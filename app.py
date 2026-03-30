@@ -109,6 +109,11 @@ def fetch_bars(api_key, secret_key, ticker, trade_date, feed="sip"):
     client = StockHistoricalDataClient(api_key, secret_key)
     mo = EASTERN.localize(datetime(trade_date.year, trade_date.month, trade_date.day, 9, 30))
     mc = EASTERN.localize(datetime(trade_date.year, trade_date.month, trade_date.day, 16, 0))
+    # When fetching today's intraday data the market may still be open —
+    # cap the end to "now" so the historical API returns bars it already has.
+    now_et = datetime.now(EASTERN)
+    if trade_date >= now_et.date() and now_et < mc:
+        mc = now_et
     req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute,
                            start=mo, end=mc, feed=feed)
     bars = client.get_stock_bars(req)
@@ -1814,13 +1819,15 @@ with st.sidebar:
 
     if mode == "📅 Historical":
         today = date.today()
-        def_d = today - timedelta(days=1)
-        if def_d.weekday() == 6:
-            def_d -= timedelta(days=2)
-        elif def_d.weekday() == 5:
-            def_d -= timedelta(days=1)
+        # Default to today if it's a weekday, otherwise roll back to last Friday
+        if today.weekday() < 5:
+            def_d = today
+        elif today.weekday() == 5:   # Saturday → Friday
+            def_d = today - timedelta(days=1)
+        else:                         # Sunday → Friday
+            def_d = today - timedelta(days=2)
         selected_date = st.date_input("Trading Date", value=def_d, max_value=today,
-                                       help="Pick a weekday (Mon–Fri)")
+                                       help="Pick a weekday (Mon–Fri). Today's intraday data is supported.")
         data_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
                                   help="SIP = full tape. IEX = IEX exchange only.")
         run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
@@ -2103,10 +2110,11 @@ with tab_chart:
                     try:
                         df = fetch_bars(api_key, secret_key, ticker, selected_date, feed=data_feed)
                         if df.empty:
+                            today_hint = " (If fetching today, make sure the market is open and at least a few minutes have passed since open.)" if selected_date >= date.today() else ""
                             if data_feed == "sip":
-                                st.warning(f"No data for **{ticker}** on {selected_date} via SIP. Try IEX, or confirm the date was a trading day.")
+                                st.warning(f"No data for **{ticker}** on {selected_date} via SIP. Try switching to IEX, or confirm the date was a trading day.{today_hint}")
                             else:
-                                st.warning(f"No data for **{ticker}** on {selected_date} via IEX. Small-caps are often absent on IEX — try SIP.")
+                                st.warning(f"No data for **{ticker}** on {selected_date} via IEX. Small-caps are often absent on IEX — try SIP.{today_hint}")
                         else:
                             st.success(f"Loaded **{len(df)}** 1-min bars via {data_feed.upper()}.")
                             # ── Pre-fetch RVOL baseline (5-day avg daily volume) ──────
