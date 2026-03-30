@@ -1828,8 +1828,8 @@ with st.sidebar:
             def_d = today - timedelta(days=2)
         selected_date = st.date_input("Trading Date", value=def_d, max_value=today,
                                        help="Pick a weekday (Mon–Fri). Today's intraday data is supported.")
-        data_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
-                                  help="SIP = full tape. IEX = IEX exchange only.")
+        data_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
+                                  help="IEX = free, works on all accounts. SIP = full tape, requires a paid Alpaca data subscription.")
         run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
     else:
         live_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
@@ -2156,7 +2156,24 @@ with tab_chart:
                         if "forbidden" in err.lower() or "403" in err or "unauthorized" in err.lower():
                             st.error("Authentication failed — check your API Key and Secret Key.")
                         elif "subscription" in err.lower() or "not entitled" in err.lower() or "422" in err:
-                            st.error(f"Not subscribed to {data_feed.upper()} feed. Switch to IEX or upgrade your Alpaca plan.")
+                            if data_feed == "sip":
+                                st.warning("SIP feed requires a paid Alpaca subscription. Retrying with IEX…")
+                                try:
+                                    df2 = fetch_bars(api_key, secret_key, ticker, selected_date, feed="iex")
+                                    if df2.empty:
+                                        st.error(f"No data for **{ticker}** on {selected_date} via IEX either. Confirm the date was a trading day and the ticker is valid.")
+                                    else:
+                                        st.success(f"Loaded **{len(df2)}** 1-min bars via IEX (auto-switched from SIP).")
+                                        render_analysis(df2, num_bins, ticker,
+                                                        f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')} (IEX)",
+                                                        avg_daily_vol=None, sector_bonus=0.0,
+                                                        sector_etf=sector_etf, intraday_curve=None,
+                                                        is_live=False)
+                                        render_log_entry_ui()
+                                except Exception as e2:
+                                    st.error(f"IEX fallback also failed: {e2}")
+                            else:
+                                st.error("Not subscribed to IEX feed — check your Alpaca account.")
                         else:
                             st.error(f"Error: {err}")
         else:
