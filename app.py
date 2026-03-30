@@ -27,6 +27,9 @@ _DEFAULTS = {
     "tcs_fired_high": False,   # True once ≥ 80% crossed this session
     "tcs_was_high": False,     # True while TCS was ≥ 60% (for chop-drop detection)
     "sound_trigger": 0,        # Incremented to force fresh audio iframe
+    # RVOL / Sector cache — pre-fetched once per analysis session
+    "rvol_avg_vol": None,      # Average daily volume (5-day lookback)
+    "sector_pct_chg": 0.0,    # Sector ETF % change for current date
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -255,13 +258,127 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
     return {k: round(v / total * 100, 1) for k, v in scores.items()}
 
 
-def compute_tcs(df, ib_high, ib_low, poc_price):
+def fetch_avg_daily_volume(api_key, secret_key, ticker, trade_date, lookback_days=5):
+    """Return the average total daily volume for ticker over the last N trading days before trade_date."""
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    client = StockHistoricalDataClient(api_key, secret_key)
+    start = EASTERN.localize(
+        datetime(trade_date.year, trade_date.month, trade_date.day) - timedelta(days=lookback_days * 2)
+    )
+    end = EASTERN.localize(datetime(trade_date.year, trade_date.month, trade_date.day))
+    req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Day, start=start, end=end)
+    bars = client.get_stock_bars(req)
+    df = bars.df
+    if df.empty:
+        return None
+    if isinstance(df.index, pd.MultiIndex):
+        df = df.xs(ticker, level="symbol")
+    df = df.sort_index()
+    # Keep only the last lookback_days complete days
+    df = df.tail(lookback_days)
+    if df.empty:
+        return None
+    return float(df["volume"].mean())
+
+
+def fetch_etf_pct_change(api_key, secret_key, etf, trade_date, feed="iex"):
+    """Return today's open-to-close percent change for the given ETF ticker."""
+    try:
+        df = fetch_bars(api_key, secret_key, etf, trade_date, feed=feed)
+        if df.empty:
+            return 0.0
+        open_price = float(df["open"].iloc[0])
+        close_price = float(df["close"].iloc[-1])
+        if open_price == 0:
+            return 0.0
+        return (close_price - open_price) / open_price * 100.0
+    except Exception:
+        return 0.0
+
+
+def compute_rvol(df, avg_daily_vol):
+    """Relative Volume — pace-adjusted so it's comparable at any time of day.
+
+    RVOL = (current pace extrapolated to full session) / avg_daily_vol
+    Returns None if avg_daily_vol is unavailable.
+    """
+    if avg_daily_vol is None or avg_daily_vol == 0:
+        return None
+    elapsed_bars = max(1, len(df))
+    session_bars = 390  # 9:30–16:00 = 390 minutes
+    current_vol = float(df["volume"].sum())
+    pace = (current_vol / elapsed_bars) * session_bars
+    return round(pace / avg_daily_vol, 2)
+
+
+def rvol_classify(rvol, pct_chg_today):
+    """Map RVOL + price direction to (label, color, is_runner, is_play).
+
+    Returns (label_str | None, color_str, is_runner_bool, is_play_bool)
+    """
+    if rvol is None:
+        return None, "#aaaaaa", False, False
+    if rvol > 5.5:
+        return "🚀 MULTI-DAY RUNNER POTENTIAL", "#FFD700", True, True
+    if rvol > 4.0:
+        return "🔥 STOCK IN PLAY", "#FF6B35", False, True
+    if rvol < 1.2 and pct_chg_today > 0.5:
+        return "⚠️ DEAD CAT / FAKE-OUT RISK", "#ef5350", False, False
+    return None, "#aaaaaa", False, False
+
+
+def compute_model_prediction(df, rvol, tcs, sector_bonus):
+    """Classify move as Fake-out / High Conviction / Consolidation from volume-price divergence."""
+    if len(df) < 2:
+        return "Consolidation", "Insufficient bars for prediction."
+    price_start = float(df["open"].iloc[0])
+    price_now = float(df["close"].iloc[-1])
+    pct_chg = (price_now - price_start) / price_start * 100.0 if price_start > 0 else 0.0
+
+    # Fake-out: price rising but volume is weak
+    if rvol is not None and rvol < 1.2 and pct_chg > 0.5:
+        return ("Fake-out",
+                f"Price +{pct_chg:.1f}% on anemic RVOL {rvol:.1f}× — volume is NOT confirming "
+                "the move. High reversal risk. Wait for RVOL > 2.0 before trusting direction.")
+
+    # High Conviction: strong RVOL + strong TCS
+    if rvol is not None and rvol > 4.0 and tcs >= 60:
+        tail = " Sector tailwind adds confirmation." if sector_bonus > 0 else ""
+        return ("High Conviction",
+                f"RVOL {rvol:.1f}× surge confirms directional participation. "
+                f"TCS {tcs:.0f}% — institutional footprint visible. "
+                f"Trend continuation is the high-probability path.{tail}")
+
+    # Consolidation: low TCS regardless of direction
+    if tcs < 35:
+        return ("Consolidation",
+                f"TCS {tcs:.0f}% — low trend energy. Price coiling inside range. "
+                "Watch for a Volume Velocity spike to signal the next push.")
+
+    # Moderate high conviction (price moving, volume ok)
+    if abs(pct_chg) > 0.5 and (rvol is None or rvol >= 1.5):
+        direction = f"+{pct_chg:.1f}%" if pct_chg > 0 else f"{pct_chg:.1f}%"
+        bias = "upward" if pct_chg > 0 else "downward"
+        return ("High Conviction",
+                f"Price {direction} with TCS {tcs:.0f}% and volume not diverging. "
+                f"Structure supports {bias} continuation.")
+
+    return ("Consolidation",
+            f"Mixed signals — TCS {tcs:.0f}%, "
+            f"RVOL {'N/A' if rvol is None else f'{rvol:.1f}×'}. "
+            "Price and volume not clearly aligned; range-bound action expected.")
+
+
+def compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=0.0):
     """Trend Confidence Score (0–100).
 
     Three equally-weighted factors:
-      • Range Factor   (40 pts) — day range vs IB range
+      • Range Factor    (40 pts) — day range vs IB range
       • Velocity Factor (30 pts) — current vol/min vs session avg vol/min
       • Structure Factor (30 pts) — price > 1 ATR from POC and trending away
+    Optional sector_bonus: +10 pts if sector ETF is up > 1%.
     """
     tcs = 0.0
 
@@ -312,6 +429,9 @@ def compute_tcs(df, ib_high, ib_low, poc_price):
                     tcs += 15.0          # beyond ATR but stalling
             else:
                 tcs += 20.0
+
+    # ── Sector Tailwind bonus (+10 pts if sector ETF up > 1%) ────────────────
+    tcs += sector_bonus
 
     return round(min(100.0, tcs), 1)
 
@@ -552,7 +672,8 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title):
     return fig
 
 
-def render_structure_banner(label, color, detail, probs, tcs):
+def render_structure_banner(label, color, detail, probs, tcs,
+                            is_runner=False, sector_bonus=0.0):
     top3 = sorted(probs.items(), key=lambda x: x[1], reverse=True)[:3]
     prob_pills = "".join(
         f'<span style="display:inline-block; background:{color}33; border:1px solid {color}66; '
@@ -561,20 +682,43 @@ def render_structure_banner(label, color, detail, probs, tcs):
         for n, p in top3
     )
 
-    # TCS gauge colours
-    if tcs >= 70:
+    # ── TCS gauge colour logic ─────────────────────────────────────────────────
+    if is_runner:
+        # Gold → Electric Blue gradient for MULTI-DAY RUNNER / STOCK IN PLAY
+        gauge_fill = "linear-gradient(90deg,#FFD700,#00BFFF)"
+        gauge_color = "#FFD700"
+        badge = ('<span style="background:#FFD70033; border:1px solid #FFD700; border-radius:4px; '
+                 'padding:2px 10px; font-size:12px; font-weight:700; color:#FFD700; '
+                 'text-transform:uppercase; letter-spacing:1px; '
+                 'box-shadow:0 0 8px #FFD70066;">⚡ RUNNER MODE</span>')
+    elif tcs >= 70:
+        gauge_fill = f"linear-gradient(90deg,#4caf5099,#4caf50)"
         gauge_color = "#4caf50"
         badge = ('<span style="background:#4caf5033; border:1px solid #4caf50; border-radius:4px; '
                  'padding:2px 10px; font-size:12px; font-weight:700; color:#4caf50; '
                  'text-transform:uppercase; letter-spacing:1px;">🔥 HIGH CONVICTION</span>')
     elif tcs <= 30:
+        gauge_fill = f"linear-gradient(90deg,#ef535099,#ef5350)"
         gauge_color = "#ef5350"
         badge = ('<span style="background:#ef535033; border:1px solid #ef5350; border-radius:4px; '
                  'padding:2px 10px; font-size:12px; font-weight:700; color:#ef5350; '
                  'text-transform:uppercase; letter-spacing:1px;">⚠ CHOP RISK</span>')
     else:
+        gauge_fill = f"linear-gradient(90deg,#ffa72699,#ffa726)"
         gauge_color = "#ffa726"
         badge = ""
+
+    # Sector tailwind badge
+    sector_badge = ""
+    if sector_bonus > 0:
+        sector_badge = ('<span style="background:#26a69a33; border:1px solid #26a69a; '
+                        'border-radius:4px; padding:2px 10px; font-size:12px; font-weight:700; '
+                        'color:#26a69a; text-transform:uppercase; letter-spacing:1px; '
+                        'margin-left:6px;">🌊 SECTOR TAILWIND +10</span>')
+
+    tcs_label = f"{tcs:.0f}%"
+    if sector_bonus > 0:
+        tcs_label += f" (+{sector_bonus:.0f} sector)"
 
     tcs_bar = f"""
     <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -582,19 +726,22 @@ def render_structure_banner(label, color, detail, probs, tcs):
             Trend Confidence
         </span>
         <div style="flex:1; min-width:120px; max-width:220px; background:#2a2a4a;
-                    border-radius:6px; height:10px; overflow:hidden;">
-            <div style="width:{tcs}%; background:linear-gradient(90deg,{gauge_color}99,{gauge_color});
+                    border-radius:6px; height:12px; overflow:hidden;">
+            <div style="width:{min(tcs,100)}%; background:{gauge_fill};
                         height:100%; border-radius:6px; transition:width 0.4s;"></div>
         </div>
-        <span style="font-size:18px; font-weight:800; color:{gauge_color}; min-width:44px;">{tcs:.0f}%</span>
-        {badge}
+        <span style="font-size:18px; font-weight:800; color:{gauge_color}; min-width:44px;">{tcs_label}</span>
+        {badge}{sector_badge}
     </div>
     """
+
+    # Runner glow border
+    glow = f"box-shadow:0 0 18px {gauge_color}55;" if is_runner else ""
 
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,{color}22,{color}0a);
                 border-left:5px solid {color}; border-radius:8px;
-                padding:14px 22px; margin:10px 0 4px 0;">
+                padding:14px 22px; margin:10px 0 4px 0; {glow}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
             <div>
                 <div style="font-size:26px; font-weight:800; color:{color}; letter-spacing:0.5px;">{label}</div>
@@ -607,6 +754,61 @@ def render_structure_banner(label, color, detail, probs, tcs):
             </div>
         </div>
         {tcs_bar}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_rvol_widget(rvol_val, label_str, label_color, is_runner):
+    """Show the RVOL reading with appropriate colour and optional glow for runner stocks."""
+    if rvol_val is None:
+        return
+    display_label = label_str if label_str else f"RVOL {rvol_val:.1f}×  — Normal Activity"
+    if label_str is None:
+        label_color = "#aaaaaa"
+
+    runner_style = ""
+    if is_runner:
+        runner_style = ("box-shadow:0 0 16px #FFD70077; "
+                        "border-color:#FFD700 !important; "
+                        "animation:rvol-pulse 1.8s ease-in-out infinite;")
+
+    st.markdown(f"""
+    <style>
+    @keyframes rvol-pulse {{
+        0%   {{ box-shadow: 0 0 8px #FFD70044; }}
+        50%  {{ box-shadow: 0 0 22px #FFD700cc; }}
+        100% {{ box-shadow: 0 0 8px #FFD70044; }}
+    }}
+    </style>
+    <div style="display:inline-flex; align-items:center; background:{label_color}11;
+                border:2px solid {label_color}77; border-radius:8px;
+                padding:8px 20px; margin:4px 0 6px 0; gap:16px; {runner_style}">
+        <span style="font-size:12px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">RVOL</span>
+        <span style="font-size:24px; font-weight:900; color:{label_color};">{rvol_val:.1f}×</span>
+        <span style="font-size:14px; font-weight:700; color:{label_color};">{display_label}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_model_prediction(outcome, reasoning):
+    """Show the volume-price divergence model prediction in a styled text box."""
+    _colors = {"Fake-out": "#ef5350", "High Conviction": "#4caf50", "Consolidation": "#ffa726"}
+    _icons  = {"Fake-out": "⚠️", "High Conviction": "🎯", "Consolidation": "📊"}
+    c = _colors.get(outcome, "#aaaaaa")
+    icon = _icons.get(outcome, "📊")
+    st.markdown(f"""
+    <div style="background:{c}0e; border:1px solid {c}44; border-radius:8px;
+                padding:12px 20px; margin:8px 0 4px 0;">
+        <div style="font-size:10px; color:#666; text-transform:uppercase;
+                    letter-spacing:1.2px; margin-bottom:6px;">
+            🤖 Model Prediction — Volume-Price Divergence
+        </div>
+        <div style="font-size:20px; font-weight:800; color:{c}; margin-bottom:4px;">
+            {icon}&nbsp;{outcome}
+        </div>
+        <div style="font-size:13px; color:#c0c0c0; line-height:1.6;">
+            {reasoning}
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -639,17 +841,29 @@ def render_velocity_widget(df):
     """, unsafe_allow_html=True)
 
 
-def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False):
+def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
+                    avg_daily_vol=None, sector_bonus=0.0, sector_etf="IWM"):
     ib_high, ib_low = compute_initial_balance(df)
     bin_centers, vap, poc_price = compute_volume_profile(df, num_bins)
     label, color, detail = classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price)
     probs = compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price)
-    tcs = compute_tcs(df, ib_high, ib_low, poc_price)
+    tcs = compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=sector_bonus)
     audio_enabled = st.session_state.get("audio_alerts_enabled", True)
     check_tcs_alerts(tcs, audio_enabled)
 
+    # ── RVOL + Pattern Label ───────────────────────────────────────────────────
+    price_start = float(df["open"].iloc[0]) if len(df) else 0.0
+    price_now   = float(df["close"].iloc[-1]) if len(df) else 0.0
+    pct_chg_today = (price_now - price_start) / price_start * 100.0 if price_start > 0 else 0.0
+
+    rvol_val = compute_rvol(df, avg_daily_vol)
+    rvol_lbl, rvol_color, is_runner, is_play = rvol_classify(rvol_val, pct_chg_today)
+
+    # ── Model prediction ───────────────────────────────────────────────────────
+    pred_outcome, pred_reasoning = compute_model_prediction(df, rvol_val, tcs, sector_bonus)
+
     day_high = float(df["high"].max())
-    day_low = float(df["low"].min())
+    day_low  = float(df["low"].min())
     ib_range = (ib_high - ib_low) if ib_high and ib_low else 0.0
 
     # IB status badge for live mode
@@ -664,16 +878,25 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False):
             unsafe_allow_html=True
         )
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    # ── Top metrics row ───────────────────────────────────────────────────────
+    rvol_display = f"{rvol_val:.1f}×" if rvol_val is not None else "—"
+    sector_display = (f"{sector_etf} +{sector_bonus:.0f}pts" if sector_bonus > 0
+                      else f"{sector_etf} —")
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
     col1.metric("Bars", len(df))
     col2.metric("IB High", f"${ib_high:.2f}" if ib_high else "—")
-    col3.metric("IB Low", f"${ib_low:.2f}" if ib_low else "—")
+    col3.metric("IB Low",  f"${ib_low:.2f}"  if ib_low  else "—")
     col4.metric("IB Range", f"${ib_range:.2f}")
     col5.metric("Day Range", f"${day_high - day_low:.2f}")
     col6.metric("POC", f"${poc_price:.2f}")
+    col7.metric("RVOL", rvol_display)
+    col8.metric("Sector", sector_display)
 
     render_velocity_widget(df)
-    render_structure_banner(label, color, detail, probs, tcs)
+    render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
+    render_structure_banner(label, color, detail, probs, tcs,
+                            is_runner=is_runner, sector_bonus=sector_bonus)
+    render_model_prediction(pred_outcome, pred_reasoning)
 
     fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title)
     st.plotly_chart(fig, use_container_width=True)
@@ -701,6 +924,12 @@ with st.sidebar:
     st.header("📈 Settings")
     ticker = st.text_input("Ticker Symbol", value="AAPL", placeholder="e.g. AAPL, GME").upper().strip()
     num_bins = st.slider("Volume Profile Bins", min_value=20, max_value=200, value=100, step=10)
+    sector_etf = st.selectbox(
+        "Sector ETF (for Tailwind)",
+        ["IWM", "XBI", "SMH", "QQQ", "SPY", "XLF", "XLE"],
+        index=0,
+        help="If this ETF is up > 1% on the day, TCS gets a +10 pt Sector Tailwind bonus."
+    )
 
     run_button = start_live = stop_live = False
     selected_date = date.today()
@@ -805,8 +1034,28 @@ if mode == "📅 Historical":
                             st.warning(f"No data for **{ticker}** on {selected_date} via IEX. Small-caps are often absent on IEX — try SIP.")
                     else:
                         st.success(f"Loaded **{len(df)}** 1-min bars via {data_feed.upper()}.")
+                        # ── Pre-fetch RVOL baseline (5-day avg daily volume) ──────────
+                        try:
+                            avg_vol = fetch_avg_daily_volume(
+                                api_key, secret_key, ticker, selected_date)
+                        except Exception:
+                            avg_vol = None
+                        st.session_state.rvol_avg_vol = avg_vol
+
+                        # ── Sector ETF % change for that date ────────────────────────
+                        try:
+                            etf_chg = fetch_etf_pct_change(
+                                api_key, secret_key, sector_etf, selected_date, feed=data_feed)
+                        except Exception:
+                            etf_chg = 0.0
+                        sector_bonus = 10.0 if etf_chg > 1.0 else 0.0
+                        st.session_state.sector_pct_chg = etf_chg
+
                         render_analysis(df, num_bins, ticker,
-                                        f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}")
+                                        f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
+                                        avg_daily_vol=avg_vol,
+                                        sector_bonus=sector_bonus,
+                                        sector_etf=sector_etf)
                 except Exception as e:
                     err = str(e)
                     if "forbidden" in err.lower() or "403" in err or "unauthorized" in err.lower():
@@ -837,6 +1086,22 @@ else:
         elif not ticker:
             st.error("Enter a ticker symbol.")
         else:
+            # Pre-fetch RVOL baseline and sector ETF change before starting stream
+            today = date.today()
+            with st.spinner("Computing RVOL baseline & sector data…"):
+                try:
+                    avg_vol = fetch_avg_daily_volume(api_key, secret_key, ticker, today)
+                except Exception:
+                    avg_vol = None
+                st.session_state.rvol_avg_vol = avg_vol
+
+                try:
+                    etf_chg = fetch_etf_pct_change(
+                        api_key, secret_key, sector_etf, today, feed=live_feed)
+                except Exception:
+                    etf_chg = 0.0
+                st.session_state.sector_pct_chg = etf_chg
+
             start_stream(api_key, secret_key, ticker, live_feed)
             st.rerun()
 
@@ -873,8 +1138,14 @@ else:
             chart_title = (f"🔴 LIVE — {st.session_state.live_ticker} | "
                            f"{now_est.strftime('%H:%M:%S')} EST"
                            + (" | 📐 IB FORMING" if is_ib_live else ""))
+            live_sector_bonus = (10.0
+                                 if st.session_state.get("sector_pct_chg", 0.0) > 1.0
+                                 else 0.0)
             render_analysis(df, num_bins, st.session_state.live_ticker,
-                            chart_title, is_ib_live=is_ib_live)
+                            chart_title, is_ib_live=is_ib_live,
+                            avg_daily_vol=st.session_state.get("rvol_avg_vol"),
+                            sector_bonus=live_sector_bonus,
+                            sector_etf=sector_etf)
     else:
         if not st.session_state.live_error:
             st.info("👈 Enter credentials and ticker, then click **▶ Start Live Stream**.")

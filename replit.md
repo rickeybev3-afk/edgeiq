@@ -6,20 +6,38 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Streamlit Volume Profile Dashboard
 
-A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for small-cap stocks.
+A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for small-cap stocks with advanced analysis engine.
 
 ### Features
-- Fetch 1-minute historical bars from Alpaca via `alpaca-py`
-- Calculate Initial Balance (IB High/Low: first 60 min, 9:30–10:30 EST)
-- Build a Volume Profile (100 price bins, volume-weighted)
-- Identify Point of Control (POC) — price level with highest volume
-- Interactive Plotly chart: candlestick + volume profile histogram side-by-side
-- IB High (green dashed), IB Low (red dashed), POC (gold line) overlays
-- Sidebar for Alpaca API Key, Secret Key, ticker, date, and bin count
+- Fetch 1-minute historical bars from Alpaca via `alpaca-py` (SIP / IEX feeds)
+- Live WebSocket stream mode via Alpaca `StockDataStream` — 2-second auto-refresh
+- Initial Balance (IB High/Low: 9:30–10:30 EST) with dynamic live tracking
+- Volume Profile histogram (configurable bins), POC gold line, IB dashed lines
+- Day Structure Classification: Trend Day, P-Shape, b-Shape, Double Distribution, Normal/Balanced
+- Structure Probability Meter — top-3 scored pills
+- **Trend Confidence Score (TCS)** — 0–100 gauge with sector tailwind bonus:
+  - Range Factor (40 pts), Velocity Factor (30 pts), Structure Factor (30 pts)
+  - +10 pt Sector Tailwind bonus if selected ETF is up > 1%
+- **RVOL (Relative Volume)** — pace-adjusted 5-day baseline:
+  - ⚠️ DEAD CAT / FAKE-OUT RISK (RVOL < 1.2, price up)
+  - 🔥 STOCK IN PLAY (RVOL > 4.0)
+  - 🚀 MULTI-DAY RUNNER POTENTIAL (RVOL > 5.5) — triggers Gold/Electric-Blue gauge
+- **Model Prediction box** — Fake-out / High Conviction / Consolidation from volume-price divergence
+- **Volume Velocity widget** — vol/min + acceleration label
+- **Audio/Visual Alert System** — Web Audio API synthesised tones, sidebar unlock button
+  - Ascending 4-note chime on TCS ≥ 80% (once per session)
+  - Descending 3-tone warning on TCS drop below 30%
+
+### Sidebar Settings
+- Alpaca API Key + Secret Key
+- Mode: Historical / Live Stream
+- Ticker Symbol, Volume Profile Bins
+- Sector ETF (IWM, XBI, SMH, QQQ, SPY, XLF, XLE) for tailwind detection
+- Enable Audio Alerts + browser unlock button
 
 ### Running
 ```bash
-streamlit run app.py --server.port 5000
+streamlit run app.py --server.port 8080
 ```
 
 ### Dependencies (Python)
