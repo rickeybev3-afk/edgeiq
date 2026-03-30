@@ -1360,17 +1360,6 @@ def render_structure_banner(label, color, detail, probs, tcs,
     # Runner glow border
     glow = f"box-shadow:0 0 18px {gauge_color}55;" if is_runner else ""
 
-    # Key Insights box
-    insight_html = ""
-    if insight:
-        insight_html = f"""
-        <div style="margin-top:10px; background:#1a2744; border-left:3px solid {color}99;
-                    border-radius:5px; padding:9px 14px;">
-            <span style="font-size:10px; color:#888; text-transform:uppercase;
-                         letter-spacing:1px; font-weight:600;">Key Insights</span><br>
-            <span style="font-size:13px; color:#d0d8f0; line-height:1.55;">{insight}</span>
-        </div>"""
-
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,{color}22,{color}0a);
                 border-left:5px solid {color}; border-radius:8px;
@@ -1387,9 +1376,20 @@ def render_structure_banner(label, color, detail, probs, tcs,
             </div>
         </div>
         {tcs_bar}
-        {insight_html}
     </div>
     """, unsafe_allow_html=True)
+
+    # Key Insights box — separate call so Streamlit's markdown parser doesn't escape inner HTML
+    if insight:
+        st.markdown(
+            f'<div style="margin-top:6px; background:#1a2744; border-left:3px solid {color}99;'
+            f' border-radius:5px; padding:9px 14px;">'
+            f'<span style="font-size:10px; color:#888; text-transform:uppercase;'
+            f' letter-spacing:1px; font-weight:600;">KEY INSIGHTS</span><br>'
+            f'<span style="font-size:13px; color:#d0d8f0; line-height:1.55;">{insight}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_rvol_widget(rvol_val, label_str, label_color, is_runner):
