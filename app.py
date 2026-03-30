@@ -83,7 +83,8 @@ def compute_volume_profile(df, num_bins):
     return bin_centers, vap, float(bin_centers[poc_idx])
 
 
-def _find_peaks(smoothed, bin_centers, threshold_pct=0.40):
+def _find_peaks(smoothed, bin_centers, threshold_pct=0.30):
+    """Return indices of local maxima that exceed threshold_pct of the profile max."""
     n = len(smoothed)
     max_v = smoothed.max()
     peaks = []
@@ -91,9 +92,44 @@ def _find_peaks(smoothed, bin_centers, threshold_pct=0.40):
         if (smoothed[i] >= max_v * threshold_pct and
                 smoothed[i] > smoothed[i-1] and smoothed[i] > smoothed[i+1] and
                 smoothed[i] > smoothed[i-2] and smoothed[i] > smoothed[i+2]):
-            if not peaks or bin_centers[i] - bin_centers[peaks[-1]] > (bin_centers[1]-bin_centers[0]) * 3:
+            # Deduplicate: require at least 3 bins from the previous accepted peak
+            if not peaks or (i - peaks[-1]) >= 3:
                 peaks.append(i)
     return peaks
+
+
+def _is_strong_hvn(pk, vap):
+    """True if peak qualifies as an HVN by small-cap DD criteria.
+
+    Either:
+      • Volume in ±2-bin window around peak > 20 % of total session volume, OR
+      • Peak bin volume > 2.5× the average bin volume.
+    """
+    total_vol = vap.sum()
+    if total_vol == 0:
+        return False
+    avg_bin = total_vol / len(vap)
+    window = vap[max(0, pk-2): min(len(vap), pk+3)].sum()
+    return (window / total_vol > 0.20) or (vap[pk] > 2.5 * avg_bin)
+
+
+def _detect_double_distribution(bin_centers, vap, min_bin_sep=15):
+    """Return (pk1_idx, pk2_idx, lvn_idx) if a valid Double Distribution is found, else None."""
+    smoothed = np.convolve(vap.astype(float), np.ones(5)/5, mode="same")
+    peaks = _find_peaks(smoothed, bin_centers, threshold_pct=0.25)
+    for j in range(len(peaks) - 1):
+        pk1, pk2 = peaks[j], peaks[j+1]
+        # Must be at least 15 bins apart
+        if (pk2 - pk1) < min_bin_sep:
+            continue
+        # Both peaks must qualify as strong HVNs
+        if not (_is_strong_hvn(pk1, vap) and _is_strong_hvn(pk2, vap)):
+            continue
+        # Must have a clear LVN valley between them
+        vi = int(np.argmin(smoothed[pk1:pk2+1])) + pk1
+        if smoothed[vi] < 0.60 * min(smoothed[pk1], smoothed[pk2]):
+            return pk1, pk2, vi
+    return None
 
 
 def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price):
@@ -106,34 +142,40 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price):
         return "⚖️ Normal / Balanced", "#66bb6a", "Insufficient range data."
     poc_pos = (poc_price - day_low) / total_range
 
+    # ── 1. Double Distribution (prioritised — check before single-direction labels) ──
+    dd = _detect_double_distribution(bin_centers, vap)
+    if dd is not None:
+        pk1, pk2, vi = dd
+        sep_bins = pk2 - pk1
+        sep_price = bin_centers[pk2] - bin_centers[pk1]
+        pct1 = vap[max(0,pk1-2):min(len(vap),pk1+3)].sum() / vap.sum() * 100
+        pct2 = vap[max(0,pk2-2):min(len(vap),pk2+3)].sum() / vap.sum() * 100
+        return ("⚡ Double Distribution", "#00bcd4",
+                f"HVNs at ${bin_centers[pk1]:.2f} ({pct1:.0f}% vol) & "
+                f"${bin_centers[pk2]:.2f} ({pct2:.0f}% vol) — "
+                f"{sep_bins}-bin / ${sep_price:.2f} gap. "
+                f"LVN at ${bin_centers[vi]:.2f}. Two distinct auctions.")
+
+    # ── 2. Trend Day ──────────────────────────────────────────────────────────
     if total_range > 2.5 * ib_range:
         bull = final_price > day_low + total_range / 2
         return ("📈 Trend Day", "#ff9800",
                 f"{'Bullish' if bull else 'Bearish'} — range ${total_range:.2f} is "
                 f"{total_range/ib_range:.1f}× the IB (${ib_range:.2f}). Strong directional conviction.")
 
+    # ── 3. P-Shape ────────────────────────────────────────────────────────────
     if poc_pos >= 0.75 and final_price > ib_high:
         return ("🅟 P-Shape (Short Covering)", "#ce93d8",
                 f"POC ${poc_price:.2f} in top {100*(1-poc_pos):.0f}% of range, "
                 f"close ${final_price:.2f} > IB High ${ib_high:.2f}. Shorts covering into strength.")
 
+    # ── 4. b-Shape ────────────────────────────────────────────────────────────
     if poc_pos <= 0.25 and final_price < ib_low:
         return ("🅑 b-Shape (Long Liquidation)", "#ef5350",
                 f"POC ${poc_price:.2f} in bottom {100*poc_pos:.0f}% of range, "
                 f"close ${final_price:.2f} < IB Low ${ib_low:.2f}. Longs liquidating into weakness.")
 
-    smoothed = np.convolve(vap.astype(float), np.ones(5)/5, mode="same")
-    peaks = _find_peaks(smoothed, bin_centers)
-    for j in range(len(peaks) - 1):
-        pk1, pk2 = peaks[j], peaks[j+1]
-        sep = bin_centers[pk2] - bin_centers[pk1]
-        if sep >= 0.20:
-            vi = int(np.argmin(smoothed[pk1:pk2+1])) + pk1
-            if smoothed[vi] < 0.60 * min(smoothed[pk1], smoothed[pk2]):
-                return ("⚡ Double Distribution", "#00bcd4",
-                        f"HVNs at ${bin_centers[pk1]:.2f} & ${bin_centers[pk2]:.2f}, "
-                        f"LVN at ${bin_centers[vi]:.2f} (${sep:.2f} gap). Two auctions in one session.")
-
+    # ── 5. Normal / Balanced ──────────────────────────────────────────────────
     pct = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean()) * 100
     return ("⚖️ Normal / Balanced", "#66bb6a",
             f"Price inside IB for {pct:.0f}% of session — balanced, rotational day.")
@@ -165,19 +207,76 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
         bs += 18.0
     bs = min(bs, 80.0)
 
-    smoothed = np.convolve(vap.astype(float), np.ones(5)/5, mode="same")
-    peaks = _find_peaks(smoothed, bin_centers)
-    n_valid_pairs = sum(
-        1 for j in range(len(peaks)-1)
-        if bin_centers[peaks[j+1]] - bin_centers[peaks[j]] >= 0.20
-    )
-    dd = 5.0 + min(n_valid_pairs, 2) * 18.0
+    # Use the strict DD detector — bump score significantly if it fires
+    has_dd = _detect_double_distribution(bin_centers, vap) is not None
+    dd = 55.0 if has_dd else 5.0
 
     nm = 8.0 + pct_inside * 50.0
 
     scores = {"Trend Day": td, "P-Shape": ps, "b-Shape": bs, "Dbl Dist": dd, "Normal": nm}
     total = sum(scores.values())
     return {k: round(v / total * 100, 1) for k, v in scores.items()}
+
+
+def compute_tcs(df, ib_high, ib_low, poc_price):
+    """Trend Confidence Score (0–100).
+
+    Three equally-weighted factors:
+      • Range Factor   (40 pts) — day range vs IB range
+      • Velocity Factor (30 pts) — current vol/min vs session avg vol/min
+      • Structure Factor (30 pts) — price > 1 ATR from POC and trending away
+    """
+    tcs = 0.0
+
+    day_high = float(df["high"].max())
+    day_low = float(df["low"].min())
+    total_range = day_high - day_low
+    ib_range = (ib_high - ib_low) if (ib_high and ib_low) else 0.0
+    final_price = float(df["close"].iloc[-1])
+
+    # ── Range Factor (40 pts) ─────────────────────────────────────────────────
+    if ib_range > 0:
+        rr = total_range / ib_range
+        if rr >= 2.5:
+            tcs += 40.0
+        elif rr > 1.1:
+            tcs += 40.0 * (rr - 1.1) / (2.5 - 1.1)
+
+    # ── Velocity Factor (30 pts) ──────────────────────────────────────────────
+    if len(df) >= 6:
+        w = min(3, len(df) // 2)
+        current_vel = float(df["volume"].iloc[-w:].mean())
+        avg_vel = float(df["volume"].mean())
+        if avg_vel > 0:
+            vr = current_vel / avg_vel
+            if vr >= 2.0:
+                tcs += 30.0
+            elif vr > 1.0:
+                tcs += 30.0 * (vr - 1.0) / (2.0 - 1.0)
+
+    # ── Structure Factor (30 pts) ─────────────────────────────────────────────
+    if len(df) >= 3:
+        high = df["high"]
+        low = df["low"]
+        prev_close = df["close"].shift(1)
+        tr = pd.concat(
+            [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+        ).max(axis=1)
+        atr = float(tr.rolling(window=min(14, len(df))).mean().iloc[-1])
+
+        if atr > 0 and abs(final_price - poc_price) > atr:
+            # "Moving" = last 3 closes trending further from POC
+            if len(df) >= 4:
+                poc_side = 1 if final_price > poc_price else -1
+                move = float(df["close"].iloc[-1]) - float(df["close"].iloc[-4])
+                if move * poc_side > 0:
+                    tcs += 30.0          # trending away — full credit
+                else:
+                    tcs += 15.0          # beyond ATR but stalling
+            else:
+                tcs += 20.0
+
+    return round(min(100.0, tcs), 1)
 
 
 def compute_volume_velocity(df):
@@ -379,7 +478,7 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title):
     return fig
 
 
-def render_structure_banner(label, color, detail, probs):
+def render_structure_banner(label, color, detail, probs, tcs):
     top3 = sorted(probs.items(), key=lambda x: x[1], reverse=True)[:3]
     prob_pills = "".join(
         f'<span style="display:inline-block; background:{color}33; border:1px solid {color}66; '
@@ -387,6 +486,37 @@ def render_structure_banner(label, color, detail, probs):
         f'<b>{n}</b> {p}%</span>'
         for n, p in top3
     )
+
+    # TCS gauge colours
+    if tcs >= 70:
+        gauge_color = "#4caf50"
+        badge = ('<span style="background:#4caf5033; border:1px solid #4caf50; border-radius:4px; '
+                 'padding:2px 10px; font-size:12px; font-weight:700; color:#4caf50; '
+                 'text-transform:uppercase; letter-spacing:1px;">🔥 HIGH CONVICTION</span>')
+    elif tcs <= 30:
+        gauge_color = "#ef5350"
+        badge = ('<span style="background:#ef535033; border:1px solid #ef5350; border-radius:4px; '
+                 'padding:2px 10px; font-size:12px; font-weight:700; color:#ef5350; '
+                 'text-transform:uppercase; letter-spacing:1px;">⚠ CHOP RISK</span>')
+    else:
+        gauge_color = "#ffa726"
+        badge = ""
+
+    tcs_bar = f"""
+    <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:1px; white-space:nowrap;">
+            Trend Confidence
+        </span>
+        <div style="flex:1; min-width:120px; max-width:220px; background:#2a2a4a;
+                    border-radius:6px; height:10px; overflow:hidden;">
+            <div style="width:{tcs}%; background:linear-gradient(90deg,{gauge_color}99,{gauge_color});
+                        height:100%; border-radius:6px; transition:width 0.4s;"></div>
+        </div>
+        <span style="font-size:18px; font-weight:800; color:{gauge_color}; min-width:44px;">{tcs:.0f}%</span>
+        {badge}
+    </div>
+    """
+
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,{color}22,{color}0a);
                 border-left:5px solid {color}; border-radius:8px;
@@ -402,6 +532,7 @@ def render_structure_banner(label, color, detail, probs):
                 <div>{prob_pills}</div>
             </div>
         </div>
+        {tcs_bar}
     </div>
     """, unsafe_allow_html=True)
 
@@ -439,6 +570,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False):
     bin_centers, vap, poc_price = compute_volume_profile(df, num_bins)
     label, color, detail = classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price)
     probs = compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price)
+    tcs = compute_tcs(df, ib_high, ib_low, poc_price)
 
     day_high = float(df["high"].max())
     day_low = float(df["low"].min())
@@ -465,7 +597,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False):
     col6.metric("POC", f"${poc_price:.2f}")
 
     render_velocity_widget(df)
-    render_structure_banner(label, color, detail, probs)
+    render_structure_banner(label, color, detail, probs, tcs)
 
     fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title)
     st.plotly_chart(fig, use_container_width=True)
