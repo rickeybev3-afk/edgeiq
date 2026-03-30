@@ -38,6 +38,10 @@ _DEFAULTS = {
     # Gap Scanner results cache
     "scanner_results": [],         # [{ticker, price, gap_pct, pm_vol, avg_pm_vol, pm_rvol}]
     "scanner_last_run": None,      # datetime of last successful scan
+    # Last analysis snapshot — used by Live Pulse header + Log Entry
+    "last_analysis_state": None,
+    # Trade journal active tab state
+    "active_tab": 0,
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -994,6 +998,218 @@ def build_live_df():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TRADE JOURNAL
+# ══════════════════════════════════════════════════════════════════════════════
+
+import csv
+import os
+
+JOURNAL_PATH = "trade_journal.csv"
+_JOURNAL_COLS = [
+    "timestamp", "ticker", "price", "structure", "tcs", "rvol",
+    "ib_high", "ib_low", "notes", "grade", "grade_reason",
+]
+
+
+def load_journal() -> "pd.DataFrame":
+    if not os.path.exists(JOURNAL_PATH):
+        return pd.DataFrame(columns=_JOURNAL_COLS)
+    try:
+        df = pd.read_csv(JOURNAL_PATH)
+        for col in _JOURNAL_COLS:
+            if col not in df.columns:
+                df[col] = ""
+        return df[_JOURNAL_COLS]
+    except Exception:
+        return pd.DataFrame(columns=_JOURNAL_COLS)
+
+
+def save_journal_entry(entry: dict):
+    exists = os.path.exists(JOURNAL_PATH)
+    with open(JOURNAL_PATH, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_JOURNAL_COLS)
+        if not exists:
+            writer.writeheader()
+        row = {k: entry.get(k, "") for k in _JOURNAL_COLS}
+        writer.writerow(row)
+
+
+def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
+    """Return (grade, reason) based on RVOL, TCS, price relative to IB."""
+    rvol_val = rvol if rvol is not None else 0.0
+    is_trend  = "trend" in structure_label.lower()
+    price_inside_ib = (
+        (ib_low is not None and ib_high is not None) and (ib_low < price < ib_high)
+    )
+    price_above_ib = (ib_high is not None) and (price > ib_high)
+
+    # F — disqualifying conditions first
+    if rvol_val < 1.0:
+        return "F", f"Grade F: Low-volume setup (RVOL {rvol_val:.1f}×) — unfavorable odds."
+    if is_trend and price_inside_ib:
+        return "F", "Grade F: Trend attempt but price is still inside IB — no breakout confirmation."
+
+    # A — ideal setup
+    if rvol_val > 4.0 and tcs > 70 and price_above_ib:
+        return "A", (f"Grade A: RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%, price above IB High — "
+                     f"elite, high-conviction setup.")
+
+    # B — solid
+    if rvol_val > 2.0 and tcs > 50:
+        return "B", (f"Grade B: RVOL {rvol_val:.1f}×, TCS {tcs:.0f}% — solid participation "
+                     f"with reasonable confidence.")
+
+    # C — moderate
+    if (1.0 <= rvol_val <= 2.0) or (30 <= tcs <= 50):
+        return "C", (f"Grade C: Moderate quality (RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%) — "
+                     f"acceptable but below ideal thresholds.")
+
+    # F — catch-all low confidence
+    return "F", (f"Grade F: Low confidence (RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%) — "
+                 f"avoid or reduce size significantly.")
+
+
+_GRADE_COLORS = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}
+_GRADE_SCORE  = {"A": 4, "B": 3, "C": 2, "F": 1}
+
+
+def render_log_entry_ui():
+    """Show the Notes box + LOG ENTRY button below the chart."""
+    state = st.session_state.get("last_analysis_state")
+    if not state:
+        return
+    with st.expander("💾 Log This Trade Entry", expanded=False):
+        notes = st.text_input(
+            "Mental State / Notes",
+            placeholder="e.g. Calm, FOMO, Greed, Hesitated...",
+            key="journal_notes_input",
+        )
+        if st.button("💾 LOG ENTRY", use_container_width=True, key="journal_log_btn"):
+            grade, reason = compute_trade_grade(
+                state.get("rvol"), state.get("tcs"), state.get("price"),
+                state.get("ib_high"), state.get("ib_low"), state.get("structure"),
+            )
+            entry = {
+                "timestamp": datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
+                "ticker":    state.get("ticker", ""),
+                "price":     round(state.get("price", 0.0), 4),
+                "structure": state.get("structure", ""),
+                "tcs":       round(state.get("tcs", 0.0), 1),
+                "rvol":      round(state.get("rvol") or 0.0, 2),
+                "ib_high":   round(state.get("ib_high") or 0.0, 4),
+                "ib_low":    round(state.get("ib_low") or 0.0, 4),
+                "notes":     notes,
+                "grade":     grade,
+                "grade_reason": reason,
+            }
+            save_journal_entry(entry)
+            gc = _GRADE_COLORS.get(grade, "#aaa")
+            st.success(f"Logged! **Grade {grade}** — {reason}")
+            st.markdown(
+                f'<div style="display:inline-block; background:{gc}22; border:2px solid {gc}; '
+                f'border-radius:50%; width:52px; height:52px; line-height:52px; '
+                f'text-align:center; font-size:24px; font-weight:900; color:{gc};">'
+                f'{grade}</div>',
+                unsafe_allow_html=True,
+            )
+
+
+def render_journal_tab():
+    """Render the 📖 My Journal tab."""
+    df = load_journal()
+
+    cola, colb = st.columns([1, 1])
+    with cola:
+        st.subheader("📖 My Trade Journal")
+    with colb:
+        if not df.empty:
+            csv_bytes = df.to_csv(index=False).encode()
+            st.download_button(
+                "⬇️ Download Journal (CSV)",
+                data=csv_bytes,
+                file_name=f"trade_journal_{date.today()}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+    if df.empty:
+        st.info("No entries yet. Run an analysis and click **💾 LOG ENTRY** under the chart.")
+        return
+
+    # Grade badges + table
+    st.markdown("---")
+    for _, row in df.iterrows():
+        grade = str(row.get("grade", "?"))
+        gc = _GRADE_COLORS.get(grade, "#aaaaaa")
+        reason = row.get("grade_reason", "")
+        ts = row.get("timestamp", "")
+        sym = row.get("ticker", "")
+        price = row.get("price", "")
+        struct = row.get("structure", "")
+        tcs_v = row.get("tcs", "")
+        rvol_v = row.get("rvol", "")
+        notes_v = row.get("notes", "")
+
+        st.markdown(f"""
+        <div style="display:flex; gap:16px; align-items:center; background:#12122288;
+                    border:1px solid #2a2a4a; border-radius:10px;
+                    padding:12px 18px; margin:8px 0;">
+            <div style="flex-shrink:0; width:52px; height:52px; border-radius:50%;
+                        background:{gc}22; border:2.5px solid {gc};
+                        display:flex; align-items:center; justify-content:center;
+                        font-size:24px; font-weight:900; color:{gc};">{grade}</div>
+            <div style="flex:1; min-width:0;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:baseline;">
+                    <span style="font-size:20px; font-weight:800; color:#e0e0e0;">{sym}</span>
+                    <span style="font-size:13px; color:#aaa;">${price}</span>
+                    <span style="font-size:11px; color:#666;">{ts}</span>
+                </div>
+                <div style="font-size:12px; color:#90caf9; margin:2px 0;">{struct}</div>
+                <div style="font-size:11px; color:#888;">
+                    TCS {tcs_v}%  ·  RVOL {rvol_v}×
+                    {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
+                </div>
+                <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Equity curve — grade average over entries
+    st.markdown("---")
+    st.markdown("**Grade Discipline Curve**")
+    df2 = df.copy()
+    df2["grade_score"] = df2["grade"].map(_GRADE_SCORE).fillna(1)
+    df2["entry_num"]   = range(1, len(df2) + 1)
+    df2["rolling_avg"] = df2["grade_score"].expanding().mean()
+
+    import plotly.graph_objects as _go
+    fig = _go.Figure()
+    fig.add_trace(_go.Scatter(
+        x=df2["entry_num"], y=df2["rolling_avg"],
+        mode="lines+markers",
+        line=dict(color="#00bcd4", width=2.5),
+        marker=dict(size=7, color=df2["grade_score"].map(
+            {4: "#4caf50", 3: "#26a69a", 2: "#ffa726", 1: "#ef5350"}
+        ).fillna("#aaa")),
+        name="Grade Average",
+        hovertemplate="Entry %{x} — Avg %{y:.2f}<extra></extra>",
+    ))
+    fig.add_hline(y=3.0, line=dict(color="#4caf5066", dash="dot"),
+                  annotation_text="B threshold", annotation_font_color="#4caf50")
+    fig.update_layout(
+        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+        font=dict(color="#e0e0e0"), height=220,
+        xaxis=dict(title="Entry #", gridcolor="#2a2a4a"),
+        yaxis=dict(title="Avg Grade (F=1 \u2013 A=4)", gridcolor="#2a2a4a",
+                   tickvals=[1, 2, 3, 4], ticktext=["F", "C", "B", "A"],
+                   range=[0.5, 4.5]),
+        margin=dict(l=10, r=10, t=20, b=40),
+        showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CHART & RENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1360,6 +1576,21 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                             insight=insight)
     render_model_prediction(pred_outcome, pred_reasoning)
 
+    # ── Persist snapshot for Live Pulse header + Log Entry ────────────────────
+    st.session_state.last_analysis_state = {
+        "ticker":    ticker,
+        "price":     price_now,
+        "structure": label,
+        "tcs":       tcs,
+        "rvol":      rvol_val,
+        "ib_high":   ib_high,
+        "ib_low":    ib_low,
+        "rvol_color": rvol_color,
+        "is_runner": is_runner,
+        "label_color": color,
+        "vol_velocity_str": "",
+    }
+
     # ── Target zone alerts + sidebar "Distance to Target" ─────────────────────
     check_target_alerts(price_now, target_zones, audio_enabled)
     if target_zones:
@@ -1657,14 +1888,74 @@ with st.sidebar:
 # MAIN AREA
 # ══════════════════════════════════════════════════════════════════════════════
 
-if mode == "🔴 Live Stream" and st.session_state.live_active:
-    st.title("📊 Volume Profile Dashboard")
-    st.markdown(f"🔴 **Live tape** — `{st.session_state.live_ticker}` — chart refreshes every 2 s")
-else:
-    st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
-    st.markdown("Visualize Volume Profile structures with Point of Control (POC) and Initial Balance (IB).")
+st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
 
-tab_vp, tab_scan = st.tabs(["📊 Volume Profile", "🔍 Top 3 Stocks In Play"])
+# ── Live Pulse Header ──────────────────────────────────────────────────────────
+_las = st.session_state.get("last_analysis_state")
+if _las:
+    _lbl  = _las.get("structure", "")
+    _tcs  = _las.get("tcs", 0.0)
+    _rvol = _las.get("rvol")
+    _sym  = _las.get("ticker", "")
+    _pr   = _las.get("price", 0.0)
+    _lc   = _las.get("label_color", "#90caf9")
+    _rc   = _las.get("rvol_color", "#aaa")
+    _runner = _las.get("is_runner", False)
+
+    _rvol_str = f"{_rvol:.1f}×" if _rvol is not None else "—"
+    _tcs_fill = ("linear-gradient(90deg,#FFD700,#00BFFF)" if _runner
+                 else f"linear-gradient(90deg,#4caf50,#4caf50)" if _tcs >= 70
+                 else f"linear-gradient(90deg,#ef5350,#ef5350)" if _tcs <= 30
+                 else "linear-gradient(90deg,#ffa726,#ffa726)")
+
+    st.markdown(f"""
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin:0 0 4px 0;">
+        <div style="flex:1; min-width:220px; background:linear-gradient(135deg,{_lc}22,{_lc}0a);
+                    border-left:4px solid {_lc}; border-radius:8px; padding:12px 18px;">
+            <div style="font-size:10px; color:#888; text-transform:uppercase;
+                        letter-spacing:1px; margin-bottom:4px;">Structure</div>
+            <div style="font-size:20px; font-weight:800; color:{_lc};">{_lbl}</div>
+            <div style="font-size:12px; color:#aaa; margin-top:2px;">{_sym} · ${_pr:.2f}</div>
+        </div>
+        <div style="flex:1; min-width:180px; background:#12122288;
+                    border-left:4px solid #90caf9; border-radius:8px; padding:12px 18px;">
+            <div style="font-size:10px; color:#888; text-transform:uppercase;
+                        letter-spacing:1px; margin-bottom:6px;">Trend Confidence (TCS)</div>
+            <div style="background:#2a2a4a; border-radius:6px; height:10px; overflow:hidden; margin-bottom:6px;">
+                <div style="width:{min(_tcs,100):.0f}%; background:{_tcs_fill};
+                            height:100%; border-radius:6px;"></div>
+            </div>
+            <div style="font-size:22px; font-weight:900; color:{'#FFD700' if _runner else '#90caf9'};">{_tcs:.0f}%</div>
+        </div>
+        <div style="flex:1; min-width:180px; background:#12122288;
+                    border-left:4px solid {_rc}; border-radius:8px; padding:12px 18px;">
+            <div style="font-size:10px; color:#888; text-transform:uppercase;
+                        letter-spacing:1px; margin-bottom:4px;">RVOL</div>
+            <div style="font-size:22px; font-weight:900; color:{_rc};">{_rvol_str}</div>
+            <div style="font-size:11px; color:#666; margin-top:2px;">
+                {'⚡ RUNNER MODE' if _runner else ('🔥 In Play' if _rvol and _rvol > 3 else '— Normal')}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Alert Banner
+    if _runner or _tcs >= 80:
+        st.markdown(
+            '<div style="background:#FFD70022; border:1px solid #FFD700; border-radius:6px; '
+            'padding:8px 18px; font-size:14px; font-weight:700; color:#FFD700; margin:4px 0 8px 0;">'
+            f'🚀 STOCK IN PLAY — {_sym} | TCS {_tcs:.0f}% | RVOL {_rvol_str}</div>',
+            unsafe_allow_html=True
+        )
+    elif _tcs <= 30:
+        st.markdown(
+            '<div style="background:#ef535022; border:1px solid #ef5350; border-radius:6px; '
+            'padding:8px 18px; font-size:14px; font-weight:700; color:#ef5350; margin:4px 0 8px 0;">'
+            f'⚠ CAUTION — Low Conviction | TCS {_tcs:.0f}% | Chop Risk Active</div>',
+            unsafe_allow_html=True
+        )
+
+tab_chart, tab_scan, tab_journal = st.tabs(["📈 Main Chart", "🔍 Scanner", "📖 Journal"])
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
 with tab_scan:
@@ -1785,7 +2076,7 @@ auto_trigger = st.session_state.get("auto_run", False)
 if auto_trigger:
     st.session_state.auto_run = False
 
-with tab_vp:
+with tab_chart:
     # ── Historical mode ────────────────────────────────────────────────────────
     if mode == "📅 Historical":
         if run_button or auto_trigger:
@@ -1842,6 +2133,7 @@ with tab_vp:
                                             sector_etf=sector_etf,
                                             intraday_curve=curve,
                                             is_live=False)
+                            render_log_entry_ui()
                     except Exception as e:
                         err = str(e)
                         if "forbidden" in err.lower() or "403" in err or "unauthorized" in err.lower():
@@ -1942,6 +2234,7 @@ with tab_vp:
                                 sector_etf=sector_etf,
                                 intraday_curve=st.session_state.get("rvol_intraday_curve"),
                                 is_live=True)
+                render_log_entry_ui()
         else:
             if not st.session_state.live_error:
                 st.info("👈 Enter credentials and ticker, then click **▶ Start Live Stream**.")
@@ -1959,6 +2252,10 @@ with tab_vp:
                 with c4:
                     st.markdown("**🎯 Probabilities**")
                     st.markdown("Every structure type scored continuously as the tape develops.")
+
+# ── Journal tab ───────────────────────────────────────────────────────────────
+with tab_journal:
+    render_journal_tab()
 
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:

@@ -13,20 +13,43 @@ A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for 
 - Live WebSocket stream mode via Alpaca `StockDataStream` — 2-second auto-refresh
 - Initial Balance (IB High/Low: 9:30–10:30 EST) with dynamic live tracking
 - Volume Profile histogram (configurable bins), POC gold line, IB dashed lines
-- Day Structure Classification: Trend Day, P-Shape, b-Shape, Double Distribution, Normal/Balanced
-- Structure Probability Meter — top-3 scored pills
-- **Trend Confidence Score (TCS)** — 0–100 gauge with sector tailwind bonus:
-  - Range Factor (40 pts), Velocity Factor (30 pts), Structure Factor (30 pts)
-  - +10 pt Sector Tailwind bonus if selected ETF is up > 1%
-- **RVOL (Relative Volume)** — pace-adjusted 5-day baseline:
-  - ⚠️ DEAD CAT / FAKE-OUT RISK (RVOL < 1.2, price up)
-  - 🔥 STOCK IN PLAY (RVOL > 4.0)
-  - 🚀 MULTI-DAY RUNNER POTENTIAL (RVOL > 5.5) — triggers Gold/Electric-Blue gauge
-- **Model Prediction box** — Fake-out / High Conviction / Consolidation from volume-price divergence
+- **7-Structure Classification** — priority-ordered:
+  1. Double Distribution (two HVNs + LVN gap ≥ 15 cents)
+  2. Non-Trend (narrow IB < 20% of day range + anemic volume)
+  3. Normal (IB never violated)
+  4. Trend Day (IB violated within 2 hrs, price > 2× ATR from IB)
+  5. Neutral Extreme (both extremes hit, closing at day H/L)
+  6. Neutral (both extremes hit, price back inside IB)
+  7. Normal Variation (one side violated, new belly forming)
+- **Key Insights box** — styled sub-panel with plain-language explanation under each structure label
+- **Structure Probability Meter** — 7 structures with percentage pills (updated scoring for all 7)
+- **Dynamic Target Zones** on chart (dotted lines + shaded bands):
+  - Coast-to-Coast (C2C) — fires when price violated an IB extreme and returned inside
+  - Range Extension (1.5× / 2.0× IB) — fires when TCS > 70%, bullish or bearish
+  - Gap Fill — Double Distribution LVN highlighted in yellow, target at next HVN
+- **Distance to Target** — sidebar widget showing each active target + % away + direction
+- **Target Reached** sound alert (4-note ascending chime) when price hits any target (0.5% tolerance)
+- **Trend Confidence Score (TCS)** — 0–100 gauge with sector tailwind bonus
+- **RVOL** — time-segmented pace-adjusted 5-day baseline with pattern labels
+- **Model Prediction box** — Fake-out / High Conviction / Consolidation
 - **Volume Velocity widget** — vol/min + acceleration label
-- **Audio/Visual Alert System** — Web Audio API synthesised tones, sidebar unlock button
-  - Ascending 4-note chime on TCS ≥ 80% (once per session)
-  - Descending 3-tone warning on TCS drop below 30%
+- **Audio/Visual Alert System** — Web Audio API tones (chime, low-tone, target-reached)
+- **Pre-Market Gap Scanner** — batch-scans 30-ticker watchlist for gap% + PM RVOL, top-3 results
+- **Trade Journal** — persistent CSV journal (`trade_journal.csv`):
+  - Captures: Ticker, Price, Timestamp, Structure, TCS, RVOL, Notes, Grade, Grade Reason
+  - Auto-grading engine: A / B / C / F with plain-language reason
+  - Colored grade badges (green A → red F)
+  - Grade discipline equity curve (rolling average over entries)
+  - CSV download button
+
+### Dashboard Layout (3 tabs)
+- **📈 Main Chart** — Volume Profile chart, all indicators, `💾 LOG ENTRY` expander
+- **🔍 Scanner** — Pre-Market Gap Scanner with clickable Load buttons
+- **📖 Journal** — Trade Journal with grade circles, Why column, equity curve, CSV export
+
+### Live Pulse Header (visible after any analysis)
+- Structure Label card, TCS progress bar + %, RVOL card
+- Alert Banner: 🚀 STOCK IN PLAY (TCS ≥ 80% or Runner Mode) or ⚠ CAUTION (TCS ≤ 30%)
 
 ### Sidebar Settings
 - Alpaca API Key + Secret Key
