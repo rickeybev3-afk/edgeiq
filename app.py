@@ -888,14 +888,23 @@ def _stream_worker(api_key, secret_key, ticker, feed_str, data_queue, stop_event
     stream.subscribe_bars(on_bar, ticker)
 
     async def run_until_stopped():
-        task = asyncio.create_task(stream.run())
+        # _run_forever() is the actual coroutine; stream.run() wraps it in
+        # asyncio.run() which would conflict with our already-running loop.
+        task = asyncio.ensure_future(stream._run_forever())
         while not stop_event.is_set():
             await asyncio.sleep(0.3)
+            if task.done():
+                break
         stream.stop()
         try:
             await asyncio.wait_for(task, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
         except Exception:
-            task.cancel()
+            pass
+        finally:
+            if not task.done():
+                task.cancel()
 
     try:
         loop.run_until_complete(run_until_stopped())
