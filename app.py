@@ -31,6 +31,13 @@ _DEFAULTS = {
     "rvol_avg_vol": None,          # Average daily volume (5-day lookback)
     "sector_pct_chg": 0.0,         # Sector ETF % change for current date
     "rvol_intraday_curve": None,   # Per-minute cumulative vol curve (390 elements)
+    # Ticker widget state (explicit key so scanner can override)
+    "ticker_input": "AAPL",
+    # Auto-run flag: scanner sets this to True to trigger historical analysis on next rerun
+    "auto_run": False,
+    # Gap Scanner results cache
+    "scanner_results": [],         # [{ticker, price, gap_pct, pm_vol, avg_pm_vol, pm_rvol}]
+    "scanner_last_run": None,      # datetime of last successful scan
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -1058,6 +1065,158 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PRE-MARKET GAP SCANNER
+# ══════════════════════════════════════════════════════════════════════════════
+
+_DEFAULT_WATCHLIST = (
+    "MSTR,COIN,SOFI,LCID,SIRI,SPCE,FFIE,WKHS,NKLA,MVIS,"
+    "CLOV,BB,MMAT,SNDL,TLRY,AFRM,UPST,DKNG,BYND,PLTR,"
+    "RIVN,CHPT,BLNK,ASTS,ACHR,JOBY,HOOD,OPEN,PSFE,NRDS"
+)
+
+
+def fetch_snapshots_bulk(api_key, secret_key, tickers, feed="iex"):
+    """Batch-fetch latest price + previous day's close for a list of tickers.
+
+    Returns {sym: {"price": float, "prev_close": float}} for tickers that
+    have data; silently skips tickers with no snapshot.
+    """
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockSnapshotRequest
+
+    client = StockHistoricalDataClient(api_key, secret_key)
+    req = StockSnapshotRequest(symbol_or_symbols=list(tickers), feed=feed)
+    snaps = client.get_stock_snapshot(req)
+
+    result = {}
+    for sym, snap in snaps.items():
+        try:
+            price = None
+            if getattr(snap, "latest_trade", None):
+                price = float(snap.latest_trade.price)
+            if price is None and getattr(snap, "daily_bar", None):
+                price = float(snap.daily_bar.close)
+
+            prev_close = None
+            if getattr(snap, "prev_daily_bar", None):
+                prev_close = float(snap.prev_daily_bar.close)
+
+            if price is not None and prev_close is not None:
+                result[sym] = {"price": price, "prev_close": prev_close}
+        except Exception:
+            pass
+    return result
+
+
+def fetch_premarket_vols(api_key, secret_key, ticker, trade_date,
+                         lookback_days=10, feed="iex"):
+    """Fetch today's pre-market volume + 10-day historical average.
+
+    Pre-market window = 4:00 AM – 9:29 AM EST (regular extended hours).
+    Returns (today_pm_vol: float, avg_hist_pm_vol: float | None).
+    """
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+
+    client = StockHistoricalDataClient(api_key, secret_key)
+    start_dt = EASTERN.localize(
+        datetime(trade_date.year, trade_date.month, trade_date.day)
+        - timedelta(days=lookback_days * 3)   # buffer for weekends / holidays
+    )
+    # Include up to 9:30 AM today to capture this morning's pre-market bars
+    end_dt = EASTERN.localize(
+        datetime(trade_date.year, trade_date.month, trade_date.day, 9, 30)
+    )
+    req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute,
+                           start=start_dt, end=end_dt, feed=feed)
+    bars = client.get_stock_bars(req)
+    df = bars.df
+    if df.empty:
+        return 0.0, None
+
+    if isinstance(df.index, pd.MultiIndex):
+        df = df.xs(ticker, level="symbol")
+    df.index = pd.to_datetime(df.index)
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    df.index = df.index.tz_convert(EASTERN)
+    df = df.sort_index()
+
+    # Filter to pre-market window: 4:00 AM – 9:29 AM
+    df = df[(df.index.time >= dtime(4, 0)) & (df.index.time < dtime(9, 30))]
+    df["_date"] = df.index.date
+    daily_vols = df.groupby("_date")["volume"].sum()
+
+    today_vol = float(daily_vols.get(trade_date, 0.0))
+    hist_vols = daily_vols[daily_vols.index < trade_date].tail(lookback_days)
+    avg_vol = float(hist_vols.mean()) if not hist_vols.empty else None
+
+    return today_vol, avg_vol
+
+
+def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
+    """Run the full gap-scanner pipeline and return the top 3 tickers by PM RVOL.
+
+    Pipeline:
+      1. Batch-fetch snapshots (price + prev_close)
+      2. Filter to $2–$20 price range
+      3. Fetch pre-market volumes + 10-day historical average per qualifying ticker
+      4. Compute Gap % and Pre-Market RVOL
+      5. Sort by RVOL descending, return top 3
+
+    Returns list of dicts: [{ticker, price, gap_pct, pm_vol, avg_pm_vol, pm_rvol}]
+    """
+    # Step 1 — batch snapshots
+    try:
+        snaps = fetch_snapshots_bulk(api_key, secret_key, watchlist, feed=feed)
+    except Exception:
+        snaps = {}
+
+    if not snaps:
+        return []
+
+    # Step 2 — filter by price
+    qualifying = {
+        sym: d for sym, d in snaps.items()
+        if d.get("price") is not None and 2.0 <= d["price"] <= 20.0
+    }
+    if not qualifying:
+        return []
+
+    # Step 3 & 4 — pre-market volume + compute metrics
+    rows = []
+    for sym, snap_data in qualifying.items():
+        try:
+            pm_vol, avg_pm_vol = fetch_premarket_vols(
+                api_key, secret_key, sym, trade_date,
+                lookback_days=10, feed=feed)
+        except Exception:
+            pm_vol, avg_pm_vol = 0.0, None
+
+        price      = snap_data["price"]
+        prev_close = snap_data["prev_close"]
+        gap_pct    = ((price - prev_close) / prev_close * 100.0
+                      if prev_close and prev_close > 0 else 0.0)
+        pm_rvol    = (round(pm_vol / avg_pm_vol, 2)
+                      if avg_pm_vol and avg_pm_vol > 0 else None)
+
+        rows.append({
+            "ticker":     sym,
+            "price":      round(price, 2),
+            "gap_pct":    round(gap_pct, 2),
+            "pm_vol":     int(pm_vol),
+            "avg_pm_vol": round(avg_pm_vol, 0) if avg_pm_vol else None,
+            "pm_rvol":    pm_rvol,
+        })
+
+    # Step 5 — sort by RVOL, top 3
+    rows.sort(key=lambda r: r["pm_rvol"] if r["pm_rvol"] is not None else -1,
+              reverse=True)
+    return rows[:3]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1071,7 +1230,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("📈 Settings")
-    ticker = st.text_input("Ticker Symbol", value="AAPL", placeholder="e.g. AAPL, GME").upper().strip()
+    ticker = st.text_input("Ticker Symbol", key="ticker_input",
+                           placeholder="e.g. AAPL, GME").upper().strip()
     num_bins = st.slider("Volume Profile Bins", min_value=20, max_value=200, value=100, step=10)
     sector_etf = st.selectbox(
         "Sector ETF (for Tailwind)",
@@ -1080,9 +1240,11 @@ with st.sidebar:
         help="If this ETF is up > 1% on the day, TCS gets a +10 pt Sector Tailwind bonus."
     )
 
-    run_button = start_live = stop_live = False
+    run_button = start_live = stop_live = scan_button = False
     selected_date = date.today()
     data_feed = "sip"
+    watchlist_raw = ""
+    scan_feed = "iex"
 
     if mode == "📅 Historical":
         today = date.today()
@@ -1146,6 +1308,22 @@ with st.sidebar:
         )
 
     st.markdown("---")
+
+    # ── Gap Scanner Controls ───────────────────────────────────────────────────
+    st.header("🔍 Gap Scanner")
+    st.caption("Enter tickers to watch. Scan fetches pre-market volume and gap data.")
+    watchlist_raw = st.text_area(
+        "Watchlist (comma-separated)",
+        value=_DEFAULT_WATCHLIST,
+        height=110,
+        help="Only tickers priced $2–$20 at scan time will be analysed.",
+        key="watchlist_raw",
+    )
+    scan_feed = st.selectbox("Scanner Feed", ["iex", "sip"], index=0, key="scan_feed_select",
+                             help="IEX = free tier. SIP = full tape (subscription needed).")
+    scan_button = st.button("🔍 Scan Gap Plays", use_container_width=True)
+
+    st.markdown("---")
     st.caption("SIP = full national tape (small-caps need this). IEX = IEX exchange only.")
 
 
@@ -1160,179 +1338,301 @@ else:
     st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
     st.markdown("Visualize Volume Profile structures with Point of Control (POC) and Initial Balance (IB).")
 
-# ── Historical mode ────────────────────────────────────────────────────────────
-if mode == "📅 Historical":
-    if run_button:
+tab_vp, tab_scan = st.tabs(["📊 Volume Profile", "🔍 Top 3 Stocks In Play"])
+
+# ── Scanner tab ────────────────────────────────────────────────────────────────
+with tab_scan:
+    # ── Run scanner if button clicked ──────────────────────────────────────────
+    if scan_button:
         if not api_key or not secret_key:
-            st.error("Enter your Alpaca credentials in the sidebar.")
-        elif not ticker:
-            st.error("Enter a ticker symbol.")
-        elif selected_date.weekday() >= 5:
-            st.error("Selected date is a weekend. Pick a weekday (Mon–Fri).")
+            st.error("Enter your Alpaca credentials in the sidebar first.")
         else:
-            # Fresh analysis — reset alert state so alerts fire for this data
-            st.session_state.tcs_fired_high = False
-            st.session_state.tcs_was_high = False
-            with st.spinner(f"Fetching 1-min bars for **{ticker}** on {selected_date} ({data_feed.upper()})..."):
-                try:
-                    df = fetch_bars(api_key, secret_key, ticker, selected_date, feed=data_feed)
-                    if df.empty:
-                        if data_feed == "sip":
-                            st.warning(f"No data for **{ticker}** on {selected_date} via SIP. Try IEX, or confirm the date was a trading day.")
-                        else:
-                            st.warning(f"No data for **{ticker}** on {selected_date} via IEX. Small-caps are often absent on IEX — try SIP.")
-                    else:
-                        st.success(f"Loaded **{len(df)}** 1-min bars via {data_feed.upper()}.")
-                        # ── Pre-fetch RVOL baseline (5-day avg daily volume) ──────────
-                        try:
-                            avg_vol = fetch_avg_daily_volume(
-                                api_key, secret_key, ticker, selected_date)
-                        except Exception:
-                            avg_vol = None
-                        st.session_state.rvol_avg_vol = avg_vol
+            watchlist = [t.strip().upper() for t in watchlist_raw.split(",") if t.strip()]
+            if not watchlist:
+                st.warning("Watchlist is empty — add some tickers and try again.")
+            else:
+                with st.spinner(f"Scanning {len(watchlist)} tickers for pre-market gaps…"):
+                    try:
+                        results = run_gap_scanner(
+                            api_key, secret_key, watchlist, date.today(), feed=scan_feed)
+                        st.session_state.scanner_results = results
+                        st.session_state.scanner_last_run = datetime.now(EASTERN)
+                    except Exception as e:
+                        st.error(f"Scanner error: {e}")
 
-                        # ── Time-segmented RVOL intraday curve ───────────────────────
-                        try:
-                            curve = build_rvol_intraday_curve(
-                                api_key, secret_key, ticker, selected_date,
-                                lookback_days=5, feed=data_feed)
-                        except Exception:
-                            curve = None
-                        st.session_state.rvol_intraday_curve = curve
+    # ── Display results ────────────────────────────────────────────────────────
+    results = st.session_state.scanner_results
+    last_run = st.session_state.scanner_last_run
 
-                        # ── Sector ETF % change for that date ────────────────────────
-                        try:
-                            etf_chg = fetch_etf_pct_change(
-                                api_key, secret_key, sector_etf, selected_date, feed=data_feed)
-                        except Exception:
-                            etf_chg = 0.0
-                        sector_bonus = 10.0 if etf_chg > 1.0 else 0.0
-                        st.session_state.sector_pct_chg = etf_chg
+    if last_run:
+        st.caption(f"Last scan: {last_run.strftime('%H:%M:%S')} EST  ·  "
+                   f"showing tickers priced $2–$20 sorted by Pre-Market RVOL")
 
-                        render_analysis(df, num_bins, ticker,
-                                        f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
-                                        avg_daily_vol=avg_vol,
-                                        sector_bonus=sector_bonus,
-                                        sector_etf=sector_etf,
-                                        intraday_curve=curve,
-                                        is_live=False)
-                except Exception as e:
-                    err = str(e)
-                    if "forbidden" in err.lower() or "403" in err or "unauthorized" in err.lower():
-                        st.error("Authentication failed — check your API Key and Secret Key.")
-                    elif "subscription" in err.lower() or "not entitled" in err.lower() or "422" in err:
-                        st.error(f"Not subscribed to {data_feed.upper()} feed. Switch to IEX or upgrade your Alpaca plan.")
-                    else:
-                        st.error(f"Error: {err}")
+    if not results:
+        st.info("👈 Click **🔍 Scan Gap Plays** in the sidebar to populate this panel.\n\n"
+                "The scanner checks every ticker in your watchlist, filters to the $2–$20 "
+                "price range, and ranks them by today's pre-market volume relative to their "
+                "10-day historical pre-market average.")
     else:
-        st.info("👈 Enter credentials and settings in the sidebar, then click **Fetch & Analyze**.")
-        st.markdown("### How it works")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown("**📊 Volume Profile**")
-            st.markdown("Bins the day's 1-min bars to show where volume concentrated.")
-        with c2:
-            st.markdown("**🎯 Point of Control**")
-            st.markdown("Gold line — the price level with the highest volume. Price gravitates here.")
-        with c3:
-            st.markdown("**📐 Initial Balance**")
-            st.markdown("9:30–10:30 EST High/Low — the key reference range for day structure.")
+        _gap_colors = {
+            "up":   ("#4caf50", "#1b5e20"),   # (text, bg-tint)
+            "down": ("#ef5350", "#4e1111"),
+            "flat": ("#aaaaaa", "#1a1a2e"),
+        }
+        _rvol_color = lambda r: (
+            "#FFD700" if r is not None and r > 5.5 else
+            "#FF6B35" if r is not None and r > 4.0 else
+            "#FF9500" if r is not None and r > 3.0 else
+            "#26a69a" if r is not None and r >= 1.2 else
+            "#ef5350"
+        )
 
-# ── Live mode ──────────────────────────────────────────────────────────────────
-else:
-    if start_live:
-        if not api_key or not secret_key:
-            st.error("Enter your Alpaca credentials first.")
-        elif not ticker:
-            st.error("Enter a ticker symbol.")
+        for row in results:
+            sym   = row["ticker"]
+            price = row["price"]
+            gap   = row["gap_pct"]
+            rvol  = row["pm_rvol"]
+            pm_v  = row["pm_vol"]
+            avg_v = row["avg_pm_vol"]
+
+            gap_dir    = "up" if gap > 0.2 else "down" if gap < -0.2 else "flat"
+            gap_txt    = f"+{gap:.2f}%" if gap >= 0 else f"{gap:.2f}%"
+            gap_clr, gap_bg = _gap_colors[gap_dir]
+            rc         = _rvol_color(rvol)
+            rvol_str   = f"{rvol:.1f}×" if rvol is not None else "N/A"
+            pm_str     = f"{pm_v:,}"
+            avg_str    = f"{avg_v:,.0f}" if avg_v else "—"
+
+            st.markdown(f"""
+            <div style="background:#12122288; border:1px solid #2a2a4a;
+                        border-radius:10px; padding:16px 20px; margin:10px 0;">
+                <div style="display:flex; align-items:center; justify-content:space-between;
+                            flex-wrap:wrap; gap:12px;">
+
+                    <!-- Ticker + Price -->
+                    <div>
+                        <div style="font-size:26px; font-weight:900; color:#e0e0e0;
+                                    letter-spacing:1px;">{sym}</div>
+                        <div style="font-size:13px; color:#888;">${price:.2f}</div>
+                    </div>
+
+                    <!-- Gap % -->
+                    <div style="text-align:center;">
+                        <div style="font-size:10px; color:#666; text-transform:uppercase;
+                                    letter-spacing:1px; margin-bottom:3px;">Gap</div>
+                        <div style="font-size:22px; font-weight:800; color:{gap_clr};">
+                            {gap_txt}
+                        </div>
+                    </div>
+
+                    <!-- PM RVOL -->
+                    <div style="text-align:center;">
+                        <div style="font-size:10px; color:#666; text-transform:uppercase;
+                                    letter-spacing:1px; margin-bottom:3px;">PM RVOL</div>
+                        <div style="font-size:22px; font-weight:800; color:{rc};">
+                            {rvol_str}
+                        </div>
+                        <div style="font-size:11px; color:#555;">
+                            {pm_str} vs avg {avg_str}
+                        </div>
+                    </div>
+
+                    <!-- Load button -->
+                    <div style="text-align:right; min-width:140px;">
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Clickable button — loads Volume Profile for this ticker
+            if st.button(f"📊 Load {sym} Volume Profile", key=f"load_{sym}",
+                         use_container_width=False):
+                st.session_state.ticker_input = sym
+                st.session_state.auto_run = True
+                st.rerun()
+
+        st.caption("Click a **Load** button to auto-populate the ticker and run the analysis.")
+
+# ── Volume Profile tab: auto_run + all historical/live content ─────────────────
+# Consume the auto-run flag set by scanner ticker buttons (runs before tab renders)
+auto_trigger = st.session_state.get("auto_run", False)
+if auto_trigger:
+    st.session_state.auto_run = False
+
+with tab_vp:
+    # ── Historical mode ────────────────────────────────────────────────────────
+    if mode == "📅 Historical":
+        if run_button or auto_trigger:
+            if not api_key or not secret_key:
+                st.error("Enter your Alpaca credentials in the sidebar.")
+            elif not ticker:
+                st.error("Enter a ticker symbol.")
+            elif selected_date.weekday() >= 5:
+                st.error("Selected date is a weekend. Pick a weekday (Mon–Fri).")
+            else:
+                # Fresh analysis — reset alert state so alerts fire for this data
+                st.session_state.tcs_fired_high = False
+                st.session_state.tcs_was_high = False
+                with st.spinner(f"Fetching 1-min bars for **{ticker}** on {selected_date} ({data_feed.upper()})..."):
+                    try:
+                        df = fetch_bars(api_key, secret_key, ticker, selected_date, feed=data_feed)
+                        if df.empty:
+                            if data_feed == "sip":
+                                st.warning(f"No data for **{ticker}** on {selected_date} via SIP. Try IEX, or confirm the date was a trading day.")
+                            else:
+                                st.warning(f"No data for **{ticker}** on {selected_date} via IEX. Small-caps are often absent on IEX — try SIP.")
+                        else:
+                            st.success(f"Loaded **{len(df)}** 1-min bars via {data_feed.upper()}.")
+                            # ── Pre-fetch RVOL baseline (5-day avg daily volume) ──────
+                            try:
+                                avg_vol = fetch_avg_daily_volume(
+                                    api_key, secret_key, ticker, selected_date)
+                            except Exception:
+                                avg_vol = None
+                            st.session_state.rvol_avg_vol = avg_vol
+
+                            # ── Time-segmented RVOL intraday curve ───────────────────
+                            try:
+                                curve = build_rvol_intraday_curve(
+                                    api_key, secret_key, ticker, selected_date,
+                                    lookback_days=5, feed=data_feed)
+                            except Exception:
+                                curve = None
+                            st.session_state.rvol_intraday_curve = curve
+
+                            # ── Sector ETF % change for that date ────────────────────
+                            try:
+                                etf_chg = fetch_etf_pct_change(
+                                    api_key, secret_key, sector_etf, selected_date, feed=data_feed)
+                            except Exception:
+                                etf_chg = 0.0
+                            sector_bonus = 10.0 if etf_chg > 1.0 else 0.0
+                            st.session_state.sector_pct_chg = etf_chg
+
+                            render_analysis(df, num_bins, ticker,
+                                            f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
+                                            avg_daily_vol=avg_vol,
+                                            sector_bonus=sector_bonus,
+                                            sector_etf=sector_etf,
+                                            intraday_curve=curve,
+                                            is_live=False)
+                    except Exception as e:
+                        err = str(e)
+                        if "forbidden" in err.lower() or "403" in err or "unauthorized" in err.lower():
+                            st.error("Authentication failed — check your API Key and Secret Key.")
+                        elif "subscription" in err.lower() or "not entitled" in err.lower() or "422" in err:
+                            st.error(f"Not subscribed to {data_feed.upper()} feed. Switch to IEX or upgrade your Alpaca plan.")
+                        else:
+                            st.error(f"Error: {err}")
         else:
-            # Pre-fetch RVOL baseline and sector ETF change before starting stream
-            today = date.today()
-            with st.spinner("Computing RVOL baseline & sector data…"):
-                try:
-                    avg_vol = fetch_avg_daily_volume(api_key, secret_key, ticker, today)
-                except Exception:
-                    avg_vol = None
-                st.session_state.rvol_avg_vol = avg_vol
+            st.info("👈 Enter credentials and settings in the sidebar, then click **Fetch & Analyze**.")
+            st.markdown("### How it works")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("**📊 Volume Profile**")
+                st.markdown("Bins the day's 1-min bars to show where volume concentrated.")
+            with c2:
+                st.markdown("**🎯 Point of Control**")
+                st.markdown("Gold line — the price level with the highest volume. Price gravitates here.")
+            with c3:
+                st.markdown("**📐 Initial Balance**")
+                st.markdown("9:30–10:30 EST High/Low — the key reference range for day structure.")
 
-                try:
-                    curve = build_rvol_intraday_curve(
-                        api_key, secret_key, ticker, today,
-                        lookback_days=5, feed=live_feed)
-                except Exception:
-                    curve = None
-                st.session_state.rvol_intraday_curve = curve
+    # ── Live mode ──────────────────────────────────────────────────────────────
+    else:
+        if start_live:
+            if not api_key or not secret_key:
+                st.error("Enter your Alpaca credentials first.")
+            elif not ticker:
+                st.error("Enter a ticker symbol.")
+            else:
+                # Pre-fetch RVOL baseline and sector ETF change before starting stream
+                today = date.today()
+                with st.spinner("Computing RVOL baseline & sector data…"):
+                    try:
+                        avg_vol = fetch_avg_daily_volume(api_key, secret_key, ticker, today)
+                    except Exception:
+                        avg_vol = None
+                    st.session_state.rvol_avg_vol = avg_vol
 
-                try:
-                    etf_chg = fetch_etf_pct_change(
-                        api_key, secret_key, sector_etf, today, feed=live_feed)
-                except Exception:
-                    etf_chg = 0.0
-                st.session_state.sector_pct_chg = etf_chg
+                    try:
+                        curve = build_rvol_intraday_curve(
+                            api_key, secret_key, ticker, today,
+                            lookback_days=5, feed=live_feed)
+                    except Exception:
+                        curve = None
+                    st.session_state.rvol_intraday_curve = curve
 
-            start_stream(api_key, secret_key, ticker, live_feed)
+                    try:
+                        etf_chg = fetch_etf_pct_change(
+                            api_key, secret_key, sector_etf, today, feed=live_feed)
+                    except Exception:
+                        etf_chg = 0.0
+                    st.session_state.sector_pct_chg = etf_chg
+
+                start_stream(api_key, secret_key, ticker, live_feed)
+                st.rerun()
+
+        if stop_live:
+            stop_stream()
             st.rerun()
 
-    if stop_live:
-        stop_stream()
-        st.rerun()
-
-    if st.session_state.live_error:
-        err = st.session_state.live_error
-        if "forbidden" in err.lower() or "unauthorized" in err.lower():
-            st.error(f"Auth error: {err}. Check your API credentials.")
-        elif "subscription" in err.lower() or "entitled" in err.lower():
-            st.error("Subscription error: SIP requires an Alpaca data plan. Switch to IEX.")
-        else:
-            st.error(f"Stream error: {err}")
-
-    if st.session_state.live_active:
-        drain_queue()
-        df = build_live_df()
-        now_est = datetime.now(EASTERN)
-        is_ib_live = now_est.time() <= dtime(10, 30)
-
-        if df.empty:
-            if now_est.time() < dtime(9, 30):
-                mins = int((datetime.combine(date.today(), dtime(9, 30)) -
-                            now_est.replace(tzinfo=None)).total_seconds() // 60)
-                st.info(f"⏳ Market opens in ~{mins} min (9:30 AM EST). WebSocket connected, waiting...")
-            elif now_est.time() > dtime(16, 0):
-                st.warning("Market is closed. No new data will arrive until tomorrow's session.")
+        if st.session_state.live_error:
+            err = st.session_state.live_error
+            if "forbidden" in err.lower() or "unauthorized" in err.lower():
+                st.error(f"Auth error: {err}. Check your API credentials.")
+            elif "subscription" in err.lower() or "entitled" in err.lower():
+                st.error("Subscription error: SIP requires an Alpaca data plan. Switch to IEX.")
             else:
-                st.info(f"🔌 Connected. Waiting for first trade on **{st.session_state.live_ticker}**... "
-                        f"({now_est.strftime('%H:%M:%S')} EST)")
+                st.error(f"Stream error: {err}")
+
+        if st.session_state.live_active:
+            drain_queue()
+            df = build_live_df()
+            now_est = datetime.now(EASTERN)
+            is_ib_live = now_est.time() <= dtime(10, 30)
+
+            if df.empty:
+                if now_est.time() < dtime(9, 30):
+                    mins = int((datetime.combine(date.today(), dtime(9, 30)) -
+                                now_est.replace(tzinfo=None)).total_seconds() // 60)
+                    st.info(f"⏳ Market opens in ~{mins} min (9:30 AM EST). WebSocket connected, waiting...")
+                elif now_est.time() > dtime(16, 0):
+                    st.warning("Market is closed. No new data will arrive until tomorrow's session.")
+                else:
+                    st.info(f"🔌 Connected. Waiting for first trade on **{st.session_state.live_ticker}**... "
+                            f"({now_est.strftime('%H:%M:%S')} EST)")
+            else:
+                chart_title = (f"🔴 LIVE — {st.session_state.live_ticker} | "
+                               f"{now_est.strftime('%H:%M:%S')} EST"
+                               + (" | 📐 IB FORMING" if is_ib_live else ""))
+                live_sector_bonus = (10.0
+                                     if st.session_state.get("sector_pct_chg", 0.0) > 1.0
+                                     else 0.0)
+                render_analysis(df, num_bins, st.session_state.live_ticker,
+                                chart_title, is_ib_live=is_ib_live,
+                                avg_daily_vol=st.session_state.get("rvol_avg_vol"),
+                                sector_bonus=live_sector_bonus,
+                                sector_etf=sector_etf,
+                                intraday_curve=st.session_state.get("rvol_intraday_curve"),
+                                is_live=True)
         else:
-            chart_title = (f"🔴 LIVE — {st.session_state.live_ticker} | "
-                           f"{now_est.strftime('%H:%M:%S')} EST"
-                           + (" | 📐 IB FORMING" if is_ib_live else ""))
-            live_sector_bonus = (10.0
-                                 if st.session_state.get("sector_pct_chg", 0.0) > 1.0
-                                 else 0.0)
-            render_analysis(df, num_bins, st.session_state.live_ticker,
-                            chart_title, is_ib_live=is_ib_live,
-                            avg_daily_vol=st.session_state.get("rvol_avg_vol"),
-                            sector_bonus=live_sector_bonus,
-                            sector_etf=sector_etf,
-                            intraday_curve=st.session_state.get("rvol_intraday_curve"),
-                            is_live=True)
-    else:
-        if not st.session_state.live_error:
-            st.info("👈 Enter credentials and ticker, then click **▶ Start Live Stream**.")
-            st.markdown("### What Live Mode does")
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.markdown("**🔌 WebSocket Feed**")
-                st.markdown("Subscribes to real-time trades + 1-min bars from Alpaca.")
-            with c2:
-                st.markdown("**📐 Dynamic IB**")
-                st.markdown("IB High/Low lines expand in real time from 9:30–10:30 AM EST.")
-            with c3:
-                st.markdown("**⚡ Vol Velocity**")
-                st.markdown("Compares recent vol/min to prior bars — early breakout signal.")
-            with c4:
-                st.markdown("**🎯 Probabilities**")
-                st.markdown("Every structure type scored continuously as the tape develops.")
+            if not st.session_state.live_error:
+                st.info("👈 Enter credentials and ticker, then click **▶ Start Live Stream**.")
+                st.markdown("### What Live Mode does")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.markdown("**🔌 WebSocket Feed**")
+                    st.markdown("Subscribes to real-time trades + 1-min bars from Alpaca.")
+                with c2:
+                    st.markdown("**📐 Dynamic IB**")
+                    st.markdown("IB High/Low lines expand in real time from 9:30–10:30 AM EST.")
+                with c3:
+                    st.markdown("**⚡ Vol Velocity**")
+                    st.markdown("Compares recent vol/min to prior bars — early breakout signal.")
+                with c4:
+                    st.markdown("**🎯 Probabilities**")
+                    st.markdown("Every structure type scored continuously as the tape develops.")
 
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:
