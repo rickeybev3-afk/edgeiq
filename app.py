@@ -76,6 +76,22 @@ _LOW_TONE_JS = """(function(){
   }catch(e){}
 })();"""
 
+_TARGET_JS = """(function(){
+  try{
+    var C=new(window.AudioContext||window.webkitAudioContext)();
+    [[1174.66,0],[1318.51,0.14],[1568.0,0.28],[1318.51,0.42]].forEach(function(fd){
+      var o=C.createOscillator(),g=C.createGain();
+      o.type='triangle'; o.frequency.value=fd[0];
+      o.connect(g); g.connect(C.destination);
+      var t=C.currentTime+fd[1];
+      g.gain.setValueAtTime(0.001,t);
+      g.gain.linearRampToValueAtTime(0.30,t+0.03);
+      g.gain.exponentialRampToValueAtTime(0.001,t+0.55);
+      o.start(t); o.stop(t+0.56);
+    });
+  }catch(e){}
+})();"""
+
 EASTERN = pytz.timezone("America/New_York")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -180,88 +196,215 @@ def _detect_double_distribution(bin_centers, vap, min_bin_sep=15):
     return None
 
 
-def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price):
-    day_high = float(df["high"].max())
-    day_low = float(df["low"].min())
-    total_range = day_high - day_low
-    ib_range = ib_high - ib_low
-    final_price = float(df["close"].iloc[-1])
-    if total_range == 0 or ib_range == 0:
-        return "⚖️ Normal / Balanced", "#66bb6a", "Insufficient range data."
-    poc_pos = (poc_price - day_low) / total_range
+def compute_atr(df, period=14):
+    """Average True Range over `period` bars (or full session when fewer bars available)."""
+    if df.empty:
+        return 0.01
+    if len(df) < 2:
+        return max(0.01, float(df["high"].iloc[0] - df["low"].iloc[0]))
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - df["close"].shift(1)).abs(),
+        (df["low"]  - df["close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    return max(0.01, float(tr.rolling(period, min_periods=1).mean().iloc[-1]))
 
-    # ── 1. Double Distribution (prioritised — check before single-direction labels) ──
+
+def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
+                           avg_daily_vol=None):
+    """7-structure classification.  Returns (label, color, detail, insight)."""
+    day_high = float(df["high"].max())
+    day_low  = float(df["low"].min())
+    total_range = day_high - day_low
+    ib_range = (ib_high - ib_low) if (ib_high is not None and ib_low is not None) else 0.0
+    final_price = float(df["close"].iloc[-1])
+
+    if total_range == 0 or ib_range == 0:
+        return ("⚖️ Normal / Balanced", "#66bb6a",
+                "Insufficient range data.",
+                "Not enough price movement to classify structure reliably.")
+
+    atr = compute_atr(df)
+
+    ib_high_touched = day_high >= ib_high
+    ib_low_touched  = day_low  <= ib_low
+    both_touched    = ib_high_touched and ib_low_touched
+
+    two_hr_end = df.index[0].replace(hour=11, minute=30)
+    early_df   = df[df.index <= two_hr_end]
+    early_high = float(early_df["high"].max()) if not early_df.empty else day_high
+    early_low  = float(early_df["low"].min())  if not early_df.empty else day_low
+    ib_violated_early_up   = early_high > ib_high
+    ib_violated_early_down = early_low  < ib_low
+
+    if final_price > ib_high:
+        dist_from_ib = final_price - ib_high
+    elif final_price < ib_low:
+        dist_from_ib = ib_low - final_price
+    else:
+        dist_from_ib = 0.0
+
+    extreme_band = 0.10 * total_range
+
+    # ── 1. Double Distribution ─────────────────────────────────────────────────
     dd = _detect_double_distribution(bin_centers, vap)
     if dd is not None:
         pk1, pk2, vi = dd
-        sep_bins = pk2 - pk1
         sep_price = bin_centers[pk2] - bin_centers[pk1]
+        lvn_price = float(bin_centers[vi])
         pct1 = vap[max(0,pk1-2):min(len(vap),pk1+3)].sum() / vap.sum() * 100
         pct2 = vap[max(0,pk2-2):min(len(vap),pk2+3)].sum() / vap.sum() * 100
-        return ("⚡ Double Distribution", "#00bcd4",
-                f"HVNs at ${bin_centers[pk1]:.2f} ({pct1:.0f}% vol) & "
-                f"${bin_centers[pk2]:.2f} ({pct2:.0f}% vol) — "
-                f"{sep_bins}-bin / ${sep_price:.2f} gap. "
-                f"LVN at ${bin_centers[vi]:.2f}. Two distinct auctions.")
+        detail  = (f"HVNs at ${bin_centers[pk1]:.2f} ({pct1:.0f}% vol) & "
+                   f"${bin_centers[pk2]:.2f} ({pct2:.0f}% vol). "
+                   f"LVN at ${lvn_price:.2f} (${sep_price:.2f} gap).")
+        insight = (f"Two separate auctions detected. Lower HVN = sellers' value area, "
+                   f"upper HVN = buyers' territory. LVN at ${lvn_price:.2f} is the "
+                   f"magnet zone — expect rapid, high-momentum moves through it. "
+                   f"Gap Fill toward the next HVN is the primary target.")
+        return ("⚡ Double Distribution", "#00bcd4", detail, insight)
 
-    # ── 2. Trend Day ──────────────────────────────────────────────────────────
-    if total_range > 2.5 * ib_range:
-        bull = final_price > day_low + total_range / 2
-        return ("📈 Trend Day", "#ff9800",
-                f"{'Bullish' if bull else 'Bearish'} — range ${total_range:.2f} is "
-                f"{total_range/ib_range:.1f}× the IB (${ib_range:.2f}). Strong directional conviction.")
+    # ── 2. Non-Trend ──────────────────────────────────────────────────────────
+    is_narrow_ib = ib_range < 0.20 * total_range
+    total_vol = float(df["volume"].sum())
+    if avg_daily_vol and avg_daily_vol > 0:
+        pace = (total_vol / max(1, len(df))) * 390.0
+        is_anemic = (pace / avg_daily_vol) < 0.80
+    else:
+        is_anemic = ib_range / max(0.001, day_high) < 0.003
+    if is_narrow_ib and is_anemic:
+        detail  = (f"IB ${ib_range:.2f} = {ib_range/total_range*100:.0f}% of day range. "
+                   f"Volume participation is anemic.")
+        insight = (f"Tight initial balance with minimal volume signals no institutional interest. "
+                   f"Day-traders are in control; avoid chasing breakouts. "
+                   f"Wait for a volume-backed catalyst before committing size.")
+        return ("😴 Non-Trend", "#78909c", detail, insight)
 
-    # ── 3. P-Shape ────────────────────────────────────────────────────────────
-    if poc_pos >= 0.75 and final_price > ib_high:
-        return ("🅟 P-Shape (Short Covering)", "#ce93d8",
-                f"POC ${poc_price:.2f} in top {100*(1-poc_pos):.0f}% of range, "
-                f"close ${final_price:.2f} > IB High ${ib_high:.2f}. Shorts covering into strength.")
+    # ── 3. Normal ─────────────────────────────────────────────────────────────
+    if not ib_high_touched and not ib_low_touched:
+        pct_inside = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean()) * 100
+        detail  = (f"IB ${ib_high:.2f}–${ib_low:.2f} never violated. "
+                   f"Price inside IB for {pct_inside:.0f}% of session.")
+        insight = (f"Classic balanced day — both buyers and sellers accept value inside "
+                   f"the opening range. No directional conviction from either side. "
+                   f"Fade the extremes and target POC at ${poc_price:.2f}.")
+        return ("⚖️ Normal", "#66bb6a", detail, insight)
 
-    # ── 4. b-Shape ────────────────────────────────────────────────────────────
-    if poc_pos <= 0.25 and final_price < ib_low:
-        return ("🅑 b-Shape (Long Liquidation)", "#ef5350",
-                f"POC ${poc_price:.2f} in bottom {100*poc_pos:.0f}% of range, "
-                f"close ${final_price:.2f} < IB Low ${ib_low:.2f}. Longs liquidating into weakness.")
+    # ── 4. Trend Day ──────────────────────────────────────────────────────────
+    is_trend_up   = ib_violated_early_up   and (dist_from_ib > 2.0 * atr) and (final_price > ib_high)
+    is_trend_down = ib_violated_early_down and (dist_from_ib > 2.0 * atr) and (final_price < ib_low)
+    if is_trend_up or is_trend_down:
+        direction  = "Bullish" if is_trend_up else "Bearish"
+        dist_atr   = dist_from_ib / atr if atr > 0 else 0
+        detail  = (f"{direction} — IB violated within first 2 hrs, "
+                   f"price {dist_atr:.1f}× ATR from IB. "
+                   f"Range ${total_range:.2f} vs IB ${ib_range:.2f}.")
+        insight = (f"Strong directional conviction from the early session. "
+                   f"{'Buyers' if is_trend_up else 'Sellers'} established control before noon "
+                   f"and held ground well. Trend continuation is the high-probability path — "
+                   f"add on pullbacks toward POC ${poc_price:.2f}.")
+        lbl = "📈 Trend Day" if is_trend_up else "📉 Trend Day (Bear)"
+        return (lbl, "#ff9800", detail, insight)
 
-    # ── 5. Normal / Balanced ──────────────────────────────────────────────────
+    # ── 5. Neutral Extreme ────────────────────────────────────────────────────
+    if both_touched:
+        at_high = final_price >= day_high - extreme_band
+        at_low  = final_price <= day_low  + extreme_band
+        if at_high or at_low:
+            side         = "high" if at_high else "low"
+            extreme_lvl  = ib_high if at_high else ib_low
+            detail  = (f"Both IB extremes hit. Price closing at day's {side} "
+                       f"(${final_price:.2f}) — late-session momentum bias building.")
+            insight = (f"Both sides were tested — late session committed to the "
+                       f"{'upside' if at_high else 'downside'}. "
+                       f"This pattern frequently resolves with a "
+                       f"{'gap up' if at_high else 'gap down'} the next morning. "
+                       f"Watch for {'resistance' if at_high else 'support'} "
+                       f"at ${extreme_lvl:.2f}.")
+            return ("⚡ Neutral Extreme", "#7e57c2", detail, insight)
+
+    # ── 6. Neutral ────────────────────────────────────────────────────────────
+    if both_touched and (ib_low <= final_price <= ib_high):
+        pct_inside = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean()) * 100
+        detail  = (f"Both IB extremes tested, price now back inside IB at ${final_price:.2f}. "
+                   f"IB inside-time {pct_inside:.0f}%.")
+        insight = (f"Both sides of the IB were accepted and rejected — a hallmark Neutral day. "
+                   f"Price is gravitating back to POC ${poc_price:.2f}. "
+                   f"Expect choppy, rotational action into the close. "
+                   f"Avoid directional trades; fade the extremes.")
+        return ("🔄 Neutral", "#80cbc4", detail, insight)
+
+    # ── 7. Normal Variation ───────────────────────────────────────────────────
+    if ib_high_touched and not ib_low_touched:
+        detail  = (f"IB High ${ib_high:.2f} breached; Low ${ib_low:.2f} held. "
+                   f"Price building new belly above at ${final_price:.2f}.")
+        insight = (f"Buyers absorbed all supply above IB High — a bullish sign. "
+                   f"New value area forming above ${ib_high:.2f}. "
+                   f"If price holds above IB High on pullbacks, "
+                   f"next target is the 1.5× IB extension.")
+        return ("📊 Normal Variation (Up)", "#aed581", detail, insight)
+    if ib_low_touched and not ib_high_touched:
+        detail  = (f"IB Low ${ib_low:.2f} breached; High ${ib_high:.2f} held. "
+                   f"Price building new belly below at ${final_price:.2f}.")
+        insight = (f"Sellers absorbed all demand below IB Low — a bearish sign. "
+                   f"New value area forming below ${ib_low:.2f}. "
+                   f"If price holds below IB Low on bounces, "
+                   f"next target is the 1.5× IB extension downward.")
+        return ("📊 Normal Variation (Down)", "#ffab91", detail, insight)
+
+    # ── Fallback ──────────────────────────────────────────────────────────────
     pct = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean()) * 100
-    return ("⚖️ Normal / Balanced", "#66bb6a",
-            f"Price inside IB for {pct:.0f}% of session — balanced, rotational day.")
+    detail  = f"Price inside IB for {pct:.0f}% of session — balanced, rotational day."
+    insight = "No dominant structure emerging. Monitor volume for a directional signal."
+    return ("⚖️ Normal / Balanced", "#66bb6a", detail, insight)
 
 
 def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price):
     day_high = float(df["high"].max())
-    day_low = float(df["low"].min())
+    day_low  = float(df["low"].min())
     total_range = day_high - day_low
-    ib_range = ib_high - ib_low
+    ib_range = (ib_high - ib_low) if (ib_high is not None and ib_low is not None) else 0.0
     final_price = float(df["close"].iloc[-1])
+    fallback = {"Non-Trend": 14.0, "Normal": 14.0, "Trend": 14.0,
+                "Ntrl Extreme": 14.0, "Neutral": 14.0, "Nrml Var": 15.0, "Dbl Dist": 15.0}
     if total_range == 0 or ib_range == 0:
-        return {"Trend Day": 20.0, "P-Shape": 20.0, "b-Shape": 20.0, "Dbl Dist": 20.0, "Normal": 20.0}
+        return fallback
 
     rr = total_range / ib_range
     poc_pos = (poc_price - day_low) / total_range
     pct_inside = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean())
 
-    td = 5.0 + max(0.0, (rr - 1.0) * 28.0)
-    td = min(td, 90.0)
+    ib_high_hit = day_high >= ib_high
+    ib_low_hit  = day_low  <= ib_low
+    both_hit    = ib_high_hit and ib_low_hit
 
-    ps = 5.0 + max(0.0, (poc_pos - 0.50) * 65.0)
+    atr = compute_atr(df)
     if final_price > ib_high:
-        ps += 18.0
-    ps = min(ps, 80.0)
+        dist_ib = final_price - ib_high
+    elif final_price < ib_low:
+        dist_ib = ib_low - final_price
+    else:
+        dist_ib = 0.0
 
-    bs = 5.0 + max(0.0, (0.50 - poc_pos) * 65.0)
-    if final_price < ib_low:
-        bs += 18.0
-    bs = min(bs, 80.0)
+    two_hr_end = df.index[0].replace(hour=11, minute=30)
+    early_df   = df[df.index <= two_hr_end]
+    early_high = float(early_df["high"].max()) if not early_df.empty else day_high
+    early_low  = float(early_df["low"].min())  if not early_df.empty else day_low
+    viol_early = (early_high > ib_high) or (early_low < ib_low)
 
-    # Use the strict DD detector — bump score significantly if it fires
+    extreme_band = 0.10 * total_range
+    at_extreme   = (final_price >= day_high - extreme_band) or (final_price <= day_low + extreme_band)
+
     has_dd = _detect_double_distribution(bin_centers, vap) is not None
-    dd = 55.0 if has_dd else 5.0
 
-    nm = 8.0 + pct_inside * 50.0
-
-    scores = {"Trend Day": td, "P-Shape": ps, "b-Shape": bs, "Dbl Dist": dd, "Normal": nm}
+    scores = {
+        "Non-Trend":    max(2.0, (1.0 - rr) * 40.0) if ib_range < 0.20 * total_range else 2.0,
+        "Normal":       5.0 + pct_inside * 60.0 if not ib_high_hit and not ib_low_hit else 3.0,
+        "Trend":        5.0 + max(0.0, (dist_ib / max(atr, 0.01) - 1.0) * 25.0) if viol_early else 3.0,
+        "Ntrl Extreme": 50.0 if both_hit and at_extreme else 3.0,
+        "Neutral":      50.0 if both_hit and (ib_low <= final_price <= ib_high) else 3.0,
+        "Nrml Var":     40.0 if (ib_high_hit ^ ib_low_hit) else 4.0,
+        "Dbl Dist":     60.0 if has_dd else 3.0,
+    }
     total = sum(scores.values())
     return {k: round(v / total * 100, 1) for k, v in scores.items()}
 
@@ -601,6 +744,114 @@ def check_tcs_alerts(tcs: float, audio_enabled: bool):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TARGET ZONES
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_target_zones(df, ib_high, ib_low, bin_centers, vap, tcs):
+    """Return a list of dynamic target zone dicts based on structure.
+
+    Each dict: {type, price, label, color, description, [lvn_price, lvn_idx]}
+    """
+    targets = []
+    if df.empty or ib_high is None or ib_low is None:
+        return targets
+    ib_range = ib_high - ib_low
+    if ib_range <= 0:
+        return targets
+
+    final_price  = float(df["close"].iloc[-1])
+    day_high     = float(df["high"].max())
+    day_low      = float(df["low"].min())
+
+    ib_high_violated = bool((df["high"] >= ib_high).any())
+    ib_low_violated  = bool((df["low"]  <= ib_low).any())
+    price_back_inside = ib_low < final_price < ib_high
+
+    # ── Coast-to-Coast ────────────────────────────────────────────────────────
+    if ib_high_violated and price_back_inside:
+        targets.append({
+            "type": "coast_to_coast",
+            "price": ib_low,
+            "label": "🎯 C2C Target",
+            "color": "#ff5252",
+            "description": (f"IB High violated → price returned inside → "
+                            f"Coast-to-Coast target: IB Low ${ib_low:.2f}"),
+        })
+    if ib_low_violated and price_back_inside:
+        targets.append({
+            "type": "coast_to_coast",
+            "price": ib_high,
+            "label": "🎯 C2C Target",
+            "color": "#00e676",
+            "description": (f"IB Low violated → price returned inside → "
+                            f"Coast-to-Coast target: IB High ${ib_high:.2f}"),
+        })
+
+    # ── Range Extension  (TCS > 70 %) ────────────────────────────────────────
+    if tcs > 70 and ib_range > 0:
+        bullish = ib_high_violated and not ib_low_violated
+        bearish = ib_low_violated  and not ib_high_violated
+        if bullish:
+            ext15 = ib_high + 1.5 * ib_range
+            ext20 = ib_high + 2.0 * ib_range
+            targets.append({"type": "trend_extension", "price": ext15,
+                            "label": "🎯 1.5× Ext", "color": "#26a69a",
+                            "description": f"Bullish 1.5× IB extension: ${ext15:.2f}"})
+            targets.append({"type": "trend_extension", "price": ext20,
+                            "label": "🎯 2.0× Ext", "color": "#4caf50",
+                            "description": f"Bullish 2.0× IB extension: ${ext20:.2f}"})
+        elif bearish:
+            ext15 = ib_low - 1.5 * ib_range
+            ext20 = ib_low - 2.0 * ib_range
+            targets.append({"type": "trend_extension", "price": ext15,
+                            "label": "🎯 1.5× Ext", "color": "#ef5350",
+                            "description": f"Bearish 1.5× IB extension: ${ext15:.2f}"})
+            targets.append({"type": "trend_extension", "price": ext20,
+                            "label": "🎯 2.0× Ext", "color": "#c62828",
+                            "description": f"Bearish 2.0× IB extension: ${ext20:.2f}"})
+
+    # ── Gap Fill (Double Distribution LVN) ───────────────────────────────────
+    dd = _detect_double_distribution(bin_centers, vap)
+    if dd is not None:
+        pk1, pk2, vi = dd
+        lvn_price = float(bin_centers[vi])
+        hvn1 = float(bin_centers[pk1])
+        hvn2 = float(bin_centers[pk2])
+        target_hvn = hvn2 if final_price < lvn_price else hvn1
+        targets.append({
+            "type": "gap_fill",
+            "price": target_hvn,
+            "lvn_price": lvn_price,
+            "lvn_idx": int(vi),
+            "label": "🎯 Gap Fill",
+            "color": "#ffd700",
+            "description": (f"DD LVN at ${lvn_price:.2f} → "
+                            f"Gap Fill target ${target_hvn:.2f}"),
+        })
+
+    return targets
+
+
+def check_target_alerts(price, targets, audio_enabled):
+    """Fire a unique 'Target Reached' sound when price touches a target zone (0.5% tol)."""
+    import streamlit.components.v1 as components
+    if not audio_enabled or not targets or price is None:
+        return
+    tol = price * 0.005
+    for tz in targets:
+        key = f"target_fired_{tz['type']}_{tz['price']:.2f}"
+        if abs(price - tz["price"]) <= tol and not st.session_state.get(key, False):
+            st.session_state[key] = True
+            st.toast(f"🎯 Target Reached — {tz['label']} at ${tz['price']:.2f}", icon="🎯")
+            n = st.session_state.get("sound_trigger", 0) + 1
+            st.session_state["sound_trigger"] = n
+            components.html(
+                f'<script>/* tr:{n} */{_TARGET_JS}</script>',
+                height=0, scrolling=False
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # LIVE STREAM
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -746,7 +997,8 @@ def build_live_df():
 # CHART & RENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title):
+def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
+                target_zones=None):
     fig = make_subplots(rows=1, cols=2, column_widths=[0.75, 0.25],
                         shared_yaxes=True, horizontal_spacing=0.01)
     fig.add_trace(go.Candlestick(
@@ -767,8 +1019,46 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title):
     fig.add_trace(go.Scatter(x=[x0, x1], y=[poc_price, poc_price], mode="lines",
         name=f"POC ({poc_price:.2f})", line=dict(color="gold", width=2.5)), row=1, col=1)
 
+    # ── Dynamic Target Zone overlay ───────────────────────────────────────────
+    lvn_idx_to_highlight = None
+    if target_zones:
+        for tz in target_zones:
+            tp = tz["price"]
+            tc = tz["color"]
+            tl = tz["label"]
+            # Annotated dotted horizontal line
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[tp, tp], mode="lines+text",
+                name=tl,
+                line=dict(color=tc, width=1.6, dash="dot"),
+                text=["", f" {tl}"],
+                textposition="top right",
+                textfont=dict(color=tc, size=11),
+            ), row=1, col=1)
+            # Shaded band (±1% of price) for trend extensions
+            if tz["type"] == "trend_extension":
+                band = tp * 0.005
+                fig.add_shape(
+                    type="rect", xref="paper", x0=0, x1=0.75,
+                    y0=tp - band, y1=tp + band,
+                    fillcolor=tc + "30",
+                    line=dict(width=0),
+                    row=1, col=1,
+                )
+            # Track LVN index for volume profile highlighting
+            if tz["type"] == "gap_fill" and "lvn_idx" in tz:
+                lvn_idx_to_highlight = tz["lvn_idx"]
+
+    # ── Volume Profile bars (LVN highlighted in yellow for Double Distribution) ─
     bw = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0
-    colors = ["gold" if abs(p - poc_price) < bw * 0.5 else "#5c6bc0" for p in bin_centers]
+    colors = []
+    for i, p in enumerate(bin_centers):
+        if abs(p - poc_price) < bw * 0.5:
+            colors.append("gold")
+        elif lvn_idx_to_highlight is not None and i == lvn_idx_to_highlight:
+            colors.append("#ffeb3b")
+        else:
+            colors.append("#5c6bc0")
     fig.add_trace(go.Bar(x=vap, y=bin_centers, orientation="h",
         name="Volume Profile", marker_color=colors, opacity=0.85), row=1, col=2)
 
@@ -789,7 +1079,7 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title):
 
 
 def render_structure_banner(label, color, detail, probs, tcs,
-                            is_runner=False, sector_bonus=0.0):
+                            is_runner=False, sector_bonus=0.0, insight=None):
     top3 = sorted(probs.items(), key=lambda x: x[1], reverse=True)[:3]
     prob_pills = "".join(
         f'<span style="display:inline-block; background:{color}33; border:1px solid {color}66; '
@@ -854,6 +1144,17 @@ def render_structure_banner(label, color, detail, probs, tcs,
     # Runner glow border
     glow = f"box-shadow:0 0 18px {gauge_color}55;" if is_runner else ""
 
+    # Key Insights box
+    insight_html = ""
+    if insight:
+        insight_html = f"""
+        <div style="margin-top:10px; background:#1a2744; border-left:3px solid {color}99;
+                    border-radius:5px; padding:9px 14px;">
+            <span style="font-size:10px; color:#888; text-transform:uppercase;
+                         letter-spacing:1px; font-weight:600;">Key Insights</span><br>
+            <span style="font-size:13px; color:#d0d8f0; line-height:1.55;">{insight}</span>
+        </div>"""
+
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,{color}22,{color}0a);
                 border-left:5px solid {color}; border-radius:8px;
@@ -870,6 +1171,7 @@ def render_structure_banner(label, color, detail, probs, tcs,
             </div>
         </div>
         {tcs_bar}
+        {insight_html}
     </div>
     """, unsafe_allow_html=True)
 
@@ -987,9 +1289,12 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                     intraday_curve=None, is_live=False):
     ib_high, ib_low = compute_initial_balance(df)
     bin_centers, vap, poc_price = compute_volume_profile(df, num_bins)
-    label, color, detail = classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price)
+    label, color, detail, insight = classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price, avg_daily_vol=avg_daily_vol
+    )
     probs = compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price)
     tcs = compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=sector_bonus)
+    target_zones = compute_target_zones(df, ib_high, ib_low, bin_centers, vap, tcs)
     audio_enabled = st.session_state.get("audio_alerts_enabled", True)
     check_tcs_alerts(tcs, audio_enabled)
 
@@ -1051,10 +1356,31 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
     render_structure_banner(label, color, detail, probs, tcs,
-                            is_runner=is_runner, sector_bonus=sector_bonus)
+                            is_runner=is_runner, sector_bonus=sector_bonus,
+                            insight=insight)
     render_model_prediction(pred_outcome, pred_reasoning)
 
-    fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title)
+    # ── Target zone alerts + sidebar "Distance to Target" ─────────────────────
+    check_target_alerts(price_now, target_zones, audio_enabled)
+    if target_zones:
+        with st.sidebar:
+            st.markdown("---")
+            st.markdown("**🎯 Distance to Target**")
+            for tz in target_zones:
+                dist_pct = abs(price_now - tz["price"]) / price_now * 100
+                arrow = "▲" if tz["price"] > price_now else "▼"
+                tc = tz["color"]
+                st.markdown(
+                    f'<div style="background:#1a2744; border-left:3px solid {tc}; '
+                    f'border-radius:4px; padding:6px 10px; margin:4px 0; font-size:12px;">'
+                    f'<span style="color:{tc}; font-weight:700;">{tz["label"]}</span> '
+                    f'<span style="color:#ccc;">${tz["price"]:.2f}</span> '
+                    f'<span style="color:#888;">{arrow} {dist_pct:.1f}% away</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+    fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title,
+                      target_zones=target_zones)
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("📋 Raw Bar Data"):
