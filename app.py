@@ -23,10 +23,47 @@ _DEFAULTS = {
     "live_queue": None,
     "live_ticker": "",
     "live_error": None,
+    # Alert state
+    "tcs_fired_high": False,   # True once ≥ 80% crossed this session
+    "tcs_was_high": False,     # True while TCS was ≥ 60% (for chop-drop detection)
+    "sound_trigger": 0,        # Incremented to force fresh audio iframe
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# ── Audio JS (Web Audio API, synthesised tones — no external files) ────────────
+_CHIME_JS = """(function(){
+  try{
+    var C=new(window.AudioContext||window.webkitAudioContext)();
+    [[523.25,0],[659.25,0.18],[783.99,0.36],[1046.50,0.54]].forEach(function(fd){
+      var o=C.createOscillator(),g=C.createGain();
+      o.type='sine'; o.frequency.value=fd[0];
+      o.connect(g); g.connect(C.destination);
+      var t=C.currentTime+fd[1];
+      g.gain.setValueAtTime(0.001,t);
+      g.gain.linearRampToValueAtTime(0.26,t+0.04);
+      g.gain.exponentialRampToValueAtTime(0.001,t+0.42);
+      o.start(t); o.stop(t+0.43);
+    });
+  }catch(e){}
+})();"""
+
+_LOW_TONE_JS = """(function(){
+  try{
+    var C=new(window.AudioContext||window.webkitAudioContext)();
+    [[240,0],[200,0.26],[155,0.52]].forEach(function(fd){
+      var o=C.createOscillator(),g=C.createGain();
+      o.type='triangle'; o.frequency.value=fd[0];
+      o.connect(g); g.connect(C.destination);
+      var t=C.currentTime+fd[1];
+      g.gain.setValueAtTime(0.001,t);
+      g.gain.linearRampToValueAtTime(0.32,t+0.05);
+      g.gain.exponentialRampToValueAtTime(0.001,t+0.40);
+      o.start(t); o.stop(t+0.41);
+    });
+  }catch(e){}
+})();"""
 
 EASTERN = pytz.timezone("America/New_York")
 
@@ -293,6 +330,40 @@ def compute_volume_velocity(df):
     return recent, abs(chg), ("↑" if chg >= 0 else "↓")
 
 
+def check_tcs_alerts(tcs: float, audio_enabled: bool):
+    """Fire visual toast + audio when TCS crosses key thresholds."""
+    import streamlit.components.v1 as components
+
+    # ── HIGH CONVICTION: TCS ≥ 80%, fires only once per session ───────────────
+    if tcs >= 80 and not st.session_state.tcs_fired_high:
+        st.session_state.tcs_fired_high = True
+        st.session_state.tcs_was_high = True
+        st.toast("🚀 HIGH CONVICTION TREND DETECTED", icon="🚀")
+        if audio_enabled:
+            n = st.session_state.sound_trigger + 1
+            st.session_state.sound_trigger = n
+            components.html(
+                f'<script>/* hc:{n} */{_CHIME_JS}</script>',
+                height=0, scrolling=False
+            )
+
+    # Track whether TCS has been "high" (≥ 60%) so we can detect a drop
+    elif tcs >= 60:
+        st.session_state.tcs_was_high = True
+
+    # ── CHOP RISK: TCS drops below 30 after being high ────────────────────────
+    if tcs < 30 and st.session_state.tcs_was_high:
+        st.session_state.tcs_was_high = False
+        st.toast("⚠️ CHOP RISK INCREASED", icon="⚠️")
+        if audio_enabled:
+            n = st.session_state.sound_trigger + 1
+            st.session_state.sound_trigger = n
+            components.html(
+                f'<script>/* cr:{n} */{_LOW_TONE_JS}</script>',
+                height=0, scrolling=False
+            )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE STREAM
 # ══════════════════════════════════════════════════════════════════════════════
@@ -365,6 +436,9 @@ def start_stream(api_key, secret_key, ticker, feed_str):
     st.session_state.live_trades = deque(maxlen=3000)
     st.session_state.live_ticker = ticker
     st.session_state.live_error = None
+    # Reset alert state for the new session
+    st.session_state.tcs_fired_high = False
+    st.session_state.tcs_was_high = False
 
 
 def stop_stream():
@@ -571,6 +645,8 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False):
     label, color, detail = classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price)
     probs = compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price)
     tcs = compute_tcs(df, ib_high, ib_low, poc_price)
+    audio_enabled = st.session_state.get("audio_alerts_enabled", True)
+    check_tcs_alerts(tcs, audio_enabled)
 
     day_high = float(df["high"].max())
     day_low = float(df["low"].min())
@@ -652,6 +728,46 @@ with st.sidebar:
             st.success(f"🔴 Live: **{st.session_state.live_ticker}**")
 
     st.markdown("---")
+
+    # ── Audio alert controls ───────────────────────────────────────────────────
+    st.header("🔔 Alerts")
+    audio_alerts_enabled = st.checkbox(
+        "Enable Audio Alerts",
+        value=True,
+        key="audio_alerts_enabled",
+        help="Play sounds when TCS crosses 80% (chime) or drops below 30% (low tone)."
+    )
+
+    if audio_alerts_enabled:
+        import streamlit.components.v1 as _comp
+        _comp.html(
+            """
+            <style>
+              .ab{background:#16213e;border:1px solid #5c6bc0;color:#aaa;
+                  padding:5px 12px;border-radius:5px;cursor:pointer;
+                  font-size:12px;width:100%;margin:2px 0;transition:all 0.2s;}
+              .ab:hover{border-color:#90caf9;color:#e0e0e0;}
+              .ab.ok{border-color:#4caf50!important;color:#4caf50!important;}
+              small{color:#555;font-size:10px;line-height:1.4;display:block;margin-top:4px;}
+            </style>
+            <button class="ab" id="ab" onclick="
+              var C=new(window.AudioContext||window.webkitAudioContext)();
+              var o=C.createOscillator(),g=C.createGain();
+              o.type='sine'; o.frequency.value=880;
+              o.connect(g); g.connect(C.destination);
+              g.gain.setValueAtTime(0.12,C.currentTime);
+              g.gain.exponentialRampToValueAtTime(0.001,C.currentTime+0.3);
+              o.start(); o.stop(C.currentTime+0.3);
+              this.textContent='✓ Audio Ready';
+              this.classList.add('ok');
+            ">🔊 Enable Browser Audio</button>
+            <small>Browsers block auto-play until you click above once per session.</small>
+            """,
+            height=68,
+            scrolling=False,
+        )
+
+    st.markdown("---")
     st.caption("SIP = full national tape (small-caps need this). IEX = IEX exchange only.")
 
 
@@ -676,6 +792,9 @@ if mode == "📅 Historical":
         elif selected_date.weekday() >= 5:
             st.error("Selected date is a weekend. Pick a weekday (Mon–Fri).")
         else:
+            # Fresh analysis — reset alert state so alerts fire for this data
+            st.session_state.tcs_fired_high = False
+            st.session_state.tcs_was_high = False
             with st.spinner(f"Fetching 1-min bars for **{ticker}** on {selected_date} ({data_feed.upper()})..."):
                 try:
                     df = fetch_bars(api_key, secret_key, ticker, selected_date, feed=data_feed)
