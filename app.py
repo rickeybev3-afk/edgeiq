@@ -126,6 +126,88 @@ def compute_volume_profile(df: pd.DataFrame, num_bins: int):
 
     return bin_centers, volume_at_price, poc_price
 
+def classify_day_structure(df: pd.DataFrame, bin_centers: np.ndarray,
+                           volume_at_price: np.ndarray, ib_high: float,
+                           ib_low: float, poc_price: float):
+    day_high = df["high"].max()
+    day_low = df["low"].min()
+    total_range = day_high - day_low
+    ib_range = ib_high - ib_low
+    final_price = df["close"].iloc[-1]
+
+    if total_range == 0 or ib_range == 0:
+        return "⚖️ Normal / Balanced", "#4caf50", "Insufficient range data to classify."
+
+    poc_position = (poc_price - day_low) / total_range
+
+    # 1. Trend Day — total range > 2.5× IB range
+    if total_range > 2.5 * ib_range:
+        direction = "Bullish" if final_price > (day_low + total_range / 2) else "Bearish"
+        return (
+            "📈 Trend Day",
+            "#ff9800",
+            f"{direction} trend day — total range ${total_range:.2f} is "
+            f"{total_range / ib_range:.1f}× the IB range (${ib_range:.2f}). Strong directional conviction."
+        )
+
+    # 2. P-Shape (Short Covering) — POC in top 25% + close above IB High
+    if poc_position >= 0.75 and final_price > ib_high:
+        return (
+            "🅟 P-Shape  (Short Covering)",
+            "#ce93d8",
+            f"POC at ${poc_price:.2f} sits in the top {100 * (1 - poc_position):.0f}% of the day's range "
+            f"with close ${final_price:.2f} above IB High ${ib_high:.2f}. Late shorts covering into strength."
+        )
+
+    # 3. b-Shape (Long Liquidation) — POC in bottom 25% + close below IB Low
+    if poc_position <= 0.25 and final_price < ib_low:
+        return (
+            "🅑 b-Shape  (Long Liquidation)",
+            "#ef5350",
+            f"POC at ${poc_price:.2f} sits in the bottom {100 * poc_position:.0f}% of the day's range "
+            f"with close ${final_price:.2f} below IB Low ${ib_low:.2f}. Longs liquidating into weakness."
+        )
+
+    # 4. Double Distribution — two HVNs separated by an LVN ≥ 20 cents apart
+    n = len(volume_at_price)
+    kernel = np.ones(5) / 5
+    smoothed = np.convolve(volume_at_price.astype(float), kernel, mode="same")
+    max_vol = smoothed.max()
+    hvn_threshold = max_vol * 0.40
+
+    peaks = []
+    for i in range(3, n - 3):
+        if (smoothed[i] >= hvn_threshold and
+                smoothed[i] > smoothed[i - 1] and smoothed[i] > smoothed[i + 1] and
+                smoothed[i] > smoothed[i - 2] and smoothed[i] > smoothed[i + 2]):
+            if not peaks or bin_centers[i] - bin_centers[peaks[-1]] > (bin_centers[1] - bin_centers[0]) * 3:
+                peaks.append(i)
+
+    for j in range(len(peaks) - 1):
+        pk1, pk2 = peaks[j], peaks[j + 1]
+        separation = bin_centers[pk2] - bin_centers[pk1]
+        if separation >= 0.20:
+            valley_slice = smoothed[pk1: pk2 + 1]
+            valley_idx = int(np.argmin(valley_slice)) + pk1
+            lvn_vol = smoothed[valley_idx]
+            if lvn_vol < 0.60 * min(smoothed[pk1], smoothed[pk2]):
+                return (
+                    "⚡ Double Distribution",
+                    "#00bcd4",
+                    f"Two HVNs at ${bin_centers[pk1]:.2f} and ${bin_centers[pk2]:.2f} "
+                    f"separated by LVN at ${bin_centers[valley_idx]:.2f} "
+                    f"(${separation:.2f} gap). Two distinct auctions within the session."
+                )
+
+    # 5. Normal / Balanced
+    pct_inside_ib = ((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean() * 100
+    return (
+        "⚖️ Normal / Balanced",
+        "#66bb6a",
+        f"Price rotated within the Initial Balance for {pct_inside_ib:.0f}% of the session — "
+        "no dominant directional structure detected."
+    )
+
 def build_chart(df: pd.DataFrame, ib_high: float, ib_low: float,
                 bin_centers: np.ndarray, volume_at_price: np.ndarray,
                 poc_price: float, ticker: str, trade_date: date) -> go.Figure:
@@ -277,12 +359,42 @@ if run_button:
                     st.success(f"Loaded **{len(df)}** 1-minute bars via **{data_feed.upper()}** feed.")
                     ib_high, ib_low = compute_initial_balance(df)
                     bin_centers, volume_at_price, poc_price = compute_volume_profile(df, num_bins)
+                    structure_label, structure_color, structure_detail = classify_day_structure(
+                        df, bin_centers, volume_at_price, ib_high, ib_low, poc_price
+                    )
 
-                    col1, col2, col3, col4 = st.columns(4)
+                    day_high = df["high"].max()
+                    day_low = df["low"].min()
+                    total_range = day_high - day_low
+                    ib_range = ib_high - ib_low
+
+                    col1, col2, col3, col4, col5, col6 = st.columns(6)
                     col1.metric("Total Bars", f"{len(df)}")
                     col2.metric("IB High", f"${ib_high:.2f}")
                     col3.metric("IB Low", f"${ib_low:.2f}")
-                    col4.metric("POC", f"${poc_price:.2f}")
+                    col4.metric("IB Range", f"${ib_range:.2f}")
+                    col5.metric("Day Range", f"${total_range:.2f}")
+                    col6.metric("POC", f"${poc_price:.2f}")
+
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background: linear-gradient(135deg, {structure_color}22, {structure_color}11);
+                            border-left: 5px solid {structure_color};
+                            border-radius: 8px;
+                            padding: 14px 22px;
+                            margin: 10px 0 6px 0;
+                        ">
+                            <div style="font-size: 26px; font-weight: 800; color: {structure_color}; letter-spacing: 0.5px;">
+                                {structure_label}
+                            </div>
+                            <div style="font-size: 13px; color: #cccccc; margin-top: 4px;">
+                                {structure_detail}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
                     fig = build_chart(df, ib_high, ib_low, bin_centers, volume_at_price, poc_price, ticker, selected_date)
                     st.plotly_chart(fig, use_container_width=True)
