@@ -40,15 +40,23 @@ with st.sidebar:
 
     num_bins = st.slider("Volume Profile Bins", min_value=20, max_value=200, value=100, step=10)
 
+    data_feed = st.selectbox(
+        "Data Feed",
+        options=["sip", "iex"],
+        index=0,
+        help="SIP = full tape (all exchanges, recommended for small-caps). IEX = IEX exchange only (limited coverage). If SIP returns no data, try IEX."
+    )
+
     run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
 
     st.markdown("---")
     st.markdown(
-        "**Tip:** Use paper trading keys for testing. "
-        "Make sure the selected date is a valid trading day."
+        "**Tip:** Use **SIP** feed for small-cap stocks — IEX only covers trades on the IEX exchange "
+        "and may miss most of the volume. SIP requires an Alpaca data subscription; "
+        "if you get a permission error, switch to IEX."
     )
 
-def fetch_bars(api_key: str, secret_key: str, ticker: str, trade_date: date) -> pd.DataFrame:
+def fetch_bars(api_key: str, secret_key: str, ticker: str, trade_date: date, feed: str = "sip") -> pd.DataFrame:
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
@@ -64,7 +72,7 @@ def fetch_bars(api_key: str, secret_key: str, ticker: str, trade_date: date) -> 
         timeframe=TimeFrame.Minute,
         start=market_open,
         end=market_close,
-        feed="iex"
+        feed=feed
     )
 
     bars = client.get_stock_bars(request_params)
@@ -249,16 +257,24 @@ if run_button:
     elif selected_date.weekday() >= 5:
         st.error("The selected date is a weekend. Please pick a weekday (Mon–Fri).")
     else:
-        with st.spinner(f"Fetching 1-minute bars for **{ticker}** on {selected_date}..."):
+        with st.spinner(f"Fetching 1-minute bars for **{ticker}** on {selected_date} ({data_feed.upper()} feed)..."):
             try:
-                df = fetch_bars(api_key, secret_key, ticker, selected_date)
+                df = fetch_bars(api_key, secret_key, ticker, selected_date, feed=data_feed)
 
                 if df.empty:
-                    st.warning(
-                        f"No data returned for **{ticker}** on {selected_date}. "
-                        "This may be a holiday, the market was closed, or the ticker had no trades."
-                    )
+                    if data_feed == "sip":
+                        st.warning(
+                            f"No data returned for **{ticker}** on {selected_date} using the **SIP** feed. "
+                            "Try switching to the **IEX** feed in the sidebar, or confirm this was a valid trading day."
+                        )
+                    else:
+                        st.warning(
+                            f"No data returned for **{ticker}** on {selected_date} using the **IEX** feed. "
+                            "Small-cap stocks are often not traded on IEX. "
+                            "Try switching to the **SIP** feed if your Alpaca account has a data subscription."
+                        )
                 else:
+                    st.success(f"Loaded **{len(df)}** 1-minute bars via **{data_feed.upper()}** feed.")
                     ib_high, ib_low = compute_initial_balance(df)
                     bin_centers, volume_at_price, poc_price = compute_volume_profile(df, num_bins)
 
@@ -280,9 +296,18 @@ if run_button:
             except Exception as e:
                 err_msg = str(e)
                 if "forbidden" in err_msg.lower() or "unauthorized" in err_msg.lower() or "403" in err_msg:
-                    st.error("Authentication failed. Please check your API Key and Secret Key.")
-                elif "not found" in err_msg.lower() or "invalid symbol" in err_msg.lower():
-                    st.error(f"Ticker **{ticker}** was not found. Please check the symbol and try again.")
+                    st.error(
+                        "Authentication failed. Please check your API Key and Secret Key.\n\n"
+                        "If your credentials are correct but you selected **SIP**, your Alpaca account "
+                        "may not have a SIP data subscription — try switching to **IEX** in the sidebar."
+                    )
+                elif "subscription" in err_msg.lower() or "not entitled" in err_msg.lower() or "422" in err_msg:
+                    st.error(
+                        f"Your Alpaca account is not subscribed to the **{data_feed.upper()}** data feed. "
+                        "Switch to **IEX** in the sidebar, or upgrade your Alpaca data plan to access SIP."
+                    )
+                elif "not found" in err_msg.lower() or "invalid symbol" in err_msg.lower() or "no data" in err_msg.lower():
+                    st.error(f"Ticker **{ticker}** was not found or returned no data. Please check the symbol.")
                 else:
                     st.error(f"An error occurred: {err_msg}")
 else:
