@@ -4,6 +4,27 @@
 
 pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
 
+## Streamlit Volume Profile Dashboard
+
+A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for small-cap stocks.
+
+### Features
+- Fetch 1-minute historical bars from Alpaca via `alpaca-py`
+- Calculate Initial Balance (IB High/Low: first 60 min, 9:30–10:30 EST)
+- Build a Volume Profile (100 price bins, volume-weighted)
+- Identify Point of Control (POC) — price level with highest volume
+- Interactive Plotly chart: candlestick + volume profile histogram side-by-side
+- IB High (green dashed), IB Low (red dashed), POC (gold line) overlays
+- Sidebar for Alpaca API Key, Secret Key, ticker, date, and bin count
+
+### Running
+```bash
+streamlit run app.py --server.port 5000
+```
+
+### Dependencies (Python)
+- `streamlit`, `alpaca-py`, `plotly`, `pandas`, `numpy`, `pytz`
+
 ## Stack
 
 - **Monorepo tool**: pnpm workspaces
