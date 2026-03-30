@@ -28,8 +28,9 @@ _DEFAULTS = {
     "tcs_was_high": False,     # True while TCS was ≥ 60% (for chop-drop detection)
     "sound_trigger": 0,        # Incremented to force fresh audio iframe
     # RVOL / Sector cache — pre-fetched once per analysis session
-    "rvol_avg_vol": None,      # Average daily volume (5-day lookback)
-    "sector_pct_chg": 0.0,    # Sector ETF % change for current date
+    "rvol_avg_vol": None,          # Average daily volume (5-day lookback)
+    "sector_pct_chg": 0.0,         # Sector ETF % change for current date
+    "rvol_intraday_curve": None,   # Per-minute cumulative vol curve (390 elements)
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -298,46 +299,154 @@ def fetch_etf_pct_change(api_key, secret_key, etf, trade_date, feed="iex"):
         return 0.0
 
 
-def compute_rvol(df, avg_daily_vol):
-    """Relative Volume — pace-adjusted so it's comparable at any time of day.
+def is_market_open():
+    """True if the current EST clock is within regular session hours (9:30–16:00)."""
+    t = datetime.now(EASTERN).time()
+    return dtime(9, 30) <= t <= dtime(16, 0)
 
-    RVOL = (current pace extrapolated to full session) / avg_daily_vol
-    Returns None if avg_daily_vol is unavailable.
+
+def build_rvol_intraday_curve(api_key, secret_key, ticker, trade_date,
+                               lookback_days=5, feed="iex"):
+    """Build a 390-element list of average cumulative volume at each minute from open.
+
+    Each element i represents the expected cumulative volume after (i+1) minutes of
+    trading, averaged across the last lookback_days sessions before trade_date.
+    Returns None if insufficient data.
     """
-    if avg_daily_vol is None or avg_daily_vol == 0:
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+
+    client = StockHistoricalDataClient(api_key, secret_key)
+    start_dt = EASTERN.localize(
+        datetime(trade_date.year, trade_date.month, trade_date.day)
+        - timedelta(days=lookback_days * 3)   # extra buffer for weekends/holidays
+    )
+    end_dt = EASTERN.localize(
+        datetime(trade_date.year, trade_date.month, trade_date.day)
+    )
+    req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute,
+                           start=start_dt, end=end_dt, feed=feed)
+    bars = client.get_stock_bars(req)
+    df_all = bars.df
+    if df_all.empty:
         return None
-    elapsed_bars = max(1, len(df))
-    session_bars = 390  # 9:30–16:00 = 390 minutes
+
+    if isinstance(df_all.index, pd.MultiIndex):
+        df_all = df_all.xs(ticker, level="symbol")
+    df_all.index = pd.to_datetime(df_all.index)
+    if df_all.index.tz is None:
+        df_all.index = df_all.index.tz_localize("UTC")
+    df_all.index = df_all.index.tz_convert(EASTERN)
+    df_all = df_all.sort_index()
+
+    # Keep only market hours
+    df_all = df_all[(df_all.index.time >= dtime(9, 30)) &
+                    (df_all.index.time <= dtime(16, 0))]
+    if df_all.empty:
+        return None
+
+    # Vectorised minutes-from-open (9:30 = minute 0)
+    df_all = df_all.copy()
+    df_all["_mins"] = df_all.index.hour * 60 + df_all.index.minute - (9 * 60 + 30)
+    df_all["_date"] = pd.to_datetime(df_all.index.date)
+
+    day_curves = []
+    for day, grp in df_all.groupby("_date"):
+        if day.date() >= trade_date:           # exclude the analysis date itself
+            continue
+        cv = np.zeros(390)
+        for _, row in grp.iterrows():
+            m = int(row["_mins"])
+            if 0 <= m < 390:
+                cv[m] = float(row["volume"])
+        day_curves.append(np.cumsum(cv))
+
+    if not day_curves:
+        return None
+
+    day_curves = day_curves[-lookback_days:]   # keep most recent N days
+    return np.mean(day_curves, axis=0).tolist()
+
+
+def compute_rvol(df, intraday_curve=None, avg_daily_vol=None):
+    """Time-segmented RVOL (preferred) with pace-adjusted fallback.
+
+    Time-segmented: compare cumulative volume at current elapsed minute to the
+    historical average cumulative volume at the same minute of day.
+    Fallback: extrapolate current pace to full session / full-day average.
+    Returns None if no baseline is available.
+    """
+    if df.empty:
+        return None
     current_vol = float(df["volume"].sum())
-    pace = (current_vol / elapsed_bars) * session_bars
-    return round(pace / avg_daily_vol, 2)
+    elapsed_bars = max(1, len(df))
+
+    # ── Time-segmented RVOL ───────────────────────────────────────────────────
+    if intraday_curve is not None and len(intraday_curve) >= elapsed_bars:
+        idx = min(elapsed_bars - 1, len(intraday_curve) - 1)
+        expected_vol = float(intraday_curve[idx])
+        if expected_vol > 0:
+            return round(current_vol / expected_vol, 2)
+
+    # ── Pace-adjusted fallback ────────────────────────────────────────────────
+    if avg_daily_vol is not None and avg_daily_vol > 0:
+        pace = (current_vol / elapsed_bars) * 390   # 390-minute session
+        return round(pace / avg_daily_vol, 2)
+
+    return None
 
 
-def rvol_classify(rvol, pct_chg_today):
-    """Map RVOL + price direction to (label, color, is_runner, is_play).
+def rvol_classify(rvol, pct_chg_today, elapsed_bars=None, price_now=None):
+    """Time-aware RVOL label.
 
-    Returns (label_str | None, color_str, is_runner_bool, is_play_bool)
+    elapsed_bars — minutes since 9:30 AM open (None = historical full-day view)
+    price_now    — current last price (for small-cap volatility adjustment)
+    Returns (label | None, color, is_runner, is_play)
     """
     if rvol is None:
         return None, "#aaaaaa", False, False
+
+    # ── Runner tiers (highest priority) ───────────────────────────────────────
     if rvol > 5.5:
         return "🚀 MULTI-DAY RUNNER POTENTIAL", "#FFD700", True, True
     if rvol > 4.0:
         return "🔥 STOCK IN PLAY", "#FF6B35", False, True
+
+    # ── 9:30–10:00 AM "Fuel Check" (first 30 minutes of session) ─────────────
+    is_open_window = elapsed_bars is not None and 1 <= elapsed_bars <= 30
+    if is_open_window and rvol > 3.0:
+        return "🔥 HIGH CONVICTION OPEN", "#FF9500", False, True
+
+    # ── Fake-out with small-cap volatility adjustment ─────────────────────────
     if rvol < 1.2 and pct_chg_today > 0.5:
+        # For stocks priced $2–$20 (small-cap / low-float) noise threshold is 1%
+        # — only flag as fake-out if divergence is meaningful (> 1% move)
+        if price_now is not None and 2.0 <= price_now <= 20.0:
+            if pct_chg_today < 1.0:          # within noise band → ignore
+                return None, "#aaaaaa", False, False
         return "⚠️ DEAD CAT / FAKE-OUT RISK", "#ef5350", False, False
+
     return None, "#aaaaaa", False, False
 
 
-def compute_model_prediction(df, rvol, tcs, sector_bonus):
-    """Classify move as Fake-out / High Conviction / Consolidation from volume-price divergence."""
+def compute_model_prediction(df, rvol, tcs, sector_bonus, market_open=True):
+    """Classify move as Fake-out / High Conviction / Consolidation.
+
+    market_open=False → returns ('Market Closed', '') so the renderer shows
+    the sleep-mode info box instead of a directional warning.
+    """
+    if not market_open:
+        return "Market Closed", ""
+
     if len(df) < 2:
         return "Consolidation", "Insufficient bars for prediction."
+
     price_start = float(df["open"].iloc[0])
-    price_now = float(df["close"].iloc[-1])
+    price_now   = float(df["close"].iloc[-1])
     pct_chg = (price_now - price_start) / price_start * 100.0 if price_start > 0 else 0.0
 
-    # Fake-out: price rising but volume is weak
+    # Fake-out: price up but volume weak
     if rvol is not None and rvol < 1.2 and pct_chg > 0.5:
         return ("Fake-out",
                 f"Price +{pct_chg:.1f}% on anemic RVOL {rvol:.1f}× — volume is NOT confirming "
@@ -351,13 +460,13 @@ def compute_model_prediction(df, rvol, tcs, sector_bonus):
                 f"TCS {tcs:.0f}% — institutional footprint visible. "
                 f"Trend continuation is the high-probability path.{tail}")
 
-    # Consolidation: low TCS regardless of direction
+    # Consolidation: low TCS
     if tcs < 35:
         return ("Consolidation",
                 f"TCS {tcs:.0f}% — low trend energy. Price coiling inside range. "
                 "Watch for a Volume Velocity spike to signal the next push.")
 
-    # Moderate high conviction (price moving, volume ok)
+    # Moderate high conviction
     if abs(pct_chg) > 0.5 and (rvol is None or rvol >= 1.5):
         direction = f"+{pct_chg:.1f}%" if pct_chg > 0 else f"{pct_chg:.1f}%"
         bias = "upward" if pct_chg > 0 else "downward"
@@ -791,10 +900,35 @@ def render_rvol_widget(rvol_val, label_str, label_color, is_runner):
 
 
 def render_model_prediction(outcome, reasoning):
-    """Show the volume-price divergence model prediction in a styled text box."""
+    """Show the volume-price divergence model prediction in a styled text box.
+
+    'Market Closed' outcome → shows a blue sleep-mode info box instead of
+    a directional warning so stale/historical analysis isn't misread as live signal.
+    """
+    # ── Sleep mode: market is closed, suppress directional warnings ───────────
+    if outcome == "Market Closed":
+        st.markdown("""
+        <div style="background:#0d47a114; border:1px solid #1565c066;
+                    border-radius:8px; padding:12px 20px; margin:8px 0 4px 0;">
+            <div style="font-size:10px; color:#5c8ecc; text-transform:uppercase;
+                        letter-spacing:1.2px; margin-bottom:6px;">
+                🤖 Model Prediction — Volume-Price Divergence
+            </div>
+            <div style="font-size:20px; font-weight:800; color:#64b5f6; margin-bottom:4px;">
+                💤 MARKET CLOSED — Analyzing Historical Data
+            </div>
+            <div style="font-size:13px; color:#90caf9; line-height:1.6;">
+                Live pattern alerts are suppressed outside 9:30 AM – 4:00 PM EST.
+                Use the volume profile structure and TCS score for session-level context.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # ── Live / historical session directional signal ───────────────────────────
     _colors = {"Fake-out": "#ef5350", "High Conviction": "#4caf50", "Consolidation": "#ffa726"}
     _icons  = {"Fake-out": "⚠️", "High Conviction": "🎯", "Consolidation": "📊"}
-    c = _colors.get(outcome, "#aaaaaa")
+    c    = _colors.get(outcome, "#aaaaaa")
     icon = _icons.get(outcome, "📊")
     st.markdown(f"""
     <div style="background:{c}0e; border:1px solid {c}44; border-radius:8px;
@@ -842,7 +976,8 @@ def render_velocity_widget(df):
 
 
 def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
-                    avg_daily_vol=None, sector_bonus=0.0, sector_etf="IWM"):
+                    avg_daily_vol=None, sector_bonus=0.0, sector_etf="IWM",
+                    intraday_curve=None, is_live=False):
     ib_high, ib_low = compute_initial_balance(df)
     bin_centers, vap, poc_price = compute_volume_profile(df, num_bins)
     label, color, detail = classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price)
@@ -851,16 +986,30 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     audio_enabled = st.session_state.get("audio_alerts_enabled", True)
     check_tcs_alerts(tcs, audio_enabled)
 
+    # ── Time context ───────────────────────────────────────────────────────────
+    # elapsed_bars = minutes of session captured so far (used for time-seg RVOL + Fuel Check)
+    elapsed_bars = len(df)
+    # market_open:
+    #   • Live mode  → check actual clock (suppress fake-out if market is closed)
+    #   • Historical → True — session data is self-contained, show all signals
+    market_open = is_market_open() if is_live else True
+
     # ── RVOL + Pattern Label ───────────────────────────────────────────────────
     price_start = float(df["open"].iloc[0]) if len(df) else 0.0
     price_now   = float(df["close"].iloc[-1]) if len(df) else 0.0
     pct_chg_today = (price_now - price_start) / price_start * 100.0 if price_start > 0 else 0.0
 
-    rvol_val = compute_rvol(df, avg_daily_vol)
-    rvol_lbl, rvol_color, is_runner, is_play = rvol_classify(rvol_val, pct_chg_today)
+    rvol_val = compute_rvol(df, intraday_curve=intraday_curve, avg_daily_vol=avg_daily_vol)
+    rvol_lbl, rvol_color, is_runner, is_play = rvol_classify(
+        rvol_val, pct_chg_today,
+        elapsed_bars=elapsed_bars if is_live else None,   # open-window check only in live mode
+        price_now=price_now
+    )
 
     # ── Model prediction ───────────────────────────────────────────────────────
-    pred_outcome, pred_reasoning = compute_model_prediction(df, rvol_val, tcs, sector_bonus)
+    pred_outcome, pred_reasoning = compute_model_prediction(
+        df, rvol_val, tcs, sector_bonus, market_open=market_open
+    )
 
     day_high = float(df["high"].max())
     day_low  = float(df["low"].min())
@@ -1042,6 +1191,15 @@ if mode == "📅 Historical":
                             avg_vol = None
                         st.session_state.rvol_avg_vol = avg_vol
 
+                        # ── Time-segmented RVOL intraday curve ───────────────────────
+                        try:
+                            curve = build_rvol_intraday_curve(
+                                api_key, secret_key, ticker, selected_date,
+                                lookback_days=5, feed=data_feed)
+                        except Exception:
+                            curve = None
+                        st.session_state.rvol_intraday_curve = curve
+
                         # ── Sector ETF % change for that date ────────────────────────
                         try:
                             etf_chg = fetch_etf_pct_change(
@@ -1055,7 +1213,9 @@ if mode == "📅 Historical":
                                         f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
                                         avg_daily_vol=avg_vol,
                                         sector_bonus=sector_bonus,
-                                        sector_etf=sector_etf)
+                                        sector_etf=sector_etf,
+                                        intraday_curve=curve,
+                                        is_live=False)
                 except Exception as e:
                     err = str(e)
                     if "forbidden" in err.lower() or "403" in err or "unauthorized" in err.lower():
@@ -1094,6 +1254,14 @@ else:
                 except Exception:
                     avg_vol = None
                 st.session_state.rvol_avg_vol = avg_vol
+
+                try:
+                    curve = build_rvol_intraday_curve(
+                        api_key, secret_key, ticker, today,
+                        lookback_days=5, feed=live_feed)
+                except Exception:
+                    curve = None
+                st.session_state.rvol_intraday_curve = curve
 
                 try:
                     etf_chg = fetch_etf_pct_change(
@@ -1145,7 +1313,9 @@ else:
                             chart_title, is_ib_live=is_ib_live,
                             avg_daily_vol=st.session_state.get("rvol_avg_vol"),
                             sector_bonus=live_sector_bonus,
-                            sector_etf=sector_etf)
+                            sector_etf=sector_etf,
+                            intraday_curve=st.session_state.get("rvol_intraday_curve"),
+                            is_live=True)
     else:
         if not st.session_state.live_error:
             st.info("👈 Enter credentials and ticker, then click **▶ Start Live Stream**.")
