@@ -3066,42 +3066,59 @@ def render_tracker_tab():
                                                  feed=_bt_feed, num_bins=100)
                         _bt_results.append(_r)
                     _prog.empty()
+                    # Persist results so they survive the page rerun
+                    st.session_state["bt_last_results"] = _bt_results
 
-                    _rdf = pd.DataFrame(_bt_results)
-                    _ok  = (_rdf["status"] == "OK").sum()
-                    _dup = (_rdf["status"] == "Already logged").sum()
-                    _err = len(_rdf) - _ok - _dup
-                    _correct = (_rdf["correct"] == "✅").sum()
-                    _logged  = _ok + _dup
+        # ── Always render results if available ────────────────────────────────
+        if st.session_state.get("bt_last_results"):
+            _rdf = pd.DataFrame(st.session_state["bt_last_results"])
+            _ok      = (_rdf["status"] == "OK").sum()
+            _dup     = (_rdf["status"] == "Already logged").sum()
+            _no_data = _rdf["status"].str.startswith("No data").sum()
+            _no_ib   = _rdf["status"].str.startswith("IB").sum()
+            _errs    = len(_rdf) - _ok - _dup - _no_data - _no_ib
+            _correct = (_rdf["correct"] == "✅").sum()
+            _wrong   = (_rdf["correct"] == "❌").sum()
+            _logged  = _ok + _dup
 
-                    _acc_str = (f" — Batch accuracy: {_correct}/{_logged} "
-                                f"({_correct/_logged*100:.0f}%)" if _logged > 0 else "")
-                    st.success(
-                        f"Done — {_ok} new entries logged, {_dup} already existed, "
-                        f"{_err} skipped/errored.{_acc_str}"
-                    )
+            _acc_str = (f"  •  Batch accuracy: **{_correct}/{_correct+_wrong}** "
+                        f"({_correct/((_correct+_wrong) or 1)*100:.0f}%)"
+                        if (_correct + _wrong) > 0 else "")
+            st.success(
+                f"✅ **{_ok}** new logged  •  "
+                f"🔁 **{_dup}** already existed  •  "
+                f"📭 **{_no_data}** no data  •  "
+                f"⏱ **{_no_ib}** IB incomplete  •  "
+                f"⚠️ **{_errs}** errors"
+                + _acc_str
+            )
+            st.caption(
+                "💡 'No data' means Alpaca IEX doesn't carry historical minute bars for that "
+                "ticker on that date. Very small OTC stocks often only appear on SIP. "
+                "Try switching the feed to **sip** if you have an Alpaca paid subscription."
+            )
 
-                    # Color rows by result
-                    def _bt_style(row):
-                        if row.get("correct") == "✅":
-                            return ["background-color:#4caf5022"] * len(row)
-                        if row.get("correct") == "❌":
-                            return ["background-color:#ef535022"] * len(row)
-                        return ["background-color:#33333311"] * len(row)
+            # Color rows by result
+            def _bt_style(row):
+                s = row.get("correct", "—")
+                if s == "✅":  return ["background-color:#4caf5022"] * len(row)
+                if s == "❌":  return ["background-color:#ef535022"] * len(row)
+                return [""] * len(row)
 
-                    try:
-                        st.dataframe(
-                            _rdf[["ticker","date","predicted","actual","correct","status"]]
-                              .style.apply(_bt_style, axis=1),
-                            use_container_width=True, hide_index=True
-                        )
-                    except Exception:
-                        st.dataframe(
-                            _rdf[["ticker","date","predicted","actual","correct","status"]],
-                            use_container_width=True, hide_index=True
-                        )
-
-                    st.rerun()   # refresh all stats below with the new data
+            try:
+                st.dataframe(
+                    _rdf[["ticker","date","predicted","actual","correct","status"]]
+                      .style.apply(_bt_style, axis=1),
+                    use_container_width=True, hide_index=True
+                )
+            except Exception:
+                st.dataframe(
+                    _rdf[["ticker","date","predicted","actual","correct","status"]],
+                    use_container_width=True, hide_index=True
+                )
+            if st.button("🗑 Clear batch results", key="bt_clear_btn"):
+                st.session_state.pop("bt_last_results", None)
+                st.rerun()
 
     st.markdown("---")
     df = load_accuracy_tracker()

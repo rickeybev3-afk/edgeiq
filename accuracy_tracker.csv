@@ -33,3 +33,4 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-30 22:42:36,SMX,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,SMX_2026-03-30_8.2100_8.2100
 2026-03-30 22:46:39,EEIQ,Neutral,📉 Trend Day (Bear),❌,0.0,0.0,0.0,EEIQ_2026-03-30_11.0200_9.1200
 2026-03-30 22:52:56,BATL,Neutral Extreme,📉 Trend Day (Bear),❌,0.0,0.0,0.0,BATL_2026-03-30_6.4300_5.7700
+2026-03-30 23:07:12,TURB,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,TURB_2026-03-30_2.9650_2.6800
