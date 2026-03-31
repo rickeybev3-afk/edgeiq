@@ -43,3 +43,4 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-31 10:01:39,VRAX,Normal Variation,⚡ Neutral Extreme,❌,0.0,0.0,0.0,VRAX_2026-03-31_0.2800_0.2150
 2026-03-31 10:03:17,VRAX,Normal Variation,⚡ Neutral Extreme,❌,0.0,0.0,0.0,VRAX_2026-03-31_0.2800_0.2106
 2026-03-31 10:05:15,VRAX,Normal Variation,⚡ Neutral Extreme,❌,0.0,0.0,0.0,VRAX_2026-03-31_0.2800_0.2056
+2026-03-31 10:10:03,VRAX,Trend Day,⚡ Neutral Extreme,❌,0.0,0.0,0.0,VRAX_2026-03-31_0.2800_0.2006
