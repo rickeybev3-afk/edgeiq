@@ -56,7 +56,10 @@ _DEFAULTS = {
     "position_shares":      0,
     "position_structure":   "",
     # MarketBrain — stores the live predicted structure between reruns
-    "brain_predicted":      None,
+    "brain_session_correct":  0,    # correct predictions this session
+    "brain_session_total":    0,    # total comparisons this session
+    "brain_last_compared":    "",   # "TICKER_YYYY-MM-DD" — dedup key
+    "brain_predicted":        None,
     "brain_ib_high":        0.0,
     "brain_ib_low":         float("inf"),
     "brain_ib_set":         False,
@@ -468,6 +471,26 @@ if not st.session_state.get("_position_loaded"):
     st.session_state["_position_loaded"] = True
 
 
+def compute_ib_volume_stats(df, ib_high, ib_low):
+    """Return (ib_vol_pct, ib_range_ratio) — both in [0, 1].
+
+    ib_vol_pct  : fraction of total session volume traded while close was inside [ib_low, ib_high]
+    ib_range_ratio : IB range / day range  — how much of the day was captured in the opening hour
+    """
+    if df.empty or ib_high is None or ib_low is None:
+        return 0.5, 0.5
+    total_vol = float(df["volume"].sum())
+    if total_vol <= 0:
+        return 0.5, 0.5
+    inside_mask = (df["close"] >= ib_low) & (df["close"] <= ib_high)
+    ib_vol  = float(df.loc[inside_mask, "volume"].sum())
+    ib_vol_pct = ib_vol / total_vol
+    day_range = float(df["high"].max()) - float(df["low"].min())
+    ib_range  = ib_high - ib_low
+    ib_range_ratio = (ib_range / day_range) if day_range > 0 else 0.5
+    return round(ib_vol_pct, 3), round(ib_range_ratio, 3)
+
+
 def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
                            avg_daily_vol=None):
     """7-structure classification.  Returns (label, color, detail, insight)."""
@@ -476,6 +499,10 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
     total_range = day_high - day_low
     ib_range = (ib_high - ib_low) if (ib_high is not None and ib_low is not None) else 0.0
     final_price = float(df["close"].iloc[-1])
+
+    # ── IB volume stats — the most important structural signal ─────────────────
+    ib_vol_pct, ib_range_ratio = compute_ib_volume_stats(df, ib_high, ib_low)
+    # High ib_vol_pct (>0.65) → balanced/Normal; low (<0.35) → directional/Trend
 
     if total_range == 0 or ib_range == 0:
         return ("⚖️ Normal / Balanced", "#66bb6a",
@@ -529,10 +556,14 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
         is_anemic = (pace / avg_daily_vol) < 0.80
     else:
         is_anemic = ib_range / max(0.001, day_high) < 0.003
-    if is_narrow_ib and is_anemic:
+    # IB vol % reinforces Non-Trend: most volume staying inside a tight IB = no conviction
+    ib_vol_confirms_nontrend = ib_vol_pct > 0.72 and ib_range_ratio < 0.25
+    if is_narrow_ib and (is_anemic or ib_vol_confirms_nontrend):
         detail  = (f"IB ${ib_range:.2f} = {ib_range/total_range*100:.0f}% of day range. "
+                   f"IB volume {ib_vol_pct*100:.0f}% of session total. "
                    f"Volume participation is anemic.")
-        insight = (f"Tight initial balance with minimal volume signals no institutional interest. "
+        insight = (f"Tight initial balance with {ib_vol_pct*100:.0f}% of session volume "
+                   f"trapped inside the opening range signals no institutional interest. "
                    f"Day-traders are in control; avoid chasing breakouts. "
                    f"Wait for a volume-backed catalyst before committing size.")
         return ("😴 Non-Trend", "#78909c", detail, insight)
@@ -540,27 +571,45 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
     # ── 3. Normal ─────────────────────────────────────────────────────────────
     if not ib_high_touched and not ib_low_touched:
         pct_inside = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean()) * 100
+        # High IB vol% on a Normal day = very strong balance signal
+        ib_vol_str = (f"IB absorbed {ib_vol_pct*100:.0f}% of volume — "
+                      f"{'strong balance' if ib_vol_pct > 0.60 else 'moderate balance'}. ")
         detail  = (f"IB ${ib_high:.2f}–${ib_low:.2f} never violated. "
-                   f"Price inside IB for {pct_inside:.0f}% of session.")
-        insight = (f"Classic balanced day — both buyers and sellers accept value inside "
-                   f"the opening range. No directional conviction from either side. "
+                   f"Price inside IB for {pct_inside:.0f}% of session. {ib_vol_str}")
+        insight = (f"Classic balanced day — {ib_vol_pct*100:.0f}% of volume traded inside the "
+                   f"9:30–10:30 range. Both buyers and sellers accept value here. "
+                   f"{'High IB volume confirms strong rotational acceptance — ' if ib_vol_pct > 0.60 else ''}"
+                   f"No directional conviction from either side. "
                    f"Fade the extremes and target POC at ${poc_price:.2f}.")
         return ("⚖️ Normal", "#66bb6a", detail, insight)
 
     # ── 4. Trend Day ──────────────────────────────────────────────────────────
+    # IB vol% < 0.40 AND ib_range_ratio < 0.40 are strong Trend Day signals:
+    # most volume printed outside the opening range → directional conviction confirmed by flow
+    ib_vol_trend_signal = ib_vol_pct < 0.40 and ib_range_ratio < 0.40
     is_trend_up   = ib_violated_early_up   and (dist_from_ib > 2.0 * atr) and (final_price > ib_high)
     is_trend_down = ib_violated_early_down and (dist_from_ib > 2.0 * atr) and (final_price < ib_low)
-    if is_trend_up or is_trend_down:
-        direction  = "Bullish" if is_trend_up else "Bearish"
+    # Softer Trend trigger when IB vol stats confirm directional flow even if ATR threshold not met
+    is_trend_up_soft   = (ib_violated_early_up   and ib_vol_trend_signal
+                          and dist_from_ib > 1.0 * atr and final_price > ib_high)
+    is_trend_down_soft = (ib_violated_early_down and ib_vol_trend_signal
+                          and dist_from_ib > 1.0 * atr and final_price < ib_low)
+    if is_trend_up or is_trend_down or is_trend_up_soft or is_trend_down_soft:
+        bullish    = is_trend_up or is_trend_up_soft
+        direction  = "Bullish" if bullish else "Bearish"
         dist_atr   = dist_from_ib / atr if atr > 0 else 0
+        confirmed  = "✅ IB vol confirms" if ib_vol_trend_signal else ""
         detail  = (f"{direction} — IB violated within first 2 hrs, "
                    f"price {dist_atr:.1f}× ATR from IB. "
-                   f"Range ${total_range:.2f} vs IB ${ib_range:.2f}.")
-        insight = (f"Strong directional conviction from the early session. "
-                   f"{'Buyers' if is_trend_up else 'Sellers'} established control before noon "
-                   f"and held ground well. Trend continuation is the high-probability path — "
+                   f"Only {ib_vol_pct*100:.0f}% of volume inside IB — directional flow. "
+                   f"IB captured {ib_range_ratio*100:.0f}% of day range. {confirmed}")
+        insight = (f"Strong directional conviction: only {ib_vol_pct*100:.0f}% of session volume "
+                   f"stayed inside the 9:30–10:30 range (IB), meaning "
+                   f"{'buyers' if bullish else 'sellers'} pushed hard outside it immediately. "
+                   f"{'Buyers' if bullish else 'Sellers'} established control before noon "
+                   f"and held ground. Trend continuation is the high-probability path — "
                    f"add on pullbacks toward POC ${poc_price:.2f}.")
-        lbl = "📈 Trend Day" if is_trend_up else "📉 Trend Day (Bear)"
+        lbl = "📈 Trend Day" if bullish else "📉 Trend Day (Bear)"
         return (lbl, "#ff9800", detail, insight)
 
     # ── 5. Neutral Extreme ────────────────────────────────────────────────────
@@ -627,6 +676,11 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
     if total_range == 0 or ib_range == 0:
         return fallback
 
+    # ── IB volume stats (primary signal) ──────────────────────────────────────
+    ib_vol_pct, ib_range_ratio = compute_ib_volume_stats(df, ib_high, ib_low)
+    # ib_vol_pct:  >0.65 = balanced, <0.35 = directional
+    # ib_range_ratio: >0.60 = tight/Normal, <0.30 = wide Trend expansion
+
     rr = total_range / ib_range
     poc_pos = (poc_price - day_low) / total_range
     pct_inside = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean())
@@ -654,13 +708,22 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
 
     has_dd = _detect_double_distribution(bin_centers, vap) is not None
 
+    # ── IB-volume multipliers ─────────────────────────────────────────────────
+    # Normal / Non-Trend boosted by high IB vol; Trend boosted by low IB vol
+    ib_balance_boost = max(0.5, ib_vol_pct * 2.0)          # 0.5 → 2.0 as ib_vol_pct goes 0→1
+    ib_trend_boost   = max(0.5, (1.0 - ib_vol_pct) * 2.0) # mirrors above
+
     scores = {
-        "Non-Trend":    max(2.0, (1.0 - rr) * 40.0) if ib_range < 0.20 * total_range else 2.0,
-        "Normal":       5.0 + pct_inside * 60.0 if not ib_high_hit and not ib_low_hit else 3.0,
-        "Trend":        5.0 + max(0.0, (dist_ib / max(atr, 0.01) - 1.0) * 25.0) if viol_early else 3.0,
+        "Non-Trend":    max(2.0, (1.0 - rr) * 40.0 * ib_balance_boost)
+                        if ib_range < 0.20 * total_range else 2.0,
+        "Normal":       (5.0 + pct_inside * 60.0) * ib_balance_boost
+                        if not ib_high_hit and not ib_low_hit else 3.0,
+        "Trend":        (5.0 + max(0.0, (dist_ib / max(atr, 0.01) - 1.0) * 25.0)) * ib_trend_boost
+                        if viol_early else 3.0,
         "Ntrl Extreme": 50.0 if both_hit and at_extreme else 3.0,
         "Neutral":      50.0 if both_hit and (ib_low <= final_price <= ib_high) else 3.0,
-        "Nrml Var":     40.0 if (ib_high_hit ^ ib_low_hit) else 4.0,
+        "Nrml Var":     40.0 * (0.7 + 0.6 * (1.0 - ib_vol_pct))  # stronger when low IB vol
+                        if (ib_high_hit ^ ib_low_hit) else 4.0,
         "Dbl Dist":     60.0 if has_dd else 3.0,
     }
     total = sum(scores.values())
@@ -1895,6 +1958,34 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     col7.metric("RVOL", rvol_display)
     col8.metric("Sector", sector_display)
 
+    # ── IB Volume Stats widget ─────────────────────────────────────────────────
+    ib_vol_pct_disp, ib_range_ratio_disp = compute_ib_volume_stats(df, ib_high, ib_low)
+    _ivp_pct = ib_vol_pct_disp * 100
+    _irr_pct = ib_range_ratio_disp * 100
+    # Color coding: balanced (green) vs directional (orange/red)
+    _ivp_color = ("#4caf50" if _ivp_pct >= 60 else "#ffa726" if _ivp_pct >= 35 else "#ef5350")
+    _irr_color = ("#4caf50" if _irr_pct >= 50 else "#ffa726" if _irr_pct >= 25 else "#ef5350")
+    _ivp_label = "Balanced" if _ivp_pct >= 60 else ("Neutral" if _ivp_pct >= 35 else "Directional")
+    _irr_label = "Contained" if _irr_pct >= 50 else ("Moderate" if _irr_pct >= 25 else "Expanded")
+    st.markdown(
+        f'<div style="background:#0f3460; border:1px solid #1a3a6e; border-radius:6px; '
+        f'padding:8px 16px; margin:4px 0 6px 0; display:flex; align-items:center; gap:20px; flex-wrap:wrap;">'
+        f'<span style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+        f'letter-spacing:1px; white-space:nowrap;">📐 IB Structure</span>'
+        f'<span style="font-size:12px; color:#aaa;">IB Vol%: '
+        f'<b style="color:{_ivp_color};">{_ivp_pct:.0f}%</b> '
+        f'<span style="color:{_ivp_color}; font-size:11px;">({_ivp_label})</span></span>'
+        f'<span style="color:#2a2a4a;">|</span>'
+        f'<span style="font-size:12px; color:#aaa;">IB/Day Range: '
+        f'<b style="color:{_irr_color};">{_irr_pct:.0f}%</b> '
+        f'<span style="color:{_irr_color}; font-size:11px;">({_irr_label})</span></span>'
+        f'<span style="color:#2a2a4a;">|</span>'
+        f'<span style="font-size:11px; color:#555; white-space:nowrap;">'
+        f'IB ${ib_high:.2f} – ${ib_low:.2f} &nbsp;|&nbsp; POC ${poc_price:.2f}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
     render_structure_banner(label, color, detail, probs, tcs,
@@ -1902,19 +1993,70 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                             insight=insight)
     render_model_prediction(pred_outcome, pred_reasoning)
 
-    # ── MarketBrain prediction widget ─────────────────────────────────────────
+    # ── MarketBrain: compare prediction vs actual + running counter ───────────
     bc = brain.color()
+    _brain_correct_now = False
+    _brain_newly_logged = False
+
+    # Auto-compare once IB is complete and brain has a real prediction
+    if brain.ib_set and brain.prediction != "Analyzing IB…":
+        _compare_key = f"{ticker}_{str(ib_high)}_{str(ib_low)}"
+        if st.session_state.brain_last_compared != _compare_key:
+            st.session_state.brain_last_compared = _compare_key
+            # Fuzzy match: strip emojis/punctuation and compare core words
+            _pred_clean   = _strip_emoji(brain.prediction)
+            _actual_clean = _strip_emoji(label)
+            _brain_correct_now = (
+                _pred_clean in _actual_clean or _actual_clean in _pred_clean
+                or any(w in _actual_clean for w in _pred_clean.split() if len(w) > 4)
+            )
+            st.session_state.brain_session_total   += 1
+            if _brain_correct_now:
+                st.session_state.brain_session_correct += 1
+            # Log to accuracy_tracker.csv
+            log_accuracy_entry(ticker, brain.prediction, label)
+            _brain_newly_logged = True
+
+    _b_corr  = st.session_state.brain_session_correct
+    _b_total = st.session_state.brain_session_total
+    _b_rate  = (_b_corr / _b_total * 100) if _b_total > 0 else 0
+    _counter_str = (f"Session: {_b_corr}/{_b_total} ({_b_rate:.0f}%)"
+                    if _b_total > 0 else "No comparisons yet")
+    _counter_col = "#4caf50" if _b_rate >= 60 else "#ffa726" if _b_rate >= 40 else "#ef5350"
+
     st.markdown(
         f'<div style="background:{bc}11; border-left:3px solid {bc}; border-radius:6px; '
-        f'padding:8px 16px; margin:6px 0 4px 0; display:flex; align-items:center; gap:14px;">'
+        f'padding:8px 16px; margin:6px 0 4px 0; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">'
         f'<span style="font-size:11px; color:#888; text-transform:uppercase; '
         f'letter-spacing:1px; white-space:nowrap;">🧠 Brain Prediction</span>'
-        f'<span style="font-size:15px; font-weight:700; color:{bc};">'
-        f'{brain.prediction}</span>'
-        f'<span style="font-size:11px; color:#666; margin-left:auto;">vs actual: '
-        f'<span style="color:{color};">{label}</span></span></div>',
+        f'<span style="font-size:15px; font-weight:700; color:{bc};">{brain.prediction}</span>'
+        f'<span style="font-size:11px; color:#666;">vs actual: '
+        f'<span style="color:{color};">{label}</span></span>'
+        f'<span style="font-size:11px; font-weight:700; color:{_counter_col}; '
+        f'margin-left:auto; background:{_counter_col}22; padding:2px 8px; border-radius:4px; '
+        f'border:1px solid {_counter_col}55;">{_counter_str}</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Flash notification when brain is newly correct / newly wrong ──────────
+    if _brain_newly_logged:
+        if _brain_correct_now:
+            st.markdown(
+                f'<div style="background:#4caf5022; border:1px solid #4caf50; border-radius:6px; '
+                f'padding:8px 16px; margin:4px 0; font-size:13px; font-weight:700; color:#4caf50;">'
+                f'✅ Brain Correct! Predicted <em>{brain.prediction}</em> — matches <em>{label}</em>. '
+                f'Running accuracy: {_b_corr}/{_b_total} ({_b_rate:.0f}%)</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="background:#ffa72622; border:1px solid #ffa726; border-radius:6px; '
+                f'padding:8px 16px; margin:4px 0; font-size:13px; color:#ffa726;">'
+                f'🔄 Brain predicted <em>{brain.prediction}</em> — actual was <em>{label}</em>. '
+                f'Data logged for learning. Running: {_b_corr}/{_b_total} ({_b_rate:.0f}%)</div>',
+                unsafe_allow_html=True,
+            )
 
     # ── Persist snapshot for Live Pulse header + Log Entry ────────────────────
     st.session_state.last_analysis_state = {
