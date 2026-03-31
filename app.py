@@ -15,6 +15,15 @@ from collections import deque
 
 STATE_FILE   = "trade_state.json"
 TRACKER_FILE = "accuracy_tracker.csv"
+WEIGHTS_FILE = "brain_weights.json"   # adaptive per-structure multipliers
+
+# ── Structures the Brain tracks — maps display keyword → weight key ────────────
+_BRAIN_WEIGHT_KEYS = [
+    "trend_bull", "trend_bear", "double_dist",
+    "non_trend",  "normal",     "neutral",
+    "ntrl_extreme", "nrml_variation",
+]
+_RECALIBRATE_EVERY = 10   # re-learn every N new comparison rows
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
 
@@ -429,11 +438,130 @@ def log_accuracy_entry(symbol, predicted, actual, compare_key="",
                     round(entry_price, 4), round(exit_price, 4), round(mfe, 4),
                     compare_key])
 
+    # ── Adaptive learning: recalibrate every N entries ────────────────────────
+    try:
+        _n_rows = sum(1 for _ in open(TRACKER_FILE)) - 1  # subtract header
+        if _n_rows > 0 and _n_rows % _RECALIBRATE_EVERY == 0:
+            recalibrate_brain_weights()
+    except Exception:
+        pass
+
 
 def _strip_emoji(s):
     """Rough emoji stripper for fuzzy structure matching."""
     import re
     return re.sub(r"[^\w\s/()]", "", str(s)).strip().lower()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADAPTIVE BRAIN LEARNING — per-structure accuracy weights
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _label_to_weight_key(label: str) -> str:
+    """Map a raw structure label to one of the canonical weight keys."""
+    s = label.lower()
+    if "bear" in s or "down" in s:          return "trend_bear"
+    if "trend" in s:                         return "trend_bull"
+    if "double" in s or "dbl" in s:         return "double_dist"
+    if "non" in s:                           return "non_trend"
+    if "variation" in s or "var" in s:       return "nrml_variation"
+    if "extreme" in s:                       return "ntrl_extreme"
+    if "neutral" in s:                       return "neutral"
+    if "normal" in s or "balance" in s:      return "normal"
+    return "normal"   # safe default
+
+
+def load_brain_weights() -> dict:
+    """Load adaptive calibration weights from disk (defaults to 1.0 for all)."""
+    defaults = {k: 1.0 for k in _BRAIN_WEIGHT_KEYS}
+    if not os.path.exists(WEIGHTS_FILE):
+        return defaults
+    try:
+        import json
+        with open(WEIGHTS_FILE) as f:
+            stored = json.load(f)
+        # Merge: keep stored values, fill any missing keys with 1.0
+        return {k: float(stored.get(k, 1.0)) for k in _BRAIN_WEIGHT_KEYS}
+    except Exception:
+        return defaults
+
+
+def _save_brain_weights(weights: dict) -> None:
+    import json
+    with open(WEIGHTS_FILE, "w") as f:
+        json.dump({k: round(float(v), 4) for k, v in weights.items()}, f, indent=2)
+
+
+def recalibrate_brain_weights() -> dict:
+    """Read the accuracy tracker, compute per-structure accuracy, and update weights.
+
+    Learning rule (smoothed exponential moving average):
+      target = 1.5 if acc ≥ 70% | 1.0 if 50-70% | 0.75 if 30-50% | 0.5 if < 30%
+      new_weight = old_weight × 0.70  +  target × 0.30   (30% learning rate)
+
+    Structures with fewer than 5 samples are left unchanged (avoid overfitting).
+    Returns the updated weights dict.
+    """
+    weights = load_brain_weights()
+    if not os.path.exists(TRACKER_FILE):
+        return weights
+    try:
+        df = pd.read_csv(TRACKER_FILE)
+        if df.empty or "predicted" not in df.columns or "correct" not in df.columns:
+            return weights
+
+        # Group by predicted structure
+        for raw_label, grp in df.groupby("predicted"):
+            if len(grp) < 5:
+                continue   # too few samples — skip
+            acc = (grp["correct"] == "✅").sum() / len(grp)
+            wk  = _label_to_weight_key(str(raw_label))
+
+            # Target weight based on accuracy band
+            if acc >= 0.70:   target = 1.50
+            elif acc >= 0.50: target = 1.00
+            elif acc >= 0.30: target = 0.75
+            else:             target = 0.50
+
+            # Smooth update (EMA-style, 30% learning rate)
+            old = weights.get(wk, 1.0)
+            weights[wk] = round(old * 0.70 + target * 0.30, 4)
+
+        _save_brain_weights(weights)
+    except Exception:
+        pass
+    return weights
+
+
+def brain_weights_summary() -> list[dict]:
+    """Return a list of dicts for displaying the learned weight table."""
+    weights  = load_brain_weights()
+    if not os.path.exists(TRACKER_FILE):
+        return []
+    try:
+        df = pd.read_csv(TRACKER_FILE)
+        if df.empty or "predicted" not in df.columns:
+            return []
+        rows = []
+        for raw_label, grp in df.groupby("predicted"):
+            wk   = _label_to_weight_key(str(raw_label))
+            n    = len(grp)
+            acc  = (grp["correct"] == "✅").sum() / n if n > 0 else 0
+            w    = weights.get(wk, 1.0)
+            rows.append({
+                "Structure":  raw_label,
+                "Samples":    n,
+                "Accuracy":   round(acc * 100, 1),
+                "Multiplier": w,
+                "Status": ("✅ Trusted" if w >= 1.3 else
+                           "🟢 Good"    if w >= 1.0 else
+                           "🟡 Reduced" if w >= 0.7 else
+                           "🔴 Low Confidence"),
+            })
+        rows.sort(key=lambda r: r["Multiplier"], reverse=True)
+        return rows
+    except Exception:
+        return []
 
 
 # ── Position state persistence ────────────────────────────────────────────────
@@ -754,6 +882,25 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
                         if (ib_high_hit ^ ib_low_hit) else 4.0,
         "Dbl Dist":     60.0 if has_dd else 3.0,
     }
+
+    # ── Apply adaptive learned weights ─────────────────────────────────────────
+    # Maps probability-engine keys → canonical weight keys
+    _score_to_wkey = {
+        "Non-Trend":    "non_trend",
+        "Normal":       "normal",
+        "Trend":        "trend_bull",
+        "Ntrl Extreme": "ntrl_extreme",
+        "Neutral":      "neutral",
+        "Nrml Var":     "nrml_variation",
+        "Dbl Dist":     "double_dist",
+    }
+    try:
+        _w = load_brain_weights()
+        scores = {k: v * _w.get(_score_to_wkey.get(k, "normal"), 1.0)
+                  for k, v in scores.items()}
+    except Exception:
+        pass   # weights unavailable — use raw scores
+
     total = sum(scores.values())
     return {k: round(v / total * 100, 1) for k, v in scores.items()}
 
@@ -2847,7 +2994,76 @@ def render_tracker_tab():
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SECTION 3 — Full history table
+    # SECTION 3 — Adaptive Learning Status
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### 🔬 Adaptive Learning Status")
+    st.caption(
+        f"Brain recalibrates its probability weights every {_RECALIBRATE_EVERY} comparisons. "
+        f"Structures with ≥5 samples are eligible. Multiplier > 1.0 = trusted; < 1.0 = confidence reduced."
+    )
+
+    _ws_rows = brain_weights_summary()
+    _raw_w   = load_brain_weights()
+
+    if not _ws_rows:
+        st.info(f"Learning begins once at least 5 comparisons are logged for any structure. "
+                f"Full recalibration fires every {_RECALIBRATE_EVERY} entries.")
+    else:
+        # ── Weight bar chart ──────────────────────────────────────────────────
+        _wdf = pd.DataFrame(_ws_rows)
+        _bar_colors = [
+            "#4caf50" if m >= 1.3 else "#26a69a" if m >= 1.0 else
+            "#ffa726" if m >= 0.7 else "#ef5350"
+            for m in _wdf["Multiplier"]
+        ]
+        fig_w = go.Figure(go.Bar(
+            x=_wdf["Multiplier"],
+            y=_wdf["Structure"].apply(_clean_structure_label),
+            orientation="h",
+            marker_color=_bar_colors,
+            text=[f"  {m:.2f}×  ({a:.0f}% acc / {n} samples)"
+                  for m, a, n in zip(_wdf["Multiplier"], _wdf["Accuracy"], _wdf["Samples"])],
+            textposition="outside",
+            cliponaxis=False,
+        ))
+        fig_w.add_vline(x=1.0, line_dash="dash", line_color="#5c6bc0",
+                        annotation_text="Baseline", annotation_position="top")
+        fig_w.update_layout(
+            paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+            font=dict(color="#e0e0e0"),
+            height=max(220, len(_wdf) * 44 + 60),
+            xaxis=dict(range=[0.0, 1.8], gridcolor="#2a2a4a",
+                       title="Probability Multiplier"),
+            yaxis=dict(gridcolor="#2a2a4a"),
+            margin=dict(l=10, r=120, t=20, b=40),
+        )
+        st.plotly_chart(fig_w, use_container_width=True)
+
+        # ── Summary table ──────────────────────────────────────────────────────
+        _wdf_disp = _wdf[["Structure", "Samples", "Accuracy", "Multiplier", "Status"]].copy()
+        _wdf_disp["Accuracy"] = _wdf_disp["Accuracy"].apply(lambda x: f"{x:.1f}%")
+        _wdf_disp["Multiplier"] = _wdf_disp["Multiplier"].apply(lambda x: f"{x:.3f}×")
+        st.dataframe(_wdf_disp, use_container_width=True, hide_index=True)
+
+        # ── Next recalibration countdown ──────────────────────────────────────
+        _current_n = len(df) if not df.empty else 0
+        _next_recal = _RECALIBRATE_EVERY - (_current_n % _RECALIBRATE_EVERY)
+        if _next_recal == _RECALIBRATE_EVERY:
+            st.success(f"✅ Weights just recalibrated at {_current_n} entries.")
+        else:
+            st.info(f"🔄 Next recalibration in **{_next_recal}** more {"entry" if _next_recal == 1 else "entries"} "
+                    f"({_current_n} logged so far).")
+
+        # ── Manual recalibrate button ─────────────────────────────────────────
+        if st.button("⚡ Recalibrate Now", help="Force immediate weight update from all logged data"):
+            _new_w = recalibrate_brain_weights()
+            st.success("Weights updated! Brain probabilities will use the new calibration on next analysis.")
+            st.rerun()
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 4 — Full history table
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown("### 📋 Full History")
     display_cols = ["timestamp", "symbol", "predicted", "actual", "correct",
