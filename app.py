@@ -90,11 +90,12 @@ for _k, _v in _DEFAULTS.items():
         st.session_state[_k] = _v
 
 # ── Restore today's brain accuracy counters from CSV on first load ─────────────
-# This makes the session badge survive page reloads while keeping the counter
-# scoped to today (so every new trading day starts fresh automatically).
+# Uses load_accuracy_tracker() so the CSV migration runs first, ensuring
+# pandas always sees a clean, uniform column layout.
 if st.session_state.brain_session_total == 0 and os.path.exists(TRACKER_FILE):
     try:
-        _restore_df = pd.read_csv(TRACKER_FILE)
+        _migrate_tracker_csv()   # fix column mismatch before reading
+        _restore_df = pd.read_csv(TRACKER_FILE, encoding="utf-8")
         if "timestamp" in _restore_df.columns and not _restore_df.empty:
             _today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
             _today_rows = _restore_df[
@@ -102,14 +103,15 @@ if st.session_state.brain_session_total == 0 and os.path.exists(TRACKER_FILE):
             ]
             if not _today_rows.empty and "correct" in _today_rows.columns:
                 _r_total   = len(_today_rows)
-                _r_correct = (_today_rows["correct"] == "✅").sum()
+                _r_correct = int((_today_rows["correct"] == "✅").sum())
                 st.session_state.brain_session_total   = int(_r_total)
-                st.session_state.brain_session_correct = int(_r_correct)
+                st.session_state.brain_session_correct = _r_correct
                 # Restore last compare_key so we don't re-log on first run
                 if "compare_key" in _today_rows.columns:
-                    _last_key = _today_rows["compare_key"].dropna().iloc[-1] \
-                                if not _today_rows["compare_key"].dropna().empty else ""
-                    st.session_state.brain_last_compared = str(_last_key)
+                    _non_empty = _today_rows["compare_key"].dropna()
+                    _non_empty = _non_empty[_non_empty.astype(str).str.strip() != ""]
+                    if not _non_empty.empty:
+                        st.session_state.brain_last_compared = str(_non_empty.iloc[-1])
     except Exception:
         pass  # safe fallback — counters stay at 0
 
@@ -403,20 +405,76 @@ class MarketBrain:
 
 # ── Accuracy tracker persistence ──────────────────────────────────────────────
 
+def _migrate_tracker_csv():
+    """One-time fix: rebuild the CSV so every row has the same columns.
+
+    The file may have an 8-column header (pre-compare_key) with some rows
+    that have 9 values — pandas chokes on this.  We read line-by-line with
+    csv.reader (which never errors on column count mismatches), normalise
+    every row to the full column set, then rewrite the file cleanly.
+    """
+    if not os.path.exists(TRACKER_FILE):
+        return
+    full_cols = ["timestamp", "symbol", "predicted", "actual", "correct",
+                 "entry_price", "exit_price", "mfe", "compare_key"]
+    try:
+        rows = []
+        with open(TRACKER_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            raw_header = next(reader, None)
+            if raw_header is None:
+                return
+            # Add compare_key to old header if missing
+            if "compare_key" not in raw_header:
+                header = raw_header + ["compare_key"]
+            else:
+                header = raw_header
+            for row in reader:
+                # Pad short rows, truncate long rows to header length
+                while len(row) < len(header):
+                    row.append("")
+                rows.append(row[:len(header)])
+
+        # Re-map any missing full_cols
+        h_idx = {c: i for i, c in enumerate(header)}
+        out_rows = []
+        for row in rows:
+            out = [row[h_idx[c]] if c in h_idx else "" for c in full_cols]
+            out_rows.append(out)
+
+        with open(TRACKER_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(full_cols)
+            writer.writerows(out_rows)
+    except Exception:
+        pass   # leave file untouched on any error
+
+
 def load_accuracy_tracker():
     """Return a DataFrame from accuracy_tracker.csv (or empty if none)."""
     cols = ["timestamp", "symbol", "predicted", "actual", "correct",
             "entry_price", "exit_price", "mfe", "compare_key"]
     if not os.path.exists(TRACKER_FILE):
         return pd.DataFrame(columns=cols)
+    # Ensure the file has a consistent column structure before pandas reads it
+    _migrate_tracker_csv()
     try:
-        df = pd.read_csv(TRACKER_FILE)
+        df = pd.read_csv(TRACKER_FILE, encoding="utf-8")
         for c in cols:
             if c not in df.columns:
                 df[c] = ""
         return df
     except Exception:
-        return pd.DataFrame(columns=cols)
+        # Last-resort: row-by-row manual parse
+        try:
+            rows = []
+            with open(TRACKER_FILE, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    rows.append({c: row.get(c, "") for c in cols})
+            return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
+        except Exception:
+            return pd.DataFrame(columns=cols)
 
 
 def log_accuracy_entry(symbol, predicted, actual, compare_key="",
