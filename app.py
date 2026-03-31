@@ -8,7 +8,13 @@ import pytz
 import threading
 import queue
 import time
+import json
+import csv
+import os
 from collections import deque
+
+STATE_FILE   = "trade_state.json"
+TRACKER_FILE = "accuracy_tracker.csv"
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
 
@@ -42,6 +48,20 @@ _DEFAULTS = {
     "last_analysis_state": None,
     # Trade journal active tab state
     "active_tab": 0,
+    # Position tracking
+    "position_in":          False,
+    "position_avg_entry":   0.0,
+    "position_peak_price":  0.0,
+    "position_ticker":      "",
+    "position_shares":      0,
+    "position_structure":   "",
+    # MarketBrain — stores the live predicted structure between reruns
+    "brain_predicted":      None,
+    "brain_ib_high":        0.0,
+    "brain_ib_low":         float("inf"),
+    "brain_ib_set":         False,
+    "brain_high_touched":   False,
+    "brain_low_touched":    False,
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -220,6 +240,222 @@ def compute_atr(df, period=14):
         (df["low"]  - df["close"].shift(1)).abs(),
     ], axis=1).max(axis=1)
     return max(0.01, float(tr.rolling(period, min_periods=1).mean().iloc[-1]))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MARKET BRAIN  — real-time IB tracker + structure predictor
+# ══════════════════════════════════════════════════════════════════════════════
+
+class MarketBrain:
+    """Runs alongside classify_day_structure to predict structure mid-session.
+
+    Call update(df, rvol) on each refresh; read `.prediction` for the live call.
+    After the actual structure is classified, call log_accuracy() to record
+    Predicted vs Actual in accuracy_tracker.csv.
+    """
+
+    _STRUCTURE_COLORS = {
+        "Trend Day":            "#ff9800",
+        "Double Distribution":  "#00bcd4",
+        "Non-Trend":            "#78909c",
+        "Normal":               "#66bb6a",
+        "Normal Variation":     "#aed581",
+        "Neutral":              "#80cbc4",
+        "Neutral Extreme":      "#7e57c2",
+        "Analyzing IB…":        "#888888",
+    }
+
+    def __init__(self):
+        self.ib_high        = 0.0
+        self.ib_low         = float("inf")
+        self.ib_set         = False
+        self.high_touched   = False
+        self.low_touched    = False
+        self.prediction     = "Analyzing IB…"
+
+    # ── Restore from session state so we survive Streamlit reruns ──────────────
+    def load_from_session(self):
+        self.ib_high      = st.session_state.brain_ib_high
+        self.ib_low       = st.session_state.brain_ib_low
+        self.ib_set       = st.session_state.brain_ib_set
+        self.high_touched = st.session_state.brain_high_touched
+        self.low_touched  = st.session_state.brain_low_touched
+        self.prediction   = st.session_state.brain_predicted or "Analyzing IB…"
+
+    def save_to_session(self):
+        st.session_state.brain_ib_high      = self.ib_high
+        st.session_state.brain_ib_low       = self.ib_low
+        st.session_state.brain_ib_set       = self.ib_set
+        st.session_state.brain_high_touched = self.high_touched
+        st.session_state.brain_low_touched  = self.low_touched
+        st.session_state.brain_predicted    = self.prediction
+
+    # ── Main update call ───────────────────────────────────────────────────────
+    def update(self, df, rvol=None):
+        """Ingest fresh bar data, update IB, and re-predict."""
+        if df.empty:
+            return
+        rvol = rvol or 0.0
+        ib_end = df.index[0].replace(hour=10, minute=30, second=0)
+
+        # Track IB extremes minute-by-minute during first hour
+        ib_df = df[df.index <= ib_end]
+        if not ib_df.empty:
+            self.ib_high = max(self.ib_high, float(ib_df["high"].max()))
+            self.ib_low  = min(self.ib_low,  float(ib_df["low"].min()))
+
+        last_time = df.index[-1].time()
+        if last_time > dtime(10, 30):
+            self.ib_set = True
+
+        if self.ib_set and self.ib_high > 0 and self.ib_low < float("inf"):
+            current_price = float(df["close"].iloc[-1])
+            day_high      = float(df["high"].max())
+            day_low       = float(df["low"].min())
+            ib_range      = self.ib_high - self.ib_low
+
+            if day_high >= self.ib_high:
+                self.high_touched = True
+            if day_low <= self.ib_low:
+                self.low_touched = True
+
+            # ── Priority order mirrors classify_day_structure ──────────────────
+            # 1. Trend Day: early aggressive break + high RVOL
+            if current_price > self.ib_high and rvol > 2.0:
+                self.prediction = "Trend Day"
+            elif current_price < self.ib_low and rvol > 2.0:
+                self.prediction = "Trend Day"
+
+            # 2. Non-Trend: very narrow IB + low RVOL
+            elif ib_range < 0.005 * self.ib_high and rvol < 1.0:
+                self.prediction = "Non-Trend"
+
+            # 3. Neutral Extreme: both sides hit
+            elif self.high_touched and self.low_touched:
+                total_range = day_high - day_low
+                extreme_band = 0.10 * total_range if total_range > 0 else 0
+                if current_price >= day_high - extreme_band or current_price <= day_low + extreme_band:
+                    self.prediction = "Neutral Extreme"
+                else:
+                    self.prediction = "Neutral"
+
+            # 4. Normal Variation: one side breached only
+            elif self.high_touched or self.low_touched:
+                self.prediction = "Normal Variation"
+
+            # 5. Normal: price stayed inside IB
+            else:
+                self.prediction = "Normal"
+        else:
+            self.prediction = "Analyzing IB…"
+
+        self.save_to_session()
+
+    def color(self):
+        return self._STRUCTURE_COLORS.get(self.prediction, "#888")
+
+
+# ── Accuracy tracker persistence ──────────────────────────────────────────────
+
+def load_accuracy_tracker():
+    """Return a DataFrame from accuracy_tracker.csv (or empty if none)."""
+    cols = ["timestamp", "symbol", "predicted", "actual", "correct",
+            "entry_price", "exit_price", "mfe"]
+    if not os.path.exists(TRACKER_FILE):
+        return pd.DataFrame(columns=cols)
+    try:
+        df = pd.read_csv(TRACKER_FILE)
+        for c in cols:
+            if c not in df.columns:
+                df[c] = ""
+        return df
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+
+def log_accuracy_entry(symbol, predicted, actual, entry_price=0.0,
+                       exit_price=0.0, mfe=0.0):
+    """Append one Predicted vs Actual row to accuracy_tracker.csv."""
+    correct = "✅" if _strip_emoji(predicted) in _strip_emoji(actual) or \
+                     _strip_emoji(actual) in _strip_emoji(predicted) else "❌"
+    file_exists = os.path.isfile(TRACKER_FILE)
+    with open(TRACKER_FILE, "a", newline="") as f:
+        w = csv.writer(f)
+        if not file_exists:
+            w.writerow(["timestamp", "symbol", "predicted", "actual", "correct",
+                        "entry_price", "exit_price", "mfe"])
+        w.writerow([datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
+                    symbol, predicted, actual, correct,
+                    round(entry_price, 4), round(exit_price, 4), round(mfe, 4)])
+
+
+def _strip_emoji(s):
+    """Rough emoji stripper for fuzzy structure matching."""
+    import re
+    return re.sub(r"[^\w\s/()]", "", str(s)).strip().lower()
+
+
+# ── Position state persistence ────────────────────────────────────────────────
+
+def load_position_state():
+    """Load persisted position from trade_state.json into session state."""
+    if not os.path.exists(STATE_FILE):
+        return
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+        for k in ("position_in", "position_avg_entry", "position_peak_price",
+                  "position_ticker", "position_shares", "position_structure"):
+            if k in data:
+                st.session_state[k] = data[k]
+    except Exception:
+        pass
+
+
+def save_position_state():
+    """Persist current position session state to trade_state.json."""
+    data = {k: st.session_state.get(k)
+            for k in ("position_in", "position_avg_entry", "position_peak_price",
+                      "position_ticker", "position_shares", "position_structure")}
+    with open(STATE_FILE, "w") as f:
+        json.dump(data, f)
+
+
+def enter_position(ticker, avg_entry, shares, structure):
+    st.session_state.position_in        = True
+    st.session_state.position_avg_entry = float(avg_entry)
+    st.session_state.position_peak_price = float(avg_entry)
+    st.session_state.position_ticker    = ticker
+    st.session_state.position_shares    = int(shares)
+    st.session_state.position_structure = structure
+    save_position_state()
+
+
+def exit_position(exit_price, actual_structure=""):
+    """Record the exit, log to accuracy tracker, clear position."""
+    entry   = st.session_state.position_avg_entry
+    mfe     = st.session_state.position_peak_price
+    sym     = st.session_state.position_ticker
+    pred    = st.session_state.position_structure
+    shares  = st.session_state.position_shares
+    if entry > 0:
+        log_accuracy_entry(sym, pred, actual_structure or pred,
+                           entry_price=entry, exit_price=float(exit_price), mfe=mfe)
+    st.session_state.position_in        = False
+    st.session_state.position_avg_entry = 0.0
+    st.session_state.position_peak_price = 0.0
+    st.session_state.position_ticker    = ""
+    st.session_state.position_shares    = 0
+    st.session_state.position_structure = ""
+    save_position_state()
+    pnl = (float(exit_price) - entry) * shares if shares > 0 else 0
+    return pnl
+
+
+# Load persisted position on startup (only runs once per session via default init)
+if not st.session_state.get("_position_loaded"):
+    load_position_state()
+    st.session_state["_position_loaded"] = True
 
 
 def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
@@ -1231,7 +1467,7 @@ def render_journal_tab():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
-                target_zones=None):
+                target_zones=None, position=None):
     fig = make_subplots(rows=1, cols=2, column_widths=[0.75, 0.25],
                         shared_yaxes=True, horizontal_spacing=0.01)
     fig.add_trace(go.Candlestick(
@@ -1294,6 +1530,53 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
             colors.append("#5c6bc0")
     fig.add_trace(go.Bar(x=vap, y=bin_centers, orientation="h",
         name="Volume Profile", marker_color=colors, opacity=0.85), row=1, col=2)
+
+    # ── Position overlay ──────────────────────────────────────────────────────
+    if position and position.get("in"):
+        avg_entry  = position["avg_entry"]
+        peak_price = position["peak_price"]
+        price_now  = float(df["close"].iloc[-1])
+        shares     = position.get("shares", 0)
+        pnl_pct    = (price_now - avg_entry) / avg_entry * 100 if avg_entry > 0 else 0
+        pnl_dol    = (price_now - avg_entry) * shares if shares > 0 else 0
+        pnl_color  = "#4caf50" if pnl_pct >= 0 else "#ef5350"
+
+        # Entry line — solid white
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[avg_entry, avg_entry], mode="lines+text",
+            name=f"Entry ${avg_entry:.2f}",
+            line=dict(color="#ffffff", width=2.0, dash="solid"),
+            text=["", f" 📍 ENTRY ${avg_entry:.2f}"],
+            textposition="top right",
+            textfont=dict(color="#ffffff", size=12),
+        ), row=1, col=1)
+
+        # MFE (peak) line — cyan dashed
+        if peak_price > avg_entry:
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[peak_price, peak_price], mode="lines+text",
+                name=f"MFE ${peak_price:.2f}",
+                line=dict(color="#00bcd4", width=1.5, dash="dash"),
+                text=["", f" ⬆ MFE ${peak_price:.2f}"],
+                textposition="top right",
+                textfont=dict(color="#00bcd4", size=11),
+            ), row=1, col=1)
+
+        # P&L annotation badge at the right edge
+        pnl_txt = (f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%"
+                   f"  (${pnl_dol:+.0f})" if shares > 0 else
+                   f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%")
+        fig.add_annotation(
+            xref="paper", yref="y",
+            x=0.74, y=avg_entry,
+            text=f"<b>{pnl_txt}</b>",
+            showarrow=False,
+            font=dict(color=pnl_color, size=13),
+            bgcolor=pnl_color + "22",
+            bordercolor=pnl_color,
+            borderwidth=1,
+            borderpad=4,
+        )
 
     fig.update_layout(
         title=dict(text=title, font=dict(size=17, color="white")),
@@ -1531,6 +1814,13 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     audio_enabled = st.session_state.get("audio_alerts_enabled", True)
     check_tcs_alerts(tcs, audio_enabled)
 
+    # ── MarketBrain — real-time structure prediction ───────────────────────────
+    brain = MarketBrain()
+    brain.load_from_session()
+    rvol_pre = compute_rvol(df, intraday_curve=intraday_curve, avg_daily_vol=avg_daily_vol)
+    brain.update(df, rvol=rvol_pre)
+    st.session_state.brain_predicted = brain.prediction
+
     # ── Time context ───────────────────────────────────────────────────────────
     # elapsed_bars = minutes of session captured so far (used for time-seg RVOL + Fuel Check)
     elapsed_bars = len(df)
@@ -1593,6 +1883,20 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                             insight=insight)
     render_model_prediction(pred_outcome, pred_reasoning)
 
+    # ── MarketBrain prediction widget ─────────────────────────────────────────
+    bc = brain.color()
+    st.markdown(
+        f'<div style="background:{bc}11; border-left:3px solid {bc}; border-radius:6px; '
+        f'padding:8px 16px; margin:6px 0 4px 0; display:flex; align-items:center; gap:14px;">'
+        f'<span style="font-size:11px; color:#888; text-transform:uppercase; '
+        f'letter-spacing:1px; white-space:nowrap;">🧠 Brain Prediction</span>'
+        f'<span style="font-size:15px; font-weight:700; color:{bc};">'
+        f'{brain.prediction}</span>'
+        f'<span style="font-size:11px; color:#666; margin-left:auto;">vs actual: '
+        f'<span style="color:{color};">{label}</span></span></div>',
+        unsafe_allow_html=True,
+    )
+
     # ── Persist snapshot for Live Pulse header + Log Entry ────────────────────
     st.session_state.last_analysis_state = {
         "ticker":    ticker,
@@ -1606,7 +1910,14 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "is_runner": is_runner,
         "label_color": color,
         "vol_velocity_str": "",
+        "brain_predicted": brain.prediction,
     }
+
+    # ── Update peak price for open position ───────────────────────────────────
+    if st.session_state.position_in and st.session_state.position_ticker == ticker:
+        if price_now > st.session_state.position_peak_price:
+            st.session_state.position_peak_price = price_now
+            save_position_state()
 
     # ── Target zone alerts + sidebar "Distance to Target" ─────────────────────
     check_target_alerts(price_now, target_zones, audio_enabled)
@@ -1627,8 +1938,14 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                     unsafe_allow_html=True,
                 )
 
+    pos_state = {
+        "in":         st.session_state.position_in,
+        "avg_entry":  st.session_state.position_avg_entry,
+        "peak_price": st.session_state.position_peak_price,
+        "shares":     st.session_state.position_shares,
+    }
     fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title,
-                      target_zones=target_zones)
+                      target_zones=target_zones, position=pos_state)
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("📋 Raw Bar Data"):
@@ -1845,6 +2162,62 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # ── Position Management ────────────────────────────────────────────────────
+    st.header("📍 Position")
+    _snap   = st.session_state.get("last_analysis_state") or {}
+    _p_in   = st.session_state.position_in
+    _p_tkr  = st.session_state.position_ticker
+    _p_ent  = st.session_state.position_avg_entry
+    _p_mfe  = st.session_state.position_peak_price
+    _p_shr  = st.session_state.position_shares
+    _p_strc = st.session_state.position_structure
+    _cur    = _snap.get("price", 0.0)
+
+    if _p_in:
+        pnl_pct = (_cur - _p_ent) / _p_ent * 100 if _p_ent > 0 else 0
+        pnl_dol = (_cur - _p_ent) * _p_shr if _p_shr > 0 else 0
+        pnl_col = "#4caf50" if pnl_pct >= 0 else "#ef5350"
+        st.markdown(
+            f'<div style="background:{pnl_col}11; border:1px solid {pnl_col}55; '
+            f'border-radius:6px; padding:10px 14px; margin-bottom:8px;">'
+            f'<div style="font-size:11px; color:#888; margin-bottom:4px;">OPEN — {_p_tkr} × {_p_shr} sh</div>'
+            f'<div style="font-size:13px; color:#ccc;">Entry: <b>${_p_ent:.2f}</b> &nbsp;|&nbsp; '
+            f'MFE: <b>${_p_mfe:.2f}</b></div>'
+            f'<div style="font-size:20px; font-weight:800; color:{pnl_col}; margin-top:4px;">'
+            f'{"▲" if pnl_pct>=0 else "▼"} {abs(pnl_pct):.2f}%'
+            f'{"  ($" + f"{pnl_dol:+.0f}" + ")" if _p_shr > 0 else ""}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        exit_px = st.number_input("Exit Price", value=_cur if _cur else _p_ent,
+                                   step=0.01, format="%.2f", key="pos_exit_px")
+        exit_struct = st.text_input("Actual Structure (opt.)", value="", key="pos_exit_struct",
+                                    placeholder="e.g. Trend Day")
+        if st.button("🔴 Exit Position", use_container_width=True, key="pos_exit_btn"):
+            _realized = exit_position(exit_px, actual_structure=exit_struct or _p_strc)
+            st.success(f"✅ Exited — Realized P&L: ${_realized:+.2f}" if _p_shr > 0
+                       else "✅ Position closed.")
+            st.rerun()
+    else:
+        _default_tkr = _snap.get("ticker", "")
+        _default_strc = _snap.get("structure", "")
+        _default_price = _snap.get("price", 0.0)
+        e_tkr = st.text_input("Ticker", value=_default_tkr, key="pos_entry_tkr")
+        e_px  = st.number_input("Entry Price", value=float(_default_price) if _default_price else 0.0,
+                                 step=0.01, format="%.2f", key="pos_entry_px")
+        e_shr = st.number_input("Shares", value=100, step=1, min_value=1, key="pos_entry_shr")
+        e_strc = st.text_input("Structure at Entry", value=_default_strc, key="pos_entry_strc")
+        if st.button("🟢 Enter Position", use_container_width=True,
+                     key="pos_enter_btn", type="primary"):
+            if e_tkr and e_px > 0:
+                enter_position(e_tkr.upper(), e_px, e_shr, e_strc)
+                st.success(f"✅ Entered {e_tkr.upper()} × {e_shr} sh @ ${e_px:.2f}")
+                st.rerun()
+            else:
+                st.error("Enter a valid ticker and price.")
+
+    st.markdown("---")
+
     # ── Audio alert controls ───────────────────────────────────────────────────
     st.header("🔔 Alerts")
     audio_alerts_enabled = st.checkbox(
@@ -1974,7 +2347,89 @@ if _las:
             unsafe_allow_html=True
         )
 
-tab_chart, tab_scan, tab_journal = st.tabs(["📈 Main Chart", "🔍 Scanner", "📖 Journal"])
+def render_tracker_tab():
+    """Render the Accuracy Tracker tab — Predicted vs Actual structure history."""
+    st.markdown("## 🧠 MarketBrain — Accuracy Tracker")
+    st.caption("Tracks every Predicted vs Actual structure when you exit a position.")
+
+    df = load_accuracy_tracker()
+    if df.empty:
+        st.info("No accuracy data yet. Enter and exit a position to start recording predictions.")
+        return
+
+    # ── Summary stats ─────────────────────────────────────────────────────────
+    total    = len(df)
+    correct  = (df["correct"] == "✅").sum()
+    acc_rate = correct / total * 100 if total > 0 else 0
+    wrong    = total - correct
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Predictions", total)
+    c2.metric("Correct", f"{correct}  ({acc_rate:.0f}%)", delta=None)
+    c3.metric("Wrong",   wrong)
+    c4.metric("Accuracy Rate", f"{acc_rate:.1f}%")
+
+    # ── Accuracy by structure ─────────────────────────────────────────────────
+    if "predicted" in df.columns and "correct" in df.columns:
+        grouped = df.groupby("predicted").apply(
+            lambda g: pd.Series({
+                "total":   len(g),
+                "correct": (g["correct"] == "✅").sum(),
+                "acc":     (g["correct"] == "✅").sum() / len(g) * 100,
+            })
+        ).reset_index()
+        grouped = grouped.sort_values("acc", ascending=False)
+
+        st.markdown("### Accuracy by Structure")
+        bar_colors = [
+            "#4caf50" if a >= 60 else "#ffa726" if a >= 40 else "#ef5350"
+            for a in grouped["acc"]
+        ]
+        fig = go.Figure(go.Bar(
+            x=grouped["predicted"],
+            y=grouped["acc"].round(1),
+            marker_color=bar_colors,
+            text=[f"{a:.0f}%<br>({int(c)}/{int(t)})"
+                  for a, c, t in zip(grouped["acc"], grouped["correct"], grouped["total"])],
+            textposition="outside",
+        ))
+        fig.update_layout(
+            paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+            font=dict(color="#e0e0e0"), height=340,
+            yaxis=dict(range=[0, 110], gridcolor="#2a2a4a", title="Accuracy %"),
+            xaxis=dict(gridcolor="#2a2a4a"),
+            margin=dict(t=30, b=60, l=50, r=20),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Detailed history table ────────────────────────────────────────────────
+    st.markdown("### Full History")
+    display_cols = ["timestamp", "symbol", "predicted", "actual", "correct",
+                    "entry_price", "exit_price", "mfe"]
+    disp = df[[c for c in display_cols if c in df.columns]].copy()
+    disp = disp.sort_values("timestamp", ascending=False) if "timestamp" in disp.columns else disp
+
+    def _style_row(row):
+        color = "#4caf5022" if row.get("correct") == "✅" else "#ef535022"
+        return [f"background-color: {color}"] * len(row)
+
+    try:
+        styled = disp.style.apply(_style_row, axis=1)
+        st.dataframe(styled, use_container_width=True, height=340)
+    except Exception:
+        st.dataframe(disp, use_container_width=True, height=340)
+
+    # ── Download ──────────────────────────────────────────────────────────────
+    csv_str = df.to_csv(index=False)
+    st.download_button(
+        "⬇ Download Tracker CSV", data=csv_str,
+        file_name="accuracy_tracker.csv", mime="text/csv"
+    )
+
+
+tab_chart, tab_scan, tab_journal, tab_tracker = st.tabs(
+    ["📈 Main Chart", "🔍 Scanner", "📖 Journal", "🧠 Tracker"]
+)
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
 with tab_scan:
@@ -2297,6 +2752,10 @@ with tab_chart:
 # ── Journal tab ───────────────────────────────────────────────────────────────
 with tab_journal:
     render_journal_tab()
+
+# ── Tracker tab ───────────────────────────────────────────────────────────────
+with tab_tracker:
+    render_tracker_tab()
 
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:

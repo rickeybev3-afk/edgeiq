@@ -9,8 +9,13 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for small-cap stocks with advanced analysis engine.
 
 ### Features
+- **4-Tab Layout** — Main Chart | Scanner | Journal | 🧠 Tracker
 - Fetch 1-minute historical bars from Alpaca via `alpaca-py` (SIP / IEX feeds)
 - Live WebSocket stream mode via Alpaca `StockDataStream` — 2-second auto-refresh
+- **MarketBrain** — real-time IB tracker + structure predictor; compares Predicted vs Actual live on each analysis run; persists IB state across Streamlit reruns via session state; color-coded prediction badge shown below Model Prediction
+- **Position Management** (sidebar) — Enter/Exit buttons with entry price, shares, structure at entry; live P&L % and $ badge; MFE peak tracking per bar; persists to `trade_state.json`; auto-preloads last analysis ticker + price
+- **Position Chart Overlay** — solid white Entry line, cyan dashed MFE line, color-coded P&L annotation badge (all rendered on main candlestick chart when position is open)
+- **Accuracy Tracker** (`accuracy_tracker.csv`) — logs Predicted vs Actual + correct/wrong on each exit; 🧠 Tracker tab shows: total/correct/wrong metrics, accuracy % by structure bar chart, full history table with color-coded rows, CSV download
 - Initial Balance (IB High/Low: 9:30–10:30 EST) with dynamic live tracking
 - Volume Profile histogram (configurable bins), POC gold line, IB dashed lines
 - **7-Structure Classification** — priority-ordered:
