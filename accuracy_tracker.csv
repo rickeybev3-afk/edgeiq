@@ -29,3 +29,11 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-31 00:53:05,MNTS,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,MNTS_2026-03-31_4.6500_4.2200
 2026-03-31 00:54:23,ONCO,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,ONCO_2026-03-31_1.2900_1.2900
 2026-03-31 00:54:32,EONR,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,EONR_2026-03-31_1.0600_0.9631
+2026-03-31 00:59:36,CUPR,Neutral Extreme,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,CUPR_2026-03-31_0.3114_0.3114
+2026-03-31 01:00:28,ITRM,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ITRM_2026-03-31_0.0949_0.0642
+2026-03-31 01:01:33,ZNB,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,ZNB_2026-03-31_1.7500_1.2900
+2026-03-31 01:02:07,REI,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,REI_2026-03-31_1.6450_1.5700
+2026-03-31 01:02:15,ASNS,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ASNS_2026-03-31_0.3545_0.3445
+2026-03-31 01:02:58,GO,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GO_2026-03-31_7.0350_6.8800
+2026-03-31 01:03:06,KLTR,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,KLTR_2026-03-31_1.2650_1.2250
+2026-03-31 01:15:10,FCHL,Neutral,⚡ Double Distribution,❌,0.0,0.0,0.0,FCHL_2026-03-31_1.5300_1.3400

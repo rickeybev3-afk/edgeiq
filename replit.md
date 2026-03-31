@@ -19,14 +19,11 @@ A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for 
 - **Accuracy Tracker** (`accuracy_tracker.csv`) — logs Predicted vs Actual + correct/wrong on each exit; 🧠 Tracker tab shows: total/correct/wrong metrics, accuracy % by structure bar chart, full history table with color-coded rows, CSV download
 - Initial Balance (IB High/Low: 9:30–10:30 EST) with dynamic live tracking
 - Volume Profile histogram (configurable bins), POC gold line, IB dashed lines
-- **7-Structure Classification** — priority-ordered:
-  1. Double Distribution (two HVNs + LVN gap ≥ 15 cents)
-  2. Non-Trend (narrow IB < 20% of day range + anemic volume)
-  3. Normal (IB never violated)
-  4. Trend Day (IB violated within 2 hrs, price > 2× ATR from IB)
-  5. Neutral Extreme (both extremes hit, closing at day H/L)
-  6. Neutral (both extremes hit, price back inside IB)
-  7. Normal Variation (one side violated, new belly forming)
+- **7-Structure Classification** — strict 3-branch IB-interaction decision tree:
+  - **Branch A — No IB break**: Normal (wide IB, big players set range) or Non-Trend (narrow IB, low vol/interest)
+  - **Branch B — Both sides broken** (always Neutral family, NO fallthrough): Neutral Extreme (close top/bottom 20% of range) or Neutral (close anywhere else)
+  - **Branch C — One side only broken**: Trend Day (early violation + close at extreme + directional vol), Double Distribution (bimodal profile detected), or Normal Variation (moderate single-side break)
+  - KEY: Neutral vs Normal Variation are mutually exclusive by gate — both_hit → ONLY Neutral family; one_side → ONLY Trend/NrmVar/DblDist
 - **Key Insights box** — styled sub-panel with plain-language explanation under each structure label
 - **Structure Probability Meter** — 7 structures with percentage pills (updated scoring for all 7)
 - **Dynamic Target Zones** on chart (dotted lines + shaded bands):
@@ -63,6 +60,15 @@ A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for 
 - Ticker Symbol, Volume Profile Bins
 - Sector ETF (IWM, XBI, SMH, QQQ, SPY, XLF, XLE) for tailwind detection
 - Enable Audio Alerts + browser unlock button
+
+### Current State (session notes)
+- Brain `update()` rewritten with hard 3-branch gate (no_break / both_broken / one_side)
+- `classify_day_structure` rewritten same way — no fallthrough gap, both_touched always resolves to Neutral family
+- `compute_structure_probabilities` rewritten with same hard gates (scores floored at 2.0 for out-of-bucket structures — Neutral/Ntrl Extreme can NEVER score high on a one-side day, Normal Variation can NEVER score high on a both-hit day)
+- `has_double_dist` now passed from `_detect_double_distribution()` to `brain.update()` in both live flow (line ~2303) and batch runner (line ~3168)
+- High conviction threshold = 75% (`HICONS_THRESHOLD = 75.0`)
+- All tracking data reset clean: `accuracy_tracker.csv`, `high_conviction_log.csv` empty, `brain_weights.json` all 1.0
+- TODO next session: run batch backtest on 20+ tickers to rebuild training data with correct logic; consider tightening Trend Day threshold or adding RVOL floor
 
 ### Running
 ```bash
