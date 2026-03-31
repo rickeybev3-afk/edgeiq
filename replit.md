@@ -10,6 +10,7 @@ A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for 
 
 ### Features
 - **4-Tab Layout** — Main Chart | Scanner | Journal | 🧠 Tracker
+- **3-Mode Sidebar** — Historical | 🎬 Replay | 🔴 Live Stream
 - Fetch 1-minute historical bars from Alpaca via `alpaca-py` (SIP / IEX feeds)
 - Live WebSocket stream mode via Alpaca `StockDataStream` — 2-second auto-refresh
 - **MarketBrain** — real-time IB tracker + structure predictor; compares Predicted vs Actual live on each analysis run; persists IB state across Streamlit reruns via session state; color-coded prediction badge shown below Model Prediction

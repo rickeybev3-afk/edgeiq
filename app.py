@@ -62,6 +62,16 @@ _DEFAULTS = {
     "brain_ib_set":         False,
     "brain_high_touched":   False,
     "brain_low_touched":    False,
+    # Replay mode
+    "replay_bars":          None,   # full-day DataFrame (all bars)
+    "replay_bar_idx":       0,      # index of current visible bar (0-based)
+    "replay_playing":       False,  # auto-advance in progress
+    "replay_speed":         1,      # bars advanced per step
+    "replay_ticker":        "",
+    "replay_date":          None,
+    "replay_avg_vol":       None,
+    "replay_intraday_curve": None,
+    "replay_sector_bonus":  0.0,
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -1468,15 +1478,24 @@ def render_journal_tab():
 
 def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
                 target_zones=None, position=None):
+    # ── Convert df.index to ET time-label strings ────────────────────────────
+    def _et_label(ts):
+        try:
+            return pd.Timestamp(ts).tz_convert(EASTERN).strftime("%H:%M ET")
+        except Exception:
+            return str(ts)[-8:]
+
+    x_labels = [_et_label(ts) for ts in df.index]
+    x0, x1   = x_labels[0], x_labels[-1]
+
     fig = make_subplots(rows=1, cols=2, column_widths=[0.75, 0.25],
                         shared_yaxes=True, horizontal_spacing=0.01)
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+        x=x_labels, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
         name="Price", increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
         increasing_fillcolor="#26a69a", decreasing_fillcolor="#ef5350",
     ), row=1, col=1)
 
-    x0, x1 = df.index[0], df.index[-1]
     if ib_high is not None and ib_low is not None:
         fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_high, ib_high], mode="lines",
             name=f"IB High ({ib_high:.2f})",
@@ -2158,7 +2177,7 @@ with st.sidebar:
     secret_key = st.text_input("Secret Key", type="password", placeholder="Alpaca Secret Key")
 
     st.markdown("---")
-    mode = st.radio("Mode", ["📅 Historical", "🔴 Live Stream"], index=0)
+    mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)
 
     st.markdown("---")
     st.header("📈 Settings")
@@ -2172,7 +2191,7 @@ with st.sidebar:
         help="If this ETF is up > 1% on the day, TCS gets a +10 pt Sector Tailwind bonus."
     )
 
-    run_button = start_live = stop_live = scan_button = False
+    run_button = start_live = stop_live = scan_button = replay_load = False
     selected_date = date.today()
     data_feed = "sip"
     watchlist_raw = ""
@@ -2192,6 +2211,84 @@ with st.sidebar:
         data_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
                                   help="IEX = free, works on all accounts. SIP = full tape, requires a paid Alpaca data subscription.")
         run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
+
+    elif mode == "🎬 Replay":
+        today = date.today()
+        if today.weekday() < 5:
+            def_d = today
+        elif today.weekday() == 5:
+            def_d = today - timedelta(days=1)
+        else:
+            def_d = today - timedelta(days=2)
+        selected_date = st.date_input("Trading Date", value=def_d, max_value=today,
+                                       help="Pick a trading day to replay.", key="replay_date_input")
+        data_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
+                                  help="IEX = free. SIP = full tape, needs subscription.", key="replay_feed_sel")
+        replay_load = st.button("📥 Load Day for Replay", use_container_width=True, type="primary")
+
+        # ── Replay controls (shown once bars are loaded) ───────────────────────
+        if st.session_state.replay_bars is not None:
+            _rb      = st.session_state.replay_bars
+            _max_idx = len(_rb) - 1
+            _cur_idx = st.session_state.replay_bar_idx
+
+            # Current bar's ET time
+            _cur_ts  = _rb.index[_cur_idx]
+            _cur_et  = pd.Timestamp(_cur_ts).tz_convert(EASTERN)
+            _total_et = pd.Timestamp(_rb.index[_max_idx]).tz_convert(EASTERN)
+
+            st.markdown(
+                f'<div style="background:#16213e; border:1px solid #5c6bc0; border-radius:6px; '
+                f'padding:8px 14px; margin:6px 0; font-family:monospace; font-size:16px; '
+                f'color:#90caf9; text-align:center; letter-spacing:1px;">'
+                f'🕐 {_cur_et.strftime("%H:%M")} ET &nbsp;|&nbsp; '
+                f'Bar {_cur_idx + 1} / {_max_idx + 1}</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Bar slider
+            replay_bar_idx = st.slider(
+                "Bar (time)", min_value=0, max_value=_max_idx,
+                value=_cur_idx, step=1,
+                format="%d",
+                key="replay_slider",
+            )
+            if replay_bar_idx != _cur_idx:
+                st.session_state.replay_bar_idx = replay_bar_idx
+                st.session_state.replay_playing = False
+                st.rerun()
+
+            # Playback controls
+            _sp_label = {"Slow (1 bar/step)": 1, "Normal (2 bars/step)": 2,
+                         "Fast (5 bars/step)": 5, "Turbo (10 bars/step)": 10}
+            _sp_sel = st.selectbox("Speed", list(_sp_label.keys()), index=1,
+                                    key="replay_speed_sel")
+            st.session_state.replay_speed = _sp_label[_sp_sel]
+
+            rc1, rc2, rc3, rc4 = st.columns(4)
+            if rc1.button("⏮", help="Jump to start"):
+                st.session_state.replay_bar_idx = 0
+                st.session_state.replay_playing = False
+                st.rerun()
+            if rc2.button("◀", help="Step back"):
+                st.session_state.replay_bar_idx = max(0, _cur_idx - st.session_state.replay_speed)
+                st.session_state.replay_playing = False
+                st.rerun()
+            if rc3.button("▶" if not st.session_state.replay_playing else "⏸",
+                          help="Play / Pause"):
+                st.session_state.replay_playing = not st.session_state.replay_playing
+                st.rerun()
+            if rc4.button("▶▶", help="Step forward"):
+                st.session_state.replay_bar_idx = min(_max_idx, _cur_idx + st.session_state.replay_speed)
+                st.session_state.replay_playing = False
+                st.rerun()
+
+            if st.button("🗑 Clear / Load new day", use_container_width=True):
+                st.session_state.replay_bars    = None
+                st.session_state.replay_bar_idx = 0
+                st.session_state.replay_playing = False
+                st.rerun()
+
     else:
         live_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
                                   help="IEX works on all accounts. SIP needs a subscription.")
@@ -2693,6 +2790,113 @@ with tab_chart:
                 st.markdown("**📐 Initial Balance**")
                 st.markdown("9:30–10:30 EST High/Low — the key reference range for day structure.")
 
+    # ── Replay mode ────────────────────────────────────────────────────────────
+    elif mode == "🎬 Replay":
+        # ── Load full-day bars on demand ──────────────────────────────────────
+        if replay_load:
+            if not api_key or not secret_key:
+                st.error("Enter your Alpaca credentials in the sidebar.")
+            elif not ticker:
+                st.error("Enter a ticker symbol.")
+            elif selected_date.weekday() >= 5:
+                st.error("Selected date is a weekend. Pick a weekday.")
+            else:
+                with st.spinner(f"Loading full day for **{ticker}** on {selected_date} ({data_feed.upper()})..."):
+                    try:
+                        _rdf = fetch_bars(api_key, secret_key, ticker, selected_date, feed=data_feed)
+                        if _rdf.empty:
+                            st.error("No bars returned. Check the ticker/date/feed.")
+                        else:
+                            st.session_state.replay_bars    = _rdf
+                            st.session_state.replay_bar_idx = 0
+                            st.session_state.replay_playing = False
+                            st.session_state.replay_ticker  = ticker
+                            st.session_state.replay_date    = selected_date
+                            # Pre-fetch baselines for the replay session
+                            try:
+                                st.session_state.replay_avg_vol = fetch_avg_daily_volume(
+                                    api_key, secret_key, ticker, selected_date)
+                            except Exception:
+                                st.session_state.replay_avg_vol = None
+                            try:
+                                st.session_state.replay_intraday_curve = build_rvol_intraday_curve(
+                                    api_key, secret_key, ticker, selected_date,
+                                    lookback_days=5, feed=data_feed)
+                            except Exception:
+                                st.session_state.replay_intraday_curve = None
+                            try:
+                                _etf = fetch_etf_pct_change(
+                                    api_key, secret_key, sector_etf, selected_date, feed=data_feed)
+                                st.session_state.replay_sector_bonus = 10.0 if _etf > 1.0 else 0.0
+                            except Exception:
+                                st.session_state.replay_sector_bonus = 0.0
+                            # Reset Brain state for fresh replay
+                            for _bk in ("brain_ib_high", "brain_ib_low", "brain_ib_set",
+                                        "brain_high_touched", "brain_low_touched", "brain_predicted"):
+                                st.session_state[_bk] = _DEFAULTS[_bk]
+                            st.success(f"✅ Loaded {len(_rdf)} bars — use the slider and controls in the sidebar to replay.")
+                            st.rerun()
+                    except Exception as _e:
+                        st.error(f"Load error: {_e}")
+
+        # ── Run analysis for current replay bar ───────────────────────────────
+        if st.session_state.replay_bars is not None:
+            _rdf    = st.session_state.replay_bars
+            _ridx   = st.session_state.replay_bar_idx
+            _rtk    = st.session_state.replay_ticker
+            _rdate  = st.session_state.replay_date
+            _df_now = _rdf.iloc[:_ridx + 1]   # only bars up to current time
+
+            _cur_et  = pd.Timestamp(_rdf.index[_ridx]).tz_convert(EASTERN)
+            _total_et = pd.Timestamp(_rdf.index[-1]).tz_convert(EASTERN)
+
+            # Clock banner
+            st.markdown(
+                f'<div style="background:#0f3460; border:1px solid #5c6bc0; border-radius:8px; '
+                f'padding:10px 20px; margin-bottom:10px; display:flex; align-items:center; gap:16px;">'
+                f'<span style="font-size:22px; font-family:monospace; color:#90caf9; font-weight:700;">'
+                f'🎬 {_cur_et.strftime("%H:%M")} ET</span>'
+                f'<span style="font-size:12px; color:#888;">Bar {_ridx + 1} / {len(_rdf)} &nbsp;|&nbsp; '
+                f'{_rtk} &nbsp;|&nbsp; {_rdate}</span>'
+                f'<span style="font-size:11px; color:#555; margin-left:auto;">'
+                f'through {_total_et.strftime("%H:%M")} ET total</span></div>',
+                unsafe_allow_html=True,
+            )
+
+            if len(_df_now) < 2:
+                st.info("Need at least 2 bars for a full analysis — advance the slider forward.")
+            else:
+                render_analysis(
+                    _df_now, num_bins, _rtk,
+                    f"🎬 Replay — {_rtk} | {_cur_et.strftime('%H:%M ET')} | {_rdate}",
+                    is_ib_live=(_cur_et.time() <= dtime(10, 30)),
+                    avg_daily_vol=st.session_state.replay_avg_vol,
+                    sector_bonus=st.session_state.replay_sector_bonus,
+                    sector_etf=sector_etf,
+                    intraday_curve=st.session_state.replay_intraday_curve,
+                    is_live=False,
+                )
+                render_log_entry_ui()
+        else:
+            st.info("👈 Pick a date and click **📥 Load Day for Replay** in the sidebar.")
+            rc1, rc2 = st.columns(2)
+            with rc1:
+                st.markdown("**How Replay works**")
+                st.markdown(
+                    "- Fetches the full day's bars once\n"
+                    "- Shows only bars up to the selected time\n"
+                    "- All analysis (Volume Profile, Structure, TCS, Brain) updates in real-time\n"
+                    "- Use the slider to jump to any moment, or ▶ Play to auto-advance"
+                )
+            with rc2:
+                st.markdown("**Uses**")
+                st.markdown(
+                    "- Review your trade decisions at the exact moment you entered\n"
+                    "- See how the IB formed bar by bar\n"
+                    "- Practice reading structure before it becomes obvious\n"
+                    "- Study how RVOL evolved during the session"
+                )
+
     # ── Live mode ──────────────────────────────────────────────────────────────
     else:
         if start_live:
@@ -2801,4 +3005,17 @@ with tab_tracker:
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:
     time.sleep(2)
+    st.rerun()
+
+# ── Replay auto-advance loop ──────────────────────────────────────────────────
+if (mode == "🎬 Replay"
+        and st.session_state.replay_playing
+        and st.session_state.replay_bars is not None):
+    _rdf_all = st.session_state.replay_bars
+    _max     = len(_rdf_all) - 1
+    _nxt     = min(_max, st.session_state.replay_bar_idx + st.session_state.replay_speed)
+    if _nxt >= _max:
+        st.session_state.replay_playing = False   # reached end, stop
+    st.session_state.replay_bar_idx = _nxt
+    time.sleep(0.5)   # ~2 bars/sec at Normal speed
     st.rerun()
