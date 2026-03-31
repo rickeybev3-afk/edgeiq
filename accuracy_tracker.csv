@@ -58,3 +58,19 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-30 23:35:58,AIFF,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,AIFF_2026-03-30_2.3800_2.1800
 2026-03-30 23:36:13,AZTR,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,AZTR_2026-03-30_0.2420_0.2400
 2026-03-30 23:37:48,TOVX,Trend Day,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,TOVX_2026-03-30_0.1928_0.1895
+2026-03-30 23:40:07,BGM,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,BGM_2026-03-30_0.4111_0.3616
+2026-03-30 23:40:16,ABVE,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ABVE_2026-03-30_0.7829_0.7108
+2026-03-30 23:41:02,AZI,Neutral Extreme,📉 Trend Day (Bear),❌,0.0,0.0,0.0,AZI_2026-03-30_2.2650_2.2300
+2026-03-30 23:42:00,LBGJ,Neutral Extreme,📈 Trend Day,❌,0.0,0.0,0.0,LBGJ_2026-03-30_0.8265_0.7614
+2026-03-30 23:42:21,DRMA,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,DRMA_2026-03-30_1.1700_1.1250
+2026-03-30 23:42:41,BRTX,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,BRTX_2026-03-30_0.2805_0.2523
+2026-03-30 23:43:12,IMSR,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,IMSR_2026-03-30_6.0850_5.7600
+2026-03-30 23:43:49,CYAB,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,CYAB_2026-03-30_2.6700_2.4500
+2026-03-30 23:44:13,HOLO,Neutral Extreme,📉 Trend Day (Bear),❌,0.0,0.0,0.0,HOLO_2026-03-30_2.3000_2.1000
+2026-03-30 23:44:41,ITRM,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ITRM_2026-03-30_0.0949_0.0642
+2026-03-30 23:44:56,QNTM,Neutral Extreme,⚡ Double Distribution,❌,0.0,0.0,0.0,QNTM_2026-03-30_6.4200_5.2800
+2026-03-30 23:45:24,ZNB,Neutral,📈 Trend Day,❌,0.0,0.0,0.0,ZNB_2026-03-30_1.7500_1.2900
+2026-03-30 23:45:49,CIG,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,CIG_2026-03-30_2.3600_2.3200
+2026-03-30 23:45:56,KMDA,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,KMDA_2026-03-30_8.0550_8.0250
+2026-03-30 23:46:34,QUBT,Neutral,📉 Trend Day (Bear),❌,0.0,0.0,0.0,QUBT_2026-03-30_6.7350_6.5200
+2026-03-30 23:46:41,MGRX,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,MGRX_2026-03-30_0.4739_0.4087

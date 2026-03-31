@@ -381,46 +381,59 @@ class MarketBrain:
             if day_low <= self.ib_low:
                 self.low_touched = True
 
-            # Derived signals
-            price_above_ib = current_price > self.ib_high
-            price_below_ib = current_price < self.ib_low
-            ib_breakout    = price_above_ib or price_below_ib
-            # IB vol% signal: <0.35 → directional; >0.65 → balanced/rotational
-            _ivp = ib_vol_pct if ib_vol_pct is not None else 0.5
-            directional_vol = _ivp < 0.38
-            balanced_vol    = _ivp > 0.60
-            # POC position: inside IB (normal/balanced) vs outside (extension)
-            poc_outside_ib = (poc_price is not None
-                              and (poc_price > self.ib_high or poc_price < self.ib_low))
+            # ── Derived signals ────────────────────────────────────────────────
+            _ivp            = ib_vol_pct if ib_vol_pct is not None else 0.5
+            directional_vol = _ivp < 0.38   # most volume outside IB → directional day
+            balanced_vol    = _ivp > 0.60   # most volume inside IB  → rotational day
 
-            # ── Priority order: highest-conviction calls first ─────────────────
-            # 1. Trend Day: price broke IB + either high RVOL OR directional volume
-            if ib_breakout and (rvol > 1.8 or directional_vol):
+            poc_outside_ib  = (poc_price is not None
+                               and (poc_price > self.ib_high or poc_price < self.ib_low))
+
+            total_range      = day_high - day_low
+            # Where did price close within the day's range? (0 = at low, 1 = at high)
+            close_pct        = ((current_price - day_low) / total_range
+                                if total_range > 0 else 0.5)
+            close_at_top     = close_pct >= 0.75   # strong bull close
+            close_at_bottom  = close_pct <= 0.25   # strong bear close
+            close_at_extreme = close_pct >= 0.90 or close_pct <= 0.10
+
+            # How many times did the day range expand vs the IB?
+            range_expansion  = total_range / ib_range if ib_range > 0 else 1.0
+
+            # ── Priority order ────────────────────────────────────────────────
+            # On small-caps both IB sides are touched on almost every day,
+            # so we check WHERE price CLOSED before falling back to Neutral logic.
+            # A true Trend closes strongly at one end of the day's range.
+
+            # 1. Trend Day — strong directional close + at least one confirming signal
+            if (close_at_top or close_at_bottom) and (
+                    directional_vol or range_expansion >= 2.0 or rvol >= 1.5):
                 self.prediction = "Trend Day"
 
-            # 2. Non-Trend: very narrow IB + low RVOL + balanced vol
-            elif ib_range < 0.006 * self.ib_high and rvol < 1.2 and balanced_vol:
+            # 2. Non-Trend — very tight IB, low expansion, balanced volume
+            elif (ib_range < 0.006 * self.ib_high
+                  and range_expansion < 1.5
+                  and balanced_vol):
                 self.prediction = "Non-Trend"
 
-            # 3. Neutral Extreme: both sides hit, close near extreme
-            elif self.high_touched and self.low_touched:
-                total_range  = day_high - day_low
-                extreme_band = 0.10 * total_range if total_range > 0 else 0
-                if (current_price >= day_high - extreme_band
-                        or current_price <= day_low + extreme_band):
-                    self.prediction = "Neutral Extreme"
-                else:
-                    self.prediction = "Neutral"
-
-            # 4. Double Distribution: one side only + POC migrated outside IB
-            elif (self.high_touched or self.low_touched) and poc_outside_ib:
+            # 3. Double Distribution — one side only breached + POC migrated outside IB
+            elif ((self.high_touched ^ self.low_touched)   # XOR: exactly one side
+                  and poc_outside_ib):
                 self.prediction = "Double Distribution"
 
-            # 5. Normal Variation: one side breached but POC stayed inside IB
+            # 4. Neutral Extreme — both sides hit, close pinned at a true extreme
+            elif self.high_touched and self.low_touched and close_at_extreme:
+                self.prediction = "Neutral Extreme"
+
+            # 5. Neutral — both sides hit, close somewhere in the middle
+            elif self.high_touched and self.low_touched:
+                self.prediction = "Neutral"
+
+            # 6. Normal Variation — one side breached, moderate close
             elif self.high_touched or self.low_touched:
                 self.prediction = "Normal Variation"
 
-            # 6. Normal: price + POC stayed inside IB
+            # 7. Normal — price never left the IB
             else:
                 self.prediction = "Normal"
         else:
