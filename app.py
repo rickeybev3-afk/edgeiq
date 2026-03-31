@@ -341,26 +341,40 @@ class MarketBrain:
         st.session_state.brain_predicted    = self.prediction
 
     # ── Main update call ───────────────────────────────────────────────────────
-    def update(self, df, rvol=None, ib_vol_pct=None, poc_price=None):
+    def update(self, df, rvol=None, ib_vol_pct=None, poc_price=None, has_double_dist=False):
         """Ingest fresh bar data, update IB, and re-predict.
+
+        The 7-structure framework (Dalton / volume profile):
+        ┌─────────────────────────────────────────────────────────────────────┐
+        │  IB interaction          │  Close position    │  Structure          │
+        ├──────────────────────────┼────────────────────┼─────────────────────┤
+        │  Neither side broken     │  IB was wide       │  Normal             │
+        │  Neither side broken     │  IB was narrow/low │  Non-Trend          │
+        │  BOTH sides broken       │  Near middle/IB    │  Neutral            │
+        │  BOTH sides broken       │  Near day extreme  │  Neutral Extreme    │
+        │  ONE side only broken    │  Moderate move     │  Normal Variation   │
+        │  ONE side only broken    │  Two vol clusters  │  Double Distribution│
+        │  ONE side only broken    │  Dominant/early    │  Trend Day          │
+        └─────────────────────────────────────────────────────────────────────┘
 
         Parameters
         ----------
-        df          : OHLCV DataFrame (ET-indexed)
-        rvol        : relative volume (session so far ÷ expected); None → 0.0
-        ib_vol_pct  : fraction of total session volume traded inside IB (0–1)
-        poc_price   : Point of Control price from volume profile
+        df              : OHLCV DataFrame (ET-indexed, may contain NaN reindex rows)
+        rvol            : relative volume vs expected; None → 0.0
+        ib_vol_pct      : fraction of total session volume traded inside IB (0–1)
+        poc_price       : Point of Control from volume profile
+        has_double_dist : True when _detect_double_distribution() found two peaks
         """
         if df.empty:
             return
-        # Drop any NaN rows that come from the chart's reindex grid
+        # Strip NaN rows inserted by the chart reindex grid
         _df = df.dropna(subset=["open", "high", "low", "close"])
         if _df.empty:
             return
         rvol = rvol or 0.0
         ib_end = _df.index[0].replace(hour=10, minute=30, second=0)
 
-        # Track IB extremes during the first hour
+        # Accumulate IB extremes over the first hour (9:30–10:30)
         ib_df = _df[_df.index <= ib_end]
         if not ib_df.empty:
             self.ib_high = max(self.ib_high, float(ib_df["high"].max()))
@@ -376,66 +390,81 @@ class MarketBrain:
             day_low       = float(_df["low"].min())
             ib_range      = self.ib_high - self.ib_low
 
-            if day_high >= self.ib_high:
-                self.high_touched = True
-            if day_low <= self.ib_low:
-                self.low_touched = True
+            if day_high >= self.ib_high:  self.high_touched = True
+            if day_low  <= self.ib_low:   self.low_touched  = True
 
-            # ── Derived signals ────────────────────────────────────────────────
+            # ── IB interaction buckets (the core 3-way split) ─────────────────
+            no_break     = not self.high_touched and not self.low_touched
+            both_broken  = self.high_touched and self.low_touched
+            one_side_up  = self.high_touched and not self.low_touched
+            one_side_dn  = self.low_touched  and not self.high_touched
+            one_side     = one_side_up or one_side_dn
+
+            # ── Derived signals ───────────────────────────────────────────────
             _ivp            = ib_vol_pct if ib_vol_pct is not None else 0.5
-            directional_vol = _ivp < 0.38   # most volume outside IB → directional day
-            balanced_vol    = _ivp > 0.60   # most volume inside IB  → rotational day
+            directional_vol = _ivp < 0.35   # <35% of volume in IB → directional
+            balanced_vol    = _ivp > 0.62   # >62% of volume in IB → rotational
 
             poc_outside_ib  = (poc_price is not None
                                and (poc_price > self.ib_high or poc_price < self.ib_low))
 
             total_range      = day_high - day_low
-            # Where did price close within the day's range? (0 = at low, 1 = at high)
-            close_pct        = ((current_price - day_low) / total_range
-                                if total_range > 0 else 0.5)
-            close_at_top     = close_pct >= 0.75   # strong bull close
-            close_at_bottom  = close_pct <= 0.25   # strong bear close
-            close_at_extreme = close_pct >= 0.90 or close_pct <= 0.10
-
-            # How many times did the day range expand vs the IB?
             range_expansion  = total_range / ib_range if ib_range > 0 else 1.0
 
-            # ── Priority order ────────────────────────────────────────────────
-            # On small-caps both IB sides are touched on almost every day,
-            # so we check WHERE price CLOSED before falling back to Neutral logic.
-            # A true Trend closes strongly at one end of the day's range.
+            # Where did price close in today's range? (0.0 = at day low, 1.0 = at day high)
+            close_pct        = ((current_price - day_low) / total_range
+                                if total_range > 0 else 0.5)
+            # "Near extreme" = closing in the top 20% or bottom 20% of day range
+            close_at_extreme = close_pct >= 0.80 or close_pct <= 0.20
+            # "In the middle" = closing within IB range or close to it
+            close_near_ib    = self.ib_low <= current_price <= self.ib_high
 
-            # 1. Trend Day — strong directional close + at least one confirming signal
-            if (close_at_top or close_at_bottom) and (
-                    directional_vol or range_expansion >= 2.0 or rvol >= 1.5):
-                self.prediction = "Trend Day"
+            # ── BRANCH 1: Neither IB side violated ───────────────────────────
+            # Both Normal and Non-Trend have no break. The difference is IB SIZE:
+            #   Normal   → wide IB set by large players early; price stays inside
+            #   Non-Trend → narrow IB, no volume/interest (holiday, eve-of-news, etc.)
+            if no_break:
+                # < 1.5% of price AND balanced vol AND minimal range expansion = Non-Trend
+                is_narrow = ib_range < 0.015 * self.ib_high
+                if is_narrow and balanced_vol and range_expansion <= 1.25:
+                    self.prediction = "Non-Trend"
+                else:
+                    self.prediction = "Normal"
 
-            # 2. Non-Trend — very tight IB, low expansion, balanced volume
-            elif (ib_range < 0.006 * self.ib_high
-                  and range_expansion < 1.5
-                  and balanced_vol):
-                self.prediction = "Non-Trend"
+            # ── BRANCH 2: BOTH IB sides violated → always Neutral family ─────
+            # Transcript: "both sides violated → EITHER closes in middle (Neutral)
+            # OR one side dominates and closes near an extreme (Neutral Extreme)"
+            elif both_broken:
+                if close_at_extreme:
+                    self.prediction = "Neutral Extreme"
+                else:
+                    self.prediction = "Neutral"
 
-            # 3. Double Distribution — one side only breached + POC migrated outside IB
-            elif ((self.high_touched ^ self.low_touched)   # XOR: exactly one side
-                  and poc_outside_ib):
-                self.prediction = "Double Distribution"
+            # ── BRANCH 3: ONE side only violated → Trend / Dbl Dist / Nrml Var
+            # Transcript: Trend = "pretty much from the open, very dominant, ONE side only"
+            # Double Dist = two distinct volume clusters; a thin LVN in the middle
+            # Normal Variation = one side broken but NOT dominant/early
+            else:  # one_side is True
+                # Double Distribution: bimodal profile detected OR
+                # POC migrated out of IB but IB still has meaningful volume
+                # (volume stayed in 2 places, not fully directional)
+                is_double = has_double_dist or (poc_outside_ib and not directional_vol)
 
-            # 4. Neutral Extreme — both sides hit, close pinned at a true extreme
-            elif self.high_touched and self.low_touched and close_at_extreme:
-                self.prediction = "Neutral Extreme"
+                # Trend: POC fully migrated + all volume directional, OR
+                # strong early break + close firmly at the extreme
+                is_trend = (
+                    (poc_outside_ib and directional_vol)
+                    or (close_at_extreme and range_expansion >= 2.0)
+                    or (close_at_extreme and rvol >= 2.0)
+                    or (close_at_extreme and directional_vol)
+                )
 
-            # 5. Neutral — both sides hit, close somewhere in the middle
-            elif self.high_touched and self.low_touched:
-                self.prediction = "Neutral"
-
-            # 6. Normal Variation — one side breached, moderate close
-            elif self.high_touched or self.low_touched:
-                self.prediction = "Normal Variation"
-
-            # 7. Normal — price never left the IB
-            else:
-                self.prediction = "Normal"
+                if is_trend:
+                    self.prediction = "Trend Day"
+                elif is_double:
+                    self.prediction = "Double Distribution"
+                else:
+                    self.prediction = "Normal Variation"
         else:
             self.prediction = "Analyzing IB…"
 
@@ -2268,7 +2297,9 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
             ib_high is not None and ib_low is not None) else (None, None)
     except Exception:
         _brain_ivp = None
-    brain.update(df, rvol=rvol_pre, ib_vol_pct=_brain_ivp, poc_price=poc_price)
+    _brain_has_dd = _detect_double_distribution(bin_centers, vap) is not None
+    brain.update(df, rvol=rvol_pre, ib_vol_pct=_brain_ivp,
+                 poc_price=poc_price, has_double_dist=_brain_has_dd)
     st.session_state.brain_predicted = brain.prediction
 
     # ── Time context ───────────────────────────────────────────────────────────
@@ -3131,7 +3162,9 @@ def run_single_backtest(api_key, secret_key, ticker, trade_date, feed="iex", num
             _bt_ivp, _ = compute_ib_volume_stats(df, ib_high, ib_low)
         except Exception:
             _bt_ivp = None
-        brain.update(df, ib_vol_pct=_bt_ivp, poc_price=poc_price)
+        _bt_has_dd = _detect_double_distribution(bin_centers, vap) is not None
+        brain.update(df, ib_vol_pct=_bt_ivp, poc_price=poc_price,
+                     has_double_dist=_bt_has_dd)
         prediction = brain.prediction
         result["predicted"] = prediction
 

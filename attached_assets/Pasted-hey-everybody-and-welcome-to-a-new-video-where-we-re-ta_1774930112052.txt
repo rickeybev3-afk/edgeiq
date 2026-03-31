@@ -1,0 +1,594 @@
+hey everybody and welcome to a new video 
+ where we're talking about the volume 
+ profile and more specifically we're 
+ talking about 
+ intraday structures now in this video 
+ i'm going to be breaking down 
+ seven intraday structures we're going to 
+ look at what exactly is an intraday 
+ structure 
+ how they form how we identify them why 
+ it's important 
+ and then as we go through i want to pull 
+ out a few examples so we can look at how 
+ we take this information 
+ and use it to come up with really great 
+ trade ideas 
+ so let's go ahead we're going to get 
+ started before we jump into the charts 
+ and i pull up some examples 
+ there's a couple things we need to know 
+ just by way of introduction 
+ the first thing is we need to know a 
+ term that's used in volume profiling 
+ called the initial balance now the 
+ initial balance is the first full 
+ hour of trading during the regular 
+ trading session so 
+ for an example a product like the s p 
+ 500 although it's open 
+ almost 24 hours a day the regular 
+ trading hours 
+ start at 9 30 a.m eastern standard time 
+ so this means that the initial balance 
+ for a product like the es 
+ is from 9 30 a.m until 10 30 a.m eastern 
+ standard time 
+ that's the initial balance now the 
+ initial balance is incredibly simple 
+ there's nothing to overthink here 
+ but this is an important part to 
+ understand intraday structure 
+ how a day shapes up how it forms and how 
+ it interacts 
+ with that initial balance is going to be 
+ how we determine and how we understand 
+ what the intraday structure is so the 
+ initial balance is incredibly 
+ simple but this is a vital part to 
+ understanding intraday structures 
+ the second thing we need to understand 
+ is that when we're talking about 
+ intraday structure 
+ this is a foundational piece of the 
+ profile 
+ there's uh several different things that 
+ as you learn 
+ about profiling they're just 
+ foundational and 
+ everything else gets built upon that 
+ intraday structures is one of those 
+ foundational pieces it's just a part 
+ it's a it's a cornerstone 
+ and everything else we understand and 
+ all the competence we have above that 
+ it has to be built on top of this 
+ foundation so these are some things 
+ about profiling that you need to just 
+ memorize you need to understand 
+ and just going into this be aware that 
+ this is 
+ foundational information when it comes 
+ to the profile it's very important that 
+ we understand it 
+ okay so with that being said 
+ understanding that this is part of the 
+ foundation 
+ understanding what the initial balance 
+ is let's go ahead we'll jump into the 
+ charts i'll start pulling up examples 
+ and we'll kick things off looking at the 
+ first of the seven intraday structures 
+ we're going to cover 
+ in this video 
+ the first intraday structure that we're 
+ going to be looking at is what we call a 
+ normal structure so i'm going to pull up 
+ an example on the screen so we can look 
+ at this 
+ and walk through it now as we're looking 
+ at this chart the main thing we need to 
+ really be focusing on for right now 
+ is the blue line at the top and the red 
+ line at the very bottom 
+ this is the initial balance high and the 
+ initial balance 
+ low respectively okay this is a 15 
+ minute chart so you can see that the 
+ first four 
+ candles of that session makes up the 
+ hour range and makes up the range 
+ for the initial balance now when we have 
+ a normal structure that is formed 
+ what we have going on here is an initial 
+ balance high 
+ and an initial balance low that has 
+ never been violated 
+ so the first hours range of the day 
+ that is the range for the entire session 
+ and what's going on here 
+ is there's some larger players some 
+ higher time frames that are 
+ present they have business to do very 
+ early in the session 
+ they step in it creates a very wide 
+ range for the first 
+ hour and then they're done for the day 
+ and they exit and they never come back 
+ for the rest of the session trading 
+ continues and we usually auction around 
+ sometimes to the extremes of that range 
+ but we never have the conviction we 
+ never have the power 
+ to extend the range and to trade into a 
+ new area 
+ so when you're looking at a normal 
+ structure that is formed the easiest way 
+ to know that this is happening 
+ is when we have a wide initial balance 
+ where the high 
+ and the low do not get violated for the 
+ entire day 
+ now it's interesting that this is called 
+ a normal intraday structure 
+ because this is fairly abnormal nowadays 
+ on a lot of products that we trade 
+ understanding if you have a product like 
+ the s p 500 
+ the first hours range high and low never 
+ getting violated 
+ this only happens a very small 
+ percentage of the time 
+ now when we're talking about intraday 
+ structure and we're talking about market 
+ and volume profiling 
+ these things were not created 
+ specifically for products like the s p 
+ and in the early years when this was all 
+ being put together and it revolved 
+ around 
+ market profile things were very 
+ different the volatility was very 
+ different the ranges for products were 
+ very different the volume was very 
+ different 
+ and so back then i'm sure maybe this was 
+ something that happened fairly common 
+ but for most of the products that you're 
+ probably trading for all the products 
+ that i'm trading 
+ the the high and low never getting 
+ violated of the initial balance is 
+ actually pretty rare 
+ even though this is what is referred to 
+ and this is what we call a normal 
+ structure 
+ now the second one that we need to look 
+ at is a normal variation 
+ this is a variation of a normal 
+ structure 
+ and what we have going on here is a 
+ fairly decent initial balance where we 
+ we've opened up 
+ there's a range that has been 
+ established but at some point during the 
+ session 
+ larger players step in with some power 
+ and they drive us out of the range 
+ that's been established for the first 
+ hour 
+ we reach a new area and then we start to 
+ auction and to trade in a new range 
+ so sometimes we'll stay outside and then 
+ sometimes like in this example 
+ we'll pull back to or back inside of the 
+ initial balance 
+ but when you're looking at a variation 
+ of a normal structure 
+ what's happening is an initial balance 
+ that's been established and we've only 
+ violated it and we've only broken it to 
+ one side 
+ that's how you know that it's a normal 
+ variation okay the third one we're going 
+ to talk about is non-trend 
+ a non-trend is something that happens 
+ very uniquely it's when we have an 
+ initial balance high 
+ and low that do not get violated for the 
+ entire session 
+ now it's important to understand the 
+ difference between a non-trend and a 
+ normal 
+ if you remember we just talked about a 
+ normal and a normal structure 
+ has a high and low of the initial 
+ balance that do not get violated 
+ but what happens in that context is that 
+ large players step in and we create a 
+ very 
+ wide initial balance that never gets 
+ violated 
+ on a non-trend what happens is this is a 
+ session this is a 
+ product that has no interest it has no 
+ volume 
+ it has no movement this usually happens 
+ on maybe a holiday 
+ where the the market is open but we have 
+ shortened trading hours 
+ this might also happen if there's a huge 
+ news catalyst that's coming out in the 
+ following day 
+ and what we're seeing here is a market 
+ that is just resting there is no 
+ interest there is no movement for 
+ contrast and so we can understand this 
+ it's it's very easy to tell these apart 
+ on a normal 
+ structure you might have an initial 
+ balance on the s 
+ p for something like 30 or 40 points of 
+ range 
+ for a non-trend the initial balance 
+ range might be like six or seven points 
+ there's just no opportunities here 
+ there's no interest in trading 
+ and if this is forming you are better 
+ off being completely off the screens 
+ because 
+ there's nothing to do here a non-trend 
+ is just 
+ an environment where there is no 
+ interest there's nothing going on 
+ there's going to be no opportunities 
+ okay kicking it up with the next one 
+ this 
+ is one of my favorite intraday 
+ structures that can form 
+ and when this happens these are my best 
+ trading days 
+ what we're looking at here is what's 
+ called a neutral intraday structure 
+ the way you can identify a neutral 
+ structure is when we have a good 
+ size initial balance that has been 
+ violated to the high side 
+ it has been violated to the low side and 
+ then we finish 
+ somewhere in the middle of the initial 
+ balance 
+ so what we have going on here are higher 
+ time frames that are 
+ active they are doing business we have a 
+ lot of activity during this session 
+ but it's not directional and it's not 
+ clearly being driven to one side 
+ large time longs and shorts are active 
+ but they're not that 
+ far off on what is value and what is an 
+ agreeable 
+ price to do business so what we have 
+ going on is a range that gets 
+ established 
+ we violate it to one side in this 
+ example to the high side 
+ we then go coast to coast putting in a 
+ new low and extending it to the downside 
+ and then finishing somewhere in the 
+ middle so this type of action creates a 
+ ton of opportunity 
+ and it also creates a lot of range and 
+ for the way that i trade this 
+ is the the best one of the best day 
+ types 
+ that can form and one of the best 
+ structures that we can see get developed 
+ now the the next structure is very 
+ similar 
+ at least for the start and what this is 
+ called is a neutral extreme 
+ so when this is forming what we have 
+ going on is an initial balance has been 
+ established 
+ higher time frames are very active one 
+ side gets 
+ violated but instead of the other side 
+ getting violated and finishing somewhere 
+ in the middle where there's kind of back 
+ and forth 
+ action but no clear winner 
+ with a neutral extreme one side wins and 
+ dominates the session so in this example 
+ we have higher time frames being active 
+ we establish a range we push one side 
+ we push the other side but we never come 
+ back in this case 
+ the shorts dominate the session all the 
+ way into the close 
+ so what you'll have with a neutral 
+ extreme structure is an initial balance 
+ that gets established 
+ the high gets violated the low gets 
+ violated and then we finish the session 
+ somewhere near the extreme 
+ the same exact thing can happen to the 
+ high side in this example it happens to 
+ the short side 
+ now let me take a brief moment and 
+ explain how this translates into 
+ some amazing trade opportunities very 
+ similar if we have a neutral day 
+ surfacing what can happen here if you're 
+ ever in a situation 
+ where we have the initial balance get 
+ established we 
+ violate that one side and then we 
+ clearly 
+ do not accept those higher prices and we 
+ come back into range 
+ what you'll see a lot of times is 
+ there's likely places 
+ that we're going to be targeting above 
+ and below 
+ wherever it is that we open in the range 
+ that we have established 
+ so with the neutral type day if we break 
+ through and this session takes us 
+ through the uh 
+ the in this case the high and we don't 
+ reach that targeted place 
+ that we're going and we fail back into 
+ range 
+ this sets up for a beautiful opportunity 
+ to take that and to target it into 
+ the low of the initial balance and to 
+ look for that range extension to the 
+ other side 
+ if i can give this as an example let's 
+ say we're targeting either the overnight 
+ high or the overnight low 
+ we set up this range we break out to the 
+ high side but that overnight high does 
+ not get tagged 
+ we fall back into range where the 
+ overnight high the overnight low are 
+ still 
+ untouched but we're clearly not 
+ accepting those higher prices 
+ this sets up for a good understanding 
+ that a neutral or a neutral extreme day 
+ is probably on deck 
+ now once we violate to the other side of 
+ the initial 
+ balance we can understand that this is 
+ either likely to come back and finish 
+ within range to create that neutral day 
+ or this is going to just be dominated 
+ and if we 
+ don't accept those prices this is likely 
+ setting up for 
+ a neutral extreme so the example we're 
+ seeing here we've gone coast to coast 
+ and we were not able to get back into 
+ that initial balance range and then we 
+ got really dominant 
+ if you can understand that this is 
+ setting up for 
+ a neutral extreme type of structure 
+ you can at least avoid fighting this 
+ action but you can also look for ways 
+ to join it and understand that as this 
+ is shaping up we are likely to dominate 
+ and finish near the extreme of the 
+ session 
+ and this can really uh give you powerful 
+ insights into how you should be 
+ positioned 
+ into what you can expect that price 
+ forms and what we can expect for the 
+ structure to be developing 
+ it's it's very powerful when you compare 
+ this and we can use this for really 
+ great trade ideas 
+ okay jumping on the next one we're going 
+ to be looking at i think this is the 
+ second to last that should be the sixth 
+ one 
+ is a trend structure now a trend 
+ structure 
+ is where we are just very dominant all 
+ day long as the name suggests 
+ this one's kind of a no-brainer and 
+ obvious to understand this is where the 
+ initial balance is only going to get 
+ violated on one side 
+ and pretty much from the open it's just 
+ very dominated by one direction 
+ this can happen to the high side or the 
+ low side and it's very important to 
+ understand that this is forming very 
+ early on 
+ if you have the ability to jump on and 
+ take advantage to to go with it 
+ all the better but at least you can 
+ identify that this is happening 
+ it can help you not to fight it if the 
+ day happens where we are setting up for 
+ a 
+ a trend intraday structure and you try 
+ to fight that in this example if you 
+ keep going long 
+ this is a day where you're going to 
+ really hurt your p l and by 
+ understanding that this is a structure 
+ that's forming 
+ you can put yourself in a position 
+ obviously to try to join it 
+ but at least make good trade decisions 
+ where you're not sitting there all day 
+ trying to fight something that is never 
+ coming back 
+ because the trend is forming not too 
+ much really to comment about that one 
+ and we'll wrap it up 
+ with the last structure which is called 
+ double distribution 
+ a double distribution is very easy to 
+ identify because it has 
+ two unique distributions in this example 
+ we have a distribution up top 
+ and then we have a thin area with a 
+ distribution down at the bottom 
+ now looking at these and just 
+ understanding this let's take apart 
+ what's happening here 
+ this is a session where we open up we're 
+ establishing a range that we really 
+ trade a lot in you can see that upper 
+ distribution has a lot of volume 
+ so we spend some time there we're fairly 
+ active but we're not going very far 
+ and then at some point during the 
+ session we leave 
+ that range usually what ends up 
+ happening is there's some type of a news 
+ catalyst so maybe big news is coming out 
+ the market is resting kind of waiting 
+ for that and then it happens 
+ which drives us into a new area because 
+ now we have something new to price 
+ in so the market is doing its thing 
+ there's something new to price in and we 
+ go 
+ to a new area we then spend the rest of 
+ the session 
+ in a new range developing and just 
+ establishing a new range 
+ what happens here and what we're left 
+ with is a very unique thing where 
+ there's a distribution 
+ up top there's a distribution below and 
+ then some kind of a cut-off point or a 
+ thin area in the middle 
+ now back to uh how we can use this 
+ information practically if you can 
+ understand 
+ this when you can see that this is 
+ forming 
+ what will happen is the point of control 
+ is going to be near this this this was 
+ the point of control for the entire 
+ morning session 
+ as this breaks down we have a point of 
+ control that gets 
+ eventually built out to the downside 
+ this is what will happen 
+ on a double distribution typically so 
+ when this happens 
+ you understand that it takes several 
+ hours 
+ for that shift of the point of control 
+ to happen and for us to build in all of 
+ this volume to the downside 
+ so if you can identify what happened 
+ we've 
+ had this range this distribution we 
+ broke 
+ to one side or the other and now we're 
+ starting to form a new distribution 
+ and a double distribution is likely to 
+ form you can put yourself in a position 
+ to identify early on 
+ where that point of control shift is 
+ likely to happen 
+ and understand that we need to spend a 
+ lot of time and trade a lot at that 
+ price 
+ in order to get the shift so as this 
+ happens 
+ price will move to the highest side it 
+ will move to the low side 
+ and you can look for fading 
+ opportunities that as 
+ price moves away from that developing 
+ point of control 
+ to bring it back to the point of control 
+ understanding that we will be spending a 
+ lot of time 
+ in that area and then as you compare 
+ when we move away with with some type of 
+ levels of interest or trigger levels 
+ that are 
+ key for you you can hit those levels and 
+ then fade them back to the point of 
+ control 
+ one of the ways that you can use this 
+ information on a double distribution 
+ structure but it's a very powerful way 
+ where instead of just seeing that price 
+ was somewhere and then for some reason 
+ we exploded to a new area and now we 
+ just 
+ kind of stopped again we can peel this 
+ back and see 
+ that this is the structure that is 
+ likely to be forming 
+ and as it forms and we get more 
+ information about it 
+ we can make trade decisions that that we 
+ wouldn't really be able to make 
+ otherwise or we can at least have an 
+ enormous amount of confidence 
+ that wouldn't be present if we couldn't 
+ look at this and understand 
+ what the structure is is happening and 
+ how this is really being developed okay 
+ so this is a double distribution this is 
+ another beautiful one that i love to see 
+ surface 
+ because it sets up some very clear 
+ things that we can take advantage of 
+ okay so this was a lot of information 
+ that we covered in this session 
+ we went over seven intraday structures 
+ uh some very 
+ foundational pieces of using the profile 
+ now this information is stuff that we 
+ can take a lot 
+ deeper and all we did was keep this at a 
+ high level because i wanted to introduce 
+ them 
+ and really in this video i hope that we 
+ sparked 
+ your uh we i hope that i uh 
+ sparked your interest maybe a little bit 
+ deeper and understanding that the volume 
+ profile is not this thing you just throw 
+ in your charts and look for the point of 
+ control 
+ but we can take this way way deeper and 
+ really understand things 
+ that that aren't visible or that are 
+ very hard to understand if we're not 
+ using the profile and if we're not using 
+ structures okay so we can take this 
+ information we can understand it 
+ at a very deep level and then we can put 
+ that together to make some 
+ really incredible uh trade ideas 
+ okay so that's gonna be it for this 
+ video i hope that this was very 
+ informative i hope that you got 
+ something out of this and that it sparks 
+ you to go deeper 
+ with your journey in the volume profile 
+ let's all hit the like button 
+ on the way out i'll see you guys in the 
+ next video if you're going to be on the 
+ screens between now and the next time i 
+ see you as always i wish you very happy 
+ trading 
+ and uh i'll see you guys in the next 
+ video 
+ you
