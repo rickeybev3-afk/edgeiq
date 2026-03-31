@@ -34,3 +34,15 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-31 00:05:23,VCX,Trend Day,⚡ Double Distribution,❌,0.0,0.0,0.0,VCX_2026-03-31_138.2900_122.0000
 2026-03-31 00:05:37,BIAF,Trend Day,😴 Non-Trend,❌,0.0,0.0,0.0,BIAF_2026-03-31_3.2500_2.8050
 2026-03-31 00:06:07,PTLE,Neutral,😴 Non-Trend,❌,0.0,0.0,0.0,PTLE_2026-03-31_8.1700_7.1200
+2026-03-31 00:19:58,ANNA,Neutral Extreme,⚡ Double Distribution,❌,0.0,0.0,0.0,ANNA_2026-03-31_9.2500_7.9800
+2026-03-31 00:20:32,BATL,Neutral Extreme,📉 Trend Day (Bear),❌,0.0,0.0,0.0,BATL_2026-03-31_6.4300_5.7700
+2026-03-31 00:21:01,HKIT,Neutral Extreme,🔄 Neutral,✅,0.0,0.0,0.0,HKIT_2026-03-31_0.0430_0.0385
+2026-03-31 00:21:37,HWH,Neutral Extreme,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,HWH_2026-03-31_1.2800_1.2800
+2026-03-31 00:22:28,BFRG,Neutral Extreme,🔄 Neutral,✅,0.0,0.0,0.0,BFRG_2026-03-31_1.3550_0.9846
+2026-03-31 00:24:24,BRTX,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,BRTX_2026-03-31_0.2805_0.2523
+2026-03-31 00:31:20,AAPL,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,AAPL_2026-03-31_250.7300_247.0200
+2026-03-31 00:33:44,ZSPC,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ZSPC_2026-03-31_0.1304_0.1166
+2026-03-31 00:35:10,EONR,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,EONR_2026-03-31_1.0600_0.9631
+2026-03-31 00:36:37,REI,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,REI_2026-03-31_1.6450_1.5700
+2026-03-31 00:38:02,ITRM,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ITRM_2026-03-31_0.0949_0.0642
+2026-03-31 00:38:30,CUPR,Neutral Extreme,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,CUPR_2026-03-31_0.3114_0.3114
