@@ -1,0 +1,10 @@
+{
+  "trend_bull": 1.0,
+  "trend_bear": 1.0,
+  "double_dist": 1.0,
+  "non_trend": 1.0,
+  "normal": 1.0,
+  "neutral": 0.925,
+  "ntrl_extreme": 0.925,
+  "nrml_variation": 1.0
+}

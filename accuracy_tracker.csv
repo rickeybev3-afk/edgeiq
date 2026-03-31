@@ -34,3 +34,12 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-30 22:46:39,EEIQ,Neutral,📉 Trend Day (Bear),❌,0.0,0.0,0.0,EEIQ_2026-03-30_11.0200_9.1200
 2026-03-30 22:52:56,BATL,Neutral Extreme,📉 Trend Day (Bear),❌,0.0,0.0,0.0,BATL_2026-03-30_6.4300_5.7700
 2026-03-30 23:07:12,TURB,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,TURB_2026-03-30_2.9650_2.6800
+2026-03-30 23:11:24,EDSA,Trend Day,📉 Trend Day (Bear),✅,0.0,0.0,0.0,EDSA_2026-03-30_5.6100_5.4200
+2026-03-30 23:12:08,QNCX,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,QNCX_2026-03-30_0.1036_0.0933
+2026-03-30 23:12:29,JCSE,Neutral,😴 Non-Trend,❌,0.0,0.0,0.0,JCSE_2026-03-30_1.1300_1.0600
+2026-03-30 23:12:56,HXHX,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,HXHX_2026-03-30_0.4821_0.4155
+2026-03-30 23:13:20,APRE,Neutral,😴 Non-Trend,❌,0.0,0.0,0.0,APRE_2026-03-30_0.6890_0.6636
+2026-03-30 23:13:38,GLND,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GLND_2026-03-30_12.5750_8.6600
+2026-03-30 23:13:53,YYGH,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,YYGH_2026-03-30_1.0600_0.9464
+2026-03-30 23:14:08,LTRN,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,LTRN_2026-03-30_1.3700_1.1700
+2026-03-30 23:14:15,TBI,Neutral,😴 Non-Trend,❌,0.0,0.0,0.0,TBI_2026-03-30_3.2900_3.2000

@@ -339,27 +339,39 @@ class MarketBrain:
         st.session_state.brain_predicted    = self.prediction
 
     # ── Main update call ───────────────────────────────────────────────────────
-    def update(self, df, rvol=None):
-        """Ingest fresh bar data, update IB, and re-predict."""
+    def update(self, df, rvol=None, ib_vol_pct=None, poc_price=None):
+        """Ingest fresh bar data, update IB, and re-predict.
+
+        Parameters
+        ----------
+        df          : OHLCV DataFrame (ET-indexed)
+        rvol        : relative volume (session so far ÷ expected); None → 0.0
+        ib_vol_pct  : fraction of total session volume traded inside IB (0–1)
+        poc_price   : Point of Control price from volume profile
+        """
         if df.empty:
             return
+        # Drop any NaN rows that come from the chart's reindex grid
+        _df = df.dropna(subset=["open", "high", "low", "close"])
+        if _df.empty:
+            return
         rvol = rvol or 0.0
-        ib_end = df.index[0].replace(hour=10, minute=30, second=0)
+        ib_end = _df.index[0].replace(hour=10, minute=30, second=0)
 
-        # Track IB extremes minute-by-minute during first hour
-        ib_df = df[df.index <= ib_end]
+        # Track IB extremes during the first hour
+        ib_df = _df[_df.index <= ib_end]
         if not ib_df.empty:
             self.ib_high = max(self.ib_high, float(ib_df["high"].max()))
             self.ib_low  = min(self.ib_low,  float(ib_df["low"].min()))
 
-        last_time = df.index[-1].time()
+        last_time = _df.index[-1].time()
         if last_time > dtime(10, 30):
             self.ib_set = True
 
         if self.ib_set and self.ib_high > 0 and self.ib_low < float("inf"):
-            current_price = float(df["close"].iloc[-1])
-            day_high      = float(df["high"].max())
-            day_low       = float(df["low"].min())
+            current_price = float(_df["close"].iloc[-1])
+            day_high      = float(_df["high"].max())
+            day_low       = float(_df["low"].min())
             ib_range      = self.ib_high - self.ib_low
 
             if day_high >= self.ib_high:
@@ -367,31 +379,46 @@ class MarketBrain:
             if day_low <= self.ib_low:
                 self.low_touched = True
 
-            # ── Priority order mirrors classify_day_structure ──────────────────
-            # 1. Trend Day: early aggressive break + high RVOL
-            if current_price > self.ib_high and rvol > 2.0:
-                self.prediction = "Trend Day"
-            elif current_price < self.ib_low and rvol > 2.0:
+            # Derived signals
+            price_above_ib = current_price > self.ib_high
+            price_below_ib = current_price < self.ib_low
+            ib_breakout    = price_above_ib or price_below_ib
+            # IB vol% signal: <0.35 → directional; >0.65 → balanced/rotational
+            _ivp = ib_vol_pct if ib_vol_pct is not None else 0.5
+            directional_vol = _ivp < 0.38
+            balanced_vol    = _ivp > 0.60
+            # POC position: inside IB (normal/balanced) vs outside (extension)
+            poc_outside_ib = (poc_price is not None
+                              and (poc_price > self.ib_high or poc_price < self.ib_low))
+
+            # ── Priority order: highest-conviction calls first ─────────────────
+            # 1. Trend Day: price broke IB + either high RVOL OR directional volume
+            if ib_breakout and (rvol > 1.8 or directional_vol):
                 self.prediction = "Trend Day"
 
-            # 2. Non-Trend: very narrow IB + low RVOL
-            elif ib_range < 0.005 * self.ib_high and rvol < 1.0:
+            # 2. Non-Trend: very narrow IB + low RVOL + balanced vol
+            elif ib_range < 0.006 * self.ib_high and rvol < 1.2 and balanced_vol:
                 self.prediction = "Non-Trend"
 
-            # 3. Neutral Extreme: both sides hit
+            # 3. Neutral Extreme: both sides hit, close near extreme
             elif self.high_touched and self.low_touched:
-                total_range = day_high - day_low
+                total_range  = day_high - day_low
                 extreme_band = 0.10 * total_range if total_range > 0 else 0
-                if current_price >= day_high - extreme_band or current_price <= day_low + extreme_band:
+                if (current_price >= day_high - extreme_band
+                        or current_price <= day_low + extreme_band):
                     self.prediction = "Neutral Extreme"
                 else:
                     self.prediction = "Neutral"
 
-            # 4. Normal Variation: one side breached only
+            # 4. Double Distribution: one side only + POC migrated outside IB
+            elif (self.high_touched or self.low_touched) and poc_outside_ib:
+                self.prediction = "Double Distribution"
+
+            # 5. Normal Variation: one side breached but POC stayed inside IB
             elif self.high_touched or self.low_touched:
                 self.prediction = "Normal Variation"
 
-            # 5. Normal: price stayed inside IB
+            # 6. Normal: price + POC stayed inside IB
             else:
                 self.prediction = "Normal"
         else:
@@ -1774,12 +1801,24 @@ def render_journal_tab():
 
 def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
                 target_zones=None, position=None):
-    # ── Convert df.index to ET time-label strings ────────────────────────────
+    # ── Reindex to a full 9:30–16:00 minute grid so the chart ALWAYS
+    #    anchors at 9:30 ET, even for thinly-traded small-caps whose first
+    #    real trade doesn't occur until 9:31 or later.
     def _et_label(ts):
         try:
             return pd.Timestamp(ts).tz_convert(EASTERN).strftime("%H:%M ET")
         except Exception:
             return str(ts)[-8:]
+
+    try:
+        _first = df.index[0]
+        _d = _first.date()
+        _open_et  = EASTERN.localize(datetime(_d.year, _d.month, _d.day,  9, 30))
+        _close_et = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16,  0))
+        _full_idx = pd.date_range(_open_et, _close_et, freq="1min")
+        df = df.reindex(_full_idx)      # NaN rows for minutes with no trade
+    except Exception:
+        pass   # if reindex fails (e.g. tz issues) fall back to raw bars
 
     x_labels = [_et_label(ts) for ts in df.index]
     x0, x1   = x_labels[0], x_labels[-1]
@@ -2133,7 +2172,12 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     brain = MarketBrain()
     brain.load_from_session()
     rvol_pre = compute_rvol(df, intraday_curve=intraday_curve, avg_daily_vol=avg_daily_vol)
-    brain.update(df, rvol=rvol_pre)
+    try:
+        _brain_ivp, _ = compute_ib_volume_stats(df, ib_high, ib_low) if (
+            ib_high is not None and ib_low is not None) else (None, None)
+    except Exception:
+        _brain_ivp = None
+    brain.update(df, rvol=rvol_pre, ib_vol_pct=_brain_ivp, poc_price=poc_price)
     st.session_state.brain_predicted = brain.prediction
 
     # ── Time context ───────────────────────────────────────────────────────────
@@ -2990,9 +3034,13 @@ def run_single_backtest(api_key, secret_key, ticker, trade_date, feed="iex", num
         )
         result["actual"] = label
 
-        # Simulate MarketBrain with the full day's bars
+        # Simulate MarketBrain with the full day's bars + rich signals
         brain = MarketBrain()
-        brain.update(df)
+        try:
+            _bt_ivp, _ = compute_ib_volume_stats(df, ib_high, ib_low)
+        except Exception:
+            _bt_ivp = None
+        brain.update(df, ib_vol_pct=_bt_ivp, poc_price=poc_price)
         prediction = brain.prediction
         result["predicted"] = prediction
 
