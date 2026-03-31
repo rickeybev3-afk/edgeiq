@@ -1,0 +1,7 @@
+timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe
+2026-03-30 22:17:21,ATPC,Trend Day,😴 Non-Trend,❌,0.0,0.0,0.0
+2026-03-30 22:17:36,ASTC,Trend Day,⚖️ Normal / Balanced,❌,0.0,0.0,0.0
+2026-03-30 22:19:15,BFRG,Neutral,🔄 Neutral,✅,0.0,0.0,0.0
+2026-03-30 22:19:49,FGI,Neutral,🔄 Neutral,✅,0.0,0.0,0.0
+2026-03-30 22:19:56,GV,Neutral,📈 Trend Day,❌,0.0,0.0,0.0
+2026-03-30 22:20:17,SST,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0

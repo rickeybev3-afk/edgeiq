@@ -2627,17 +2627,135 @@ if _las:
             unsafe_allow_html=True
         )
 
+_STRUCTURE_COLORS_MAP = {
+    "trend":       "#ff9800",
+    "bear":        "#ff5722",
+    "double":      "#00bcd4",
+    "non":         "#78909c",
+    "normal var":  "#aed581",
+    "variation":   "#aed581",
+    "neutral ext": "#7e57c2",
+    "neutral":     "#80cbc4",
+    "normal":      "#66bb6a",
+    "balanced":    "#66bb6a",
+}
+
+def _structure_color(label_str):
+    """Return a color for a structure label string."""
+    s = label_str.lower()
+    for key, col in _STRUCTURE_COLORS_MAP.items():
+        if key in s:
+            return col
+    return "#5c6bc0"
+
+def _clean_structure_label(raw):
+    """Strip emojis + extra words for a readable short label."""
+    import re
+    s = re.sub(r"[^\w\s()/\-]", "", str(raw)).strip()
+    # Trim very long labels
+    return s[:30] if len(s) > 30 else s
+
+
 def render_tracker_tab():
-    """Render the Accuracy Tracker tab — Predicted vs Actual structure history."""
+    """Render the Accuracy Tracker tab — structure distribution + Predicted vs Actual history."""
     st.markdown("## 🧠 MarketBrain — Accuracy Tracker")
-    st.caption("Tracks every Predicted vs Actual structure when you exit a position.")
+    st.caption("All-time structure distribution and brain prediction accuracy.")
 
     df = load_accuracy_tracker()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — All-Time Structure Distribution
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📊 All-Time Structure Distribution")
+    st.caption("Every structure classified since you started using the dashboard (from accuracy tracker log).")
+
+    if df.empty or "actual" not in df.columns:
+        st.info("No data yet — run analyses to start populating the distribution.")
+    else:
+        _dist = df["actual"].dropna()
+        _dist = _dist[_dist.str.strip() != ""]
+
+        if _dist.empty:
+            st.info("No actual structure data logged yet.")
+        else:
+            # Count + percent
+            _counts = _dist.value_counts().reset_index()
+            _counts.columns = ["structure", "count"]
+            _counts["pct"] = (_counts["count"] / _counts["count"].sum() * 100).round(1)
+            _counts["label_clean"] = _counts["structure"].apply(_clean_structure_label)
+            _counts["color"] = _counts["structure"].apply(_structure_color)
+            _counts = _counts.sort_values("pct", ascending=True)   # horizontal bar → ascending
+
+            # ── Pill badges row ────────────────────────────────────────────────
+            pills_html = '<div style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px 0;">'
+            for _, row in _counts.sort_values("pct", ascending=False).iterrows():
+                c = row["color"]
+                pills_html += (
+                    f'<span style="background:{c}22; border:1px solid {c}55; border-radius:20px; '
+                    f'padding:4px 12px; font-size:12px; color:{c}; white-space:nowrap;">'
+                    f'<b>{row["pct"]:.0f}%</b> {row["label_clean"]} '
+                    f'<span style="color:#555; font-size:10px;">({int(row["count"])})</span></span>'
+                )
+            pills_html += "</div>"
+            st.markdown(pills_html, unsafe_allow_html=True)
+
+            # ── Horizontal bar chart ──────────────────────────────────────────
+            fig_dist = go.Figure(go.Bar(
+                x=_counts["pct"],
+                y=_counts["label_clean"],
+                orientation="h",
+                marker_color=_counts["color"].tolist(),
+                text=[f"  {p:.1f}%  ({n})" for p, n in zip(_counts["pct"], _counts["count"])],
+                textposition="outside",
+                cliponaxis=False,
+            ))
+            fig_dist.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"),
+                height=max(240, len(_counts) * 44 + 60),
+                xaxis=dict(range=[0, min(100, _counts["pct"].max() * 1.25)],
+                           gridcolor="#2a2a4a", title="% of all sessions",
+                           ticksuffix="%"),
+                yaxis=dict(gridcolor="#2a2a4a", tickfont=dict(size=12)),
+                margin=dict(l=10, r=80, t=20, b=40),
+            )
+            st.plotly_chart(fig_dist, use_container_width=True)
+
+            # ── Trend vs Balance split ────────────────────────────────────────
+            _directional_keys = ["trend", "bear", "double", "variation"]
+            _balanced_keys    = ["normal", "neutral", "non", "balanced"]
+
+            def _classify_side(s):
+                sl = s.lower()
+                if any(k in sl for k in _directional_keys):
+                    return "Directional"
+                if any(k in sl for k in _balanced_keys):
+                    return "Balanced"
+                return "Other"
+
+            _sides = _dist.apply(_classify_side).value_counts()
+            _total_sides = _sides.sum()
+            dir_pct = _sides.get("Directional", 0) / _total_sides * 100
+            bal_pct = _sides.get("Balanced", 0) / _total_sides * 100
+
+            d1, d2, d3 = st.columns(3)
+            d1.metric("📈 Directional Days", f"{dir_pct:.0f}%",
+                      help="Trend Day, Trend Bear, Double Distribution, Normal Variation")
+            d2.metric("⚖️ Balanced Days",    f"{bal_pct:.0f}%",
+                      help="Normal, Neutral, Neutral Extreme, Non-Trend")
+            d3.metric("📋 Total Sessions",   int(_total_sides))
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — Brain Accuracy
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### 🎯 Brain Prediction Accuracy")
+
     if df.empty:
-        st.info("No accuracy data yet. Enter and exit a position to start recording predictions.")
+        st.info("No accuracy data yet — run analyses after 10:30 ET to start logging brain predictions.")
         return
 
-    # ── Summary stats ─────────────────────────────────────────────────────────
     total    = len(df)
     correct  = (df["correct"] == "✅").sum()
     acc_rate = correct / total * 100 if total > 0 else 0
@@ -2645,11 +2763,11 @@ def render_tracker_tab():
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Predictions", total)
-    c2.metric("Correct", f"{correct}  ({acc_rate:.0f}%)", delta=None)
+    c2.metric("Correct", f"{correct}  ({acc_rate:.0f}%)")
     c3.metric("Wrong",   wrong)
     c4.metric("Accuracy Rate", f"{acc_rate:.1f}%")
 
-    # ── Accuracy by structure ─────────────────────────────────────────────────
+    # ── Accuracy by predicted structure ──────────────────────────────────────
     if "predicted" in df.columns and "correct" in df.columns:
         grouped = df.groupby("predicted").apply(
             lambda g: pd.Series({
@@ -2660,34 +2778,39 @@ def render_tracker_tab():
         ).reset_index()
         grouped = grouped.sort_values("acc", ascending=False)
 
-        st.markdown("### Accuracy by Structure")
+        st.markdown("**Accuracy by Predicted Structure**")
         bar_colors = [
             "#4caf50" if a >= 60 else "#ffa726" if a >= 40 else "#ef5350"
             for a in grouped["acc"]
         ]
-        fig = go.Figure(go.Bar(
-            x=grouped["predicted"],
+        fig_acc = go.Figure(go.Bar(
+            x=grouped["predicted"].apply(_clean_structure_label),
             y=grouped["acc"].round(1),
             marker_color=bar_colors,
             text=[f"{a:.0f}%<br>({int(c)}/{int(t)})"
                   for a, c, t in zip(grouped["acc"], grouped["correct"], grouped["total"])],
             textposition="outside",
         ))
-        fig.update_layout(
+        fig_acc.update_layout(
             paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
-            font=dict(color="#e0e0e0"), height=340,
-            yaxis=dict(range=[0, 110], gridcolor="#2a2a4a", title="Accuracy %"),
+            font=dict(color="#e0e0e0"), height=320,
+            yaxis=dict(range=[0, 115], gridcolor="#2a2a4a", title="Accuracy %"),
             xaxis=dict(gridcolor="#2a2a4a"),
-            margin=dict(t=30, b=60, l=50, r=20),
+            margin=dict(t=20, b=60, l=50, r=20),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_acc, use_container_width=True)
 
-    # ── Detailed history table ────────────────────────────────────────────────
-    st.markdown("### Full History")
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — Full history table
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📋 Full History")
     display_cols = ["timestamp", "symbol", "predicted", "actual", "correct",
                     "entry_price", "exit_price", "mfe"]
     disp = df[[c for c in display_cols if c in df.columns]].copy()
-    disp = disp.sort_values("timestamp", ascending=False) if "timestamp" in disp.columns else disp
+    if "timestamp" in disp.columns:
+        disp = disp.sort_values("timestamp", ascending=False)
 
     def _style_row(row):
         color = "#4caf5022" if row.get("correct") == "✅" else "#ef535022"
@@ -2695,11 +2818,10 @@ def render_tracker_tab():
 
     try:
         styled = disp.style.apply(_style_row, axis=1)
-        st.dataframe(styled, use_container_width=True, height=340)
+        st.dataframe(styled, use_container_width=True, height=320)
     except Exception:
-        st.dataframe(disp, use_container_width=True, height=340)
+        st.dataframe(disp, use_container_width=True, height=320)
 
-    # ── Download ──────────────────────────────────────────────────────────────
     csv_str = df.to_csv(index=False)
     st.download_button(
         "⬇ Download Tracker CSV", data=csv_str,
