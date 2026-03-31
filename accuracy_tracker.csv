@@ -6,3 +6,5 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe
 2026-03-30 22:19:56,GV,Neutral,📈 Trend Day,❌,0.0,0.0,0.0
 2026-03-30 22:20:17,SST,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0
 2026-03-30 22:24:21,ONCO,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0
+2026-03-30 22:32:26,HKIT,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,HKIT_2026-03-30_0.0430_0.0385
+2026-03-30 22:33:26,BFRG,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,BFRG_2026-03-30_1.3550_0.9846

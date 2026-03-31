@@ -2211,21 +2211,39 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     _b_corr  = st.session_state.brain_session_correct
     _b_total = st.session_state.brain_session_total
     _b_rate  = (_b_corr / _b_total * 100) if _b_total > 0 else 0
-    _counter_str = (f"Session: {_b_corr}/{_b_total} ({_b_rate:.0f}%)"
-                    if _b_total > 0 else "No comparisons yet")
+    _counter_str = (f"Today: {_b_corr}/{_b_total} ({_b_rate:.0f}%)"
+                    if _b_total > 0 else "Today: —")
     _counter_col = "#4caf50" if _b_rate >= 60 else "#ffa726" if _b_rate >= 40 else "#ef5350"
+
+    # ── All-time win rate — reads directly from CSV, never resets ─────────────
+    try:
+        _at_df = pd.read_csv(TRACKER_FILE) if os.path.exists(TRACKER_FILE) else pd.DataFrame()
+        _at_total   = len(_at_df)
+        _at_correct = int((_at_df["correct"] == "✅").sum()) if "correct" in _at_df.columns else 0
+        _at_rate    = (_at_correct / _at_total * 100) if _at_total > 0 else None
+    except Exception:
+        _at_total, _at_correct, _at_rate = 0, 0, None
+
+    _at_col = ("#4caf50" if (_at_rate or 0) >= 60
+               else "#ffa726" if (_at_rate or 0) >= 40
+               else "#ef5350" if _at_rate is not None else "#555")
+    _at_str  = f"{_at_rate:.0f}%" if _at_rate is not None else "—"
+    _at_lbl  = f"All-time: <b style='font-size:18px; color:{_at_col};'>{_at_str}</b>"
+    if _at_rate is not None:
+        _at_lbl += f" <span style='font-size:10px; color:#555;'>({_at_correct}/{_at_total})</span>"
 
     st.markdown(
         f'<div style="background:{bc}11; border-left:3px solid {bc}; border-radius:6px; '
-        f'padding:8px 16px; margin:6px 0 4px 0; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">'
+        f'padding:10px 16px; margin:6px 0 4px 0; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">'
         f'<span style="font-size:11px; color:#888; text-transform:uppercase; '
-        f'letter-spacing:1px; white-space:nowrap;">🧠 Brain Prediction</span>'
+        f'letter-spacing:1px; white-space:nowrap;">🧠 Brain</span>'
         f'<span style="font-size:15px; font-weight:700; color:{bc};">{brain.prediction}</span>'
-        f'<span style="font-size:11px; color:#666;">vs actual: '
-        f'<span style="color:{color};">{label}</span></span>'
-        f'<span style="font-size:11px; font-weight:700; color:{_counter_col}; '
-        f'margin-left:auto; background:{_counter_col}22; padding:2px 8px; border-radius:4px; '
-        f'border:1px solid {_counter_col}55;">{_counter_str}</span>'
+        f'<span style="font-size:11px; color:#555;">vs <span style="color:{color};">{label}</span></span>'
+        f'<span style="font-size:11px; color:#444; margin-left:auto;">|</span>'
+        f'<span style="font-size:12px; color:#aaa;">{_at_lbl}</span>'
+        f'<span style="font-size:11px; font-weight:600; color:{_counter_col}; '
+        f'background:{_counter_col}22; padding:2px 8px; border-radius:4px; '
+        f'border:1px solid {_counter_col}44; white-space:nowrap;">{_counter_str}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
