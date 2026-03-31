@@ -109,11 +109,14 @@ def fetch_bars(api_key, secret_key, ticker, trade_date, feed="sip"):
     client = StockHistoricalDataClient(api_key, secret_key)
     mo = EASTERN.localize(datetime(trade_date.year, trade_date.month, trade_date.day, 9, 30))
     mc = EASTERN.localize(datetime(trade_date.year, trade_date.month, trade_date.day, 16, 0))
-    # When fetching today's intraday data the market may still be open —
-    # cap the end to "now" so the historical API returns bars it already has.
+    # When fetching today's intraday data cap end to now so the API doesn't
+    # get a future end time. If we're before market open, nothing to fetch yet.
     now_et = datetime.now(EASTERN)
-    if trade_date >= now_et.date() and now_et < mc:
-        mc = now_et
+    if trade_date >= now_et.date():
+        if now_et <= mo:
+            return pd.DataFrame()   # pre-market — no bars yet
+        if now_et < mc:
+            mc = now_et             # mid-session — cap end to current time
     req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute,
                            start=mo, end=mc, feed=feed)
     bars = client.get_stock_bars(req)
@@ -2110,11 +2113,15 @@ with tab_chart:
                     try:
                         df = fetch_bars(api_key, secret_key, ticker, selected_date, feed=data_feed)
                         if df.empty:
-                            today_hint = " (If fetching today, make sure the market is open and at least a few minutes have passed since open.)" if selected_date >= date.today() else ""
-                            if data_feed == "sip":
-                                st.warning(f"No data for **{ticker}** on {selected_date} via SIP. Try switching to IEX, or confirm the date was a trading day.{today_hint}")
+                            now_et = datetime.now(EASTERN)
+                            pre_mkt = (selected_date >= now_et.date() and
+                                       now_et <= EASTERN.localize(datetime(selected_date.year, selected_date.month, selected_date.day, 9, 30)))
+                            if pre_mkt:
+                                st.warning("Market hasn't opened yet (9:30 AM ET). Come back once trading starts and bars are available.")
+                            elif data_feed == "sip":
+                                st.warning(f"No data for **{ticker}** on {selected_date} via SIP. Try switching to IEX, or confirm the date was a trading day.")
                             else:
-                                st.warning(f"No data for **{ticker}** on {selected_date} via IEX. Small-caps are often absent on IEX — try SIP.{today_hint}")
+                                st.warning(f"No data for **{ticker}** on {selected_date} via IEX. Small-caps may be absent on IEX — try SIP.")
                         else:
                             st.success(f"Loaded **{len(df)}** 1-min bars via {data_feed.upper()}.")
                             # ── Pre-fetch RVOL baseline (5-day avg daily volume) ──────
