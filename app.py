@@ -1122,8 +1122,9 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
     return {k: round(v / total * 100, 1) for k, v in scores.items()}
 
 
-def fetch_avg_daily_volume(api_key, secret_key, ticker, trade_date, lookback_days=5):
-    """Return the average total daily volume for ticker over the last N trading days before trade_date."""
+def fetch_avg_daily_volume(api_key, secret_key, ticker, trade_date, lookback_days=50):
+    """Return the average total daily volume for ticker over the last N trading days before trade_date.
+    Default is 50 days to provide a robust, statistically stable baseline."""
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
@@ -1169,11 +1170,12 @@ def is_market_open():
 
 
 def build_rvol_intraday_curve(api_key, secret_key, ticker, trade_date,
-                               lookback_days=5, feed="iex"):
+                               lookback_days=50, feed="iex"):
     """Build a 390-element list of average cumulative volume at each minute from open.
 
     Each element i represents the expected cumulative volume after (i+1) minutes of
     trading, averaged across the last lookback_days sessions before trade_date.
+    Uses 50-day default for a statistically robust baseline.
     Returns None if insufficient data.
     """
     from alpaca.data.historical import StockHistoricalDataClient
@@ -1258,6 +1260,60 @@ def compute_rvol(df, intraday_curve=None, avg_daily_vol=None):
         return round(pace / avg_daily_vol, 2)
 
     return None
+
+
+def compute_buy_sell_pressure(df):
+    """Estimate session-cumulative buy vs sell volume from 1-min OHLCV bars.
+
+    Uses standard money-flow weighting per bar:
+        buy_vol  = volume × (close − low)  / (high − low)
+        sell_vol = volume × (high − close) / (high − low)
+
+    Also computes a momentum comparison (last 5 bars vs prior 5 bars) to detect
+    whether buy pressure is ramping up or cooling off — similar to RSI oscillation
+    but for volume expansion/contraction.
+
+    Returns dict with keys: buy_pct, sell_pct, trend_now, trend_prev,
+                            total_buy, total_sell — or None if insufficient data.
+    """
+    if df.empty or len(df) < 2:
+        return None
+    _df = df.dropna(subset=["open", "high", "low", "close", "volume"]).copy()
+    if _df.empty:
+        return None
+
+    hl = (_df["high"] - _df["low"]).replace(0, np.nan)
+    buy_frac         = (((_df["close"] - _df["low"]) / hl).fillna(0.5)).clip(0, 1)
+    _df["buy_vol"]   = _df["volume"] * buy_frac
+    _df["sell_vol"]  = _df["volume"] * (1.0 - buy_frac)
+
+    total_buy  = float(_df["buy_vol"].sum())
+    total_sell = float(_df["sell_vol"].sum())
+    total_vol  = total_buy + total_sell
+    if total_vol == 0:
+        return None
+
+    buy_pct = total_buy / total_vol * 100.0
+
+    def _pct(sub):
+        b = float(sub["buy_vol"].sum())
+        s = float(sub["sell_vol"].sum())
+        return b / (b + s) * 100.0 if (b + s) > 0 else 50.0
+
+    # Momentum: last 5 min vs prior 5 min
+    recent5    = _df.tail(5)
+    prior5     = _df.iloc[-10:-5] if len(_df) >= 10 else _df.head(max(1, len(_df) // 2))
+    trend_now  = _pct(recent5)
+    trend_prev = _pct(prior5)
+
+    return {
+        "buy_pct":    round(buy_pct, 1),
+        "sell_pct":   round(100.0 - buy_pct, 1),
+        "trend_now":  round(trend_now, 1),
+        "trend_prev": round(trend_prev, 1),
+        "total_buy":  total_buy,
+        "total_sell": total_sell,
+    }
 
 
 def rvol_classify(rvol, pct_chg_today, elapsed_bars=None, price_now=None):
@@ -2231,6 +2287,62 @@ def render_rvol_widget(rvol_val, label_str, label_color, is_runner):
     """, unsafe_allow_html=True)
 
 
+def render_buy_sell_widget(bsp):
+    """Buy/Sell Volume Pressure oscillator — 0-100 gauge with momentum arrow.
+
+    Left of centre = sell pressure dominant; right = buy pressure dominant.
+    Momentum compares last 5 bars vs prior 5 bars (RSI-style ramping signal).
+    """
+    if bsp is None:
+        return
+    buy_pct    = bsp["buy_pct"]
+    trend_now  = bsp["trend_now"]
+    trend_prev = bsp["trend_prev"]
+
+    if buy_pct >= 65:
+        bar_color, label = "#4caf50", "🔼 BUY DOMINANT"
+    elif buy_pct >= 57:
+        bar_color, label = "#8bc34a", "↑ Buy Leaning"
+    elif buy_pct >= 43:
+        bar_color, label = "#ffa726", "⇔ Balanced"
+    elif buy_pct >= 35:
+        bar_color, label = "#ef9a9a", "↓ Sell Leaning"
+    else:
+        bar_color, label = "#ef5350", "🔽 SELL DOMINANT"
+
+    delta = trend_now - trend_prev
+    if delta > 3:
+        momentum, mom_color = f"▲ Ramping +{delta:.0f}%", "#4caf50"
+    elif delta < -3:
+        momentum, mom_color = f"▼ Cooling {delta:.0f}%", "#ef5350"
+    else:
+        momentum, mom_color = "→ Flat", "#aaaaaa"
+
+    st.markdown(f"""
+    <div style="background:#1a1a2e; border:1px solid {bar_color}55; border-radius:8px;
+                padding:10px 16px; margin:4px 0 6px 0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">
+          Buy / Sell Pressure
+        </span>
+        <span style="font-size:12px; font-weight:700; color:{bar_color};">{label}</span>
+        <span style="font-size:11px; color:{mom_color};">{momentum}</span>
+      </div>
+      <div style="background:#333; border-radius:4px; height:14px; width:100%;
+                  position:relative; overflow:hidden;">
+        <div style="position:absolute; left:0; top:0; height:100%; width:{buy_pct:.1f}%;
+                    background:{bar_color}; border-radius:4px;"></div>
+        <div style="position:absolute; left:50%; top:0; height:100%;
+                    width:2px; background:#ffffff44;"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-top:5px;">
+        <span style="font-size:11px; color:#ef5350;">🔴 Sell {bsp["sell_pct"]:.0f}%</span>
+        <span style="font-size:11px; color:{bar_color}; font-weight:700;">🟢 Buy {buy_pct:.0f}%</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_model_prediction(outcome, reasoning):
     """Show the volume-price divergence model prediction in a styled text box.
 
@@ -2429,6 +2541,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
+    render_buy_sell_widget(compute_buy_sell_pressure(_real_df))
     render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
@@ -3812,7 +3925,7 @@ with tab_chart:
                             try:
                                 curve = build_rvol_intraday_curve(
                                     api_key, secret_key, ticker, selected_date,
-                                    lookback_days=5, feed=data_feed)
+                                    lookback_days=50, feed=data_feed)
                             except Exception:
                                 curve = None
                             st.session_state.rvol_intraday_curve = curve
@@ -3904,7 +4017,7 @@ with tab_chart:
                             try:
                                 st.session_state.replay_intraday_curve = build_rvol_intraday_curve(
                                     api_key, secret_key, ticker, selected_date,
-                                    lookback_days=5, feed=data_feed)
+                                    lookback_days=50, feed=data_feed)
                             except Exception:
                                 st.session_state.replay_intraday_curve = None
                             try:
@@ -4000,7 +4113,7 @@ with tab_chart:
                     try:
                         curve = build_rvol_intraday_curve(
                             api_key, secret_key, ticker, today,
-                            lookback_days=5, feed=live_feed)
+                            lookback_days=50, feed=live_feed)
                     except Exception:
                         curve = None
                     st.session_state.rvol_intraday_curve = curve
