@@ -80,6 +80,30 @@ for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
+# ── Restore today's brain accuracy counters from CSV on first load ─────────────
+# This makes the session badge survive page reloads while keeping the counter
+# scoped to today (so every new trading day starts fresh automatically).
+if st.session_state.brain_session_total == 0 and os.path.exists(TRACKER_FILE):
+    try:
+        _restore_df = pd.read_csv(TRACKER_FILE)
+        if "timestamp" in _restore_df.columns and not _restore_df.empty:
+            _today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+            _today_rows = _restore_df[
+                _restore_df["timestamp"].astype(str).str.startswith(_today_str)
+            ]
+            if not _today_rows.empty and "correct" in _today_rows.columns:
+                _r_total   = len(_today_rows)
+                _r_correct = (_today_rows["correct"] == "✅").sum()
+                st.session_state.brain_session_total   = int(_r_total)
+                st.session_state.brain_session_correct = int(_r_correct)
+                # Restore last compare_key so we don't re-log on first run
+                if "compare_key" in _today_rows.columns:
+                    _last_key = _today_rows["compare_key"].dropna().iloc[-1] \
+                                if not _today_rows["compare_key"].dropna().empty else ""
+                    st.session_state.brain_last_compared = str(_last_key)
+    except Exception:
+        pass  # safe fallback — counters stay at 0
+
 # ── Audio JS (Web Audio API, synthesised tones — no external files) ────────────
 _CHIME_JS = """(function(){
   try{
@@ -373,7 +397,7 @@ class MarketBrain:
 def load_accuracy_tracker():
     """Return a DataFrame from accuracy_tracker.csv (or empty if none)."""
     cols = ["timestamp", "symbol", "predicted", "actual", "correct",
-            "entry_price", "exit_price", "mfe"]
+            "entry_price", "exit_price", "mfe", "compare_key"]
     if not os.path.exists(TRACKER_FILE):
         return pd.DataFrame(columns=cols)
     try:
@@ -386,9 +410,12 @@ def load_accuracy_tracker():
         return pd.DataFrame(columns=cols)
 
 
-def log_accuracy_entry(symbol, predicted, actual, entry_price=0.0,
-                       exit_price=0.0, mfe=0.0):
-    """Append one Predicted vs Actual row to accuracy_tracker.csv."""
+def log_accuracy_entry(symbol, predicted, actual, compare_key="",
+                       entry_price=0.0, exit_price=0.0, mfe=0.0):
+    """Append one Predicted vs Actual row to accuracy_tracker.csv.
+
+    compare_key is stored so dedup checks survive page reloads.
+    """
     correct = "✅" if _strip_emoji(predicted) in _strip_emoji(actual) or \
                      _strip_emoji(actual) in _strip_emoji(predicted) else "❌"
     file_exists = os.path.isfile(TRACKER_FILE)
@@ -396,10 +423,11 @@ def log_accuracy_entry(symbol, predicted, actual, entry_price=0.0,
         w = csv.writer(f)
         if not file_exists:
             w.writerow(["timestamp", "symbol", "predicted", "actual", "correct",
-                        "entry_price", "exit_price", "mfe"])
+                        "entry_price", "exit_price", "mfe", "compare_key"])
         w.writerow([datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
                     symbol, predicted, actual, correct,
-                    round(entry_price, 4), round(exit_price, 4), round(mfe, 4)])
+                    round(entry_price, 4), round(exit_price, 4), round(mfe, 4),
+                    compare_key])
 
 
 def _strip_emoji(s):
@@ -2000,8 +2028,20 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     # Auto-compare once IB is complete and brain has a real prediction
     if brain.ib_set and brain.prediction != "Analyzing IB…":
-        _compare_key = f"{ticker}_{str(ib_high)}_{str(ib_low)}"
+        _today_str   = datetime.now(EASTERN).strftime("%Y-%m-%d")
+        _compare_key = f"{ticker}_{_today_str}_{ib_high:.4f}_{ib_low:.4f}"
+
+        # Dedup: check both session state AND the CSV (survives reloads)
+        _already_in_csv = False
         if st.session_state.brain_last_compared != _compare_key:
+            try:
+                _chk = pd.read_csv(TRACKER_FILE) if os.path.exists(TRACKER_FILE) else pd.DataFrame()
+                if "compare_key" in _chk.columns:
+                    _already_in_csv = (_chk["compare_key"] == _compare_key).any()
+            except Exception:
+                pass
+
+        if st.session_state.brain_last_compared != _compare_key and not _already_in_csv:
             st.session_state.brain_last_compared = _compare_key
             # Fuzzy match: strip emojis/punctuation and compare core words
             _pred_clean   = _strip_emoji(brain.prediction)
@@ -2013,9 +2053,13 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
             st.session_state.brain_session_total   += 1
             if _brain_correct_now:
                 st.session_state.brain_session_correct += 1
-            # Log to accuracy_tracker.csv
-            log_accuracy_entry(ticker, brain.prediction, label)
+            # Log to CSV with the compare_key stored for reload dedup
+            log_accuracy_entry(ticker, brain.prediction, label,
+                               compare_key=_compare_key)
             _brain_newly_logged = True
+        elif st.session_state.brain_last_compared != _compare_key and _already_in_csv:
+            # Already in CSV from a previous session — just sync the session key
+            st.session_state.brain_last_compared = _compare_key
 
     _b_corr  = st.session_state.brain_session_correct
     _b_total = st.session_state.brain_session_total
