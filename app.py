@@ -1003,28 +1003,35 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
 
 
 def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price):
-    day_high = float(df["high"].max())
-    day_low  = float(df["low"].min())
+    """Score each of the 7 structures using the same IB-interaction decision tree
+    as classify_day_structure.  Scores are converted to percentages at the end.
+
+    Key invariant (mirrors the video framework):
+      • no_break       → only Normal / Non-Trend get high scores
+      • both_hit       → only Neutral / Neutral Extreme get high scores
+      • one_side_only  → only Trend / Normal Variation / Dbl Dist get high scores
+    """
+    day_high    = float(df["high"].max())
+    day_low     = float(df["low"].min())
     total_range = day_high - day_low
-    ib_range = (ib_high - ib_low) if (ib_high is not None and ib_low is not None) else 0.0
+    ib_range    = (ib_high - ib_low) if (ib_high is not None and ib_low is not None) else 0.0
     final_price = float(df["close"].iloc[-1])
-    fallback = {"Non-Trend": 14.0, "Normal": 14.0, "Trend": 14.0,
-                "Ntrl Extreme": 14.0, "Neutral": 14.0, "Nrml Var": 15.0, "Dbl Dist": 15.0}
+    fallback    = {"Non-Trend": 14.0, "Normal": 14.0, "Trend": 14.0,
+                   "Ntrl Extreme": 14.0, "Neutral": 14.0, "Nrml Var": 15.0, "Dbl Dist": 15.0}
     if total_range == 0 or ib_range == 0:
         return fallback
 
-    # ── IB volume stats (primary signal) ──────────────────────────────────────
     ib_vol_pct, ib_range_ratio = compute_ib_volume_stats(df, ib_high, ib_low)
-    # ib_vol_pct:  >0.65 = balanced, <0.35 = directional
-    # ib_range_ratio: >0.60 = tight/Normal, <0.30 = wide Trend expansion
 
-    rr = total_range / ib_range
-    poc_pos = (poc_price - day_low) / total_range
-    pct_inside = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean())
+    rr          = total_range / ib_range
+    pct_inside  = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean())
 
-    ib_high_hit = day_high >= ib_high
-    ib_low_hit  = day_low  <= ib_low
-    both_hit    = ib_high_hit and ib_low_hit
+    # IB boundary state (the core 3-way split)
+    ib_high_hit  = day_high >= ib_high
+    ib_low_hit   = day_low  <= ib_low
+    both_hit     = ib_high_hit and ib_low_hit
+    one_side     = ib_high_hit ^ ib_low_hit   # XOR: exactly one side broken
+    no_break     = not ib_high_hit and not ib_low_hit
 
     atr = compute_atr(df)
     if final_price > ib_high:
@@ -1034,34 +1041,63 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
     else:
         dist_ib = 0.0
 
-    two_hr_end = df.index[0].replace(hour=11, minute=30)
-    early_df   = df[df.index <= two_hr_end]
-    early_high = float(early_df["high"].max()) if not early_df.empty else day_high
-    early_low  = float(early_df["low"].min())  if not early_df.empty else day_low
-    viol_early = (early_high > ib_high) or (early_low < ib_low)
+    # Close position in day range (0 = at low, 1 = at high)
+    close_pct   = (final_price - day_low) / total_range if total_range > 0 else 0.5
+    at_extreme  = close_pct >= 0.80 or close_pct <= 0.20   # top/bottom 20% of range
 
-    extreme_band = 0.10 * total_range
-    at_extreme   = (final_price >= day_high - extreme_band) or (final_price <= day_low + extreme_band)
+    # Early IB violation — only meaningful for one-side-only days
+    two_hr_end  = df.index[0].replace(hour=11, minute=30)
+    early_df    = df[df.index <= two_hr_end]
+    early_high  = float(early_df["high"].max()) if not early_df.empty else day_high
+    early_low   = float(early_df["low"].min())  if not early_df.empty else day_low
+    viol_early  = (early_high > ib_high) or (early_low < ib_low)
 
-    has_dd = _detect_double_distribution(bin_centers, vap) is not None
+    directional_vol = ib_vol_pct < 0.40 and ib_range_ratio < 0.40
+    has_dd          = _detect_double_distribution(bin_centers, vap) is not None
 
-    # ── IB-volume multipliers ─────────────────────────────────────────────────
-    # Normal / Non-Trend boosted by high IB vol; Trend boosted by low IB vol
-    ib_balance_boost = max(0.5, ib_vol_pct * 2.0)          # 0.5 → 2.0 as ib_vol_pct goes 0→1
-    ib_trend_boost   = max(0.5, (1.0 - ib_vol_pct) * 2.0) # mirrors above
+    # ── Volume multipliers ────────────────────────────────────────────────────
+    ib_balance_boost = max(0.5, ib_vol_pct * 2.0)           # high → balanced day
+    ib_trend_boost   = max(0.5, (1.0 - ib_vol_pct) * 2.0)  # low  → directional day
+
+    # ── Scores gated by IB-interaction bucket ─────────────────────────────────
+    # Non-Trend / Normal → only score when no IB break
+    if no_break:
+        is_narrow = ib_range < 0.20 * total_range
+        s_nontrend = max(2.0, (1.0 - rr) * 40.0 * ib_balance_boost) if is_narrow else 2.0
+        s_normal   = (5.0 + pct_inside * 60.0) * ib_balance_boost
+    else:
+        s_nontrend = 2.0
+        s_normal   = 2.0
+
+    # Neutral / Neutral Extreme → only score when BOTH sides broken
+    if both_hit:
+        s_ntrl_extreme = 70.0 if at_extreme else 4.0
+        s_neutral      = 4.0  if at_extreme else 70.0
+    else:
+        s_ntrl_extreme = 2.0
+        s_neutral      = 2.0
+
+    # Trend / Normal Variation / Dbl Dist → only score when ONE side broken
+    if one_side:
+        # Trend: early break, close at extreme, directional volume
+        trend_strength = 5.0 + max(0.0, (dist_ib / max(atr, 0.01) - 1.0) * 25.0)
+        is_trend_day   = viol_early and at_extreme
+        s_trend   = trend_strength * ib_trend_boost if is_trend_day else 4.0
+        s_nrml_var= 4.0 if is_trend_day else (40.0 * (0.7 + 0.6 * (1.0 - ib_vol_pct)))
+        s_dbl_dist= 70.0 if has_dd else 4.0
+    else:
+        s_trend    = 2.0
+        s_nrml_var = 2.0
+        s_dbl_dist = 70.0 if has_dd else 2.0   # DD can still override on both-hit days
 
     scores = {
-        "Non-Trend":    max(2.0, (1.0 - rr) * 40.0 * ib_balance_boost)
-                        if ib_range < 0.20 * total_range else 2.0,
-        "Normal":       (5.0 + pct_inside * 60.0) * ib_balance_boost
-                        if not ib_high_hit and not ib_low_hit else 3.0,
-        "Trend":        (5.0 + max(0.0, (dist_ib / max(atr, 0.01) - 1.0) * 25.0)) * ib_trend_boost
-                        if viol_early else 3.0,
-        "Ntrl Extreme": 50.0 if both_hit and at_extreme else 3.0,
-        "Neutral":      50.0 if both_hit and (ib_low <= final_price <= ib_high) else 3.0,
-        "Nrml Var":     40.0 * (0.7 + 0.6 * (1.0 - ib_vol_pct))  # stronger when low IB vol
-                        if (ib_high_hit ^ ib_low_hit) else 4.0,
-        "Dbl Dist":     60.0 if has_dd else 3.0,
+        "Non-Trend":    s_nontrend,
+        "Normal":       s_normal,
+        "Trend":        s_trend,
+        "Ntrl Extreme": s_ntrl_extreme,
+        "Neutral":      s_neutral,
+        "Nrml Var":     s_nrml_var,
+        "Dbl Dist":     s_dbl_dist,
     }
 
     # ── Apply adaptive learned weights ─────────────────────────────────────────

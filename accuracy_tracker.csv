@@ -1,1 +1,31 @@
-
+timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
+2026-03-31 00:45:11,BFRG,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,BFRG_2026-03-31_1.3550_0.9846
+2026-03-31 00:45:41,ASTC,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ASTC_2026-03-31_4.7450_2.8000
+2026-03-31 00:45:56,UGRO,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,UGRO_2026-03-31_27.1400_19.9750
+2026-03-31 00:46:25,QNCX,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,QNCX_2026-03-31_0.1036_0.0933
+2026-03-31 00:46:37,GV,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GV_2026-03-31_0.2086_0.1840
+2026-03-31 00:46:53,JCSE,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,JCSE_2026-03-31_1.1300_1.0600
+2026-03-31 00:47:05,EEIQ,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,EEIQ_2026-03-31_11.0200_9.1200
+2026-03-31 00:47:16,HXHX,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,HXHX_2026-03-31_0.4821_0.4155
+2026-03-31 00:47:33,APRE,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,APRE_2026-03-31_0.6890_0.6636
+2026-03-31 00:47:46,GLND,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GLND_2026-03-31_12.5750_8.6600
+2026-03-31 00:48:04,ANNA,Neutral Extreme,⚡ Double Distribution,❌,0.0,0.0,0.0,ANNA_2026-03-31_9.2500_7.9800
+2026-03-31 00:48:16,YYGH,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,YYGH_2026-03-31_1.0600_0.9464
+2026-03-31 00:48:29,TURB,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,TURB_2026-03-31_2.9650_2.6800
+2026-03-31 00:48:38,LTRN,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,LTRN_2026-03-31_1.3700_1.1700
+2026-03-31 00:48:50,TBI,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,TBI_2026-03-31_3.2900_3.2000
+2026-03-31 00:49:01,SWMR,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,SWMR_2026-03-31_37.7300_34.4550
+2026-03-31 00:49:26,IDN,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,IDN_2026-03-31_5.5300_5.0500
+2026-03-31 00:49:42,POLA,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,POLA_2026-03-31_1.7200_1.6100
+2026-03-31 00:50:03,GVH,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GVH_2026-03-31_1.4500_1.3200
+2026-03-31 00:50:21,KZR,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,KZR_2026-03-31_7.4700_7.2900
+2026-03-31 00:50:30,BOXL,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,BOXL_2026-03-31_1.3600_1.2400
+2026-03-31 00:51:05,SST,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,SST_2026-03-31_4.4300_3.6500
+2026-03-31 00:51:21,RBNE,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,RBNE_2026-03-31_2.9200_2.5200
+2026-03-31 00:51:41,VSA,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,VSA_2026-03-31_0.6205_0.5312
+2026-03-31 00:51:53,HWH,Neutral Extreme,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,HWH_2026-03-31_1.2800_1.2800
+2026-03-31 00:52:03,LNAI,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,LNAI_2026-03-31_0.3965_0.3800
+2026-03-31 00:52:56,TPST,Neutral Extreme,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,TPST_2026-03-31_1.6500_1.6500
+2026-03-31 00:53:05,MNTS,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,MNTS_2026-03-31_4.6500_4.2200
+2026-03-31 00:54:23,ONCO,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,ONCO_2026-03-31_1.2900_1.2900
+2026-03-31 00:54:32,EONR,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,EONR_2026-03-31_1.0600_0.9631
