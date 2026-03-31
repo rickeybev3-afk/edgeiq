@@ -1913,11 +1913,52 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "brain_predicted": brain.prediction,
     }
 
-    # ── Update peak price for open position ───────────────────────────────────
+    # ── Update peak price + auto-alerts for open position ────────────────────
     if st.session_state.position_in and st.session_state.position_ticker == ticker:
+        avg_entry = st.session_state.position_avg_entry
+
+        # Track MFE
         if price_now > st.session_state.position_peak_price:
             st.session_state.position_peak_price = price_now
             save_position_state()
+
+        # 1. Breakeven alert — price reached +2% from entry
+        if avg_entry > 0 and price_now >= avg_entry * 1.02:
+            be_pct = (price_now - avg_entry) / avg_entry * 100
+            st.markdown(
+                f'<div style="background:#ff980022; border:1px solid #ff9800; border-radius:6px; '
+                f'padding:10px 18px; margin:6px 0; font-size:14px; font-weight:700; color:#ff9800;">'
+                f'⚡ MOVE STOP TO BREAKEVEN — Price is +{be_pct:.1f}% from entry '
+                f'(${avg_entry:.2f} → ${price_now:.2f}). '
+                f'Set stop at ${avg_entry:.2f} to lock in a risk-free trade.</div>',
+                unsafe_allow_html=True,
+            )
+
+        # 2. Auto Take-Profit — price hit IB High on Neutral or Normal structure
+        _tp_structures = {"Neutral", "Neutral Extreme", "Normal", "Normal Variation"}
+        _label_base    = label.split(" ")[0] if label else ""
+        _tp_triggered  = (
+            avg_entry > 0
+            and ib_high is not None
+            and price_now >= ib_high
+            and any(s in label for s in _tp_structures)
+        )
+        if _tp_triggered:
+            _mfe      = st.session_state.position_peak_price   # capture before exit clears it
+            _realized = exit_position(price_now, actual_structure=label)
+            _pnl_col  = "#4caf50" if _realized >= 0 else "#ef5350"
+            st.markdown(
+                f'<div style="background:{_pnl_col}22; border:1px solid {_pnl_col}; '
+                f'border-radius:6px; padding:10px 18px; margin:6px 0; font-size:14px; '
+                f'font-weight:700; color:{_pnl_col};">'
+                f'🎯 AUTO TAKE PROFIT — Price reached IB High ${ib_high:.2f} on a '
+                f'<em>{label}</em> day. '
+                f'Position closed at ${price_now:.2f}. '
+                f'Realized: ${_realized:+.2f} | MFE: ${_mfe:.2f}</div>',
+                unsafe_allow_html=True,
+            )
+            time.sleep(0.5)
+            st.rerun()
 
     # ── Target zone alerts + sidebar "Distance to Target" ─────────────────────
     check_target_alerts(price_now, target_zones, audio_enabled)
