@@ -3051,7 +3051,8 @@ def render_tracker_tab():
         if _next_recal == _RECALIBRATE_EVERY:
             st.success(f"✅ Weights just recalibrated at {_current_n} entries.")
         else:
-            st.info(f"🔄 Next recalibration in **{_next_recal}** more {"entry" if _next_recal == 1 else "entries"} "
+            _entry_word = "entry" if _next_recal == 1 else "entries"
+            st.info(f"🔄 Next recalibration in **{_next_recal}** more {_entry_word} "
                     f"({_current_n} logged so far).")
 
         # ── Manual recalibrate button ─────────────────────────────────────────
