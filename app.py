@@ -1858,15 +1858,23 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
         except Exception:
             return str(ts)[-8:]
 
+    # Keep a handle to the original (real) bars before we expand the index
+    _real_df = df.copy()
+    _current_price = float(_real_df["close"].dropna().iloc[-1]) if not _real_df.empty else None
+
     try:
         _first = df.index[0]
+        _last_real = df.index[-1]          # last bar that actually has data
         _d = _first.date()
-        _open_et  = EASTERN.localize(datetime(_d.year, _d.month, _d.day,  9, 30))
-        _close_et = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16,  0))
-        _full_idx = pd.date_range(_open_et, _close_et, freq="1min")
-        df = df.reindex(_full_idx)      # NaN rows for minutes with no trade
+        _open_et   = EASTERN.localize(datetime(_d.year, _d.month, _d.day,  9, 30))
+        # Extend grid only to the last real bar, not necessarily 16:00.
+        # This prevents the chart trailing off into blank space mid-session.
+        _close_et  = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16,  0))
+        _grid_end  = min(_last_real, _close_et)
+        _full_idx  = pd.date_range(_open_et, _grid_end, freq="1min")
+        df = df.reindex(_full_idx)         # NaN rows for minutes with no trade
     except Exception:
-        pass   # if reindex fails (e.g. tz issues) fall back to raw bars
+        pass   # fallback to raw bars if tz handling fails
 
     x_labels = [_et_label(ts) for ts in df.index]
     x0, x1   = x_labels[0], x_labels[-1]
@@ -1878,6 +1886,19 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
         name="Price", increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
         increasing_fillcolor="#26a69a", decreasing_fillcolor="#ef5350",
     ), row=1, col=1)
+
+    # ── Current Price line ────────────────────────────────────────────────────
+    if _current_price is not None:
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[_current_price, _current_price],
+            mode="lines+text",
+            name=f"Last ${_current_price:.2f}",
+            line=dict(color="#ffffff", width=1.2, dash="dot"),
+            text=["", f" ▶ ${_current_price:.2f}"],
+            textposition="middle right",
+            textfont=dict(color="#ffffff", size=12, family="monospace"),
+            showlegend=True,
+        ), row=1, col=1)
 
     if ib_high is not None and ib_low is not None:
         fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_high, ib_high], mode="lines",

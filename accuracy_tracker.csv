@@ -48,3 +48,13 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-30 23:24:28,CUPR,Neutral Extreme,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,CUPR_2026-03-30_0.3114_0.3114
 2026-03-30 23:25:10,SATL,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,SATL_2026-03-30_5.9200_5.0000
 2026-03-30 23:25:28,RPAY,Neutral,📉 Trend Day (Bear),❌,0.0,0.0,0.0,RPAY_2026-03-30_3.3100_3.2100
+2026-03-30 23:29:59,CXAI,Trend Day,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,CXAI_2026-03-30_0.2004_0.2004
+2026-03-30 23:30:49,BOXL,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,BOXL_2026-03-30_1.3600_1.2400
+2026-03-30 23:31:21,KZR,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,KZR_2026-03-30_7.4700_7.2900
+2026-03-30 23:31:30,POLA,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,POLA_2026-03-30_1.7200_1.6100
+2026-03-30 23:32:10,IDN,Neutral Extreme,📈 Trend Day,❌,0.0,0.0,0.0,IDN_2026-03-30_5.5300_5.0500
+2026-03-30 23:35:02,ITOC,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,ITOC_2026-03-30_0.3700_0.3600
+2026-03-30 23:35:45,RBNE,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,RBNE_2026-03-30_2.9200_2.5200
+2026-03-30 23:35:58,AIFF,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,AIFF_2026-03-30_2.3800_2.1800
+2026-03-30 23:36:13,AZTR,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,AZTR_2026-03-30_0.2420_0.2400
+2026-03-30 23:37:48,TOVX,Trend Day,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,TOVX_2026-03-30_0.1928_0.1895
