@@ -1262,30 +1262,57 @@ def compute_rvol(df, intraday_curve=None, avg_daily_vol=None):
     return None
 
 
-def compute_buy_sell_pressure(df):
-    """Estimate session-cumulative buy vs sell volume from 1-min OHLCV bars.
+def compute_buy_sell_pressure(df,
+                               lookback_len=10,
+                               baseline_weight=0.5,
+                               sell_pct_floor=0.0,
+                               sell_pct_ceiling=1.0):
+    """Estimate session-cumulative buy vs sell volume using the blended CLV+Tick method.
 
-    Uses standard money-flow weighting per bar:
-        buy_vol  = volume × (close − low)  / (high − low)
-        sell_vol = volume × (high − close) / (high − low)
+    Mirrors the ThinkScript Blended split formula:
+        sellPctCLV  = (high − close) / (high − low)     ← close location value
+        sellPctTick = 1 if close < close[1]              ← up/down tick
+                      0 if close > close[1]
+                      0.5 otherwise
+        sellPctRaw      = (sellPctCLV + sellPctTick) / 2
+        sellPctBaseline = rolling mean of sellPctRaw over lookback_len bars
+        sellPctBlended  = (1−baseline_weight)×sellPctRaw + baseline_weight×sellPctBaseline
+        sellPct         = clamp(sellPctBlended, floor, ceiling)
+        buyPct          = 1 − sellPct
 
-    Also computes a momentum comparison (last 5 bars vs prior 5 bars) to detect
-    whether buy pressure is ramping up or cooling off — similar to RSI oscillation
-    but for volume expansion/contraction.
-
+    Momentum compares last 5 bars vs prior 5 bars (RSI-style ramping detection).
     Returns dict with keys: buy_pct, sell_pct, trend_now, trend_prev,
                             total_buy, total_sell — or None if insufficient data.
     """
     if df.empty or len(df) < 2:
         return None
     _df = df.dropna(subset=["open", "high", "low", "close", "volume"]).copy()
-    if _df.empty:
+    if len(_df) < 2:
         return None
 
+    # ── CLV component ─────────────────────────────────────────────────────────
     hl = (_df["high"] - _df["low"]).replace(0, np.nan)
-    buy_frac         = (((_df["close"] - _df["low"]) / hl).fillna(0.5)).clip(0, 1)
-    _df["buy_vol"]   = _df["volume"] * buy_frac
-    _df["sell_vol"]  = _df["volume"] * (1.0 - buy_frac)
+    sell_pct_clv = (((_df["high"] - _df["close"]) / hl).fillna(0.5)).clip(0, 1)
+
+    # ── Up/Down Tick component ────────────────────────────────────────────────
+    close_prev = _df["close"].shift(1)
+    sell_pct_tick = np.where(
+        _df["close"] < close_prev, 1.0,
+        np.where(_df["close"] > close_prev, 0.0, 0.5)
+    )
+    sell_pct_tick = pd.Series(sell_pct_tick, index=_df.index).fillna(0.5)
+
+    # ── Blend CLV + Tick → apply baseline smoothing → clamp ──────────────────
+    sell_pct_raw      = (sell_pct_clv + sell_pct_tick) / 2.0
+    sell_pct_baseline = sell_pct_raw.rolling(window=max(1, lookback_len),
+                                              min_periods=1).mean()
+    sell_pct_blended  = ((1.0 - baseline_weight) * sell_pct_raw
+                         + baseline_weight * sell_pct_baseline)
+    sell_pct          = sell_pct_blended.clip(sell_pct_floor, sell_pct_ceiling)
+    buy_pct_series    = 1.0 - sell_pct
+
+    _df["buy_vol"]  = _df["volume"] * buy_pct_series
+    _df["sell_vol"] = _df["volume"] * sell_pct
 
     total_buy  = float(_df["buy_vol"].sum())
     total_sell = float(_df["sell_vol"].sum())
@@ -1293,22 +1320,22 @@ def compute_buy_sell_pressure(df):
     if total_vol == 0:
         return None
 
-    buy_pct = total_buy / total_vol * 100.0
+    buy_pct_session = total_buy / total_vol * 100.0
 
     def _pct(sub):
         b = float(sub["buy_vol"].sum())
         s = float(sub["sell_vol"].sum())
         return b / (b + s) * 100.0 if (b + s) > 0 else 50.0
 
-    # Momentum: last 5 min vs prior 5 min
+    # Momentum: last 5 bars vs prior 5 bars
     recent5    = _df.tail(5)
     prior5     = _df.iloc[-10:-5] if len(_df) >= 10 else _df.head(max(1, len(_df) // 2))
     trend_now  = _pct(recent5)
     trend_prev = _pct(prior5)
 
     return {
-        "buy_pct":    round(buy_pct, 1),
-        "sell_pct":   round(100.0 - buy_pct, 1),
+        "buy_pct":    round(buy_pct_session, 1),
+        "sell_pct":   round(100.0 - buy_pct_session, 1),
         "trend_now":  round(trend_now, 1),
         "trend_prev": round(trend_prev, 1),
         "total_buy":  total_buy,
@@ -2287,17 +2314,18 @@ def render_rvol_widget(rvol_val, label_str, label_color, is_runner):
     """, unsafe_allow_html=True)
 
 
-def render_buy_sell_widget(bsp):
+def render_buy_sell_widget(bsp, rvol_val=None):
     """Buy/Sell Volume Pressure oscillator — 0-100 gauge with momentum arrow.
 
-    Left of centre = sell pressure dominant; right = buy pressure dominant.
-    Momentum compares last 5 bars vs prior 5 bars (RSI-style ramping signal).
+    Uses the blended CLV+Tick formula (same as ThinkScript Blended split).
+    Fires a HIGH CONVICTION alert when RVOL > 3 AND buy pressure is ramping.
     """
     if bsp is None:
         return
     buy_pct    = bsp["buy_pct"]
     trend_now  = bsp["trend_now"]
     trend_prev = bsp["trend_prev"]
+    delta      = trend_now - trend_prev
 
     if buy_pct >= 65:
         bar_color, label = "#4caf50", "🔼 BUY DOMINANT"
@@ -2310,7 +2338,6 @@ def render_buy_sell_widget(bsp):
     else:
         bar_color, label = "#ef5350", "🔽 SELL DOMINANT"
 
-    delta = trend_now - trend_prev
     if delta > 3:
         momentum, mom_color = f"▲ Ramping +{delta:.0f}%", "#4caf50"
     elif delta < -3:
@@ -2318,12 +2345,35 @@ def render_buy_sell_widget(bsp):
     else:
         momentum, mom_color = "→ Flat", "#aaaaaa"
 
+    # ── High-conviction signal: RVOL > 3 + buy pressure ramping ──────────────
+    rvol_gt3     = rvol_val is not None and rvol_val >= 3.0
+    buy_ramping  = delta > 3 and buy_pct >= 55
+    sell_ramping = delta < -3 and buy_pct <= 45
+    hc_alert     = ""
+    if rvol_gt3 and buy_ramping:
+        hc_alert = (
+            f'<div style="background:#4caf5022; border:1px solid #4caf5088; '
+            f'border-radius:6px; padding:6px 12px; margin-bottom:6px; '
+            f'font-size:12px; font-weight:700; color:#4caf50; text-align:center;">'
+            f'🚀 HIGH CONVICTION BUY — RVOL {rvol_val:.1f}× + Buy Ramping'
+            f'</div>'
+        )
+    elif rvol_gt3 and sell_ramping:
+        hc_alert = (
+            f'<div style="background:#ef535022; border:1px solid #ef535088; '
+            f'border-radius:6px; padding:6px 12px; margin-bottom:6px; '
+            f'font-size:12px; font-weight:700; color:#ef5350; text-align:center;">'
+            f'🔻 HIGH CONVICTION SELL — RVOL {rvol_val:.1f}× + Sell Ramping'
+            f'</div>'
+        )
+
     st.markdown(f"""
     <div style="background:#1a1a2e; border:1px solid {bar_color}55; border-radius:8px;
                 padding:10px 16px; margin:4px 0 6px 0;">
+      {hc_alert}
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
         <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">
-          Buy / Sell Pressure
+          Buy / Sell Pressure &nbsp;<span style="color:#555;">(CLV+Tick Blended)</span>
         </span>
         <span style="font-size:12px; font-weight:700; color:{bar_color};">{label}</span>
         <span style="font-size:11px; color:{mom_color};">{momentum}</span>
@@ -2541,7 +2591,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
-    render_buy_sell_widget(compute_buy_sell_pressure(_real_df))
+    render_buy_sell_widget(compute_buy_sell_pressure(_real_df), rvol_val=rvol_val)
     render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
