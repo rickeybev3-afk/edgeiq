@@ -16,8 +16,8 @@ from collections import deque
 STATE_FILE   = "trade_state.json"
 TRACKER_FILE = "accuracy_tracker.csv"
 WEIGHTS_FILE = "brain_weights.json"   # adaptive per-structure multipliers
-HICONS_FILE  = "high_conviction_log.csv"   # tickers where top prob ≥ 80%
-HICONS_THRESHOLD = 80.0                    # % above which we flag high conviction
+HICONS_FILE  = "high_conviction_log.csv"   # tickers where top prob ≥ 75%
+HICONS_THRESHOLD = 75.0                    # % above which we flag high conviction
 
 # ── Structures the Brain tracks — maps display keyword → weight key ────────────
 _BRAIN_WEIGHT_KEYS = [
@@ -3274,7 +3274,7 @@ def render_tracker_tab():
         "Ntrl Extreme": "#7e57c2",
     }
 
-    st.markdown("### 🎯 High Conviction Calls  <span style='font-size:13px;color:#888;font-weight:400'>≥ 80% structure probability</span>",
+    st.markdown("### 🎯 High Conviction Calls  <span style='font-size:13px;color:#888;font-weight:400'>≥ 75% structure probability</span>",
                 unsafe_allow_html=True)
     _hc_df = load_high_conviction_log()
 
@@ -3282,7 +3282,7 @@ def render_tracker_tab():
         st.info(
             "No high-conviction calls logged yet. "
             "Run a historical or live analysis on any ticker — any day where the "
-            "top structure probability ≥ 80% is automatically captured here."
+            "top structure probability ≥ 75% is automatically captured here."
         )
     else:
         # ── Summary pills row ─────────────────────────────────────────────────
