@@ -2174,9 +2174,11 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     _brain_newly_logged = False
 
     # Auto-compare once IB is complete and brain has a real prediction
-    if brain.ib_set and brain.prediction != "Analyzing IB…":
+    if brain.ib_set and brain.prediction != "Analyzing IB…" \
+            and ib_high is not None and ib_low is not None \
+            and ib_high != float("inf") and ib_low != float("inf"):
         _today_str   = datetime.now(EASTERN).strftime("%Y-%m-%d")
-        _compare_key = f"{ticker}_{_today_str}_{ib_high:.4f}_{ib_low:.4f}"
+        _compare_key = f"{ticker}_{_today_str}_{float(ib_high):.4f}_{float(ib_low):.4f}"
 
         # Dedup: check both session state AND the CSV (survives reloads)
         _already_in_csv = False
@@ -2216,20 +2218,25 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     _counter_col = "#4caf50" if _b_rate >= 60 else "#ffa726" if _b_rate >= 40 else "#ef5350"
 
     # ── All-time win rate — reads directly from CSV, never resets ─────────────
+    _at_total, _at_correct, _at_rate = 0, 0, None
     try:
-        _at_df = pd.read_csv(TRACKER_FILE) if os.path.exists(TRACKER_FILE) else pd.DataFrame()
-        _at_total   = len(_at_df)
-        _at_correct = int((_at_df["correct"] == "✅").sum()) if "correct" in _at_df.columns else 0
-        _at_rate    = (_at_correct / _at_total * 100) if _at_total > 0 else None
+        if os.path.exists(TRACKER_FILE):
+            _at_df = pd.read_csv(TRACKER_FILE)
+            _at_total = int(len(_at_df))
+            if "correct" in _at_df.columns and _at_total > 0:
+                _at_correct = int((_at_df["correct"] == "✅").sum())
+                _at_rate    = round(float(_at_correct) / float(_at_total) * 100.0, 1)
     except Exception:
         _at_total, _at_correct, _at_rate = 0, 0, None
 
-    _at_col = ("#4caf50" if (_at_rate or 0) >= 60
-               else "#ffa726" if (_at_rate or 0) >= 40
-               else "#ef5350" if _at_rate is not None else "#555")
-    _at_str  = f"{_at_rate:.0f}%" if _at_rate is not None else "—"
+    _at_is_valid = (_at_rate is not None and isinstance(_at_rate, (int, float))
+                    and _at_rate == _at_rate)   # NaN check
+    _at_col = ("#4caf50" if _at_is_valid and _at_rate >= 60
+               else "#ffa726" if _at_is_valid and _at_rate >= 40
+               else "#ef5350" if _at_is_valid else "#555")
+    _at_str  = f"{_at_rate:.0f}%" if _at_is_valid else "—"
     _at_lbl  = f"All-time: <b style='font-size:18px; color:{_at_col};'>{_at_str}</b>"
-    if _at_rate is not None:
+    if _at_is_valid:
         _at_lbl += f" <span style='font-size:10px; color:#555;'>({_at_correct}/{_at_total})</span>"
 
     st.markdown(
