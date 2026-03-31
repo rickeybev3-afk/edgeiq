@@ -2591,7 +2591,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
-    render_buy_sell_widget(compute_buy_sell_pressure(_real_df), rvol_val=rvol_val)
+    render_buy_sell_widget(compute_buy_sell_pressure(df), rvol_val=rvol_val)
     render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
