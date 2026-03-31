@@ -16,6 +16,8 @@ from collections import deque
 STATE_FILE   = "trade_state.json"
 TRACKER_FILE = "accuracy_tracker.csv"
 WEIGHTS_FILE = "brain_weights.json"   # adaptive per-structure multipliers
+HICONS_FILE  = "high_conviction_log.csv"   # tickers where top prob ≥ 80%
+HICONS_THRESHOLD = 80.0                    # % above which we flag high conviction
 
 # ── Structures the Brain tracks — maps display keyword → weight key ────────────
 _BRAIN_WEIGHT_KEYS = [
@@ -530,6 +532,52 @@ def log_accuracy_entry(symbol, predicted, actual, compare_key="",
             recalibrate_brain_weights()
     except Exception:
         pass
+
+
+def log_high_conviction(ticker, trade_date, structure, prob,
+                        ib_high=None, ib_low=None, poc_price=None):
+    """Append a row to high_conviction_log.csv when top prob ≥ HICONS_THRESHOLD.
+
+    Deduplication: one row per ticker+date combination — existing row is
+    updated (overwritten) if prob is higher than what was previously recorded.
+    """
+    _cols = ["timestamp", "ticker", "date", "structure", "prob_pct",
+             "ib_high", "ib_low", "poc_price"]
+    _row  = {
+        "timestamp": datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
+        "ticker":    ticker,
+        "date":      str(trade_date),
+        "structure": structure,
+        "prob_pct":  round(prob, 1),
+        "ib_high":   round(ib_high, 4) if ib_high else "",
+        "ib_low":    round(ib_low, 4)  if ib_low  else "",
+        "poc_price": round(poc_price, 4) if poc_price else "",
+    }
+    # Load existing, drop any previous row for same ticker+date, then append
+    if os.path.exists(HICONS_FILE):
+        try:
+            _df = pd.read_csv(HICONS_FILE, encoding="utf-8")
+            _mask = ~((_df["ticker"] == ticker) & (_df["date"] == str(trade_date)))
+            _df = _df[_mask]
+        except Exception:
+            _df = pd.DataFrame(columns=_cols)
+    else:
+        _df = pd.DataFrame(columns=_cols)
+    _new = pd.concat([_df, pd.DataFrame([_row])], ignore_index=True)
+    _new.to_csv(HICONS_FILE, index=False, encoding="utf-8")
+
+
+def load_high_conviction_log():
+    """Return the high conviction log as a DataFrame, newest entries first."""
+    if not os.path.exists(HICONS_FILE):
+        return pd.DataFrame()
+    try:
+        _df = pd.read_csv(HICONS_FILE, encoding="utf-8")
+        if _df.empty:
+            return _df
+        return _df.sort_values("prob_pct", ascending=False).reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
 
 
 def _strip_emoji(s):
@@ -2165,6 +2213,15 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     probs = compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price)
     tcs = compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=sector_bonus)
     target_zones = compute_target_zones(df, ib_high, ib_low, bin_centers, vap, tcs)
+
+    # ── High Conviction logger ─────────────────────────────────────────────────
+    try:
+        _top_struct, _top_prob = max(probs.items(), key=lambda x: x[1])
+        if _top_prob >= HICONS_THRESHOLD and ib_high is not None and ib_low is not None:
+            log_high_conviction(ticker, selected_date, _top_struct, _top_prob,
+                                ib_high=ib_high, ib_low=ib_low, poc_price=poc_price)
+    except Exception:
+        pass
     audio_enabled = st.session_state.get("audio_alerts_enabled", True)
     check_tcs_alerts(tcs, audio_enabled)
 
@@ -3166,6 +3223,81 @@ def render_tracker_tab():
                 )
             if st.button("🗑 Clear batch results", key="bt_clear_btn"):
                 st.session_state.pop("bt_last_results", None)
+                st.rerun()
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 0b — High Conviction Watchlist (top prob ≥ 80%)
+    # ══════════════════════════════════════════════════════════════════════════
+    _STRUCT_COLORS_HC = {
+        "Trend":        "#ff9800",
+        "Dbl Dist":     "#00bcd4",
+        "Non-Trend":    "#78909c",
+        "Normal":       "#66bb6a",
+        "Nrml Var":     "#aed581",
+        "Neutral":      "#80cbc4",
+        "Ntrl Extreme": "#7e57c2",
+    }
+
+    st.markdown("### 🎯 High Conviction Calls  <span style='font-size:13px;color:#888;font-weight:400'>≥ 80% structure probability</span>",
+                unsafe_allow_html=True)
+    _hc_df = load_high_conviction_log()
+
+    if _hc_df.empty:
+        st.info(
+            "No high-conviction calls logged yet. "
+            "Run a historical or live analysis on any ticker — any day where the "
+            "top structure probability ≥ 80% is automatically captured here."
+        )
+    else:
+        # ── Summary pills row ─────────────────────────────────────────────────
+        _hc_total   = len(_hc_df)
+        _hc_structs = _hc_df["structure"].value_counts()
+        _pill_html  = ""
+        for _s, _cnt in _hc_structs.items():
+            _c = _STRUCT_COLORS_HC.get(_s, "#888888")
+            _pill_html += (
+                f'<span style="background:{_c}33;color:{_c};border:1px solid {_c}66;'
+                f'border-radius:12px;padding:3px 10px;margin:3px;'
+                f'font-size:13px;font-weight:600;display:inline-block;">'
+                f'{_s} ({_cnt})</span>'
+            )
+        st.markdown(
+            f'<div style="margin-bottom:8px;">'
+            f'<b style="color:#ccc;">{_hc_total} total</b> &nbsp;·&nbsp; '
+            + _pill_html + "</div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Table ─────────────────────────────────────────────────────────────
+        def _hc_row_style(row):
+            _c = _STRUCT_COLORS_HC.get(row.get("structure", ""), "#888888")
+            return [f"background-color:{_c}18;"] * len(row)
+
+        _hc_display = _hc_df[["ticker","date","structure","prob_pct",
+                               "ib_high","ib_low","poc_price"]].copy()
+        _hc_display.columns = ["Ticker","Date","Structure","Probability %",
+                                "IB High","IB Low","POC"]
+        _hc_display["Probability %"] = _hc_display["Probability %"].apply(
+            lambda x: f"{x:.1f}%"
+        )
+
+        try:
+            st.dataframe(
+                _hc_display.style.apply(_hc_row_style, axis=1),
+                use_container_width=True, hide_index=True
+            )
+        except Exception:
+            st.dataframe(_hc_display, use_container_width=True, hide_index=True)
+
+        c1, c2 = st.columns([3, 1])
+        with c2:
+            if st.button("🗑 Clear list", key="hc_clear_btn"):
+                try:
+                    os.remove(HICONS_FILE)
+                except Exception:
+                    pass
                 st.rerun()
 
     st.markdown("---")
