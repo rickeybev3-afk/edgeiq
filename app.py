@@ -2930,11 +2930,180 @@ def _clean_structure_label(raw):
     return s[:30] if len(s) > 30 else s
 
 
+_BATCH_DEFAULT = """\
+3/30: ANNA, SST, ASTC, BFRG, UGRO, JCSE, EEIQ, ELAB
+3/27: VSA, ARTL, GVH, GCTK
+3/26: AIFF, EEIQ, GLND, FCHL, VSA
+3/25: VCX, RMSG, UGRO, SATL, CODX, QNRX, FEED
+3/24: SATL, FEED, RBNE, PAVS, VCX, UGRO, ANNA
+3/23: AHMA, UGRO, VCX, BIAF, PTLE
+3/20: ARTL, ANNA, CODX
+3/19: LNKS, SWMR, ACXP, GOAI, SER, VCX, CHNR
+3/18: ARTL, AIM, SWMR, MTVA
+3/17: UCAR, LNAI, BIAF, CREG, EDSA, SWMR
+3/16: WNW, HCWB"""
+
+
+def _parse_batch_pairs(text: str) -> list[tuple]:
+    """Parse 'M/D: T1, T2, ...' lines into [(ticker, date), ...] for year 2026."""
+    import re
+    pairs = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        date_part, tickers_part = line.split(":", 1)
+        date_part = date_part.strip()
+        m = re.match(r"(\d{1,2})/(\d{1,2})", date_part)
+        if not m:
+            continue
+        mo, dy = int(m.group(1)), int(m.group(2))
+        try:
+            trade_date = date(2026, mo, dy)
+        except ValueError:
+            continue
+        for t in tickers_part.split(","):
+            t = t.strip().upper()
+            if t:
+                pairs.append((t, trade_date))
+    return pairs
+
+
+def run_single_backtest(api_key, secret_key, ticker, trade_date, feed="iex", num_bins=100):
+    """Full pipeline for one ticker/date: fetch → classify → brain → log."""
+    result = {"ticker": ticker, "date": str(trade_date),
+              "predicted": "—", "actual": "—", "correct": "—", "status": "OK"}
+    try:
+        df = fetch_bars(api_key, secret_key, ticker, trade_date, feed=feed)
+        if df.empty or len(df) < 10:
+            result["status"] = "No data"
+            return result
+
+        bin_centers, vap, poc_price = compute_volume_profile(df, num_bins)
+        ib_high, ib_low = compute_initial_balance(df)
+        if ib_high is None or ib_low is None:
+            result["status"] = "No IB data"
+            return result
+
+        label, color, detail, insight = classify_day_structure(
+            df, bin_centers, vap, ib_high, ib_low, poc_price
+        )
+        result["actual"] = label
+
+        # Simulate MarketBrain with the full day's bars
+        brain = MarketBrain()
+        brain.update(df)
+        prediction = brain.prediction
+        result["predicted"] = prediction
+
+        if not brain.ib_set or prediction == "Analyzing IB…":
+            result["status"] = "IB incomplete"
+            return result
+
+        # Build compare_key and dedup check
+        ck = f"{ticker}_{trade_date}_{float(ib_high):.4f}_{float(ib_low):.4f}"
+        if os.path.exists(TRACKER_FILE):
+            try:
+                _chk = pd.read_csv(TRACKER_FILE, encoding="utf-8")
+                if "compare_key" in _chk.columns and (_chk["compare_key"] == ck).any():
+                    result["status"] = "Already logged"
+                    # Still show correct/wrong from existing row
+                    _row = _chk[_chk["compare_key"] == ck]
+                    if not _row.empty and "correct" in _row.columns:
+                        result["correct"] = str(_row["correct"].iloc[0])
+                    return result
+            except Exception:
+                pass
+
+        log_accuracy_entry(ticker, prediction, label, compare_key=ck)
+        result["correct"] = ("✅" if _strip_emoji(prediction) in _strip_emoji(label)
+                             or _strip_emoji(label) in _strip_emoji(prediction) else "❌")
+    except Exception as e:
+        result["status"] = f"Error: {str(e)[:60]}"
+    return result
+
+
 def render_tracker_tab():
     """Render the Accuracy Tracker tab — structure distribution + Predicted vs Actual history."""
     st.markdown("## 🧠 MarketBrain — Accuracy Tracker")
     st.caption("All-time structure distribution and brain prediction accuracy.")
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 0 — Batch Backtest Runner
+    # ══════════════════════════════════════════════════════════════════════════
+    with st.expander("🔬 Batch Backtest — Feed Historical Tickers", expanded=False):
+        st.caption(
+            "Fetches each ticker/date pair via Alpaca, classifies structure, records Brain "
+            "prediction vs actual. Uses credentials entered in the sidebar. "
+            "Skips any pair already in the tracker. Add more lines in M/D: T1, T2 format."
+        )
+        _bt_pairs_text = st.text_area(
+            "Ticker / Date pairs", value=_BATCH_DEFAULT, height=220, key="bt_pairs_input"
+        )
+        _bt_feed = st.selectbox(
+            "Data feed", ["iex", "sip"], index=0, key="bt_feed_select",
+            help="IEX = free tier (recommended for backtests). SIP = full tape."
+        )
+        _bt_run = st.button("▶ Run Batch Backtest", type="primary",
+                            use_container_width=True, key="bt_run_btn")
+
+        if _bt_run:
+            # api_key and secret_key come from the outer sidebar scope
+            if not api_key or not secret_key:
+                st.error("Enter your Alpaca API Key and Secret Key in the sidebar first.")
+            else:
+                _pairs = _parse_batch_pairs(_bt_pairs_text)
+                if not _pairs:
+                    st.warning("No valid ticker/date pairs found. Use format: 3/30: ANNA, SST, BFRG")
+                else:
+                    st.info(f"Processing {len(_pairs)} pairs… this may take 1–2 minutes.")
+                    _prog   = st.progress(0.0, text="Starting…")
+                    _bt_results = []
+                    for _i, (_tk, _dt) in enumerate(_pairs):
+                        _prog.progress((_i + 1) / len(_pairs),
+                                       text=f"Fetching {_tk} {_dt} ({_i+1}/{len(_pairs)})…")
+                        _r = run_single_backtest(api_key, secret_key, _tk, _dt,
+                                                 feed=_bt_feed, num_bins=100)
+                        _bt_results.append(_r)
+                    _prog.empty()
+
+                    _rdf = pd.DataFrame(_bt_results)
+                    _ok  = (_rdf["status"] == "OK").sum()
+                    _dup = (_rdf["status"] == "Already logged").sum()
+                    _err = len(_rdf) - _ok - _dup
+                    _correct = (_rdf["correct"] == "✅").sum()
+                    _logged  = _ok + _dup
+
+                    _acc_str = (f" — Batch accuracy: {_correct}/{_logged} "
+                                f"({_correct/_logged*100:.0f}%)" if _logged > 0 else "")
+                    st.success(
+                        f"Done — {_ok} new entries logged, {_dup} already existed, "
+                        f"{_err} skipped/errored.{_acc_str}"
+                    )
+
+                    # Color rows by result
+                    def _bt_style(row):
+                        if row.get("correct") == "✅":
+                            return ["background-color:#4caf5022"] * len(row)
+                        if row.get("correct") == "❌":
+                            return ["background-color:#ef535022"] * len(row)
+                        return ["background-color:#33333311"] * len(row)
+
+                    try:
+                        st.dataframe(
+                            _rdf[["ticker","date","predicted","actual","correct","status"]]
+                              .style.apply(_bt_style, axis=1),
+                            use_container_width=True, hide_index=True
+                        )
+                    except Exception:
+                        st.dataframe(
+                            _rdf[["ticker","date","predicted","actual","correct","status"]],
+                            use_container_width=True, hide_index=True
+                        )
+
+                    st.rerun()   # refresh all stats below with the new data
+
+    st.markdown("---")
     df = load_accuracy_tracker()
 
     # ══════════════════════════════════════════════════════════════════════════
