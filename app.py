@@ -229,6 +229,33 @@ def compute_volume_profile(df, num_bins):
     return bin_centers, vap, float(bin_centers[poc_idx])
 
 
+def _compute_value_area(bin_centers, vap, pct=0.70):
+    """Return (VAL, VAH) — the price range containing `pct` of session volume.
+
+    Starts at the POC and expands one bin at a time (always adding whichever
+    adjacent bin has more volume), until the accumulated total reaches the
+    target percentage.  This is the CME / Market Profile standard method.
+    """
+    total = float(np.sum(vap))
+    if total == 0 or len(vap) == 0:
+        return None, None
+    poc_idx = int(np.argmax(vap))
+    acc = float(vap[poc_idx])
+    lo = hi = poc_idx
+    while acc / total < pct:
+        can_up = hi + 1 < len(vap)
+        can_dn = lo - 1 >= 0
+        if not can_up and not can_dn:
+            break
+        uv = float(vap[hi + 1]) if can_up else -1.0
+        dv = float(vap[lo - 1]) if can_dn else -1.0
+        if uv >= dv:
+            hi += 1; acc += uv
+        else:
+            lo -= 1; acc += dv
+    return float(bin_centers[lo]), float(bin_centers[hi])
+
+
 def _find_peaks(smoothed, bin_centers, threshold_pct=0.30):
     """Return indices of local maxima that exceed threshold_pct of the profile max."""
     n = len(smoothed)
@@ -2031,52 +2058,114 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
 
     try:
         _first = df.index[0]
-        _last_real = df.index[-1]          # last bar that actually has data
+        _last_real = df.index[-1]
         _d = _first.date()
-        _open_et   = EASTERN.localize(datetime(_d.year, _d.month, _d.day,  9, 30))
-        # Extend grid only to the last real bar, not necessarily 16:00.
-        # This prevents the chart trailing off into blank space mid-session.
-        _close_et  = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16,  0))
-        _grid_end  = min(_last_real, _close_et)
-        _full_idx  = pd.date_range(_open_et, _grid_end, freq="1min")
-        df = df.reindex(_full_idx)         # NaN rows for minutes with no trade
+        _open_et  = EASTERN.localize(datetime(_d.year, _d.month, _d.day,  9, 30))
+        _close_et = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16,  0))
+        _grid_end = min(_last_real, _close_et)
+        _full_idx = pd.date_range(_open_et, _grid_end, freq="1min")
+        df = df.reindex(_full_idx)
     except Exception:
-        pass   # fallback to raw bars if tz handling fails
+        pass
 
     x_labels = [_et_label(ts) for ts in df.index]
     x0, x1   = x_labels[0], x_labels[-1]
 
+    # ── Value Area (70 % of session volume) ──────────────────────────────────
+    val_price, vah_price = _compute_value_area(bin_centers, vap)
+
     fig = make_subplots(rows=1, cols=2, column_widths=[0.75, 0.25],
                         shared_yaxes=True, horizontal_spacing=0.01)
+
+    # ── Candlestick ───────────────────────────────────────────────────────────
     fig.add_trace(go.Candlestick(
         x=x_labels, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
         name="Price", increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
         increasing_fillcolor="#26a69a", decreasing_fillcolor="#ef5350",
+        showlegend=False,
     ), row=1, col=1)
 
-    # ── Current Price line ────────────────────────────────────────────────────
+    # ── Value Area shaded band on price chart (very subtle) ───────────────────
+    if val_price is not None and vah_price is not None:
+        fig.add_hrect(
+            y0=val_price, y1=vah_price,
+            fillcolor="rgba(92, 107, 192, 0.06)",
+            line_width=0,
+            row=1, col=1,
+        )
+
+    # ── Key Level lines — all with right-edge price labels ────────────────────
+    # POC — gold solid, thickest
+    fig.add_trace(go.Scatter(
+        x=[x0, x1], y=[poc_price, poc_price],
+        mode="lines+text",
+        name="POC",
+        line=dict(color="rgba(255,215,0,1)", width=2.5),
+        text=["", f"  POC  ${poc_price:.2f}"],
+        textposition="middle right",
+        textfont=dict(color="rgba(255,215,0,0.95)", size=11, family="monospace"),
+        legendrank=10,
+    ), row=1, col=1)
+
+    # IB High — solid green
+    if ib_high is not None and ib_low is not None:
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[ib_high, ib_high],
+            mode="lines+text",
+            name="IB High",
+            line=dict(color="#00e676", width=2.0),
+            text=["", f"  IB Hi ${ib_high:.2f}"],
+            textposition="middle right",
+            textfont=dict(color="#00e676", size=11, family="monospace"),
+            legendrank=20,
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[ib_low, ib_low],
+            mode="lines+text",
+            name="IB Low",
+            line=dict(color="#ff5252", width=2.0),
+            text=["", f"  IB Lo ${ib_low:.2f}"],
+            textposition="middle right",
+            textfont=dict(color="#ff5252", size=11, family="monospace"),
+            legendrank=30,
+        ), row=1, col=1)
+
+    # VAH / VAL — thin blue dashed, clearly labelled
+    if vah_price is not None:
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[vah_price, vah_price],
+            mode="lines+text",
+            name="VAH",
+            line=dict(color="#64b5f6", width=1.2, dash="dot"),
+            text=["", f"  VAH  ${vah_price:.2f}"],
+            textposition="middle right",
+            textfont=dict(color="#64b5f6", size=10, family="monospace"),
+            legendrank=40,
+        ), row=1, col=1)
+    if val_price is not None:
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[val_price, val_price],
+            mode="lines+text",
+            name="VAL",
+            line=dict(color="#64b5f6", width=1.2, dash="dot"),
+            text=["", f"  VAL  ${val_price:.2f}"],
+            textposition="middle right",
+            textfont=dict(color="#64b5f6", size=10, family="monospace"),
+            legendrank=50,
+        ), row=1, col=1)
+
+    # Current Price — white dotted
     if _current_price is not None:
         fig.add_trace(go.Scatter(
             x=[x0, x1], y=[_current_price, _current_price],
             mode="lines+text",
-            name=f"Last ${_current_price:.2f}",
-            line=dict(color="#ffffff", width=1.2, dash="dot"),
-            text=["", f" ▶ ${_current_price:.2f}"],
+            name="Last Price",
+            line=dict(color="rgba(220,220,220,0.8)", width=1.0, dash="dot"),
+            text=["", f"  ▶ ${_current_price:.2f}"],
             textposition="middle right",
-            textfont=dict(color="#ffffff", size=12, family="monospace"),
-            showlegend=True,
+            textfont=dict(color="#e0e0e0", size=11, family="monospace"),
+            legendrank=60,
         ), row=1, col=1)
-
-    if ib_high is not None and ib_low is not None:
-        fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_high, ib_high], mode="lines",
-            name=f"IB High ({ib_high:.2f})",
-            line=dict(color="#00e676", width=1.8, dash="dash")), row=1, col=1)
-        fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_low, ib_low], mode="lines",
-            name=f"IB Low ({ib_low:.2f})",
-            line=dict(color="#ff5252", width=1.8, dash="dash")), row=1, col=1)
-
-    fig.add_trace(go.Scatter(x=[x0, x1], y=[poc_price, poc_price], mode="lines",
-        name=f"POC ({poc_price:.2f})", line=dict(color="gold", width=2.5)), row=1, col=1)
 
     # ── Dynamic Target Zone overlay ───────────────────────────────────────────
     lvn_idx_to_highlight = None
@@ -2085,41 +2174,74 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
             tp = tz["price"]
             tc = tz["color"]
             tl = tz["label"]
-            # Annotated dotted horizontal line
             fig.add_trace(go.Scatter(
                 x=[x0, x1], y=[tp, tp], mode="lines+text",
                 name=tl,
-                line=dict(color=tc, width=1.6, dash="dot"),
-                text=["", f" {tl}"],
+                line=dict(color=tc, width=1.4, dash="dot"),
+                text=["", f"  {tl}"],
                 textposition="top right",
-                textfont=dict(color=tc, size=11),
+                textfont=dict(color=tc, size=10),
+                showlegend=False,
             ), row=1, col=1)
-            # Shaded band (±1% of price) for trend extensions
             if tz["type"] == "trend_extension":
                 band = tp * 0.005
                 fig.add_shape(
                     type="rect", xref="paper", x0=0, x1=0.75,
                     y0=tp - band, y1=tp + band,
-                    fillcolor=tc + "30",
+                    fillcolor=tc + "28",
                     line=dict(width=0),
                     row=1, col=1,
                 )
-            # Track LVN index for volume profile highlighting
             if tz["type"] == "gap_fill" and "lvn_idx" in tz:
                 lvn_idx_to_highlight = tz["lvn_idx"]
 
-    # ── Volume Profile bars (LVN highlighted in yellow for Double Distribution) ─
-    bw = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0
+    # ── Volume Profile — intensity-based gradient coloring ────────────────────
+    bw = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0.01
+    max_vap = float(np.max(vap)) if len(vap) > 0 and np.max(vap) > 0 else 1.0
     colors = []
-    for i, p in enumerate(bin_centers):
-        if abs(p - poc_price) < bw * 0.5:
-            colors.append("gold")
-        elif lvn_idx_to_highlight is not None and i == lvn_idx_to_highlight:
-            colors.append("#ffeb3b")
+    for i, (p, v) in enumerate(zip(bin_centers, vap)):
+        norm = v / max_vap
+        is_poc = abs(p - poc_price) < bw * 0.5
+        is_lvn = (lvn_idx_to_highlight is not None and i == lvn_idx_to_highlight)
+        in_va  = (val_price is not None and vah_price is not None
+                  and val_price <= p <= vah_price)
+
+        if is_poc:
+            colors.append("rgba(255,215,0,1.0)")         # bright gold
+        elif is_lvn:
+            colors.append("rgba(255,235,59,0.88)")       # yellow LVN marker
+        elif norm > 0.55:
+            # High Volume Node — amber → deep orange
+            g = int(165 - (norm - 0.55) / 0.45 * 90)
+            a = min(1.0, 0.80 + norm * 0.20)
+            colors.append(f"rgba(255,{max(75,g)},10,{a:.2f})")
+        elif in_va:
+            # Inside Value Area — blue-indigo, brighter with more volume
+            r = int(80 + norm * 80)
+            g = int(120 + norm * 50)
+            b = int(210 - norm * 30)
+            a = 0.60 + norm * 0.30
+            colors.append(f"rgba({r},{g},{b},{a:.2f})")
         else:
-            colors.append("#5c6bc0")
-    fig.add_trace(go.Bar(x=vap, y=bin_centers, orientation="h",
-        name="Volume Profile", marker_color=colors, opacity=0.85), row=1, col=2)
+            # Outside Value Area — muted slate, barely visible
+            b_ch = int(115 + norm * 30)
+            a = 0.28 + norm * 0.30
+            colors.append(f"rgba(55,70,{b_ch},{a:.2f})")
+
+    fig.add_trace(go.Bar(
+        x=vap, y=bin_centers, orientation="h",
+        name="Vol Profile", marker_color=colors, opacity=0.95,
+        showlegend=False,
+    ), row=1, col=2)
+
+    # ── POC tick on the volume profile panel ──────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=[max_vap * 1.02], y=[poc_price],
+        mode="text",
+        text=["◀ POC"],
+        textfont=dict(color="rgba(255,215,0,0.85)", size=10, family="monospace"),
+        showlegend=False,
+    ), row=1, col=2)
 
     # ── Position overlay ──────────────────────────────────────────────────────
     if position and position.get("in"):
@@ -2131,28 +2253,27 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
         pnl_dol    = (price_now - avg_entry) * shares if shares > 0 else 0
         pnl_color  = "#4caf50" if pnl_pct >= 0 else "#ef5350"
 
-        # Entry line — solid white
         fig.add_trace(go.Scatter(
             x=[x0, x1], y=[avg_entry, avg_entry], mode="lines+text",
             name=f"Entry ${avg_entry:.2f}",
             line=dict(color="#ffffff", width=2.0, dash="solid"),
-            text=["", f" 📍 ENTRY ${avg_entry:.2f}"],
+            text=["", f"  📍 ENTRY ${avg_entry:.2f}"],
             textposition="top right",
             textfont=dict(color="#ffffff", size=12),
+            showlegend=False,
         ), row=1, col=1)
 
-        # MFE (peak) line — cyan dashed
         if peak_price > avg_entry:
             fig.add_trace(go.Scatter(
                 x=[x0, x1], y=[peak_price, peak_price], mode="lines+text",
                 name=f"MFE ${peak_price:.2f}",
                 line=dict(color="#00bcd4", width=1.5, dash="dash"),
-                text=["", f" ⬆ MFE ${peak_price:.2f}"],
+                text=["", f"  ⬆ MFE ${peak_price:.2f}"],
                 textposition="top right",
                 textfont=dict(color="#00bcd4", size=11),
+                showlegend=False,
             ), row=1, col=1)
 
-        # P&L annotation badge at the right edge
         pnl_txt = (f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%"
                    f"  (${pnl_dol:+.0f})" if shares > 0 else
                    f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%")
@@ -2168,19 +2289,48 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
             borderpad=4,
         )
 
+    # ── Chart layout ──────────────────────────────────────────────────────────
     fig.update_layout(
-        title=dict(text=title, font=dict(size=17, color="white")),
-        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e", font=dict(color="#e0e0e0"),
+        title=dict(text=title, font=dict(size=16, color="#e0e0e0")),
+        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+        font=dict(color="#c0c0d8"),
         height=660,
-        xaxis=dict(rangeslider=dict(visible=False), gridcolor="#2a2a4a",
-                   showgrid=True, type="category"),
-        yaxis=dict(gridcolor="#2a2a4a", showgrid=True, tickformat=".2f"),
-        xaxis2=dict(gridcolor="#2a2a4a", showgrid=True, title="Volume"),
-        legend=dict(bgcolor="#0f3460", bordercolor="#5c6bc0", borderwidth=1,
-                    font=dict(color="white"), x=0.01, y=0.99),
-        margin=dict(l=10, r=10, t=55, b=40),
+        xaxis=dict(
+            rangeslider=dict(visible=False),
+            gridcolor="#1c2040",
+            showgrid=True,
+            type="category",
+        ),
+        yaxis=dict(
+            gridcolor="#1c2040",
+            showgrid=True,
+            tickformat=".2f",
+            tickfont=dict(family="monospace", size=11, color="#8888aa"),
+        ),
+        xaxis2=dict(
+            gridcolor="#1c2040",
+            showgrid=False,
+            title="",
+            showticklabels=False,
+        ),
+        # ── Clean legend box — key levels only ────────────────────────────────
+        legend=dict(
+            bgcolor="rgba(8, 12, 40, 0.88)",
+            bordercolor="rgba(80, 90, 160, 0.6)",
+            borderwidth=1,
+            font=dict(color="#c8c8e0", size=11, family="monospace"),
+            x=0.01, y=0.99,
+            xanchor="left", yanchor="top",
+            title=dict(
+                text="KEY LEVELS",
+                font=dict(size=9, color="#5c6bc0"),
+            ),
+            tracegroupgap=1,
+            itemsizing="constant",
+        ),
+        margin=dict(l=10, r=130, t=55, b=40),
     )
-    fig.update_xaxes(nticks=20, tickangle=-45, row=1, col=1)
+    fig.update_xaxes(nticks=16, tickangle=-45, row=1, col=1)
     return fig
 
 
