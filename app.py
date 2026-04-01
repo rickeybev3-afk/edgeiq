@@ -18,6 +18,7 @@ TRACKER_FILE = "accuracy_tracker.csv"
 WEIGHTS_FILE = "brain_weights.json"   # adaptive per-structure multipliers
 HICONS_FILE  = "high_conviction_log.csv"   # tickers where top prob ≥ 75%
 HICONS_THRESHOLD = 75.0                    # % above which we flag high conviction
+SA_JOURNAL_FILE  = "sa_journal.csv"        # Small Account Challenge trade log
 
 # ── Structures the Brain tracks — maps display keyword → weight key ────────────
 _BRAIN_WEIGHT_KEYS = [
@@ -86,6 +87,15 @@ _DEFAULTS = {
     "replay_avg_vol":       None,
     "replay_intraday_curve": None,
     "replay_sector_bonus":  0.0,
+    # Small Account Challenge tab
+    "sa_account_bal":       5000.0,
+    "sa_risk_pct":          2.0,
+    "sa_pdt_used":          0,
+    "sa_news_confirmed":    False,
+    "sa_float_est":         0.0,
+    "last_bars":            None,   # Real bars from last analysis run
+    "sa_bin_centers":       None,   # VP bin centers for SA tab
+    "sa_vap":               None,   # VP volumes for SA tab
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -254,6 +264,93 @@ def _compute_value_area(bin_centers, vap, pct=0.70):
         else:
             lo -= 1; acc += dv
     return float(bin_centers[lo]), float(bin_centers[hi])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SMALL ACCOUNT CHALLENGE — HELPER FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_macd(close_series, fast=12, slow=26, signal=9):
+    """Return (macd_line, signal_line, histogram) as pandas Series."""
+    ema_f = close_series.ewm(span=fast, adjust=False).mean()
+    ema_s = close_series.ewm(span=slow, adjust=False).mean()
+    macd  = ema_f - ema_s
+    sig   = macd.ewm(span=signal, adjust=False).mean()
+    return macd, sig, macd - sig
+
+
+def compute_atr(df, period=14):
+    """14-period Average True Range."""
+    hi = df["high"]; lo = df["low"]; pc = df["close"].shift(1)
+    tr = pd.concat([(hi - lo), (hi - pc).abs(), (lo - pc).abs()], axis=1).max(axis=1)
+    return float(tr.rolling(window=period, min_periods=1).mean().iloc[-1])
+
+
+def get_whole_half_levels(price_low, price_high):
+    """Return all $0.50 increment levels between price_low and price_high.
+    Whole dollars are key resistance; half dollars secondary.
+    """
+    lo = np.floor(price_low * 2) / 2
+    hi = np.ceil(price_high * 2) / 2
+    return [round(x, 2) for x in np.arange(lo, hi + 0.01, 0.50)
+            if price_low * 0.98 <= x <= price_high * 1.02]
+
+
+def detect_poc_shift(bin_centers, vap):
+    """Classify POC position relative to the full profile range.
+    Upper third = Bullish (buyers in control); lower third = Bearish.
+    """
+    if len(bin_centers) == 0:
+        return "Neutral — no data", "#ffa726"
+    poc_idx = int(np.argmax(vap))
+    pct = poc_idx / len(bin_centers)
+    if pct >= 0.67:
+        return "Bullish — POC in upper zone ↑", "#4caf50"
+    if pct <= 0.33:
+        return "Bearish — POC in lower zone ↓", "#ef5350"
+    return "Neutral — POC mid-range", "#ffa726"
+
+
+def count_consecutive_greens(df):
+    """Count how many consecutive green candles appear at the tail of df."""
+    closes = df["close"].values
+    opens  = df["open"].values
+    count  = 0
+    for i in range(len(closes) - 1, -1, -1):
+        if closes[i] > opens[i]:
+            count += 1
+        else:
+            break
+    return count
+
+
+def compute_recovery_ratio(loss_pct):
+    """Return the % gain required to recover from loss_pct% drawdown."""
+    if loss_pct <= 0:
+        return 0.0
+    if loss_pct >= 100:
+        return float("inf")
+    return round((loss_pct / (100.0 - loss_pct)) * 100.0, 1)
+
+
+def load_sa_journal():
+    """Load the Small Account trade log from CSV."""
+    if not os.path.exists(SA_JOURNAL_FILE):
+        return []
+    try:
+        return pd.read_csv(SA_JOURNAL_FILE).to_dict("records")
+    except Exception:
+        return []
+
+
+def save_sa_journal(entries):
+    """Persist the Small Account trade log to CSV."""
+    if not entries:
+        return
+    try:
+        pd.DataFrame(entries).to_csv(SA_JOURNAL_FILE, index=False)
+    except Exception:
+        pass
 
 
 def _find_peaks(smoothed, bin_centers, threshold_pct=0.30):
@@ -2624,6 +2721,11 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                     intraday_curve=None, is_live=False):
     ib_high, ib_low = compute_initial_balance(df)
     bin_centers, vap, poc_price = compute_volume_profile(df, num_bins)
+    # ── Cache raw bars + VP data for Small Account Challenge tab ─────────────
+    st.session_state.last_bars      = df.copy()
+    st.session_state.sa_bin_centers = bin_centers
+    st.session_state.sa_vap         = vap
+    _sa_val, _sa_vah = _compute_value_area(bin_centers, vap)
     label, color, detail, insight = classify_day_structure(
         df, bin_centers, vap, ib_high, ib_low, poc_price, avg_daily_vol=avg_daily_vol
     )
@@ -2862,6 +2964,10 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "rvol":      rvol_val,
         "ib_high":   ib_high,
         "ib_low":    ib_low,
+        "poc_price": poc_price,
+        "val_price": _sa_val,
+        "vah_price": _sa_vah,
+        "pct_change": pct_chg_today,
         "rvol_color": rvol_color,
         "is_runner": is_runner,
         "label_color": color,
@@ -3961,8 +4067,569 @@ def render_tracker_tab():
     )
 
 
-tab_chart, tab_scan, tab_journal, tab_tracker = st.tabs(
-    ["📈 Main Chart", "🔍 Scanner", "📖 Journal", "🧠 Tracker"]
+# ══════════════════════════════════════════════════════════════════════════════
+# SMALL ACCOUNT CHALLENGE TAB
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_sa_tab():
+    """Small Account Challenge — Ross Cameron / Warrior Trading methodology.
+    Five Pillars | Sniper Entry | Position Sizer | PDT Tracker | Recovery Ratio
+    """
+    now_et   = datetime.now(EASTERN)
+    hour_et  = now_et.hour + now_et.minute / 60.0
+    snap     = st.session_state.get("last_analysis_state") or {}
+    bars     = st.session_state.get("last_bars")
+    ticker   = snap.get("ticker", "")
+    price    = snap.get("price", 0.0)
+    rvol     = snap.get("rvol")
+    ib_high  = snap.get("ib_high")
+    ib_low   = snap.get("ib_low")
+    poc_p    = snap.get("poc_price")
+    val_p    = snap.get("val_price")
+    vah_p    = snap.get("vah_price")
+    pct_chg  = snap.get("pct_change", 0.0)
+
+    # ── SECTION 1 — TRADING WINDOW + PDT TRACKER ─────────────────────────────
+    window_open = 7.0 <= hour_et < 10.0
+    mins_left   = max(0, int((10.0 - hour_et) * 60)) if window_open else 0
+    if window_open:
+        wc, wlbl = "#4caf50", f"✅  SNIPER WINDOW ACTIVE — {mins_left} min remaining"
+        wbg = "#1b5e2022"
+    elif hour_et < 7.0:
+        wc, wlbl = "#ffa726", f"⏳  Pre-market — Window opens at 7:00 AM ET"
+        wbg = "#e6510022"
+    else:
+        wc, wlbl = "#ef5350", "❌  WINDOW CLOSED — Trades after 10 AM carry lower win rate"
+        wbg = "#4e111122"
+
+    wcol1, wcol2 = st.columns([3, 1])
+    with wcol1:
+        st.markdown(
+            f'<div style="background:{wbg};border:1px solid {wc};border-radius:8px;'
+            f'padding:10px 20px;margin-bottom:8px;">'
+            f'<span style="font-size:14px;font-weight:700;color:{wc};">{wlbl}</span>'
+            f'<span style="font-size:12px;color:#666;margin-left:18px;">'
+            f'{now_et.strftime("%H:%M:%S ET")}</span></div>',
+            unsafe_allow_html=True,
+        )
+    with wcol2:
+        pdt_used = st.number_input(
+            "Day trades used (this week)", min_value=0, max_value=10,
+            value=int(st.session_state.get("sa_pdt_used", 0)),
+            step=1, key="sa_pdt_inp",
+            help="PDT rule: ≤3 round-trip day trades in 5 days for accounts under $25k"
+        )
+        st.session_state.sa_pdt_used = pdt_used
+        pdt_rem   = max(0, 3 - pdt_used)
+        pdt_color = "#ef5350" if pdt_rem == 0 else "#ffa726" if pdt_rem == 1 else "#4caf50"
+        st.markdown(
+            f'<div style="font-size:18px;font-weight:800;color:{pdt_color};">'
+            f'{pdt_rem}/3 trades left</div>'
+            + ('<div style="font-size:11px;color:#ef5350;">⛔ PDT LIMIT — no more day trades</div>'
+               if pdt_rem == 0 else ''),
+            unsafe_allow_html=True,
+        )
+
+    # ── SECTION 2 — FIVE PILLARS EVALUATION ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🏛️ Five Pillars Evaluation")
+
+    if not ticker:
+        st.info("Run a Historical Analysis on the Main Chart tab first — "
+                "the Five Pillars will auto-populate for the loaded ticker.")
+    else:
+        c_float, c_news = st.columns(2)
+        with c_float:
+            float_est = st.number_input(
+                "Float estimate (M shares) — check Finviz / Benzinga",
+                min_value=0.0, max_value=1000.0,
+                value=float(st.session_state.get("sa_float_est", 0.0)),
+                step=0.5, format="%.1f", key="sa_float_inp",
+            )
+            st.session_state.sa_float_est = float_est
+        with c_news:
+            news_ok = st.checkbox(
+                "✅  Catalyst confirmed (FDA, 13D filing, PR, earnings beat, etc.)",
+                value=st.session_state.get("sa_news_confirmed", False),
+                key="sa_news_chk",
+            )
+            st.session_state.sa_news_confirmed = news_ok
+
+        # Evaluate pillars
+        p_price = 0.25 <= price <= 9.00
+        p_chg   = pct_chg >= 50.0
+        p_rvol  = (rvol is not None and rvol >= 100.0)
+        p_news  = news_ok
+        p_f5    = float_est > 0 and float_est <= 5.0
+        p_f20   = float_est > 0 and float_est <= 20.0
+        p_float = p_f5 or p_f20
+
+        float_note = (
+            f"<span style='color:#4caf50;'>Sub-5M ✅ Explosive potential</span> — {float_est:.1f}M" if p_f5 else
+            f"<span style='color:#ffa726;'>Sub-20M ⚠️ Acceptable max</span> — {float_est:.1f}M" if p_f20 else
+            f"<span style='color:#ef5350;'>&gt;20M ❌ Too big — Algos dominant</span> — {float_est:.1f}M" if float_est > 0 else
+            "<span style='color:#555;'>Enter float estimate above</span>"
+        )
+
+        def _pill_row(icon, passed, name, note, warn=False):
+            c = "#4caf50" if passed else ("#ffa726" if warn else "#ef5350")
+            return (
+                f'<tr style="border-top:1px solid #1c2040;">'
+                f'<td style="padding:6px 10px;font-size:16px;">{icon}</td>'
+                f'<td style="padding:6px 10px;font-weight:700;color:{c};white-space:nowrap;">{name}</td>'
+                f'<td style="padding:6px 10px;font-size:12px;color:#aaa;">{note}</td>'
+                f'</tr>'
+            )
+
+        score = sum([p_price, p_chg, p_rvol, p_news, p_float])
+        sc    = "#4caf50" if score == 5 else "#ffa726" if score >= 3 else "#ef5350"
+        slbl  = ("⭐ A+ — ALL PILLARS MET" if score == 5
+                 else "B — Borderline" if score >= 3 else "❌ AVOID — Sub-threshold")
+
+        tbl = (
+            '<table style="width:100%;border-collapse:collapse;">'
+            + _pill_row("✅" if p_price else "❌", p_price, "Price",
+                        f"${price:.2f}  &nbsp;·&nbsp; Target: $0.25 – $9.00")
+            + _pill_row("✅" if p_chg else "❌", p_chg, "% Change",
+                        f"{pct_chg:+.1f}%  &nbsp;·&nbsp; Need ≥ 50%")
+            + _pill_row("✅" if p_rvol else "❌", p_rvol, "RVOL",
+                        f"{f'{rvol:.0f}×' if rvol else '—'}  &nbsp;·&nbsp; Need ≥ 100× (institutional prints)")
+            + _pill_row("✅" if p_news else "⚠️", p_news, "News Catalyst",
+                        "FDA / 13D / PR / earnings beat required — momentum without news fades faster",
+                        warn=True)
+            + _pill_row("✅" if p_float else ("⚠️" if p_f20 else "❌"), p_float, "Float",
+                        float_note, warn=(p_f20 and not p_f5))
+            + '</table>'
+        )
+        st.markdown(
+            f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:10px;'
+            f'padding:14px 18px;margin:8px 0;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+            f'<span style="font-size:17px;font-weight:900;color:#e0e0e0;letter-spacing:1px;">{ticker}</span>'
+            f'<span style="background:{sc}22;border:1px solid {sc};border-radius:5px;'
+            f'padding:4px 14px;font-size:13px;font-weight:800;color:{sc};">{slbl}</span>'
+            f'</div>{tbl}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Pre-market float turnover (bonus)
+        if float_est > 0:
+            pm_row = next(
+                (r for r in st.session_state.scanner_results if r.get("ticker") == ticker), None)
+            if pm_row and pm_row.get("pm_vol"):
+                float_sh = float_est * 1_000_000
+                pmv      = pm_row["pm_vol"]
+                tover    = pmv / float_sh * 100.0 if float_sh > 0 else 0.0
+                tc  = "#ef5350" if tover > 80 else "#ffa726" if tover > 40 else "#4caf50"
+                tlb = ("EXTREME — Float nearly traded through" if tover > 80
+                       else "HIGH — Supply/demand heavily imbalanced" if tover > 40
+                       else "Normal pre-market activity")
+                st.markdown(
+                    f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:6px;'
+                    f'padding:8px 16px;margin:4px 0;font-size:12px;color:#aaa;">'
+                    f'📊 PM Float Turnover: <b style="color:{tc};">{tover:.1f}%</b>'
+                    f' <span style="color:{tc};">({tlb})</span>'
+                    f' — {pmv:,} shares vs ~{float_sh:,.0f} float</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── SECTION 3 — SETUP QUALITY (if bars loaded) ────────────────────────────
+    if bars is not None and len(bars) >= 5:
+        st.markdown("---")
+        st.markdown("### 📡 Setup Quality Analysis")
+
+        atr    = compute_atr(bars)
+        greens = count_consecutive_greens(bars)
+        mline, sline, hist = compute_macd(bars["close"])
+        macd_now  = float(mline.iloc[-1])
+        sig_now   = float(sline.iloc[-1])
+        hist_now  = float(hist.iloc[-1])
+        hist_prev = float(hist.iloc[-2]) if len(hist) >= 2 else hist_now
+
+        # Front Side: MACD above signal AND histogram not yet shrinking
+        macd_above  = macd_now > sig_now
+        hist_open   = hist_now > 0 and hist_now >= hist_prev * 0.80
+        front_side  = macd_above and hist_open
+
+        # VA Breakout
+        va_breakout = (vah_p is not None and price is not None
+                       and price > vah_p and rvol is not None and rvol >= 100.0)
+
+        # POC shift
+        bin_c = st.session_state.get("sa_bin_centers")
+        vap_c = st.session_state.get("sa_vap")
+        poc_shift_lbl, poc_shift_col = (
+            detect_poc_shift(bin_c, vap_c)
+            if bin_c is not None and vap_c is not None and len(bin_c) > 0
+            else ("—", "#aaa")
+        )
+
+        # Whole/Half dollar levels
+        try:
+            whl = get_whole_half_levels(float(bars["low"].min()), float(bars["high"].max()))
+        except Exception:
+            whl = []
+
+        # Opening Range (first 5 bars)
+        or_hi = float(bars["high"].iloc[:5].max()) if len(bars) >= 5 else None
+        or_lo = float(bars["low"].iloc[:5].min())  if len(bars) >= 5 else None
+
+        qa1, qa2, qa3 = st.columns(3)
+
+        with qa1:
+            fsc = "#4caf50" if front_side else "#ef5350"
+            fsl = "✅ FRONT SIDE" if front_side else "⛔ BACK SIDE"
+            fsb = "MACD open & diverging" if front_side else "MACD converging — fade risk"
+            st.markdown(
+                f'<div style="background:#0c1030;border:1px solid {fsc}55;border-radius:8px;'
+                f'padding:14px;text-align:center;">'
+                f'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Trade Side</div>'
+                f'<div style="font-size:19px;font-weight:800;color:{fsc};">{fsl}</div>'
+                f'<div style="font-size:11px;color:#777;margin-top:3px;">{fsb}</div>'
+                f'<div style="font-size:10px;color:#444;margin-top:4px;font-family:monospace;">'
+                f'MACD {macd_now:+.4f} · Sig {sig_now:+.4f}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        with qa2:
+            gc  = "#4caf50" if greens >= 3 else "#ffa726" if greens >= 1 else "#ef5350"
+            glb = "🔥 SURGE" if greens >= 3 else "Building" if greens >= 1 else "No Surge"
+            st.markdown(
+                f'<div style="background:#0c1030;border:1px solid {gc}55;border-radius:8px;'
+                f'padding:14px;text-align:center;">'
+                f'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Consecutive Greens</div>'
+                f'<div style="font-size:34px;font-weight:900;color:{gc};line-height:1;">{greens}</div>'
+                f'<div style="font-size:12px;color:{gc};margin-top:3px;">{glb}</div>'
+                f'<div style="font-size:10px;color:#444;margin-top:4px;">Need 3+ for surge confirmation</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        with qa3:
+            vac = "#4caf50" if va_breakout else "#555"
+            vat = "✅ BREAKING VA on RVOL ≥ 100" if va_breakout else "Inside Value Area"
+            st.markdown(
+                f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:8px;'
+                f'padding:14px;text-align:center;">'
+                f'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">VA / POC</div>'
+                f'<div style="font-size:13px;font-weight:700;color:{poc_shift_col};margin:4px 0;">{poc_shift_lbl}</div>'
+                f'<div style="font-size:11px;color:{vac};">{vat}</div>'
+                + (f'<div style="font-size:10px;color:#555;margin-top:3px;">VAH ${vah_p:.2f} · VAL ${val_p:.2f}</div>'
+                   if vah_p and val_p else '')
+                + f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # Opening Range + ATR
+        if or_hi and or_lo:
+            st.markdown(
+                f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:6px;'
+                f'padding:8px 16px;margin:8px 0;font-size:12px;color:#aaa;">'
+                f'📐 Opening Range (first 5 bars): '
+                f'<b style="color:#00e676;">Hi ${or_hi:.2f}</b> / '
+                f'<b style="color:#ef5350;">Lo ${or_lo:.2f}</b> — '
+                f'OR Range: <b style="color:#e0e0e0;">${or_hi - or_lo:.2f}</b>'
+                f'&nbsp;&nbsp;|&nbsp;&nbsp;ATR(14): <b style="color:#5c6bc0;">${atr:.2f}</b>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # Whole / Half dollar resistance levels
+        if whl:
+            whole_s = "  ".join(
+                f"<b style='color:#ffa726;'>${l:.2f}</b>" if l == int(l)
+                else f"<span style='color:#7986cb;'>${l:.2f}</span>"
+                for l in whl
+            )
+            st.markdown(
+                f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:6px;'
+                f'padding:8px 16px;margin:4px 0;font-size:12px;color:#aaa;">'
+                f'🎯 Whole/Half-Dollar Levels: {whole_s}'
+                f'&nbsp;&nbsp;<span style="color:#444;font-size:10px;">'
+                f'(orange = whole $, blue = half $  — expect resistance, then support once broken)</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── SECTION 4 — SNIPER ENTRY CHECKLIST ───────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🎯 Sniper Entry Checklist — First Candle New High")
+    st.caption("All 7 boxes must be ✅ before pulling the trigger. One unchecked = wait.")
+
+    ch1, ch2 = st.columns(2)
+    with ch1:
+        chk1 = st.checkbox("📈 Surge: 3–5 consecutive green candles on volume spike", key="sa_c1")
+        chk2 = st.checkbox("🔽 Pullback: 1–2 red candles on notably lighter volume",   key="sa_c2")
+        chk3 = st.checkbox("🔺 Apex: Price approaching high of the pullback candle",   key="sa_c3")
+        chk4 = st.checkbox("✅ Trigger: Candle BROKE the apex (confirmed — not anticipated)", key="sa_c4")
+    with ch2:
+        chk5 = st.checkbox("📊 MACD: Lines still open / histogram not shrinking",       key="sa_c5")
+        chk6 = st.checkbox("📋 Level 2: Surge of green orders visible on tape",         key="sa_c6")
+        chk7 = st.checkbox("🛡️ PDT: Day trade slot available (not at 3-trade limit)",   key="sa_c7",
+                            value=(st.session_state.get("sa_pdt_used", 0) < 3))
+        entry_type = st.selectbox(
+            "Entry Type",
+            ["First Pullback", "ABCD Pattern", "High of Day Break", "Other"],
+            key="sa_entry_sel",
+        )
+
+    checks_passed = sum([chk1, chk2, chk3, chk4, chk5, chk6, chk7])
+    if checks_passed == 7:
+        st.markdown(
+            '<div style="background:#4caf5022;border:2px solid #4caf50;border-radius:8px;'
+            'padding:12px 20px;font-weight:700;color:#4caf50;font-size:15px;margin:8px 0;">'
+            '🟢 ALL 7 CHECKS PASSED — VALID SNIPER ENTRY</div>',
+            unsafe_allow_html=True,
+        )
+    elif checks_passed >= 5:
+        st.markdown(
+            f'<div style="background:#ffa72622;border:1px solid #ffa726;border-radius:8px;'
+            f'padding:12px 20px;font-weight:700;color:#ffa726;font-size:14px;margin:8px 0;">'
+            f'⚠️ {checks_passed}/7 — Partial. Tighten your criteria before entry.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="background:#ef535022;border:1px solid #ef5350;border-radius:8px;'
+            f'padding:12px 20px;font-weight:700;color:#ef5350;font-size:14px;margin:8px 0;">'
+            f'🔴 {checks_passed}/7 — DO NOT ENTER. Be the sniper, not the machine gunner.</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── SECTION 5 — POSITION SIZER ───────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 💰 Sniper Position Sizer")
+
+    ps1, ps2, ps3 = st.columns(3)
+    with ps1:
+        acct = st.number_input(
+            "Account Balance ($)", min_value=100.0, max_value=1_000_000.0,
+            value=float(st.session_state.get("sa_account_bal", 5000.0)),
+            step=500.0, format="%.0f", key="sa_acct",
+        )
+        st.session_state.sa_account_bal = acct
+        risk_p = st.number_input(
+            "Max Risk per Trade (%)", min_value=0.5, max_value=10.0,
+            value=float(st.session_state.get("sa_risk_pct", 2.0)),
+            step=0.5, format="%.1f", key="sa_riskp",
+        )
+        st.session_state.sa_risk_pct = risk_p
+    with ps2:
+        atr_v = compute_atr(bars) if bars is not None and len(bars) >= 5 else 0.20
+        stop_d = st.number_input(
+            "Stop Distance ($)",
+            min_value=0.01, max_value=20.0,
+            value=round(max(0.05, atr_v), 2),
+            step=0.01, format="%.2f",
+            help="ATR(14) auto-filled. Adjust to your actual stop placement.",
+            key="sa_stopd",
+        )
+        st.markdown(
+            f'<div style="font-size:11px;color:#5c6bc0;margin-top:4px;">'
+            f'ATR(14) auto-fill: ${atr_v:.2f}</div>',
+            unsafe_allow_html=True,
+        )
+    with ps3:
+        risk_dol   = acct * (risk_p / 100.0)
+        max_shares = int(risk_dol / stop_d) if stop_d > 0 else 0
+        max_pos    = max_shares * price if price > 0 else 0.0
+        daily_lim  = acct * 0.25
+        st.markdown(
+            f'<div style="background:#0c1030;border:1px solid #5c6bc0;border-radius:10px;'
+            f'padding:14px;text-align:center;">'
+            f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;letter-spacing:1px;">Risk Budget</div>'
+            f'<div style="font-size:22px;font-weight:800;color:#e0e0e0;">${risk_dol:.0f}</div>'
+            f'<div style="font-size:11px;color:#555;margin:4px 0;">Max Shares</div>'
+            f'<div style="font-size:30px;font-weight:900;color:#4caf50;line-height:1;">{max_shares:,}</div>'
+            f'<div style="font-size:11px;color:#555;">Position size: ${max_pos:,.0f}</div>'
+            f'<div style="font-size:11px;color:#ef5350;margin-top:6px;">Daily loss limit: ${daily_lim:,.0f}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:6px;'
+        f'padding:8px 16px;margin:6px 0;font-size:12px;color:#aaa;">'
+        f'💡 <b style="color:#e0e0e0;">Cash Account Rule:</b> Treat every trade as your ONLY trade of the day. '
+        f'Settle T+1 before sizing up. Sniper — not machine gunner. '
+        f'<b style="color:#ef5350;">Stop trading if daily loss hits ${daily_lim:,.0f}.</b>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── SECTION 6 — RECOVERY RATIO ───────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📉 Recovery Ratio — The Math of Drawdown")
+    st.caption("A 25% loss requires a 33% gain just to break even. Protect capital first.")
+
+    rr1, rr2 = st.columns([1, 2])
+    with rr1:
+        loss_in = st.slider("Simulate a loss of:", 1, 90, 25, format="%d%%", key="sa_rrs")
+        rr_val  = compute_recovery_ratio(loss_in)
+        rrc     = "#4caf50" if loss_in < 15 else "#ffa726" if loss_in < 35 else "#ef5350"
+        st.markdown(
+            f'<div style="background:#0c1030;border:2px solid {rrc};border-radius:10px;'
+            f'padding:16px;text-align:center;margin:8px 0;">'
+            f'<div style="font-size:12px;color:#aaa;">After a <b style="color:{rrc};">{loss_in}%</b> loss</div>'
+            f'<div style="font-size:11px;color:#555;margin:4px 0;">you need to gain</div>'
+            f'<div style="font-size:38px;font-weight:900;color:{rrc};">{rr_val:.1f}%</div>'
+            f'<div style="font-size:11px;color:#aaa;">to return to break-even</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with rr2:
+        rows_rr = [(10, "Manageable"), (20, "Manageable"), (25, "Dangerous"),
+                   (33, "Dangerous"),  (50, "DEATH SPIRAL"), (75, "DEATH SPIRAL")]
+        tbl = '<table style="width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;">'
+        tbl += ('<tr style="color:#5c6bc0;font-size:10px;text-transform:uppercase;">'
+                '<th style="text-align:left;padding:5px 10px;">Loss %</th>'
+                '<th style="text-align:left;padding:5px 10px;">Must Gain</th>'
+                '<th style="text-align:left;padding:5px 10px;">Verdict</th></tr>')
+        for lp, verdict in rows_rr:
+            rr_v  = compute_recovery_ratio(lp)
+            rc2   = "#4caf50" if lp < 15 else "#ffa726" if lp < 35 else "#ef5350"
+            tbl  += (f'<tr style="border-top:1px solid #1c2040;">'
+                     f'<td style="padding:5px 10px;color:{rc2};font-weight:700;">−{lp}%</td>'
+                     f'<td style="padding:5px 10px;color:{rc2};">+{rr_v:.1f}%</td>'
+                     f'<td style="padding:5px 10px;color:{rc2};">{verdict}</td></tr>')
+        tbl += '</table>'
+        st.markdown(
+            f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:8px;'
+            f'padding:12px;">{tbl}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── SECTION 7 — SNIPER TRADE LOG ─────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Sniper Trade Log — Cognitive Audit")
+    st.caption(
+        "The data doesn't lie: confirmed entries (waited for the break) vs. "
+        "anticipated entries (jumped early). Track both — your win rate will show the difference."
+    )
+
+    with st.expander("➕ Log a Trade", expanded=False):
+        lg1, lg2, lg3 = st.columns(3)
+        with lg1:
+            lg_tick  = st.text_input("Ticker", value=ticker or "", key="sa_lgt").upper()
+            lg_ep    = st.number_input("Entry Price", min_value=0.01,
+                                        value=float(price or 1.0), step=0.01,
+                                        format="%.2f", key="sa_lgep")
+            lg_xp    = st.number_input("Exit Price", min_value=0.01,
+                                        value=float(price or 1.0), step=0.01,
+                                        format="%.2f", key="sa_lgxp")
+        with lg2:
+            lg_et    = st.selectbox("Entry Type",
+                                     ["First Pullback", "ABCD Pattern",
+                                      "High of Day Break", "Other"],
+                                     key="sa_lget")
+            lg_conf  = st.radio("Entry Discipline",
+                                 ["✅ Confirmed (waited for break)",
+                                  "⚠️ Anticipated (jumped early)"],
+                                 key="sa_lgconf")
+            lg_news  = st.checkbox("Catalyst confirmed at entry time", key="sa_lgnews")
+        with lg3:
+            in_win   = window_open
+            ts_str   = now_et.strftime("%H:%M ET")
+            if not in_win:
+                st.warning(f"⚠️ {ts_str} — Outside sniper window")
+            else:
+                st.success(f"✅ {ts_str} — Inside window")
+            lg_notes = st.text_area("Notes / reason for entry", height=90,
+                                     placeholder="Why you took this trade…",
+                                     key="sa_lgnotes")
+
+        if st.button("💾 Log Trade", key="sa_log_btn"):
+            pnl_p = round((lg_xp - lg_ep) / lg_ep * 100, 2) if lg_ep > 0 else 0.0
+            entry = {
+                "date":        now_et.strftime("%Y-%m-%d"),
+                "time":        ts_str,
+                "ticker":      lg_tick,
+                "entry_price": round(lg_ep, 2),
+                "exit_price":  round(lg_xp, 2),
+                "pnl_pct":     pnl_p,
+                "entry_type":  lg_et,
+                "confirmed":   "Confirmed" if "Confirmed" in lg_conf else "Anticipated",
+                "news":        "✅" if lg_news else "❌",
+                "in_window":   "✅" if in_win else "❌",
+                "notes":       lg_notes,
+            }
+            journal = load_sa_journal()
+            journal.append(entry)
+            save_sa_journal(journal)
+            st.success(f"Logged: {lg_tick} | {pnl_p:+.2f}%")
+            st.rerun()
+
+    # Display journal + cognitive audit split
+    journal = load_sa_journal()
+    if journal:
+        dfj = pd.DataFrame(journal)
+
+        # Win-rate by confirmed vs anticipated
+        if "confirmed" in dfj.columns and "pnl_pct" in dfj.columns:
+            conf_df = dfj[dfj["confirmed"] == "Confirmed"]
+            anti_df = dfj[dfj["confirmed"] == "Anticipated"]
+            cwr = (conf_df["pnl_pct"] > 0).mean() * 100 if len(conf_df) else None
+            awr = (anti_df["pnl_pct"] > 0).mean() * 100 if len(anti_df) else None
+
+            au1, au2 = st.columns(2)
+            with au1:
+                cwc = "#4caf50" if (cwr or 0) >= 50 else "#ef5350"
+                st.markdown(
+                    f'<div style="background:#0c1030;border:1px solid {cwc};border-radius:8px;'
+                    f'padding:12px;text-align:center;">'
+                    f'<div style="font-size:11px;color:#aaa;">✅ Confirmed Entry Win Rate</div>'
+                    f'<div style="font-size:28px;font-weight:800;color:{cwc};">'
+                    f'{"%.0f%%" % cwr if cwr is not None else "—"}</div>'
+                    f'<div style="font-size:10px;color:#555;">{len(conf_df)} trades</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with au2:
+                awc = "#4caf50" if (awr or 0) >= 50 else "#ef5350"
+                st.markdown(
+                    f'<div style="background:#0c1030;border:1px solid {awc};border-radius:8px;'
+                    f'padding:12px;text-align:center;">'
+                    f'<div style="font-size:11px;color:#aaa;">⚠️ Anticipated Entry Win Rate</div>'
+                    f'<div style="font-size:28px;font-weight:800;color:{awc};">'
+                    f'{"%.0f%%" % awr if awr is not None else "—"}</div>'
+                    f'<div style="font-size:10px;color:#555;">{len(anti_df)} trades</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # Recent trades table
+        st.markdown("**Recent Trades**")
+        for row in reversed(journal[-15:]):
+            pnl = row.get("pnl_pct", 0)
+            pc  = "#4caf50" if pnl > 0 else "#ef5350"
+            st.markdown(
+                f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:6px;'
+                f'padding:7px 14px;margin:3px 0;font-size:12px;'
+                f'display:flex;gap:14px;align-items:center;flex-wrap:wrap;">'
+                f'<span style="color:#e0e0e0;font-weight:700;min-width:48px;">'
+                f'{row.get("ticker","")}</span>'
+                f'<span style="color:#666;">{row.get("date","")} {row.get("time","")}</span>'
+                f'<span style="color:#888;">{row.get("entry_type","")}</span>'
+                f'<span style="color:#888;">{row.get("confirmed","")}</span>'
+                f'<span style="color:#555;">News: {row.get("news","")}</span>'
+                f'<span style="color:#555;">Window: {row.get("in_window","")}</span>'
+                f'<span style="font-weight:700;color:{pc};">{pnl:+.2f}%</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        sa_csv = dfj.to_csv(index=False)
+        st.download_button(
+            "⬇ Download SA Journal", data=sa_csv,
+            file_name="sa_journal.csv", mime="text/csv"
+        )
+    else:
+        st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
+
+
+tab_chart, tab_scan, tab_journal, tab_tracker, tab_sa = st.tabs(
+    ["📈 Main Chart", "🔍 Scanner", "📖 Journal", "🧠 Tracker", "⚡ Small Account"]
 )
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
@@ -4397,6 +5064,10 @@ with tab_journal:
 # ── Tracker tab ───────────────────────────────────────────────────────────────
 with tab_tracker:
     render_tracker_tab()
+
+# ── Small Account Challenge tab ────────────────────────────────────────────────
+with tab_sa:
+    render_sa_tab()
 
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:
