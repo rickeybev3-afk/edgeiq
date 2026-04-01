@@ -44,3 +44,9 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-31 10:03:17,VRAX,Normal Variation,⚡ Neutral Extreme,❌,0.0,0.0,0.0,VRAX_2026-03-31_0.2800_0.2106
 2026-03-31 10:05:15,VRAX,Normal Variation,⚡ Neutral Extreme,❌,0.0,0.0,0.0,VRAX_2026-03-31_0.2800_0.2056
 2026-03-31 10:10:03,VRAX,Trend Day,⚡ Neutral Extreme,❌,0.0,0.0,0.0,VRAX_2026-03-31_0.2800_0.2006
+2026-03-31 12:48:49,BFRG,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,BFRG_2026-03-31_1.8750_1.2000
+2026-03-31 12:50:45,SST,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,SST_2026-03-31_4.1200_3.4100
+2026-03-31 12:51:02,ELAB,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,ELAB_2026-03-31_4.0700_3.5500
+2026-03-31 13:42:54,MASK,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,MASK_2026-03-31_3.1600_1.6150
+2026-03-31 13:43:06,KIDZ,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,KIDZ_2026-03-31_4.3150_3.4450
+2026-03-31 13:49:32,AIFF,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,AIFF_2026-03-31_2.1600_2.0850
