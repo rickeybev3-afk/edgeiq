@@ -3167,9 +3167,44 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     tcs_display = max(0.0, tcs - 10.0) if magnetism.get("at_ceiling") else tcs
     render_round_number_widget(magnetism)
 
+    # ── Daily Level Confluence — evaluate BEFORE structure banner so penalty is real ──
+    _confluence_active = False
+    _confluence_prev_high = None
+    try:
+        _dl = st.session_state.get("daily_levels_cache", {})
+        _prev_high_chk = _dl.get("prev_high")
+        _dl_ticker_chk = _dl.get("ticker", "")
+        if _prev_high_chk and _dl_ticker_chk == ticker and ib_high is not None and price_now > ib_high:
+            _prev_cl2 = df["close"].shift(1)
+            _tr2 = pd.concat([
+                df["high"] - df["low"],
+                (df["high"] - _prev_cl2).abs(),
+                (df["low"]  - _prev_cl2).abs(),
+            ], axis=1).max(axis=1)
+            _atr2 = float(_tr2.rolling(window=min(14, len(df))).mean().iloc[-1])
+            if _atr2 > 0 and abs(price_now - _prev_high_chk) <= _atr2:
+                _confluence_active   = True
+                _confluence_prev_high = _prev_high_chk
+                tcs_display = max(0.0, tcs_display - 10.0)
+    except Exception:
+        pass
+
     render_structure_banner(label, color, detail, probs, tcs_display,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
+
+    # ── Daily Confluence warning banner (shown after banner so context is clear) ──
+    if _confluence_active and _confluence_prev_high is not None:
+        st.markdown(
+            f'<div style="background:#ef535022; border:1px solid #ef5350; '
+            f'border-radius:6px; padding:8px 16px; margin:4px 0 6px 0;">'
+            f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
+            f'⚠️ DAILY CONFLUENCE ZONE — IB breakout running into prior-day high '
+            f'${_confluence_prev_high:.2f} (within 1 ATR). Resistance overhead — '
+            f'TCS display reduced by 10 pts.</span></div>',
+            unsafe_allow_html=True,
+        )
+
     render_model_prediction(pred_outcome, pred_reasoning)
 
     # ── MarketBrain: compare prediction vs actual + running counter ───────────
@@ -3282,33 +3317,6 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     try:
         sim_data = compute_runner_similarity(bin_centers, vap)
         render_runner_dna_widget(sim_data)
-    except Exception:
-        pass
-
-    # ── Daily Level Confluence Warning ────────────────────────────────────────
-    try:
-        _dl = st.session_state.get("daily_levels_cache", {})
-        _dl_ticker = _dl.get("ticker", "")
-        _prev_high = _dl.get("prev_high")
-        _prev_low  = _dl.get("prev_low")
-        if _prev_high and _dl_ticker == ticker and ib_high is not None and price_now > ib_high:
-            prev_cl = df["close"].shift(1)
-            _tr = pd.concat([
-                df["high"] - df["low"],
-                (df["high"] - prev_cl).abs(),
-                (df["low"]  - prev_cl).abs(),
-            ], axis=1).max(axis=1)
-            _atr = float(_tr.rolling(window=min(14, len(df))).mean().iloc[-1])
-            if _atr > 0 and abs(price_now - _prev_high) <= _atr:
-                st.markdown(
-                    f'<div style="background:#ef535022; border:1px solid #ef5350; '
-                    f'border-radius:6px; padding:8px 16px; margin:4px 0 6px 0;">'
-                    f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
-                    f'⚠️ DAILY CONFLUENCE ZONE — IB breakout running into prior-day high '
-                    f'${_prev_high:.2f} (within 1 ATR). Resistance overhead — conviction '
-                    f'penalty applied.</span></div>',
-                    unsafe_allow_html=True,
-                )
     except Exception:
         pass
 
@@ -4716,6 +4724,17 @@ with tab_chart:
                                 st.session_state.replay_sector_bonus = 10.0 if _etf > 1.0 else 0.0
                             except Exception:
                                 st.session_state.replay_sector_bonus = 0.0
+                            # ── Daily level confluence (prior-day H/L) ───────────
+                            try:
+                                _rph, _rpl = fetch_daily_levels(
+                                    api_key, secret_key, ticker, selected_date)
+                                st.session_state.daily_levels_cache = {
+                                    "ticker":    ticker,
+                                    "prev_high": _rph,
+                                    "prev_low":  _rpl,
+                                }
+                            except Exception:
+                                st.session_state.daily_levels_cache = {}
                             # Reset Brain state for fresh replay
                             for _bk in ("brain_ib_high", "brain_ib_low", "brain_ib_set",
                                         "brain_high_touched", "brain_low_touched", "brain_predicted"):
@@ -4814,6 +4833,17 @@ with tab_chart:
                     except Exception:
                         etf_chg = 0.0
                     st.session_state.sector_pct_chg = etf_chg
+
+                    # ── Daily level confluence (prior-day H/L) ────────────────
+                    try:
+                        _lph, _lpl = fetch_daily_levels(api_key, secret_key, ticker, today)
+                        st.session_state.daily_levels_cache = {
+                            "ticker":    ticker,
+                            "prev_high": _lph,
+                            "prev_low":  _lpl,
+                        }
+                    except Exception:
+                        st.session_state.daily_levels_cache = {}
 
                 start_stream(api_key, secret_key, ticker, live_feed)
                 st.rerun()
