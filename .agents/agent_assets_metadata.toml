@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "vJLYud3CZr5piNo2TOW_c"
+uri = "file://volume_profile_dashboard.zip"
+type = "unspecified"
+title = "Volume Profile Dashboard — all files"
