@@ -51,3 +51,13 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-31 13:43:06,KIDZ,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,KIDZ_2026-03-31_4.3150_3.4450
 2026-03-31 13:49:32,AIFF,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,AIFF_2026-03-31_2.1600_2.0850
 2026-03-31 23:24:29,AAPL,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,AAPL_2026-03-31_249.2300_247.6750
+2026-04-01 00:25:33,ELAB,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,ELAB_2026-04-01_4.0700_3.5500
+2026-04-01 00:34:39,BFRG,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,BFRG_2026-04-01_1.8750_1.2000
+2026-04-01 00:37:06,ITRM,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,ITRM_2026-04-01_0.0469_0.0404
+2026-04-01 00:37:51,HKIT,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,HKIT_2026-04-01_0.1022_0.0710
+2026-04-01 00:39:05,GV,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GV_2026-04-01_0.3087_0.2029
+2026-04-01 00:42:08,VRAX,Neutral Extreme,⚡ Double Distribution,❌,0.0,0.0,0.0,VRAX_2026-04-01_0.2800_0.2006
+2026-04-01 00:45:11,EEIQ,Neutral,⚖️ Normal / Balanced,❌,0.0,0.0,0.0,EEIQ_2026-04-01_7.6300_7.6300
+2026-04-01 00:46:23,GLND,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GLND_2026-04-01_9.9900_9.0200
+2026-04-01 00:46:55,JCSE,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,JCSE_2026-04-01_1.5700_1.4450
+2026-04-01 00:48:01,GVH,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GVH_2026-04-01_1.6900_1.4800

@@ -12,3 +12,9 @@ id = "C_iVxf5rv5-czLYox5M9f"
 uri = "file://app_code.txt"
 type = "text"
 title = "app.py — Volume Profile Dashboard (text file)"
+
+[[outputs]]
+id = "m_auGl-TT_z-dhXXyBwkI"
+uri = "file://project_export.zip"
+type = "unspecified"
+title = "Volume Profile Dashboard — Full Source Code"
