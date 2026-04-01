@@ -2208,6 +2208,22 @@ def load_journal() -> "pd.DataFrame":
 
 def save_journal_entry(entry: dict):
     exists = os.path.exists(JOURNAL_PATH)
+
+    # ── One-time schema migration ─────────────────────────────────────────────
+    # If the CSV exists but was written with an older (narrower) column set,
+    # rewrite it with the current _JOURNAL_COLS header before appending.
+    # This prevents mixed-width rows that break pandas CSV parsing.
+    if exists:
+        try:
+            _existing = pd.read_csv(JOURNAL_PATH)
+            if any(col not in _existing.columns for col in _JOURNAL_COLS):
+                for col in _JOURNAL_COLS:
+                    if col not in _existing.columns:
+                        _existing[col] = ""
+                _existing[_JOURNAL_COLS].to_csv(JOURNAL_PATH, index=False)
+        except Exception:
+            pass
+
     with open(JOURNAL_PATH, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=_JOURNAL_COLS)
         if not exists:
@@ -4854,6 +4870,9 @@ with tab_chart:
                             except Exception:
                                 st.session_state.daily_levels_cache = {}
 
+                            # ── Invalidate StockTwits cache so fresh sentiment
+                            #    is fetched for this Fetch & Analyze trigger ──
+                            st.session_state.stocktwits_cache.pop(ticker, None)
                             render_analysis(df, num_bins, ticker,
                                             f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
                                             avg_daily_vol=avg_vol,
@@ -4885,6 +4904,8 @@ with tab_chart:
                                             }
                                         except Exception:
                                             st.session_state.daily_levels_cache = {}
+                                        # IEX fallback also counts as a fresh user trigger
+                                        st.session_state.stocktwits_cache.pop(ticker, None)
                                         render_analysis(df2, num_bins, ticker,
                                                         f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')} (IEX)",
                                                         avg_daily_vol=None, sector_bonus=0.0,
