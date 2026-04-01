@@ -1925,14 +1925,12 @@ def compute_low_volume_nodes(bin_centers, vap, threshold_pct=0.20):
 def fetch_stocktwits_sentiment(ticker):
     """Fetch social sentiment from StockTwits public API (no auth key required).
 
-    Parses the last 30 messages for bull/bear/neutral sentiment tags and
-    computes a rough message-per-hour velocity to detect herd accumulation.
+    Parses up to the last 30 messages for bull/bear/neutral sentiment tags.
+    Computes:
+      • msg_count    — messages within the last hour (from the newest timestamp)
+      • msg_velocity — messages-per-hour based on the one-hour window
+      • trending     — True when velocity >= 20 msg/hr
 
-    Returns a dict with keys:
-        bull_pct, bear_pct, neutral_pct  — sentiment split (0-100)
-        msg_count                         — number of messages returned (≤30)
-        msg_velocity                      — estimated messages / hour
-        trending                          — True if velocity >= 20 msg/hr
     Returns None on any error or timeout.
     """
     import urllib.request
@@ -1978,28 +1976,31 @@ def fetch_stocktwits_sentiment(ticker):
                 except Exception:
                     pass
 
-        msg_count = len(messages)
         total = bull + bear + neutral_count
         bull_pct    = round(bull / total * 100, 1) if total > 0 else 0.0
         bear_pct    = round(bear / total * 100, 1) if total > 0 else 0.0
         neutral_pct = round(max(0.0, 100.0 - bull_pct - bear_pct), 1)
 
+        # ── msg_count = messages published in the last hour ───────────────────
+        msg_count = 0
         msg_velocity = 0.0
-        if len(timestamps) >= 2:
+        if timestamps:
             timestamps.sort(reverse=True)
-            span_h = (timestamps[0] - timestamps[-1]).total_seconds() / 3600.0
-            if span_h > 0:
-                msg_velocity = round(msg_count / span_h, 1)
+            newest = timestamps[0]
+            one_hour_ago = newest - timedelta(hours=1)
+            msg_count = sum(1 for t in timestamps if t >= one_hour_ago)
+            # velocity = count / window (1 hr fixed, so they're the same number)
+            msg_velocity = float(msg_count)
 
         trending = msg_velocity >= 20.0
 
         return {
-            "bull_pct":    bull_pct,
-            "bear_pct":    bear_pct,
-            "neutral_pct": neutral_pct,
-            "msg_count":   msg_count,
+            "bull_pct":     bull_pct,
+            "bear_pct":     bear_pct,
+            "neutral_pct":  neutral_pct,
+            "msg_count":    msg_count,
             "msg_velocity": msg_velocity,
-            "trending":    trending,
+            "trending":     trending,
         }
     except Exception:
         return None
@@ -2972,39 +2973,51 @@ def render_social_sentiment_widget(sentiment, rvol_val, bsp):
 
     Args:
         sentiment  — dict from fetch_stocktwits_sentiment(), or None
-        rvol_val   — float RVOL (used for HERD alert threshold)
-        bsp        — dict from compute_buy_sell_pressure() with key 'buy_pct'
+        rvol_val   — float RVOL (used for HERD alert threshold ≥ 3)
+        bsp        — dict from compute_buy_sell_pressure() — used for momentum
+                     (trend_now vs trend_prev: a delta > 3 = ramping buy,
+                      delta < -3 = falling buy)
     """
     if sentiment is None:
         st.markdown(
             '<div style="background:#12122288;border:1px solid #2a2a4a;border-radius:10px;'
             'padding:10px 14px;margin-bottom:8px;font-size:12px;color:#555;">'
-            '💬 StockTwits — no data</div>',
+            '💬 Sentiment unavailable</div>',
             unsafe_allow_html=True,
         )
         return
 
-    bull_pct    = sentiment.get("bull_pct", 0.0)
-    bear_pct    = sentiment.get("bear_pct", 0.0)
-    neutral_pct = sentiment.get("neutral_pct", 0.0)
-    msg_count   = sentiment.get("msg_count", 0)
+    bull_pct     = sentiment.get("bull_pct", 0.0)
+    bear_pct     = sentiment.get("bear_pct", 0.0)
+    neutral_pct  = sentiment.get("neutral_pct", 0.0)
+    msg_count    = sentiment.get("msg_count", 0)
     msg_velocity = sentiment.get("msg_velocity", 0.0)
-    trending    = sentiment.get("trending", False)
-    buy_pct     = bsp.get("buy_pct", 50.0) if bsp else 50.0
+    trending     = sentiment.get("trending", False)
+
+    # ── Buy pressure momentum (ramping / falling) ─────────────────────────────
+    # trend_now and trend_prev are the last-5 vs prior-5 bar buy percentages
+    # produced by compute_buy_sell_pressure().  A delta > 3 = buy ramping;
+    # a delta < -3 = buy falling.
+    trend_now  = (bsp or {}).get("trend_now",  50.0)
+    trend_prev = (bsp or {}).get("trend_prev", 50.0)
+    buy_delta  = trend_now - trend_prev   # positive = ramping, negative = falling
 
     velocity_arrow = "⬆️" if msg_velocity >= 20 else ("➡️" if msg_velocity >= 8 else "⬇️")
 
-    # ── Alert detection ───────────────────────────────────────────────────────
-    herd_piling = trending and (rvol_val or 0.0) >= 3.0 and buy_pct >= 60.0
-    crowd_trap  = (not herd_piling) and trending and buy_pct < 40.0
+    # ── Alert detection (momentum-based, not static level) ────────────────────
+    buy_ramping = buy_delta > 3.0
+    buy_falling = buy_delta < -3.0
+    herd_piling = trending and (rvol_val or 0.0) >= 3.0 and buy_ramping
+    crowd_trap  = (not herd_piling) and trending and buy_falling
 
     alert_html = ""
     if herd_piling:
         alert_html = (
             '<div style="margin-top:8px;padding:5px 10px;border-radius:6px;'
-            'background:#e040fb22;border:1px solid #e040fb88;font-size:11px;'
-            'font-weight:700;color:#e040fb;letter-spacing:.5px;">'
-            '🚨 HERD PILING IN — RVOL + crowd + buy pressure all surging</div>'
+            'background:#00e67622;border:1px solid #00e67688;font-size:11px;'
+            'font-weight:700;color:#00e676;letter-spacing:.5px;'
+            'box-shadow:0 0 8px #00e67644;">'
+            '🐂 HERD PILING IN — RVOL + crowd + buy momentum all surging</div>'
         )
     elif crowd_trap:
         alert_html = (
@@ -3022,7 +3035,7 @@ def render_social_sentiment_widget(sentiment, rvol_val, bsp):
             💬 StockTwits Sentiment
         </div>
         <div style="font-size:11px;color:#aaa;margin-bottom:6px;">
-            {msg_count} messages &nbsp;·&nbsp; {msg_velocity:.1f} msg/hr {velocity_arrow}
+            {msg_count} msgs/hr &nbsp;·&nbsp; {msg_velocity:.0f} msg/hr {velocity_arrow}
         </div>
         <!-- Bull/Bear bar -->
         <div style="display:flex;gap:0;border-radius:4px;overflow:hidden;height:14px;">
