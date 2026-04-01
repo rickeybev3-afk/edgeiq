@@ -1,0 +1,69 @@
+Gemini said
+This breakdown covers the "Small Account Challenge" strategy used by Ross Cameron (Warrior Trading), which focuses on high-probability momentum trading. Since you're already trading in the $2−$20 range and focusing on cognitive performance, this "sniper" approach fits your profile well.
+
+The Five Pillars of Stock Selection
+For a small account (under $25,000), the criteria are much stricter than for a large account.
+
+Pillar	Small Account Criteria	Rationale
+Price	$0.25 to $9.00 Max	Maximizes share size and buying power.
+% Change	50%+ Minimum	High momentum stocks have a higher probability of continuing.
+RVOL	100+ Preferred	Indicates a massive supply/demand imbalance.
+News	Required	A specific catalyst (FDA, 13D filing, etc.) justifies the price action.
+Float	Sub-5M Preferred (20M Absolute Max)	Low float allows for "explosive" moves; avoids institutional Algos.
+Trading Guidelines & "Guardrails"
+The 3-Hour Window: Trade only from 7:00 AM to 10:00 AM. If no setup forms by 10:00 AM, walk away.
+
+The "Front Side" Rule: Only trade the "front side" of the move—the period from the news release until the first MACD crossover.
+
+Cash Account Strategy: Since cash takes time to settle, treat every trade as your "only" trade for the day. Be a sniper, not a machine gunner.
+
+Math of Recovery: Avoid the "death spiral."
+
+A 25% loss requires a 33% gain to break even.
+
+A 50% loss requires a 100% gain to break even.
+
+The Setup: The "First Candle to Make a New High"
+This is the highest win-rate setup. It relies on the "Wave" principle of momentum.
+
+Entry Checklist
+The Surge: Stock hits the scanner, moving up on high volume (3–5 green candles).
+
+The Pullback: Wait for 1–2 red candles on lower volume.
+
+The Trigger: Enter the moment a candle breaks the high of the previous (pullback) candle.
+
+Confirmation: Wait for the price to actually break the "Apex" rather than anticipating it.
+
+Indicators to Watch
+Level 2/Tape: Look for a "surge" of green orders.
+
+MACD: Ensure the MACD lines are "open" and not crossing over yet.
+
+Whole/Half Dollars: Expect resistance at $1.00 and $0.50 increments. Resistance usually flips to support once broken.
+
+Volume Profile Integration
+To incorporate this into your existing Volume Profile system, you should create a "Momentum Overlay" or a secondary tab that filters for these specific "Pillar" stocks.
+
+Point of Control (POC) Shift: On these $2−$9 stocks, you want to see the POC shifting upward rapidly.
+
+Low Volume Nodes (LVN): Use LVNs on the profile to set your profit targets. Usually, the stock will "zip" through LVNs and stall at High Volume Nodes (HVNs).
+
+The "RVOL 100" Tab: Create a tab that specifically highlights stocks where the current volume is 100× the average volume for that time of day, filtered by your float requirements.
+
+Descriptive Prompt for Revel
+Copy and paste this into Revel to build your tracker and automation tools:
+
+"Act as a financial systems developer. Build a Trading Performance & Strategy Tracker optimized for Small Cap Momentum Trading ($2 - $10 range).
+
+Core Requirements:
+
+Data Filtering: Create a 'Scanner' module that filters for: Price < $10, Daily % Change > 50%, Float < 20M (Highlight < 5M in Green), and Relative Volume (RVOL) > 100.
+
+Trade Logging: Fields for 'Entry Type' (First Pullback, ABCD, or High of Day), 'Time of Trade' (Flag if outside 7am-10am EST), and 'Front Side/Back Side' status based on MACD.
+
+Volume Profile Integration: Create a data tab that pulls the 'Value Area High/Low' and 'POC' for the current ticker. Highlight if the current price is 'Breaking Out' of the Value Area on RVOL > 100.
+
+Risk Analytics: Calculate the 'Recovery Ratio'—if a trade loses X%, display the % gain required to return to the previous balance.
+
+Cognitive Audit: Add a checkbox for 'Confirmed Entry' vs 'Anticipated Entry' to track win-rate differences between trading with confirmation versus gut feeling."
