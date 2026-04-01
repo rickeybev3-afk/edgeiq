@@ -50,3 +50,4 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-03-31 13:42:54,MASK,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,MASK_2026-03-31_3.1600_1.6150
 2026-03-31 13:43:06,KIDZ,Neutral Extreme,⚡ Neutral Extreme,✅,0.0,0.0,0.0,KIDZ_2026-03-31_4.3150_3.4450
 2026-03-31 13:49:32,AIFF,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,AIFF_2026-03-31_2.1600_2.0850
+2026-03-31 23:24:29,AAPL,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,AAPL_2026-03-31_249.2300_247.6750
