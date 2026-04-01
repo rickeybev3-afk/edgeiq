@@ -88,6 +88,9 @@ _DEFAULTS = {
     "replay_sector_bonus":  0.0,
     # Daily level confluence cache
     "daily_levels_cache":   {},
+    # StockTwits sentiment cache — keyed by ticker, refreshed per user analysis trigger
+    # (prevents repeated API calls during Live/Replay auto-reruns)
+    "stocktwits_cache":     {},
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -3034,7 +3037,7 @@ def render_social_sentiment_widget(sentiment, rvol_val, bsp):
             💬 StockTwits Sentiment
         </div>
         <div style="font-size:11px;color:#aaa;margin-bottom:6px;">
-            {msg_count} msgs/hr &nbsp;·&nbsp; {msg_velocity:.0f} msg/hr {velocity_arrow}
+            {msg_count} msgs in last hr &nbsp;·&nbsp; {velocity_arrow}
         </div>
         <!-- Bull/Bear bar -->
         <div style="display:flex;gap:0;border-radius:4px;overflow:hidden;height:14px;">
@@ -3360,8 +3363,15 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     _bsp_data = compute_buy_sell_pressure(df)
     render_buy_sell_widget(_bsp_data, rvol_val=rvol_val)
 
-    # ── StockTwits Social Sentiment ───────────────────────────────────────────
-    _sentiment = fetch_stocktwits_sentiment(ticker)
+    # ── StockTwits Social Sentiment (cache-backed) ────────────────────────────
+    # Fetched at most ONCE per ticker per session: on the first render for that
+    # ticker regardless of mode (historical, scanner, live first entry).
+    # Subsequent Live/Replay auto-reruns are cache hits → zero API calls.
+    _st_cache = st.session_state.get("stocktwits_cache", {})
+    if ticker not in _st_cache:
+        _st_cache[ticker] = fetch_stocktwits_sentiment(ticker)
+        st.session_state.stocktwits_cache = _st_cache
+    _sentiment = _st_cache.get(ticker)
     render_social_sentiment_widget(_sentiment, rvol_val, _bsp_data)
 
     # ── Round Number Magnet ───────────────────────────────────────────────────
