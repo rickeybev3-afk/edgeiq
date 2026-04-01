@@ -1920,6 +1920,91 @@ def compute_low_volume_nodes(bin_centers, vap, threshold_pct=0.20):
     return sorted(lvns, key=lambda x: x["price"])
 
 
+# ── StockTwits Social Sentiment ───────────────────────────────────────────────
+
+def fetch_stocktwits_sentiment(ticker):
+    """Fetch social sentiment from StockTwits public API (no auth key required).
+
+    Parses the last 30 messages for bull/bear/neutral sentiment tags and
+    computes a rough message-per-hour velocity to detect herd accumulation.
+
+    Returns a dict with keys:
+        bull_pct, bear_pct, neutral_pct  — sentiment split (0-100)
+        msg_count                         — number of messages returned (≤30)
+        msg_velocity                      — estimated messages / hour
+        trending                          — True if velocity >= 20 msg/hr
+    Returns None on any error or timeout.
+    """
+    import urllib.request
+
+    try:
+        url = f"https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
+        req = urllib.request.Request(url, headers={"User-Agent": "VolumeProfileBot/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+
+        messages = data.get("messages", [])
+        if not messages:
+            return None
+
+        bull = bear = neutral_count = 0
+        timestamps = []
+
+        for msg in messages:
+            # Sentiment tag lives in entities.sentiment.basic
+            sentiment_tag = None
+            entities = msg.get("entities") or {}
+            raw_sent = entities.get("sentiment")
+            if raw_sent and isinstance(raw_sent, dict):
+                sentiment_tag = raw_sent.get("basic", "")
+            # Older API shape: top-level sentiment field
+            if not sentiment_tag:
+                raw_top = msg.get("sentiment")
+                if raw_top and isinstance(raw_top, dict):
+                    sentiment_tag = raw_top.get("basic", "")
+
+            if sentiment_tag == "Bullish":
+                bull += 1
+            elif sentiment_tag == "Bearish":
+                bear += 1
+            else:
+                neutral_count += 1
+
+            ts_str = msg.get("created_at", "")
+            if ts_str:
+                try:
+                    ts = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
+                    timestamps.append(ts)
+                except Exception:
+                    pass
+
+        msg_count = len(messages)
+        total = bull + bear + neutral_count
+        bull_pct    = round(bull / total * 100, 1) if total > 0 else 0.0
+        bear_pct    = round(bear / total * 100, 1) if total > 0 else 0.0
+        neutral_pct = round(max(0.0, 100.0 - bull_pct - bear_pct), 1)
+
+        msg_velocity = 0.0
+        if len(timestamps) >= 2:
+            timestamps.sort(reverse=True)
+            span_h = (timestamps[0] - timestamps[-1]).total_seconds() / 3600.0
+            if span_h > 0:
+                msg_velocity = round(msg_count / span_h, 1)
+
+        trending = msg_velocity >= 20.0
+
+        return {
+            "bull_pct":    bull_pct,
+            "bear_pct":    bear_pct,
+            "neutral_pct": neutral_pct,
+            "msg_count":   msg_count,
+            "msg_velocity": msg_velocity,
+            "trending":    trending,
+        }
+    except Exception:
+        return None
+
+
 def check_target_alerts(price, targets, audio_enabled):
     """Fire a unique 'Target Reached' sound when price touches a target zone (0.5% tol)."""
     import streamlit.components.v1 as components
@@ -2101,6 +2186,7 @@ JOURNAL_PATH = "trade_journal.csv"
 _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
+    "social_bull_pct", "social_bear_pct", "social_msg_count",
 ]
 
 
@@ -2194,6 +2280,9 @@ def render_log_entry_ui():
                 "notes":     notes,
                 "grade":     grade,
                 "grade_reason": reason,
+                "social_bull_pct":  state.get("social_bull_pct", ""),
+                "social_bear_pct":  state.get("social_bear_pct", ""),
+                "social_msg_count": state.get("social_msg_count", ""),
             }
             save_journal_entry(entry)
             gc = _GRADE_COLORS.get(grade, "#aaa")
@@ -2242,6 +2331,27 @@ def render_journal_tab():
         tcs_v = row.get("tcs", "")
         rvol_v = row.get("rvol", "")
         notes_v = row.get("notes", "")
+        s_bull = row.get("social_bull_pct", "")
+        s_bear = row.get("social_bear_pct", "")
+        s_msgs = row.get("social_msg_count", "")
+
+        # Build optional Sentiment at Entry line
+        if s_bull != "" and s_bear != "":
+            try:
+                _sb = float(s_bull)
+                _se = float(s_bear)
+                _sc = int(s_msgs) if str(s_msgs).strip() not in ("", "nan") else 0
+                _sentiment_row = (
+                    f'<div style="font-size:11px;color:#90caf9;margin-top:3px;">'
+                    f'💬 Sentiment at Entry: '
+                    f'<span style="color:#26a69a;font-weight:700;">🐂 {_sb:.0f}%</span>'
+                    f' / <span style="color:#ef5350;font-weight:700;">{_se:.0f}% 🐻</span>'
+                    f' · {_sc} msgs</div>'
+                )
+            except Exception:
+                _sentiment_row = ""
+        else:
+            _sentiment_row = ""
 
         st.markdown(f"""
         <div style="display:flex; gap:16px; align-items:center; background:#12122288;
@@ -2262,6 +2372,7 @@ def render_journal_tab():
                     TCS {tcs_v}%  ·  RVOL {rvol_v}×
                     {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
                 </div>
+                {_sentiment_row}
                 <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
             </div>
         </div>
@@ -2856,6 +2967,81 @@ def render_buy_sell_widget(bsp, rvol_val=None):
     """, unsafe_allow_html=True)
 
 
+def render_social_sentiment_widget(sentiment, rvol_val, bsp):
+    """Render StockTwits social sentiment card below the buy/sell pressure widget.
+
+    Args:
+        sentiment  — dict from fetch_stocktwits_sentiment(), or None
+        rvol_val   — float RVOL (used for HERD alert threshold)
+        bsp        — dict from compute_buy_sell_pressure() with key 'buy_pct'
+    """
+    if sentiment is None:
+        st.markdown(
+            '<div style="background:#12122288;border:1px solid #2a2a4a;border-radius:10px;'
+            'padding:10px 14px;margin-bottom:8px;font-size:12px;color:#555;">'
+            '💬 StockTwits — no data</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    bull_pct    = sentiment.get("bull_pct", 0.0)
+    bear_pct    = sentiment.get("bear_pct", 0.0)
+    neutral_pct = sentiment.get("neutral_pct", 0.0)
+    msg_count   = sentiment.get("msg_count", 0)
+    msg_velocity = sentiment.get("msg_velocity", 0.0)
+    trending    = sentiment.get("trending", False)
+    buy_pct     = bsp.get("buy_pct", 50.0) if bsp else 50.0
+
+    velocity_arrow = "⬆️" if msg_velocity >= 20 else ("➡️" if msg_velocity >= 8 else "⬇️")
+
+    # ── Alert detection ───────────────────────────────────────────────────────
+    herd_piling = trending and (rvol_val or 0.0) >= 3.0 and buy_pct >= 60.0
+    crowd_trap  = (not herd_piling) and trending and buy_pct < 40.0
+
+    alert_html = ""
+    if herd_piling:
+        alert_html = (
+            '<div style="margin-top:8px;padding:5px 10px;border-radius:6px;'
+            'background:#e040fb22;border:1px solid #e040fb88;font-size:11px;'
+            'font-weight:700;color:#e040fb;letter-spacing:.5px;">'
+            '🚨 HERD PILING IN — RVOL + crowd + buy pressure all surging</div>'
+        )
+    elif crowd_trap:
+        alert_html = (
+            '<div style="margin-top:8px;padding:5px 10px;border-radius:6px;'
+            'background:#ff572222;border:1px solid #ff572288;font-size:11px;'
+            'font-weight:700;color:#ff7043;letter-spacing:.5px;">'
+            '⚠️ CROWD TRAP — social buzz spiking but buy pressure fading</div>'
+        )
+
+    sentiment_html = f"""
+    <div style="background:#12122288;border:1px solid #2a2a4a;border-radius:10px;
+                padding:12px 14px;margin-bottom:8px;">
+        <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
+                    color:#90caf9;font-weight:700;margin-bottom:8px;">
+            💬 StockTwits Sentiment
+        </div>
+        <div style="font-size:11px;color:#aaa;margin-bottom:6px;">
+            {msg_count} messages &nbsp;·&nbsp; {msg_velocity:.1f} msg/hr {velocity_arrow}
+        </div>
+        <!-- Bull/Bear bar -->
+        <div style="display:flex;gap:0;border-radius:4px;overflow:hidden;height:14px;">
+            <div style="width:{bull_pct}%;background:#26a69a;min-width:2px;"></div>
+            <div style="width:{neutral_pct}%;background:#37474f;"></div>
+            <div style="width:{bear_pct}%;background:#ef5350;min-width:2px;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;
+                    font-size:11px;color:#aaa;">
+            <span style="color:#26a69a;font-weight:700;">🐂 {bull_pct:.0f}%</span>
+            <span style="color:#666;">Neutral {neutral_pct:.0f}%</span>
+            <span style="color:#ef5350;font-weight:700;">{bear_pct:.0f}% 🐻</span>
+        </div>
+        {alert_html}
+    </div>
+    """
+    st.markdown(sentiment_html, unsafe_allow_html=True)
+
+
 def render_round_number_widget(mag):
     """Round Number Magnet badge — shows proximity to whole/half dollar levels."""
     if mag is None or mag.get("badge") is None:
@@ -3159,7 +3345,12 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
-    render_buy_sell_widget(compute_buy_sell_pressure(df), rvol_val=rvol_val)
+    _bsp_data = compute_buy_sell_pressure(df)
+    render_buy_sell_widget(_bsp_data, rvol_val=rvol_val)
+
+    # ── StockTwits Social Sentiment ───────────────────────────────────────────
+    _sentiment = fetch_stocktwits_sentiment(ticker)
+    render_social_sentiment_widget(_sentiment, rvol_val, _bsp_data)
 
     # ── Round Number Magnet ───────────────────────────────────────────────────
     magnetism = compute_round_number_magnetism(price_now)
@@ -3335,6 +3526,9 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "label_color": color,
         "vol_velocity_str": "",
         "brain_predicted": brain.prediction,
+        "social_bull_pct":  (_sentiment or {}).get("bull_pct", ""),
+        "social_bear_pct":  (_sentiment or {}).get("bear_pct", ""),
+        "social_msg_count": (_sentiment or {}).get("msg_count", ""),
     }
 
     # ── Update peak price + auto-alerts for open position ────────────────────
