@@ -6,3 +6,9 @@ id = "vJLYud3CZr5piNo2TOW_c"
 uri = "file://volume_profile_dashboard.zip"
 type = "unspecified"
 title = "Volume Profile Dashboard — all files"
+
+[[outputs]]
+id = "C_iVxf5rv5-czLYox5M9f"
+uri = "file://app_code.txt"
+type = "text"
+title = "app.py — Volume Profile Dashboard (text file)"
