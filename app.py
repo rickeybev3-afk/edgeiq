@@ -2105,7 +2105,7 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
             r = int(80  + norm * 175)
             g = int(130 + norm * -10)
             b = int(220 + norm * -220)
-            a = round(0.07 + norm * 0.62, 2)
+            a = round(0.05 + norm * 0.65, 2)
             color = f"rgba({r},{g},{b},{a})"
         vp_bands.append({"price": round(fprice, 4), "norm": round(norm, 4),
                          "color": color, "isPoc": is_poc})
