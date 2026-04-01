@@ -10,6 +10,7 @@ import time
 import json
 import csv
 import os
+import math
 from collections import deque
 
 STATE_FILE   = "trade_state.json"
@@ -85,6 +86,8 @@ _DEFAULTS = {
     "replay_avg_vol":       None,
     "replay_intraday_curve": None,
     "replay_sector_bonus":  0.0,
+    # Daily level confluence cache
+    "daily_levels_cache":   {},
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -1425,6 +1428,266 @@ def compute_model_prediction(df, rvol, tcs, sector_bonus, market_open=True):
             "Price and volume not clearly aligned; range-bound action expected.")
 
 
+# ── Round Number Magnet ────────────────────────────────────────────────────────
+
+def compute_round_number_magnetism(price):
+    """Round Number Magnet score (0-100).
+
+    Whole dollars and half dollars act as psychological magnets for retail
+    traders — price often stalls or reverses at these levels.
+
+    Returns a dict:
+        whole_dollar, half_dollar, dist_whole_pct, dist_half_pct,
+        score (0-100, higher = price closer to a magnet),
+        badge ("Strong" / "Moderate" / "Weak" / None),
+        at_ceiling (bool — price within 0.5% below a whole dollar)
+    """
+    if price is None or price <= 0:
+        return {"score": 0, "badge": None, "at_ceiling": False,
+                "whole_dollar": None, "half_dollar": None,
+                "dist_whole_pct": None, "dist_half_pct": None}
+
+    price = float(price)
+
+    # Nearest whole dollar
+    whole_lo = math.floor(price)
+    whole_hi = whole_lo + 1
+    dist_whole_lo = abs(price - whole_lo)
+    dist_whole_hi = abs(price - whole_hi)
+    dist_whole = min(dist_whole_lo, dist_whole_hi)
+    nearest_whole = whole_lo if dist_whole_lo <= dist_whole_hi else whole_hi
+    dist_whole_pct = dist_whole / price * 100.0
+
+    # Nearest half dollar (x.00 or x.50)
+    half_lo = math.floor(price * 2) / 2.0
+    half_hi = half_lo + 0.5
+    dist_half_lo = abs(price - half_lo)
+    dist_half_hi = abs(price - half_hi)
+    dist_half = min(dist_half_lo, dist_half_hi)
+    nearest_half = half_lo if dist_half_lo <= dist_half_hi else half_hi
+    dist_half_pct = dist_half / price * 100.0
+
+    best_dist_pct = min(dist_whole_pct, dist_half_pct)
+    if best_dist_pct <= 0.25:
+        score = 100
+    elif best_dist_pct <= 0.5:
+        score = int(80 + (0.5 - best_dist_pct) / 0.25 * 20)
+    elif best_dist_pct <= 1.0:
+        score = int(50 + (1.0 - best_dist_pct) / 0.5 * 30)
+    elif best_dist_pct <= 2.0:
+        score = int(20 + (2.0 - best_dist_pct) / 1.0 * 30)
+    else:
+        score = 0
+
+    if score >= 80:
+        badge = "Strong"
+    elif score >= 50:
+        badge = "Moderate"
+    elif score >= 20:
+        badge = "Weak"
+    else:
+        badge = None
+
+    # Ceiling risk: price approaching a whole dollar from below within 0.5%
+    at_ceiling = (price < nearest_whole and (nearest_whole - price) / price * 100.0 <= 0.5)
+
+    return {
+        "whole_dollar":   nearest_whole,
+        "half_dollar":    nearest_half,
+        "dist_whole_pct": round(dist_whole_pct, 2),
+        "dist_half_pct":  round(dist_half_pct, 2),
+        "score":          score,
+        "badge":          badge,
+        "at_ceiling":     at_ceiling,
+    }
+
+
+# ── Lunar Phase ───────────────────────────────────────────────────────────────
+
+def get_lunar_phase(trade_date):
+    """Lunar phase via Julian Date calculation — no external library.
+
+    Returns (icon, phase_name, is_retail_mania).
+    is_retail_mania is True on Full Moon and New Moon — historically elevated
+    retail participation windows.
+    """
+    y, m, d = trade_date.year, trade_date.month, trade_date.day
+    if m <= 2:
+        y -= 1
+        m += 12
+    a = int(y / 100)
+    b = 2 - a + int(a / 4)
+    jd = int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + d + b - 1524.5
+
+    known_new_moon_jd = 2451549.5   # Jan 6, 2000 was a confirmed new moon
+    lunar_cycle = 29.53058867
+    moon_age = (jd - known_new_moon_jd) % lunar_cycle
+    if moon_age < 0:
+        moon_age += lunar_cycle
+
+    if moon_age < 1.85 or moon_age >= 27.68:
+        return "🌑", "New Moon", True
+    elif moon_age < 7.38:
+        return "🌒", "Waxing Crescent", False
+    elif moon_age < 9.22:
+        return "🌓", "First Quarter", False
+    elif moon_age < 14.77:
+        return "🌔", "Waxing Gibbous", False
+    elif moon_age < 16.61:
+        return "🌕", "Full Moon", True
+    elif moon_age < 22.15:
+        return "🌖", "Waning Gibbous", False
+    elif moon_age < 23.99:
+        return "🌗", "Last Quarter", False
+    else:
+        return "🌘", "Waning Crescent", False
+
+
+# ── Daily Level Confluence ────────────────────────────────────────────────────
+
+def fetch_daily_levels(api_key, secret_key, ticker, trade_date):
+    """Fetch the prior trading day's high and low from Alpaca daily bars.
+
+    Returns (prev_high, prev_low) or (None, None) on failure.
+    trade_date is the CURRENT session date — we want the session BEFORE this.
+    """
+    if not api_key or not secret_key:
+        return None, None
+    try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+
+        client = StockHistoricalDataClient(api_key, secret_key)
+        end_dt   = datetime.combine(trade_date, dtime(0, 0))
+        start_dt = end_dt - timedelta(days=10)   # cover weekends/holidays
+
+        req = StockBarsRequest(
+            symbol_or_symbols=ticker,
+            timeframe=TimeFrame.Day,
+            start=start_dt,
+            end=end_dt,
+        )
+        bars_resp = client.get_stock_bars(req)
+        df_day = bars_resp.df
+
+        if df_day is None or df_day.empty:
+            return None, None
+
+        if isinstance(df_day.index, pd.MultiIndex):
+            if ticker in df_day.index.get_level_values(0):
+                df_day = df_day.xs(ticker, level=0)
+            elif ticker in df_day.index.get_level_values("symbol"):
+                df_day = df_day.xs(ticker, level="symbol")
+
+        df_day.index = pd.to_datetime(df_day.index)
+        df_day = df_day[df_day.index.date < trade_date]
+        if df_day.empty:
+            return None, None
+
+        prev_high = float(df_day["high"].iloc[-1])
+        prev_low  = float(df_day["low"].iloc[-1])
+        return prev_high, prev_low
+    except Exception:
+        return None, None
+
+
+# ── Runner Archetype Similarity ───────────────────────────────────────────────
+# Each archetype is a 20-element vector of relative volume weights, index 0 = lowest
+# price bin, index 19 = highest price bin. All values are proportional (not normalized).
+
+_RUNNER_ARCHETYPES = {
+    "Gap & Go":          [0.18, 0.15, 0.12, 0.09, 0.07, 0.06, 0.05, 0.04, 0.04, 0.03,
+                          0.03, 0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.02, 0.01, 0.01],
+    "Bull Flag Runner":  [0.05, 0.05, 0.08, 0.09, 0.07, 0.06, 0.04, 0.04, 0.05, 0.05,
+                          0.04, 0.04, 0.04, 0.05, 0.06, 0.08, 0.09, 0.06, 0.04, 0.02],
+    "VWAP Reclaim":      [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.09, 0.10, 0.11, 0.10,
+                          0.09, 0.08, 0.07, 0.05, 0.04, 0.03, 0.02, 0.02, 0.02, 0.01],
+    "Afternoon Momentum":[0.02, 0.02, 0.03, 0.03, 0.04, 0.04, 0.04, 0.05, 0.05, 0.06,
+                          0.06, 0.07, 0.08, 0.09, 0.10, 0.09, 0.08, 0.07, 0.05, 0.03],
+    "Morning Star":      [0.14, 0.13, 0.12, 0.10, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03,
+                          0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.01, 0.01],
+    "V-Shape Recovery":  [0.09, 0.08, 0.06, 0.04, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03,
+                          0.03, 0.04, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.08, 0.07],
+    "Steady Grinder":    [0.04, 0.04, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.06,
+                          0.06, 0.06, 0.06, 0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.04],
+    "Breakout Bomb":     [0.01, 0.01, 0.02, 0.02, 0.02, 0.02, 0.03, 0.03, 0.04, 0.05,
+                          0.06, 0.07, 0.08, 0.09, 0.10, 0.11, 0.10, 0.07, 0.05, 0.03],
+    "IB Extension":      [0.10, 0.11, 0.12, 0.11, 0.10, 0.08, 0.07, 0.06, 0.05, 0.04,
+                          0.04, 0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.01, 0.01, 0.01],
+    "Double Cluster":    [0.06, 0.08, 0.09, 0.10, 0.09, 0.06, 0.03, 0.02, 0.02, 0.02,
+                          0.02, 0.02, 0.03, 0.06, 0.09, 0.10, 0.09, 0.08, 0.06, 0.04],
+}
+
+_SQUEEZE_ARCHETYPE = [0.01, 0.01, 0.02, 0.02, 0.02, 0.03, 0.03, 0.03, 0.03, 0.04,
+                      0.04, 0.05, 0.06, 0.07, 0.09, 0.11, 0.12, 0.11, 0.08, 0.03]
+
+_DUMP_ARCHETYPE    = [0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.11, 0.12,
+                      0.11, 0.10, 0.08, 0.06, 0.04, 0.03, 0.02, 0.01, 0.01, 0.01]
+
+
+def _normalize_archetype(vec):
+    total = sum(vec)
+    return [v / total for v in vec] if total > 0 else vec
+
+
+def _cosine_sim(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na  = math.sqrt(sum(x * x for x in a))
+    nb  = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if (na > 0 and nb > 0) else 0.0
+
+
+def compute_runner_similarity(bin_centers, vap):
+    """Cosine-compare today's VP against 10 runner archetypes plus squeeze/dump.
+
+    Resamples the VP to a 20-bin normalized vector then computes cosine similarity
+    against every pre-defined archetype.
+
+    Returns a dict:
+        best_match    — name of closest runner archetype
+        runner_pct    — similarity % (0-100) for best runner match
+        squeeze_pct   — similarity % vs short-squeeze signature
+        dump_pct      — similarity % vs dump signature
+    """
+    if len(vap) < 2 or float(np.sum(vap)) == 0:
+        return {"best_match": "—", "runner_pct": 0.0, "squeeze_pct": 0.0, "dump_pct": 0.0}
+
+    N = 20
+    n_bins = len(vap)
+
+    if n_bins >= N:
+        bucket = n_bins / N
+        vec = [float(np.sum(vap[int(i * bucket):int((i + 1) * bucket)])) for i in range(N)]
+    else:
+        vec = [float(vap[int(i * n_bins / N)]) for i in range(N)]
+
+    total = sum(vec)
+    if total == 0:
+        return {"best_match": "—", "runner_pct": 0.0, "squeeze_pct": 0.0, "dump_pct": 0.0}
+    vec_norm = [v / total for v in vec]
+
+    best_match = "—"
+    best_sim   = 0.0
+    for name, archetype in _RUNNER_ARCHETYPES.items():
+        arch_norm = _normalize_archetype(archetype)
+        sim = _cosine_sim(vec_norm, arch_norm)
+        if sim > best_sim:
+            best_sim   = sim
+            best_match = name
+
+    runner_pct  = round(best_sim * 100.0, 1)
+    squeeze_pct = round(_cosine_sim(vec_norm, _normalize_archetype(_SQUEEZE_ARCHETYPE)) * 100.0, 1)
+    dump_pct    = round(_cosine_sim(vec_norm, _normalize_archetype(_DUMP_ARCHETYPE)) * 100.0, 1)
+
+    return {
+        "best_match":  best_match,
+        "runner_pct":  runner_pct,
+        "squeeze_pct": squeeze_pct,
+        "dump_pct":    dump_pct,
+    }
+
+
 def compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=0.0):
     """Trend Confidence Score (0–100).
 
@@ -2593,6 +2856,111 @@ def render_buy_sell_widget(bsp, rvol_val=None):
     """, unsafe_allow_html=True)
 
 
+def render_round_number_widget(mag):
+    """Round Number Magnet badge — shows proximity to whole/half dollar levels."""
+    if mag is None or mag.get("badge") is None:
+        return
+
+    badge      = mag["badge"]
+    score      = mag["score"]
+    whole      = mag["whole_dollar"]
+    half_d     = mag["half_dollar"]
+    dw         = mag["dist_whole_pct"]
+    dh         = mag["dist_half_pct"]
+    at_ceiling = mag["at_ceiling"]
+
+    badge_colors = {
+        "Strong":   ("#ff6d00", "#ff6d0022"),
+        "Moderate": ("#ffa726", "#ffa72618"),
+        "Weak":     ("#5c6bc0", "#5c6bc018"),
+    }
+    bc, bg = badge_colors.get(badge, ("#555", "#11111118"))
+
+    ceil_html = ""
+    if at_ceiling:
+        ceil_html = (
+            '<div style="font-size:11px; color:#ef5350; margin-top:4px;">'
+            f'⚠️ Approaching ${whole:.0f} ceiling — breakout needed to clear resistance'
+            '</div>'
+        )
+
+    st.markdown(
+        f'<div style="background:{bg}; border:1px solid {bc}55; border-radius:8px; '
+        f'padding:8px 16px; margin:4px 0 6px 0;">'
+        f'<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">'
+        f'<span style="font-size:11px; color:#888; text-transform:uppercase; '
+        f'letter-spacing:.8px;">🧲 Round Number Magnet</span>'
+        f'<span style="font-size:12px; font-weight:700; color:{bc}; background:{bc}22; '
+        f'padding:1px 8px; border-radius:4px; border:1px solid {bc}55;">{badge}</span>'
+        f'<span style="font-size:12px; color:#aaa;">${whole:.0f}: {dw:.2f}% away</span>'
+        f'<span style="color:#2a2a4a;">|</span>'
+        f'<span style="font-size:12px; color:#aaa;">${half_d:.2f}: {dh:.2f}% away</span>'
+        f'<span style="font-size:12px; color:{bc}; font-family:monospace; margin-left:auto;">'
+        f'Score&nbsp;{score}</span>'
+        f'</div>'
+        f'{ceil_html}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_runner_dna_widget(sim):
+    """Runner DNA similarity badges — shows archetype match + squeeze/dump signals."""
+    if sim is None:
+        return
+    runner_pct  = sim["runner_pct"]
+    best_match  = sim["best_match"]
+    squeeze_pct = sim["squeeze_pct"]
+    dump_pct    = sim["dump_pct"]
+
+    if runner_pct < 60 and squeeze_pct < 60 and dump_pct < 60:
+        return
+
+    parts = []
+    if runner_pct >= 60:
+        rc = "#76ff03" if runner_pct >= 80 else "#4caf50"
+        parts.append(
+            f'<div style="background:{rc}11; border:1px solid {rc}44; border-radius:6px; '
+            f'padding:6px 12px; display:inline-flex; align-items:center; gap:8px;">'
+            f'<span style="font-size:10px; color:#888; text-transform:uppercase; '
+            f'letter-spacing:.6px;">Runner DNA</span>'
+            f'<span style="font-size:15px; font-weight:800; color:{rc}; '
+            f'font-family:monospace;">{runner_pct:.0f}%</span>'
+            f'<span style="font-size:11px; color:{rc}; font-weight:600;">{best_match}</span>'
+            f'</div>'
+        )
+    if squeeze_pct >= 60:
+        sc = "#ff6d00" if squeeze_pct >= 80 else "#ffa726"
+        parts.append(
+            f'<div style="background:{sc}11; border:1px solid {sc}44; border-radius:6px; '
+            f'padding:6px 12px; display:inline-flex; align-items:center; gap:8px;">'
+            f'<span style="font-size:10px; color:#888; text-transform:uppercase; '
+            f'letter-spacing:.6px;">⚡ Short Squeeze</span>'
+            f'<span style="font-size:15px; font-weight:800; color:{sc}; '
+            f'font-family:monospace;">{squeeze_pct:.0f}%</span>'
+            f'</div>'
+        )
+    if dump_pct >= 60:
+        dc = "#ef5350"
+        parts.append(
+            f'<div style="background:{dc}11; border:1px solid {dc}44; border-radius:6px; '
+            f'padding:6px 12px; display:inline-flex; align-items:center; gap:8px;">'
+            f'<span style="font-size:10px; color:#888; text-transform:uppercase; '
+            f'letter-spacing:.6px;">🔻 Dump Pattern</span>'
+            f'<span style="font-size:15px; font-weight:800; color:{dc}; '
+            f'font-family:monospace;">{dump_pct:.0f}%</span>'
+            f'</div>'
+        )
+
+    if parts:
+        st.markdown(
+            '<div style="display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 6px 0;">'
+            + "".join(parts)
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+
 def render_model_prediction(outcome, reasoning):
     """Show the volume-price divergence model prediction in a styled text box.
 
@@ -2792,7 +3160,14 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
     render_buy_sell_widget(compute_buy_sell_pressure(df), rvol_val=rvol_val)
-    render_structure_banner(label, color, detail, probs, tcs,
+
+    # ── Round Number Magnet ───────────────────────────────────────────────────
+    magnetism = compute_round_number_magnetism(price_now)
+    # Visual-only TCS penalty: approaching whole-dollar ceiling reduces displayed TCS
+    tcs_display = max(0.0, tcs - 10.0) if magnetism.get("at_ceiling") else tcs
+    render_round_number_widget(magnetism)
+
+    render_structure_banner(label, color, detail, probs, tcs_display,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
     render_model_prediction(pred_outcome, pred_reasoning)
@@ -2902,6 +3277,40 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                 f'Data logged for learning. Running: {_b_corr}/{_b_total} ({_b_rate:.0f}%)</div>',
                 unsafe_allow_html=True,
             )
+
+    # ── Runner DNA Similarity ─────────────────────────────────────────────────
+    try:
+        sim_data = compute_runner_similarity(bin_centers, vap)
+        render_runner_dna_widget(sim_data)
+    except Exception:
+        pass
+
+    # ── Daily Level Confluence Warning ────────────────────────────────────────
+    try:
+        _dl = st.session_state.get("daily_levels_cache", {})
+        _dl_ticker = _dl.get("ticker", "")
+        _prev_high = _dl.get("prev_high")
+        _prev_low  = _dl.get("prev_low")
+        if _prev_high and _dl_ticker == ticker and ib_high is not None and price_now > ib_high:
+            prev_cl = df["close"].shift(1)
+            _tr = pd.concat([
+                df["high"] - df["low"],
+                (df["high"] - prev_cl).abs(),
+                (df["low"]  - prev_cl).abs(),
+            ], axis=1).max(axis=1)
+            _atr = float(_tr.rolling(window=min(14, len(df))).mean().iloc[-1])
+            if _atr > 0 and abs(price_now - _prev_high) <= _atr:
+                st.markdown(
+                    f'<div style="background:#ef535022; border:1px solid #ef5350; '
+                    f'border-radius:6px; padding:8px 16px; margin:4px 0 6px 0;">'
+                    f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
+                    f'⚠️ DAILY CONFLUENCE ZONE — IB breakout running into prior-day high '
+                    f'${_prev_high:.2f} (within 1 ATR). Resistance overhead — conviction '
+                    f'penalty applied.</span></div>',
+                    unsafe_allow_html=True,
+                )
+    except Exception:
+        pass
 
     # ── Persist snapshot for Live Pulse header + Log Entry ────────────────────
     st.session_state.last_analysis_state = {
@@ -3286,6 +3695,25 @@ with st.sidebar:
             st.success(f"🔴 Live: **{st.session_state.live_ticker}**")
 
     st.markdown("---")
+
+    # ── Lunar Phase ───────────────────────────────────────────────────────────
+    try:
+        _l_icon, _l_phase, _l_mania = get_lunar_phase(date.today())
+        _l_color = "#ff6d00" if _l_mania else "#5c6bc0"
+        _l_note  = "🔥 Retail Mania Window" if _l_mania else "Normal Session"
+        st.markdown(
+            f'<div style="background:{_l_color}11; border:1px solid {_l_color}55; '
+            f'border-radius:6px; padding:6px 12px; margin:2px 0 6px 0; '
+            f'display:flex; align-items:center; gap:8px;">'
+            f'<span style="font-size:18px;">{_l_icon}</span>'
+            f'<div><div style="font-size:11px; color:{_l_color}; font-weight:700;">'
+            f'{_l_phase}</div>'
+            f'<div style="font-size:10px; color:#888;">{_l_note}</div></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
 
     # ── Position Management ────────────────────────────────────────────────────
     st.header("📍 Position")
@@ -4188,6 +4616,18 @@ with tab_chart:
                                 etf_chg = 0.0
                             sector_bonus = 10.0 if etf_chg > 1.0 else 0.0
                             st.session_state.sector_pct_chg = etf_chg
+
+                            # ── Daily level confluence (prior-day H/L) ─────────────
+                            try:
+                                _ph, _pl = fetch_daily_levels(
+                                    api_key, secret_key, ticker, selected_date)
+                                st.session_state.daily_levels_cache = {
+                                    "ticker":    ticker,
+                                    "prev_high": _ph,
+                                    "prev_low":  _pl,
+                                }
+                            except Exception:
+                                st.session_state.daily_levels_cache = {}
 
                             render_analysis(df, num_bins, ticker,
                                             f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
