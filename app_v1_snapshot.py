@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, date, timedelta, time as dtime
 import pytz
 import threading
@@ -1627,36 +1628,6 @@ def compute_target_zones(df, ib_high, ib_low, bin_centers, vap, tcs):
     return targets
 
 
-def compute_low_volume_nodes(bin_centers, vap, threshold_pct=0.20):
-    """Identify Low Volume Nodes (LVNs) — price levels where volume is thin.
-
-    LVNs are 'Turbo Zones': price tends to move rapidly through them because
-    there is little historical supply or demand to slow it down.
-
-    Returns a list of dicts (sorted ascending by price) with keys:
-        price, volume, strength (0=weak LVN, 1=completely empty), index
-    threshold_pct: bins below this fraction of avg session volume are LVNs.
-    """
-    if len(vap) == 0 or np.sum(vap) == 0:
-        return []
-    avg_vol   = float(np.mean(vap))
-    if avg_vol == 0:
-        return []
-    threshold = avg_vol * threshold_pct
-    lvns = []
-    for i, (price, vol) in enumerate(zip(bin_centers, vap)):
-        fvol = float(vol)
-        if fvol < threshold:
-            strength = 1.0 - (fvol / threshold) if threshold > 0 else 1.0
-            lvns.append({
-                "price":    round(float(price), 4),
-                "volume":   round(fvol, 2),
-                "strength": round(min(1.0, max(0.0, strength)), 3),
-                "index":    int(i),
-            })
-    return sorted(lvns, key=lambda x: x["price"])
-
-
 def check_target_alerts(price, targets, audio_enabled):
     """Fire a unique 'Target Reached' sound when price touches a target zone (0.5% tol)."""
     import streamlit.components.v1 as components
@@ -2044,307 +2015,173 @@ def render_journal_tab():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
-                target_zones=None, position=None, tcs=None, label="", rvol_val=None):
-    """Build a TradingView-style chart using lightweight-charts v4 (CDN).
+                target_zones=None, position=None):
+    # ── Reindex to a full 9:30–16:00 minute grid so the chart ALWAYS
+    #    anchors at 9:30 ET, even for thinly-traded small-caps whose first
+    #    real trade doesn't occur until 9:31 or later.
+    def _et_label(ts):
+        try:
+            return pd.Timestamp(ts).tz_convert(EASTERN).strftime("%H:%M ET")
+        except Exception:
+            return str(ts)[-8:]
 
-    Renders directly via st.components.v1.html() — returns nothing.
-    Layout: left 75% = dark candlestick chart  |  right 25% = VP heatmap
-    A glassmorphism HUD floats top-right of the candle panel.
-    Code preservation: compute_buy_sell_pressure (Blended Split) is untouched.
-    """
-    import streamlit.components.v1 as _comp
-
-    # ── Prepare candlestick data ───────────────────────────────────────────────
-    _rdf          = df.copy()
-    _cur_price    = float(_rdf["close"].dropna().iloc[-1]) if not _rdf.empty else None
+    # Keep a handle to the original (real) bars before we expand the index
+    _real_df = df.copy()
+    _current_price = float(_real_df["close"].dropna().iloc[-1]) if not _real_df.empty else None
 
     try:
-        _first   = df.index[0]
-        _last    = df.index[-1]
-        _d       = _first.date()
-        _ot      = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 9, 30))
-        _ct      = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16, 0))
-        _end     = min(_last, _ct)
-        df       = df.reindex(pd.date_range(_ot, _end, freq="1min"))
+        _first = df.index[0]
+        _last_real = df.index[-1]          # last bar that actually has data
+        _d = _first.date()
+        _open_et   = EASTERN.localize(datetime(_d.year, _d.month, _d.day,  9, 30))
+        # Extend grid only to the last real bar, not necessarily 16:00.
+        # This prevents the chart trailing off into blank space mid-session.
+        _close_et  = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16,  0))
+        _grid_end  = min(_last_real, _close_et)
+        _full_idx  = pd.date_range(_open_et, _grid_end, freq="1min")
+        df = df.reindex(_full_idx)         # NaN rows for minutes with no trade
     except Exception:
-        pass
+        pass   # fallback to raw bars if tz handling fails
 
-    candles = []
-    for ts, row in df.iterrows():
-        try:
-            if pd.isna(row["open"]) or pd.isna(row["close"]):
-                continue
-            candles.append({
-                "time":  int(pd.Timestamp(ts).timestamp()),
-                "open":  round(float(row["open"]),  4),
-                "high":  round(float(row["high"]),  4),
-                "low":   round(float(row["low"]),   4),
-                "close": round(float(row["close"]), 4),
-            })
-        except Exception:
-            continue
+    x_labels = [_et_label(ts) for ts in df.index]
+    x0, x1   = x_labels[0], x_labels[-1]
 
-    # ── Volume profile heatmap bands (blue→orange gradient, POC=gold) ─────────
-    max_vap  = float(np.max(vap)) if len(vap) > 0 and np.max(vap) > 0 else 1.0
-    bin_w    = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0.01
-    vp_bands = []
-    for price, vol in zip(bin_centers, vap):
-        fprice, fvol = float(price), float(vol)
-        norm         = fvol / max_vap
-        is_poc       = abs(fprice - float(poc_price)) < bin_w * 0.6
-        if is_poc:
-            color = "rgba(255,215,0,0.92)"
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.75, 0.25],
+                        shared_yaxes=True, horizontal_spacing=0.01)
+    fig.add_trace(go.Candlestick(
+        x=x_labels, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+        name="Price", increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
+        increasing_fillcolor="#26a69a", decreasing_fillcolor="#ef5350",
+    ), row=1, col=1)
+
+    # ── Current Price line ────────────────────────────────────────────────────
+    if _current_price is not None:
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[_current_price, _current_price],
+            mode="lines+text",
+            name=f"Last ${_current_price:.2f}",
+            line=dict(color="#ffffff", width=1.2, dash="dot"),
+            text=["", f" ▶ ${_current_price:.2f}"],
+            textposition="middle right",
+            textfont=dict(color="#ffffff", size=12, family="monospace"),
+            showlegend=True,
+        ), row=1, col=1)
+
+    if ib_high is not None and ib_low is not None:
+        fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_high, ib_high], mode="lines",
+            name=f"IB High ({ib_high:.2f})",
+            line=dict(color="#00e676", width=1.8, dash="dash")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_low, ib_low], mode="lines",
+            name=f"IB Low ({ib_low:.2f})",
+            line=dict(color="#ff5252", width=1.8, dash="dash")), row=1, col=1)
+
+    fig.add_trace(go.Scatter(x=[x0, x1], y=[poc_price, poc_price], mode="lines",
+        name=f"POC ({poc_price:.2f})", line=dict(color="gold", width=2.5)), row=1, col=1)
+
+    # ── Dynamic Target Zone overlay ───────────────────────────────────────────
+    lvn_idx_to_highlight = None
+    if target_zones:
+        for tz in target_zones:
+            tp = tz["price"]
+            tc = tz["color"]
+            tl = tz["label"]
+            # Annotated dotted horizontal line
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[tp, tp], mode="lines+text",
+                name=tl,
+                line=dict(color=tc, width=1.6, dash="dot"),
+                text=["", f" {tl}"],
+                textposition="top right",
+                textfont=dict(color=tc, size=11),
+            ), row=1, col=1)
+            # Shaded band (±1% of price) for trend extensions
+            if tz["type"] == "trend_extension":
+                band = tp * 0.005
+                fig.add_shape(
+                    type="rect", xref="paper", x0=0, x1=0.75,
+                    y0=tp - band, y1=tp + band,
+                    fillcolor=tc + "30",
+                    line=dict(width=0),
+                    row=1, col=1,
+                )
+            # Track LVN index for volume profile highlighting
+            if tz["type"] == "gap_fill" and "lvn_idx" in tz:
+                lvn_idx_to_highlight = tz["lvn_idx"]
+
+    # ── Volume Profile bars (LVN highlighted in yellow for Double Distribution) ─
+    bw = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0
+    colors = []
+    for i, p in enumerate(bin_centers):
+        if abs(p - poc_price) < bw * 0.5:
+            colors.append("gold")
+        elif lvn_idx_to_highlight is not None and i == lvn_idx_to_highlight:
+            colors.append("#ffeb3b")
         else:
-            r = int(80  + norm * 175)   # 80 → 255
-            g = int(130 + norm * -10)   # 130 → 120
-            b = int(220 + norm * -220)  # 220 → 0
-            a = round(0.07 + norm * 0.62, 2)
-            color = f"rgba({r},{g},{b},{a})"
-        vp_bands.append({"price": round(fprice, 4), "norm": round(norm, 4),
-                         "color": color, "isPoc": is_poc})
+            colors.append("#5c6bc0")
+    fig.add_trace(go.Bar(x=vap, y=bin_centers, orientation="h",
+        name="Volume Profile", marker_color=colors, opacity=0.85), row=1, col=2)
 
-    # ── LVNs (Turbo Zones) ────────────────────────────────────────────────────
-    lvns       = compute_low_volume_nodes(bin_centers, vap)
-    lvn_prices = [l["price"] for l in lvns]
-
-    # ── Price lines (IB, POC, current, targets, LVNs, position) ──────────────
-    plines = []
-    if ib_high is not None:
-        plines.append({"price": float(ib_high), "color": "#00e676",
-                       "width": 2, "style": 1, "title": f"IB Hi ${float(ib_high):.2f}"})
-    if ib_low is not None:
-        plines.append({"price": float(ib_low),  "color": "#ff5252",
-                       "width": 2, "style": 1, "title": f"IB Lo ${float(ib_low):.2f}"})
-    plines.append({"price": float(poc_price), "color": "#ffd700",
-                   "width": 2.5, "style": 0, "title": f"POC ${float(poc_price):.2f}"})
-    if _cur_price is not None:
-        plines.append({"price": float(_cur_price), "color": "#e0e0e0",
-                       "width": 1.4, "style": 2, "title": f"▶ ${float(_cur_price):.2f}"})
-    for tz in (target_zones or []):
-        plines.append({"price": float(tz["price"]), "color": tz["color"],
-                       "width": 1.6, "style": 2, "title": tz["label"]})
-    for lvn in lvns:
-        plines.append({"price": lvn["price"], "color": "#ff8f00",
-                       "width": 1, "style": 3, "title": f"⚡ ${lvn['price']:.2f}"})
-
-    # ── R/R projection (High Conviction: TCS ≥ 75) ───────────────────────────
-    tcs_val = float(tcs) if tcs is not None else 0.0
-    rr_data = None
-    if tcs_val >= 75 and _cur_price is not None:
-        cp = float(_cur_price)
-        above = sorted([tz for tz in (target_zones or []) if tz["price"] > cp],
-                       key=lambda x: x["price"])
-        lvns_above = [l for l in lvns if l["price"] > cp]
-        target_p = (float(above[0]["price"]) if above
-                    else float(lvns_above[0]["price"]) if lvns_above
-                    else round(cp * 1.05, 4))
-        cands = ([float(ib_low)] if (ib_low and float(ib_low) < cp) else []) + \
-                ([float(poc_price)] if poc_price and float(poc_price) < cp else [])
-        stop_p = max(cands) if cands else round(cp * 0.97, 4)
-        reward, risk = target_p - cp, cp - stop_p
-        ratio        = round(reward / risk, 2) if risk > 0 else 0.0
-        plines.append({"price": target_p, "color": "#76ff03",
-                       "width": 2.5, "style": 0, "title": f"🎯 Target ${target_p:.2f}"})
-        plines.append({"price": stop_p,   "color": "#ef5350",
-                       "width": 2.5, "style": 0, "title": f"🛑 Stop ${stop_p:.2f}"})
-        rr_data = {"ratio": ratio,
-                   "reward_pct": round(reward / cp * 100, 1),
-                   "risk_pct":   round(risk   / cp * 100, 1)}
-
-    # Position overlay lines
+    # ── Position overlay ──────────────────────────────────────────────────────
     if position and position.get("in"):
-        ae, pk = float(position["avg_entry"]), float(position["peak_price"])
-        plines.append({"price": ae, "color": "#ffffff",
-                       "width": 2, "style": 0, "title": f"📍 Entry ${ae:.2f}"})
-        if pk > ae:
-            plines.append({"price": pk, "color": "#00bcd4",
-                           "width": 1.5, "style": 1, "title": f"⬆ MFE ${pk:.2f}"})
+        avg_entry  = position["avg_entry"]
+        peak_price = position["peak_price"]
+        price_now  = float(df["close"].iloc[-1])
+        shares     = position.get("shares", 0)
+        pnl_pct    = (price_now - avg_entry) / avg_entry * 100 if avg_entry > 0 else 0
+        pnl_dol    = (price_now - avg_entry) * shares if shares > 0 else 0
+        pnl_color  = "#4caf50" if pnl_pct >= 0 else "#ef5350"
 
-    # ── HUD colors ────────────────────────────────────────────────────────────
-    lbl_lo = (label or "").lower()
-    if tcs_val >= 75:
-        hud_color, hud_glow = "#76ff03", "0 0 18px rgba(118,255,3,0.55)"
-        hud_label = "HIGH CONVICTION"
-    elif "trend" in lbl_lo and "double" not in lbl_lo and "non" not in lbl_lo:
-        hud_color, hud_glow = "#ff6d00", "0 0 14px rgba(255,109,0,0.45)"
-        hud_label = "TREND DAY"
-    elif "double" in lbl_lo:
-        hud_color, hud_glow = "#00e5ff", "0 0 14px rgba(0,229,255,0.45)"
-        hud_label = "DOUBLE DIST"
-    else:
-        hud_color, hud_glow = "#5c6bc0", "none"
-        hud_label = (label or "—")[:18].upper()
+        # Entry line — solid white
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[avg_entry, avg_entry], mode="lines+text",
+            name=f"Entry ${avg_entry:.2f}",
+            line=dict(color="#ffffff", width=2.0, dash="solid"),
+            text=["", f" 📍 ENTRY ${avg_entry:.2f}"],
+            textposition="top right",
+            textfont=dict(color="#ffffff", size=12),
+        ), row=1, col=1)
 
-    rvol_str = f"{rvol_val:.1f}\u00d7" if rvol_val is not None else "\u2014"
+        # MFE (peak) line — cyan dashed
+        if peak_price > avg_entry:
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[peak_price, peak_price], mode="lines+text",
+                name=f"MFE ${peak_price:.2f}",
+                line=dict(color="#00bcd4", width=1.5, dash="dash"),
+                text=["", f" ⬆ MFE ${peak_price:.2f}"],
+                textposition="top right",
+                textfont=dict(color="#00bcd4", size=11),
+            ), row=1, col=1)
 
-    rr_html = ""
-    if rr_data:
-        rc = "#76ff03" if rr_data["ratio"] >= 2 else "#ffa726" if rr_data["ratio"] >= 1 else "#ef5350"
-        rr_html = (
-            f'<div class="hud-div"></div>'
-            f'<div class="hud-row"><span>R/R</span>'
-            f'<span class="hud-val" style="color:{rc};">{rr_data["ratio"]:.1f}:1</span></div>'
-            f'<div style="font-size:9px;color:#4caf50;text-align:right;">🎯+{rr_data["reward_pct"]}%</div>'
-            f'<div style="font-size:9px;color:#ef5350;text-align:right;">🛑-{rr_data["risk_pct"]}%</div>'
+        # P&L annotation badge at the right edge
+        pnl_txt = (f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%"
+                   f"  (${pnl_dol:+.0f})" if shares > 0 else
+                   f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%")
+        fig.add_annotation(
+            xref="paper", yref="y",
+            x=0.74, y=avg_entry,
+            text=f"<b>{pnl_txt}</b>",
+            showarrow=False,
+            font=dict(color=pnl_color, size=13),
+            bgcolor=pnl_color + "22",
+            bordercolor=pnl_color,
+            borderwidth=1,
+            borderpad=4,
         )
 
-    # ── Serialise Python data → JS ─────────────────────────────────────────────
-    j_candles  = json.dumps(candles)
-    j_plines   = json.dumps(plines)
-    j_vpbands  = json.dumps(vp_bands)
-    j_lvnp     = json.dumps(lvn_prices)
-
-    safe_title = title.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
-
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#1a1a2e;overflow:hidden;font-family:'Inter','Segoe UI',sans-serif}}
-#wrap{{display:flex;width:100%;height:600px;position:relative;background:#1a1a2e;
-       border:1px solid #252540;border-radius:6px;overflow:hidden}}
-#cpanel{{flex:3;height:600px;position:relative;min-width:0}}
-#chart{{width:100%;height:600px}}
-#vppanel{{flex:1;height:600px;position:relative;background:#14192e;
-          border-left:1px solid #252540;overflow:hidden}}
-#vpcanvas{{position:absolute;top:0;left:0;width:100%;height:100%}}
-#vplbl{{position:absolute;bottom:4px;left:0;right:0;text-align:center;
-        font-size:9px;color:#454565;letter-spacing:.8px;text-transform:uppercase}}
-#hud{{position:absolute;top:10px;right:10px;z-index:200;
-      background:rgba(8,12,28,.78);
-      backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-      border:1px solid {hud_color}55;border-radius:10px;padding:10px 14px;
-      min-width:108px;pointer-events:none;
-      box-shadow:{hud_glow},0 4px 24px rgba(0,0,0,.5)}}
-.hud-title{{font-size:9px;letter-spacing:1.4px;text-transform:uppercase;
-            color:{hud_color};font-weight:800;margin-bottom:7px;
-            text-shadow:0 0 8px {hud_color}88}}
-.hud-row{{display:flex;justify-content:space-between;align-items:center;
-          font-size:11px;color:#aaa;margin-bottom:4px}}
-.hud-val{{font-size:15px;font-weight:900;color:{hud_color};
-          font-family:'SF Mono','Fira Code',monospace}}
-.hud-div{{height:1px;background:rgba(255,255,255,.1);margin:6px 0}}
-#ctitle{{position:absolute;top:10px;left:10px;z-index:200;font-size:12px;
-         font-weight:600;color:#b0b0c8;pointer-events:none;
-         max-width:55%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-</style></head><body>
-<div id="wrap">
-  <div id="cpanel">
-    <div id="ctitle">{safe_title}</div>
-    <div id="chart"></div>
-    <div id="hud">
-      <div class="hud-title">{hud_label}</div>
-      <div class="hud-row"><span>TCS</span><span class="hud-val">{tcs_val:.0f}%</span></div>
-      <div class="hud-row"><span>RVOL</span><span class="hud-val">{rvol_str}</span></div>
-      {rr_html}
-    </div>
-  </div>
-  <div id="vppanel">
-    <canvas id="vpcanvas"></canvas>
-    <div id="vplbl">Vol Profile</div>
-  </div>
-</div>
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<script>
-(function(){{
-  const candleData = {j_candles};
-  const plines     = {j_plines};
-  const vpBands    = {j_vpbands};
-  const lvnPrices  = new Set({j_lvnp});
-
-  const chartEl = document.getElementById('chart');
-  const chart = LightweightCharts.createChart(chartEl, {{
-    width:  chartEl.clientWidth,
-    height: 600,
-    layout:{{background:{{type:'solid',color:'#14192e'}},textColor:'#b0b0c8'}},
-    grid:{{vertLines:{{color:'#1c2235'}},horzLines:{{color:'#1c2235'}}}},
-    crosshair:{{
-      mode:LightweightCharts.CrosshairMode.Normal,
-      vertLine:{{color:'#5c6bc066',width:1,style:LightweightCharts.LineStyle.Dashed,
-                 labelBackgroundColor:'#0f3460'}},
-      horzLine:{{color:'#5c6bc066',width:1,style:LightweightCharts.LineStyle.Dashed,
-                 labelBackgroundColor:'#0f3460'}},
-    }},
-    rightPriceScale:{{borderColor:'#252540',scaleMargins:{{top:.06,bottom:.06}}}},
-    timeScale:{{borderColor:'#252540',timeVisible:true,secondsVisible:false,
-                rightOffset:8,fixLeftEdge:true}},
-  }});
-
-  new ResizeObserver(()=>{{
-    chart.resize(chartEl.clientWidth,600);
-    drawVP();
-  }}).observe(document.getElementById('cpanel'));
-
-  const LS = LightweightCharts.LineStyle;
-  const cs = chart.addCandlestickSeries({{
-    upColor:'#26a69a',downColor:'#ef5350',
-    borderUpColor:'#26a69a',borderDownColor:'#ef5350',
-    wickUpColor:'#26a69a',wickDownColor:'#ef5350',
-  }});
-  if(candleData.length>0) cs.setData(candleData);
-
-  const styleMap=[LS.Solid,LS.Dashed,LS.Dotted,LS.LargeDashed];
-  for(const pl of plines){{
-    cs.createPriceLine({{
-      price:pl.price,color:pl.color,lineWidth:pl.width||1.5,
-      lineStyle:styleMap[pl.style]??LS.Dashed,
-      axisLabelVisible:true,title:pl.title||'',
-    }});
-  }}
-  chart.timeScale().fitContent();
-
-  // ── Volume Profile Canvas ─────────────────────────────────────────────────
-  function drawVP(){{
-    const canvas = document.getElementById('vpcanvas');
-    const panel  = document.getElementById('vppanel');
-    const W = panel.clientWidth, H = 600;
-    canvas.width=W; canvas.height=H;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0,0,W,H);
-    if(vpBands.length===0||candleData.length===0) return;
-
-    const allP = candleData.flatMap(c=>[c.high,c.low]);
-    const pMin = Math.min(...allP), pMax = Math.max(...allP);
-    const pSpan= pMax-pMin;
-    if(pSpan<=0) return;
-    const pad  = pSpan*0.06;
-    const pLo  = pMin-pad, pHi = pMax+pad, pRng = pHi-pLo;
-    const maxN = Math.max(...vpBands.map(b=>b.norm),0.001);
-    const binH = H/Math.max(vpBands.length,1);
-
-    for(const band of vpBands){{
-      const yC  = H-((band.price-pLo)/pRng)*H;
-      const bW  = (band.norm/maxN)*(W-2);
-      const hH  = Math.max(binH*0.45,1.5);
-      ctx.fillStyle = band.color;
-      ctx.fillRect(0,yC-hH,bW,hH*2);
-
-      if(band.isPoc){{
-        ctx.strokeStyle='rgba(255,215,0,.9)';
-        ctx.lineWidth=1.5;
-        ctx.strokeRect(0,yC-hH,bW,hH*2);
-        ctx.fillStyle='#ffd700';
-        ctx.font='9px monospace';
-        ctx.fillText('POC',Math.min(bW+2,W-28),yC+3);
-      }}
-      if(lvnPrices.has(band.price)){{
-        ctx.strokeStyle='rgba(255,143,0,.55)';
-        ctx.lineWidth=1;
-        ctx.setLineDash([3,3]);
-        ctx.strokeRect(0,yC-hH,W-2,hH*2);
-        ctx.setLineDash([]);
-        ctx.fillStyle='#ff8f00';
-        ctx.font='9px monospace';
-        ctx.fillText('\u26a1',W-14,yC+3);
-      }}
-    }}
-  }}
-
-  requestAnimationFrame(()=>{{drawVP();}});
-  chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{{drawVP();}});
-}})();
-</script></body></html>"""
-
-    _comp.html(html, height=614, scrolling=False)
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=17, color="white")),
+        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e", font=dict(color="#e0e0e0"),
+        height=660,
+        xaxis=dict(rangeslider=dict(visible=False), gridcolor="#2a2a4a",
+                   showgrid=True, type="category"),
+        yaxis=dict(gridcolor="#2a2a4a", showgrid=True, tickformat=".2f"),
+        xaxis2=dict(gridcolor="#2a2a4a", showgrid=True, title="Volume"),
+        legend=dict(bgcolor="#0f3460", bordercolor="#5c6bc0", borderwidth=1,
+                    font=dict(color="white"), x=0.01, y=0.99),
+        margin=dict(l=10, r=10, t=55, b=40),
+    )
+    fig.update_xaxes(nticks=20, tickangle=-45, row=1, col=1)
+    return fig
 
 
 def render_structure_banner(label, color, detail, probs, tcs,
@@ -2954,9 +2791,9 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "peak_price": st.session_state.position_peak_price,
         "shares":     st.session_state.position_shares,
     }
-    build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title,
-                target_zones=target_zones, position=pos_state,
-                tcs=tcs, label=label, rvol_val=rvol_val)
+    fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title,
+                      target_zones=target_zones, position=pos_state)
+    st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("📋 Raw Bar Data"):
         disp = df[["open", "high", "low", "close", "volume"]].copy()
