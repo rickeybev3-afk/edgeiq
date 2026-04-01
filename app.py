@@ -3174,6 +3174,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         _dl = st.session_state.get("daily_levels_cache", {})
         _prev_high_chk = _dl.get("prev_high")
         _dl_ticker_chk = _dl.get("ticker", "")
+        # Guard: only apply if cache matches current ticker (stale-date guard via ticker key)
         if _prev_high_chk and _dl_ticker_chk == ticker and ib_high is not None and price_now > ib_high:
             _prev_cl2 = df["close"].shift(1)
             _tr2 = pd.concat([
@@ -3708,7 +3709,7 @@ with st.sidebar:
     try:
         _l_icon, _l_phase, _l_mania = get_lunar_phase(date.today())
         _l_color = "#ff6d00" if _l_mania else "#5c6bc0"
-        _l_note  = "🔥 Retail Mania Window" if _l_mania else "Normal Session"
+        _l_note  = "🔥 Retail Mania Window" if _l_mania else "Neutral"
         st.markdown(
             f'<div style="background:{_l_color}11; border:1px solid {_l_color}55; '
             f'border-radius:6px; padding:6px 12px; margin:2px 0 6px 0; '
@@ -4658,6 +4659,16 @@ with tab_chart:
                                         st.error(f"No data for **{ticker}** on {selected_date} via IEX either. Confirm the date was a trading day and the ticker is valid.")
                                     else:
                                         st.success(f"Loaded **{len(df2)}** 1-min bars via IEX (auto-switched from SIP).")
+                                        try:
+                                            _fph, _fpl = fetch_daily_levels(
+                                                api_key, secret_key, ticker, selected_date)
+                                            st.session_state.daily_levels_cache = {
+                                                "ticker":    ticker,
+                                                "prev_high": _fph,
+                                                "prev_low":  _fpl,
+                                            }
+                                        except Exception:
+                                            st.session_state.daily_levels_cache = {}
                                         render_analysis(df2, num_bins, ticker,
                                                         f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')} (IEX)",
                                                         avg_daily_vol=None, sector_bonus=0.0,
