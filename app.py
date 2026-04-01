@@ -1941,7 +1941,7 @@ def fetch_stocktwits_sentiment(ticker):
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
 
-        messages = data.get("messages", [])
+        messages = data.get("messages", [])[:30]   # API default ~30; guard explicitly
         if not messages:
             return None
 
@@ -1981,15 +1981,14 @@ def fetch_stocktwits_sentiment(ticker):
         bear_pct    = round(bear / total * 100, 1) if total > 0 else 0.0
         neutral_pct = round(max(0.0, 100.0 - bull_pct - bear_pct), 1)
 
-        # ── msg_count = messages published in the last hour ───────────────────
+        # ── msg_count = messages published in the last hour (anchored to utcnow) ─
         msg_count = 0
         msg_velocity = 0.0
+        now_utc = datetime.utcnow()
+        one_hour_ago = now_utc - timedelta(hours=1)
         if timestamps:
-            timestamps.sort(reverse=True)
-            newest = timestamps[0]
-            one_hour_ago = newest - timedelta(hours=1)
             msg_count = sum(1 for t in timestamps if t >= one_hour_ago)
-            # velocity = count / window (1 hr fixed, so they're the same number)
+            # velocity = count over the 1-hr fixed window
             msg_velocity = float(msg_count)
 
         trending = msg_velocity >= 20.0
