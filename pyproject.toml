@@ -10,4 +10,5 @@ dependencies = [
     "plotly>=6.6.0",
     "pytz>=2026.1.post1",
     "streamlit>=1.55.0",
+    "streamlit-lightweight-charts>=0.7.20",
 ]

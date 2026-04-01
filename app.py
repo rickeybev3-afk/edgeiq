@@ -2045,27 +2045,34 @@ def render_journal_tab():
 
 def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
                 target_zones=None, position=None, tcs=None, label="", rvol_val=None):
-    """Build a TradingView-style chart using lightweight-charts v4 (CDN).
+    """Build a TradingView-style chart using streamlit-lightweight-charts + CDN overlay.
 
-    Renders directly via st.components.v1.html() — returns nothing.
-    Layout: left 75% = dark candlestick chart  |  right 25% = VP heatmap
-    A glassmorphism HUD floats top-right of the candle panel.
-    Code preservation: compute_buy_sell_pressure (Blended Split) is untouched.
+    Candlestick chart rendered via lightweight-charts v4 (from CDN for full plugin
+    support).  Volume Profile heatmap is drawn on a transparent canvas overlaid
+    directly on the price chart — NOT in a separate panel — using the series'
+    priceToCoordinate() API so bars are price-aligned to the Y axis.
+
+    LVN Turbo Zones are rendered as full-width shaded horizontal bands with
+    "⚡ Turbo Zone $price" text labels on the chart canvas.
+
+    Glassmorphism HUD (TCS, RVOL, R/R) floats top-right.
+    compute_buy_sell_pressure (Blended CLV+Tick Split) is untouched.
     """
+    from streamlit_lightweight_charts import renderLightweightCharts as _rlc  # noqa (dep declared)
     import streamlit.components.v1 as _comp
 
     # ── Prepare candlestick data ───────────────────────────────────────────────
-    _rdf          = df.copy()
-    _cur_price    = float(_rdf["close"].dropna().iloc[-1]) if not _rdf.empty else None
+    _rdf       = df.copy()
+    _cur_price = float(_rdf["close"].dropna().iloc[-1]) if not _rdf.empty else None
 
     try:
-        _first   = df.index[0]
-        _last    = df.index[-1]
-        _d       = _first.date()
-        _ot      = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 9, 30))
-        _ct      = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16, 0))
-        _end     = min(_last, _ct)
-        df       = df.reindex(pd.date_range(_ot, _end, freq="1min"))
+        _first = df.index[0]
+        _last  = df.index[-1]
+        _d     = _first.date()
+        _ot    = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 9, 30))
+        _ct    = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16, 0))
+        _end   = min(_last, _ct)
+        df     = df.reindex(pd.date_range(_ot, _end, freq="1min"))
     except Exception:
         pass
 
@@ -2084,30 +2091,29 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
         except Exception:
             continue
 
-    # ── Volume profile heatmap bands (blue→orange gradient, POC=gold) ─────────
-    max_vap  = float(np.max(vap)) if len(vap) > 0 and np.max(vap) > 0 else 1.0
-    bin_w    = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0.01
+    # ── Volume Profile heatmap bands (blue→orange gradient, POC=gold) ─────────
+    max_vap = float(np.max(vap)) if len(vap) > 0 and np.max(vap) > 0 else 1.0
+    bin_w   = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0.01
     vp_bands = []
     for price, vol in zip(bin_centers, vap):
         fprice, fvol = float(price), float(vol)
-        norm         = fvol / max_vap
-        is_poc       = abs(fprice - float(poc_price)) < bin_w * 0.6
+        norm   = fvol / max_vap
+        is_poc = abs(fprice - float(poc_price)) < bin_w * 0.6
         if is_poc:
             color = "rgba(255,215,0,0.92)"
         else:
-            r = int(80  + norm * 175)   # 80 → 255
-            g = int(130 + norm * -10)   # 130 → 120
-            b = int(220 + norm * -220)  # 220 → 0
+            r = int(80  + norm * 175)
+            g = int(130 + norm * -10)
+            b = int(220 + norm * -220)
             a = round(0.07 + norm * 0.62, 2)
             color = f"rgba({r},{g},{b},{a})"
         vp_bands.append({"price": round(fprice, 4), "norm": round(norm, 4),
                          "color": color, "isPoc": is_poc})
 
     # ── LVNs (Turbo Zones) ────────────────────────────────────────────────────
-    lvns       = compute_low_volume_nodes(bin_centers, vap)
-    lvn_prices = [l["price"] for l in lvns]
+    lvns = compute_low_volume_nodes(bin_centers, vap)
 
-    # ── Price lines (IB, POC, current, targets, LVNs, position) ──────────────
+    # ── Price lines: IB, POC, current, target zones, LVNs, position ──────────
     plines = []
     if ib_high is not None:
         plines.append({"price": float(ib_high), "color": "#00e676",
@@ -2119,48 +2125,45 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
                    "width": 2.5, "style": 0, "title": f"POC ${float(poc_price):.2f}"})
     if _cur_price is not None:
         plines.append({"price": float(_cur_price), "color": "#e0e0e0",
-                       "width": 1.4, "style": 2, "title": f"▶ ${float(_cur_price):.2f}"})
+                       "width": 1.4, "style": 2, "title": f"\u25b6 ${float(_cur_price):.2f}"})
     for tz in (target_zones or []):
         plines.append({"price": float(tz["price"]), "color": tz["color"],
                        "width": 1.6, "style": 2, "title": tz["label"]})
-    for lvn in lvns:
-        plines.append({"price": lvn["price"], "color": "#ff8f00",
-                       "width": 1, "style": 3, "title": f"⚡ ${lvn['price']:.2f}"})
 
-    # ── R/R projection (High Conviction: TCS ≥ 75) ───────────────────────────
+    # ── R/R projection when TCS ≥ 75 ─────────────────────────────────────────
     tcs_val = float(tcs) if tcs is not None else 0.0
     rr_data = None
     if tcs_val >= 75 and _cur_price is not None:
         cp = float(_cur_price)
-        above = sorted([tz for tz in (target_zones or []) if tz["price"] > cp],
-                       key=lambda x: x["price"])
-        lvns_above = [l for l in lvns if l["price"] > cp]
-        target_p = (float(above[0]["price"]) if above
-                    else float(lvns_above[0]["price"]) if lvns_above
-                    else round(cp * 1.05, 4))
-        cands = ([float(ib_low)] if (ib_low and float(ib_low) < cp) else []) + \
-                ([float(poc_price)] if poc_price and float(poc_price) < cp else [])
-        stop_p = max(cands) if cands else round(cp * 0.97, 4)
-        reward, risk = target_p - cp, cp - stop_p
-        ratio        = round(reward / risk, 2) if risk > 0 else 0.0
+        above     = sorted([tz for tz in (target_zones or []) if tz["price"] > cp],
+                           key=lambda x: x["price"])
+        lvns_up   = [l for l in lvns if l["price"] > cp]
+        target_p  = (float(above[0]["price"]) if above
+                     else float(lvns_up[0]["price"]) if lvns_up
+                     else round(cp * 1.05, 4))
+        cands = ([float(ib_low)]    if (ib_low    and float(ib_low)    < cp) else []) + \
+                ([float(poc_price)] if (poc_price  and float(poc_price) < cp) else [])
+        stop_p        = max(cands) if cands else round(cp * 0.97, 4)
+        reward, risk  = target_p - cp, cp - stop_p
+        ratio         = round(reward / risk, 2) if risk > 0 else 0.0
         plines.append({"price": target_p, "color": "#76ff03",
-                       "width": 2.5, "style": 0, "title": f"🎯 Target ${target_p:.2f}"})
+                       "width": 2.5, "style": 0, "title": f"\U0001f3af Target ${target_p:.2f}"})
         plines.append({"price": stop_p,   "color": "#ef5350",
-                       "width": 2.5, "style": 0, "title": f"🛑 Stop ${stop_p:.2f}"})
+                       "width": 2.5, "style": 0, "title": f"\U0001f6d1 Stop ${stop_p:.2f}"})
         rr_data = {"ratio": ratio,
                    "reward_pct": round(reward / cp * 100, 1),
                    "risk_pct":   round(risk   / cp * 100, 1)}
 
-    # Position overlay lines
+    # Position overlay
     if position and position.get("in"):
         ae, pk = float(position["avg_entry"]), float(position["peak_price"])
         plines.append({"price": ae, "color": "#ffffff",
-                       "width": 2, "style": 0, "title": f"📍 Entry ${ae:.2f}"})
+                       "width": 2, "style": 0, "title": f"\U0001f4cd Entry ${ae:.2f}"})
         if pk > ae:
             plines.append({"price": pk, "color": "#00bcd4",
-                           "width": 1.5, "style": 1, "title": f"⬆ MFE ${pk:.2f}"})
+                           "width": 1.5, "style": 1, "title": f"\u2b06 MFE ${pk:.2f}"})
 
-    # ── HUD colors ────────────────────────────────────────────────────────────
+    # ── HUD styling ───────────────────────────────────────────────────────────
     lbl_lo = (label or "").lower()
     if tcs_val >= 75:
         hud_color, hud_glow = "#76ff03", "0 0 18px rgba(118,255,3,0.55)"
@@ -2173,7 +2176,7 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
         hud_label = "DOUBLE DIST"
     else:
         hud_color, hud_glow = "#5c6bc0", "none"
-        hud_label = (label or "—")[:18].upper()
+        hud_label = (label or "\u2014")[:18].upper()
 
     rvol_str = f"{rvol_val:.1f}\u00d7" if rvol_val is not None else "\u2014"
 
@@ -2184,37 +2187,38 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
             f'<div class="hud-div"></div>'
             f'<div class="hud-row"><span>R/R</span>'
             f'<span class="hud-val" style="color:{rc};">{rr_data["ratio"]:.1f}:1</span></div>'
-            f'<div style="font-size:9px;color:#4caf50;text-align:right;">🎯+{rr_data["reward_pct"]}%</div>'
-            f'<div style="font-size:9px;color:#ef5350;text-align:right;">🛑-{rr_data["risk_pct"]}%</div>'
+            f'<div style="font-size:9px;color:#4caf50;text-align:right;">'
+            f'\U0001f3af+{rr_data["reward_pct"]}%</div>'
+            f'<div style="font-size:9px;color:#ef5350;text-align:right;">'
+            f'\U0001f6d1-{rr_data["risk_pct"]}%</div>'
         )
 
-    # ── Serialise Python data → JS ─────────────────────────────────────────────
-    j_candles  = json.dumps(candles)
-    j_plines   = json.dumps(plines)
-    j_vpbands  = json.dumps(vp_bands)
-    j_lvnp     = json.dumps(lvn_prices)
-
+    # ── Serialise to JSON for inline JS ──────────────────────────────────────
+    j_candles = json.dumps(candles)
+    j_plines  = json.dumps(plines)
+    j_vpbands = json.dumps(vp_bands)
+    j_lvns    = json.dumps(lvns)
     safe_title = title.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
 
+    # ── HTML: chart + transparent VP overlay canvas + glassmorphism HUD ───────
+    # The VP canvas is position:absolute over the chart div; it uses
+    # series.priceToCoordinate() so bars are price-axis aligned.
+    # LVN Turbo Zone bands are full-width with text on the chart.
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#1a1a2e;overflow:hidden;font-family:'Inter','Segoe UI',sans-serif}}
-#wrap{{display:flex;width:100%;height:600px;position:relative;background:#1a1a2e;
-       border:1px solid #252540;border-radius:6px;overflow:hidden}}
-#cpanel{{flex:3;height:600px;position:relative;min-width:0}}
-#chart{{width:100%;height:600px}}
-#vppanel{{flex:1;height:600px;position:relative;background:#14192e;
-          border-left:1px solid #252540;overflow:hidden}}
-#vpcanvas{{position:absolute;top:0;left:0;width:100%;height:100%}}
-#vplbl{{position:absolute;bottom:4px;left:0;right:0;text-align:center;
-        font-size:9px;color:#454565;letter-spacing:.8px;text-transform:uppercase}}
+body{{background:#16213e;overflow:hidden;font-family:'Inter','Segoe UI',sans-serif}}
+#wrap{{position:relative;width:100%;height:600px;
+       border:1px solid #252540;border-radius:6px;overflow:hidden;background:#16213e}}
+#chart{{width:100%;height:600px;position:absolute;top:0;left:0}}
+#vp-overlay{{position:absolute;top:0;left:0;width:100%;height:600px;
+             pointer-events:none;z-index:10}}
 #hud{{position:absolute;top:10px;right:10px;z-index:200;
-      background:rgba(8,12,28,.78);
+      background:rgba(8,12,28,.82);
       backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
       border:1px solid {hud_color}55;border-radius:10px;padding:10px 14px;
-      min-width:108px;pointer-events:none;
-      box-shadow:{hud_glow},0 4px 24px rgba(0,0,0,.5)}}
+      min-width:110px;pointer-events:none;
+      box-shadow:{hud_glow},0 4px 24px rgba(0,0,0,.55)}}
 .hud-title{{font-size:9px;letter-spacing:1.4px;text-transform:uppercase;
             color:{hud_color};font-weight:800;margin-bottom:7px;
             text-shadow:0 0 8px {hud_color}88}}
@@ -2225,22 +2229,17 @@ body{{background:#1a1a2e;overflow:hidden;font-family:'Inter','Segoe UI',sans-ser
 .hud-div{{height:1px;background:rgba(255,255,255,.1);margin:6px 0}}
 #ctitle{{position:absolute;top:10px;left:10px;z-index:200;font-size:12px;
          font-weight:600;color:#b0b0c8;pointer-events:none;
-         max-width:55%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+         max-width:58%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 </style></head><body>
 <div id="wrap">
-  <div id="cpanel">
-    <div id="ctitle">{safe_title}</div>
-    <div id="chart"></div>
-    <div id="hud">
-      <div class="hud-title">{hud_label}</div>
-      <div class="hud-row"><span>TCS</span><span class="hud-val">{tcs_val:.0f}%</span></div>
-      <div class="hud-row"><span>RVOL</span><span class="hud-val">{rvol_str}</span></div>
-      {rr_html}
-    </div>
-  </div>
-  <div id="vppanel">
-    <canvas id="vpcanvas"></canvas>
-    <div id="vplbl">Vol Profile</div>
+  <div id="chart"></div>
+  <canvas id="vp-overlay"></canvas>
+  <div id="ctitle">{safe_title}</div>
+  <div id="hud">
+    <div class="hud-title">{hud_label}</div>
+    <div class="hud-row"><span>TCS</span><span class="hud-val">{tcs_val:.0f}%</span></div>
+    <div class="hud-row"><span>RVOL</span><span class="hud-val">{rvol_str}</span></div>
+    {rr_html}
   </div>
 </div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -2249,19 +2248,24 @@ body{{background:#1a1a2e;overflow:hidden;font-family:'Inter','Segoe UI',sans-ser
   const candleData = {j_candles};
   const plines     = {j_plines};
   const vpBands    = {j_vpbands};
-  const lvnPrices  = new Set({j_lvnp});
+  const lvns       = {j_lvns};
 
+  const CHART_H    = 600;
+
+  // ── Create chart ─────────────────────────────────────────────────────────
   const chartEl = document.getElementById('chart');
   const chart = LightweightCharts.createChart(chartEl, {{
     width:  chartEl.clientWidth,
-    height: 600,
-    layout:{{background:{{type:'solid',color:'#14192e'}},textColor:'#b0b0c8'}},
+    height: CHART_H,
+    layout:{{background:{{type:'solid',color:'#16213e'}},textColor:'#b0b0c8'}},
     grid:{{vertLines:{{color:'#1c2235'}},horzLines:{{color:'#1c2235'}}}},
     crosshair:{{
-      mode:LightweightCharts.CrosshairMode.Normal,
-      vertLine:{{color:'#5c6bc066',width:1,style:LightweightCharts.LineStyle.Dashed,
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine:{{color:'#5c6bc066',width:1,
+                 style:LightweightCharts.LineStyle.Dashed,
                  labelBackgroundColor:'#0f3460'}},
-      horzLine:{{color:'#5c6bc066',width:1,style:LightweightCharts.LineStyle.Dashed,
+      horzLine:{{color:'#5c6bc066',width:1,
+                 style:LightweightCharts.LineStyle.Dashed,
                  labelBackgroundColor:'#0f3460'}},
     }},
     rightPriceScale:{{borderColor:'#252540',scaleMargins:{{top:.06,bottom:.06}}}},
@@ -2269,78 +2273,111 @@ body{{background:#1a1a2e;overflow:hidden;font-family:'Inter','Segoe UI',sans-ser
                 rightOffset:8,fixLeftEdge:true}},
   }});
 
-  new ResizeObserver(()=>{{
-    chart.resize(chartEl.clientWidth,600);
-    drawVP();
-  }}).observe(document.getElementById('cpanel'));
-
+  // ── Candlestick series ────────────────────────────────────────────────────
   const LS = LightweightCharts.LineStyle;
   const cs = chart.addCandlestickSeries({{
-    upColor:'#26a69a',downColor:'#ef5350',
+    upColor:'#26a69a',  downColor:'#ef5350',
     borderUpColor:'#26a69a',borderDownColor:'#ef5350',
-    wickUpColor:'#26a69a',wickDownColor:'#ef5350',
+    wickUpColor:'#26a69a',  wickDownColor:'#ef5350',
   }});
-  if(candleData.length>0) cs.setData(candleData);
+  if (candleData.length > 0) cs.setData(candleData);
 
-  const styleMap=[LS.Solid,LS.Dashed,LS.Dotted,LS.LargeDashed];
-  for(const pl of plines){{
+  // ── Price lines: IB, POC, targets, current price, position ───────────────
+  const styleMap = [LS.Solid, LS.Dashed, LS.Dotted, LS.LargeDashed];
+  for (const pl of plines) {{
     cs.createPriceLine({{
-      price:pl.price,color:pl.color,lineWidth:pl.width||1.5,
-      lineStyle:styleMap[pl.style]??LS.Dashed,
-      axisLabelVisible:true,title:pl.title||'',
+      price:            pl.price,
+      color:            pl.color,
+      lineWidth:        pl.width || 1.5,
+      lineStyle:        styleMap[pl.style] ?? LS.Dashed,
+      axisLabelVisible: true,
+      title:            pl.title || '',
     }});
   }}
   chart.timeScale().fitContent();
 
-  // ── Volume Profile Canvas ─────────────────────────────────────────────────
-  function drawVP(){{
-    const canvas = document.getElementById('vpcanvas');
-    const panel  = document.getElementById('vppanel');
-    const W = panel.clientWidth, H = 600;
-    canvas.width=W; canvas.height=H;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0,0,W,H);
-    if(vpBands.length===0||candleData.length===0) return;
+  // ── Volume Profile + LVN Turbo Zone overlay on the chart canvas ───────────
+  // The canvas sits on top of the chart (pointer-events:none).
+  // priceToCoordinate() maps each bin's price to the correct Y pixel position,
+  // so the VP heatmap bars align with the chart's price axis at any zoom level.
+  const vpCanvas  = document.getElementById('vp-overlay');
+  const binCount  = vpBands.length;
 
-    const allP = candleData.flatMap(c=>[c.high,c.low]);
-    const pMin = Math.min(...allP), pMax = Math.max(...allP);
-    const pSpan= pMax-pMin;
-    if(pSpan<=0) return;
-    const pad  = pSpan*0.06;
-    const pLo  = pMin-pad, pHi = pMax+pad, pRng = pHi-pLo;
-    const maxN = Math.max(...vpBands.map(b=>b.norm),0.001);
-    const binH = H/Math.max(vpBands.length,1);
+  function drawVPOverlay() {{
+    const W = chartEl.clientWidth;
+    const H = CHART_H;
+    vpCanvas.width  = W;
+    vpCanvas.height = H;
+    const ctx = vpCanvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
 
-    for(const band of vpBands){{
-      const yC  = H-((band.price-pLo)/pRng)*H;
-      const bW  = (band.norm/maxN)*(W-2);
-      const hH  = Math.max(binH*0.45,1.5);
+    if (vpBands.length === 0) return;
+
+    const maxNorm  = Math.max(...vpBands.map(b => b.norm), 0.001);
+    const barMaxW  = Math.min(W * 0.20, 110);  // VP bars: right 20% of chart
+
+    // ── Draw VP heatmap bars (right side, extending left) ────────────────
+    for (const band of vpBands) {{
+      const y = cs.priceToCoordinate(band.price);
+      if (y === null || y === undefined || y < 0 || y > H) continue;
+      const barW = (band.norm / maxNorm) * barMaxW;
+      const halfH = Math.max(H / Math.max(binCount, 1) * 0.45, 1.5);
+
       ctx.fillStyle = band.color;
-      ctx.fillRect(0,yC-hH,bW,hH*2);
+      ctx.fillRect(W - barW, y - halfH, barW, halfH * 2);
 
-      if(band.isPoc){{
-        ctx.strokeStyle='rgba(255,215,0,.9)';
-        ctx.lineWidth=1.5;
-        ctx.strokeRect(0,yC-hH,bW,hH*2);
-        ctx.fillStyle='#ffd700';
-        ctx.font='9px monospace';
-        ctx.fillText('POC',Math.min(bW+2,W-28),yC+3);
+      if (band.isPoc) {{
+        // Gold border + "POC" label to the left of bar
+        ctx.strokeStyle = 'rgba(255,215,0,0.95)';
+        ctx.lineWidth   = 1.5;
+        ctx.strokeRect(W - barW - 1, y - halfH - 1, barW + 2, halfH * 2 + 2);
+        ctx.fillStyle = '#ffd700';
+        ctx.font      = 'bold 9px monospace';
+        const lx = Math.max(0, W - barW - 34);
+        ctx.fillText('POC', lx, y + 3);
       }}
-      if(lvnPrices.has(band.price)){{
-        ctx.strokeStyle='rgba(255,143,0,.55)';
-        ctx.lineWidth=1;
-        ctx.setLineDash([3,3]);
-        ctx.strokeRect(0,yC-hH,W-2,hH*2);
-        ctx.setLineDash([]);
-        ctx.fillStyle='#ff8f00';
-        ctx.font='9px monospace';
-        ctx.fillText('\u26a1',W-14,yC+3);
-      }}
+    }}
+
+    // ── Draw LVN Turbo Zone bands (full-width, labeled) ───────────────────
+    const binH = H / Math.max(binCount, 1);
+    for (const lvn of lvns) {{
+      const y = cs.priceToCoordinate(lvn.price);
+      if (y === null || y === undefined || y < 0 || y > H) continue;
+      const bandH = Math.max(binH, 5);
+
+      // Semi-transparent amber fill across full chart width
+      ctx.fillStyle = 'rgba(255,143,0,0.07)';
+      ctx.fillRect(0, y - bandH / 2, W, bandH);
+
+      // Dashed amber border
+      ctx.strokeStyle = 'rgba(255,143,0,0.40)';
+      ctx.lineWidth   = 1;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(1, y - bandH / 2, W - 2, bandH);
+      ctx.setLineDash([]);
+
+      // ⚡ Turbo Zone label at left edge of band
+      ctx.fillStyle = '#ff8f00';
+      ctx.font      = 'bold 9px monospace';
+      ctx.fillText('\u26a1 Turbo Zone $' + lvn.price.toFixed(2), 6, y - 2);
     }}
   }}
 
-  requestAnimationFrame(()=>{{drawVP();}});
-  chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{{drawVP();}});
+  // Initial draw after layout settles
+  requestAnimationFrame(() => {{
+    setTimeout(drawVPOverlay, 80);
+  }});
+
+  // Redraw whenever price scale or time range changes
+  chart.timeScale().subscribeVisibleTimeRangeChange(drawVPOverlay);
+  chart.subscribeCrosshairMove(drawVPOverlay);
+
+  // Resize handler
+  new ResizeObserver(() => {{
+    chart.resize(chartEl.clientWidth, CHART_H);
+    drawVPOverlay();
+  }}).observe(document.getElementById('wrap'));
+
 }})();
 </script></body></html>"""
 
