@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, date, timedelta, time as dtime
 import pytz
 import threading
@@ -10,7 +11,6 @@ import time
 import json
 import csv
 import os
-import math
 from collections import deque
 
 STATE_FILE   = "trade_state.json"
@@ -86,11 +86,6 @@ _DEFAULTS = {
     "replay_avg_vol":       None,
     "replay_intraday_curve": None,
     "replay_sector_bonus":  0.0,
-    # Daily level confluence cache
-    "daily_levels_cache":   {},
-    # StockTwits sentiment cache — keyed by ticker, refreshed per user analysis trigger
-    # (prevents repeated API calls during Live/Replay auto-reruns)
-    "stocktwits_cache":     {},
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -1431,266 +1426,6 @@ def compute_model_prediction(df, rvol, tcs, sector_bonus, market_open=True):
             "Price and volume not clearly aligned; range-bound action expected.")
 
 
-# ── Round Number Magnet ────────────────────────────────────────────────────────
-
-def compute_round_number_magnetism(price):
-    """Round Number Magnet score (0-100).
-
-    Whole dollars and half dollars act as psychological magnets for retail
-    traders — price often stalls or reverses at these levels.
-
-    Returns a dict:
-        whole_dollar, half_dollar, dist_whole_pct, dist_half_pct,
-        score (0-100, higher = price closer to a magnet),
-        badge ("Strong" / "Moderate" / "Weak" / None),
-        at_ceiling (bool — price within 0.5% below a whole dollar)
-    """
-    if price is None or price <= 0:
-        return {"score": 0, "badge": None, "at_ceiling": False,
-                "whole_dollar": None, "half_dollar": None,
-                "dist_whole_pct": None, "dist_half_pct": None}
-
-    price = float(price)
-
-    # Nearest whole dollar
-    whole_lo = math.floor(price)
-    whole_hi = whole_lo + 1
-    dist_whole_lo = abs(price - whole_lo)
-    dist_whole_hi = abs(price - whole_hi)
-    dist_whole = min(dist_whole_lo, dist_whole_hi)
-    nearest_whole = whole_lo if dist_whole_lo <= dist_whole_hi else whole_hi
-    dist_whole_pct = dist_whole / price * 100.0
-
-    # Nearest half dollar (x.00 or x.50)
-    half_lo = math.floor(price * 2) / 2.0
-    half_hi = half_lo + 0.5
-    dist_half_lo = abs(price - half_lo)
-    dist_half_hi = abs(price - half_hi)
-    dist_half = min(dist_half_lo, dist_half_hi)
-    nearest_half = half_lo if dist_half_lo <= dist_half_hi else half_hi
-    dist_half_pct = dist_half / price * 100.0
-
-    best_dist_pct = min(dist_whole_pct, dist_half_pct)
-    if best_dist_pct <= 0.25:
-        score = 100
-    elif best_dist_pct <= 0.5:
-        score = int(80 + (0.5 - best_dist_pct) / 0.25 * 20)
-    elif best_dist_pct <= 1.0:
-        score = int(50 + (1.0 - best_dist_pct) / 0.5 * 30)
-    elif best_dist_pct <= 2.0:
-        score = int(20 + (2.0 - best_dist_pct) / 1.0 * 30)
-    else:
-        score = 0
-
-    if score >= 80:
-        badge = "Strong"
-    elif score >= 50:
-        badge = "Moderate"
-    elif score >= 20:
-        badge = "Weak"
-    else:
-        badge = None
-
-    # Ceiling risk: price approaching a whole dollar from below within 0.5%
-    at_ceiling = (price < nearest_whole and (nearest_whole - price) / price * 100.0 <= 0.5)
-
-    return {
-        "whole_dollar":   nearest_whole,
-        "half_dollar":    nearest_half,
-        "dist_whole_pct": round(dist_whole_pct, 2),
-        "dist_half_pct":  round(dist_half_pct, 2),
-        "score":          score,
-        "badge":          badge,
-        "at_ceiling":     at_ceiling,
-    }
-
-
-# ── Lunar Phase ───────────────────────────────────────────────────────────────
-
-def get_lunar_phase(trade_date):
-    """Lunar phase via Julian Date calculation — no external library.
-
-    Returns (icon, phase_name, is_retail_mania).
-    is_retail_mania is True on Full Moon and New Moon — historically elevated
-    retail participation windows.
-    """
-    y, m, d = trade_date.year, trade_date.month, trade_date.day
-    if m <= 2:
-        y -= 1
-        m += 12
-    a = int(y / 100)
-    b = 2 - a + int(a / 4)
-    jd = int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + d + b - 1524.5
-
-    known_new_moon_jd = 2451549.5   # Jan 6, 2000 was a confirmed new moon
-    lunar_cycle = 29.53058867
-    moon_age = (jd - known_new_moon_jd) % lunar_cycle
-    if moon_age < 0:
-        moon_age += lunar_cycle
-
-    if moon_age < 1.85 or moon_age >= 27.68:
-        return "🌑", "New Moon", True
-    elif moon_age < 7.38:
-        return "🌒", "Waxing Crescent", False
-    elif moon_age < 9.22:
-        return "🌓", "First Quarter", False
-    elif moon_age < 14.77:
-        return "🌔", "Waxing Gibbous", False
-    elif moon_age < 16.61:
-        return "🌕", "Full Moon", True
-    elif moon_age < 22.15:
-        return "🌖", "Waning Gibbous", False
-    elif moon_age < 23.99:
-        return "🌗", "Last Quarter", False
-    else:
-        return "🌘", "Waning Crescent", False
-
-
-# ── Daily Level Confluence ────────────────────────────────────────────────────
-
-def fetch_daily_levels(api_key, secret_key, ticker, trade_date):
-    """Fetch the prior trading day's high and low from Alpaca daily bars.
-
-    Returns (prev_high, prev_low) or (None, None) on failure.
-    trade_date is the CURRENT session date — we want the session BEFORE this.
-    """
-    if not api_key or not secret_key:
-        return None, None
-    try:
-        from alpaca.data.historical import StockHistoricalDataClient
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame
-
-        client = StockHistoricalDataClient(api_key, secret_key)
-        end_dt   = datetime.combine(trade_date, dtime(0, 0))
-        start_dt = end_dt - timedelta(days=10)   # cover weekends/holidays
-
-        req = StockBarsRequest(
-            symbol_or_symbols=ticker,
-            timeframe=TimeFrame.Day,
-            start=start_dt,
-            end=end_dt,
-        )
-        bars_resp = client.get_stock_bars(req)
-        df_day = bars_resp.df
-
-        if df_day is None or df_day.empty:
-            return None, None
-
-        if isinstance(df_day.index, pd.MultiIndex):
-            if ticker in df_day.index.get_level_values(0):
-                df_day = df_day.xs(ticker, level=0)
-            elif ticker in df_day.index.get_level_values("symbol"):
-                df_day = df_day.xs(ticker, level="symbol")
-
-        df_day.index = pd.to_datetime(df_day.index)
-        df_day = df_day[df_day.index.date < trade_date]
-        if df_day.empty:
-            return None, None
-
-        prev_high = float(df_day["high"].iloc[-1])
-        prev_low  = float(df_day["low"].iloc[-1])
-        return prev_high, prev_low
-    except Exception:
-        return None, None
-
-
-# ── Runner Archetype Similarity ───────────────────────────────────────────────
-# Each archetype is a 20-element vector of relative volume weights, index 0 = lowest
-# price bin, index 19 = highest price bin. All values are proportional (not normalized).
-
-_RUNNER_ARCHETYPES = {
-    "Gap & Go":          [0.18, 0.15, 0.12, 0.09, 0.07, 0.06, 0.05, 0.04, 0.04, 0.03,
-                          0.03, 0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.02, 0.01, 0.01],
-    "Bull Flag Runner":  [0.05, 0.05, 0.08, 0.09, 0.07, 0.06, 0.04, 0.04, 0.05, 0.05,
-                          0.04, 0.04, 0.04, 0.05, 0.06, 0.08, 0.09, 0.06, 0.04, 0.02],
-    "VWAP Reclaim":      [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.09, 0.10, 0.11, 0.10,
-                          0.09, 0.08, 0.07, 0.05, 0.04, 0.03, 0.02, 0.02, 0.02, 0.01],
-    "Afternoon Momentum":[0.02, 0.02, 0.03, 0.03, 0.04, 0.04, 0.04, 0.05, 0.05, 0.06,
-                          0.06, 0.07, 0.08, 0.09, 0.10, 0.09, 0.08, 0.07, 0.05, 0.03],
-    "Morning Star":      [0.14, 0.13, 0.12, 0.10, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03,
-                          0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.01, 0.01],
-    "V-Shape Recovery":  [0.09, 0.08, 0.06, 0.04, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03,
-                          0.03, 0.04, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.08, 0.07],
-    "Steady Grinder":    [0.04, 0.04, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.06,
-                          0.06, 0.06, 0.06, 0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.04],
-    "Breakout Bomb":     [0.01, 0.01, 0.02, 0.02, 0.02, 0.02, 0.03, 0.03, 0.04, 0.05,
-                          0.06, 0.07, 0.08, 0.09, 0.10, 0.11, 0.10, 0.07, 0.05, 0.03],
-    "IB Extension":      [0.10, 0.11, 0.12, 0.11, 0.10, 0.08, 0.07, 0.06, 0.05, 0.04,
-                          0.04, 0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.01, 0.01, 0.01],
-    "Double Cluster":    [0.06, 0.08, 0.09, 0.10, 0.09, 0.06, 0.03, 0.02, 0.02, 0.02,
-                          0.02, 0.02, 0.03, 0.06, 0.09, 0.10, 0.09, 0.08, 0.06, 0.04],
-}
-
-_SQUEEZE_ARCHETYPE = [0.01, 0.01, 0.02, 0.02, 0.02, 0.03, 0.03, 0.03, 0.03, 0.04,
-                      0.04, 0.05, 0.06, 0.07, 0.09, 0.11, 0.12, 0.11, 0.08, 0.03]
-
-_DUMP_ARCHETYPE    = [0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.11, 0.12,
-                      0.11, 0.10, 0.08, 0.06, 0.04, 0.03, 0.02, 0.01, 0.01, 0.01]
-
-
-def _normalize_archetype(vec):
-    total = sum(vec)
-    return [v / total for v in vec] if total > 0 else vec
-
-
-def _cosine_sim(a, b):
-    dot = sum(x * y for x, y in zip(a, b))
-    na  = math.sqrt(sum(x * x for x in a))
-    nb  = math.sqrt(sum(y * y for y in b))
-    return dot / (na * nb) if (na > 0 and nb > 0) else 0.0
-
-
-def compute_runner_similarity(bin_centers, vap):
-    """Cosine-compare today's VP against 10 runner archetypes plus squeeze/dump.
-
-    Resamples the VP to a 20-bin normalized vector then computes cosine similarity
-    against every pre-defined archetype.
-
-    Returns a dict:
-        best_match    — name of closest runner archetype
-        runner_pct    — similarity % (0-100) for best runner match
-        squeeze_pct   — similarity % vs short-squeeze signature
-        dump_pct      — similarity % vs dump signature
-    """
-    if len(vap) < 2 or float(np.sum(vap)) == 0:
-        return {"best_match": "—", "runner_pct": 0.0, "squeeze_pct": 0.0, "dump_pct": 0.0}
-
-    N = 20
-    n_bins = len(vap)
-
-    if n_bins >= N:
-        bucket = n_bins / N
-        vec = [float(np.sum(vap[int(i * bucket):int((i + 1) * bucket)])) for i in range(N)]
-    else:
-        vec = [float(vap[int(i * n_bins / N)]) for i in range(N)]
-
-    total = sum(vec)
-    if total == 0:
-        return {"best_match": "—", "runner_pct": 0.0, "squeeze_pct": 0.0, "dump_pct": 0.0}
-    vec_norm = [v / total for v in vec]
-
-    best_match = "—"
-    best_sim   = 0.0
-    for name, archetype in _RUNNER_ARCHETYPES.items():
-        arch_norm = _normalize_archetype(archetype)
-        sim = _cosine_sim(vec_norm, arch_norm)
-        if sim > best_sim:
-            best_sim   = sim
-            best_match = name
-
-    runner_pct  = round(best_sim * 100.0, 1)
-    squeeze_pct = round(_cosine_sim(vec_norm, _normalize_archetype(_SQUEEZE_ARCHETYPE)) * 100.0, 1)
-    dump_pct    = round(_cosine_sim(vec_norm, _normalize_archetype(_DUMP_ARCHETYPE)) * 100.0, 1)
-
-    return {
-        "best_match":  best_match,
-        "runner_pct":  runner_pct,
-        "squeeze_pct": squeeze_pct,
-        "dump_pct":    dump_pct,
-    }
-
-
 def compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=0.0):
     """Trend Confidence Score (0–100).
 
@@ -1893,121 +1628,6 @@ def compute_target_zones(df, ib_high, ib_low, bin_centers, vap, tcs):
     return targets
 
 
-def compute_low_volume_nodes(bin_centers, vap, threshold_pct=0.20):
-    """Identify Low Volume Nodes (LVNs) — price levels where volume is thin.
-
-    LVNs are 'Turbo Zones': price tends to move rapidly through them because
-    there is little historical supply or demand to slow it down.
-
-    Returns a list of dicts (sorted ascending by price) with keys:
-        price, volume, strength (0=weak LVN, 1=completely empty), index
-    threshold_pct: bins below this fraction of avg session volume are LVNs.
-    """
-    if len(vap) == 0 or np.sum(vap) == 0:
-        return []
-    avg_vol   = float(np.mean(vap))
-    if avg_vol == 0:
-        return []
-    threshold = avg_vol * threshold_pct
-    lvns = []
-    for i, (price, vol) in enumerate(zip(bin_centers, vap)):
-        fvol = float(vol)
-        if fvol < threshold:
-            strength = 1.0 - (fvol / threshold) if threshold > 0 else 1.0
-            lvns.append({
-                "price":    round(float(price), 4),
-                "volume":   round(fvol, 2),
-                "strength": round(min(1.0, max(0.0, strength)), 3),
-                "index":    int(i),
-            })
-    return sorted(lvns, key=lambda x: x["price"])
-
-
-# ── StockTwits Social Sentiment ───────────────────────────────────────────────
-
-def fetch_stocktwits_sentiment(ticker):
-    """Fetch social sentiment from StockTwits public API (no auth key required).
-
-    Parses up to the last 30 messages for bull/bear/neutral sentiment tags.
-    Computes:
-      • msg_count    — messages within the last hour (from the newest timestamp)
-      • msg_velocity — messages-per-hour based on the one-hour window
-      • trending     — True when velocity >= 20 msg/hr
-
-    Returns None on any error or timeout.
-    """
-    import urllib.request
-
-    try:
-        url = f"https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
-        req = urllib.request.Request(url, headers={"User-Agent": "VolumeProfileBot/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-
-        messages = data.get("messages", [])[:30]   # API default ~30; guard explicitly
-        if not messages:
-            return None
-
-        bull = bear = neutral_count = 0
-        timestamps = []
-
-        for msg in messages:
-            # Sentiment tag lives in entities.sentiment.basic
-            sentiment_tag = None
-            entities = msg.get("entities") or {}
-            raw_sent = entities.get("sentiment")
-            if raw_sent and isinstance(raw_sent, dict):
-                sentiment_tag = raw_sent.get("basic", "")
-            # Older API shape: top-level sentiment field
-            if not sentiment_tag:
-                raw_top = msg.get("sentiment")
-                if raw_top and isinstance(raw_top, dict):
-                    sentiment_tag = raw_top.get("basic", "")
-
-            if sentiment_tag == "Bullish":
-                bull += 1
-            elif sentiment_tag == "Bearish":
-                bear += 1
-            else:
-                neutral_count += 1
-
-            ts_str = msg.get("created_at", "")
-            if ts_str:
-                try:
-                    ts = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
-                    timestamps.append(ts)
-                except Exception:
-                    pass
-
-        total = bull + bear + neutral_count
-        bull_pct    = round(bull / total * 100, 1) if total > 0 else 0.0
-        bear_pct    = round(bear / total * 100, 1) if total > 0 else 0.0
-        neutral_pct = round(max(0.0, 100.0 - bull_pct - bear_pct), 1)
-
-        # ── msg_count = messages published in the last hour (anchored to utcnow) ─
-        msg_count = 0
-        msg_velocity = 0.0
-        now_utc = datetime.utcnow()
-        one_hour_ago = now_utc - timedelta(hours=1)
-        if timestamps:
-            msg_count = sum(1 for t in timestamps if t >= one_hour_ago)
-            # velocity = count over the 1-hr fixed window
-            msg_velocity = float(msg_count)
-
-        trending = msg_velocity >= 20.0
-
-        return {
-            "bull_pct":     bull_pct,
-            "bear_pct":     bear_pct,
-            "neutral_pct":  neutral_pct,
-            "msg_count":    msg_count,
-            "msg_velocity": msg_velocity,
-            "trending":     trending,
-        }
-    except Exception:
-        return None
-
-
 def check_target_alerts(price, targets, audio_enabled):
     """Fire a unique 'Target Reached' sound when price touches a target zone (0.5% tol)."""
     import streamlit.components.v1 as components
@@ -2189,7 +1809,6 @@ JOURNAL_PATH = "trade_journal.csv"
 _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
-    "social_bull_pct", "social_bear_pct", "social_msg_count",
 ]
 
 
@@ -2208,22 +1827,6 @@ def load_journal() -> "pd.DataFrame":
 
 def save_journal_entry(entry: dict):
     exists = os.path.exists(JOURNAL_PATH)
-
-    # ── One-time schema migration ─────────────────────────────────────────────
-    # If the CSV exists but was written with an older (narrower) column set,
-    # rewrite it with the current _JOURNAL_COLS header before appending.
-    # This prevents mixed-width rows that break pandas CSV parsing.
-    if exists:
-        try:
-            _existing = pd.read_csv(JOURNAL_PATH)
-            if any(col not in _existing.columns for col in _JOURNAL_COLS):
-                for col in _JOURNAL_COLS:
-                    if col not in _existing.columns:
-                        _existing[col] = ""
-                _existing[_JOURNAL_COLS].to_csv(JOURNAL_PATH, index=False)
-        except Exception:
-            pass
-
     with open(JOURNAL_PATH, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=_JOURNAL_COLS)
         if not exists:
@@ -2299,9 +1902,6 @@ def render_log_entry_ui():
                 "notes":     notes,
                 "grade":     grade,
                 "grade_reason": reason,
-                "social_bull_pct":  state.get("social_bull_pct", ""),
-                "social_bear_pct":  state.get("social_bear_pct", ""),
-                "social_msg_count": state.get("social_msg_count", ""),
             }
             save_journal_entry(entry)
             gc = _GRADE_COLORS.get(grade, "#aaa")
@@ -2350,27 +1950,6 @@ def render_journal_tab():
         tcs_v = row.get("tcs", "")
         rvol_v = row.get("rvol", "")
         notes_v = row.get("notes", "")
-        s_bull = row.get("social_bull_pct", "")
-        s_bear = row.get("social_bear_pct", "")
-        s_msgs = row.get("social_msg_count", "")
-
-        # Build optional Sentiment at Entry line
-        if s_bull != "" and s_bear != "":
-            try:
-                _sb = float(s_bull)
-                _se = float(s_bear)
-                _sc = int(s_msgs) if str(s_msgs).strip() not in ("", "nan") else 0
-                _sentiment_row = (
-                    f'<div style="font-size:11px;color:#90caf9;margin-top:3px;">'
-                    f'💬 Sentiment at Entry: '
-                    f'<span style="color:#26a69a;font-weight:700;">🐂 {_sb:.0f}%</span>'
-                    f' / <span style="color:#ef5350;font-weight:700;">{_se:.0f}% 🐻</span>'
-                    f' · {_sc} msgs</div>'
-                )
-            except Exception:
-                _sentiment_row = ""
-        else:
-            _sentiment_row = ""
 
         st.markdown(f"""
         <div style="display:flex; gap:16px; align-items:center; background:#12122288;
@@ -2391,7 +1970,6 @@ def render_journal_tab():
                     TCS {tcs_v}%  ·  RVOL {rvol_v}×
                     {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
                 </div>
-                {_sentiment_row}
                 <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
             </div>
         </div>
@@ -2437,344 +2015,173 @@ def render_journal_tab():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
-                target_zones=None, position=None, tcs=None, label="", rvol_val=None):
-    """Build a TradingView-style chart using streamlit-lightweight-charts + CDN overlay.
+                target_zones=None, position=None):
+    # ── Reindex to a full 9:30–16:00 minute grid so the chart ALWAYS
+    #    anchors at 9:30 ET, even for thinly-traded small-caps whose first
+    #    real trade doesn't occur until 9:31 or later.
+    def _et_label(ts):
+        try:
+            return pd.Timestamp(ts).tz_convert(EASTERN).strftime("%H:%M ET")
+        except Exception:
+            return str(ts)[-8:]
 
-    Candlestick chart rendered via lightweight-charts v4 (from CDN for full plugin
-    support).  Volume Profile heatmap is drawn on a transparent canvas overlaid
-    directly on the price chart — NOT in a separate panel — using the series'
-    priceToCoordinate() API so bars are price-aligned to the Y axis.
-
-    LVN Turbo Zones are rendered as full-width shaded horizontal bands with
-    "⚡ Turbo Zone $price" text labels on the chart canvas.
-
-    Glassmorphism HUD (TCS, RVOL, R/R) floats top-right.
-    compute_buy_sell_pressure (Blended CLV+Tick Split) is untouched.
-    """
-    from streamlit_lightweight_charts import renderLightweightCharts as _rlc  # noqa (dep declared)
-    import streamlit.components.v1 as _comp
-
-    # ── Prepare candlestick data ───────────────────────────────────────────────
-    _rdf       = df.copy()
-    _cur_price = float(_rdf["close"].dropna().iloc[-1]) if not _rdf.empty else None
+    # Keep a handle to the original (real) bars before we expand the index
+    _real_df = df.copy()
+    _current_price = float(_real_df["close"].dropna().iloc[-1]) if not _real_df.empty else None
 
     try:
         _first = df.index[0]
-        _last  = df.index[-1]
-        _d     = _first.date()
-        _ot    = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 9, 30))
-        _ct    = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16, 0))
-        _end   = min(_last, _ct)
-        df     = df.reindex(pd.date_range(_ot, _end, freq="1min"))
+        _last_real = df.index[-1]          # last bar that actually has data
+        _d = _first.date()
+        _open_et   = EASTERN.localize(datetime(_d.year, _d.month, _d.day,  9, 30))
+        # Extend grid only to the last real bar, not necessarily 16:00.
+        # This prevents the chart trailing off into blank space mid-session.
+        _close_et  = EASTERN.localize(datetime(_d.year, _d.month, _d.day, 16,  0))
+        _grid_end  = min(_last_real, _close_et)
+        _full_idx  = pd.date_range(_open_et, _grid_end, freq="1min")
+        df = df.reindex(_full_idx)         # NaN rows for minutes with no trade
     except Exception:
-        pass
+        pass   # fallback to raw bars if tz handling fails
 
-    candles = []
-    for ts, row in df.iterrows():
-        try:
-            if pd.isna(row["open"]) or pd.isna(row["close"]):
-                continue
-            candles.append({
-                "time":  int(pd.Timestamp(ts).timestamp()),
-                "open":  round(float(row["open"]),  4),
-                "high":  round(float(row["high"]),  4),
-                "low":   round(float(row["low"]),   4),
-                "close": round(float(row["close"]), 4),
-            })
-        except Exception:
-            continue
+    x_labels = [_et_label(ts) for ts in df.index]
+    x0, x1   = x_labels[0], x_labels[-1]
 
-    # ── Volume Profile heatmap bands (blue→orange gradient, POC=gold) ─────────
-    max_vap = float(np.max(vap)) if len(vap) > 0 and np.max(vap) > 0 else 1.0
-    bin_w   = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0.01
-    vp_bands = []
-    for price, vol in zip(bin_centers, vap):
-        fprice, fvol = float(price), float(vol)
-        norm   = fvol / max_vap
-        is_poc = abs(fprice - float(poc_price)) < bin_w * 0.6
-        if is_poc:
-            color = "rgba(255,215,0,0.92)"
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.75, 0.25],
+                        shared_yaxes=True, horizontal_spacing=0.01)
+    fig.add_trace(go.Candlestick(
+        x=x_labels, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+        name="Price", increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
+        increasing_fillcolor="#26a69a", decreasing_fillcolor="#ef5350",
+    ), row=1, col=1)
+
+    # ── Current Price line ────────────────────────────────────────────────────
+    if _current_price is not None:
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[_current_price, _current_price],
+            mode="lines+text",
+            name=f"Last ${_current_price:.2f}",
+            line=dict(color="#ffffff", width=1.2, dash="dot"),
+            text=["", f" ▶ ${_current_price:.2f}"],
+            textposition="middle right",
+            textfont=dict(color="#ffffff", size=12, family="monospace"),
+            showlegend=True,
+        ), row=1, col=1)
+
+    if ib_high is not None and ib_low is not None:
+        fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_high, ib_high], mode="lines",
+            name=f"IB High ({ib_high:.2f})",
+            line=dict(color="#00e676", width=1.8, dash="dash")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=[x0, x1], y=[ib_low, ib_low], mode="lines",
+            name=f"IB Low ({ib_low:.2f})",
+            line=dict(color="#ff5252", width=1.8, dash="dash")), row=1, col=1)
+
+    fig.add_trace(go.Scatter(x=[x0, x1], y=[poc_price, poc_price], mode="lines",
+        name=f"POC ({poc_price:.2f})", line=dict(color="gold", width=2.5)), row=1, col=1)
+
+    # ── Dynamic Target Zone overlay ───────────────────────────────────────────
+    lvn_idx_to_highlight = None
+    if target_zones:
+        for tz in target_zones:
+            tp = tz["price"]
+            tc = tz["color"]
+            tl = tz["label"]
+            # Annotated dotted horizontal line
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[tp, tp], mode="lines+text",
+                name=tl,
+                line=dict(color=tc, width=1.6, dash="dot"),
+                text=["", f" {tl}"],
+                textposition="top right",
+                textfont=dict(color=tc, size=11),
+            ), row=1, col=1)
+            # Shaded band (±1% of price) for trend extensions
+            if tz["type"] == "trend_extension":
+                band = tp * 0.005
+                fig.add_shape(
+                    type="rect", xref="paper", x0=0, x1=0.75,
+                    y0=tp - band, y1=tp + band,
+                    fillcolor=tc + "30",
+                    line=dict(width=0),
+                    row=1, col=1,
+                )
+            # Track LVN index for volume profile highlighting
+            if tz["type"] == "gap_fill" and "lvn_idx" in tz:
+                lvn_idx_to_highlight = tz["lvn_idx"]
+
+    # ── Volume Profile bars (LVN highlighted in yellow for Double Distribution) ─
+    bw = float(bin_centers[1] - bin_centers[0]) if len(bin_centers) > 1 else 0
+    colors = []
+    for i, p in enumerate(bin_centers):
+        if abs(p - poc_price) < bw * 0.5:
+            colors.append("gold")
+        elif lvn_idx_to_highlight is not None and i == lvn_idx_to_highlight:
+            colors.append("#ffeb3b")
         else:
-            r = int(80  + norm * 175)
-            g = int(130 + norm * -10)
-            b = int(220 + norm * -220)
-            a = round(0.05 + norm * 0.65, 2)
-            color = f"rgba({r},{g},{b},{a})"
-        vp_bands.append({"price": round(fprice, 4), "norm": round(norm, 4),
-                         "color": color, "isPoc": is_poc})
+            colors.append("#5c6bc0")
+    fig.add_trace(go.Bar(x=vap, y=bin_centers, orientation="h",
+        name="Volume Profile", marker_color=colors, opacity=0.85), row=1, col=2)
 
-    # ── LVNs (Turbo Zones) ────────────────────────────────────────────────────
-    lvns = compute_low_volume_nodes(bin_centers, vap)
-
-    # ── Price lines: IB, POC, current, target zones, LVNs, position ──────────
-    plines = []
-    if ib_high is not None:
-        plines.append({"price": float(ib_high), "color": "#00e676",
-                       "width": 2, "style": 1, "title": f"IB Hi ${float(ib_high):.2f}"})
-    if ib_low is not None:
-        plines.append({"price": float(ib_low),  "color": "#ff5252",
-                       "width": 2, "style": 1, "title": f"IB Lo ${float(ib_low):.2f}"})
-    plines.append({"price": float(poc_price), "color": "#ffd700",
-                   "width": 2.5, "style": 0, "title": f"POC ${float(poc_price):.2f}"})
-    if _cur_price is not None:
-        plines.append({"price": float(_cur_price), "color": "#e0e0e0",
-                       "width": 1.4, "style": 2, "title": f"\u25b6 ${float(_cur_price):.2f}"})
-    for tz in (target_zones or []):
-        plines.append({"price": float(tz["price"]), "color": tz["color"],
-                       "width": 1.6, "style": 2, "title": tz["label"]})
-
-    # ── R/R projection when TCS ≥ 75 ─────────────────────────────────────────
-    tcs_val = float(tcs) if tcs is not None else 0.0
-    rr_data = None
-    if tcs_val >= 75 and _cur_price is not None:
-        cp = float(_cur_price)
-        above     = sorted([tz for tz in (target_zones or []) if tz["price"] > cp],
-                           key=lambda x: x["price"])
-        lvns_up   = [l for l in lvns if l["price"] > cp]
-        target_p  = (float(above[0]["price"]) if above
-                     else float(lvns_up[0]["price"]) if lvns_up
-                     else round(cp * 1.05, 4))
-        cands = ([float(ib_low)]    if (ib_low    and float(ib_low)    < cp) else []) + \
-                ([float(poc_price)] if (poc_price  and float(poc_price) < cp) else [])
-        stop_p        = max(cands) if cands else round(cp * 0.97, 4)
-        reward, risk  = target_p - cp, cp - stop_p
-        ratio         = round(reward / risk, 2) if risk > 0 else 0.0
-        plines.append({"price": target_p, "color": "#76ff03",
-                       "width": 2.5, "style": 0, "title": f"\U0001f3af Target ${target_p:.2f}"})
-        plines.append({"price": stop_p,   "color": "#ef5350",
-                       "width": 2.5, "style": 0, "title": f"\U0001f6d1 Stop ${stop_p:.2f}"})
-        rr_data = {"ratio": ratio,
-                   "reward_pct": round(reward / cp * 100, 1),
-                   "risk_pct":   round(risk   / cp * 100, 1)}
-
-    # Position overlay
+    # ── Position overlay ──────────────────────────────────────────────────────
     if position and position.get("in"):
-        ae, pk = float(position["avg_entry"]), float(position["peak_price"])
-        plines.append({"price": ae, "color": "#ffffff",
-                       "width": 2, "style": 0, "title": f"\U0001f4cd Entry ${ae:.2f}"})
-        if pk > ae:
-            plines.append({"price": pk, "color": "#00bcd4",
-                           "width": 1.5, "style": 1, "title": f"\u2b06 MFE ${pk:.2f}"})
+        avg_entry  = position["avg_entry"]
+        peak_price = position["peak_price"]
+        price_now  = float(df["close"].iloc[-1])
+        shares     = position.get("shares", 0)
+        pnl_pct    = (price_now - avg_entry) / avg_entry * 100 if avg_entry > 0 else 0
+        pnl_dol    = (price_now - avg_entry) * shares if shares > 0 else 0
+        pnl_color  = "#4caf50" if pnl_pct >= 0 else "#ef5350"
 
-    # ── HUD styling ───────────────────────────────────────────────────────────
-    lbl_lo = (label or "").lower()
-    if tcs_val >= 75:
-        hud_color, hud_glow = "#76ff03", "0 0 18px rgba(118,255,3,0.55)"
-        hud_label = "HIGH CONVICTION"
-    elif "trend" in lbl_lo and "double" not in lbl_lo and "non" not in lbl_lo:
-        hud_color, hud_glow = "#ff6d00", "0 0 14px rgba(255,109,0,0.45)"
-        hud_label = "TREND DAY"
-    elif "double" in lbl_lo:
-        hud_color, hud_glow = "#00e5ff", "0 0 14px rgba(0,229,255,0.45)"
-        hud_label = "DOUBLE DIST"
-    else:
-        hud_color, hud_glow = "#5c6bc0", "none"
-        hud_label = (label or "\u2014")[:18].upper()
+        # Entry line — solid white
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[avg_entry, avg_entry], mode="lines+text",
+            name=f"Entry ${avg_entry:.2f}",
+            line=dict(color="#ffffff", width=2.0, dash="solid"),
+            text=["", f" 📍 ENTRY ${avg_entry:.2f}"],
+            textposition="top right",
+            textfont=dict(color="#ffffff", size=12),
+        ), row=1, col=1)
 
-    rvol_str = f"{rvol_val:.1f}\u00d7" if rvol_val is not None else "\u2014"
+        # MFE (peak) line — cyan dashed
+        if peak_price > avg_entry:
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[peak_price, peak_price], mode="lines+text",
+                name=f"MFE ${peak_price:.2f}",
+                line=dict(color="#00bcd4", width=1.5, dash="dash"),
+                text=["", f" ⬆ MFE ${peak_price:.2f}"],
+                textposition="top right",
+                textfont=dict(color="#00bcd4", size=11),
+            ), row=1, col=1)
 
-    rr_html = ""
-    if rr_data:
-        rc = "#76ff03" if rr_data["ratio"] >= 2 else "#ffa726" if rr_data["ratio"] >= 1 else "#ef5350"
-        rr_html = (
-            f'<div class="hud-div"></div>'
-            f'<div class="hud-row"><span>R/R</span>'
-            f'<span class="hud-val" style="color:{rc};">{rr_data["ratio"]:.1f}:1</span></div>'
-            f'<div style="font-size:9px;color:#4caf50;text-align:right;">'
-            f'\U0001f3af+{rr_data["reward_pct"]}%</div>'
-            f'<div style="font-size:9px;color:#ef5350;text-align:right;">'
-            f'\U0001f6d1-{rr_data["risk_pct"]}%</div>'
+        # P&L annotation badge at the right edge
+        pnl_txt = (f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%"
+                   f"  (${pnl_dol:+.0f})" if shares > 0 else
+                   f"{'▲' if pnl_pct>=0 else '▼'} {abs(pnl_pct):.1f}%")
+        fig.add_annotation(
+            xref="paper", yref="y",
+            x=0.74, y=avg_entry,
+            text=f"<b>{pnl_txt}</b>",
+            showarrow=False,
+            font=dict(color=pnl_color, size=13),
+            bgcolor=pnl_color + "22",
+            bordercolor=pnl_color,
+            borderwidth=1,
+            borderpad=4,
         )
 
-    # ── Serialise to JSON for inline JS ──────────────────────────────────────
-    j_candles = json.dumps(candles)
-    j_plines  = json.dumps(plines)
-    j_vpbands = json.dumps(vp_bands)
-    j_lvns    = json.dumps(lvns)
-    safe_title = title.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
-
-    # ── HTML: chart + transparent VP overlay canvas + glassmorphism HUD ───────
-    # The VP canvas is position:absolute over the chart div; it uses
-    # series.priceToCoordinate() so bars are price-axis aligned.
-    # LVN Turbo Zone bands are full-width with text on the chart.
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#16213e;overflow:hidden;font-family:'Inter','Segoe UI',sans-serif}}
-#wrap{{position:relative;width:100%;height:600px;
-       border:1px solid #252540;border-radius:6px;overflow:hidden;background:#16213e}}
-#chart{{width:100%;height:600px;position:absolute;top:0;left:0}}
-#vp-overlay{{position:absolute;top:0;left:0;width:100%;height:600px;
-             pointer-events:none;z-index:10}}
-#hud{{position:absolute;top:10px;right:10px;z-index:200;
-      background:rgba(8,12,28,.82);
-      backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-      border:1px solid {hud_color}55;border-radius:10px;padding:10px 14px;
-      min-width:110px;pointer-events:none;
-      box-shadow:{hud_glow},0 4px 24px rgba(0,0,0,.55)}}
-.hud-title{{font-size:9px;letter-spacing:1.4px;text-transform:uppercase;
-            color:{hud_color};font-weight:800;margin-bottom:7px;
-            text-shadow:0 0 8px {hud_color}88}}
-.hud-row{{display:flex;justify-content:space-between;align-items:center;
-          font-size:11px;color:#aaa;margin-bottom:4px}}
-.hud-val{{font-size:15px;font-weight:900;color:{hud_color};
-          font-family:'SF Mono','Fira Code',monospace}}
-.hud-div{{height:1px;background:rgba(255,255,255,.1);margin:6px 0}}
-#ctitle{{position:absolute;top:10px;left:10px;z-index:200;font-size:12px;
-         font-weight:600;color:#b0b0c8;pointer-events:none;
-         max-width:58%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-</style></head><body>
-<div id="wrap">
-  <div id="chart"></div>
-  <canvas id="vp-overlay"></canvas>
-  <div id="ctitle">{safe_title}</div>
-  <div id="hud">
-    <div class="hud-title">{hud_label}</div>
-    <div class="hud-row"><span>TCS</span><span class="hud-val">{tcs_val:.0f}%</span></div>
-    <div class="hud-row"><span>RVOL</span><span class="hud-val">{rvol_str}</span></div>
-    {rr_html}
-  </div>
-</div>
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<script>
-(function(){{
-  const candleData = {j_candles};
-  const plines     = {j_plines};
-  const vpBands    = {j_vpbands};
-  const lvns       = {j_lvns};
-
-  const CHART_H    = 600;
-
-  // ── Create chart ─────────────────────────────────────────────────────────
-  const chartEl = document.getElementById('chart');
-  const chart = LightweightCharts.createChart(chartEl, {{
-    width:  chartEl.clientWidth,
-    height: CHART_H,
-    layout:{{background:{{type:'solid',color:'#16213e'}},textColor:'#b0b0c8'}},
-    grid:{{vertLines:{{color:'#1c2235'}},horzLines:{{color:'#1c2235'}}}},
-    crosshair:{{
-      mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine:{{color:'#5c6bc066',width:1,
-                 style:LightweightCharts.LineStyle.Dashed,
-                 labelBackgroundColor:'#0f3460'}},
-      horzLine:{{color:'#5c6bc066',width:1,
-                 style:LightweightCharts.LineStyle.Dashed,
-                 labelBackgroundColor:'#0f3460'}},
-    }},
-    rightPriceScale:{{borderColor:'#252540',scaleMargins:{{top:.06,bottom:.06}}}},
-    timeScale:{{borderColor:'#252540',timeVisible:true,secondsVisible:false,
-                rightOffset:8,fixLeftEdge:true}},
-  }});
-
-  // ── Candlestick series ────────────────────────────────────────────────────
-  const LS = LightweightCharts.LineStyle;
-  const cs = chart.addCandlestickSeries({{
-    upColor:'#26a69a',  downColor:'#ef5350',
-    borderUpColor:'#26a69a',borderDownColor:'#ef5350',
-    wickUpColor:'#26a69a',  wickDownColor:'#ef5350',
-  }});
-  if (candleData.length > 0) cs.setData(candleData);
-
-  // ── Price lines: IB, POC, targets, current price, position ───────────────
-  const styleMap = [LS.Solid, LS.Dashed, LS.Dotted, LS.LargeDashed];
-  for (const pl of plines) {{
-    cs.createPriceLine({{
-      price:            pl.price,
-      color:            pl.color,
-      lineWidth:        pl.width || 1.5,
-      lineStyle:        styleMap[pl.style] ?? LS.Dashed,
-      axisLabelVisible: true,
-      title:            pl.title || '',
-    }});
-  }}
-  chart.timeScale().fitContent();
-
-  // ── Volume Profile + LVN Turbo Zone overlay on the chart canvas ───────────
-  // The canvas sits on top of the chart (pointer-events:none).
-  // priceToCoordinate() maps each bin's price to the correct Y pixel position,
-  // so the VP heatmap bars align with the chart's price axis at any zoom level.
-  const vpCanvas  = document.getElementById('vp-overlay');
-  const binCount  = vpBands.length;
-
-  function drawVPOverlay() {{
-    const W = chartEl.clientWidth;
-    const H = CHART_H;
-    vpCanvas.width  = W;
-    vpCanvas.height = H;
-    const ctx = vpCanvas.getContext('2d');
-    ctx.clearRect(0, 0, W, H);
-
-    if (vpBands.length === 0) return;
-
-    const maxNorm  = Math.max(...vpBands.map(b => b.norm), 0.001);
-    const barMaxW  = Math.min(W * 0.20, 110);  // VP bars: right 20% of chart
-
-    // ── Draw VP heatmap bars (right side, extending left) ────────────────
-    for (const band of vpBands) {{
-      const y = cs.priceToCoordinate(band.price);
-      if (y === null || y === undefined || y < 0 || y > H) continue;
-      const barW = (band.norm / maxNorm) * barMaxW;
-      const halfH = Math.max(H / Math.max(binCount, 1) * 0.45, 1.5);
-
-      ctx.fillStyle = band.color;
-      ctx.fillRect(W - barW, y - halfH, barW, halfH * 2);
-
-      if (band.isPoc) {{
-        // Gold border + "POC" label to the left of bar
-        ctx.strokeStyle = 'rgba(255,215,0,0.95)';
-        ctx.lineWidth   = 1.5;
-        ctx.strokeRect(W - barW - 1, y - halfH - 1, barW + 2, halfH * 2 + 2);
-        ctx.fillStyle = '#ffd700';
-        ctx.font      = 'bold 9px monospace';
-        const lx = Math.max(0, W - barW - 34);
-        ctx.fillText('POC', lx, y + 3);
-      }}
-    }}
-
-    // ── Draw LVN Turbo Zone bands (full-width, labeled) ───────────────────
-    const binH = H / Math.max(binCount, 1);
-    for (const lvn of lvns) {{
-      const y = cs.priceToCoordinate(lvn.price);
-      if (y === null || y === undefined || y < 0 || y > H) continue;
-      const bandH = Math.max(binH, 5);
-
-      // Semi-transparent amber fill across full chart width
-      ctx.fillStyle = 'rgba(255,143,0,0.07)';
-      ctx.fillRect(0, y - bandH / 2, W, bandH);
-
-      // Dashed amber border
-      ctx.strokeStyle = 'rgba(255,143,0,0.40)';
-      ctx.lineWidth   = 1;
-      ctx.setLineDash([5, 4]);
-      ctx.strokeRect(1, y - bandH / 2, W - 2, bandH);
-      ctx.setLineDash([]);
-
-      // ⚡ Turbo Zone label at left edge of band
-      ctx.fillStyle = '#ff8f00';
-      ctx.font      = 'bold 9px monospace';
-      ctx.fillText('\u26a1 Turbo Zone $' + lvn.price.toFixed(2), 6, y - 2);
-    }}
-  }}
-
-  // Initial draw after layout settles
-  requestAnimationFrame(() => {{
-    setTimeout(drawVPOverlay, 80);
-  }});
-
-  // Redraw whenever price scale or time range changes
-  chart.timeScale().subscribeVisibleTimeRangeChange(drawVPOverlay);
-  chart.subscribeCrosshairMove(drawVPOverlay);
-
-  // Resize handler
-  new ResizeObserver(() => {{
-    chart.resize(chartEl.clientWidth, CHART_H);
-    drawVPOverlay();
-  }}).observe(document.getElementById('wrap'));
-
-}})();
-</script></body></html>"""
-
-    _comp.html(html, height=614, scrolling=False)
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=17, color="white")),
+        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e", font=dict(color="#e0e0e0"),
+        height=660,
+        xaxis=dict(rangeslider=dict(visible=False), gridcolor="#2a2a4a",
+                   showgrid=True, type="category"),
+        yaxis=dict(gridcolor="#2a2a4a", showgrid=True, tickformat=".2f"),
+        xaxis2=dict(gridcolor="#2a2a4a", showgrid=True, title="Volume"),
+        legend=dict(bgcolor="#0f3460", bordercolor="#5c6bc0", borderwidth=1,
+                    font=dict(color="white"), x=0.01, y=0.99),
+        margin=dict(l=10, r=10, t=55, b=40),
+    )
+    fig.update_xaxes(nticks=20, tickangle=-45, row=1, col=1)
+    return fig
 
 
 def render_structure_banner(label, color, detail, probs, tcs,
@@ -2986,198 +2393,6 @@ def render_buy_sell_widget(bsp, rvol_val=None):
     """, unsafe_allow_html=True)
 
 
-def render_social_sentiment_widget(sentiment, rvol_val, bsp):
-    """Render StockTwits social sentiment card below the buy/sell pressure widget.
-
-    Args:
-        sentiment  — dict from fetch_stocktwits_sentiment(), or None
-        rvol_val   — float RVOL (used for HERD alert threshold ≥ 3)
-        bsp        — dict from compute_buy_sell_pressure() — used for momentum
-                     (trend_now vs trend_prev: a delta > 3 = ramping buy,
-                      delta < -3 = falling buy)
-    """
-    if sentiment is None:
-        st.markdown(
-            '<div style="background:#12122288;border:1px solid #2a2a4a;border-radius:10px;'
-            'padding:10px 14px;margin-bottom:8px;font-size:12px;color:#555;">'
-            '💬 Sentiment unavailable</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    bull_pct     = sentiment.get("bull_pct", 0.0)
-    bear_pct     = sentiment.get("bear_pct", 0.0)
-    neutral_pct  = sentiment.get("neutral_pct", 0.0)
-    msg_count    = sentiment.get("msg_count", 0)
-    msg_velocity = sentiment.get("msg_velocity", 0.0)
-    trending     = sentiment.get("trending", False)
-
-    # ── Buy pressure momentum (ramping / falling) ─────────────────────────────
-    # trend_now and trend_prev are the last-5 vs prior-5 bar buy percentages
-    # produced by compute_buy_sell_pressure().  A delta > 3 = buy ramping;
-    # a delta < -3 = buy falling.
-    trend_now  = (bsp or {}).get("trend_now",  50.0)
-    trend_prev = (bsp or {}).get("trend_prev", 50.0)
-    buy_delta  = trend_now - trend_prev   # positive = ramping, negative = falling
-
-    velocity_arrow = "⬆️" if msg_velocity >= 20 else ("➡️" if msg_velocity >= 8 else "⬇️")
-
-    # ── Alert detection (momentum-based, not static level) ────────────────────
-    buy_ramping = buy_delta > 3.0
-    buy_falling = buy_delta < -3.0
-    herd_piling = trending and (rvol_val or 0.0) >= 3.0 and buy_ramping
-    crowd_trap  = (not herd_piling) and trending and buy_falling
-
-    alert_html = ""
-    if herd_piling:
-        alert_html = (
-            '<div style="margin-top:8px;padding:5px 10px;border-radius:6px;'
-            'background:#00e67622;border:1px solid #00e67688;font-size:11px;'
-            'font-weight:700;color:#00e676;letter-spacing:.5px;'
-            'box-shadow:0 0 8px #00e67644;">'
-            '🐂 HERD PILING IN — RVOL + crowd + buy momentum all surging</div>'
-        )
-    elif crowd_trap:
-        alert_html = (
-            '<div style="margin-top:8px;padding:5px 10px;border-radius:6px;'
-            'background:#ff572222;border:1px solid #ff572288;font-size:11px;'
-            'font-weight:700;color:#ff7043;letter-spacing:.5px;">'
-            '⚠️ CROWD TRAP — social buzz spiking but buy pressure fading</div>'
-        )
-
-    sentiment_html = f"""
-    <div style="background:#12122288;border:1px solid #2a2a4a;border-radius:10px;
-                padding:12px 14px;margin-bottom:8px;">
-        <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
-                    color:#90caf9;font-weight:700;margin-bottom:8px;">
-            💬 StockTwits Sentiment
-        </div>
-        <div style="font-size:11px;color:#aaa;margin-bottom:6px;">
-            {msg_count} msgs in last hr &nbsp;·&nbsp; {velocity_arrow}
-        </div>
-        <!-- Bull/Bear bar -->
-        <div style="display:flex;gap:0;border-radius:4px;overflow:hidden;height:14px;">
-            <div style="width:{bull_pct}%;background:#26a69a;min-width:2px;"></div>
-            <div style="width:{neutral_pct}%;background:#37474f;"></div>
-            <div style="width:{bear_pct}%;background:#ef5350;min-width:2px;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:4px;
-                    font-size:11px;color:#aaa;">
-            <span style="color:#26a69a;font-weight:700;">🐂 {bull_pct:.0f}%</span>
-            <span style="color:#666;">Neutral {neutral_pct:.0f}%</span>
-            <span style="color:#ef5350;font-weight:700;">{bear_pct:.0f}% 🐻</span>
-        </div>
-        {alert_html}
-    </div>
-    """
-    st.markdown(sentiment_html, unsafe_allow_html=True)
-
-
-def render_round_number_widget(mag):
-    """Round Number Magnet badge — shows proximity to whole/half dollar levels."""
-    if mag is None or mag.get("badge") is None:
-        return
-
-    badge      = mag["badge"]
-    score      = mag["score"]
-    whole      = mag["whole_dollar"]
-    half_d     = mag["half_dollar"]
-    dw         = mag["dist_whole_pct"]
-    dh         = mag["dist_half_pct"]
-    at_ceiling = mag["at_ceiling"]
-
-    badge_colors = {
-        "Strong":   ("#ff6d00", "#ff6d0022"),
-        "Moderate": ("#ffa726", "#ffa72618"),
-        "Weak":     ("#5c6bc0", "#5c6bc018"),
-    }
-    bc, bg = badge_colors.get(badge, ("#555", "#11111118"))
-
-    ceil_html = ""
-    if at_ceiling:
-        ceil_html = (
-            '<div style="font-size:11px; color:#ef5350; margin-top:4px;">'
-            f'⚠️ Approaching ${whole:.0f} ceiling — breakout needed to clear resistance'
-            '</div>'
-        )
-
-    st.markdown(
-        f'<div style="background:{bg}; border:1px solid {bc}55; border-radius:8px; '
-        f'padding:8px 16px; margin:4px 0 6px 0;">'
-        f'<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">'
-        f'<span style="font-size:11px; color:#888; text-transform:uppercase; '
-        f'letter-spacing:.8px;">🧲 Round Number Magnet</span>'
-        f'<span style="font-size:12px; font-weight:700; color:{bc}; background:{bc}22; '
-        f'padding:1px 8px; border-radius:4px; border:1px solid {bc}55;">{badge}</span>'
-        f'<span style="font-size:12px; color:#aaa;">${whole:.0f}: {dw:.2f}% away</span>'
-        f'<span style="color:#2a2a4a;">|</span>'
-        f'<span style="font-size:12px; color:#aaa;">${half_d:.2f}: {dh:.2f}% away</span>'
-        f'<span style="font-size:12px; color:{bc}; font-family:monospace; margin-left:auto;">'
-        f'Score&nbsp;{score}</span>'
-        f'</div>'
-        f'{ceil_html}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def render_runner_dna_widget(sim):
-    """Runner DNA similarity badges — shows archetype match + squeeze/dump signals."""
-    if sim is None:
-        return
-    runner_pct  = sim["runner_pct"]
-    best_match  = sim["best_match"]
-    squeeze_pct = sim["squeeze_pct"]
-    dump_pct    = sim["dump_pct"]
-
-    if runner_pct < 60 and squeeze_pct < 60 and dump_pct < 60:
-        return
-
-    parts = []
-    if runner_pct >= 60:
-        rc = "#76ff03" if runner_pct >= 80 else "#4caf50"
-        parts.append(
-            f'<div style="background:{rc}11; border:1px solid {rc}44; border-radius:6px; '
-            f'padding:6px 12px; display:inline-flex; align-items:center; gap:8px;">'
-            f'<span style="font-size:10px; color:#888; text-transform:uppercase; '
-            f'letter-spacing:.6px;">Runner DNA</span>'
-            f'<span style="font-size:15px; font-weight:800; color:{rc}; '
-            f'font-family:monospace;">{runner_pct:.0f}%</span>'
-            f'<span style="font-size:11px; color:{rc}; font-weight:600;">{best_match}</span>'
-            f'</div>'
-        )
-    if squeeze_pct >= 60:
-        sc = "#ff6d00" if squeeze_pct >= 80 else "#ffa726"
-        parts.append(
-            f'<div style="background:{sc}11; border:1px solid {sc}44; border-radius:6px; '
-            f'padding:6px 12px; display:inline-flex; align-items:center; gap:8px;">'
-            f'<span style="font-size:10px; color:#888; text-transform:uppercase; '
-            f'letter-spacing:.6px;">⚡ Short Squeeze</span>'
-            f'<span style="font-size:15px; font-weight:800; color:{sc}; '
-            f'font-family:monospace;">{squeeze_pct:.0f}%</span>'
-            f'</div>'
-        )
-    if dump_pct >= 60:
-        dc = "#ef5350"
-        parts.append(
-            f'<div style="background:{dc}11; border:1px solid {dc}44; border-radius:6px; '
-            f'padding:6px 12px; display:inline-flex; align-items:center; gap:8px;">'
-            f'<span style="font-size:10px; color:#888; text-transform:uppercase; '
-            f'letter-spacing:.6px;">🔻 Dump Pattern</span>'
-            f'<span style="font-size:15px; font-weight:800; color:{dc}; '
-            f'font-family:monospace;">{dump_pct:.0f}%</span>'
-            f'</div>'
-        )
-
-    if parts:
-        st.markdown(
-            '<div style="display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 6px 0;">'
-            + "".join(parts)
-            + '</div>',
-            unsafe_allow_html=True,
-        )
-
-
 def render_model_prediction(outcome, reasoning):
     """Show the volume-price divergence model prediction in a styled text box.
 
@@ -3376,65 +2591,10 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
-    _bsp_data = compute_buy_sell_pressure(df)
-    render_buy_sell_widget(_bsp_data, rvol_val=rvol_val)
-
-    # ── StockTwits Social Sentiment (cache-backed) ────────────────────────────
-    # Fetched at most ONCE per ticker per session: on the first render for that
-    # ticker regardless of mode (historical, scanner, live first entry).
-    # Subsequent Live/Replay auto-reruns are cache hits → zero API calls.
-    _st_cache = st.session_state.get("stocktwits_cache", {})
-    if ticker not in _st_cache:
-        _st_cache[ticker] = fetch_stocktwits_sentiment(ticker)
-        st.session_state.stocktwits_cache = _st_cache
-    _sentiment = _st_cache.get(ticker)
-    render_social_sentiment_widget(_sentiment, rvol_val, _bsp_data)
-
-    # ── Round Number Magnet ───────────────────────────────────────────────────
-    magnetism = compute_round_number_magnetism(price_now)
-    # Visual-only TCS penalty: approaching whole-dollar ceiling reduces displayed TCS
-    tcs_display = max(0.0, tcs - 10.0) if magnetism.get("at_ceiling") else tcs
-    render_round_number_widget(magnetism)
-
-    # ── Daily Level Confluence — evaluate BEFORE structure banner so penalty is real ──
-    _confluence_active = False
-    _confluence_prev_high = None
-    try:
-        _dl = st.session_state.get("daily_levels_cache", {})
-        _prev_high_chk = _dl.get("prev_high")
-        _dl_ticker_chk = _dl.get("ticker", "")
-        # Guard: only apply if cache matches current ticker (stale-date guard via ticker key)
-        if _prev_high_chk and _dl_ticker_chk == ticker and ib_high is not None and price_now > ib_high:
-            _prev_cl2 = df["close"].shift(1)
-            _tr2 = pd.concat([
-                df["high"] - df["low"],
-                (df["high"] - _prev_cl2).abs(),
-                (df["low"]  - _prev_cl2).abs(),
-            ], axis=1).max(axis=1)
-            _atr2 = float(_tr2.rolling(window=min(14, len(df))).mean().iloc[-1])
-            if _atr2 > 0 and abs(price_now - _prev_high_chk) <= _atr2:
-                _confluence_active   = True
-                _confluence_prev_high = _prev_high_chk
-                tcs_display = max(0.0, tcs_display - 10.0)
-    except Exception:
-        pass
-
-    render_structure_banner(label, color, detail, probs, tcs_display,
+    render_buy_sell_widget(compute_buy_sell_pressure(df), rvol_val=rvol_val)
+    render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
-
-    # ── Daily Confluence warning banner (shown after banner so context is clear) ──
-    if _confluence_active and _confluence_prev_high is not None:
-        st.markdown(
-            f'<div style="background:#ef535022; border:1px solid #ef5350; '
-            f'border-radius:6px; padding:8px 16px; margin:4px 0 6px 0;">'
-            f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
-            f'⚠️ DAILY CONFLUENCE ZONE — IB breakout running into prior-day high '
-            f'${_confluence_prev_high:.2f} (within 1 ATR). Resistance overhead — '
-            f'TCS display reduced by 10 pts.</span></div>',
-            unsafe_allow_html=True,
-        )
-
     render_model_prediction(pred_outcome, pred_reasoning)
 
     # ── MarketBrain: compare prediction vs actual + running counter ───────────
@@ -3543,13 +2703,6 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                 unsafe_allow_html=True,
             )
 
-    # ── Runner DNA Similarity ─────────────────────────────────────────────────
-    try:
-        sim_data = compute_runner_similarity(bin_centers, vap)
-        render_runner_dna_widget(sim_data)
-    except Exception:
-        pass
-
     # ── Persist snapshot for Live Pulse header + Log Entry ────────────────────
     st.session_state.last_analysis_state = {
         "ticker":    ticker,
@@ -3564,9 +2717,6 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "label_color": color,
         "vol_velocity_str": "",
         "brain_predicted": brain.prediction,
-        "social_bull_pct":  (_sentiment or {}).get("bull_pct", ""),
-        "social_bear_pct":  (_sentiment or {}).get("bear_pct", ""),
-        "social_msg_count": (_sentiment or {}).get("msg_count", ""),
     }
 
     # ── Update peak price + auto-alerts for open position ────────────────────
@@ -3641,9 +2791,9 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "peak_price": st.session_state.position_peak_price,
         "shares":     st.session_state.position_shares,
     }
-    build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title,
-                target_zones=target_zones, position=pos_state,
-                tcs=tcs, label=label, rvol_val=rvol_val)
+    fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title,
+                      target_zones=target_zones, position=pos_state)
+    st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("📋 Raw Bar Data"):
         disp = df[["open", "high", "low", "close", "volume"]].copy()
@@ -3936,25 +3086,6 @@ with st.sidebar:
             st.success(f"🔴 Live: **{st.session_state.live_ticker}**")
 
     st.markdown("---")
-
-    # ── Lunar Phase ───────────────────────────────────────────────────────────
-    try:
-        _l_icon, _l_phase, _l_mania = get_lunar_phase(date.today())
-        _l_color = "#ff6d00" if _l_mania else "#5c6bc0"
-        _l_note  = "🔥 Retail Mania Window" if _l_mania else "Neutral"
-        st.markdown(
-            f'<div style="background:{_l_color}11; border:1px solid {_l_color}55; '
-            f'border-radius:6px; padding:6px 12px; margin:2px 0 6px 0; '
-            f'display:flex; align-items:center; gap:8px;">'
-            f'<span style="font-size:18px;">{_l_icon}</span>'
-            f'<div><div style="font-size:11px; color:{_l_color}; font-weight:700;">'
-            f'{_l_phase}</div>'
-            f'<div style="font-size:10px; color:#888;">{_l_note}</div></div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    except Exception:
-        pass
 
     # ── Position Management ────────────────────────────────────────────────────
     st.header("📍 Position")
@@ -4858,21 +3989,6 @@ with tab_chart:
                             sector_bonus = 10.0 if etf_chg > 1.0 else 0.0
                             st.session_state.sector_pct_chg = etf_chg
 
-                            # ── Daily level confluence (prior-day H/L) ─────────────
-                            try:
-                                _ph, _pl = fetch_daily_levels(
-                                    api_key, secret_key, ticker, selected_date)
-                                st.session_state.daily_levels_cache = {
-                                    "ticker":    ticker,
-                                    "prev_high": _ph,
-                                    "prev_low":  _pl,
-                                }
-                            except Exception:
-                                st.session_state.daily_levels_cache = {}
-
-                            # ── Invalidate StockTwits cache so fresh sentiment
-                            #    is fetched for this Fetch & Analyze trigger ──
-                            st.session_state.stocktwits_cache.pop(ticker, None)
                             render_analysis(df, num_bins, ticker,
                                             f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
                                             avg_daily_vol=avg_vol,
@@ -4894,18 +4010,6 @@ with tab_chart:
                                         st.error(f"No data for **{ticker}** on {selected_date} via IEX either. Confirm the date was a trading day and the ticker is valid.")
                                     else:
                                         st.success(f"Loaded **{len(df2)}** 1-min bars via IEX (auto-switched from SIP).")
-                                        try:
-                                            _fph, _fpl = fetch_daily_levels(
-                                                api_key, secret_key, ticker, selected_date)
-                                            st.session_state.daily_levels_cache = {
-                                                "ticker":    ticker,
-                                                "prev_high": _fph,
-                                                "prev_low":  _fpl,
-                                            }
-                                        except Exception:
-                                            st.session_state.daily_levels_cache = {}
-                                        # IEX fallback also counts as a fresh user trigger
-                                        st.session_state.stocktwits_cache.pop(ticker, None)
                                         render_analysis(df2, num_bins, ticker,
                                                         f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')} (IEX)",
                                                         avg_daily_vol=None, sector_bonus=0.0,
@@ -4972,17 +4076,6 @@ with tab_chart:
                                 st.session_state.replay_sector_bonus = 10.0 if _etf > 1.0 else 0.0
                             except Exception:
                                 st.session_state.replay_sector_bonus = 0.0
-                            # ── Daily level confluence (prior-day H/L) ───────────
-                            try:
-                                _rph, _rpl = fetch_daily_levels(
-                                    api_key, secret_key, ticker, selected_date)
-                                st.session_state.daily_levels_cache = {
-                                    "ticker":    ticker,
-                                    "prev_high": _rph,
-                                    "prev_low":  _rpl,
-                                }
-                            except Exception:
-                                st.session_state.daily_levels_cache = {}
                             # Reset Brain state for fresh replay
                             for _bk in ("brain_ib_high", "brain_ib_low", "brain_ib_set",
                                         "brain_high_touched", "brain_low_touched", "brain_predicted"):
@@ -5081,17 +4174,6 @@ with tab_chart:
                     except Exception:
                         etf_chg = 0.0
                     st.session_state.sector_pct_chg = etf_chg
-
-                    # ── Daily level confluence (prior-day H/L) ────────────────
-                    try:
-                        _lph, _lpl = fetch_daily_levels(api_key, secret_key, ticker, today)
-                        st.session_state.daily_levels_cache = {
-                            "ticker":    ticker,
-                            "prev_high": _lph,
-                            "prev_low":  _lpl,
-                        }
-                    except Exception:
-                        st.session_state.daily_levels_cache = {}
 
                 start_stream(api_key, secret_key, ticker, live_feed)
                 st.rerun()
