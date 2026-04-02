@@ -3197,14 +3197,23 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
         )
 
     # Step 3 & 4 — pre-market volume + compute metrics
+    # On IEX (free tier) pre-market bars are unavailable — we gracefully degrade
+    # to gap-only mode after the first subscription error.
+    pm_data_available = True
     rows = []
     for sym, snap_data in qualifying.items():
-        try:
-            pm_vol, avg_pm_vol = fetch_premarket_vols(
-                api_key, secret_key, sym, trade_date,
-                lookback_days=10, feed=feed)
-        except Exception:
-            pm_vol, avg_pm_vol = 0.0, None
+        pm_vol, avg_pm_vol = 0.0, None
+        if pm_data_available:
+            try:
+                pm_vol, avg_pm_vol = fetch_premarket_vols(
+                    api_key, secret_key, sym, trade_date,
+                    lookback_days=10, feed=feed)
+            except Exception as _pm_err:
+                err_str = str(_pm_err).lower()
+                if "subscription" in err_str or "permit" in err_str or "sip" in err_str:
+                    # Free-tier account — skip PM vol for all remaining tickers
+                    pm_data_available = False
+                # Any other error: leave pm_vol/avg_pm_vol as 0/None and continue
 
         price      = snap_data["price"]
         prev_close = snap_data["prev_close"]
@@ -3214,19 +3223,25 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
                       if avg_pm_vol and avg_pm_vol > 0 else None)
 
         rows.append({
-            "ticker":     sym,
-            "price":      round(price, 2),
-            "gap_pct":    round(gap_pct, 2),
-            "pm_vol":     int(pm_vol),
-            "avg_pm_vol": round(avg_pm_vol, 0) if avg_pm_vol else None,
-            "pm_rvol":    pm_rvol,
+            "ticker":          sym,
+            "price":           round(price, 2),
+            "gap_pct":         round(gap_pct, 2),
+            "pm_vol":          int(pm_vol),
+            "avg_pm_vol":      round(avg_pm_vol, 0) if avg_pm_vol else None,
+            "pm_rvol":         pm_rvol,
+            "pm_data_available": pm_data_available,
         })
 
-    # Step 5 — sort by gap % then RVOL, top 10
+    # Step 5 — sort by absolute gap %, then RVOL as tiebreaker, top 10
     rows.sort(key=lambda r: (
         abs(r["gap_pct"]),
         r["pm_rvol"] if r["pm_rvol"] is not None else -1,
     ), reverse=True)
+
+    # Tag each row with whether PM data was available for this scan
+    for r in rows:
+        r["pm_data_available"] = pm_data_available
+
     return rows[:10]
 
 
@@ -3469,12 +3484,11 @@ with st.sidebar:
         help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
     )
-    scan_feed = st.selectbox("Scanner Feed", ["sip", "iex"], index=0, key="scan_feed_select",
-                             help="SIP = full tape including pre-market (recommended). IEX = regular hours only.")
+    scan_feed = st.selectbox("Scanner Feed", ["iex", "sip"], index=0, key="scan_feed_select",
+                             help="IEX = free tier (gap % only). SIP = full tape with pre-market vol (paid subscription).")
     if scan_feed == "iex":
-        st.warning("⚠️ IEX feed has **no pre-market data**. PM Volume will show 0. "
-                   "Switch to SIP for real gap plays (requires Alpaca subscription).",
-                   icon="⚠️")
+        st.info("ℹ️ IEX (free tier): scanner shows **Gap %** ranked results. "
+                "PM Volume will be blank. Upgrade to SIP for pre-market RVOL.")
     scan_button = st.button("🔍 Scan Gap Plays", use_container_width=True)
 
     st.markdown("---")
@@ -4689,14 +4703,19 @@ with tab_scan:
     last_run = st.session_state.scanner_last_run
 
     if last_run:
+        _pm_ok = results[0].get("pm_data_available", True) if results else True
+        _sort_by = "Pre-Market RVOL" if _pm_ok else "Gap %"
         st.caption(f"Last scan: {last_run.strftime('%H:%M:%S')} EST  ·  "
-                   f"showing tickers priced $2–$20 sorted by Pre-Market RVOL")
+                   f"tickers $1–$50 · sorted by {_sort_by}")
+        if not _pm_ok:
+            st.info("📊 **Gap-Only Mode** — Pre-market volume unavailable on free IEX tier. "
+                    "Results are sorted by largest gap %. PM Vol / RVOL columns will be blank. "
+                    "Upgrade to Alpaca SIP subscription to unlock pre-market RVOL.")
 
     if not results:
         st.info("👈 Click **🔍 Scan Gap Plays** in the sidebar to populate this panel.\n\n"
-                "The scanner checks every ticker in your watchlist, filters to the $2–$20 "
-                "price range, and ranks them by today's pre-market volume relative to their "
-                "10-day historical pre-market average.")
+                "The scanner checks every ticker in your watchlist, filters to the $1–$50 "
+                "price range, and ranks them by gap % (free IEX tier) or pre-market RVOL (SIP).")
     else:
         _gap_colors = {
             "up":   ("#4caf50", "#1b5e20"),   # (text, bg-tint)
