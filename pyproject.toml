@@ -11,4 +11,5 @@ dependencies = [
     "pytz>=2026.1.post1",
     "streamlit>=1.55.0",
     "streamlit-lightweight-charts>=0.7.20",
+    "supabase>=2.28.3",
 ]
