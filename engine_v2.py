@@ -166,6 +166,105 @@ def identify_overhead_supply(daily_df: pd.DataFrame, current_price: float) -> li
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# HALT DETECTOR — Volatility Halt Fingerprint
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_volatility_halts(df: pd.DataFrame, bar_freq_minutes: int = 1,
+                             luld_threshold: float = 0.10) -> dict:
+    """Detect LULD (Limit-Up / Limit-Down) volatility halt signatures.
+
+    A halt leaves three fingerprints in intraday bar data:
+      1. TIME GAP   — a span of missing bars during market hours (exchange
+                      suspended trading; Alpaca returns no data for that window)
+      2. PRE-HALT   — the bar immediately before the gap has an extreme price
+                      move (>= luld_threshold, default 10%) AND a volume spike
+                      (>= 2× the rolling average)
+      3. POST-HALT  — the bar immediately after the gap is the re-open; price
+                      often prints a Thin/I-Shape because trapped sellers are
+                      exhausted and liquidity is thin
+
+    Parameters
+    ----------
+    df              : intraday OHLCV DataFrame with a DatetimeIndex
+    bar_freq_minutes: expected bar interval (1 = 1-min bars)
+    luld_threshold  : single-bar % move that triggers LULD consideration (0.10 = 10%)
+
+    Returns
+    -------
+    dict with keys:
+      halt_zones      : list of (gap_start, gap_end, gap_minutes) tuples
+      pre_halt_bars   : list of bar timestamps where the extreme move occurred
+      post_halt_bars  : list of bar timestamps immediately after each gap
+      halt_count      : int — total halts detected today
+      is_post_halt_now: bool — True if the LAST bar is a post-halt re-open
+      luld_triggers   : list of bar timestamps where LULD threshold was breached
+                        (may or may not have halted, but flag as high-risk)
+    """
+    df = _normalize_cols(df)
+    df = df.copy()
+    df.index = pd.to_datetime(df.index)
+
+    result = {
+        'halt_zones':       [],
+        'pre_halt_bars':    [],
+        'post_halt_bars':   [],
+        'halt_count':       0,
+        'is_post_halt_now': False,
+        'luld_triggers':    [],
+    }
+
+    if len(df) < 3:
+        return result
+
+    expected_gap = pd.Timedelta(minutes=bar_freq_minutes)
+    # Only look at market hours (9:30 – 16:00 ET)
+    mkt_open  = df.index[0].replace(hour=9,  minute=30, second=0)
+    mkt_close = df.index[0].replace(hour=16, minute=0,  second=0)
+    df_mkt = df[(df.index >= mkt_open) & (df.index <= mkt_close)]
+
+    if df_mkt.empty:
+        return result
+
+    # ── 1. Volume rolling average (for spike detection) ────────────────────────
+    vol_avg = df_mkt['volume'].rolling(window=10, min_periods=3).mean()
+
+    # ── 2. Single-bar % move ──────────────────────────────────────────────────
+    bar_move = (df_mkt['high'] - df_mkt['low']) / (df_mkt['close'].shift(1).abs() + 0.001)
+
+    # ── 3. Scan for time gaps ──────────────────────────────────────────────────
+    times = df_mkt.index.tolist()
+    for i in range(1, len(times)):
+        actual_gap = times[i] - times[i - 1]
+
+        # Gap must be at least 2× the expected interval to count as a halt
+        if actual_gap >= expected_gap * 2:
+            gap_minutes = int(actual_gap.total_seconds() / 60)
+            gap_start   = times[i - 1]
+            gap_end     = times[i]
+
+            result['halt_zones'].append((gap_start, gap_end, gap_minutes))
+            result['halt_count'] += 1
+
+            # Pre-halt bar
+            result['pre_halt_bars'].append(gap_start)
+
+            # Post-halt bar (first bar after resumption)
+            result['post_halt_bars'].append(gap_end)
+
+    # ── 4. LULD trigger scan (extreme moves — halt may not have occurred) ──────
+    luld_bars = df_mkt.index[bar_move >= luld_threshold].tolist()
+    # Also flag volume spikes ≥ 3× average as potential LULD approach
+    spike_bars = df_mkt.index[df_mkt['volume'] >= vol_avg * 3].tolist()
+    result['luld_triggers'] = sorted(set(luld_bars + spike_bars))
+
+    # ── 5. Is the current (last) bar a post-halt re-open? ─────────────────────
+    if result['post_halt_bars'] and times[-1] == result['post_halt_bars'][-1]:
+        result['is_post_halt_now'] = True
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PHASE 2 — THE SKULL (Volume Profile + Shape Classification)
 # ══════════════════════════════════════════════════════════════════════════════
 

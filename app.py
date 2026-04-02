@@ -17,6 +17,7 @@ from engine_v2 import (
     get_profile_and_shape,
     calculate_historical_retention,
     identify_overhead_supply,
+    detect_volatility_halts,
     v2_brain_final_boss,
     calculate_time_multiplier,
     v2_brain_v3,             # legacy alias
