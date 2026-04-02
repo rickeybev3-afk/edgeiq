@@ -3319,8 +3319,13 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("📈 Settings")
-    if st.session_state.get("_load_ticker"):
-        st.session_state.ticker_input = st.session_state.pop("_load_ticker")
+    _pending_ticker = st.session_state.get("_load_ticker", "")
+    if _pending_ticker:
+        st.session_state["ticker_input"] = _pending_ticker
+        try:
+            del st.session_state["_load_ticker"]
+        except Exception:
+            st.session_state["_load_ticker"] = ""
     ticker = st.text_input("Ticker Symbol", key="ticker_input",
                            placeholder="e.g. AAPL, GME").upper().strip()
     num_bins = st.slider("Volume Profile Bins", min_value=20, max_value=200, value=100, step=10)
@@ -4832,11 +4837,16 @@ with tab_scan:
             # Clickable button — loads Volume Profile for this ticker
             if st.button(f"📊 Load {sym} Volume Profile", key=f"load_{sym}",
                          use_container_width=False):
-                st.session_state._load_ticker = sym
+                st.session_state["_load_ticker"] = sym
+                st.session_state["_last_scan_load"] = sym
                 st.session_state.auto_run = True
                 st.rerun()
 
-        st.caption("Click a **Load** button to auto-populate the ticker and run the analysis.")
+        _last = st.session_state.get("_last_scan_load", "")
+        if _last:
+            st.success(f"✅ **{_last}** loaded — click the **📈 Main Chart** tab to view the Volume Profile.")
+        else:
+            st.caption("Click a **Load** button to populate the ticker and switch to Main Chart.")
 
 # ── Volume Profile tab: auto_run + all historical/live content ─────────────────
 # Consume the auto-run flag set by scanner ticker buttons (runs before tab renders)
