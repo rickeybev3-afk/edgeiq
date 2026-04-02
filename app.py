@@ -3162,33 +3162,39 @@ def fetch_premarket_vols(api_key, secret_key, ticker, trade_date,
 
 
 def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
-    """Run the full gap-scanner pipeline and return the top 3 tickers by PM RVOL.
+    """Run the full gap-scanner pipeline and return the top 10 tickers by PM RVOL.
 
     Pipeline:
       1. Batch-fetch snapshots (price + prev_close)
-      2. Filter to $2–$20 price range
+      2. Filter to $1–$50 price range (covers most small-cap universe)
       3. Fetch pre-market volumes + 10-day historical average per qualifying ticker
       4. Compute Gap % and Pre-Market RVOL
-      5. Sort by RVOL descending, return top 3
+      5. Sort by RVOL descending, return top 10
 
     Returns list of dicts: [{ticker, price, gap_pct, pm_vol, avg_pm_vol, pm_rvol}]
+    Raises exceptions so the caller can surface them to the UI.
     """
-    # Step 1 — batch snapshots
-    try:
-        snaps = fetch_snapshots_bulk(api_key, secret_key, watchlist, feed=feed)
-    except Exception:
-        snaps = {}
+    # Step 1 — batch snapshots (let exception propagate so UI can show the message)
+    snaps = fetch_snapshots_bulk(api_key, secret_key, watchlist, feed=feed)
 
     if not snaps:
-        return []
+        raise ValueError(
+            "No snapshot data returned. Check your API credentials and that the "
+            "tickers exist on Alpaca."
+        )
 
-    # Step 2 — filter by price
+    # Step 2 — filter by price ($1–$50 covers the small-cap universe)
     qualifying = {
         sym: d for sym, d in snaps.items()
-        if d.get("price") is not None and 2.0 <= d["price"] <= 20.0
+        if d.get("price") is not None and 1.0 <= d["price"] <= 50.0
     }
     if not qualifying:
-        return []
+        out_of_range = [s for s, d in snaps.items() if d.get("price") is not None]
+        raise ValueError(
+            f"All {len(out_of_range)} tickers are outside the $1–$50 scan range "
+            f"({', '.join(out_of_range[:5])}). "
+            "Add small-cap tickers to your watchlist."
+        )
 
     # Step 3 & 4 — pre-market volume + compute metrics
     rows = []
@@ -3216,10 +3222,12 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
             "pm_rvol":    pm_rvol,
         })
 
-    # Step 5 — sort by RVOL, top 3
-    rows.sort(key=lambda r: r["pm_rvol"] if r["pm_rvol"] is not None else -1,
-              reverse=True)
-    return rows[:3]
+    # Step 5 — sort by gap % then RVOL, top 10
+    rows.sort(key=lambda r: (
+        abs(r["gap_pct"]),
+        r["pm_rvol"] if r["pm_rvol"] is not None else -1,
+    ), reverse=True)
+    return rows[:10]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3458,15 +3466,19 @@ with st.sidebar:
         "Watchlist (comma-separated)",
         value=_DEFAULT_WATCHLIST,
         height=110,
-        help="Only tickers priced $2–$20 at scan time will be analysed.",
+        help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
     )
-    scan_feed = st.selectbox("Scanner Feed", ["iex", "sip"], index=0, key="scan_feed_select",
-                             help="IEX = free tier. SIP = full tape (subscription needed).")
+    scan_feed = st.selectbox("Scanner Feed", ["sip", "iex"], index=0, key="scan_feed_select",
+                             help="SIP = full tape including pre-market (recommended). IEX = regular hours only.")
+    if scan_feed == "iex":
+        st.warning("⚠️ IEX feed has **no pre-market data**. PM Volume will show 0. "
+                   "Switch to SIP for real gap plays (requires Alpaca subscription).",
+                   icon="⚠️")
     scan_button = st.button("🔍 Scan Gap Plays", use_container_width=True)
 
     st.markdown("---")
-    st.caption("SIP = full national tape (small-caps need this). IEX = IEX exchange only.")
+    st.caption("SIP = full national tape + pre-market data. IEX = regular hours (9:30–4 PM) only.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4661,6 +4673,14 @@ with tab_scan:
                             api_key, secret_key, watchlist, date.today(), feed=scan_feed)
                         st.session_state.scanner_results = results
                         st.session_state.scanner_last_run = datetime.now(EASTERN)
+                        if not results:
+                            st.warning(
+                                "Scan ran but returned no results. "
+                                "Possible reasons: all tickers outside $1–$50 range, "
+                                "no gap data available (market closed / weekend), "
+                                "or IEX feed selected (no pre-market data). "
+                                "Try switching to SIP feed or checking your watchlist."
+                            )
                     except Exception as e:
                         st.error(f"Scanner error: {e}")
 
