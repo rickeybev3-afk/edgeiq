@@ -230,7 +230,16 @@ def render_log_entry_ui():
     state = st.session_state.get("last_analysis_state")
     if not state:
         return
-    with st.expander("💾 Log This Trade Entry", expanded=False):
+    with st.expander("💾 Log This Trade Entry", expanded=True):
+        ticker  = state.get("ticker", "?")
+        price   = state.get("price", 0.0)
+        tcs     = state.get("tcs", 0.0)
+        rvol    = state.get("rvol") or 0.0
+        struct  = state.get("structure", "?")
+        st.markdown(
+            f"**Ready to log:** `{ticker}` @ `${price:.2f}` — "
+            f"TCS `{tcs:.0f}` · RVOL `{rvol:.2f}x` · Structure `{struct}`"
+        )
         notes = st.text_input(
             "Mental State / Notes",
             placeholder="e.g. Calm, FOMO, Greed, Hesitated...",
