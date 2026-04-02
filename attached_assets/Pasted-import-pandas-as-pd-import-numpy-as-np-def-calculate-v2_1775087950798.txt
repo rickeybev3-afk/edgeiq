@@ -1,0 +1,51 @@
+import pandas as pd
+import numpy as np
+
+def calculate_v2_metrics(df, atr_period=14):
+    # 1. DYNAMIC BINNING (ATR-BASED)
+    # Calculate ATR to determine the 'resolution' of our Volume Profile
+    df['high_low'] = df['High'] - df['Low']
+    df['high_close'] = np.abs(df['High'] - df['Close'].shift())
+    df['low_close'] = np.abs(df['Low'] - df['Close'].shift())
+    df['tr'] = df[['high_low', 'high_close', 'low_close']].max(axis=1)
+    atr = df['tr'].rolling(window=atr_period).mean().iloc[-1]
+    
+    # Each bin is now 10% of the ATR - High Resolution for Small Caps
+    bin_size = max(0.01, atr * 0.1) 
+    
+    # 2. TIME-SEGMENTED Z-SCORE VOLUME
+    # Identify 'Institutional Loading' by comparing volume to its own time-slot
+    df['hour'] = df.index.hour
+    df['minute'] = df.index.minute
+    
+    # Calculate rolling mean/std for the specific time-segment
+    # This prevents the 'Morning Noise' from masking 'Afternoon Signals'
+    stats = df.groupby(['hour', 'minute'])['Volume'].agg(['mean', 'std']).reset_index()
+    df = df.reset_index().merge(stats, on=['hour', 'minute'], how='left').set_index('Date')
+    
+    # Z-Score = (Current Vol - Mean Vol for this time) / Std Dev for this time
+    df['vol_z_score'] = (df['Volume'] - df['mean']) / (df['std'] + 0.1) # Add 0.1 to avoid div by zero
+    
+    # 3. LIQUIDITY VOID DETECTION (LVN)
+    # Identify price zones where volume is significantly lower than the POC
+    def detect_voids(profile_df, threshold=0.2):
+        poc_vol = profile_df['volume'].max()
+        # LVNs are 'valleys' where volume is less than 20% of the POC
+        voids = profile_df[profile_df['volume'] < (poc_vol * threshold)]
+        return voids
+
+    return df, bin_size
+
+# --- VERSION 2.0 BRAIN WEIGHTS LOGIC ---
+# In your scoring function, replace the old 'volume' check with this:
+def get_brain_score_v2(row, bin_size):
+    score = 0
+    # Institutional Bias: Z-Score > 2.0 is a 140 IQ signal
+    if row['vol_z_score'] > 2.5:
+        score += 40  # High confidence loading
+        
+    # Relative Strength to the 'Build'
+    if row['Close'] > row['mean']: # Simple trend confirm
+        score += 10
+        
+    return score
