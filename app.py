@@ -4806,46 +4806,26 @@ with tab_scan:
             pm_str     = f"{pm_v:,}"
             avg_str    = f"{avg_v:,.0f}" if avg_v else "—"
 
-            st.markdown(f"""
-            <div style="background:#12122288; border:1px solid #2a2a4a;
-                        border-radius:10px; padding:16px 20px; margin:10px 0;">
-                <div style="display:flex; align-items:center; justify-content:space-between;
-                            flex-wrap:wrap; gap:12px;">
-
-                    <!-- Ticker + Price -->
-                    <div>
-                        <div style="font-size:26px; font-weight:900; color:#e0e0e0;
-                                    letter-spacing:1px;">{sym}</div>
-                        <div style="font-size:13px; color:#888;">${price:.2f}</div>
-                    </div>
-
-                    <!-- Gap % -->
-                    <div style="text-align:center;">
-                        <div style="font-size:10px; color:#666; text-transform:uppercase;
-                                    letter-spacing:1px; margin-bottom:3px;">Gap</div>
-                        <div style="font-size:22px; font-weight:800; color:{gap_clr};">
-                            {gap_txt}
-                        </div>
-                    </div>
-
-                    <!-- PM RVOL -->
-                    <div style="text-align:center;">
-                        <div style="font-size:10px; color:#666; text-transform:uppercase;
-                                    letter-spacing:1px; margin-bottom:3px;">PM RVOL</div>
-                        <div style="font-size:22px; font-weight:800; color:{rc};">
-                            {rvol_str}
-                        </div>
-                        <div style="font-size:11px; color:#555;">
-                            {pm_str} vs avg {avg_str}
-                        </div>
-                    </div>
-
-                    <!-- Load button -->
-                    <div style="text-align:right; min-width:140px;">
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:#12122299;border:1px solid #2a2a4a;'
+                f'border-radius:10px;padding:16px 20px;margin:8px 0;">'
+                f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">'
+                f'<div>'
+                f'<div style="font-size:26px;font-weight:900;color:#e0e0e0;letter-spacing:1px;">{sym}</div>'
+                f'<div style="font-size:13px;color:#888;">${price:.2f}</div>'
+                f'</div>'
+                f'<div style="text-align:center;">'
+                f'<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Gap</div>'
+                f'<div style="font-size:22px;font-weight:800;color:{gap_clr};">{gap_txt}</div>'
+                f'</div>'
+                f'<div style="text-align:center;">'
+                f'<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">PM RVOL</div>'
+                f'<div style="font-size:22px;font-weight:800;color:{rc};">{rvol_str}</div>'
+                f'<div style="font-size:11px;color:#555;">{pm_str} vs avg {avg_str}</div>'
+                f'</div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
 
             # Clickable button — loads Volume Profile for this ticker
             if st.button(f"📊 Load {sym} Volume Profile", key=f"load_{sym}",
