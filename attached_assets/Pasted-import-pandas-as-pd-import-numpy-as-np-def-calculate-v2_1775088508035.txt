@@ -1,0 +1,79 @@
+import pandas as pd
+import numpy as np
+
+def calculate_v2_metrics(df, atr_period=14):
+    """The Master Calculation Engine"""
+    # --- 1. DYNAMIC BINNING (ATR-BASED) ---
+    df['high_low'] = df['High'] - df['Low']
+    df['high_close'] = np.abs(df['High'] - df['Close'].shift())
+    df['low_close'] = np.abs(df['Low'] - df['Close'].shift())
+    df['tr'] = df[['high_low', 'high_close', 'low_close']].max(axis=1)
+    atr = df['tr'].rolling(window=atr_period).mean().iloc[-1]
+    
+    # Resolution adjustment for Small Caps
+    bin_size = max(0.01, atr * 0.1) 
+    
+    # --- 2. TIME-SEGMENTED Z-SCORE VOLUME ---
+    df.index = pd.to_datetime(df.index)
+    df['hour'] = df.index.hour
+    df['minute'] = df.index.minute
+    
+    # Institutional Loading detection
+    stats = df.groupby(['hour', 'minute'])['Volume'].agg(['mean', 'std']).reset_index()
+    df = df.reset_index().merge(stats, on=['hour', 'minute'], how='left').set_index('Date')
+    df['vol_z_score'] = (df['Volume'] - df['mean']) / (df['std'] + 0.1)
+    
+    # --- 3. ORDER FLOW DELTA (The Muscle) ---
+    # Effort vs Result
+    df['delta'] = ((df['Close'] - df['Open']) / (df['High'] - df['Low'] + 0.001)) * df['Volume']
+    df['cvd'] = df['delta'].cumsum()
+    
+    # Divergence Tracking (Trap Detector)
+    df['cvd_slope'] = df['cvd'].rolling(window=5).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)==5 else 0)
+    df['price_slope'] = df['Close'].rolling(window=5).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)==5 else 0)
+    
+    df['divergence'] = np.where((df['cvd_slope'] > 0) & (df['price_slope'] < 0), 'Bullish_Abs', 
+                       np.where((df['cvd_slope'] < 0) & (df['price_slope'] > 0), 'Bearish_Dist', 'Neutral'))
+    
+    return df, bin_size
+
+def get_volume_profile_v2(df, bin_size):
+    """The Skull (Structure)"""
+    price_min = df['Low'].min()
+    price_max = df['High'].max()
+    bins = np.arange(price_min, price_max + bin_size, bin_size)
+    
+    df['price_bin'] = pd.cut(df['Close'], bins=bins, labels=bins[:-1])
+    profile = df.groupby('price_bin', observed=True)['Volume'].sum().reset_index()
+    profile.columns = ['price', 'volume']
+    
+    poc_price = profile.loc[profile['volume'].idxmax(), 'price']
+    
+    # LVN (Liquidity Void) Logic
+    poc_vol = profile['volume'].max()
+    # Any zone with < 20% of POC volume is a 'Void'
+    void_zones = profile[profile['volume'] < (poc_vol * 0.2)]['price'].tolist()
+    
+    return profile, poc_price, void_zones
+
+def v2_execution_logic(row, void_zones):
+    """The Brain (Confluence)"""
+    score = 0
+    
+    # A: Institutional Z-Score
+    if row['vol_z_score'] > 2.5:
+        score += 40
+    
+    # B: Delta/CVD Divergence
+    if row['divergence'] == 'Bullish_Abs':
+        score += 30
+    elif row['divergence'] == 'Bearish_Dist':
+        score -= 50
+        
+    # C: Velocity (Liquidity Voids)
+    # Check if current price is near an LVN
+    is_in_void = any(abs(row['Close'] - v) < 0.05 for v in void_zones)
+    if is_in_void:
+        score += 20
+        
+    return score
