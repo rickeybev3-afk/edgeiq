@@ -9,7 +9,7 @@ import os
 
 from backend import *
 from backend import (
-    _migrate_tracker_csv, _compute_value_area, _strip_emoji,
+    _compute_value_area, _strip_emoji,
     _parse_batch_pairs, _RECALIBRATE_EVERY, _BRAIN_WEIGHT_KEYS,
     _JOURNAL_COLS, _find_peaks, _is_strong_hvn, _detect_double_distribution,
     _label_to_weight_key, _save_brain_weights, _stream_worker,
@@ -88,24 +88,19 @@ for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
-# ── Restore today's brain accuracy counters from CSV on first load ─────────────
-# Uses load_accuracy_tracker() so the CSV migration runs first, ensuring
-# pandas always sees a clean, uniform column layout.
-if st.session_state.brain_session_total == 0 and os.path.exists(TRACKER_FILE):
+# ── Restore today's brain accuracy counters from Supabase on first load ────────
+if st.session_state.brain_session_total == 0:
     try:
-        _migrate_tracker_csv()   # fix column mismatch before reading
-        _restore_df = pd.read_csv(TRACKER_FILE, encoding="utf-8")
+        _restore_df = load_accuracy_tracker()
         if "timestamp" in _restore_df.columns and not _restore_df.empty:
-            _today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+            _today_str  = datetime.now(EASTERN).strftime("%Y-%m-%d")
             _today_rows = _restore_df[
                 _restore_df["timestamp"].astype(str).str.startswith(_today_str)
             ]
             if not _today_rows.empty and "correct" in _today_rows.columns:
-                _r_total   = len(_today_rows)
-                _r_correct = int((_today_rows["correct"] == "✅").sum())
-                st.session_state.brain_session_total   = int(_r_total)
-                st.session_state.brain_session_correct = _r_correct
-                # Restore last compare_key so we don't re-log on first run
+                st.session_state.brain_session_total   = int(len(_today_rows))
+                st.session_state.brain_session_correct = int(
+                    (_today_rows["correct"] == "✅").sum())
                 if "compare_key" in _today_rows.columns:
                     _non_empty = _today_rows["compare_key"].dropna()
                     _non_empty = _non_empty[_non_empty.astype(str).str.strip() != ""]

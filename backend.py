@@ -9,6 +9,16 @@ import csv
 import os
 from collections import deque
 import streamlit as st
+from supabase import create_client, Client
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    supabase = None
+    print("WARNING: Supabase credentials not found in environment variables.")
 
 from engine_v2 import (
     calculate_v2_metrics, get_profile_and_shape, calculate_historical_retention,
@@ -454,104 +464,53 @@ class MarketBrain:
 
 # ── Accuracy tracker persistence ──────────────────────────────────────────────
 
-def _migrate_tracker_csv():
-    """One-time fix: rebuild the CSV so every row has the same columns.
-
-    The file may have an 8-column header (pre-compare_key) with some rows
-    that have 9 values — pandas chokes on this.  We read line-by-line with
-    csv.reader (which never errors on column count mismatches), normalise
-    every row to the full column set, then rewrite the file cleanly.
-    """
-    if not os.path.exists(TRACKER_FILE):
-        return
-    full_cols = ["timestamp", "symbol", "predicted", "actual", "correct",
-                 "entry_price", "exit_price", "mfe", "compare_key"]
-    try:
-        rows = []
-        with open(TRACKER_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            raw_header = next(reader, None)
-            if raw_header is None:
-                return
-            # Add compare_key to old header if missing
-            if "compare_key" not in raw_header:
-                header = raw_header + ["compare_key"]
-            else:
-                header = raw_header
-            for row in reader:
-                # Pad short rows, truncate long rows to header length
-                while len(row) < len(header):
-                    row.append("")
-                rows.append(row[:len(header)])
-
-        # Re-map any missing full_cols
-        h_idx = {c: i for i, c in enumerate(header)}
-        out_rows = []
-        for row in rows:
-            out = [row[h_idx[c]] if c in h_idx else "" for c in full_cols]
-            out_rows.append(out)
-
-        with open(TRACKER_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(full_cols)
-            writer.writerows(out_rows)
-    except Exception:
-        pass   # leave file untouched on any error
-
-
 def load_accuracy_tracker():
-    """Return a DataFrame from accuracy_tracker.csv (or empty if none)."""
+    """Load MarketBrain accuracy history from Supabase."""
     cols = ["timestamp", "symbol", "predicted", "actual", "correct",
             "entry_price", "exit_price", "mfe", "compare_key"]
-    if not os.path.exists(TRACKER_FILE):
+    if not supabase:
         return pd.DataFrame(columns=cols)
-    # Ensure the file has a consistent column structure before pandas reads it
-    _migrate_tracker_csv()
     try:
-        df = pd.read_csv(TRACKER_FILE, encoding="utf-8")
+        response = supabase.table("accuracy_tracker").select("*").execute()
+        data = response.data
+        if not data:
+            return pd.DataFrame(columns=cols)
+        df = pd.DataFrame(data)
         for c in cols:
             if c not in df.columns:
                 df[c] = ""
         return df
-    except Exception:
-        # Last-resort: row-by-row manual parse
-        try:
-            rows = []
-            with open(TRACKER_FILE, newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    rows.append({c: row.get(c, "") for c in cols})
-            return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
-        except Exception:
-            return pd.DataFrame(columns=cols)
+    except Exception as e:
+        print(f"Database read error (tracker): {e}")
+        return pd.DataFrame(columns=cols)
 
 
 def log_accuracy_entry(symbol, predicted, actual, compare_key="",
                        entry_price=0.0, exit_price=0.0, mfe=0.0):
-    """Append one Predicted vs Actual row to accuracy_tracker.csv.
-
-    compare_key is stored so dedup checks survive page reloads.
-    """
+    """Log Predicted vs Actual structure to Supabase."""
+    if not supabase:
+        return
     correct = "✅" if _strip_emoji(predicted) in _strip_emoji(actual) or \
                      _strip_emoji(actual) in _strip_emoji(predicted) else "❌"
-    file_exists = os.path.isfile(TRACKER_FILE)
-    with open(TRACKER_FILE, "a", newline="") as f:
-        w = csv.writer(f)
-        if not file_exists:
-            w.writerow(["timestamp", "symbol", "predicted", "actual", "correct",
-                        "entry_price", "exit_price", "mfe", "compare_key"])
-        w.writerow([datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
-                    symbol, predicted, actual, correct,
-                    round(entry_price, 4), round(exit_price, 4), round(mfe, 4),
-                    compare_key])
-
-    # ── Adaptive learning: recalibrate every N entries ────────────────────────
+    row = {
+        "timestamp":   datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol":      symbol,
+        "predicted":   predicted,
+        "actual":      actual,
+        "correct":     correct,
+        "entry_price": float(entry_price),
+        "exit_price":  float(exit_price),
+        "mfe":         float(mfe),
+        "compare_key": compare_key,
+    }
     try:
-        _n_rows = sum(1 for _ in open(TRACKER_FILE)) - 1  # subtract header
+        supabase.table("accuracy_tracker").insert(row).execute()
+        res = supabase.table("accuracy_tracker").select("id", count="exact").execute()
+        _n_rows = res.count if res.count else 0
         if _n_rows > 0 and _n_rows % _RECALIBRATE_EVERY == 0:
             recalibrate_brain_weights()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Database write error (tracker): {e}")
 
 
 def log_high_conviction(ticker, trade_date, structure, prob,
@@ -1730,26 +1689,34 @@ _JOURNAL_COLS = [
 
 
 def load_journal() -> "pd.DataFrame":
-    if not os.path.exists(JOURNAL_PATH):
+    """Load the trade journal from Supabase."""
+    if not supabase:
         return pd.DataFrame(columns=_JOURNAL_COLS)
     try:
-        df = pd.read_csv(JOURNAL_PATH)
+        response = supabase.table("trade_journal").select("*").execute()
+        data = response.data
+        if not data:
+            return pd.DataFrame(columns=_JOURNAL_COLS)
+        df = pd.DataFrame(data)
         for col in _JOURNAL_COLS:
             if col not in df.columns:
                 df[col] = ""
         return df[_JOURNAL_COLS]
-    except Exception:
+    except Exception as e:
+        print(f"Database read error (journal): {e}")
         return pd.DataFrame(columns=_JOURNAL_COLS)
 
 
 def save_journal_entry(entry: dict):
-    exists = os.path.exists(JOURNAL_PATH)
-    with open(JOURNAL_PATH, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_JOURNAL_COLS)
-        if not exists:
-            writer.writeheader()
-        row = {k: entry.get(k, "") for k in _JOURNAL_COLS}
-        writer.writerow(row)
+    """Save a new trade journal entry to Supabase."""
+    if not supabase:
+        print("Error: Supabase not connected.")
+        return
+    try:
+        row = {k: entry.get(k, None) for k in _JOURNAL_COLS}
+        supabase.table("trade_journal").insert(row).execute()
+    except Exception as e:
+        print(f"Database write error (journal): {e}")
 
 
 def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
