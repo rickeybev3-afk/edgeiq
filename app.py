@@ -3084,34 +3084,94 @@ _DEFAULT_WATCHLIST = (
 def fetch_snapshots_bulk(api_key, secret_key, tickers, feed="iex"):
     """Batch-fetch latest price + previous day's close for a list of tickers.
 
-    Returns {sym: {"price": float, "prev_close": float}} for tickers that
-    have data; silently skips tickers with no snapshot.
+    Works during market hours AND after hours / weekends by cascading through
+    every available data field on the snapshot object.
+
+    Returns {sym: {"price": float, "prev_close": float}} for qualifying tickers.
+    Raises on authentication / network errors so the caller can show them.
     """
     from alpaca.data.historical import StockHistoricalDataClient
-    from alpaca.data.requests import StockSnapshotRequest
+    from alpaca.data.requests import StockSnapshotRequest, StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
 
     client = StockHistoricalDataClient(api_key, secret_key)
-    req = StockSnapshotRequest(symbol_or_symbols=list(tickers), feed=feed)
-    snaps = client.get_stock_snapshot(req)
 
-    result = {}
-    for sym, snap in snaps.items():
+    # ── Step 1: try snapshot endpoint ─────────────────────────────────────────
+    snap_result = {}
+    try:
+        req   = StockSnapshotRequest(symbol_or_symbols=list(tickers), feed=feed)
+        snaps = client.get_stock_snapshot(req)
+
+        for sym, snap in snaps.items():
+            try:
+                # Price: latest_trade → latest_quote mid → daily_bar close
+                price = None
+                if getattr(snap, "latest_trade", None) and snap.latest_trade.price:
+                    price = float(snap.latest_trade.price)
+                if price is None and getattr(snap, "latest_quote", None):
+                    q = snap.latest_quote
+                    ask = getattr(q, "ask_price", None)
+                    bid = getattr(q, "bid_price", None)
+                    if ask and bid and ask > 0 and bid > 0:
+                        price = (float(ask) + float(bid)) / 2
+                if price is None and getattr(snap, "daily_bar", None) and snap.daily_bar.close:
+                    price = float(snap.daily_bar.close)
+
+                # Prev close: prev_daily_bar → fall back to daily_bar open
+                prev_close = None
+                if getattr(snap, "prev_daily_bar", None) and snap.prev_daily_bar.close:
+                    prev_close = float(snap.prev_daily_bar.close)
+                if prev_close is None and getattr(snap, "daily_bar", None) and snap.daily_bar.open:
+                    prev_close = float(snap.daily_bar.open)
+
+                if price and price > 0:
+                    snap_result[sym] = {
+                        "price":      price,
+                        "prev_close": prev_close if prev_close and prev_close > 0 else price,
+                    }
+            except Exception:
+                pass
+    except Exception as snap_err:
+        # Snapshot endpoint failed entirely — fall through to daily bars
+        snap_err_str = str(snap_err)
+        if any(k in snap_err_str.lower() for k in ("forbidden", "unauthorized", "403", "401")):
+            raise  # bad credentials — surface immediately
+
+    if snap_result:
+        return snap_result
+
+    # ── Step 2: fallback — fetch last 5 daily bars for each ticker ─────────────
+    # This path is used when the snapshot returns empty (e.g. after hours on IEX)
+    daily_result = {}
+    end_dt   = datetime.now(pytz.UTC)
+    start_dt = end_dt - timedelta(days=10)
+
+    for sym in tickers:
         try:
-            price = None
-            if getattr(snap, "latest_trade", None):
-                price = float(snap.latest_trade.price)
-            if price is None and getattr(snap, "daily_bar", None):
-                price = float(snap.daily_bar.close)
-
-            prev_close = None
-            if getattr(snap, "prev_daily_bar", None):
-                prev_close = float(snap.prev_daily_bar.close)
-
-            if price is not None and prev_close is not None:
-                result[sym] = {"price": price, "prev_close": prev_close}
+            req = StockBarsRequest(
+                symbol_or_symbols=sym,
+                timeframe=TimeFrame.Day,
+                start=start_dt,
+                end=end_dt,
+                feed=feed,
+            )
+            bars = client.get_stock_bars(req)
+            df   = bars.df
+            if df.empty:
+                continue
+            if isinstance(df.index, pd.MultiIndex):
+                df = df.xs(sym, level="symbol")
+            df = df.sort_index()
+            if len(df) < 1:
+                continue
+            price      = float(df["close"].iloc[-1])
+            prev_close = float(df["close"].iloc[-2]) if len(df) >= 2 else price
+            if price > 0:
+                daily_result[sym] = {"price": price, "prev_close": prev_close}
         except Exception:
             pass
-    return result
+
+    return daily_result
 
 
 def fetch_premarket_vols(api_key, secret_key, ticker, trade_date,
