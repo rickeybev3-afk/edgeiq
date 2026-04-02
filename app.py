@@ -2859,18 +2859,23 @@ with tab_chart:
                         else:
                             st.error(f"Error: {err}")
         else:
-            st.info("👈 Enter credentials and settings in the sidebar, then click **Fetch & Analyze**.")
-            st.markdown("### How it works")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown("**📊 Volume Profile**")
-                st.markdown("Bins the day's 1-min bars to show where volume concentrated.")
-            with c2:
-                st.markdown("**🎯 Point of Control**")
-                st.markdown("Gold line — the price level with the highest volume. Price gravitates here.")
-            with c3:
-                st.markdown("**📐 Initial Balance**")
-                st.markdown("9:30–10:30 EST High/Low — the key reference range for day structure.")
+            # If a previous analysis exists (e.g. user clicked LOG ENTRY), show
+            # the log panel instead of resetting to the welcome screen.
+            if st.session_state.get("last_analysis_state"):
+                render_log_entry_ui()
+            else:
+                st.info("👈 Enter credentials and settings in the sidebar, then click **Fetch & Analyze**.")
+                st.markdown("### How it works")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.markdown("**📊 Volume Profile**")
+                    st.markdown("Bins the day's 1-min bars to show where volume concentrated.")
+                with c2:
+                    st.markdown("**🎯 Point of Control**")
+                    st.markdown("Gold line — the price level with the highest volume. Price gravitates here.")
+                with c3:
+                    st.markdown("**📐 Initial Balance**")
+                    st.markdown("9:30–10:30 EST High/Low — the key reference range for day structure.")
 
     # ── Replay mode ────────────────────────────────────────────────────────────
     elif mode == "🎬 Replay":
