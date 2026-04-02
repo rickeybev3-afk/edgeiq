@@ -3319,6 +3319,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("📈 Settings")
+    if st.session_state.get("_load_ticker"):
+        st.session_state.ticker_input = st.session_state.pop("_load_ticker")
     ticker = st.text_input("Ticker Symbol", key="ticker_input",
                            placeholder="e.g. AAPL, GME").upper().strip()
     num_bins = st.slider("Volume Profile Bins", min_value=20, max_value=200, value=100, step=10)
@@ -4830,7 +4832,7 @@ with tab_scan:
             # Clickable button — loads Volume Profile for this ticker
             if st.button(f"📊 Load {sym} Volume Profile", key=f"load_{sym}",
                          use_container_width=False):
-                st.session_state.ticker_input = sym
+                st.session_state._load_ticker = sym
                 st.session_state.auto_run = True
                 st.rerun()
 
