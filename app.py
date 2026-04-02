@@ -12,7 +12,7 @@ from backend import (
     _compute_value_area, _strip_emoji,
     _parse_batch_pairs, _RECALIBRATE_EVERY, _BRAIN_WEIGHT_KEYS,
     _JOURNAL_COLS, _find_peaks, _is_strong_hvn, _detect_double_distribution,
-    _label_to_weight_key, _save_brain_weights, _stream_worker, _GRADE_COLORS,
+    _label_to_weight_key, _save_brain_weights, _stream_worker, _GRADE_COLORS, _GRADE_SCORE,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
