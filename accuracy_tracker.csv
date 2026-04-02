@@ -61,3 +61,4 @@ timestamp,symbol,predicted,actual,correct,entry_price,exit_price,mfe,compare_key
 2026-04-01 00:46:23,GLND,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GLND_2026-04-01_9.9900_9.0200
 2026-04-01 00:46:55,JCSE,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,JCSE_2026-04-01_1.5700_1.4450
 2026-04-01 00:48:01,GVH,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,GVH_2026-04-01_1.6900_1.4800
+2026-04-01 20:24:39,MASK,Neutral,🔄 Neutral,✅,0.0,0.0,0.0,MASK_2026-04-01_2.5500_2.2000
