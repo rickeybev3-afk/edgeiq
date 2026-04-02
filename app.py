@@ -1045,19 +1045,22 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     col3.metric("IB Low",  f"${ib_low:.2f}"  if ib_low  else "—")
     col4.metric("IB Range", f"${ib_range:.2f}")
     col5.metric("Day Range", f"${day_high - day_low:.2f}")
-    col6.metric("POC", f"${poc_price:.2f}")
+    col6.metric("POC", f"${poc_price:.2f}" if poc_price is not None else "—")
     col7.metric("RVOL", rvol_display)
     col8.metric("Sector", sector_display)
 
     # ── IB Volume Stats widget ─────────────────────────────────────────────────
     ib_vol_pct_disp, ib_range_ratio_disp = compute_ib_volume_stats(df, ib_high, ib_low)
-    _ivp_pct = ib_vol_pct_disp * 100
-    _irr_pct = ib_range_ratio_disp * 100
+    _ivp_pct = (ib_vol_pct_disp or 0.0) * 100
+    _irr_pct = (ib_range_ratio_disp or 0.0) * 100
     # Color coding: balanced (green) vs directional (orange/red)
     _ivp_color = ("#4caf50" if _ivp_pct >= 60 else "#ffa726" if _ivp_pct >= 35 else "#ef5350")
     _irr_color = ("#4caf50" if _irr_pct >= 50 else "#ffa726" if _irr_pct >= 25 else "#ef5350")
     _ivp_label = "Balanced" if _ivp_pct >= 60 else ("Neutral" if _ivp_pct >= 35 else "Directional")
     _irr_label = "Contained" if _irr_pct >= 50 else ("Moderate" if _irr_pct >= 25 else "Expanded")
+    _ib_high_str  = f"${ib_high:.2f}"   if ib_high   is not None else "—"
+    _ib_low_str   = f"${ib_low:.2f}"    if ib_low    is not None else "—"
+    _poc_str      = f"${poc_price:.2f}" if poc_price  is not None else "—"
     st.markdown(
         f'<div style="background:#0f3460; border:1px solid #1a3a6e; border-radius:6px; '
         f'padding:8px 16px; margin:4px 0 6px 0; display:flex; align-items:center; gap:20px; flex-wrap:wrap;">'
@@ -1072,7 +1075,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         f'<span style="color:{_irr_color}; font-size:11px;">({_irr_label})</span></span>'
         f'<span style="color:#2a2a4a;">|</span>'
         f'<span style="font-size:11px; color:#555; white-space:nowrap;">'
-        f'IB ${ib_high:.2f} – ${ib_low:.2f} &nbsp;|&nbsp; POC ${poc_price:.2f}</span>'
+        f'IB {_ib_high_str} – {_ib_low_str} &nbsp;|&nbsp; POC {_poc_str}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
