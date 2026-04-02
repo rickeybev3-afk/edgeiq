@@ -43,3 +43,4 @@ timestamp,ticker,date,structure,prob_pct,ib_high,ib_low,poc_price
 2026-04-01 22:06:37,GME,2026-04-01,Ntrl Extreme,86.3,23.34,23.09,22.8326
 2026-04-01 23:38:13,ELAB,2026-04-01,Ntrl Extreme,86.3,7.72,6.61,7.2365
 2026-04-01 23:39:43,MASK,2026-04-01,Neutral,86.6,2.55,2.2,1.9025
+2026-04-01 23:42:52,GVH,2026-04-01,Ntrl Extreme,86.3,2.49,1.88,1.9989

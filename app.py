@@ -355,7 +355,7 @@ def render_journal_tab():
         name="Grade Average",
         hovertemplate="Entry %{x} — Avg %{y:.2f}<extra></extra>",
     ))
-    fig.add_hline(y=3.0, line=dict(color="#4caf5066", dash="dot"),
+    fig.add_hline(y=3.0, line=dict(color="rgba(76,175,80,0.4)", dash="dot"),
                   annotation_text="B threshold", annotation_font_color="#4caf50")
     fig.update_layout(
         paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
