@@ -38,12 +38,13 @@ A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for 
 - **Volume Velocity widget** — vol/min + acceleration label
 - **Audio/Visual Alert System** — Web Audio API tones (chime, low-tone, target-reached)
 - **Pre-Market Gap Scanner** — batch-scans 30-ticker watchlist for gap% + PM RVOL, top-3 results
-- **Trade Journal** — persistent CSV journal (`trade_journal.csv`):
+- **Trade Journal** — cloud-persisted via Supabase (`trade_journal` table):
   - Captures: Ticker, Price, Timestamp, Structure, TCS, RVOL, Notes, Grade, Grade Reason
   - Auto-grading engine: A / B / C / F with plain-language reason
   - Colored grade badges (green A → red F)
   - Grade discipline equity curve (rolling average over entries)
   - CSV download button
+- **Accuracy Tracker** — cloud-persisted via Supabase (`accuracy_tracker` table)
 
 ### Dashboard Layout (3 tabs)
 - **📈 Main Chart** — Volume Profile chart, all indicators, `💾 LOG ENTRY` expander
