@@ -15,7 +15,11 @@ from collections import deque
 from engine_v2 import (
     calculate_v2_metrics,
     get_profile_and_shape,
-    v2_brain_v3,
+    calculate_historical_retention,
+    identify_overhead_supply,
+    v2_brain_final_boss,
+    calculate_time_multiplier,
+    v2_brain_v3,             # legacy alias
     get_volume_profile_v2,   # legacy alias
     v2_execution_logic,      # legacy alias
 )
