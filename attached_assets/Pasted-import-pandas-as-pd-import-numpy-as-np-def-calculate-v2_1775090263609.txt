@@ -1,0 +1,112 @@
+import pandas as pd
+import numpy as np
+
+def calculate_v2_metrics(df, atr_period=14):
+    """
+    Phase 1: Metric Engine
+    Calculates the 'Frequencies' (Z-Score, Delta, ATR)
+    """
+    # 1. DYNAMIC BINNING (ATR-BASED)
+    df['tr'] = np.maximum(df['High'] - df['Low'], 
+                          np.maximum(np.abs(df['High'] - df['Close'].shift()), 
+                                     np.abs(df['Low'] - df['Close'].shift())))
+    df['atr'] = df['tr'].rolling(window=atr_period).mean()
+    atr = df['atr'].iloc[-1] if not pd.isna(df['atr'].iloc[-1]) else 0.1
+    bin_size = max(0.01, atr * 0.1) # Higher resolution for small caps
+
+    # 2. TIME-SEGMENTED Z-SCORE VOLUME
+    df.index = pd.to_datetime(df.index)
+    df['hour'] = df.index.hour
+    df['minute'] = df.index.minute
+    
+    stats = df.groupby(['hour', 'minute'], observed=True)['Volume'].agg(['mean', 'std']).reset_index()
+    df = df.reset_index().merge(stats, on=['hour', 'minute'], how='left').set_index('Date')
+    df['vol_z_score'] = (df['Volume'] - df['mean']) / (df['std'] + 0.1)
+
+    # 3. ORDER FLOW DELTA & CVD
+    # Approximation of aggression: Effort vs Result
+    df['delta'] = ((df['Close'] - df['Open']) / (df['High'] - df['Low'] + 0.001)) * df['Volume']
+    df['cvd'] = df['delta'].cumsum()
+
+    # Divergence Tracking (Trap Detector)
+    df['cvd_slope'] = df['cvd'].rolling(window=5).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)==5 else 0)
+    df['price_slope'] = df['Close'].rolling(window=5).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)==5 else 0)
+    
+    df['divergence'] = np.where((df['cvd_slope'] > 0) & (df['price_slope'] < 0), 'Bullish_Abs', 
+                       np.where((df['cvd_slope'] < 0) & (df['price_slope'] > 0), 'Bearish_Dist', 'Neutral'))
+
+    return df, bin_size
+
+def get_profile_and_shape(df, bin_size):
+    """
+    Phase 2: The Skull
+    Builds the Volume Profile and Classifies the Structure
+    """
+    price_min, price_max = df['Low'].min(), df['High'].max()
+    bins = np.arange(price_min, price_max + bin_size, bin_size)
+    
+    # Generate Profile
+    df['price_bin'] = pd.cut(df['Close'], bins=bins, labels=bins[:-1])
+    profile = df.groupby('price_bin', observed=True)['Volume'].sum().reset_index()
+    profile.columns = ['price', 'volume']
+    
+    # Identify Key Levels
+    poc_price = profile.loc[profile['volume'].idxmax(), 'price']
+    total_range = price_max - price_min
+    
+    # Shape Classification logic (The "Thirds" Rule)
+    top_third = price_max - (total_range / 3)
+    bottom_third = price_min + (total_range / 3)
+    
+    vol_top = profile[profile['price'] >= top_third]['volume'].sum()
+    vol_mid = profile[(profile['price'] < top_third) & (profile['price'] > bottom_third)]['volume'].sum()
+    vol_bot = profile[profile['price'] <= bottom_third]['volume'].sum()
+    total_vol = profile['volume'].sum()
+
+    # Classification logic
+    if vol_top > (vol_mid + vol_bot) * 0.6:
+        shape = "P-Shape"  # Short Covering / Aggressive Buying
+    elif vol_bot > (vol_top + vol_mid) * 0.6:
+        shape = "b-Shape"  # Long Liquidation / Aggressive Selling
+    elif vol_mid > (vol_top + vol_bot) * 0.7:
+        shape = "D-Shape"  # Balanced / Mean Reversion
+    elif vol_top > vol_mid and vol_bot > vol_mid:
+        shape = "B-Shape"  # Double Distribution / Trending
+    else:
+        shape = "Thin/I-Shape" # Parabolic / Emotional Trend
+
+    # Liquidity Void Detection
+    poc_vol = profile['volume'].max()
+    void_zones = profile[profile['volume'] < (poc_vol * 0.2)]['price'].tolist()
+
+    return profile, poc_price, shape, void_zones
+
+def v2_brain_v3(row, shape, void_zones, pillar_score=0):
+    """
+    Phase 3: The Brain
+    Final Confluence Engine
+    """
+    score = 0
+    
+    # 1. Structural Bias
+    if shape == "P-Shape": score += 20
+    elif shape == "Thin/I-Shape": score += 15 # Momentum bias
+    elif shape == "b-Shape": score -= 30
+    elif shape == "D-Shape": score -= 10 # Choppy, reduce aggression
+    
+    # 2. Institutional Aggression (Z-Score)
+    if row['vol_z_score'] > 2.5: score += 40
+    elif row['vol_z_score'] > 1.5: score += 15
+    
+    # 3. Order Flow Divergence
+    if row['divergence'] == 'Bullish_Abs': score += 25
+    elif row['divergence'] == 'Bearish_Dist': score -= 40
+    
+    # 4. Liquidity Velocity
+    is_in_void = any(abs(row['Close'] - v) < 0.05 for v in void_zones)
+    if is_in_void: score += 20
+    
+    # 5. Ross Cameron Pillar Influence
+    score += pillar_score 
+    
+    return score

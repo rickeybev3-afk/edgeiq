@@ -12,7 +12,13 @@ import json
 import csv
 import os
 from collections import deque
-from engine_v2 import calculate_v2_metrics, get_volume_profile_v2, v2_execution_logic
+from engine_v2 import (
+    calculate_v2_metrics,
+    get_profile_and_shape,
+    v2_brain_v3,
+    get_volume_profile_v2,   # legacy alias
+    v2_execution_logic,      # legacy alias
+)
 
 STATE_FILE   = "trade_state.json"
 TRACKER_FILE = "accuracy_tracker.csv"
