@@ -274,6 +274,62 @@ def render_log_entry_ui():
                 unsafe_allow_html=True,
             )
 
+    # ── Recent Trades preview (last 10 from Supabase) ─────────────────────────
+    _recent_df = load_journal()
+    if not _recent_df.empty:
+        _cols = [c for c in ["timestamp", "ticker", "price", "structure", "grade"]
+                 if c in _recent_df.columns]
+        _show = _recent_df[_cols].head(10).copy()
+
+        # Format price column
+        if "price" in _show.columns:
+            _show["price"] = _show["price"].apply(
+                lambda x: f"${float(x):.2f}" if x not in (None, "", "nan") else "—"
+            )
+
+        # Grade → colored badge via styled HTML
+        _grade_row_colors = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}
+        rows_html = ""
+        for _, row in _show.iterrows():
+            g  = str(row.get("grade", ""))
+            gc = _grade_row_colors.get(g, "#555")
+            ts = str(row.get("timestamp", ""))[:16]   # trim seconds
+            rows_html += (
+                f'<tr>'
+                f'<td style="color:#888; font-size:11px; padding:5px 8px; white-space:nowrap;">{ts}</td>'
+                f'<td style="color:#e0e0e0; font-weight:700; padding:5px 8px;">{row.get("ticker","")}</td>'
+                f'<td style="color:#90caf9; padding:5px 8px;">{row.get("price","")}</td>'
+                f'<td style="color:#aaa; font-size:11px; padding:5px 8px;">{row.get("structure","")}</td>'
+                f'<td style="padding:5px 8px; text-align:center;">'
+                f'<span style="background:{gc}22; border:1px solid {gc}; color:{gc}; '
+                f'border-radius:4px; padding:2px 8px; font-weight:700; font-size:12px;">{g}</span>'
+                f'</td>'
+                f'</tr>'
+            )
+
+        st.markdown(
+            f'<div style="margin-top:12px;">'
+            f'<div style="font-size:12px; color:#5c6bc0; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:6px;">📋 Recent Trades</div>'
+            f'<table style="width:100%; border-collapse:collapse; background:#12122a; '
+            f'border-radius:6px; overflow:hidden;">'
+            f'<thead><tr style="background:#1a1a3e; border-bottom:1px solid #2a2a4a;">'
+            f'<th style="text-align:left; color:#5c6bc0; font-size:10px; padding:6px 8px; '
+            f'text-transform:uppercase; letter-spacing:1px;">Time</th>'
+            f'<th style="text-align:left; color:#5c6bc0; font-size:10px; padding:6px 8px; '
+            f'text-transform:uppercase; letter-spacing:1px;">Ticker</th>'
+            f'<th style="text-align:left; color:#5c6bc0; font-size:10px; padding:6px 8px; '
+            f'text-transform:uppercase; letter-spacing:1px;">Price</th>'
+            f'<th style="text-align:left; color:#5c6bc0; font-size:10px; padding:6px 8px; '
+            f'text-transform:uppercase; letter-spacing:1px;">Structure</th>'
+            f'<th style="text-align:center; color:#5c6bc0; font-size:10px; padding:6px 8px; '
+            f'text-transform:uppercase; letter-spacing:1px;">Grade</th>'
+            f'</tr></thead>'
+            f'<tbody>{rows_html}</tbody>'
+            f'</table></div>',
+            unsafe_allow_html=True,
+        )
+
 
 def render_journal_tab():
     """Render the 📖 My Journal tab."""
