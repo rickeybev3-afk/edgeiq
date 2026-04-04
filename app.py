@@ -2191,6 +2191,182 @@ def _structure_color(label_str):
             return col
     return "#5c6bc0"
 
+
+# ── Live Playbook Screener Tab ──────────────────────────────────────────────────
+def render_playbook_tab(api_key: str = "", secret_key: str = ""):
+    """Render the 📋 Playbook tab — live small-cap screener with one-click journal routing."""
+
+    # ── Header ─────────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="margin-bottom:4px;">'
+        '<span style="font-size:22px; font-weight:800; color:#e0e0e0;">📋 Live Playbook</span>'
+        '<span style="font-size:12px; color:#5c6bc0; margin-left:14px; text-transform:uppercase; '
+        'letter-spacing:1px;">Small-Cap Screener · $2 – $20 · Alpaca Market Data</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="font-size:12px; color:#607d8b; margin-bottom:16px;">'
+        'Combines <b>Most Active</b> (by volume) and <b>Top Gainers</b> from Alpaca. '
+        'Filtered to your target range. Click <b>📝 Log</b> on any row to pre-load '
+        'the ticker &amp; price in your Chart → Log Entry form.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── No credentials guard ────────────────────────────────────────────────────
+    if not api_key or not secret_key:
+        st.warning("Enter your **Alpaca API Key** and **Secret Key** in the sidebar to enable the Playbook scanner.")
+        return
+
+    # ── Scan controls ───────────────────────────────────────────────────────────
+    _pb_c1, _pb_c2, _pb_c3 = st.columns([2, 1, 1])
+    with _pb_c1:
+        _pb_top = st.slider("Candidates to scan per source", 20, 100, 50, step=10,
+                            key="playbook_top_slider")
+    with _pb_c2:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _pb_refresh = st.button("🔄 Refresh Scan", use_container_width=True,
+                                key="playbook_refresh_btn")
+    with _pb_c3:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _pb_auto = st.checkbox("Auto-refresh (60 s)", value=False, key="playbook_auto_refresh")
+
+    # ── Cached results in session state ─────────────────────────────────────────
+    _pb_cache_key = "playbook_results_cache"
+    _pb_time_key  = "playbook_last_fetch"
+
+    _should_fetch = (
+        _pb_refresh
+        or _pb_cache_key not in st.session_state
+        or (
+            _pb_auto
+            and (time.time() - st.session_state.get(_pb_time_key, 0)) > 60
+        )
+    )
+
+    if _should_fetch:
+        with st.spinner("Scanning Alpaca market data…"):
+            _rows, _err = scan_playbook(api_key, secret_key, top=_pb_top)
+        st.session_state[_pb_cache_key] = (_rows, _err)
+        st.session_state[_pb_time_key]  = time.time()
+    else:
+        _rows, _err = st.session_state.get(_pb_cache_key, ([], ""))
+
+    # ── Pre-load success banner ─────────────────────────────────────────────────
+    _pb_loaded = st.session_state.pop("_playbook_just_loaded", None)
+    if _pb_loaded:
+        st.success(
+            f"✅ **{_pb_loaded['ticker']}** pre-loaded at **${_pb_loaded['price']:.2f}** — "
+            f"click the **📈 Main Chart** tab and scroll down to the "
+            f"**Log This Trade Entry** form to complete your journal."
+        )
+
+    # ── Error handling ──────────────────────────────────────────────────────────
+    if _err:
+        st.error(f"Screener error: {_err}")
+
+    if not _rows:
+        if not _err:
+            st.info("No small-cap stocks in the $2–$20 range found right now. Try refreshing after market open.")
+        return
+
+    # ── Last fetch timestamp ────────────────────────────────────────────────────
+    _ts = st.session_state.get(_pb_time_key, 0)
+    if _ts:
+        _ago = int(time.time() - _ts)
+        _ago_str = f"{_ago}s ago" if _ago < 120 else f"{_ago // 60}m ago"
+        st.markdown(
+            f'<div style="font-size:11px; color:#546e7a; margin-bottom:12px;">'
+            f'Last fetched: <b>{_ago_str}</b> · {len(_rows)} stocks in range</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Column headers ──────────────────────────────────────────────────────────
+    _hdr = st.columns([1.2, 1.1, 1.1, 1.5, 1.2, 0.9])
+    _hdr_labels = ["Ticker", "Price", "% Change", "Volume", "Source", "Action"]
+    _hdr_colors = ["#90caf9", "#90caf9", "#90caf9", "#90caf9", "#90caf9", "#90caf9"]
+    for _col, _lbl, _clr in zip(_hdr, _hdr_labels, _hdr_colors):
+        _col.markdown(
+            f'<div style="font-size:11px; font-weight:700; color:{_clr}; '
+            f'text-transform:uppercase; letter-spacing:0.8px; padding:4px 0 8px 0; '
+            f'border-bottom:1px solid #1e2a3a;">{_lbl}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Data rows ───────────────────────────────────────────────────────────────
+    for _i, _row in enumerate(_rows):
+        _sym   = _row["ticker"]
+        _price = _row["price"]
+        _chg   = _row["change_pct"]
+        _vol   = _row["volume"]
+        _src   = _row["source"]
+
+        _chg_color = "#4caf50" if _chg >= 0 else "#ef5350"
+        _chg_sign  = "+" if _chg >= 0 else ""
+        _vol_str   = f"{_vol:,}" if _vol else "—"
+
+        _src_color = (
+            "#4caf50" if _src == "Active + Gainer"
+            else "#66bb6a" if _src == "Gainer"
+            else "#5c6bc0"
+        )
+
+        _row_cols = st.columns([1.2, 1.1, 1.1, 1.5, 1.2, 0.9])
+
+        _row_cols[0].markdown(
+            f'<div style="padding:10px 0; font-size:15px; font-weight:800; color:#e0e0e0;">'
+            f'{_sym}</div>',
+            unsafe_allow_html=True,
+        )
+        _row_cols[1].markdown(
+            f'<div style="padding:10px 0; font-size:14px; color:#cfd8dc;">'
+            f'${_price:.2f}</div>',
+            unsafe_allow_html=True,
+        )
+        _row_cols[2].markdown(
+            f'<div style="padding:10px 0; font-size:14px; font-weight:700; color:{_chg_color};">'
+            f'{_chg_sign}{_chg:.2f}%</div>',
+            unsafe_allow_html=True,
+        )
+        _row_cols[3].markdown(
+            f'<div style="padding:10px 0; font-size:13px; color:#90a4ae;">'
+            f'{_vol_str}</div>',
+            unsafe_allow_html=True,
+        )
+        _row_cols[4].markdown(
+            f'<div style="padding:10px 0;">'
+            f'<span style="background:{_src_color}22; color:{_src_color}; '
+            f'font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; '
+            f'border:1px solid {_src_color}55; text-transform:uppercase;">'
+            f'{_src}</span></div>',
+            unsafe_allow_html=True,
+        )
+        with _row_cols[5]:
+            if st.button("📝 Log", key=f"playbook_log_{_i}_{_sym}",
+                         use_container_width=True):
+                st.session_state["_fetched_price"]    = _price
+                st.session_state["_fetched_volume"]   = _vol
+                st.session_state["_fetched_symbol"]   = _sym
+                st.session_state["_playbook_just_loaded"] = {
+                    "ticker": _sym, "price": _price
+                }
+                st.rerun()
+
+        st.markdown(
+            f'<div style="border-bottom:1px solid #0d1520; margin:0;"></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Auto-refresh trigger ────────────────────────────────────────────────────
+    if _pb_auto:
+        _remaining = max(0, 60 - int(time.time() - st.session_state.get(_pb_time_key, 0)))
+        st.markdown(
+            f'<div style="font-size:11px; color:#37474f; margin-top:12px;">'
+            f'Auto-refresh in {_remaining}s</div>',
+            unsafe_allow_html=True,
+        )
+
 def _clean_structure_label(raw):
     """Strip emojis + extra words for a readable short label."""
     import re
@@ -3431,8 +3607,8 @@ def render_sa_tab():
         st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
 
 
-tab_chart, tab_scan, tab_journal, tab_tracker, tab_analytics, tab_sa = st.tabs(
-    ["📈 Main Chart", "🔍 Scanner", "📖 Journal", "🧠 Tracker",
+tab_chart, tab_scan, tab_playbook, tab_journal, tab_tracker, tab_analytics, tab_sa = st.tabs(
+    ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "📖 Journal", "🧠 Tracker",
      "📊 Analytics", "⚡ Small Account"]
 )
 
@@ -3863,6 +4039,10 @@ with tab_chart:
                 with c4:
                     st.markdown("**🎯 Probabilities**")
                     st.markdown("Every structure type scored continuously as the tape develops.")
+
+# ── Playbook tab ──────────────────────────────────────────────────────────────
+with tab_playbook:
+    render_playbook_tab(api_key=api_key, secret_key=secret_key)
 
 # ── Journal tab ───────────────────────────────────────────────────────────────
 with tab_journal:

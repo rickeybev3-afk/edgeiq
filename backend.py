@@ -2448,3 +2448,88 @@ def compute_edge_analytics(journal_df: pd.DataFrame,
     }
 
 
+# ── Live Playbook Screener ──────────────────────────────────────────────────────
+def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
+    """Scan Alpaca for today's most-active and top-gaining small-cap stocks ($2–$20).
+
+    Returns
+    -------
+    (rows: list[dict], error: str)
+        rows — sorted by % change descending; each dict has:
+            ticker, price, change_pct, volume, source
+        error — non-empty string only if *both* endpoints fail
+    """
+    if not api_key or not secret_key:
+        return [], "No API credentials provided."
+
+    headers = {
+        "APCA-API-KEY-ID":     api_key,
+        "APCA-API-SECRET-KEY": secret_key,
+        "accept":              "application/json",
+    }
+    base   = "https://data.alpaca.markets/v1beta1/screener/stocks"
+    pool   = {}
+    errors = []
+
+    # ── Most Actives ─────────────────────────────────────────────────────────
+    try:
+        r = requests.get(
+            f"{base}/most-actives",
+            params={"by": "volume", "top": top},
+            headers=headers,
+            timeout=10,
+        )
+        if r.status_code == 200:
+            for item in r.json().get("most_actives", []):
+                sym        = str(item.get("symbol", "")).upper()
+                price      = float(item.get("price", 0) or 0)
+                change_pct = float(item.get("percent_change", 0) or 0)
+                volume     = int(item.get("volume", 0) or 0)
+                if sym and 2.0 <= price <= 20.0:
+                    pool[sym] = {
+                        "ticker":     sym,
+                        "price":      price,
+                        "change_pct": change_pct,
+                        "volume":     volume,
+                        "source":     "Active",
+                    }
+        else:
+            errors.append(f"most-actives HTTP {r.status_code}")
+    except Exception as exc:
+        errors.append(f"most-actives: {exc}")
+
+    # ── Top Gainers ───────────────────────────────────────────────────────────
+    try:
+        r = requests.get(
+            f"{base}/movers",
+            params={"top": top, "market_type": "stocks"},
+            headers=headers,
+            timeout=10,
+        )
+        if r.status_code == 200:
+            for item in r.json().get("gainers", []):
+                sym        = str(item.get("symbol", "")).upper()
+                price      = float(item.get("price", 0) or 0)
+                change_pct = float(item.get("percent_change", 0) or 0)
+                volume     = int(item.get("volume", 0) or 0)
+                if sym and 2.0 <= price <= 20.0:
+                    if sym in pool:
+                        pool[sym]["source"] = "Active + Gainer"
+                    else:
+                        pool[sym] = {
+                            "ticker":     sym,
+                            "price":      price,
+                            "change_pct": change_pct,
+                            "volume":     volume,
+                            "source":     "Gainer",
+                        }
+        else:
+            errors.append(f"movers HTTP {r.status_code}")
+    except Exception as exc:
+        errors.append(f"movers: {exc}")
+
+    rows = sorted(pool.values(), key=lambda x: x["change_pct"], reverse=True)
+    err  = "; ".join(errors) if (errors and not rows) else ""
+    return rows, err
+
+
