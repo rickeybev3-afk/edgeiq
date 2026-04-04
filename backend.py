@@ -2502,7 +2502,7 @@ def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
     try:
         r = requests.get(
             f"{base}/movers",
-            params={"top": top, "market_type": "stocks"},
+            params={"top": top},
             headers=headers,
             timeout=10,
         )
