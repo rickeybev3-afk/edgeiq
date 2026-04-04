@@ -2534,6 +2534,165 @@ def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
     return rows, err
 
 
+# ── Historical Backtester ───────────────────────────────────────────────────────
+_BACKTEST_DIRECTIONAL = ("Trend", "Nrml Var", "Normal Var")
+_BACKTEST_RANGE       = ("Non-Trend", "Non Trend")
+_BACKTEST_BALANCED    = ("Neutral", "Ntrl", "Extreme")
+_BACKTEST_BIMODAL     = ("Dbl Dist", "Double")
+_BACKTEST_NORMAL      = ("Normal",)   # Normal (not Var) — range-ish
+
+
+def _backtest_single(api_key: str, secret_key: str, sym: str,
+                     trade_date, feed: str, price_min: float, price_max: float):
+    """Fetch one ticker's historical bars, score the morning, evaluate the afternoon.
+
+    Returns a result dict or None if data is insufficient / out of price range.
+    """
+    try:
+        df = fetch_bars(api_key, secret_key, sym, trade_date, feed=feed)
+        if df.empty or len(df) < 10:
+            return None
+
+        # Price range gate: use first bar open price
+        open_px = float(df["open"].iloc[0])
+        if not (price_min <= open_px <= price_max):
+            return None
+
+        # Split at IB end (10:30 ET)
+        ib_cutoff = df.index[0].replace(hour=10, minute=30, second=0)
+        pm_df  = df[df.index <= ib_cutoff]   # engine input
+        aft_df = df[df.index > ib_cutoff]    # actual outcome
+
+        if len(pm_df) < 5 or len(aft_df) < 5:
+            return None
+
+        # Morning engine run
+        ib_high, ib_low = compute_initial_balance(pm_df)
+        if not ib_high or not ib_low:
+            return None
+
+        bin_centers, vap, poc_price = compute_volume_profile(pm_df, num_bins=30)
+        tcs   = float(compute_tcs(pm_df, ib_high, ib_low, poc_price))
+        probs = compute_structure_probabilities(
+            pm_df, bin_centers, vap, ib_high, ib_low, poc_price
+        )
+        predicted = max(probs, key=probs.get) if probs else "—"
+        confidence = round(probs.get(predicted, 0.0), 1)
+
+        # Afternoon reality
+        aft_high = float(aft_df["high"].max())
+        aft_low  = float(aft_df["low"].min())
+        close_px = float(aft_df["close"].iloc[-1])
+
+        broke_up   = aft_high > ib_high
+        broke_down = aft_low  < ib_low
+
+        if broke_up and broke_down:
+            actual_outcome = "Both Sides"
+            actual_icon    = "↕"
+        elif broke_up:
+            actual_outcome = "Bullish Break"
+            actual_icon    = "↑"
+        elif broke_down:
+            actual_outcome = "Bearish Break"
+            actual_icon    = "↓"
+        else:
+            actual_outcome = "Range-Bound"
+            actual_icon    = "—"
+
+        # Win/Loss: does predicted category match actual outcome?
+        is_dir     = any(k in predicted for k in _BACKTEST_DIRECTIONAL)
+        is_range   = any(k in predicted for k in _BACKTEST_RANGE)
+        is_balanced = any(k in predicted for k in _BACKTEST_BALANCED)
+        is_bimodal = any(k in predicted for k in _BACKTEST_BIMODAL)
+        is_normal  = (not is_dir and not is_range and not is_balanced
+                      and not is_bimodal and "Normal" in predicted)
+
+        if is_dir:
+            win = actual_outcome in ("Bullish Break", "Bearish Break")
+        elif is_range or is_normal:
+            win = actual_outcome == "Range-Bound"
+        elif is_balanced:
+            win = actual_outcome == "Both Sides"
+        elif is_bimodal:
+            win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+        else:
+            win = False
+
+        # % move after IB
+        pm_range   = ib_high - ib_low
+        aft_move   = (close_px - ((ib_high + ib_low) / 2)) / open_px * 100
+
+        return {
+            "ticker":          sym,
+            "open_price":      round(open_px, 2),
+            "ib_high":         round(ib_high, 2),
+            "ib_low":          round(ib_low, 2),
+            "tcs":             round(tcs, 1),
+            "predicted":       predicted,
+            "confidence":      confidence,
+            "actual_outcome":  actual_outcome,
+            "actual_icon":     actual_icon,
+            "close_price":     round(close_px, 2),
+            "aft_move_pct":    round(aft_move, 2),
+            "win_loss":        "Win" if win else "Loss",
+        }
+    except Exception:
+        return None
+
+
+def run_historical_backtest(
+    api_key: str, secret_key: str,
+    trade_date,
+    tickers: list,
+    feed: str = "sip",
+    price_min: float = 2.0,
+    price_max: float = 20.0,
+) -> tuple:
+    """Run the quant engine on morning-only historical data and score against afternoon.
+
+    Returns (results: list[dict], summary: dict).
+    Results are sorted by TCS descending.
+    """
+    if not tickers:
+        return [], {"error": "No tickers provided."}
+    if not api_key or not secret_key:
+        return [], {"error": "Alpaca credentials missing."}
+
+    results = []
+    with ThreadPoolExecutor(max_workers=min(10, len(tickers))) as executor:
+        futures = {
+            executor.submit(
+                _backtest_single, api_key, secret_key, sym,
+                trade_date, feed, price_min, price_max
+            ): sym
+            for sym in tickers
+        }
+        for future in as_completed(futures):
+            r = future.result()
+            if r is not None:
+                results.append(r)
+
+    if not results:
+        return [], {"error": "No valid data returned. Check tickers and date (market must have been open)."}
+
+    results.sort(key=lambda x: x["tcs"], reverse=True)
+
+    wins     = sum(1 for r in results if r["win_loss"] == "Win")
+    losses   = len(results) - wins
+    win_rate = round(wins / len(results) * 100, 1) if results else 0.0
+
+    summary = {
+        "win_rate":    win_rate,
+        "total":       len(results),
+        "wins":        wins,
+        "losses":      losses,
+        "highest_tcs": round(max(r["tcs"] for r in results), 1),
+        "avg_tcs":     round(sum(r["tcs"] for r in results) / len(results), 1),
+    }
+    return results, summary
+
+
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────
 def _score_single_ticker(api_key: str, secret_key: str, sym: str,
                          trade_date, feed: str = "iex"):

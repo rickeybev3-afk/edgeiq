@@ -2452,8 +2452,327 @@ def _clean_structure_label(raw):
     """Strip emojis + extra words for a readable short label."""
     import re
     s = re.sub(r"[^\w\s()/\-]", "", str(raw)).strip()
-    # Trim very long labels
     return s[:30] if len(s) > 30 else s
+
+
+# ── Historical Backtester Tab ───────────────────────────────────────────────────
+_BT_DEFAULT_TICKERS = (
+    "GME,AMC,SOFI,SPCE,SNDL,TLRY,XELA,OCGN,CLOV,MVIS,"
+    "WKHS,NKLA,RIDE,WISH,BBIG,SENS,CIDM,FFIE,MULN,PHUN,"
+    "ATER,PROG,BIOR,CTRM,SIGA,GFAI,ONDS,ATNM,CTXR,PAVS"
+)
+
+_BT_WIN_CLR   = "#4caf50"
+_BT_LOSS_CLR  = "#ef5350"
+_BT_NEUT_CLR  = "#546e7a"
+
+
+def _bt_tcs_color(tcs):
+    if tcs is None:  return _BT_NEUT_CLR
+    if tcs >= 70:    return "#4caf50"
+    if tcs >= 40:    return "#ffa726"
+    return "#ef5350"
+
+
+def _bt_outcome_color(outcome):
+    return {
+        "Bullish Break": "#4caf50",
+        "Bearish Break": "#ef5350",
+        "Both Sides":    "#ffa726",
+        "Range-Bound":   "#5c6bc0",
+    }.get(outcome, _BT_NEUT_CLR)
+
+
+def render_backtest_tab(api_key: str = "", secret_key: str = ""):
+    """Render the 🔬 Backtest Engine tab — institutional backtesting terminal."""
+
+    # ── Terminal header ─────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="background:#020813; border:1px solid #0d2137; border-radius:10px; '
+        'padding:16px 22px; margin-bottom:18px;">'
+        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:2px; margin-bottom:4px;">QUANT RESEARCH TERMINAL v2</div>'
+        '<div style="font-size:24px; font-weight:900; color:#e0e0e0; '
+        'font-family:monospace;">🔬 Historical Backtest Engine</div>'
+        '<div style="font-size:12px; color:#455a64; margin-top:4px;">'
+        'Simulates your quant model on historical morning data → measures afternoon accuracy. '
+        'Engine sees only 9:30–10:30 AM, then we check what actually happened 10:30 AM–4:00 PM.'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not api_key or not secret_key:
+        st.warning("Enter your **Alpaca API Key** and **Secret Key** in the sidebar to run backtests.")
+        return
+
+    # ── Configuration panel ─────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:1.5px; margin-bottom:10px; font-weight:700;">⚙ Simulation Parameters</div>',
+        unsafe_allow_html=True,
+    )
+    _bt_col1, _bt_col2, _bt_col3 = st.columns([1.2, 1.2, 1])
+    with _bt_col1:
+        yesterday = date.today() - timedelta(days=1)
+        _bt_date  = st.date_input(
+            "Backtest Date", value=yesterday,
+            max_value=date.today() - timedelta(days=1),
+            key="bt_date_picker",
+            help="Select any past trading day. Weekends/holidays will return no data.",
+        )
+    with _bt_col2:
+        _bt_feed = st.radio(
+            "Bar Data Feed", ["SIP (paid — accurate)", "IEX (free — limited)"],
+            key="bt_feed_radio", horizontal=True,
+        )
+        _bt_feed_str = "sip" if "SIP" in _bt_feed else "iex"
+    with _bt_col3:
+        _bt_price_range = st.slider(
+            "Price Range ($)", min_value=1.0, max_value=50.0,
+            value=(2.0, 20.0), step=0.5, key="bt_price_range",
+        )
+
+    st.markdown(
+        '<div style="font-size:11px; color:#37474f; margin:10px 0 4px 0;">Ticker Watchlist '
+        '(comma-separated — engine will test all, keep only those in price range on that date)'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    _bt_tickers_raw = st.text_area(
+        "Ticker Watchlist", value=_BT_DEFAULT_TICKERS,
+        height=68, key="bt_tickers_input", label_visibility="collapsed",
+    )
+
+    _bt_run = st.button(
+        "▶ RUN SIMULATION", use_container_width=True, key="bt_run_btn",
+        type="primary",
+    )
+
+    st.markdown(
+        '<div style="font-size:10px; color:#263238; margin-top:6px;">'
+        'Engine logic: IB = 9:30–10:30 AM · Prediction = TCS + top structure probability · '
+        'Win = predicted category matches afternoon reality (directional / range / balanced)'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+
+    # ── Run simulation ──────────────────────────────────────────────────────────
+    _bt_cache = "bt_results_cache"
+
+    if _bt_run:
+        _tickers = [t.strip().upper() for t in _bt_tickers_raw.replace("\n", ",").split(",")
+                    if t.strip() and t.strip().isalpha()]
+        if not _tickers:
+            st.error("No valid tickers found. Check your watchlist.")
+            st.stop()
+
+        _pmin, _pmax = float(_bt_price_range[0]), float(_bt_price_range[1])
+        _total = len(_tickers)
+
+        with st.spinner(
+            f"⏳ Simulating {_total} tickers on {_bt_date} — "
+            f"fetching bars & running quant engine concurrently…"
+        ):
+            _results, _summary = run_historical_backtest(
+                api_key, secret_key,
+                trade_date=_bt_date,
+                tickers=_tickers,
+                feed=_bt_feed_str,
+                price_min=_pmin,
+                price_max=_pmax,
+            )
+        st.session_state[_bt_cache] = (_results, _summary, _bt_date)
+
+    # ── Load cached results ─────────────────────────────────────────────────────
+    if _bt_cache not in st.session_state:
+        st.markdown(
+            '<div style="text-align:center; color:#263238; font-size:13px; '
+            'padding:40px 0; font-family:monospace;">'
+            '[ SELECT DATE + TICKERS → PRESS RUN SIMULATION ]'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    _results, _summary, _sim_date = st.session_state[_bt_cache]
+
+    if _summary.get("error"):
+        st.error(_summary["error"])
+        return
+
+    # ── Summary KPI header ──────────────────────────────────────────────────────
+    _wr = _summary["win_rate"]
+    _wr_color = (
+        _BT_WIN_CLR  if _wr >= 60 else
+        "#ffa726"    if _wr >= 45 else
+        _BT_LOSS_CLR
+    )
+
+    st.markdown(
+        f'<div style="background:#020813; border:1px solid #0d2137; border-radius:10px; '
+        f'padding:18px 24px; margin-bottom:20px;">'
+        f'<div style="font-size:10px; color:#1565c0; letter-spacing:2px; '
+        f'text-transform:uppercase; margin-bottom:12px; font-family:monospace;">'
+        f'SIMULATION RESULTS — {_sim_date.strftime("%A %B %d, %Y").upper()}</div>'
+        f'<div style="display:flex; gap:40px; flex-wrap:wrap;">'
+
+        f'<div>'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        f'letter-spacing:1px; margin-bottom:2px;">Simulated Win Rate</div>'
+        f'<div style="font-size:42px; font-weight:900; color:{_wr_color}; '
+        f'font-family:monospace;">{_wr:.1f}%</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:32px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        f'letter-spacing:1px; margin-bottom:2px;">Setups Found</div>'
+        f'<div style="font-size:36px; font-weight:800; color:#e0e0e0; '
+        f'font-family:monospace;">{_summary["total"]}</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:32px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        f'letter-spacing:1px; margin-bottom:2px;">Wins / Losses</div>'
+        f'<div style="font-size:28px; font-weight:800; font-family:monospace;">'
+        f'<span style="color:{_BT_WIN_CLR};">{_summary["wins"]}</span>'
+        f'<span style="color:#37474f;"> / </span>'
+        f'<span style="color:{_BT_LOSS_CLR};">{_summary["losses"]}</span>'
+        f'</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:32px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        f'letter-spacing:1px; margin-bottom:2px;">Highest TCS</div>'
+        f'<div style="font-size:36px; font-weight:800; color:#7c4dff; '
+        f'font-family:monospace;">{_summary["highest_tcs"]:.0f}</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:32px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        f'letter-spacing:1px; margin-bottom:2px;">Avg TCS</div>'
+        f'<div style="font-size:36px; font-weight:800; color:#5c6bc0; '
+        f'font-family:monospace;">{_summary["avg_tcs"]:.0f}</div>'
+        f'</div>'
+
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Column headers ──────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:1.5px; margin-bottom:10px; font-weight:700;">'
+        '📋 Trade-by-Trade Simulation Log</div>',
+        unsafe_allow_html=True,
+    )
+
+    _BT_COLS  = [0.7, 0.7, 0.75, 0.6, 1.2, 1.5, 1.2, 0.7, 0.6]
+    _BT_HDRS  = ["Ticker", "Open", "IB Range", "TCS", "Morning Prediction",
+                 "EOD Reality", "Close", "Move %", "Result"]
+
+    _hdr_row = st.columns(_BT_COLS)
+    for _col, _lbl in zip(_hdr_row, _BT_HDRS):
+        _hdr_clr = "#1565c0"
+        _col.markdown(
+            f'<div style="font-size:10px; font-weight:700; color:{_hdr_clr}; '
+            f'text-transform:uppercase; letter-spacing:0.8px; padding:4px 0 8px 0; '
+            f'border-bottom:1px solid #0d2137; font-family:monospace;">{_lbl}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Data rows ───────────────────────────────────────────────────────────────
+    for _r in _results:
+        _wl         = _r["win_loss"]
+        _tcs        = _r["tcs"]
+        _tcs_clr    = _bt_tcs_color(_tcs)
+        _out_clr    = _bt_outcome_color(_r["actual_outcome"])
+        _wl_clr     = _BT_WIN_CLR if _wl == "Win" else _BT_LOSS_CLR
+        _move       = _r["aft_move_pct"]
+        _move_sign  = "+" if _move >= 0 else ""
+        _move_clr   = "#4caf50" if _move >= 0 else "#ef5350"
+        _pred_short = (_r["predicted"][:18] + "…") if len(_r["predicted"]) > 18 else _r["predicted"]
+        _pred_clean = _clean_structure_label(_r["predicted"])
+
+        _row_bg = "#051015" if _wl == "Win" else "#120508"
+
+        _row = st.columns(_BT_COLS)
+        _row[0].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'font-size:14px; font-weight:900; color:#e0e0e0; '
+            f'font-family:monospace;">{_r["ticker"]}</div>',
+            unsafe_allow_html=True,
+        )
+        _row[1].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'font-size:12px; color:#90a4ae; font-family:monospace;">'
+            f'${_r["open_price"]:.2f}</div>',
+            unsafe_allow_html=True,
+        )
+        _row[2].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'font-size:11px; color:#607d8b; font-family:monospace;">'
+            f'${_r["ib_low"]:.2f}–${_r["ib_high"]:.2f}</div>',
+            unsafe_allow_html=True,
+        )
+        _row[3].markdown(
+            f'<div style="background:{_row_bg}; padding:8px 6px;">'
+            f'<span style="background:{_tcs_clr}22; color:{_tcs_clr}; '
+            f'font-size:13px; font-weight:800; padding:2px 8px; border-radius:10px; '
+            f'border:1px solid {_tcs_clr}55; font-family:monospace;">'
+            f'{_tcs:.0f}</span></div>',
+            unsafe_allow_html=True,
+        )
+        _row[4].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'font-size:11px; color:#ce93d8; font-weight:600;">'
+            f'{_pred_clean}</div>',
+            unsafe_allow_html=True,
+        )
+        _row[5].markdown(
+            f'<div style="background:{_row_bg}; padding:8px 6px;">'
+            f'<span style="background:{_out_clr}22; color:{_out_clr}; '
+            f'font-size:11px; font-weight:700; padding:3px 10px; border-radius:10px; '
+            f'border:1px solid {_out_clr}55;">'
+            f'{_r["actual_icon"]} {_r["actual_outcome"]}</span></div>',
+            unsafe_allow_html=True,
+        )
+        _row[6].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'font-size:12px; color:#90a4ae; font-family:monospace;">'
+            f'${_r["close_price"]:.2f}</div>',
+            unsafe_allow_html=True,
+        )
+        _row[7].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'font-size:12px; font-weight:700; color:{_move_clr}; font-family:monospace;">'
+            f'{_move_sign}{_move:.1f}%</div>',
+            unsafe_allow_html=True,
+        )
+        _row[8].markdown(
+            f'<div style="background:{_row_bg}; padding:8px 6px;">'
+            f'<span style="background:{_wl_clr}22; color:{_wl_clr}; '
+            f'font-size:11px; font-weight:800; padding:3px 10px; border-radius:10px; '
+            f'border:1px solid {_wl_clr}55; text-transform:uppercase;">'
+            f'{_wl}</span></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div style="border-bottom:1px solid #060f18; margin:0;"></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Footer legend ────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="margin-top:20px; font-size:10px; color:#263238; font-family:monospace;">'
+        'WIN LOGIC: Directional predict (Trend/Nrml Var) → one IB side breaks = WIN · '
+        'Range predict (Non-Trend/Normal) → neither side breaks = WIN · '
+        'Balanced predict (Neutral) → both sides touched = WIN · '
+        'Move% = (Close − IB mid) / Open · IB = 9:30–10:30 AM ET'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 _BATCH_DEFAULT = """\
@@ -3688,9 +4007,9 @@ def render_sa_tab():
         st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
 
 
-tab_chart, tab_scan, tab_playbook, tab_journal, tab_tracker, tab_analytics, tab_sa = st.tabs(
-    ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "📖 Journal", "🧠 Tracker",
-     "📊 Analytics", "⚡ Small Account"]
+tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_tracker, tab_analytics, tab_sa = st.tabs(
+    ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "🔬 Backtest",
+     "📖 Journal", "🧠 Tracker", "📊 Analytics", "⚡ Small Account"]
 )
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
@@ -4124,6 +4443,10 @@ with tab_chart:
 # ── Playbook tab ──────────────────────────────────────────────────────────────
 with tab_playbook:
     render_playbook_tab(api_key=api_key, secret_key=secret_key)
+
+# ── Backtest tab ───────────────────────────────────────────────────────────────
+with tab_backtest:
+    render_backtest_tab(api_key=api_key, secret_key=secret_key)
 
 # ── Journal tab ───────────────────────────────────────────────────────────────
 with tab_journal:
