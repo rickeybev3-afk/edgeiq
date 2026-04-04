@@ -1747,6 +1747,58 @@ def fetch_live_quote(ticker: str) -> dict:
         return {"price": None, "volume": None, "error": str(e)}
 
 
+def save_trade_review(journal_row: dict, exit_price: float,
+                      actual_structure: str, direction: str = "Long") -> dict:
+    """Calculate trade outcome and persist to accuracy_tracker.
+
+    Parameters
+    ----------
+    journal_row      : row dict from trade_journal (must have 'ticker', 'price', 'structure')
+    exit_price       : actual exit price entered by the user
+    actual_structure : actual day structure the user observed
+    direction        : "Long" or "Short"
+
+    Returns
+    -------
+    dict with keys: win_loss, pnl_dollars, pnl_pct, correct_structure
+    """
+    entry_price = float(journal_row.get("price", 0.0))
+    ticker      = str(journal_row.get("ticker", ""))
+    predicted   = str(journal_row.get("structure", ""))
+
+    if entry_price <= 0:
+        return {"win_loss": "N/A", "pnl_dollars": 0.0, "pnl_pct": 0.0,
+                "correct_structure": False, "error": "Invalid entry price"}
+
+    pnl_dollars = (exit_price - entry_price) if direction == "Long" \
+                  else (entry_price - exit_price)
+    pnl_pct     = (pnl_dollars / entry_price) * 100
+    win_loss    = "Win" if pnl_dollars > 0 else ("Loss" if pnl_dollars < 0 else "Breakeven")
+
+    correct_structure = (
+        _strip_emoji(predicted.lower()) in _strip_emoji(actual_structure.lower()) or
+        _strip_emoji(actual_structure.lower()) in _strip_emoji(predicted.lower())
+    )
+
+    log_accuracy_entry(
+        symbol      = ticker,
+        predicted   = predicted,
+        actual      = actual_structure,
+        compare_key = "manual_review",
+        entry_price = entry_price,
+        exit_price  = exit_price,
+        mfe         = round(pnl_dollars, 4),
+    )
+
+    return {
+        "win_loss":          win_loss,
+        "pnl_dollars":       round(pnl_dollars, 4),
+        "pnl_pct":           round(pnl_pct, 2),
+        "correct_structure": correct_structure,
+        "error":             None,
+    }
+
+
 def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
     """Return (grade, reason) based on RVOL, TCS, price relative to IB."""
     rvol_val = rvol if rvol is not None else 0.0

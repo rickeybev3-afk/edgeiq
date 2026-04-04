@@ -474,6 +474,128 @@ def render_journal_tab():
     )
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── Review Trades ────────────────────────────────────────────────────────
+    st.markdown("---")
+    with st.expander("🔍 Review Trades — Log Actual Outcome", expanded=False):
+        st.markdown(
+            '<div style="font-size:12px; color:#90caf9; margin-bottom:8px;">'
+            'Pick a logged trade, enter your actual exit price and what structure '
+            'the day turned out to be, and save the result to the Accuracy Tracker.'
+            '</div>', unsafe_allow_html=True,
+        )
+
+        _STRUCTURES = [
+            "Trend Day", "Non-Trend", "Normal", "Normal Variation",
+            "Neutral", "Neutral Extreme", "Double Distribution",
+        ]
+
+        # Build display labels for the selectbox
+        _trade_labels = []
+        for _, _r in df.iterrows():
+            _ts  = str(_r.get("timestamp", ""))[:16]
+            _sym = str(_r.get("ticker", "?"))
+            _px  = _r.get("price", 0.0)
+            _st  = str(_r.get("structure", ""))[:20]
+            _trade_labels.append(f"{_ts}  ·  {_sym}  @${_px:.2f}  [{_st}]")
+
+        _sel_idx = st.selectbox(
+            "Select a trade to review",
+            options=range(len(_trade_labels)),
+            format_func=lambda i: _trade_labels[i],
+            key="review_trade_select",
+        )
+
+        _sel_row = df.iloc[_sel_idx].to_dict()
+        _entry_px = float(_sel_row.get("price", 0.0))
+        _pred_struct = str(_sel_row.get("structure", ""))
+
+        # Summary card
+        _gc = _GRADE_COLORS.get(str(_sel_row.get("grade", "?")), "#aaa")
+        st.markdown(
+            f'<div style="background:#12122288; border:1px solid #2a2a4a; border-radius:8px; '
+            f'padding:10px 16px; margin:8px 0; display:flex; gap:20px; align-items:center;">'
+            f'<div style="color:{_gc}; font-weight:900; font-size:20px;">'
+            f'{_sel_row.get("grade","?")} Grade</div>'
+            f'<div><span style="color:#e0e0e0; font-weight:700;">{_sel_row.get("ticker","")}</span>'
+            f'&nbsp;<span style="color:#90caf9;">Entry @ ${_entry_px:.2f}</span></div>'
+            f'<div style="color:#888; font-size:11px;">Predicted: '
+            f'<span style="color:#ffcc80;">{_pred_struct}</span></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        _rc1, _rc2, _rc3 = st.columns([2, 2, 1])
+        with _rc1:
+            _exit_price = st.number_input(
+                "Actual Exit Price ($)", min_value=0.01, value=float(_entry_px),
+                step=0.01, format="%.4f", key="review_exit_price",
+            )
+        with _rc2:
+            # Pre-select predicted structure if it exists in list
+            _def_idx = 0
+            for _si, _sl in enumerate(_STRUCTURES):
+                if _strip_emoji(_pred_struct.lower()) in _strip_emoji(_sl.lower()):
+                    _def_idx = _si; break
+            _actual_struct = st.selectbox(
+                "Actual Market Structure",
+                options=_STRUCTURES,
+                index=_def_idx,
+                key="review_actual_structure",
+            )
+        with _rc3:
+            _direction = st.radio(
+                "Direction", options=["Long", "Short"],
+                key="review_direction", horizontal=False,
+            )
+
+        _submit_review = st.button(
+            "💾 Save Review to Accuracy Tracker",
+            use_container_width=True, key="review_submit_btn",
+        )
+
+        if _submit_review:
+            if _exit_price <= 0:
+                st.error("Exit price must be greater than zero.")
+            else:
+                with st.spinner("Saving review…"):
+                    _res = save_trade_review(
+                        journal_row=_sel_row,
+                        exit_price=_exit_price,
+                        actual_structure=_actual_struct,
+                        direction=_direction,
+                    )
+                if _res.get("error"):
+                    st.error(f"Error: {_res['error']}")
+                else:
+                    _wl       = _res["win_loss"]
+                    _pnl_d    = _res["pnl_dollars"]
+                    _pnl_p    = _res["pnl_pct"]
+                    _corr_s   = _res["correct_structure"]
+                    _wl_color = "#4caf50" if _wl == "Win" else ("#ef5350" if _wl == "Loss" else "#ffa726")
+                    _wl_icon  = "✅" if _wl == "Win" else ("❌" if _wl == "Loss" else "➖")
+                    _pnl_sign = "+" if _pnl_d >= 0 else ""
+                    _struct_badge = (
+                        '<span style="color:#4caf50;">✅ Structure Correct</span>'
+                        if _corr_s else
+                        '<span style="color:#ef5350;">❌ Structure Wrong</span>'
+                    )
+                    st.markdown(
+                        f'<div style="background:#0a0a1a; border:2px solid {_wl_color}; '
+                        f'border-radius:10px; padding:16px 22px; margin:10px 0;">'
+                        f'<div style="font-size:22px; font-weight:900; color:{_wl_color};">'
+                        f'{_wl_icon} {_wl}</div>'
+                        f'<div style="font-size:14px; color:#e0e0e0; margin-top:6px;">'
+                        f'P&L: <b style="color:{_wl_color};">'
+                        f'{_pnl_sign}${_pnl_d:.4f} ({_pnl_sign}{_pnl_p:.2f}%)</b>'
+                        f'&nbsp;&nbsp;·&nbsp;&nbsp;{_struct_badge}</div>'
+                        f'<div style="font-size:11px; color:#666; margin-top:4px;">'
+                        f'Saved to Accuracy Tracker · '
+                        f'{_direction} {_sel_row.get("ticker","")} '
+                        f'${_entry_px:.4f} → ${_exit_price:.4f}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHART & RENDER
