@@ -2245,3 +2245,138 @@ def run_single_backtest(api_key, secret_key, ticker, trade_date, feed="iex", num
     return result
 
 
+# ── Analytics & Edge ──────────────────────────────────────────────────────────
+
+def compute_edge_analytics(journal_df: pd.DataFrame,
+                           tracker_df: pd.DataFrame) -> dict:
+    """Join trade_journal + accuracy_tracker and compute full edge stats.
+
+    Returns
+    -------
+    dict with keys:
+      summary            – high-level KPIs
+      equity_curve       – DataFrame (timestamp, symbol, mfe, cumulative_pnl)
+      daily_pnl          – DataFrame (date, pnl, cumulative_pnl)
+      win_rate_by_struct – DataFrame (structure, trades, wins, win_rate, avg_pnl)
+      grade_distribution – dict {grade: count}
+      tcs_edge           – DataFrame (tcs_bucket, trades, win_rate)
+    """
+    empty = {
+        "summary": {
+            "win_rate": 0.0, "total_pnl": 0.0, "avg_win": 0.0,
+            "avg_loss": 0.0, "profit_factor": 0.0,
+            "total_trades": 0, "trade_days": 0,
+        },
+        "equity_curve":        pd.DataFrame(),
+        "daily_pnl":           pd.DataFrame(),
+        "win_rate_by_struct":  pd.DataFrame(),
+        "grade_distribution":  {},
+        "tcs_edge":            pd.DataFrame(),
+    }
+
+    # ── Clean tracker ──────────────────────────────────────────────────────
+    tdf = tracker_df.copy() if not tracker_df.empty else pd.DataFrame()
+    if tdf.empty:
+        return empty
+
+    for col in ("entry_price", "exit_price", "mfe"):
+        tdf[col] = pd.to_numeric(tdf.get(col, 0), errors="coerce").fillna(0.0)
+    tdf["timestamp"] = pd.to_datetime(tdf.get("timestamp", pd.NaT), errors="coerce")
+
+    trades = tdf[(tdf["entry_price"] > 0) & (tdf["exit_price"] > 0)].copy()
+    if trades.empty:
+        return empty
+
+    trades = trades.sort_values("timestamp").reset_index(drop=True)
+
+    wins   = trades[trades["mfe"] > 0]
+    losses = trades[trades["mfe"] < 0]
+
+    total_trades  = len(trades)
+    win_count     = len(wins)
+    win_rate      = round(win_count / total_trades * 100, 1) if total_trades else 0.0
+    total_pnl     = round(float(trades["mfe"].sum()), 2)
+    avg_win       = round(float(wins["mfe"].mean()), 2)   if not wins.empty   else 0.0
+    avg_loss      = round(float(losses["mfe"].mean()), 2) if not losses.empty else 0.0
+    gross_win     = float(wins["mfe"].sum())              if not wins.empty   else 0.0
+    gross_loss    = abs(float(losses["mfe"].sum()))       if not losses.empty else 0.0
+    profit_factor = round(gross_win / gross_loss, 2)      if gross_loss > 0   else 999.0
+    trade_days    = int(trades["timestamp"].dt.date.nunique())
+
+    # ── Equity curve ────────────────────────────────────────────────────────
+    trades["cumulative_pnl"] = trades["mfe"].cumsum()
+    equity_curve = trades[["timestamp", "symbol", "mfe", "cumulative_pnl"]].copy()
+
+    # ── Daily P&L ───────────────────────────────────────────────────────────
+    trades["date"] = trades["timestamp"].dt.date
+    daily = (trades.groupby("date")["mfe"].sum()
+             .reset_index().rename(columns={"mfe": "pnl"}))
+    daily["cumulative_pnl"] = daily["pnl"].cumsum()
+
+    # ── Win rate by predicted structure ─────────────────────────────────────
+    struct_rows = []
+    if "predicted" in trades.columns:
+        for struct, grp in trades.groupby("predicted"):
+            s = str(struct).strip()
+            if not s:
+                continue
+            tc = len(grp); wc = int((grp["mfe"] > 0).sum())
+            struct_rows.append({
+                "structure": s,
+                "trades":    tc,
+                "wins":      wc,
+                "win_rate":  round(wc / tc * 100, 1) if tc else 0.0,
+                "avg_pnl":   round(float(grp["mfe"].mean()), 2),
+            })
+    wr_struct = (pd.DataFrame(struct_rows).sort_values("win_rate", ascending=False)
+                 if struct_rows else pd.DataFrame())
+
+    # ── TCS edge ────────────────────────────────────────────────────────────
+    tcs_edge = pd.DataFrame()
+    if not journal_df.empty and "tcs" in journal_df.columns:
+        jdf = journal_df.copy()
+        jdf["tcs"] = pd.to_numeric(jdf.get("tcs", 0), errors="coerce").fillna(0)
+        jdf["tcs_bucket"] = pd.cut(
+            jdf["tcs"],
+            bins=[0, 40, 55, 65, 75, 101],
+            labels=["<40", "40–54", "55–64", "65–74", "75+"],
+        )
+        jdf["timestamp"] = pd.to_datetime(jdf.get("timestamp", ""), errors="coerce")
+        merged = pd.merge(
+            jdf[["timestamp", "ticker", "tcs", "tcs_bucket"]],
+            trades[["timestamp", "symbol", "mfe"]],
+            left_on="ticker", right_on="symbol", how="inner",
+            suffixes=("_j", "_t"),
+        )
+        if not merged.empty:
+            tcs_rows = []
+            for bkt, grp in merged.groupby("tcs_bucket", observed=True):
+                tc = len(grp); wc = int((grp["mfe"] > 0).sum())
+                tcs_rows.append({
+                    "tcs_bucket": str(bkt),
+                    "trades":     tc,
+                    "win_rate":   round(wc / tc * 100, 1) if tc else 0.0,
+                })
+            tcs_edge = pd.DataFrame(tcs_rows)
+
+    # ── Grade distribution ──────────────────────────────────────────────────
+    grade_dist = {}
+    if not journal_df.empty and "grade" in journal_df.columns:
+        grade_dist = {str(k): int(v)
+                      for k, v in journal_df["grade"].value_counts().items()}
+
+    return {
+        "summary": {
+            "win_rate": win_rate, "total_pnl": total_pnl,
+            "avg_win": avg_win,   "avg_loss": avg_loss,
+            "profit_factor": profit_factor,
+            "total_trades": total_trades, "trade_days": trade_days,
+        },
+        "equity_curve":       equity_curve,
+        "daily_pnl":          daily,
+        "win_rate_by_struct": wr_struct,
+        "grade_distribution": grade_dist,
+        "tcs_edge":           tcs_edge,
+    }
+
+

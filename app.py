@@ -2055,6 +2055,251 @@ _BATCH_DEFAULT = """\
 3/16: WNW, HCWB"""
 
 
+def render_analytics_tab():
+    """Render the 📊 Analytics & Edge dashboard tab."""
+    import plotly.graph_objects as _go
+    from plotly.subplots import make_subplots as _make_subplots
+
+    st.markdown("## 📊 Analytics & Edge")
+    st.caption("Live edge stats computed from your trade journal and accuracy tracker.")
+
+    journal_df = load_journal()
+    tracker_df = load_accuracy_tracker()
+
+    with st.spinner("Computing edge analytics…"):
+        ana = compute_edge_analytics(journal_df, tracker_df)
+
+    s = ana["summary"]
+    no_data = s["total_trades"] == 0
+
+    # ── KPI CARDS ──────────────────────────────────────────────────────────
+    def _kpi(label, value, color="#e0e0e0", sub=""):
+        _sub_html = (
+            '<div style="font-size:10px;color:#666;margin-top:2px;">' + sub + '</div>'
+            if sub else ""
+        )
+        return (
+            f'<div style="background:#12122288; border:1px solid #2a2a4a; '
+            f'border-radius:10px; padding:14px 18px; text-align:center;">'
+            f'<div style="font-size:10px; color:#5c6bc0; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:4px;">{label}</div>'
+            f'<div style="font-size:28px; font-weight:900; color:{color};">{value}</div>'
+            f'{_sub_html}'
+            f'</div>'
+        )
+
+    wr        = s["win_rate"]
+    wr_color  = "#4caf50" if wr >= 55 else ("#ffa726" if wr >= 45 else "#ef5350")
+    pnl_color = "#4caf50" if s["total_pnl"] >= 0 else "#ef5350"
+    pf_color  = "#4caf50" if s["profit_factor"] >= 1.5 else ("#ffa726" if s["profit_factor"] >= 1.0 else "#ef5350")
+    pnl_sign  = "+" if s["total_pnl"] >= 0 else ""
+
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    with kc1:
+        st.markdown(_kpi("Win Rate", f"{wr}%", wr_color,
+                         f"{s['total_trades']} trades · {s['trade_days']} days"),
+                    unsafe_allow_html=True)
+    with kc2:
+        st.markdown(_kpi("Total P&L",
+                         f"{pnl_sign}${s['total_pnl']:.2f}", pnl_color,
+                         f"avg win ${s['avg_win']:.2f} / avg loss ${s['avg_loss']:.2f}"),
+                    unsafe_allow_html=True)
+    with kc3:
+        pf_str = f"{s['profit_factor']:.2f}" if s['profit_factor'] < 99 else "∞"
+        st.markdown(_kpi("Profit Factor", pf_str, pf_color,
+                         "gross win / gross loss"),
+                    unsafe_allow_html=True)
+    with kc4:
+        j_count = len(journal_df) if not journal_df.empty else 0
+        st.markdown(_kpi("Journal Entries", str(j_count), "#90caf9",
+                         f"{s['total_trades']} synced to tracker"),
+                    unsafe_allow_html=True)
+
+    if no_data:
+        st.info(
+            "No synced trades yet. After you log trades and use **Sync from Alpaca** "
+            "or **Review Trades** in the Journal tab, your stats will appear here."
+        )
+        return
+
+    st.markdown("---")
+
+    # ── EQUITY CURVE ──────────────────────────────────────────────────────
+    eq = ana["equity_curve"]
+    if not eq.empty:
+        st.markdown("**Cumulative P&L — Equity Curve**")
+        _colors_eq = ["#ef5350" if v < 0 else "#4caf50"
+                      for v in eq["cumulative_pnl"]]
+        fig_eq = _go.Figure()
+        # Zero line fill area
+        fig_eq.add_trace(_go.Scatter(
+            x=eq["timestamp"], y=eq["cumulative_pnl"],
+            mode="lines+markers",
+            line=dict(color="#00e5ff", width=2.5),
+            marker=dict(size=6, color=_colors_eq,
+                        line=dict(color="#1a1a2e", width=1)),
+            fill="tozeroy",
+            fillcolor="rgba(0,229,255,0.08)",
+            name="Cumulative P&L",
+            hovertemplate=(
+                "<b>%{customdata}</b><br>"
+                "Trade P&L: $%{text}<br>"
+                "Cumulative: $%{y:.2f}<extra></extra>"
+            ),
+            customdata=eq["symbol"],
+            text=eq["mfe"].round(2).astype(str),
+        ))
+        fig_eq.add_hline(y=0, line=dict(color="rgba(255,255,255,0.15)", dash="dot"))
+        fig_eq.update_layout(
+            paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+            font=dict(color="#e0e0e0"), height=280,
+            xaxis=dict(title="", gridcolor="#2a2a4a", showgrid=True),
+            yaxis=dict(title="Cumulative P&L ($)", gridcolor="#2a2a4a"),
+            margin=dict(l=10, r=10, t=20, b=30),
+            showlegend=False,
+            hoverlabel=dict(bgcolor="#1a1a2e", font_color="#e0e0e0"),
+        )
+        st.plotly_chart(fig_eq, use_container_width=True)
+
+    # ── WIN RATE BY STRUCTURE + GRADE DONUT ──────────────────────────────
+    col_a, col_b = st.columns([3, 2])
+
+    with col_a:
+        wr_s = ana["win_rate_by_struct"]
+        if not wr_s.empty:
+            st.markdown("**Win Rate by Predicted Structure**")
+            _bar_colors = [
+                "#4caf50" if r >= 60 else ("#ffa726" if r >= 45 else "#ef5350")
+                for r in wr_s["win_rate"]
+            ]
+            fig_wr = _go.Figure()
+            fig_wr.add_trace(_go.Bar(
+                x=wr_s["structure"], y=wr_s["win_rate"],
+                marker_color=_bar_colors,
+                text=[f"{r}%<br>{t}T" for r, t in
+                      zip(wr_s["win_rate"], wr_s["trades"])],
+                textposition="outside",
+                textfont=dict(size=10, color="#e0e0e0"),
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Win Rate: %{y:.1f}%<br>"
+                    "Avg P&L: $%{customdata:.2f}<extra></extra>"
+                ),
+                customdata=wr_s["avg_pnl"],
+                name="Win Rate",
+            ))
+            fig_wr.add_hline(y=50, line=dict(color="rgba(255,255,255,0.2)", dash="dot"),
+                             annotation_text="50%", annotation_font_color="#888")
+            fig_wr.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"), height=300,
+                xaxis=dict(gridcolor="#2a2a4a"),
+                yaxis=dict(title="Win Rate (%)", gridcolor="#2a2a4a",
+                           range=[0, max(wr_s["win_rate"].max() + 15, 70)]),
+                margin=dict(l=10, r=10, t=20, b=40),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_wr, use_container_width=True)
+
+    with col_b:
+        gd = ana["grade_distribution"]
+        if gd:
+            st.markdown("**Grade Distribution**")
+            _gd_order  = [g for g in ["A", "B", "C", "F"] if g in gd]
+            _gd_vals   = [gd[g] for g in _gd_order]
+            _gd_colors = [_GRADE_COLORS.get(g, "#aaa") for g in _gd_order]
+            fig_pie = _go.Figure(_go.Pie(
+                labels=_gd_order, values=_gd_vals,
+                marker=dict(colors=_gd_colors,
+                            line=dict(color="#1a1a2e", width=2)),
+                hole=0.55,
+                textinfo="label+percent",
+                textfont=dict(size=12, color="#e0e0e0"),
+                hovertemplate="<b>Grade %{label}</b><br>Count: %{value}<extra></extra>",
+            ))
+            fig_pie.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#1a1a2e",
+                font=dict(color="#e0e0e0"), height=300,
+                margin=dict(l=0, r=0, t=20, b=0),
+                showlegend=False,
+                annotations=[dict(
+                    text=f"<b>{sum(_gd_vals)}</b><br>trades",
+                    x=0.5, y=0.5, font_size=14,
+                    font_color="#e0e0e0", showarrow=False,
+                )],
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+    # ── DAILY P&L BAR + TCS EDGE ─────────────────────────────────────────
+    col_c, col_d = st.columns([3, 2])
+
+    with col_c:
+        dp = ana["daily_pnl"]
+        if not dp.empty:
+            st.markdown("**Daily P&L**")
+            _day_colors = ["#4caf50" if v >= 0 else "#ef5350" for v in dp["pnl"]]
+            fig_day = _go.Figure()
+            fig_day.add_trace(_go.Bar(
+                x=dp["date"].astype(str), y=dp["pnl"],
+                marker_color=_day_colors,
+                text=[f"${v:+.2f}" for v in dp["pnl"]],
+                textposition="outside",
+                textfont=dict(size=9, color="#e0e0e0"),
+                hovertemplate="<b>%{x}</b><br>P&L: $%{y:.2f}<extra></extra>",
+                name="Daily P&L",
+            ))
+            fig_day.add_hline(y=0, line=dict(color="rgba(255,255,255,0.2)"))
+            fig_day.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"), height=250,
+                xaxis=dict(gridcolor="#2a2a4a", tickangle=-30),
+                yaxis=dict(title="P&L ($)", gridcolor="#2a2a4a"),
+                margin=dict(l=10, r=10, t=20, b=50),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_day, use_container_width=True)
+
+    with col_d:
+        tcs_df = ana["tcs_edge"]
+        if not tcs_df.empty:
+            st.markdown("**Win Rate by TCS Score**")
+            _tcs_colors = [
+                "#4caf50" if r >= 60 else ("#ffa726" if r >= 45 else "#ef5350")
+                for r in tcs_df["win_rate"]
+            ]
+            fig_tcs = _go.Figure(_go.Bar(
+                x=tcs_df["tcs_bucket"], y=tcs_df["win_rate"],
+                marker_color=_tcs_colors,
+                text=[f"{r}%<br>{t}T" for r, t in
+                      zip(tcs_df["win_rate"], tcs_df["trades"])],
+                textposition="outside",
+                textfont=dict(size=10, color="#e0e0e0"),
+                hovertemplate="<b>TCS %{x}</b><br>Win Rate: %{y:.1f}%<extra></extra>",
+            ))
+            fig_tcs.add_hline(y=50, line=dict(color="rgba(255,255,255,0.2)", dash="dot"))
+            fig_tcs.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"), height=250,
+                xaxis=dict(title="TCS Range", gridcolor="#2a2a4a"),
+                yaxis=dict(title="Win Rate (%)", gridcolor="#2a2a4a",
+                           range=[0, 100]),
+                margin=dict(l=10, r=10, t=20, b=30),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_tcs, use_container_width=True)
+
+    # ── RAW TRACKER TABLE ─────────────────────────────────────────────────
+    with st.expander("🗂 Raw Synced Trades", expanded=False):
+        eq_disp = ana["equity_curve"].copy()
+        if not eq_disp.empty:
+            eq_disp["timestamp"] = eq_disp["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
+            eq_disp["mfe"]       = eq_disp["mfe"].map(lambda v: f"{'+'if v>=0 else''}{v:.2f}")
+            eq_disp["cumulative_pnl"] = eq_disp["cumulative_pnl"].map(
+                lambda v: f"{'+'if v>=0 else''}{v:.2f}")
+            eq_disp.columns = ["Time", "Symbol", "Trade P&L", "Cumulative P&L"]
+            st.dataframe(eq_disp, use_container_width=True, hide_index=True)
+
+
 def render_tracker_tab():
     """Render the Accuracy Tracker tab — structure distribution + Predicted vs Actual history."""
     st.markdown("## 🧠 MarketBrain — Accuracy Tracker")
@@ -3027,8 +3272,9 @@ def render_sa_tab():
         st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
 
 
-tab_chart, tab_scan, tab_journal, tab_tracker, tab_sa = st.tabs(
-    ["📈 Main Chart", "🔍 Scanner", "📖 Journal", "🧠 Tracker", "⚡ Small Account"]
+tab_chart, tab_scan, tab_journal, tab_tracker, tab_analytics, tab_sa = st.tabs(
+    ["📈 Main Chart", "🔍 Scanner", "📖 Journal", "🧠 Tracker",
+     "📊 Analytics", "⚡ Small Account"]
 )
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
@@ -3466,6 +3712,10 @@ with tab_journal:
 # ── Tracker tab ───────────────────────────────────────────────────────────────
 with tab_tracker:
     render_tracker_tab()
+
+# ── Analytics tab ─────────────────────────────────────────────────────────────
+with tab_analytics:
+    render_analytics_tab()
 
 # ── Small Account Challenge tab ────────────────────────────────────────────────
 with tab_sa:
