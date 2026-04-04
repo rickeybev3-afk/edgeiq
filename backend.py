@@ -1726,6 +1726,27 @@ def save_journal_entry(entry: dict):
         print(f"Database write error (journal): {e}")
 
 
+def fetch_live_quote(ticker: str) -> dict:
+    """Fetch current price and today's volume via yfinance.
+    Returns dict with keys: price, volume, error (None on success).
+    """
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker.upper().strip())
+        info = t.fast_info
+        price  = float(info.last_price)  if info.last_price  else None
+        volume = int(info.three_month_average_volume) if info.three_month_average_volume else None
+        # prefer today's volume from 1d history
+        hist = t.history(period="1d", interval="1m")
+        if not hist.empty and "Volume" in hist.columns:
+            volume = int(hist["Volume"].sum())
+        if price is None:
+            return {"price": None, "volume": None, "error": f"No data returned for '{ticker}'"}
+        return {"price": round(price, 4), "volume": volume, "error": None}
+    except Exception as e:
+        return {"price": None, "volume": None, "error": str(e)}
+
+
 def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
     """Return (grade, reason) based on RVOL, TCS, price relative to IB."""
     rvol_val = rvol if rvol is not None else 0.0

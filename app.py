@@ -240,6 +240,51 @@ def render_log_entry_ui():
             f"**Ready to log:** `{ticker}` @ `${price:.2f}` — "
             f"TCS `{tcs:.0f}` · RVOL `{rvol:.2f}x` · Structure `{struct}`"
         )
+
+        # ── Live Quote Fetch ──────────────────────────────────────────────────
+        st.markdown(
+            '<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+            'letter-spacing:1px; margin:8px 0 4px 0;">🔍 Override / Verify Live Price</div>',
+            unsafe_allow_html=True,
+        )
+        _fc1, _fc2 = st.columns([3, 1])
+        with _fc1:
+            _fetch_ticker = st.text_input(
+                "Ticker to fetch", value=ticker,
+                placeholder="e.g. TSLA", label_visibility="collapsed",
+                key="live_fetch_ticker_input",
+            )
+        with _fc2:
+            _fetch_clicked = st.button("Fetch Price", use_container_width=True,
+                                       key="live_fetch_btn")
+        if _fetch_clicked:
+            with st.spinner(f"Fetching live quote for {_fetch_ticker}…"):
+                _q = fetch_live_quote(_fetch_ticker)
+            if _q["error"]:
+                st.error(f"Could not fetch `{_fetch_ticker}`: {_q['error']}")
+            else:
+                st.session_state["_fetched_price"]  = _q["price"]
+                st.session_state["_fetched_volume"] = _q["volume"]
+                st.session_state["_fetched_symbol"] = _fetch_ticker.upper()
+
+        if st.session_state.get("_fetched_price") is not None:
+            _fp  = st.session_state["_fetched_price"]
+            _fv  = st.session_state["_fetched_volume"]
+            _fsym = st.session_state.get("_fetched_symbol", "")
+            _vol_str = f"{_fv:,}" if _fv else "—"
+            st.markdown(
+                f'<div style="background:#0d2b1a; border:1px solid #2e7d32; border-radius:6px; '
+                f'padding:6px 12px; margin:4px 0; display:flex; gap:24px; align-items:center;">'
+                f'<span style="color:#81c784; font-weight:700; font-size:13px;">{_fsym}</span>'
+                f'<span style="color:#a5d6a7;">Price: <b style="color:#e8f5e9;">${_fp:.2f}</b></span>'
+                f'<span style="color:#a5d6a7;">Vol today: <b style="color:#e8f5e9;">{_vol_str}</b></span>'
+                f'<span style="font-size:10px; color:#555;">via yfinance</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            # Use fetched price in the log entry
+            price = _fp
+
         notes = st.text_input(
             "Mental State / Notes",
             placeholder="e.g. Calm, FOMO, Greed, Hesitated...",
@@ -250,10 +295,11 @@ def render_log_entry_ui():
                 state.get("rvol"), state.get("tcs"), state.get("price"),
                 state.get("ib_high"), state.get("ib_low"), state.get("structure"),
             )
+            _log_ticker = st.session_state.get("_fetched_symbol") or state.get("ticker", "")
             entry = {
                 "timestamp": datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
-                "ticker":    state.get("ticker", ""),
-                "price":     round(state.get("price", 0.0), 4),
+                "ticker":    _log_ticker,
+                "price":     round(float(price), 4),
                 "structure": state.get("structure", ""),
                 "tcs":       round(state.get("tcs", 0.0), 1),
                 "rvol":      round(state.get("rvol") or 0.0, 2),
@@ -264,6 +310,9 @@ def render_log_entry_ui():
                 "grade_reason": reason,
             }
             save_journal_entry(entry)
+            # Clear fetched price state so next log starts fresh
+            for _ck in ("_fetched_price", "_fetched_volume", "_fetched_symbol"):
+                st.session_state.pop(_ck, None)
             gc = _GRADE_COLORS.get(grade, "#aaa")
             st.success(f"Logged! **Grade {grade}** — {reason}")
             st.markdown(
