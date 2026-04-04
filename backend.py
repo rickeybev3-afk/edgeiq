@@ -2535,11 +2535,12 @@ def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
 
 
 # ── Historical Backtester ───────────────────────────────────────────────────────
-_BACKTEST_DIRECTIONAL = ("Trend", "Nrml Var", "Normal Var")
-_BACKTEST_RANGE       = ("Non-Trend", "Non Trend")
-_BACKTEST_BALANCED    = ("Neutral", "Ntrl", "Extreme")
-_BACKTEST_BIMODAL     = ("Dbl Dist", "Double")
-_BACKTEST_NORMAL      = ("Normal",)   # Normal (not Var) — range-ish
+_BACKTEST_DIRECTIONAL  = ("Trend", "Nrml Var", "Normal Var")
+_BACKTEST_RANGE        = ("Non-Trend", "Non Trend")
+_BACKTEST_NEUTRAL_EXT  = ("Ntrl Extreme", "Neutral Extreme")  # high-vol: any break wins
+_BACKTEST_BALANCED     = ("Neutral",)                          # pure balanced: needs both sides
+_BACKTEST_BIMODAL      = ("Dbl Dist", "Double")
+_BACKTEST_NORMAL       = ("Normal",)   # Normal (not Var) — range-ish
 
 
 def _backtest_single(api_key: str, secret_key: str, sym: str,
@@ -2601,20 +2602,30 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             actual_icon    = "—"
 
         # Win/Loss: does predicted category match actual outcome?
-        is_dir     = any(k in predicted for k in _BACKTEST_DIRECTIONAL)
-        is_range   = any(k in predicted for k in _BACKTEST_RANGE)
-        is_balanced = any(k in predicted for k in _BACKTEST_BALANCED)
-        is_bimodal = any(k in predicted for k in _BACKTEST_BIMODAL)
-        is_normal  = (not is_dir and not is_range and not is_balanced
-                      and not is_bimodal and "Normal" in predicted)
+        is_dir      = any(k in predicted for k in _BACKTEST_DIRECTIONAL)
+        is_range    = any(k in predicted for k in _BACKTEST_RANGE)
+        is_neut_ext = any(k in predicted for k in _BACKTEST_NEUTRAL_EXT)
+        is_balanced = (not is_neut_ext and
+                       any(k in predicted for k in _BACKTEST_BALANCED))
+        is_bimodal  = any(k in predicted for k in _BACKTEST_BIMODAL)
+        is_normal   = (not is_dir and not is_range and not is_neut_ext
+                       and not is_balanced and not is_bimodal
+                       and "Normal" in predicted)
 
         if is_dir:
+            # Trend / Nrml Var → one side breaks in any direction
             win = actual_outcome in ("Bullish Break", "Bearish Break")
+        elif is_neut_ext:
+            # Ntrl Extreme → high-vol structure: any IB break counts as win
+            win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
         elif is_range or is_normal:
+            # Non-Trend / Normal → price stayed inside IB
             win = actual_outcome == "Range-Bound"
         elif is_balanced:
-            win = actual_outcome == "Both Sides"
+            # Pure Neutral → balanced two-sided day
+            win = actual_outcome in ("Both Sides", "Bullish Break", "Bearish Break")
         elif is_bimodal:
+            # Dbl Dist → any break away from low-volume node
             win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
         else:
             win = False

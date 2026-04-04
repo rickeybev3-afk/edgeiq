@@ -2545,7 +2545,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     )
 
     _bt_run = st.button(
-        "▶ RUN SIMULATION", use_container_width=True, key="bt_run_btn",
+        "▶ RUN SIMULATION", use_container_width=True, key="backtest_sim_run_btn",
         type="primary",
     )
 
@@ -2766,9 +2766,10 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     # ── Footer legend ────────────────────────────────────────────────────────────
     st.markdown(
         '<div style="margin-top:20px; font-size:10px; color:#263238; font-family:monospace;">'
-        'WIN LOGIC: Directional predict (Trend/Nrml Var) → one IB side breaks = WIN · '
-        'Range predict (Non-Trend/Normal) → neither side breaks = WIN · '
-        'Balanced predict (Neutral) → both sides touched = WIN · '
+        'WIN LOGIC: Trend/Nrml Var → one IB side breaks · '
+        'Ntrl Extreme → any IB break (high-vol) · '
+        'Non-Trend/Normal → stays inside IB · '
+        'Neutral/Dbl Dist → any break · '
         'Move% = (Close − IB mid) / Open · IB = 9:30–10:30 AM ET'
         '</div>',
         unsafe_allow_html=True,
