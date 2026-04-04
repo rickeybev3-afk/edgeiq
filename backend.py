@@ -28,6 +28,55 @@ else:
     supabase = None
     print("WARNING: Supabase credentials not found in environment variables.")
 
+# ── Supabase Auth helpers ─────────────────────────────────────────────────────
+
+def auth_login(email: str, password: str) -> dict:
+    """Sign in via Supabase email/password auth."""
+    if not supabase:
+        return {"user": None, "session": None, "error": "Supabase not configured."}
+    try:
+        resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        return {"user": resp.user, "session": resp.session, "error": None}
+    except Exception as exc:
+        msg = str(exc)
+        if "Invalid login credentials" in msg:
+            msg = "Invalid email or password."
+        elif "Email not confirmed" in msg:
+            msg = "Please confirm your email before logging in."
+        return {"user": None, "session": None, "error": msg}
+
+
+def auth_signup(email: str, password: str) -> dict:
+    """Sign up via Supabase email/password auth."""
+    if not supabase:
+        return {"user": None, "session": None, "error": "Supabase not configured."}
+    try:
+        resp = supabase.auth.sign_up({"email": email, "password": password})
+        return {"user": resp.user, "session": resp.session, "error": None}
+    except Exception as exc:
+        return {"user": None, "session": None, "error": str(exc)}
+
+
+def auth_signout() -> None:
+    """Sign out the current Supabase auth session."""
+    if not supabase:
+        return
+    try:
+        supabase.auth.sign_out()
+    except Exception:
+        pass
+
+
+def check_user_id_column_exists() -> bool:
+    """Return True if user_id column already exists in trade_journal."""
+    if not supabase:
+        return False
+    try:
+        supabase.table("trade_journal").select("user_id").limit(1).execute()
+        return True
+    except Exception as e:
+        return "user_id" not in str(e)  # column error → False; other errors → assume True
+
 from engine_v2 import (
     calculate_v2_metrics, get_profile_and_shape, calculate_historical_retention,
     identify_overhead_supply, detect_volatility_halts, v2_brain_final_boss,
@@ -472,14 +521,20 @@ class MarketBrain:
 
 # ── Accuracy tracker persistence ──────────────────────────────────────────────
 
-def load_accuracy_tracker():
-    """Load MarketBrain accuracy history from Supabase."""
+def load_accuracy_tracker(user_id: str = "") -> pd.DataFrame:
+    """Load MarketBrain accuracy history from Supabase, optionally filtered by user_id."""
     cols = ["timestamp", "symbol", "predicted", "actual", "correct",
             "entry_price", "exit_price", "mfe", "compare_key"]
     if not supabase:
         return pd.DataFrame(columns=cols)
     try:
-        response = supabase.table("accuracy_tracker").select("*").execute()
+        q = supabase.table("accuracy_tracker").select("*")
+        if user_id:
+            try:
+                q = q.eq("user_id", user_id)
+            except Exception:
+                pass
+        response = q.execute()
         data = response.data
         if not data:
             return pd.DataFrame(columns=cols)
@@ -494,7 +549,8 @@ def load_accuracy_tracker():
 
 
 def log_accuracy_entry(symbol, predicted, actual, compare_key="",
-                       entry_price=0.0, exit_price=0.0, mfe=0.0):
+                       entry_price=0.0, exit_price=0.0, mfe=0.0,
+                       user_id: str = ""):
     """Log Predicted vs Actual structure to Supabase."""
     if not supabase:
         return
@@ -511,6 +567,8 @@ def log_accuracy_entry(symbol, predicted, actual, compare_key="",
         "mfe":         float(mfe),
         "compare_key": compare_key,
     }
+    if user_id:
+        row["user_id"] = user_id
     try:
         supabase.table("accuracy_tracker").insert(row).execute()
         res = supabase.table("accuracy_tracker").select("id", count="exact").execute()
@@ -1696,12 +1754,18 @@ _JOURNAL_COLS = [
 ]
 
 
-def load_journal() -> "pd.DataFrame":
-    """Load the trade journal from Supabase."""
+def load_journal(user_id: str = "") -> "pd.DataFrame":
+    """Load the trade journal from Supabase, optionally filtered by user_id."""
     if not supabase:
         return pd.DataFrame(columns=_JOURNAL_COLS)
     try:
-        response = supabase.table("trade_journal").select("*").execute()
+        q = supabase.table("trade_journal").select("*")
+        if user_id:
+            try:
+                q = q.eq("user_id", user_id)
+            except Exception:
+                pass
+        response = q.execute()
         data = response.data
         if not data:
             return pd.DataFrame(columns=_JOURNAL_COLS)
@@ -1715,13 +1779,15 @@ def load_journal() -> "pd.DataFrame":
         return pd.DataFrame(columns=_JOURNAL_COLS)
 
 
-def save_journal_entry(entry: dict):
+def save_journal_entry(entry: dict, user_id: str = ""):
     """Save a new trade journal entry to Supabase."""
     if not supabase:
         print("Error: Supabase not connected.")
         return
     try:
         row = {k: entry.get(k, None) for k in _JOURNAL_COLS}
+        if user_id:
+            row["user_id"] = user_id
         supabase.table("trade_journal").insert(row).execute()
     except Exception as e:
         print(f"Database write error (journal): {e}")
@@ -1846,7 +1912,8 @@ def match_fills_to_roundtrips(fills: list) -> list:
 
 
 def save_trade_review(journal_row: dict, exit_price: float,
-                      actual_structure: str, direction: str = "Long") -> dict:
+                      actual_structure: str, direction: str = "Long",
+                      user_id: str = "") -> dict:
     """Calculate trade outcome and persist to accuracy_tracker.
 
     Parameters
@@ -1886,6 +1953,7 @@ def save_trade_review(journal_row: dict, exit_price: float,
         entry_price = entry_price,
         exit_price  = exit_price,
         mfe         = round(pnl_dollars, 4),
+        user_id     = user_id,
     )
 
     return {

@@ -45,6 +45,10 @@ _DEFAULTS = {
     "scanner_last_run": None,      # datetime of last successful scan
     # Last analysis snapshot — used by Live Pulse header + Log Entry
     "last_analysis_state": None,
+    # Auth
+    "auth_user":    None,   # supabase User object when logged in
+    "auth_user_id": "",     # user UUID string
+    "auth_email":   "",     # user email string
     # Trade journal active tab state
     "active_tab": 0,
     # Position tracking
@@ -222,6 +226,107 @@ def check_target_alerts(price, targets, audio_enabled):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# AUTH
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_login_page():
+    """Full-page login / sign-up screen shown when no user is authenticated."""
+    st.markdown("""
+    <style>
+    .auth-card {
+        max-width: 440px; margin: 60px auto 0 auto;
+        background: #12122288; border: 1px solid #2a2a4a;
+        border-radius: 16px; padding: 40px 36px;
+    }
+    .auth-logo {
+        text-align: center; font-size: 48px; margin-bottom: 4px;
+    }
+    .auth-title {
+        text-align: center; font-size: 22px; font-weight: 800;
+        color: #e0e0e0; letter-spacing: -0.5px; margin-bottom: 4px;
+    }
+    .auth-sub {
+        text-align: center; font-size: 12px; color: #5c6bc0;
+        text-transform: uppercase; letter-spacing: 1px; margin-bottom: 28px;
+    }
+    </style>
+    <div class="auth-card">
+      <div class="auth-logo">📊</div>
+      <div class="auth-title">Volume Profile Terminal</div>
+      <div class="auth-sub">Professional Trading Analytics</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Center the form using columns
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        _auth_tab = st.radio(
+            "Action", ["🔐 Log In", "📝 Sign Up"],
+            horizontal=True, key="auth_tab_select", label_visibility="collapsed",
+        )
+        st.markdown("")
+
+        _email = st.text_input(
+            "Email", placeholder="you@example.com",
+            key="auth_email_input", label_visibility="collapsed",
+        )
+        _password = st.text_input(
+            "Password", type="password", placeholder="Password",
+            key="auth_password_input", label_visibility="collapsed",
+        )
+
+        if _auth_tab == "🔐 Log In":
+            if st.button("Log In", use_container_width=True, type="primary",
+                         key="auth_login_btn"):
+                if not _email or not _password:
+                    st.error("Please enter your email and password.")
+                else:
+                    with st.spinner("Logging in…"):
+                        _res = auth_login(_email.strip(), _password)
+                    if _res["error"]:
+                        st.error(_res["error"])
+                    else:
+                        _u = _res["user"]
+                        st.session_state["auth_user"]    = _u
+                        st.session_state["auth_user_id"] = str(_u.id) if _u else ""
+                        st.session_state["auth_email"]   = str(_u.email) if _u else _email
+                        st.success("Logged in! Loading dashboard…")
+                        st.rerun()
+        else:
+            st.caption("Password must be at least 6 characters.")
+            if st.button("Create Account", use_container_width=True, type="primary",
+                         key="auth_signup_btn"):
+                if not _email or not _password:
+                    st.error("Please enter your email and password.")
+                elif len(_password) < 6:
+                    st.error("Password must be at least 6 characters.")
+                else:
+                    with st.spinner("Creating account…"):
+                        _res = auth_signup(_email.strip(), _password)
+                    if _res["error"]:
+                        st.error(_res["error"])
+                    else:
+                        _u = _res["user"]
+                        if _u and _u.id:
+                            st.session_state["auth_user"]    = _u
+                            st.session_state["auth_user_id"] = str(_u.id)
+                            st.session_state["auth_email"]   = str(_u.email)
+                            st.success("Account created! Loading dashboard…")
+                            st.rerun()
+                        else:
+                            st.success(
+                                "Account created! Check your email to confirm, "
+                                "then log in below."
+                            )
+
+        st.markdown(
+            '<div style="text-align:center; font-size:10px; color:#333; margin-top:24px;">'
+            'Powered by Supabase Auth · Data isolated per account'
+            '</div>', unsafe_allow_html=True,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # LIVE STREAM
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -309,7 +414,7 @@ def render_log_entry_ui():
                 "grade":     grade,
                 "grade_reason": reason,
             }
-            save_journal_entry(entry)
+            save_journal_entry(entry, user_id=st.session_state.get("auth_user_id", ""))
             # Clear fetched price state so next log starts fresh
             for _ck in ("_fetched_price", "_fetched_volume", "_fetched_symbol"):
                 st.session_state.pop(_ck, None)
@@ -324,7 +429,7 @@ def render_log_entry_ui():
             )
 
     # ── Recent Trades preview (last 10 from Supabase) ─────────────────────────
-    _recent_df = load_journal()
+    _recent_df = load_journal(user_id=st.session_state.get("auth_user_id", ""))
     if not _recent_df.empty:
         _cols = [c for c in ["timestamp", "ticker", "price", "structure", "grade"]
                  if c in _recent_df.columns]
@@ -382,7 +487,8 @@ def render_log_entry_ui():
 
 def render_journal_tab(api_key: str = "", secret_key: str = ""):
     """Render the 📖 My Journal tab."""
-    df = load_journal()
+    _uid = st.session_state.get("auth_user_id", "")
+    df = load_journal(user_id=_uid)
 
     cola, colb = st.columns([1, 1])
     with cola:
@@ -563,6 +669,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         exit_price=_exit_price,
                         actual_structure=_actual_struct,
                         direction=_direction,
+                        user_id=_uid,
                     )
                 if _res.get("error"):
                     st.error(f"Error: {_res['error']}")
@@ -709,6 +816,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                     entry_price = _t["avg_entry"],
                                     exit_price  = _t["avg_exit"],
                                     mfe         = _t["pnl_dollars"],
+                                    user_id     = _uid,
                                 )
                                 st.session_state[f"_imported_{_imp_key}"] = True
                                 st.rerun()
@@ -734,6 +842,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                 entry_price = _t2["avg_entry"],
                                 exit_price  = _t2["avg_exit"],
                                 mfe         = _t2["pnl_dollars"],
+                                user_id     = _uid,
                             )
                             st.session_state[f"_imported_import_alpaca_{_ti2}"] = True
                             _saved += 1
@@ -1499,7 +1608,8 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                 st.session_state.brain_session_correct += 1
             # Log to CSV with the compare_key stored for reload dedup
             log_accuracy_entry(ticker, brain.prediction, label,
-                               compare_key=_compare_key)
+                               compare_key=_compare_key,
+                               user_id=st.session_state.get("auth_user_id", ""))
             _brain_newly_logged = True
         elif st.session_state.brain_last_compared != _compare_key and _already_in_csv:
             # Already in CSV from a previous session — just sync the session key
@@ -1943,7 +2053,55 @@ with st.sidebar:
     st.markdown("---")
     st.caption("SIP = full national tape + pre-market data. IEX = regular hours (9:30–4 PM) only.")
 
+    # ── Account & Sign Out ────────────────────────────────────────────────────
+    st.markdown("---")
+    _auth_email_disp = st.session_state.get("auth_email", "")
+    if _auth_email_disp:
+        st.markdown(
+            f'<div style="font-size:11px; color:#90caf9; margin-bottom:6px;">'
+            f'👤 {_auth_email_disp}</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("🚪 Sign Out", use_container_width=True, key="signout_btn"):
+            auth_signout()
+            for _k in ("auth_user", "auth_user_id", "auth_email"):
+                st.session_state[_k] = "" if _k != "auth_user" else None
+            st.rerun()
+    else:
+        st.markdown(
+            '<div style="font-size:11px; color:#555;">Not logged in</div>',
+            unsafe_allow_html=True,
+        )
 
+
+# ── Auth gate: show login page if not authenticated ───────────────────────────
+if not st.session_state.get("auth_user"):
+    render_login_page()
+    st.stop()
+
+_AUTH_USER_ID = st.session_state.get("auth_user_id", "")
+
+# ── Schema migration reminder ─────────────────────────────────────────────────
+if not st.session_state.get("_migration_checked"):
+    _col_ok = check_user_id_column_exists()
+    st.session_state["_migration_checked"] = True
+    st.session_state["_migration_needed"] = not _col_ok
+
+if st.session_state.get("_migration_needed"):
+    with st.expander("⚠️ Database Migration Required — click to expand", expanded=True):
+        st.error(
+            "Your Supabase tables are missing the **user_id** column needed for "
+            "multi-user data isolation. Run the following SQL in your Supabase SQL editor:"
+        )
+        st.code(
+            "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS user_id TEXT;\n"
+            "ALTER TABLE accuracy_tracker ADD COLUMN IF NOT EXISTS user_id TEXT;",
+            language="sql",
+        )
+        st.caption(
+            "Go to app.supabase.com → your project → SQL Editor → paste + run. "
+            "This banner disappears once the columns exist."
+        )
 
 st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
 
@@ -2063,8 +2221,9 @@ def render_analytics_tab():
     st.markdown("## 📊 Analytics & Edge")
     st.caption("Live edge stats computed from your trade journal and accuracy tracker.")
 
-    journal_df = load_journal()
-    tracker_df = load_accuracy_tracker()
+    _uid = st.session_state.get("auth_user_id", "")
+    journal_df = load_journal(user_id=_uid)
+    tracker_df = load_accuracy_tracker(user_id=_uid)
 
     with st.spinner("Computing edge analytics…"):
         ana = compute_edge_analytics(journal_df, tracker_df)
