@@ -24,3 +24,9 @@ id = "egObR-lzNIUqMQT6jm2i6"
 uri = "file://app_code_download.zip"
 type = "unspecified"
 title = "Volume Profile Dashboard — Source Code"
+
+[[outputs]]
+id = "XQVvSaYnnlCmGvDq5jJwi"
+uri = "file://volume_profile_dashboard.tar.gz"
+type = "unspecified"
+title = "Volume Profile Dashboard — Source Code"
