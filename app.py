@@ -2660,6 +2660,75 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         unsafe_allow_html=True,
     )
 
+    # ── Directional breakdown row ────────────────────────────────────────────────
+    _bull_ft_str = f"+{_summary['avg_bull_ft']:.1f}%" if _summary["avg_bull_ft"] else "—"
+    _bear_ft_str = f"-{_summary['avg_bear_ft']:.1f}%" if _summary["avg_bear_ft"] else "—"
+    _lr          = _summary["long_win_rate"]
+    _lr_clr      = "#4caf50" if _lr >= 50 else "#ffa726" if _lr >= 35 else "#ef5350"
+    st.markdown(
+        f'<div style="background:#020813; border:1px solid #0d2137; border-radius:8px; '
+        f'padding:12px 24px; margin-bottom:20px; display:flex; gap:32px; flex-wrap:wrap;">'
+
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        f'letter-spacing:1px; margin-top:4px; align-self:center; min-width:90px;">'
+        f'DIRECTIONAL BREAKDOWN</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#546e7a; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">↑ Bull Breaks</div>'
+        f'<div style="font-size:22px; font-weight:800; color:#4caf50; '
+        f'font-family:monospace;">{_summary["bull_breaks"]}'
+        f'<span style="font-size:13px; color:#37474f;"> / {_summary["total"]}</span></div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#546e7a; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">Avg Bull Follow-Thru</div>'
+        f'<div style="font-size:22px; font-weight:800; color:#4caf50; '
+        f'font-family:monospace;">{_bull_ft_str}</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#546e7a; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">↓ Bear Breaks</div>'
+        f'<div style="font-size:22px; font-weight:800; color:#ef5350; '
+        f'font-family:monospace;">{_summary["bear_breaks"]}'
+        f'<span style="font-size:13px; color:#37474f;"> / {_summary["total"]}</span></div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#546e7a; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">Avg Bear Follow-Thru</div>'
+        f'<div style="font-size:22px; font-weight:800; color:#ef5350; '
+        f'font-family:monospace;">{_bear_ft_str}</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#546e7a; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">Long-Only Hit Rate</div>'
+        f'<div style="font-size:22px; font-weight:800; color:{_lr_clr}; '
+        f'font-family:monospace;">{_lr:.1f}%</div>'
+        f'<div style="font-size:9px; color:#37474f;">% setups went bullish</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#546e7a; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">Both Sides</div>'
+        f'<div style="font-size:22px; font-weight:800; color:#ffa726; '
+        f'font-family:monospace;">{_summary["both_breaks"]}</div>'
+        f'</div>'
+
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#546e7a; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">Range-Bound</div>'
+        f'<div style="font-size:22px; font-weight:800; color:#546e7a; '
+        f'font-family:monospace;">{_summary["range_bound"]}</div>'
+        f'</div>'
+
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     # ── Column headers ──────────────────────────────────────────────────────────
     st.markdown(
         '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '

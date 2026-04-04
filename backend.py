@@ -2706,13 +2706,35 @@ def run_historical_backtest(
     losses   = len(results) - wins
     win_rate = round(wins / len(results) * 100, 1) if results else 0.0
 
+    # Directional breakdown — independent of structure prediction accuracy
+    bull_rows  = [r for r in results if r["actual_outcome"] == "Bullish Break"]
+    bear_rows  = [r for r in results if r["actual_outcome"] == "Bearish Break"]
+    both_rows  = [r for r in results if r["actual_outcome"] == "Both Sides"]
+    range_rows = [r for r in results if r["actual_outcome"] == "Range-Bound"]
+
+    avg_bull_ft = (round(sum(r["aft_move_pct"] for r in bull_rows) / len(bull_rows), 1)
+                   if bull_rows else 0.0)
+    avg_bear_ft = (round(sum(abs(r["aft_move_pct"]) for r in bear_rows) / len(bear_rows), 1)
+                   if bear_rows else 0.0)
+
+    # Long-only win rate: if you blindly bought every IB bullish break
+    long_win_rate = round(len(bull_rows) / len(results) * 100, 1) if results else 0.0
+
     summary = {
-        "win_rate":    win_rate,
-        "total":       len(results),
-        "wins":        wins,
-        "losses":      losses,
-        "highest_tcs": round(max(r["tcs"] for r in results), 1),
-        "avg_tcs":     round(sum(r["tcs"] for r in results) / len(results), 1),
+        "win_rate":      win_rate,
+        "total":         len(results),
+        "wins":          wins,
+        "losses":        losses,
+        "highest_tcs":   round(max(r["tcs"] for r in results), 1),
+        "avg_tcs":       round(sum(r["tcs"] for r in results) / len(results), 1),
+        # Directional stats
+        "bull_breaks":   len(bull_rows),
+        "bear_breaks":   len(bear_rows),
+        "both_breaks":   len(both_rows),
+        "range_bound":   len(range_rows),
+        "avg_bull_ft":   avg_bull_ft,   # avg follow-thru on bullish breaks (%)
+        "avg_bear_ft":   avg_bear_ft,   # avg follow-thru on bearish breaks (abs %)
+        "long_win_rate": long_win_rate, # % of setups that went bullish
     }
     return results, summary
 
