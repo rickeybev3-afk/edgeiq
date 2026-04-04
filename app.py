@@ -2668,9 +2668,9 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         unsafe_allow_html=True,
     )
 
-    _BT_COLS  = [0.7, 0.7, 0.75, 0.6, 1.2, 1.5, 1.2, 0.7, 0.6]
+    _BT_COLS  = [0.7, 0.7, 0.75, 0.6, 1.2, 1.5, 1.2, 0.8, 0.6]
     _BT_HDRS  = ["Ticker", "Open", "IB Range", "TCS", "Morning Prediction",
-                 "EOD Reality", "Close", "Move %", "Result"]
+                 "EOD Reality", "Close", "Follow-Thru", "Result"]
 
     _hdr_row = st.columns(_BT_COLS)
     for _col, _lbl in zip(_hdr_row, _BT_HDRS):
@@ -2770,7 +2770,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         'Ntrl Extreme → any IB break (high-vol) · '
         'Non-Trend/Normal → stays inside IB · '
         'Neutral/Dbl Dist → any break · '
-        'Move% = (Close − IB mid) / Open · IB = 9:30–10:30 AM ET'
+        'Follow-Thru = (Best post-IB point − IB boundary broken) / IB boundary · IB = 9:30–10:30 AM ET'
         '</div>',
         unsafe_allow_html=True,
     )

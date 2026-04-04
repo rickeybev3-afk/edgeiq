@@ -2630,9 +2630,22 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         else:
             win = False
 
-        # % move after IB
-        pm_range   = ib_high - ib_low
-        aft_move   = (close_px - ((ib_high + ib_low) / 2)) / open_px * 100
+        # Follow-through % = how far price ran from the broken IB boundary
+        # to the best post-IB point (afternoon high or low).
+        # Bullish break  → (afternoon_high  − ib_high) / ib_high
+        # Bearish break  → (ib_low − afternoon_low)   / ib_low
+        # Both sides     → larger of the two
+        # Range-bound    → 0  (never broke)
+        if broke_up and broke_down:
+            _ft_up   = (aft_high - ib_high) / ib_high * 100
+            _ft_down = (ib_low   - aft_low)  / ib_low  * 100
+            aft_move = _ft_up if _ft_up >= _ft_down else -_ft_down
+        elif broke_up:
+            aft_move = (aft_high - ib_high) / ib_high * 100
+        elif broke_down:
+            aft_move = -((ib_low - aft_low) / ib_low * 100)
+        else:
+            aft_move = 0.0
 
         return {
             "ticker":          sym,
