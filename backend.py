@@ -2544,7 +2544,8 @@ _BACKTEST_NORMAL       = ("Normal",)   # Normal (not Var) — range-ish
 
 
 def _backtest_single(api_key: str, secret_key: str, sym: str,
-                     trade_date, feed: str, price_min: float, price_max: float):
+                     trade_date, feed: str, price_min: float, price_max: float,
+                     cutoff_hour: int = 10, cutoff_minute: int = 30):
     """Fetch one ticker's historical bars, score the morning, evaluate the afternoon.
 
     Returns a result dict or None if data is insufficient / out of price range.
@@ -2559,10 +2560,10 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         if not (price_min <= open_px <= price_max):
             return None
 
-        # Split at IB end (10:30 ET)
-        ib_cutoff = df.index[0].replace(hour=10, minute=30, second=0)
-        pm_df  = df[df.index <= ib_cutoff]   # engine input
-        aft_df = df[df.index > ib_cutoff]    # actual outcome
+        # Split at prediction cutoff (IB always 9:30–10:30; engine sees up to cutoff)
+        ib_cutoff = df.index[0].replace(hour=cutoff_hour, minute=cutoff_minute, second=0)
+        pm_df  = df[df.index <= ib_cutoff]   # engine input (9:30 → cutoff)
+        aft_df = df[df.index > ib_cutoff]    # actual outcome (cutoff → 4:00 PM)
 
         if len(pm_df) < 5 or len(aft_df) < 5:
             return None
@@ -2672,6 +2673,8 @@ def run_historical_backtest(
     feed: str = "sip",
     price_min: float = 2.0,
     price_max: float = 20.0,
+    cutoff_hour: int = 10,
+    cutoff_minute: int = 30,
 ) -> tuple:
     """Run the quant engine on morning-only historical data and score against afternoon.
 
@@ -2688,7 +2691,8 @@ def run_historical_backtest(
         futures = {
             executor.submit(
                 _backtest_single, api_key, secret_key, sym,
-                trade_date, feed, price_min, price_max
+                trade_date, feed, price_min, price_max,
+                cutoff_hour, cutoff_minute
             ): sym
             for sym in tickers
         }

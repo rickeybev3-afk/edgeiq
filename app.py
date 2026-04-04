@@ -2512,7 +2512,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         'letter-spacing:1.5px; margin-bottom:10px; font-weight:700;">⚙ Simulation Parameters</div>',
         unsafe_allow_html=True,
     )
-    _bt_col1, _bt_col2, _bt_col3 = st.columns([1.2, 1.2, 1])
+    _bt_col1, _bt_col2, _bt_col3, _bt_col4 = st.columns([1.2, 1.2, 1, 1])
     with _bt_col1:
         yesterday = date.today() - timedelta(days=1)
         _bt_date  = st.date_input(
@@ -2532,6 +2532,22 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
             "Price Range ($)", min_value=1.0, max_value=50.0,
             value=(2.0, 20.0), step=0.5, key="bt_price_range",
         )
+    with _bt_col4:
+        _BT_CUTOFF_OPTIONS = {
+            "10:30 AM — IB Only":        (10, 30),
+            "11:00 AM — +30 min":        (11,  0),
+            "11:30 AM — +1 hr post-IB":  (11, 30),
+            "12:00 PM — Full Morning":   (12,  0),
+        }
+        _bt_cutoff_label = st.selectbox(
+            "Prediction Cutoff",
+            options=list(_BT_CUTOFF_OPTIONS.keys()),
+            index=0,
+            key="bt_cutoff_select",
+            help="How much data the engine sees before making its prediction. "
+                 "More data = richer structure signals. IB boundary stays fixed at 10:30 AM.",
+        )
+        _bt_cutoff_h, _bt_cutoff_m = _BT_CUTOFF_OPTIONS[_bt_cutoff_label]
 
     st.markdown(
         '<div style="font-size:11px; color:#37474f; margin:10px 0 4px 0;">Ticker Watchlist '
@@ -2551,8 +2567,8 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
 
     st.markdown(
         '<div style="font-size:10px; color:#263238; margin-top:6px;">'
-        'Engine logic: IB = 9:30–10:30 AM · Prediction = TCS + top structure probability · '
-        'Win = predicted category matches afternoon reality (directional / range / balanced)'
+        'Engine logic: IB always 9:30–10:30 AM (fixed) · Prediction cutoff = selectable · '
+        'More data → richer structures · Win = predicted type matches afternoon reality'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -2572,7 +2588,8 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         _total = len(_tickers)
 
         with st.spinner(
-            f"⏳ Simulating {_total} tickers on {_bt_date} — "
+            f"⏳ Simulating {_total} tickers on {_bt_date} "
+            f"(cutoff {_bt_cutoff_h}:{_bt_cutoff_m:02d}) — "
             f"fetching bars & running quant engine concurrently…"
         ):
             _results, _summary = run_historical_backtest(
@@ -2582,8 +2599,12 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
                 feed=_bt_feed_str,
                 price_min=_pmin,
                 price_max=_pmax,
+                cutoff_hour=_bt_cutoff_h,
+                cutoff_minute=_bt_cutoff_m,
             )
-        st.session_state[_bt_cache] = (_results, _summary, _bt_date)
+        st.session_state[_bt_cache] = (
+            _results, _summary, _bt_date, _bt_cutoff_label
+        )
 
     # ── Load cached results ─────────────────────────────────────────────────────
     if _bt_cache not in st.session_state:
@@ -2596,7 +2617,12 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
-    _results, _summary, _sim_date = st.session_state[_bt_cache]
+    _bt_cached = st.session_state[_bt_cache]
+    if len(_bt_cached) == 4:
+        _results, _summary, _sim_date, _sim_cutoff_label = _bt_cached
+    else:
+        _results, _summary, _sim_date = _bt_cached
+        _sim_cutoff_label = "10:30 AM"
 
     if _summary.get("error"):
         st.error(_summary["error"])
@@ -2615,7 +2641,8 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         f'padding:18px 24px; margin-bottom:20px;">'
         f'<div style="font-size:10px; color:#1565c0; letter-spacing:2px; '
         f'text-transform:uppercase; margin-bottom:12px; font-family:monospace;">'
-        f'SIMULATION RESULTS — {_sim_date.strftime("%A %B %d, %Y").upper()}</div>'
+        f'SIMULATION RESULTS — {_sim_date.strftime("%A %B %d, %Y").upper()} '
+        f'· CUTOFF {_sim_cutoff_label.split("—")[0].strip()}</div>'
         f'<div style="display:flex; gap:40px; flex-wrap:wrap;">'
 
         f'<div>'
