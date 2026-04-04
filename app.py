@@ -2232,10 +2232,36 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
         _pb_auto = st.checkbox("Auto-refresh (60 s)", value=False, key="playbook_auto_refresh")
 
-    # ── Cached results in session state ─────────────────────────────────────────
-    _pb_cache_key = "playbook_results_cache"
-    _pb_time_key  = "playbook_last_fetch"
+    # ── Quant scoring controls ───────────────────────────────────────────────────
+    st.markdown(
+        '<div style="background:#0a0f1e; border:1px solid #1a2744; border-radius:8px; '
+        'padding:12px 16px; margin:12px 0;">'
+        '<span style="font-size:12px; font-weight:700; color:#7c4dff; text-transform:uppercase; '
+        'letter-spacing:1px;">🧠 Quant Engine Scoring</span>'
+        '<span style="font-size:11px; color:#607d8b; margin-left:12px;">'
+        'Fetches intraday bars for each ticker and runs TCS + Structure prediction</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    _qs_c1, _qs_c2, _qs_c3 = st.columns([1.5, 1, 1])
+    with _qs_c1:
+        _pb_feed = st.radio("Bar data feed", ["IEX (free)", "SIP (paid)"],
+                            horizontal=True, key="playbook_feed_radio")
+        _pb_feed_str = "iex" if "IEX" in _pb_feed else "sip"
+    with _qs_c2:
+        _pb_max_score = st.number_input("Max tickers to score", min_value=5, max_value=30,
+                                        value=15, step=5, key="playbook_max_score")
+    with _qs_c3:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _pb_score_btn = st.button("🧠 Run Quant Score", use_container_width=True,
+                                  key="playbook_score_btn")
 
+    # ── Cache keys ───────────────────────────────────────────────────────────────
+    _pb_cache_key  = "playbook_results_cache"
+    _pb_time_key   = "playbook_last_fetch"
+    _pb_score_key  = "playbook_scored_cache"
+
+    # ── Fetch raw scan ───────────────────────────────────────────────────────────
     _should_fetch = (
         _pb_refresh
         or _pb_cache_key not in st.session_state
@@ -2250,8 +2276,28 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             _rows, _err = scan_playbook(api_key, secret_key, top=_pb_top)
         st.session_state[_pb_cache_key] = (_rows, _err)
         st.session_state[_pb_time_key]  = time.time()
+        st.session_state.pop(_pb_score_key, None)   # invalidate old scores
     else:
         _rows, _err = st.session_state.get(_pb_cache_key, ([], ""))
+
+    # ── Run quant scoring ────────────────────────────────────────────────────────
+    if _pb_score_btn and _rows:
+        with st.spinner(
+            f"Running quant engine on top {min(int(_pb_max_score), len(_rows))} tickers "
+            f"(fetching intraday bars via {_pb_feed_str.upper()})…"
+        ):
+            import copy as _copy
+            _rows_to_score = _copy.deepcopy(_rows)
+            _scored_rows = score_playbook_tickers(
+                _rows_to_score, api_key, secret_key,
+                feed=_pb_feed_str, max_tickers=int(_pb_max_score),
+            )
+        st.session_state[_pb_score_key] = _scored_rows
+        _rows = _scored_rows
+    elif _pb_score_key in st.session_state:
+        _rows = st.session_state[_pb_score_key]
+
+    _scores_loaded = any(r.get("tcs") is not None for r in _rows) if _rows else False
 
     # ── Pre-load success banner ─────────────────────────────────────────────────
     _pb_loaded = st.session_state.pop("_playbook_just_loaded", None)
@@ -2271,24 +2317,34 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             st.info("No small-cap stocks in the $2–$20 range found right now. Try refreshing after market open.")
         return
 
-    # ── Last fetch timestamp ────────────────────────────────────────────────────
+    # ── Last fetch timestamp + score hint ───────────────────────────────────────
     _ts = st.session_state.get(_pb_time_key, 0)
     if _ts:
-        _ago = int(time.time() - _ts)
+        _ago     = int(time.time() - _ts)
         _ago_str = f"{_ago}s ago" if _ago < 120 else f"{_ago // 60}m ago"
+        _scored_badge = (
+            f' · <span style="color:#7c4dff;">🧠 Quant scored</span>'
+            if _scores_loaded else
+            f' · <span style="color:#546e7a;">Click <b>🧠 Run Quant Score</b> to add TCS & Setup</span>'
+        )
         st.markdown(
             f'<div style="font-size:11px; color:#546e7a; margin-bottom:12px;">'
-            f'Last fetched: <b>{_ago_str}</b> · {len(_rows)} stocks in range</div>',
+            f'Last fetched: <b>{_ago_str}</b> · {len(_rows)} stocks in range'
+            f'{_scored_badge}</div>',
             unsafe_allow_html=True,
         )
 
+    # ── Column layout ───────────────────────────────────────────────────────────
+    _COL_W = [1.0, 0.9, 0.9, 1.2, 0.9, 0.8, 1.2, 0.8]
+    _COL_LABELS = ["Ticker", "Price", "% Change", "Volume", "Source",
+                   "TCS Score", "Predicted Setup", "Action"]
+
     # ── Column headers ──────────────────────────────────────────────────────────
-    _hdr = st.columns([1.2, 1.1, 1.1, 1.5, 1.2, 0.9])
-    _hdr_labels = ["Ticker", "Price", "% Change", "Volume", "Source", "Action"]
-    _hdr_colors = ["#90caf9", "#90caf9", "#90caf9", "#90caf9", "#90caf9", "#90caf9"]
-    for _col, _lbl, _clr in zip(_hdr, _hdr_labels, _hdr_colors):
+    _hdr = st.columns(_COL_W)
+    for _col, _lbl in zip(_hdr, _COL_LABELS):
+        _hdr_clr = "#7c4dff" if _lbl in ("TCS Score", "Predicted Setup") else "#90caf9"
         _col.markdown(
-            f'<div style="font-size:11px; font-weight:700; color:{_clr}; '
+            f'<div style="font-size:11px; font-weight:700; color:{_hdr_clr}; '
             f'text-transform:uppercase; letter-spacing:0.8px; padding:4px 0 8px 0; '
             f'border-bottom:1px solid #1e2a3a;">{_lbl}</div>',
             unsafe_allow_html=True,
@@ -2301,6 +2357,8 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
         _chg   = _row["change_pct"]
         _vol   = _row["volume"]
         _src   = _row["source"]
+        _tcs   = _row.get("tcs")
+        _setup = _row.get("structure", "—")
 
         _chg_color = "#4caf50" if _chg >= 0 else "#ef5350"
         _chg_sign  = "+" if _chg >= 0 else ""
@@ -2312,49 +2370,72 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             else "#5c6bc0"
         )
 
-        _row_cols = st.columns([1.2, 1.1, 1.1, 1.5, 1.2, 0.9])
+        # TCS color-coding
+        if _tcs is None:
+            _tcs_color = "#37474f"
+            _tcs_str   = "—"
+        elif _tcs >= 70:
+            _tcs_color = "#4caf50"
+            _tcs_str   = f"{_tcs:.0f}"
+        elif _tcs >= 40:
+            _tcs_color = "#ffa726"
+            _tcs_str   = f"{_tcs:.0f}"
+        else:
+            _tcs_color = "#ef5350"
+            _tcs_str   = f"{_tcs:.0f}"
+
+        _row_cols = st.columns(_COL_W)
 
         _row_cols[0].markdown(
             f'<div style="padding:10px 0; font-size:15px; font-weight:800; color:#e0e0e0;">'
-            f'{_sym}</div>',
-            unsafe_allow_html=True,
+            f'{_sym}</div>', unsafe_allow_html=True,
         )
         _row_cols[1].markdown(
             f'<div style="padding:10px 0; font-size:14px; color:#cfd8dc;">'
-            f'${_price:.2f}</div>',
-            unsafe_allow_html=True,
+            f'${_price:.2f}</div>', unsafe_allow_html=True,
         )
         _row_cols[2].markdown(
             f'<div style="padding:10px 0; font-size:14px; font-weight:700; color:{_chg_color};">'
-            f'{_chg_sign}{_chg:.2f}%</div>',
-            unsafe_allow_html=True,
+            f'{_chg_sign}{_chg:.2f}%</div>', unsafe_allow_html=True,
         )
         _row_cols[3].markdown(
             f'<div style="padding:10px 0; font-size:13px; color:#90a4ae;">'
-            f'{_vol_str}</div>',
-            unsafe_allow_html=True,
+            f'{_vol_str}</div>', unsafe_allow_html=True,
         )
         _row_cols[4].markdown(
             f'<div style="padding:10px 0;">'
             f'<span style="background:{_src_color}22; color:{_src_color}; '
             f'font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; '
             f'border:1px solid {_src_color}55; text-transform:uppercase;">'
-            f'{_src}</span></div>',
-            unsafe_allow_html=True,
+            f'{_src}</span></div>', unsafe_allow_html=True,
         )
-        with _row_cols[5]:
+        # TCS Score cell — pill badge
+        _row_cols[5].markdown(
+            f'<div style="padding:8px 0;">'
+            f'<span style="background:{_tcs_color}22; color:{_tcs_color}; '
+            f'font-size:13px; font-weight:800; padding:3px 10px; border-radius:12px; '
+            f'border:1px solid {_tcs_color}55;">{_tcs_str}</span>'
+            f'</div>', unsafe_allow_html=True,
+        )
+        # Predicted Setup cell
+        _setup_short = (_setup[:16] + "…") if len(str(_setup)) > 16 else _setup
+        _row_cols[6].markdown(
+            f'<div style="padding:10px 0; font-size:12px; color:#ce93d8; font-weight:600;">'
+            f'{_setup_short}</div>', unsafe_allow_html=True,
+        )
+        with _row_cols[7]:
             if st.button("📝 Log", key=f"playbook_log_{_i}_{_sym}",
                          use_container_width=True):
-                st.session_state["_fetched_price"]    = _price
-                st.session_state["_fetched_volume"]   = _vol
-                st.session_state["_fetched_symbol"]   = _sym
+                st.session_state["_fetched_price"]        = _price
+                st.session_state["_fetched_volume"]        = _vol
+                st.session_state["_fetched_symbol"]        = _sym
                 st.session_state["_playbook_just_loaded"] = {
-                    "ticker": _sym, "price": _price
+                    "ticker": _sym, "price": _price,
                 }
                 st.rerun()
 
         st.markdown(
-            f'<div style="border-bottom:1px solid #0d1520; margin:0;"></div>',
+            '<div style="border-bottom:1px solid #0d1520; margin:0;"></div>',
             unsafe_allow_html=True,
         )
 

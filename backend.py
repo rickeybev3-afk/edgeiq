@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta, time as dtime
 import pytz
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import csv
 import os
@@ -2531,5 +2532,79 @@ def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
     rows = sorted(pool.values(), key=lambda x: x["change_pct"], reverse=True)
     err  = "; ".join(errors) if (errors and not rows) else ""
     return rows, err
+
+
+# ── Playbook Quant Scoring ──────────────────────────────────────────────────────
+def _score_single_ticker(api_key: str, secret_key: str, sym: str,
+                         trade_date, feed: str = "iex"):
+    """Fetch intraday bars for one ticker and return (sym, tcs, top_structure).
+
+    Returns (sym, None, None) on any data or calculation failure so that callers
+    can gracefully degrade without crashing the whole batch.
+    """
+    try:
+        df = fetch_bars(api_key, secret_key, sym, trade_date, feed=feed)
+        if df.empty or len(df) < 5:
+            return sym, None, None
+
+        ib_high, ib_low = compute_initial_balance(df)
+        if not ib_high or not ib_low:
+            ib_high = float(df["high"].max())
+            ib_low  = float(df["low"].min())
+
+        bin_centers, vap, poc_price = compute_volume_profile(df, num_bins=50)
+        tcs     = compute_tcs(df, ib_high, ib_low, poc_price)
+        probs   = compute_structure_probabilities(
+            df, bin_centers, vap, ib_high, ib_low, poc_price
+        )
+        top_struct = max(probs, key=probs.get) if probs else "—"
+        return sym, round(float(tcs), 1), top_struct
+    except Exception:
+        return sym, None, None
+
+
+def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
+                           feed: str = "iex", max_tickers: int = 20) -> list:
+    """Enrich Playbook rows with TCS score and predicted structure.
+
+    Fetches intraday bar data concurrently for up to *max_tickers* tickers
+    (taken from the front of *rows*, which is already sorted by % change).
+    Adds 'tcs' (float | None) and 'structure' (str) keys to every row dict.
+    Rows beyond max_tickers get tcs=None and structure='—'.
+    Returns the mutated rows list.
+    """
+    if not rows or not api_key or not secret_key:
+        for row in rows:
+            row.setdefault("tcs", None)
+            row.setdefault("structure", "—")
+        return rows
+
+    trade_date = date.today()
+    subset     = rows[:max_tickers]
+    scored: dict = {}
+
+    with ThreadPoolExecutor(max_workers=min(8, len(subset))) as executor:
+        future_map = {
+            executor.submit(
+                _score_single_ticker, api_key, secret_key,
+                r["ticker"], trade_date, feed
+            ): r["ticker"]
+            for r in subset
+        }
+        for future in as_completed(future_map):
+            sym, tcs, structure = future.result()
+            scored[sym] = (tcs, structure if structure else "—")
+
+    for row in rows:
+        sym = row["ticker"]
+        if sym in scored:
+            tcs, structure = scored[sym]
+            row["tcs"]       = tcs
+            row["structure"] = structure
+        else:
+            row["tcs"]       = None
+            row["structure"] = "—"
+
+    return rows
 
 
