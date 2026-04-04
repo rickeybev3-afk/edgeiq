@@ -7,6 +7,7 @@ import queue
 import json
 import csv
 import os
+import requests
 from collections import deque
 import streamlit as st
 from supabase import create_client, Client
@@ -1745,6 +1746,103 @@ def fetch_live_quote(ticker: str) -> dict:
         return {"price": round(price, 4), "volume": volume, "error": None}
     except Exception as e:
         return {"price": None, "volume": None, "error": str(e)}
+
+
+def fetch_alpaca_fills(api_key: str, secret_key: str,
+                       is_paper: bool = True,
+                       trade_date: str = None) -> tuple:
+    """Fetch filled orders from Alpaca Trading REST API for a given date.
+
+    Returns (fills_list, error_string).  error_string is None on success.
+    """
+    base = ("https://paper-api.alpaca.markets"
+            if is_paper else "https://api.alpaca.markets")
+    headers = {
+        "APCA-API-KEY-ID":     api_key,
+        "APCA-API-SECRET-KEY": secret_key,
+    }
+    if trade_date is None:
+        trade_date = datetime.now(EASTERN).strftime("%Y-%m-%d")
+
+    params = {
+        "status":    "closed",
+        "after":     f"{trade_date}T00:00:00Z",
+        "until":     f"{trade_date}T23:59:59Z",
+        "limit":     200,
+        "direction": "desc",
+    }
+    try:
+        resp = requests.get(f"{base}/v2/orders",
+                            headers=headers, params=params, timeout=12)
+        if resp.status_code == 401:
+            return [], "Authentication failed — check your API Key and Secret Key."
+        if resp.status_code == 403:
+            return [], "Access forbidden — are you using a paper key on a live endpoint (or vice versa)?"
+        resp.raise_for_status()
+        orders = resp.json()
+        if isinstance(orders, dict) and "message" in orders:
+            return [], orders["message"]
+        filled = [o for o in orders if o.get("status") == "filled"]
+        return filled, None
+    except requests.exceptions.Timeout:
+        return [], "Request timed out — Alpaca API did not respond in time."
+    except Exception as exc:
+        return [], str(exc)
+
+
+def match_fills_to_roundtrips(fills: list) -> list:
+    """Match Alpaca buy+sell fills into round-trip trades.
+
+    Groups fills by symbol, computes weighted-average entry/exit,
+    and returns a list of trade summary dicts.
+    """
+    from collections import defaultdict
+    by_sym = defaultdict(lambda: {"buys": [], "sells": []})
+
+    for order in fills:
+        sym        = (order.get("symbol") or "").upper()
+        side       = order.get("side", "")
+        fill_price = float(order.get("filled_avg_price") or 0)
+        qty        = float(order.get("filled_qty") or 0)
+        filled_at  = str(order.get("filled_at") or "")
+        if fill_price <= 0 or qty <= 0:
+            continue
+        if side == "buy":
+            by_sym[sym]["buys"].append({"price": fill_price, "qty": qty, "time": filled_at})
+        elif side == "sell":
+            by_sym[sym]["sells"].append({"price": fill_price, "qty": qty, "time": filled_at})
+
+    results = []
+    for sym, sides in by_sym.items():
+        if not sides["buys"] or not sides["sells"]:
+            continue
+        total_buy_qty  = sum(b["qty"] for b in sides["buys"])
+        total_sell_qty = sum(s["qty"] for s in sides["sells"])
+        avg_entry = (sum(b["price"] * b["qty"] for b in sides["buys"])  / total_buy_qty)
+        avg_exit  = (sum(s["price"] * s["qty"] for s in sides["sells"]) / total_sell_qty)
+        matched_qty   = min(total_buy_qty, total_sell_qty)
+        pnl_dollars   = (avg_exit - avg_entry) * matched_qty
+        pnl_pct       = ((avg_exit - avg_entry) / avg_entry * 100) if avg_entry > 0 else 0.0
+        win_loss      = "Win" if pnl_dollars > 0 else ("Loss" if pnl_dollars < 0 else "Breakeven")
+
+        # Earliest fill time for display
+        all_times = [b["time"] for b in sides["buys"]] + [s["time"] for s in sides["sells"]]
+        earliest  = sorted(t for t in all_times if t)[:1]
+        fill_time = earliest[0][:16].replace("T", " ") if earliest else ""
+
+        results.append({
+            "symbol":      sym,
+            "avg_entry":   round(avg_entry, 4),
+            "avg_exit":    round(avg_exit, 4),
+            "qty":         matched_qty,
+            "pnl_dollars": round(pnl_dollars, 4),
+            "pnl_pct":     round(pnl_pct, 2),
+            "win_loss":    win_loss,
+            "fill_time":   fill_time,
+        })
+
+    results.sort(key=lambda r: r["fill_time"])
+    return results
 
 
 def save_trade_review(journal_row: dict, exit_price: float,
