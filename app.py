@@ -2252,9 +2252,14 @@ with st.sidebar:
     # ── Gap Scanner Controls ───────────────────────────────────────────────────
     st.header("🔍 Gap Scanner")
     st.caption("Enter tickers to watch. Scan fetches pre-market volume and gap data.")
+    # Use saved watchlist if available, fall back to default
+    _scanner_default = (
+        st.session_state.get("_watchlist_tickers")
+        or _DEFAULT_WATCHLIST
+    )
     watchlist_raw = st.text_area(
         "Watchlist (comma-separated)",
-        value=_DEFAULT_WATCHLIST,
+        value=_scanner_default,
         height=110,
         help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
