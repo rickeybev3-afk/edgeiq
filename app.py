@@ -878,6 +878,20 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     st.header("📸 End-of-Day Review")
     st.caption("Chart screenshots, trendline notes, and watchlist for tomorrow — all saved per day.")
 
+    # ── Edit-mode prefill: copy pending values into widget keys before render ──
+    if st.session_state.get("_eod_prefill_pending"):
+        _pf = st.session_state.pop("_eod_prefill_pending")
+        st.session_state["eod_note_date"]    = _pf["date"]
+        st.session_state["eod_watch_tickers"] = _pf["ticker"]
+        st.session_state["eod_notes_text"]   = _pf["notes"]
+        st.session_state["_eod_edit_images"] = _pf["images"]
+
+    # ── Edit-mode banner ──────────────────────────────────────────────────────
+    _edit_imgs = st.session_state.get("_eod_edit_images", [])
+    if _edit_imgs or st.session_state.get("_eod_edit_active"):
+        st.info("✏️ **Edit mode** — modify the fields below and hit Save Review to update this entry. "
+                "Existing images are kept unless you clear them.")
+
     _eod_col1, _eod_col2 = st.columns([1, 2])
     with _eod_col1:
         _eod_date = st.date_input("Review Date", value=date.today(), key="eod_note_date")
@@ -897,21 +911,40 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     )
 
     _eod_uploads = st.file_uploader(
-        "📷 Chart Images (up to 5, PNG/JPG)",
+        "📷 Chart Images (up to 5, PNG/JPG) — leave blank to keep existing images",
         type=["png", "jpg", "jpeg"],
         accept_multiple_files=True,
         key="eod_image_uploader",
     )
 
+    # Show existing images that will be kept (edit mode)
+    if _edit_imgs:
+        st.caption(f"📎 {len(_edit_imgs)} existing image(s) attached — uploading new ones replaces them:")
+        _prev_cols = st.columns(min(len(_edit_imgs), 3))
+        for _pi, _pimg in enumerate(_edit_imgs):
+            if _pimg.get("data"):
+                _prev_cols[_pi % 3].image(
+                    f"data:image/jpeg;base64,{_pimg['data']}",
+                    caption=_pimg.get("filename", ""),
+                    use_container_width=True,
+                )
+        if st.button("🗑 Clear existing images", key="eod_clear_imgs"):
+            st.session_state["_eod_edit_images"] = []
+            st.rerun()
+
     _eod_save_col, _eod_load_col = st.columns(2)
     if _eod_save_col.button("💾 Save Review", use_container_width=True, key="eod_save_btn"):
-        _imgs_payload = []
-        for _f in (_eod_uploads or [])[:5]:
-            try:
-                _b64 = _compress_image_b64(_f.read())
-                _imgs_payload.append({"filename": _f.name, "data": _b64, "caption": ""})
-            except Exception:
-                pass
+        # New uploads override existing; if no new uploads, keep existing
+        if _eod_uploads:
+            _imgs_payload = []
+            for _f in _eod_uploads[:5]:
+                try:
+                    _b64 = _compress_image_b64(_f.read())
+                    _imgs_payload.append({"filename": _f.name, "data": _b64, "caption": ""})
+                except Exception:
+                    pass
+        else:
+            _imgs_payload = st.session_state.get("_eod_edit_images", [])
         _ok, _src = save_eod_note(
             note_date     = _eod_date,
             notes         = _eod_notes,
@@ -921,9 +954,13 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         )
         if _ok and _src == "supabase":
             st.success(f"✅ Review saved for {_eod_date}")
+            st.session_state.pop("_eod_edit_images", None)
+            st.session_state.pop("_eod_edit_active", None)
             st.session_state["_eod_notes_loaded"] = None
         elif _ok and _src == "local":
             st.warning("⚠️ Supabase unreachable — review saved locally on the server. It will auto-sync to the cloud next time you load reviews and Supabase is back online.")
+            st.session_state.pop("_eod_edit_images", None)
+            st.session_state.pop("_eod_edit_active", None)
             st.session_state["_eod_notes_loaded"] = None
         else:
             st.error("❌ Save failed completely. Contact support.")
@@ -1035,9 +1072,19 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         for _ic, _img in enumerate(_nim):
                             _img_data = _img.get("data", "")
                             if _img_data:
-                                _img_cols[_ic % 3].image(
+                                _col = _img_cols[_ic % 3]
+                                _col.image(
                                     f"data:image/jpeg;base64,{_img_data}",
                                     caption=_img.get("filename", ""),
+                                    use_container_width=True,
+                                )
+                                import base64 as _b64mod
+                                _col.download_button(
+                                    label="⬇ Download",
+                                    data=_b64mod.b64decode(_img_data),
+                                    file_name=_img.get("filename", f"chart_{_ic+1}.jpg"),
+                                    mime="image/jpeg",
+                                    key=f"dl_img_{_nd}_{_nw}_{_ic}",
                                     use_container_width=True,
                                 )
 
@@ -1128,6 +1175,25 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                 st.rerun()
                             else:
                                 st.warning("Save failed — check Supabase connection.")
+
+                    # ── Edit this entry ────────────────────────────────────────
+                    st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+                    if st.button("✏️ Edit this entry", key=f"edit_{_vkey}",
+                                 use_container_width=False,
+                                 help="Load this review into the form above to edit it"):
+                        import datetime as _dtmod
+                        try:
+                            _edit_date = _dtmod.date.fromisoformat(str(_nd))
+                        except Exception:
+                            _edit_date = date.today()
+                        st.session_state["_eod_prefill_pending"] = {
+                            "date":   _edit_date,
+                            "ticker": _nw or "",
+                            "notes":  _nt or "",
+                            "images": _nim or [],
+                        }
+                        st.session_state["_eod_edit_active"] = True
+                        st.rerun()
 
     # ── Supabase setup SQL ────────────────────────────────────────────────────
     with st.expander("⚙️ First-time setup — create eod_notes table", expanded=False):
