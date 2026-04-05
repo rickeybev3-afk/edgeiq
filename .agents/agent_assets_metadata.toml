@@ -5,7 +5,7 @@ generated = []
 id = "vJLYud3CZr5piNo2TOW_c"
 uri = "file://volume_profile_dashboard.zip"
 type = "unspecified"
-title = "Volume Profile Dashboard — Source Code (with Discord Alerts)"
+title = "Volume Profile Dashboard — Source Code (Auto-Sizing Order Ticket)"
 
 [[outputs]]
 id = "C_iVxf5rv5-czLYox5M9f"

@@ -2085,19 +2085,77 @@ with st.sidebar:
                        else "✅ Position closed.")
             st.rerun()
     else:
-        _default_tkr = _snap.get("ticker", "")
-        _default_strc = _snap.get("structure", "")
+        _default_tkr   = _snap.get("ticker", "")
+        _default_strc  = _snap.get("structure", "")
         _default_price = _snap.get("price", 0.0)
-        e_tkr = st.text_input("Ticker", value=_default_tkr, key="pos_entry_tkr")
-        e_px  = st.number_input("Entry Price", value=float(_default_price) if _default_price else 0.0,
-                                 step=0.01, format="%.2f", key="pos_entry_px")
-        e_shr = st.number_input("Shares", value=100, step=1, min_value=1, key="pos_entry_shr")
+
+        e_tkr  = st.text_input("Ticker", value=_default_tkr, key="pos_entry_tkr")
+        e_px   = st.number_input("Entry Price",
+                                  value=float(_default_price) if _default_price else 0.0,
+                                  step=0.01, format="%.2f", key="pos_entry_px")
         e_strc = st.text_input("Structure at Entry", value=_default_strc, key="pos_entry_strc")
+
+        # ── Auto-Size to Risk ─────────────────────────────────────────────────
+        _auto_size = st.checkbox(
+            "⚡ Auto-Size to Risk",
+            value=False,
+            key="pos_auto_size",
+            help="Calculates shares automatically: Risk $ = Account Balance × Risk % ÷ ATR(14)",
+        )
+
+        _acct_bal  = float(st.session_state.get("sa_account_bal", 5000.0))
+        _risk_pct  = float(st.session_state.get("sa_risk_pct",  2.0))
+        _last_bars = st.session_state.get("last_bars")
+        _atr_val   = (compute_atr(_last_bars)
+                      if _last_bars is not None and len(_last_bars) >= 5
+                      else 0.0)
+
+        if _auto_size:
+            _risk_amt   = _acct_bal * (_risk_pct / 100.0)
+            _stop_dist  = _atr_val if _atr_val and _atr_val > 0 else (e_px * 0.02 if e_px > 0 else 1.0)
+            _calc_shares = max(1, int(_risk_amt / _stop_dist))
+            st.markdown(
+                f'<div style="background:#0a0f1e; border:1px solid #1a2744; border-radius:6px; '
+                f'padding:8px 12px; margin:4px 0 6px 0; font-size:12px; color:#90caf9;">'
+                f'💰 Risk: <b>${_risk_amt:.0f}</b> &nbsp;|&nbsp; '
+                f'Stop: <b>${_stop_dist:.2f}</b> (ATR) &nbsp;|&nbsp; '
+                f'<span style="color:#4caf50; font-weight:700;">Shares: {_calc_shares}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            e_shr = _calc_shares
+        else:
+            e_shr = st.number_input("Shares", value=100, step=1, min_value=1, key="pos_entry_shr")
+
+        # ── Send to Alpaca toggle ─────────────────────────────────────────────
+        _send_alpaca = st.checkbox(
+            "📡 Execute via Alpaca (Paper)",
+            value=False,
+            key="pos_send_alpaca",
+            help="Submits a paper Market order through Alpaca when you click Enter Position.",
+        )
+
         if st.button("🟢 Enter Position", use_container_width=True,
                      key="pos_enter_btn", type="primary"):
             if e_tkr and e_px > 0:
                 enter_position(e_tkr.upper(), e_px, e_shr, e_strc)
                 st.success(f"✅ Entered {e_tkr.upper()} × {e_shr} sh @ ${e_px:.2f}")
+                if _send_alpaca and api_key and secret_key:
+                    with st.spinner("Submitting to Alpaca…"):
+                        _alp = execute_alpaca_trade(
+                            api_key=api_key,
+                            secret_key=secret_key,
+                            is_paper=True,
+                            ticker=e_tkr.upper(),
+                            qty=int(e_shr),
+                            side="buy",
+                        )
+                    if _alp["success"]:
+                        st.success(f"📡 Alpaca order submitted — ID: `{_alp['order_id']}`")
+                    else:
+                        st.error(f"Alpaca error: {_alp['message']}")
+                elif _send_alpaca and (not api_key or not secret_key):
+                    st.warning("Add your Alpaca API credentials in the sidebar to execute.")
                 st.rerun()
             else:
                 st.error("Enter a valid ticker and price.")
