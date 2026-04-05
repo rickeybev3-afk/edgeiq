@@ -4949,17 +4949,14 @@ with tab_scan:
     ]
     _wpe_count = len(_wpe_saved_tickers)
 
-    if _wpe_count == 0:
-        st.info("No tickers saved yet. Add tickers in the **⭐ My Watchlist** section in the sidebar, then save them.")
-    else:
-        st.caption(f"{_wpe_count} tickers in your saved watchlist")
+    # ── Always-visible action buttons ─────────────────────────────────────────
+    _wpe_feed = st.selectbox("Feed", ["iex", "sip"], key="wpe_feed_select",
+                             help="IEX = free tier. SIP = full tape.")
+    _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
 
-        _wpe_feed = st.selectbox("Feed", ["iex", "sip"], key="wpe_feed_select",
-                                 help="IEX = free tier. SIP = full tape.")
-        _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
-
-        # ── Predict All ────────────────────────────────────────────────────────
-        if _wpe_col1.button("🔮 Predict All", use_container_width=True, key="wpe_predict_btn"):
+    # Predict All — only active when watchlist is loaded in session
+    if _wpe_count > 0:
+        if _wpe_col1.button(f"🔮 Predict All ({_wpe_count})", use_container_width=True, key="wpe_predict_btn"):
             if not api_key or not secret_key:
                 st.error("Add your Alpaca credentials in the sidebar first.")
             else:
@@ -4990,81 +4987,84 @@ with tab_scan:
                     if _wpe_ok:
                         st.success(f"✅ {len(_wpe_payload)} predictions saved for {_wpe_pred_date}")
                     else:
-                        st.warning("Scored locally — Supabase unavailable (create the `watchlist_predictions` table to persist).")
+                        st.warning("Scored locally — Supabase table missing. See setup section below.")
+    else:
+        _wpe_col1.button("🔮 Predict All", use_container_width=True, key="wpe_predict_btn", disabled=True)
+        st.caption("⬅ Add tickers in **⭐ My Watchlist** sidebar then Save to enable Predict All.")
 
-        # ── Verify Yesterday ───────────────────────────────────────────────────
-        if _wpe_col2.button("✅ Verify Yesterday", use_container_width=True, key="wpe_verify_btn"):
-            if not api_key or not secret_key:
-                st.error("Add your Alpaca credentials in the sidebar first.")
-            else:
-                with st.spinner("Fetching end-of-day data and verifying predictions…"):
-                    _vr = verify_watchlist_predictions(
-                        api_key, secret_key, user_id=_AUTH_USER_ID
-                    )
-                st.session_state["_wpe_verify_result"] = _vr
-
-        # ── Load Saved Predictions ─────────────────────────────────────────────
-        if _wpe_col3.button("📂 Load Saved", use_container_width=True, key="wpe_load_btn"):
-            _wpe_df = load_watchlist_predictions(user_id=_AUTH_USER_ID)
-            st.session_state["_wpe_loaded_df"] = _wpe_df
-
-        # ── Show verify result ─────────────────────────────────────────────────
-        _vr = st.session_state.get("_wpe_verify_result")
-        if _vr:
-            if _vr.get("error") and _vr.get("verified", 0) == 0:
-                st.warning(f"Verify: {_vr['error']}")
-            else:
-                _acc_color = "#4caf50" if _vr["accuracy"] >= 60 else "#ff9800" if _vr["accuracy"] >= 45 else "#ef5350"
-                st.markdown(
-                    f'<div style="background:#12122299;border:1px solid #2a2a4a;border-radius:10px;'
-                    f'padding:14px 20px;margin:8px 0;display:flex;gap:32px;align-items:center;">'
-                    f'<div style="text-align:center;">'
-                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Verified</div>'
-                    f'<div style="font-size:26px;font-weight:800;color:#e0e0e0;">{_vr["verified"]}</div>'
-                    f'</div>'
-                    f'<div style="text-align:center;">'
-                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Correct</div>'
-                    f'<div style="font-size:26px;font-weight:800;color:#4caf50;">{_vr["correct"]}</div>'
-                    f'</div>'
-                    f'<div style="text-align:center;">'
-                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Accuracy</div>'
-                    f'<div style="font-size:26px;font-weight:800;color:{_acc_color};">{_vr["accuracy"]:.1f}%</div>'
-                    f'</div>'
-                    f'<div style="font-size:12px;color:#666;">{_vr.get("date","")}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
+    # ── Verify Yesterday — always visible ──────────────────────────────────────
+    if _wpe_col2.button("✅ Verify Yesterday", use_container_width=True, key="wpe_verify_btn"):
+        if not api_key or not secret_key:
+            st.error("Add your Alpaca credentials in the sidebar first.")
+        else:
+            with st.spinner("Fetching end-of-day data and verifying predictions…"):
+                _vr = verify_watchlist_predictions(
+                    api_key, secret_key, user_id=_AUTH_USER_ID
                 )
+            st.session_state["_wpe_verify_result"] = _vr
 
-        # ── Show today's predictions table ─────────────────────────────────────
-        _wpe_preds = st.session_state.get("_wpe_last_predictions")
-        _wpe_df_loaded = st.session_state.get("_wpe_loaded_df")
+    # ── Load Saved — always visible ────────────────────────────────────────────
+    if _wpe_col3.button("📂 Load Saved", use_container_width=True, key="wpe_load_btn"):
+        _wpe_df = load_watchlist_predictions(user_id=_AUTH_USER_ID)
+        st.session_state["_wpe_loaded_df"] = _wpe_df
 
-        if _wpe_preds:
-            st.subheader(f"Today's Predictions — {st.session_state.get('_wpe_pred_date', '')}")
-            _wpe_display = []
-            for r in _wpe_preds:
-                _tcs_v = r.get("tcs")
-                _edg_v = r.get("edge_score")
-                _wpe_display.append({
-                    "Ticker":     r["ticker"],
-                    "Structure":  r.get("structure") or "—",
-                    "TCS":        f"{_tcs_v:.0f}" if _tcs_v is not None else "—",
-                    "Edge":       f"{_edg_v:.0f}" if _edg_v is not None else "—",
-                })
-            st.dataframe(
-                _wpe_display,
-                use_container_width=True,
-                height=min(400, 35 + 35 * len(_wpe_display)),
+    # ── Show verify result ─────────────────────────────────────────────────────
+    _vr = st.session_state.get("_wpe_verify_result")
+    if _vr:
+        if _vr.get("error") and _vr.get("verified", 0) == 0:
+            st.warning(f"Verify: {_vr['error']}")
+        else:
+            _acc_color = "#4caf50" if _vr["accuracy"] >= 60 else "#ff9800" if _vr["accuracy"] >= 45 else "#ef5350"
+            st.markdown(
+                f'<div style="background:#12122299;border:1px solid #2a2a4a;border-radius:10px;'
+                f'padding:14px 20px;margin:8px 0;display:flex;gap:32px;align-items:center;">'
+                f'<div style="text-align:center;">'
+                f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Verified</div>'
+                f'<div style="font-size:26px;font-weight:800;color:#e0e0e0;">{_vr["verified"]}</div>'
+                f'</div>'
+                f'<div style="text-align:center;">'
+                f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Correct</div>'
+                f'<div style="font-size:26px;font-weight:800;color:#4caf50;">{_vr["correct"]}</div>'
+                f'</div>'
+                f'<div style="text-align:center;">'
+                f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Accuracy</div>'
+                f'<div style="font-size:26px;font-weight:800;color:{_acc_color};">{_vr["accuracy"]:.1f}%</div>'
+                f'</div>'
+                f'<div style="font-size:12px;color:#666;">{_vr.get("date","")}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
             )
 
-        elif _wpe_df_loaded is not None and not _wpe_df_loaded.empty:
-            st.subheader("Saved Predictions")
-            _show_cols = ["ticker", "pred_date", "predicted_structure", "tcs",
-                          "edge_score", "actual_structure", "correct"]
-            _disp_df = _wpe_df_loaded[[c for c in _show_cols if c in _wpe_df_loaded.columns]].copy()
-            _disp_df.columns = [c.replace("_", " ").title() for c in _disp_df.columns]
-            st.dataframe(_disp_df, use_container_width=True, height=min(500, 35 + 35 * len(_disp_df)))
-        elif _wpe_df_loaded is not None:
+    # ── Show predictions table ─────────────────────────────────────────────────
+    _wpe_preds = st.session_state.get("_wpe_last_predictions")
+    _wpe_df_loaded = st.session_state.get("_wpe_loaded_df")
+
+    if _wpe_preds:
+        st.subheader(f"Today's Predictions — {st.session_state.get('_wpe_pred_date', '')}")
+        _wpe_display = []
+        for r in _wpe_preds:
+            _tcs_v = r.get("tcs")
+            _edg_v = r.get("edge_score")
+            _wpe_display.append({
+                "Ticker":    r["ticker"],
+                "Structure": r.get("structure") or "—",
+                "TCS":       f"{_tcs_v:.0f}" if _tcs_v is not None else "—",
+                "Edge":      f"{_edg_v:.0f}" if _edg_v is not None else "—",
+            })
+        st.dataframe(
+            _wpe_display,
+            use_container_width=True,
+            height=min(400, 35 + 35 * len(_wpe_display)),
+        )
+
+    elif _wpe_df_loaded is not None and not _wpe_df_loaded.empty:
+        st.subheader("Saved Predictions")
+        _show_cols = ["ticker", "pred_date", "predicted_structure", "tcs",
+                      "edge_score", "actual_structure", "correct"]
+        _disp_df = _wpe_df_loaded[[c for c in _show_cols if c in _wpe_df_loaded.columns]].copy()
+        _disp_df.columns = [c.replace("_", " ").title() for c in _disp_df.columns]
+        st.dataframe(_disp_df, use_container_width=True, height=min(500, 35 + 35 * len(_disp_df)))
+    elif _wpe_df_loaded is not None:
             st.info("No saved predictions found. Run **🔮 Predict All** first.")
 
     # ── Setup instructions if table missing ───────────────────────────────────
