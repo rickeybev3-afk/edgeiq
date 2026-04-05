@@ -133,7 +133,26 @@ def fetch_bars(api_key, secret_key, ticker, trade_date, feed="sip"):
     df.index = df.index.tz_convert(EASTERN)
     df = df.sort_index()
     df = df[(df.index.time >= dtime(9, 30)) & (df.index.time <= dtime(16, 0))]
+    df["vwap"] = compute_vwap(df)
     return df
+
+
+def compute_vwap(df: "pd.DataFrame") -> "pd.Series":
+    """Compute intraday VWAP anchored to the session open.
+
+    Typical Price = (High + Low + Close) / 3
+    VWAP = cumsum(Typical Price × Volume) / cumsum(Volume)
+
+    Returns a Series aligned to df.index, or an empty Series on failure.
+    """
+    try:
+        tp  = (df["high"] + df["low"] + df["close"]) / 3.0
+        vol = df["volume"].replace(0, float("nan"))
+        cum_tpv = (tp * vol).cumsum()
+        cum_vol = vol.cumsum()
+        return cum_tpv / cum_vol
+    except Exception:
+        return pd.Series(dtype=float)
 
 
 def compute_initial_balance(df):
@@ -1750,6 +1769,7 @@ def build_live_df():
         return pd.DataFrame()
     df = df[needed].sort_index()
     df = df[(df.index.time >= dtime(9, 30)) & (df.index.time <= dtime(16, 0))]
+    df["vwap"] = compute_vwap(df)
     return df
 
 

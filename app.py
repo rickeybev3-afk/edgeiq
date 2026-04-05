@@ -1002,6 +1002,32 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
             legendrank=60,
         ), row=1, col=1)
 
+    # ── VWAP line — bright orange dashed, with right-edge label ──────────────
+    if "vwap" in _real_df.columns:
+        try:
+            # Reindex VWAP onto the full minute grid (NaN gaps stay NaN — no fill)
+            _vwap_series = _real_df["vwap"].reindex(df.index)
+            _vwap_vals   = _vwap_series.tolist()
+            _vwap_last   = _vwap_series.dropna().iloc[-1] if not _vwap_series.dropna().empty else None
+            # Label only at the last real bar; blanks elsewhere keep the line clean
+            _vwap_text   = [""] * len(x_labels)
+            if _vwap_last is not None:
+                _vwap_text[-1] = f"  VWAP ${_vwap_last:.2f}"
+            fig.add_trace(go.Scatter(
+                x=x_labels,
+                y=_vwap_vals,
+                mode="lines+text",
+                name="VWAP",
+                line=dict(color="#ff6d00", width=1.8, dash="dash"),
+                text=_vwap_text,
+                textposition="middle right",
+                textfont=dict(color="#ff6d00", size=11, family="monospace"),
+                connectgaps=False,
+                legendrank=55,
+            ), row=1, col=1)
+        except Exception:
+            pass
+
     # ── Dynamic Target Zone overlay ───────────────────────────────────────────
     lvn_idx_to_highlight = None
     if target_zones:
