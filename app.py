@@ -3615,6 +3615,10 @@ def render_analytics_tab():
             eq_disp.columns = ["Time", "Symbol", "Trade P&L", "Cumulative P&L"]
             st.dataframe(eq_disp, use_container_width=True, hide_index=True)
 
+    # ── Brain Accuracy (formerly Tracker tab) ─────────────────────────────
+    st.markdown("---")
+    render_tracker_tab()
+
 
 def render_tracker_tab():
     """Render the Accuracy Tracker tab — structure distribution + Predicted vs Actual history."""
@@ -4049,56 +4053,6 @@ def render_sa_tab():
     vah_p    = snap.get("vah_price")
     pct_chg  = snap.get("pct_change", 0.0)
 
-    # ── SECTION 0 — Running P&L + Edge Stats (T006) ─────────────────────────
-    _sa_uid = st.session_state.get("auth_user_id", "")
-    _sa_jdf = load_journal(user_id=_sa_uid)
-    _sa_tdf = load_accuracy_tracker(user_id=_sa_uid)
-    _sa_ana = compute_edge_analytics(_sa_jdf, _sa_tdf)
-    _sa_s   = _sa_ana["summary"]
-
-    if _sa_s["total_trades"] > 0:
-        _sa_wr      = _sa_s["win_rate"]
-        _sa_pnl     = _sa_s["total_pnl"]
-        _sa_pf      = _sa_s["profit_factor"]
-        _sa_wr_c    = "#4caf50" if _sa_wr >= 55 else ("#ffa726" if _sa_wr >= 45 else "#ef5350")
-        _sa_pnl_c   = "#4caf50" if _sa_pnl >= 0 else "#ef5350"
-        _sa_pnl_sgn = "+" if _sa_pnl >= 0 else ""
-        _sa_pf_c    = "#4caf50" if _sa_pf >= 1.5 else ("#ffa726" if _sa_pf >= 1.0 else "#ef5350")
-
-        # Max drawdown from equity curve
-        _sa_eq = _sa_ana["equity_curve"]
-        if not _sa_eq.empty:
-            _peaks    = _sa_eq["cumulative_pnl"].cummax()
-            _dd       = (_sa_eq["cumulative_pnl"] - _peaks).min()
-            _dd_str   = f"${_dd:.2f}"
-            _dd_color = "#ef5350" if _dd < -50 else ("#ffa726" if _dd < 0 else "#4caf50")
-        else:
-            _dd_str, _dd_color = "—", "#546e7a"
-
-        def _sa_kpi(lbl, val, clr, sub=""):
-            return (
-                f'<div style="background:#0a0f1e; border:1px solid #1a2744; border-radius:8px; '
-                f'padding:10px 14px; text-align:center;">'
-                f'<div style="font-size:9px; color:#455a64; text-transform:uppercase; '
-                f'letter-spacing:1px; margin-bottom:3px;">{lbl}</div>'
-                f'<div style="font-size:22px; font-weight:900; color:{clr};">{val}</div>'
-                f'{"<div style=font-size:10px;color:#546e7a;>" + sub + "</div>" if sub else ""}'
-                f'</div>'
-            )
-        _sa_k1, _sa_k2, _sa_k3, _sa_k4, _sa_k5 = st.columns(5)
-        _sa_k1.markdown(_sa_kpi("Win Rate", f"{_sa_wr}%", _sa_wr_c,
-                                f"{_sa_s['total_trades']} trades"), unsafe_allow_html=True)
-        _sa_k2.markdown(_sa_kpi("Total P&L", f"{_sa_pnl_sgn}${_sa_pnl:.2f}", _sa_pnl_c),
-                        unsafe_allow_html=True)
-        _sa_k3.markdown(_sa_kpi("Profit Factor",
-                                f"{_sa_pf:.2f}" if _sa_pf < 99 else "∞", _sa_pf_c),
-                        unsafe_allow_html=True)
-        _sa_k4.markdown(_sa_kpi("Max Drawdown", _dd_str, _dd_color), unsafe_allow_html=True)
-        _sa_k5.markdown(_sa_kpi("Avg Win / Loss",
-                                f"${_sa_s['avg_win']:.0f} / ${_sa_s['avg_loss']:.0f}",
-                                "#90caf9"), unsafe_allow_html=True)
-        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-
     # ── SECTION 1 — TRADING WINDOW + PDT TRACKER ─────────────────────────────
     window_open = 7.0 <= hour_et < 10.0
     mins_left   = max(0, int((10.0 - hour_et) * 60)) if window_open else 0
@@ -4143,7 +4097,6 @@ def render_sa_tab():
     # ── SECTION 2 — FIVE PILLARS EVALUATION ──────────────────────────────────
     st.markdown("---")
     st.markdown("### 🏛️ Five Pillars Evaluation")
-
     if not ticker:
         st.info("Run a Historical Analysis on the Main Chart tab first — "
                 "the Five Pillars will auto-populate for the loaded ticker.")
@@ -4735,9 +4688,9 @@ def render_sa_tab():
         st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
 
 
-tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_tracker, tab_analytics, tab_sa = st.tabs(
+tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa = st.tabs(
     ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "🔬 Backtest",
-     "📖 Journal", "🧠 Tracker", "📊 Analytics", "⚡ Small Account"]
+     "📖 Journal", "📊 Analytics", "⚡ Small Account"]
 )
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
@@ -5179,10 +5132,6 @@ with tab_backtest:
 # ── Journal tab ───────────────────────────────────────────────────────────────
 with tab_journal:
     render_journal_tab(api_key=api_key, secret_key=secret_key)
-
-# ── Tracker tab ───────────────────────────────────────────────────────────────
-with tab_tracker:
-    render_tracker_tab()
 
 # ── Analytics tab ─────────────────────────────────────────────────────────────
 with tab_analytics:
