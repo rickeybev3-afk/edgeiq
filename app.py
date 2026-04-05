@@ -2595,14 +2595,15 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     else:
         _rows, _err = st.session_state.get(_pb_cache_key, ([], ""))
 
-    # ── Weekend/after-hours notice ───────────────────────────────────────────────
+    # ── Weekend/holiday/after-hours notice ───────────────────────────────────────
     import datetime as _dt
-    _today_wd = _dt.date.today().weekday()   # 0=Mon … 6=Sun
-    if _today_wd >= 5:                       # Sat or Sun
-        _days_back = _today_wd - 4           # Sat→1, Sun→2
-        _last_td   = _dt.date.today() - _dt.timedelta(days=_days_back)
+    _today = _dt.date.today()
+    _market_closed_today = not is_trading_day(_today)
+    if _market_closed_today:
+        _last_td = get_last_trading_day(as_of=_today, api_key=api_key, secret_key=secret_key)
+        _reason  = "weekend" if _today.weekday() >= 5 else "holiday"
         st.info(
-            f"📅 Market is closed (weekend). Quant Score will use the most recent "
+            f"📅 Market is closed ({_reason}). Quant Score will use the most recent "
             f"trading day: **{_last_td.strftime('%A, %b %d')}**."
         )
     elif _dt.datetime.now().hour < 9 or (_dt.datetime.now().hour == 9 and _dt.datetime.now().minute < 30):

@@ -104,6 +104,81 @@ _BRAIN_WEIGHT_KEYS = [
 _RECALIBRATE_EVERY = 10
 EASTERN = pytz.timezone("America/New_York")
 
+# ── NYSE Market Holiday Calendar ──────────────────────────────────────────────
+# Standard NYSE holidays 2025–2027  (observed date when holiday falls on weekend)
+_NYSE_HOLIDAYS: set = {
+    # 2025
+    "2025-01-01", "2025-01-20", "2025-02-17", "2025-04-18",
+    "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01",
+    "2025-11-27", "2025-12-25",
+    # 2026
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+    "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
+    "2026-11-26", "2026-12-25",
+    # 2027
+    "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26",
+    "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06",
+    "2027-11-25", "2027-12-24",
+}
+
+
+def is_trading_day(d: date) -> bool:
+    """Return True if d is a NYSE trading day (not a weekend or known holiday)."""
+    return d.weekday() < 5 and d.isoformat() not in _NYSE_HOLIDAYS
+
+
+def get_last_trading_day(as_of: date = None,
+                         api_key: str = "",
+                         secret_key: str = "") -> date:
+    """Return the most recent completed NYSE trading day on or before as_of.
+
+    Strategy:
+    1. Ask Alpaca's /v1/calendar if credentials are supplied (most accurate).
+    2. Fall back to hardcoded _NYSE_HOLIDAYS list.
+    3. Last resort: skip weekends only.
+    """
+    if as_of is None:
+        as_of = date.today()
+
+    # ── Alpaca calendar (accurate, handles early closes & ad-hoc closures) ──
+    if api_key and secret_key:
+        try:
+            start_str = (as_of - timedelta(days=14)).isoformat()
+            end_str   = as_of.isoformat()
+            r = requests.get(
+                "https://paper-api.alpaca.markets/v1/calendar",
+                params={"start": start_str, "end": end_str},
+                headers={
+                    "APCA-API-KEY-ID":     api_key,
+                    "APCA-API-SECRET-KEY": secret_key,
+                },
+                timeout=5,
+            )
+            if r.status_code == 200:
+                cal = r.json()
+                trading_dates = sorted(
+                    [c["date"] for c in cal if c["date"] <= end_str],
+                    reverse=True,
+                )
+                if trading_dates:
+                    return date.fromisoformat(trading_dates[0])
+        except Exception:
+            pass
+
+    # ── Hardcoded holiday fallback ──────────────────────────────────────────
+    d = as_of
+    for _ in range(14):
+        if is_trading_day(d):
+            return d
+        d -= timedelta(days=1)
+
+    # ── Absolute last resort: weekend-only ──────────────────────────────────
+    d = as_of
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
 def fetch_bars(api_key, secret_key, ticker, trade_date, feed="sip"):
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
@@ -3076,10 +3151,8 @@ def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
     weights  = compute_adaptive_weights(user_id)
     env_stat = get_recent_env_stats(user_id, days=5)
 
-    # Roll back to most recent trading weekday (Mon=0 … Fri=4)
-    trade_date = date.today()
-    while trade_date.weekday() >= 5:          # 5=Sat, 6=Sun
-        trade_date -= timedelta(days=1)
+    # Roll back to most recent actual trading day (holiday-aware)
+    trade_date = get_last_trading_day(api_key=api_key, secret_key=secret_key)
 
     subset = rows[:max_tickers]
     scored: dict = {}
@@ -3456,11 +3529,13 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
         return {"verified": 0, "correct": 0, "accuracy": 0.0,
                 "error": "No credentials"}
 
-    # Default to last completed trading day
+    # Default to last completed trading day (holiday-aware)
     if pred_date is None:
-        check_date = date.today() - timedelta(days=1)
-        while check_date.weekday() >= 5:
-            check_date -= timedelta(days=1)
+        # Start from yesterday and find the last actual trading day
+        check_date = get_last_trading_day(
+            as_of=date.today() - timedelta(days=1),
+            api_key=api_key, secret_key=secret_key,
+        )
     else:
         check_date = pred_date
 
