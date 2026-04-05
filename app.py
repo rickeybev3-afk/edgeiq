@@ -923,7 +923,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             st.success(f"✅ Review saved for {_eod_date}")
             st.session_state["_eod_notes_loaded"] = None
         else:
-            st.warning("Saved locally — create the `eod_notes` Supabase table to persist. See setup below.")
+            st.error("❌ Save failed — review was NOT stored. Check your Supabase connection or see the setup expander below.")
 
     if _eod_load_col.button("📂 Load Past Reviews", use_container_width=True, key="eod_load_btn"):
         st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=30)
