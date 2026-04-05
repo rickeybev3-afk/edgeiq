@@ -933,7 +933,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     _loaded_notes = st.session_state.get("_eod_notes_loaded")
     if _loaded_notes is not None:
         if not _loaded_notes:
-            st.info("No reviews saved yet.")
+            st.info("No reviews found. Any reviews saved before today's database setup weren't persisted — re-enter them above and hit Save Review.")
         else:
             # ── Accuracy summary ──────────────────────────────────────────────
             _verified_notes = [_n for _n in _loaded_notes if _n.get("outcome")]
@@ -1040,17 +1040,29 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
 
                     # ── Outcome verification panel ────────────────────────────
                     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
-                    _vcol1, _vcol2 = st.columns([1, 1])
                     _vkey = f"eod_verify_{_nd}"
+                    # Parse individual tickers for the selector
+                    _ticker_list = [t.strip().upper() for t in
+                                    _re.split(r"[,\s]+", _nw) if t.strip()] if _nw else []
+                    _sel_tickers = st.multiselect(
+                        "Select tickers to verify",
+                        options=_ticker_list,
+                        default=_ticker_list,
+                        key=f"sel_{_vkey}",
+                        label_visibility="collapsed",
+                        placeholder="Choose tickers…",
+                    ) if _ticker_list else []
+                    _vcol1, _vcol2 = st.columns([1, 1])
                     if _vcol1.button("📊 Verify Next Day", key=f"btn_{_vkey}",
                                      use_container_width=True,
                                      help="Fetch next trading day's actual price action"):
-                        if not _nw:
-                            st.warning("No watch tickers saved for this review.")
+                        if not _sel_tickers:
+                            st.warning("Select at least one ticker above.")
                         else:
-                            with st.spinner("Fetching next-day price data…"):
+                            _sel_str = ", ".join(_sel_tickers)
+                            with st.spinner(f"Fetching next-day data for {_sel_str}…"):
                                 _vresult = verify_eod_predictions(
-                                    _nd, _nw, _nt,
+                                    _nd, _sel_str, _nt,
                                     st.session_state.get("alpaca_key", ""),
                                     st.session_state.get("alpaca_secret", ""),
                                 )
