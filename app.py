@@ -522,29 +522,47 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         rvol_v = row.get("rvol", "")
         notes_v = row.get("notes", "")
 
-        st.markdown(f"""
-        <div style="display:flex; gap:16px; align-items:center; background:#12122288;
-                    border:1px solid #2a2a4a; border-radius:10px;
-                    padding:12px 18px; margin:8px 0;">
-            <div style="flex-shrink:0; width:52px; height:52px; border-radius:50%;
-                        background:{gc}22; border:2.5px solid {gc};
-                        display:flex; align-items:center; justify-content:center;
-                        font-size:24px; font-weight:900; color:{gc};">{grade}</div>
-            <div style="flex:1; min-width:0;">
-                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:baseline;">
-                    <span style="font-size:20px; font-weight:800; color:#e0e0e0;">{sym}</span>
-                    <span style="font-size:13px; color:#aaa;">${price}</span>
-                    <span style="font-size:11px; color:#666;">{ts}</span>
+        _j_cols = st.columns([8, 1])
+        with _j_cols[0]:
+            st.markdown(f"""
+            <div style="display:flex; gap:16px; align-items:center; background:#12122288;
+                        border:1px solid #2a2a4a; border-radius:10px;
+                        padding:12px 18px; margin:8px 0;">
+                <div style="flex-shrink:0; width:52px; height:52px; border-radius:50%;
+                            background:{gc}22; border:2.5px solid {gc};
+                            display:flex; align-items:center; justify-content:center;
+                            font-size:24px; font-weight:900; color:{gc};">{grade}</div>
+                <div style="flex:1; min-width:0;">
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:baseline;">
+                        <span style="font-size:20px; font-weight:800; color:#e0e0e0;">{sym}</span>
+                        <span style="font-size:13px; color:#aaa;">${price}</span>
+                        <span style="font-size:11px; color:#666;">{ts}</span>
+                    </div>
+                    <div style="font-size:12px; color:#90caf9; margin:2px 0;">{struct}</div>
+                    <div style="font-size:11px; color:#888;">
+                        TCS {tcs_v}%  ·  RVOL {rvol_v}×
+                        {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
+                    </div>
+                    <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
                 </div>
-                <div style="font-size:12px; color:#90caf9; margin:2px 0;">{struct}</div>
-                <div style="font-size:11px; color:#888;">
-                    TCS {tcs_v}%  ·  RVOL {rvol_v}×
-                    {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
-                </div>
-                <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        with _j_cols[1]:
+            st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+            _ts_str = str(ts)[:10] if ts else ""
+            _replay_key = f"journal_replay_{_}_{sym}"
+            if st.button("📈 Replay", key=_replay_key, use_container_width=True,
+                         help=f"Load {sym} on {_ts_str} in the Main Chart tab"):
+                try:
+                    from datetime import date as _date_cls
+                    _replay_dt = _date_cls.fromisoformat(_ts_str) if _ts_str else None
+                except Exception:
+                    _replay_dt = None
+                st.session_state["ticker_input"]   = str(sym).upper().strip()
+                st.session_state["_load_ticker"]   = str(sym).upper().strip()
+                if _replay_dt:
+                    st.session_state["_replay_date"] = _replay_dt
+                st.success(f"✅ {sym} loaded — switch to Main Chart tab and click Fetch & Analyze")
 
     # Equity curve — grade average over entries
     st.markdown("---")
@@ -1325,6 +1343,10 @@ def render_buy_sell_widget(bsp, rvol_val=None):
             f'🚀 HIGH CONVICTION BUY — RVOL {rvol_val:.1f}× + Buy Ramping'
             f'</div>'
         )
+        st.session_state["_hc_alert_state"] = {
+            "ticker": st.session_state.get("ticker_input", ""),
+            "rvol": rvol_val, "direction": "BUY",
+        }
     elif rvol_gt5 and sell_ramping:
         hc_alert = (
             f'<div style="background:#ef535022; border:1px solid #ef535088; '
@@ -1333,6 +1355,12 @@ def render_buy_sell_widget(bsp, rvol_val=None):
             f'🔻 HIGH CONVICTION SELL — RVOL {rvol_val:.1f}× + Sell Ramping'
             f'</div>'
         )
+        st.session_state["_hc_alert_state"] = {
+            "ticker": st.session_state.get("ticker_input", ""),
+            "rvol": rvol_val, "direction": "SELL",
+        }
+    else:
+        st.session_state.pop("_hc_alert_state", None)
 
     st.markdown(f"""
     <div style="background:#1a1a2e; border:1px solid {bar_color}55; border-radius:8px;
@@ -1452,6 +1480,22 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     probs = compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price)
     tcs = compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=sector_bonus)
     target_zones = compute_target_zones(df, ib_high, ib_low, bin_centers, vap, tcs)
+
+    # ── Edge Score (live, for this chart) ─────────────────────────────────────
+    _top_struct_key  = max(probs, key=probs.get) if probs else ""
+    _top_struct_conf = round(float(probs.get(_top_struct_key, 0.0)), 1) if probs else 0.0
+    try:
+        _chart_weights  = compute_adaptive_weights(_AUTH_USER_ID)
+        _chart_env      = get_recent_env_stats(_AUTH_USER_ID, days=5)
+        _chart_edge, _chart_edge_bkd = compute_edge_score(
+            tcs=tcs,
+            structure_conf=_top_struct_conf,
+            env_long_rate=_chart_env["long_rate"],
+            recent_false_brk_rate=_chart_env["false_brk_rate"],
+            weights=_chart_weights,
+        )
+    except Exception:
+        _chart_edge, _chart_edge_bkd = None, {}
 
     # ── High Conviction logger ─────────────────────────────────────────────────
     try:
@@ -1681,22 +1725,25 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     # ── Persist snapshot for Live Pulse header + Log Entry ────────────────────
     st.session_state.last_analysis_state = {
-        "ticker":    ticker,
-        "price":     price_now,
-        "structure": label,
-        "tcs":       tcs,
-        "rvol":      rvol_val,
-        "ib_high":   ib_high,
-        "ib_low":    ib_low,
-        "poc_price": poc_price,
-        "val_price": _sa_val,
-        "vah_price": _sa_vah,
-        "pct_change": pct_chg_today,
-        "rvol_color": rvol_color,
-        "is_runner": is_runner,
+        "ticker":      ticker,
+        "price":       price_now,
+        "structure":   label,
+        "tcs":         tcs,
+        "rvol":        rvol_val,
+        "ib_high":     ib_high,
+        "ib_low":      ib_low,
+        "poc_price":   poc_price,
+        "val_price":   _sa_val,
+        "vah_price":   _sa_vah,
+        "pct_change":  pct_chg_today,
+        "rvol_color":  rvol_color,
+        "is_runner":   is_runner,
         "label_color": color,
         "vol_velocity_str": "",
         "brain_predicted": brain.prediction,
+        "edge_score":       _chart_edge,
+        "edge_breakdown":   _chart_edge_bkd,
+        "struct_conf":      _top_struct_conf,
     }
 
     # ── Update peak price + auto-alerts for open position ────────────────────
@@ -1774,6 +1821,56 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     fig = build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, chart_title,
                       target_zones=target_zones, position=pos_state)
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── RVOL Trend Subplot (T007) ──────────────────────────────────────────────
+    try:
+        if avg_daily_vol and avg_daily_vol > 0 and intraday_curve is not None:
+            _rvol_times, _rvol_vals = [], []
+            _cum_vol = 0.0
+            for _bar_ts, _bar in df.iterrows():
+                _cum_vol += float(_bar["volume"])
+                _bar_min = int(_bar_ts.hour * 60 + _bar_ts.minute - 9 * 60 - 30)
+                _bar_min = max(0, min(_bar_min, len(intraday_curve) - 1))
+                _expected_frac = intraday_curve[_bar_min] if _bar_min < len(intraday_curve) else 1.0
+                _expected_vol  = avg_daily_vol * max(_expected_frac, 0.001)
+                _rv = round(_cum_vol / _expected_vol, 2)
+                _rvol_times.append(_bar_ts.strftime("%H:%M"))
+                _rvol_vals.append(_rv)
+
+            _rv_colors = [
+                "rgba(76,175,80,0.85)"  if v >= 5 else
+                "rgba(255,167,38,0.75)" if v >= 2 else
+                "rgba(84,110,122,0.6)"
+                for v in _rvol_vals
+            ]
+            _fig_rv = go.Figure()
+            _fig_rv.add_trace(go.Bar(
+                x=_rvol_times, y=_rvol_vals,
+                marker_color=_rv_colors,
+                name="RVOL",
+                hovertemplate="<b>%{x}</b><br>RVOL: %{y:.2f}×<extra></extra>",
+            ))
+            _fig_rv.add_hline(y=2.0, line=dict(color="rgba(255,167,38,0.5)", dash="dot", width=1),
+                              annotation_text="2× floor", annotation_font_color="#ffa726",
+                              annotation_font_size=9)
+            _fig_rv.add_hline(y=5.0, line=dict(color="rgba(76,175,80,0.5)", dash="dot", width=1),
+                              annotation_text="5× conviction", annotation_font_color="#4caf50",
+                              annotation_font_size=9)
+            _fig_rv.update_layout(
+                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                font=dict(color="#e0e0e0", size=10),
+                height=140,
+                margin=dict(l=40, r=10, t=6, b=30),
+                showlegend=False,
+                xaxis=dict(gridcolor="#1e2a3a", showgrid=False,
+                           tickfont=dict(size=9, color="#546e7a")),
+                yaxis=dict(title="RVOL ×", gridcolor="#1e2a3a",
+                           tickfont=dict(size=9, color="#546e7a")),
+                bargap=0.1,
+            )
+            st.plotly_chart(_fig_rv, use_container_width=True)
+    except Exception:
+        pass
 
     with st.expander("📋 Raw Bar Data"):
         disp = df[["open", "high", "low", "close", "volume"]].copy()
@@ -2053,6 +2150,38 @@ with st.sidebar:
     st.markdown("---")
     st.caption("SIP = full national tape + pre-market data. IEX = regular hours (9:30–4 PM) only.")
 
+    # ── Saved Watchlist (T008) ────────────────────────────────────────────────
+    st.markdown("---")
+    st.header("⭐ My Watchlist")
+    if not st.session_state.get("_watchlist_loaded"):
+        _saved_wl = load_watchlist(st.session_state.get("auth_user_id", ""))
+        if _saved_wl:
+            st.session_state["_watchlist_tickers"] = ", ".join(_saved_wl)
+        st.session_state["_watchlist_loaded"] = True
+    _wl_raw = st.text_area(
+        "Tickers (comma-separated)",
+        value=st.session_state.get("_watchlist_tickers", ""),
+        height=80, key="watchlist_textarea",
+        placeholder="AAPL, GME, AMC, MSTR",
+    )
+    _wl_cols = st.columns(2)
+    if _wl_cols[0].button("💾 Save", use_container_width=True, key="wl_save_btn"):
+        _wl_list = [t.strip().upper() for t in _wl_raw.replace("\n", ",").split(",")
+                    if t.strip()]
+        _ok = save_watchlist(_wl_list, st.session_state.get("auth_user_id", ""))
+        st.session_state["_watchlist_tickers"] = ", ".join(_wl_list)
+        if _ok:
+            st.success(f"Saved {len(_wl_list)} tickers")
+        else:
+            st.warning("Saved locally (Supabase unavailable)")
+    if _wl_cols[1].button("📋 Load Ticker", use_container_width=True, key="wl_load_btn"):
+        _wl_list = [t.strip().upper() for t in _wl_raw.replace("\n", ",").split(",")
+                    if t.strip()]
+        if _wl_list:
+            st.session_state["ticker_input"] = _wl_list[0]
+            st.session_state["_load_ticker"] = _wl_list[0]
+            st.caption(f"Loaded: {_wl_list[0]}")
+
     # ── Account & Sign Out ────────────────────────────────────────────────────
     st.markdown("---")
     _auth_email_disp = st.session_state.get("auth_email", "")
@@ -2081,6 +2210,22 @@ if not st.session_state.get("auth_user"):
 
 _AUTH_USER_ID = st.session_state.get("auth_user_id", "")
 
+# ── Cross-tab High Conviction alert (T005) ────────────────────────────────────
+_hc_alert_state = st.session_state.get("_hc_alert_state")
+if _hc_alert_state:
+    _hc_sym  = _hc_alert_state.get("ticker", "")
+    _hc_rvol = _hc_alert_state.get("rvol", 0)
+    _hc_dir  = _hc_alert_state.get("direction", "BUY")
+    _hc_clr  = "#4caf50" if _hc_dir == "BUY" else "#ef5350"
+    _hc_icon = "🚀" if _hc_dir == "BUY" else "🔻"
+    st.markdown(
+        f'<div style="background:{_hc_clr}22; border:1.5px solid {_hc_clr}; border-radius:6px; '
+        f'padding:7px 16px; margin-bottom:6px; font-size:13px; font-weight:800; color:{_hc_clr};">'
+        f'{_hc_icon} HIGH CONVICTION {_hc_dir} SIGNAL ACTIVE — {_hc_sym} | '
+        f'RVOL {_hc_rvol:.1f}× | Go to Main Chart to trade</div>',
+        unsafe_allow_html=True,
+    )
+
 # ── Schema migration reminder ─────────────────────────────────────────────────
 if not st.session_state.get("_migration_checked"):
     _col_ok = check_user_id_column_exists()
@@ -2108,48 +2253,80 @@ st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
 # ── Live Pulse Header ──────────────────────────────────────────────────────────
 _las = st.session_state.get("last_analysis_state")
 if _las:
-    _lbl  = _las.get("structure", "")
-    _tcs  = _las.get("tcs", 0.0)
-    _rvol = _las.get("rvol")
-    _sym  = _las.get("ticker", "")
-    _pr   = _las.get("price", 0.0)
-    _lc   = _las.get("label_color", "#90caf9")
-    _rc   = _las.get("rvol_color", "#aaa")
+    _lbl    = _las.get("structure", "")
+    _tcs    = _las.get("tcs", 0.0)
+    _rvol   = _las.get("rvol")
+    _sym    = _las.get("ticker", "")
+    _pr     = _las.get("price", 0.0)
+    _lc     = _las.get("label_color", "#90caf9")
+    _rc     = _las.get("rvol_color", "#aaa")
     _runner = _las.get("is_runner", False)
+    _edge   = _las.get("edge_score")
+    _e_bkd  = _las.get("edge_breakdown", {})
 
     _rvol_str = f"{_rvol:.1f}×" if _rvol is not None else "—"
     _tcs_fill = ("linear-gradient(90deg,#FFD700,#00BFFF)" if _runner
-                 else f"linear-gradient(90deg,#4caf50,#4caf50)" if _tcs >= 70
-                 else f"linear-gradient(90deg,#ef5350,#ef5350)" if _tcs <= 30
+                 else "linear-gradient(90deg,#4caf50,#4caf50)" if _tcs >= 70
+                 else "linear-gradient(90deg,#ef5350,#ef5350)" if _tcs <= 30
                  else "linear-gradient(90deg,#ffa726,#ffa726)")
+    if _edge is None:
+        _edge_str, _edge_col = "—", "#37474f"
+    elif _edge >= 75:
+        _edge_str, _edge_col = f"{_edge:.0f}", "#4caf50"
+    elif _edge >= 50:
+        _edge_str, _edge_col = f"{_edge:.0f}", "#ffa726"
+    else:
+        _edge_str, _edge_col = f"{_edge:.0f}", "#ef5350"
+    _edge_fill = (
+        "linear-gradient(90deg,#4caf50,#26a69a)" if (_edge or 0) >= 75
+        else "linear-gradient(90deg,#ffa726,#ff7043)" if (_edge or 0) >= 50
+        else "linear-gradient(90deg,#ef5350,#b71c1c)"
+    ) if _edge is not None else "linear-gradient(90deg,#37474f,#37474f)"
+    _edge_sub = (
+        f"TCS {_e_bkd.get('tcs_pts',0):.0f} + "
+        f"Struct {_e_bkd.get('struct_pts',0):.0f} + "
+        f"Env {_e_bkd.get('env_pts',0):.0f} + "
+        f"Tape {_e_bkd.get('fb_pts',0):.0f}"
+    ) if _e_bkd else "Run analysis to compute"
 
     st.markdown(f"""
-    <div style="display:flex; gap:16px; flex-wrap:wrap; margin:0 0 4px 0;">
-        <div style="flex:1; min-width:220px; background:linear-gradient(135deg,{_lc}22,{_lc}0a);
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin:0 0 4px 0;">
+        <div style="flex:1.2; min-width:200px; background:linear-gradient(135deg,{_lc}22,{_lc}0a);
                     border-left:4px solid {_lc}; border-radius:8px; padding:12px 18px;">
             <div style="font-size:10px; color:#888; text-transform:uppercase;
                         letter-spacing:1px; margin-bottom:4px;">Structure</div>
             <div style="font-size:20px; font-weight:800; color:{_lc};">{_lbl}</div>
             <div style="font-size:12px; color:#aaa; margin-top:2px;">{_sym} · ${_pr:.2f}</div>
         </div>
-        <div style="flex:1; min-width:180px; background:#12122288;
+        <div style="flex:1; min-width:160px; background:#12122288;
                     border-left:4px solid #90caf9; border-radius:8px; padding:12px 18px;">
             <div style="font-size:10px; color:#888; text-transform:uppercase;
-                        letter-spacing:1px; margin-bottom:6px;">Trend Confidence (TCS)</div>
-            <div style="background:#2a2a4a; border-radius:6px; height:10px; overflow:hidden; margin-bottom:6px;">
+                        letter-spacing:1px; margin-bottom:6px;">TCS</div>
+            <div style="background:#2a2a4a; border-radius:6px; height:8px; overflow:hidden; margin-bottom:6px;">
                 <div style="width:{min(_tcs,100):.0f}%; background:{_tcs_fill};
                             height:100%; border-radius:6px;"></div>
             </div>
             <div style="font-size:22px; font-weight:900; color:{'#FFD700' if _runner else '#90caf9'};">{_tcs:.0f}%</div>
         </div>
-        <div style="flex:1; min-width:180px; background:#12122288;
+        <div style="flex:1; min-width:140px; background:#12122288;
                     border-left:4px solid {_rc}; border-radius:8px; padding:12px 18px;">
             <div style="font-size:10px; color:#888; text-transform:uppercase;
                         letter-spacing:1px; margin-bottom:4px;">RVOL</div>
             <div style="font-size:22px; font-weight:900; color:{_rc};">{_rvol_str}</div>
             <div style="font-size:11px; color:#666; margin-top:2px;">
-                {'⚡ RUNNER MODE' if _runner else ('🔥 In Play' if _rvol and _rvol > 3 else '— Normal')}
+                {'⚡ RUNNER' if _runner else ('🔥 In Play' if _rvol and _rvol > 3 else '— Normal')}
             </div>
+        </div>
+        <div style="flex:1; min-width:160px; background:linear-gradient(135deg,{_edge_col}18,{_edge_col}08);
+                    border-left:4px solid {_edge_col}; border-radius:8px; padding:12px 18px;">
+            <div style="font-size:10px; color:#888; text-transform:uppercase;
+                        letter-spacing:1px; margin-bottom:6px;">Edge Score</div>
+            <div style="background:#2a2a4a; border-radius:6px; height:8px; overflow:hidden; margin-bottom:6px;">
+                <div style="width:{min((_edge or 0),100):.0f}%; background:{_edge_fill};
+                            height:100%; border-radius:6px;"></div>
+            </div>
+            <div style="font-size:24px; font-weight:900; color:{_edge_col}; font-family:monospace;">{_edge_str}</div>
+            <div style="font-size:9px; color:#546e7a; margin-top:3px;">{_edge_sub}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -2669,7 +2846,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     st.markdown(
         '<div style="font-size:10px; color:#263238; margin-top:6px;">'
         'IB fixed at 9:30–10:30 AM · Set From = To for single day · '
-        'Set a date range (max 10 weekdays) to see weekly market bias · '
+        'Set a date range (max 22 weekdays ≈ 1 month) to see market bias · '
         'Results auto-saved to your account history'
         '</div>',
         unsafe_allow_html=True,
@@ -3333,6 +3510,87 @@ def render_analytics_tab():
             )
             st.plotly_chart(fig_tcs, use_container_width=True)
 
+    # ── BACKTEST STRUCTURE WIN RATE (from sim history) ────────────────────
+    st.markdown("---")
+    st.markdown("**📊 Backtest Structure Win Rates** *(from your saved simulation history)*")
+    _bk_stats = compute_backtest_structure_stats(_uid)
+    if _bk_stats.empty:
+        st.caption("Run backtests in the Backtest tab to populate this chart. "
+                   "Each unique ticker/date pair you simulate builds this dataset.")
+    else:
+        import plotly.graph_objects as _go2
+        _bk_win_colors = [
+            "#4caf50" if r >= 60 else ("#ffa726" if r >= 45 else "#ef5350")
+            for r in _bk_stats["win_rate"]
+        ]
+        _bcols = st.columns([3, 2])
+        with _bcols[0]:
+            fig_bk = _go2.Figure()
+            fig_bk.add_trace(_go2.Bar(
+                x=_bk_stats["structure"], y=_bk_stats["win_rate"],
+                marker_color=_bk_win_colors,
+                text=[f"{r}%<br>{t}T · FT {ft:.1f}%"
+                      for r, t, ft in zip(_bk_stats["win_rate"],
+                                          _bk_stats["trades"],
+                                          _bk_stats["avg_follow_thru"])],
+                textposition="outside",
+                textfont=dict(size=9, color="#e0e0e0"),
+                hovertemplate=(
+                    "<b>%{x}</b><br>Win Rate: %{y:.1f}%<br>"
+                    "Trades: %{customdata[0]}<br>"
+                    "Avg Follow-Thru: %{customdata[1]:.1f}%<br>"
+                    "False Break Rate: %{customdata[2]:.1f}%<extra></extra>"
+                ),
+                customdata=list(zip(
+                    _bk_stats["trades"],
+                    _bk_stats["avg_follow_thru"],
+                    _bk_stats["false_brk_rate"],
+                )),
+            ))
+            fig_bk.add_hline(y=50, line=dict(color="rgba(255,255,255,0.2)", dash="dot"),
+                             annotation_text="50% baseline", annotation_font_color="#888")
+            fig_bk.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"), height=300,
+                xaxis=dict(gridcolor="#2a2a4a", tickangle=-20),
+                yaxis=dict(title="Win Rate (%)", gridcolor="#2a2a4a", range=[0, 100]),
+                margin=dict(l=10, r=10, t=20, b=60),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_bk, use_container_width=True)
+
+        with _bcols[1]:
+            st.markdown("**False Break Rate by Structure**")
+            _fb_colors = [
+                "#4caf50" if r <= 15 else ("#ffa726" if r <= 30 else "#ef5350")
+                for r in _bk_stats["false_brk_rate"]
+            ]
+            fig_fb = _go2.Figure(_go2.Bar(
+                x=_bk_stats["structure"], y=_bk_stats["false_brk_rate"],
+                marker_color=_fb_colors,
+                text=[f"{r}%" for r in _bk_stats["false_brk_rate"]],
+                textposition="outside",
+                textfont=dict(size=10, color="#e0e0e0"),
+                hovertemplate="<b>%{x}</b><br>False Break: %{y:.1f}%<extra></extra>",
+            ))
+            fig_fb.add_hline(y=20, line=dict(color="rgba(255,255,255,0.2)", dash="dot"),
+                             annotation_text="20% danger", annotation_font_color="#ffa726")
+            fig_fb.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"), height=300,
+                xaxis=dict(gridcolor="#2a2a4a", tickangle=-20),
+                yaxis=dict(title="False Break (%)", gridcolor="#2a2a4a", range=[0, 80]),
+                margin=dict(l=10, r=10, t=20, b=60),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_fb, use_container_width=True)
+
+        total_unique = _bk_stats["trades"].sum()
+        st.caption(
+            f"Based on {total_unique} unique ticker/date simulations · "
+            "Duplicates removed · Hover bars for full breakdown"
+        )
+
     # ── RAW TRACKER TABLE ─────────────────────────────────────────────────
     with st.expander("🗂 Raw Synced Trades", expanded=False):
         eq_disp = ana["equity_curve"].copy()
@@ -3777,6 +4035,56 @@ def render_sa_tab():
     val_p    = snap.get("val_price")
     vah_p    = snap.get("vah_price")
     pct_chg  = snap.get("pct_change", 0.0)
+
+    # ── SECTION 0 — Running P&L + Edge Stats (T006) ─────────────────────────
+    _sa_uid = st.session_state.get("auth_user_id", "")
+    _sa_jdf = load_journal(user_id=_sa_uid)
+    _sa_tdf = load_accuracy_tracker(user_id=_sa_uid)
+    _sa_ana = compute_edge_analytics(_sa_jdf, _sa_tdf)
+    _sa_s   = _sa_ana["summary"]
+
+    if _sa_s["total_trades"] > 0:
+        _sa_wr      = _sa_s["win_rate"]
+        _sa_pnl     = _sa_s["total_pnl"]
+        _sa_pf      = _sa_s["profit_factor"]
+        _sa_wr_c    = "#4caf50" if _sa_wr >= 55 else ("#ffa726" if _sa_wr >= 45 else "#ef5350")
+        _sa_pnl_c   = "#4caf50" if _sa_pnl >= 0 else "#ef5350"
+        _sa_pnl_sgn = "+" if _sa_pnl >= 0 else ""
+        _sa_pf_c    = "#4caf50" if _sa_pf >= 1.5 else ("#ffa726" if _sa_pf >= 1.0 else "#ef5350")
+
+        # Max drawdown from equity curve
+        _sa_eq = _sa_ana["equity_curve"]
+        if not _sa_eq.empty:
+            _peaks    = _sa_eq["cumulative_pnl"].cummax()
+            _dd       = (_sa_eq["cumulative_pnl"] - _peaks).min()
+            _dd_str   = f"${_dd:.2f}"
+            _dd_color = "#ef5350" if _dd < -50 else ("#ffa726" if _dd < 0 else "#4caf50")
+        else:
+            _dd_str, _dd_color = "—", "#546e7a"
+
+        def _sa_kpi(lbl, val, clr, sub=""):
+            return (
+                f'<div style="background:#0a0f1e; border:1px solid #1a2744; border-radius:8px; '
+                f'padding:10px 14px; text-align:center;">'
+                f'<div style="font-size:9px; color:#455a64; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:3px;">{lbl}</div>'
+                f'<div style="font-size:22px; font-weight:900; color:{clr};">{val}</div>'
+                f'{"<div style=font-size:10px;color:#546e7a;>" + sub + "</div>" if sub else ""}'
+                f'</div>'
+            )
+        _sa_k1, _sa_k2, _sa_k3, _sa_k4, _sa_k5 = st.columns(5)
+        _sa_k1.markdown(_sa_kpi("Win Rate", f"{_sa_wr}%", _sa_wr_c,
+                                f"{_sa_s['total_trades']} trades"), unsafe_allow_html=True)
+        _sa_k2.markdown(_sa_kpi("Total P&L", f"{_sa_pnl_sgn}${_sa_pnl:.2f}", _sa_pnl_c),
+                        unsafe_allow_html=True)
+        _sa_k3.markdown(_sa_kpi("Profit Factor",
+                                f"{_sa_pf:.2f}" if _sa_pf < 99 else "∞", _sa_pf_c),
+                        unsafe_allow_html=True)
+        _sa_k4.markdown(_sa_kpi("Max Drawdown", _dd_str, _dd_color), unsafe_allow_html=True)
+        _sa_k5.markdown(_sa_kpi("Avg Win / Loss",
+                                f"${_sa_s['avg_win']:.0f} / ${_sa_s['avg_loss']:.0f}",
+                                "#90caf9"), unsafe_allow_html=True)
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
     # ── SECTION 1 — TRADING WINDOW + PDT TRACKER ─────────────────────────────
     window_open = 7.0 <= hour_et < 10.0

@@ -2780,17 +2780,17 @@ def run_backtest_range(
     price_min: float = 2.0,
     price_max: float = 20.0,
 ) -> tuple:
-    """Run the backtest across a date range (max 10 weekdays).
+    """Run the backtest across a date range (max 22 weekdays ≈ 1 month).
 
     Returns (all_results, agg_summary, daily_list) where:
     - all_results   : flat list of every row with 'sim_date' added
     - agg_summary   : aggregate stats across all days
     - daily_list    : [(date, results, summary), ...] one entry per trading day
     """
-    # Collect weekdays in range, cap at 10
+    # Collect weekdays in range, cap at 22 (~1 calendar month)
     trading_days = []
     cur = start_date
-    while cur <= end_date and len(trading_days) < 10:
+    while cur <= end_date and len(trading_days) < 22:
         if cur.weekday() < 5:
             trading_days.append(cur)
         cur += timedelta(days=1)
@@ -3139,5 +3139,101 @@ def compute_edge_score(
         "fb_pts":     round(fb_pts,     1),
         "total":      score,
     }
+
+
+# ── Backtest Structure Analytics ─────────────────────────────────────────────
+def compute_backtest_structure_stats(user_id: str = "") -> "pd.DataFrame":
+    """Compute win rate, avg follow-through, and false break rate by structure type.
+
+    Uses saved backtest_sim_runs (deduplicated by ticker+date) so the stats
+    reflect unique setups only, not replay noise.
+
+    Returns a DataFrame with columns:
+      structure, trades, wins, win_rate, avg_follow_thru, false_brk_rate
+    Sorted by win_rate descending.
+    """
+    df = load_backtest_sim_history(user_id)
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "structure", "trades", "wins", "win_rate", "avg_follow_thru", "false_brk_rate"
+        ])
+
+    try:
+        df["sim_date"] = pd.to_datetime(df.get("sim_date", pd.NaT), errors="coerce")
+        if "ticker" in df.columns and "sim_date" in df.columns:
+            df = (df.sort_values("created_at", errors="ignore")
+                    .drop_duplicates(subset=["ticker", "sim_date"], keep="last")
+                    .reset_index(drop=True))
+
+        if "predicted_structure" not in df.columns:
+            return pd.DataFrame()
+
+        df["win_bin"]   = (df["win_loss"] == "Win").astype(int)
+        df["ft_num"]    = pd.to_numeric(df.get("follow_thru_pct", pd.Series(dtype=float)),
+                                        errors="coerce")
+        fb_up   = df.get("false_break_up",   pd.Series([False] * len(df))).fillna(False).astype(bool)
+        fb_down = df.get("false_break_down",  pd.Series([False] * len(df))).fillna(False).astype(bool)
+        df["false_brk"] = (fb_up | fb_down).astype(int)
+
+        grp = df.groupby("predicted_structure", as_index=False).agg(
+            trades        = ("win_bin",    "count"),
+            wins          = ("win_bin",    "sum"),
+            avg_follow_thru = ("ft_num",  lambda x: round(x.mean(), 2) if x.notna().any() else 0.0),
+            false_brks    = ("false_brk", "sum"),
+        )
+        grp["win_rate"]       = (grp["wins"] / grp["trades"] * 100).round(1)
+        grp["false_brk_rate"] = (grp["false_brks"] / grp["trades"] * 100).round(1)
+        grp = grp.rename(columns={"predicted_structure": "structure"})
+        grp = grp.sort_values("win_rate", ascending=False).reset_index(drop=True)
+        return grp[["structure", "trades", "wins", "win_rate", "avg_follow_thru", "false_brk_rate"]]
+    except Exception:
+        return pd.DataFrame()
+
+
+# ── Watchlist Persistence ─────────────────────────────────────────────────────
+def save_watchlist(tickers: list, user_id: str = "") -> bool:
+    """Upsert a user's custom watchlist to Supabase (table: user_watchlist).
+
+    Stores one row per user with a JSON-encoded list of tickers.
+    Returns True on success, False on failure.
+    """
+    supabase = _get_supabase()
+    if not supabase:
+        return False
+    try:
+        import json as _json
+        payload = {
+            "user_id":  user_id or "anonymous",
+            "tickers":  _json.dumps([t.strip().upper() for t in tickers if t.strip()]),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        supabase.table("user_watchlist").upsert(payload, on_conflict="user_id").execute()
+        return True
+    except Exception:
+        return False
+
+
+def load_watchlist(user_id: str = "") -> list:
+    """Load a user's saved watchlist from Supabase.
+
+    Returns a list of ticker strings, or [] if not found / table missing.
+    """
+    supabase = _get_supabase()
+    if not supabase:
+        return []
+    try:
+        import json as _json
+        uid = user_id or "anonymous"
+        res = (supabase.table("user_watchlist")
+               .select("tickers")
+               .eq("user_id", uid)
+               .limit(1)
+               .execute())
+        if res.data:
+            raw = res.data[0].get("tickers", "[]")
+            return _json.loads(raw) if isinstance(raw, str) else list(raw)
+        return []
+    except Exception:
+        return []
 
 
