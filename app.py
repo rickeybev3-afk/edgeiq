@@ -2100,65 +2100,86 @@ with st.sidebar:
             "⚡ Auto-Size to Risk",
             value=False,
             key="pos_auto_size",
-            help="Calculates shares automatically: Risk $ = Account Balance × Risk % ÷ ATR(14)",
+            help=(
+                "Calculates shares from your SA Challenge account size & risk %.\n"
+                "Risk Amount = Account Balance × Risk %\n"
+                "Risk per Share = Entry Price − Stop Loss Price\n"
+                "Shares = Risk Amount ÷ Risk per Share (rounded down)"
+            ),
         )
 
-        _acct_bal  = float(st.session_state.get("sa_account_bal", 5000.0))
-        _risk_pct  = float(st.session_state.get("sa_risk_pct",  2.0))
-        _last_bars = st.session_state.get("last_bars")
-        _atr_val   = (compute_atr(_last_bars)
-                      if _last_bars is not None and len(_last_bars) >= 5
-                      else 0.0)
+        _acct_bal = float(st.session_state.get("sa_account_bal", 5000.0))
+        _risk_pct = float(st.session_state.get("sa_risk_pct", 2.0))
 
         if _auto_size:
-            _risk_amt   = _acct_bal * (_risk_pct / 100.0)
-            _stop_dist  = _atr_val if _atr_val and _atr_val > 0 else (e_px * 0.02 if e_px > 0 else 1.0)
-            _calc_shares = max(1, int(_risk_amt / _stop_dist))
+            # Stop Loss Price input replaces Shares input
+            _sl_default = round(e_px - 0.10, 2) if e_px > 0 else 0.0
+            e_sl = st.number_input(
+                "Stop Loss Price",
+                value=_sl_default,
+                step=0.01,
+                format="%.2f",
+                key="pos_entry_sl",
+                help="Your hard stop. Risk per share = Entry Price − Stop Loss Price.",
+            )
+            _risk_amt      = _acct_bal * (_risk_pct / 100.0)
+            _risk_per_share = e_px - e_sl if e_px > e_sl else 0.0
+            _calc_shares   = max(1, int(_risk_amt / _risk_per_share)) if _risk_per_share > 0 else 1
+            # Live sizing card
+            _sl_color = "#ef5350" if _risk_per_share <= 0 else "#4caf50"
             st.markdown(
                 f'<div style="background:#0a0f1e; border:1px solid #1a2744; border-radius:6px; '
-                f'padding:8px 12px; margin:4px 0 6px 0; font-size:12px; color:#90caf9;">'
-                f'💰 Risk: <b>${_risk_amt:.0f}</b> &nbsp;|&nbsp; '
-                f'Stop: <b>${_stop_dist:.2f}</b> (ATR) &nbsp;|&nbsp; '
-                f'<span style="color:#4caf50; font-weight:700;">Shares: {_calc_shares}</span>'
+                f'padding:9px 13px; margin:4px 0 6px 0; font-size:12px; color:#90caf9; line-height:1.7;">'
+                f'💰 Risk&nbsp;$: <b>${_risk_amt:.0f}</b> &nbsp;|&nbsp; '
+                f'Risk/sh: <b style="color:{_sl_color};">'
+                f'{"$" + f"{_risk_per_share:.2f}" if _risk_per_share > 0 else "⚠ entry ≤ stop"}'
+                f'</b> &nbsp;|&nbsp; '
+                f'<span style="font-size:14px; font-weight:800; color:#4caf50;">'
+                f'Shares: {_calc_shares if _risk_per_share > 0 else "—"}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
             e_shr = _calc_shares
         else:
+            e_sl  = None
             e_shr = st.number_input("Shares", value=100, step=1, min_value=1, key="pos_entry_shr")
 
-        # ── Send to Alpaca toggle ─────────────────────────────────────────────
-        _send_alpaca = st.checkbox(
-            "📡 Execute via Alpaca (Paper)",
-            value=False,
-            key="pos_send_alpaca",
-            help="Submits a paper Market order through Alpaca when you click Enter Position.",
-        )
-
+        # ── Enter Position button ─────────────────────────────────────────────
         if st.button("🟢 Enter Position", use_container_width=True,
                      key="pos_enter_btn", type="primary"):
-            if e_tkr and e_px > 0:
-                enter_position(e_tkr.upper(), e_px, e_shr, e_strc)
-                st.success(f"✅ Entered {e_tkr.upper()} × {e_shr} sh @ ${e_px:.2f}")
-                if _send_alpaca and api_key and secret_key:
-                    with st.spinner("Submitting to Alpaca…"):
-                        _alp = execute_alpaca_trade(
-                            api_key=api_key,
-                            secret_key=secret_key,
-                            is_paper=True,
-                            ticker=e_tkr.upper(),
-                            qty=int(e_shr),
-                            side="buy",
-                        )
-                    if _alp["success"]:
-                        st.success(f"📡 Alpaca order submitted — ID: `{_alp['order_id']}`")
-                    else:
-                        st.error(f"Alpaca error: {_alp['message']}")
-                elif _send_alpaca and (not api_key or not secret_key):
-                    st.warning("Add your Alpaca API credentials in the sidebar to execute.")
-                st.rerun()
+            if not e_tkr:
+                st.error("Enter a ticker symbol.")
+            elif e_px <= 0:
+                st.error("Enter a valid entry price.")
+            elif _auto_size and e_sl is not None and e_sl >= e_px:
+                st.error("Stop Loss must be below Entry Price.")
+            elif api_key and secret_key:
+                # ── Alpaca first — local state only updates on confirmed fill ─
+                with st.spinner(f"Submitting Limit order to Alpaca — {e_tkr.upper()} × {e_shr} sh…"):
+                    _alp = execute_alpaca_trade(
+                        api_key=api_key,
+                        secret_key=secret_key,
+                        is_paper=True,
+                        ticker=e_tkr.upper(),
+                        qty=int(e_shr),
+                        side="buy",
+                        limit_price=round(e_px, 2),
+                    )
+                if _alp["success"]:
+                    enter_position(e_tkr.upper(), e_px, e_shr, e_strc)
+                    st.success(
+                        f"✅ Limit order placed — {e_tkr.upper()} × {e_shr} sh @ ${e_px:.2f}  "
+                        f"| Alpaca ID: `{_alp['order_id']}`"
+                    )
+                    st.rerun()
+                else:
+                    st.error(f"❌ Alpaca rejected the order: {_alp['message']}")
             else:
-                st.error("Enter a valid ticker and price.")
+                # No API keys — log locally only
+                st.warning("⚠️ No Alpaca keys — logging position locally only (no real order placed).")
+                enter_position(e_tkr.upper(), e_px, e_shr, e_strc)
+                st.success(f"✅ Logged {e_tkr.upper()} × {e_shr} sh @ ${e_px:.2f} (local only)")
+                st.rerun()
 
     st.markdown("---")
 
