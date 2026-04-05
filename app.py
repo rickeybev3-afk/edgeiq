@@ -1312,12 +1312,12 @@ def render_buy_sell_widget(bsp, rvol_val=None):
     else:
         momentum, mom_color = "→ Flat", "#aaaaaa"
 
-    # ── High-conviction signal: RVOL > 3 + buy pressure ramping ──────────────
-    rvol_gt3     = rvol_val is not None and rvol_val >= 3.0
+    # ── High-conviction signal: RVOL ≥ 5 + buy/sell pressure ramping ─────────
+    rvol_gt5     = rvol_val is not None and rvol_val >= 5.0
     buy_ramping  = delta > 3 and buy_pct >= 55
     sell_ramping = delta < -3 and buy_pct <= 45
     hc_alert     = ""
-    if rvol_gt3 and buy_ramping:
+    if rvol_gt5 and buy_ramping:
         hc_alert = (
             f'<div style="background:#4caf5022; border:1px solid #4caf5088; '
             f'border-radius:6px; padding:6px 12px; margin-bottom:6px; '
@@ -1325,7 +1325,7 @@ def render_buy_sell_widget(bsp, rvol_val=None):
             f'🚀 HIGH CONVICTION BUY — RVOL {rvol_val:.1f}× + Buy Ramping'
             f'</div>'
         )
-    elif rvol_gt3 and sell_ramping:
+    elif rvol_gt5 and sell_ramping:
         hc_alert = (
             f'<div style="background:#ef535022; border:1px solid #ef535088; '
             f'border-radius:6px; padding:6px 12px; margin-bottom:6px; '
@@ -2271,9 +2271,21 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
         )
     )
 
+    _RVOL_MIN = 2.0   # minimum pre-market RVOL to appear in Playbook
+
     if _should_fetch:
         with st.spinner("Scanning Alpaca market data…"):
             _rows, _err = scan_playbook(api_key, secret_key, top=_pb_top)
+        # Filter out low-RVOL stocks when SIP data is available.
+        # IEX rows have pm_rvol=None — keep those since we can't measure them.
+        _before = len(_rows)
+        _rows = [r for r in _rows
+                 if r.get("pm_rvol") is None or r.get("pm_rvol", 0) >= _RVOL_MIN]
+        _filtered_out = _before - len(_rows)
+        if _filtered_out:
+            st.session_state["_pb_filtered_count"] = _filtered_out
+        else:
+            st.session_state.pop("_pb_filtered_count", None)
         st.session_state[_pb_cache_key] = (_rows, _err)
         st.session_state[_pb_time_key]  = time.time()
         st.session_state.pop(_pb_score_key, None)   # invalidate old scores
@@ -2328,10 +2340,15 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             if _scores_loaded else
             f' · <span style="color:#546e7a;">Click <b>🧠 Run Quant Score</b> to add TCS & Setup</span>'
         )
+        _filt_n = st.session_state.get("_pb_filtered_count", 0)
+        _filt_note = (
+            f' · <span style="color:#ef5350;">{_filt_n} low-RVOL (&lt;2×) removed</span>'
+            if _filt_n else ""
+        )
         st.markdown(
             f'<div style="font-size:11px; color:#546e7a; margin-bottom:12px;">'
             f'Last fetched: <b>{_ago_str}</b> · {len(_rows)} stocks in range'
-            f'{_scored_badge}</div>',
+            f'{_filt_note}{_scored_badge}</div>',
             unsafe_allow_html=True,
         )
 
