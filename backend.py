@@ -2535,7 +2535,7 @@ def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
     try:
         r = requests.get(
             f"{base}/movers",
-            params={"top": top},
+            params={"market_type": "stocks", "top": top},
             headers=headers,
             timeout=10,
         )
@@ -2556,7 +2556,8 @@ def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
                             "volume":     volume,
                             "source":     "Gainer",
                         }
-        else:
+        elif r.status_code not in (400, 422) or not pool:
+            # Only surface the error if most-actives also came up empty
             errors.append(f"movers HTTP {r.status_code}")
     except Exception as exc:
         errors.append(f"movers: {exc}")
