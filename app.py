@@ -2642,7 +2642,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     # ── Error handling ──────────────────────────────────────────────────────────
     if _err and _err != "market_closed":
         st.error(f"Screener error: {_err}")
-    elif _err == "market_closed" and _today_wd < 5:
+    elif _err == "market_closed" and not _market_closed_today:
         st.warning("⏰ Screener returned no data — market may not be open yet. Try again after 9:30 AM ET.")
 
     if not _rows:
