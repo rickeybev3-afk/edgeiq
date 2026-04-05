@@ -4933,6 +4933,160 @@ with tab_scan:
         else:
             st.caption("Click a **Load** button to populate the ticker and switch to Main Chart.")
 
+    # ── Watchlist Prediction Engine ────────────────────────────────────────────
+    st.markdown("---")
+    st.header("🔮 Watchlist Prediction Engine")
+    st.caption(
+        "Score every ticker in your saved watchlist, save the predictions, "
+        "then verify next day to see how accurate the engine was."
+    )
+
+    _wpe_saved_tickers = [
+        t.strip().upper()
+        for t in st.session_state.get("_watchlist_tickers", "").replace("\n", ",").split(",")
+        if t.strip()
+    ]
+    _wpe_count = len(_wpe_saved_tickers)
+
+    if _wpe_count == 0:
+        st.info("No tickers saved yet. Add tickers in the **⭐ My Watchlist** section in the sidebar, then save them.")
+    else:
+        st.caption(f"{_wpe_count} tickers in your saved watchlist")
+
+        _wpe_feed = st.selectbox("Feed", ["iex", "sip"], key="wpe_feed_select",
+                                 help="IEX = free tier. SIP = full tape.")
+        _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
+
+        # ── Predict All ────────────────────────────────────────────────────────
+        if _wpe_col1.button("🔮 Predict All", use_container_width=True, key="wpe_predict_btn"):
+            if not api_key or not secret_key:
+                st.error("Add your Alpaca credentials in the sidebar first.")
+            else:
+                with st.spinner(f"Scoring {_wpe_count} tickers… (this may take ~30 s for large lists)"):
+                    _wpe_rows = [{"ticker": t} for t in _wpe_saved_tickers]
+                    import copy as _cp
+                    _wpe_scored = score_playbook_tickers(
+                        _cp.deepcopy(_wpe_rows),
+                        api_key, secret_key,
+                        feed=_wpe_feed,
+                        max_tickers=_wpe_count,
+                        user_id=_AUTH_USER_ID,
+                    )
+                    _wpe_pred_date = date.today()
+                    _wpe_payload = [
+                        {
+                            "ticker":              r["ticker"],
+                            "pred_date":           _wpe_pred_date,
+                            "predicted_structure": r.get("structure") or "—",
+                            "tcs":                 r.get("tcs") or 0,
+                            "edge_score":          r.get("edge_score") or 0,
+                        }
+                        for r in _wpe_scored
+                    ]
+                    _wpe_ok = save_watchlist_predictions(_wpe_payload, user_id=_AUTH_USER_ID)
+                    st.session_state["_wpe_last_predictions"] = _wpe_scored
+                    st.session_state["_wpe_pred_date"] = str(_wpe_pred_date)
+                    if _wpe_ok:
+                        st.success(f"✅ {len(_wpe_payload)} predictions saved for {_wpe_pred_date}")
+                    else:
+                        st.warning("Scored locally — Supabase unavailable (create the `watchlist_predictions` table to persist).")
+
+        # ── Verify Yesterday ───────────────────────────────────────────────────
+        if _wpe_col2.button("✅ Verify Yesterday", use_container_width=True, key="wpe_verify_btn"):
+            if not api_key or not secret_key:
+                st.error("Add your Alpaca credentials in the sidebar first.")
+            else:
+                with st.spinner("Fetching end-of-day data and verifying predictions…"):
+                    _vr = verify_watchlist_predictions(
+                        api_key, secret_key, user_id=_AUTH_USER_ID
+                    )
+                st.session_state["_wpe_verify_result"] = _vr
+
+        # ── Load Saved Predictions ─────────────────────────────────────────────
+        if _wpe_col3.button("📂 Load Saved", use_container_width=True, key="wpe_load_btn"):
+            _wpe_df = load_watchlist_predictions(user_id=_AUTH_USER_ID)
+            st.session_state["_wpe_loaded_df"] = _wpe_df
+
+        # ── Show verify result ─────────────────────────────────────────────────
+        _vr = st.session_state.get("_wpe_verify_result")
+        if _vr:
+            if _vr.get("error") and _vr.get("verified", 0) == 0:
+                st.warning(f"Verify: {_vr['error']}")
+            else:
+                _acc_color = "#4caf50" if _vr["accuracy"] >= 60 else "#ff9800" if _vr["accuracy"] >= 45 else "#ef5350"
+                st.markdown(
+                    f'<div style="background:#12122299;border:1px solid #2a2a4a;border-radius:10px;'
+                    f'padding:14px 20px;margin:8px 0;display:flex;gap:32px;align-items:center;">'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Verified</div>'
+                    f'<div style="font-size:26px;font-weight:800;color:#e0e0e0;">{_vr["verified"]}</div>'
+                    f'</div>'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Correct</div>'
+                    f'<div style="font-size:26px;font-weight:800;color:#4caf50;">{_vr["correct"]}</div>'
+                    f'</div>'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Accuracy</div>'
+                    f'<div style="font-size:26px;font-weight:800;color:{_acc_color};">{_vr["accuracy"]:.1f}%</div>'
+                    f'</div>'
+                    f'<div style="font-size:12px;color:#666;">{_vr.get("date","")}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── Show today's predictions table ─────────────────────────────────────
+        _wpe_preds = st.session_state.get("_wpe_last_predictions")
+        _wpe_df_loaded = st.session_state.get("_wpe_loaded_df")
+
+        if _wpe_preds:
+            st.subheader(f"Today's Predictions — {st.session_state.get('_wpe_pred_date', '')}")
+            _wpe_display = []
+            for r in _wpe_preds:
+                _tcs_v = r.get("tcs")
+                _edg_v = r.get("edge_score")
+                _wpe_display.append({
+                    "Ticker":     r["ticker"],
+                    "Structure":  r.get("structure") or "—",
+                    "TCS":        f"{_tcs_v:.0f}" if _tcs_v is not None else "—",
+                    "Edge":       f"{_edg_v:.0f}" if _edg_v is not None else "—",
+                })
+            st.dataframe(
+                _wpe_display,
+                use_container_width=True,
+                height=min(400, 35 + 35 * len(_wpe_display)),
+            )
+
+        elif _wpe_df_loaded is not None and not _wpe_df_loaded.empty:
+            st.subheader("Saved Predictions")
+            _show_cols = ["ticker", "pred_date", "predicted_structure", "tcs",
+                          "edge_score", "actual_structure", "correct"]
+            _disp_df = _wpe_df_loaded[[c for c in _show_cols if c in _wpe_df_loaded.columns]].copy()
+            _disp_df.columns = [c.replace("_", " ").title() for c in _disp_df.columns]
+            st.dataframe(_disp_df, use_container_width=True, height=min(500, 35 + 35 * len(_disp_df)))
+        elif _wpe_df_loaded is not None:
+            st.info("No saved predictions found. Run **🔮 Predict All** first.")
+
+    # ── Setup instructions if table missing ───────────────────────────────────
+    with st.expander("⚙️ First-time Supabase setup for predictions", expanded=False):
+        st.caption("Run this SQL once in your Supabase SQL editor to enable the prediction engine:")
+        st.code(
+            "CREATE TABLE IF NOT EXISTS watchlist_predictions (\n"
+            "  id           BIGSERIAL PRIMARY KEY,\n"
+            "  user_id      TEXT,\n"
+            "  ticker       TEXT,\n"
+            "  pred_date    DATE,\n"
+            "  predicted_structure TEXT,\n"
+            "  tcs          FLOAT,\n"
+            "  edge_score   FLOAT,\n"
+            "  actual_structure    TEXT DEFAULT '',\n"
+            "  verified     BOOLEAN DEFAULT FALSE,\n"
+            "  correct      TEXT DEFAULT '',\n"
+            "  UNIQUE(user_id, ticker, pred_date)\n"
+            ");",
+            language="sql",
+        )
+        st.caption("Go to supabase.com → your project → SQL Editor → paste and run.")
+
 # ── Volume Profile tab: auto_run + all historical/live content ─────────────────
 # Consume the auto-run flag set by scanner ticker buttons (runs before tab renders)
 auto_trigger = st.session_state.get("auto_run", False)

@@ -3377,6 +3377,167 @@ def load_watchlist(user_id: str = "") -> list:
         return []
 
 
+# ── Watchlist Prediction Engine ───────────────────────────────────────────────
+
+def save_watchlist_predictions(predictions: list, user_id: str = "") -> bool:
+    """Upsert batch structure+edge predictions for the user's watchlist.
+
+    predictions: list of dicts with keys:
+        ticker, pred_date, predicted_structure, tcs, edge_score
+    One row per (user_id, ticker, pred_date) — safe to re-run same day.
+    """
+    if not supabase or not predictions:
+        return False
+    try:
+        rows = []
+        for p in predictions:
+            rows.append({
+                "user_id":             user_id or "anonymous",
+                "ticker":              str(p.get("ticker", "")).upper().strip(),
+                "pred_date":           str(p.get("pred_date", date.today())),
+                "predicted_structure": p.get("predicted_structure") or "—",
+                "tcs":                 float(p.get("tcs") or 0),
+                "edge_score":          float(p.get("edge_score") or 0),
+                "verified":            False,
+                "actual_structure":    "",
+                "correct":             "",
+            })
+        supabase.table("watchlist_predictions").upsert(
+            rows, on_conflict="user_id,ticker,pred_date"
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"save_watchlist_predictions error: {e}")
+        return False
+
+
+def load_watchlist_predictions(user_id: str = "", pred_date=None) -> pd.DataFrame:
+    """Load watchlist predictions from Supabase.
+
+    If pred_date is None, loads all rows for the user sorted by date desc.
+    """
+    _cols = ["ticker", "pred_date", "predicted_structure", "tcs",
+             "edge_score", "actual_structure", "verified", "correct"]
+    if not supabase:
+        return pd.DataFrame(columns=_cols)
+    try:
+        q = supabase.table("watchlist_predictions").select("*")
+        uid = user_id or "anonymous"
+        q = q.eq("user_id", uid)
+        if pred_date:
+            q = q.eq("pred_date", str(pred_date))
+        q = q.order("edge_score", desc=True).limit(300)
+        res = q.execute()
+        if not res.data:
+            return pd.DataFrame(columns=_cols)
+        df = pd.DataFrame(res.data)
+        for c in _cols:
+            if c not in df.columns:
+                df[c] = ""
+        return df
+    except Exception as e:
+        print(f"load_watchlist_predictions error: {e}")
+        return pd.DataFrame(columns=_cols)
+
+
+def verify_watchlist_predictions(api_key: str, secret_key: str,
+                                  user_id: str = "", pred_date=None) -> dict:
+    """Fetch end-of-day data and verify pending watchlist predictions.
+
+    For each unverified prediction on pred_date (default: last trading day):
+    - Re-runs the scoring engine on the full day's bars
+    - Compares predicted_structure vs actual end-of-day structure
+    - Updates the Supabase row with actual_structure + correct flag
+    - Logs to accuracy_tracker so the brain can calibrate
+
+    Returns a summary dict: {verified, correct, accuracy, date, error}.
+    """
+    if not supabase or not api_key or not secret_key:
+        return {"verified": 0, "correct": 0, "accuracy": 0.0,
+                "error": "No credentials"}
+
+    # Default to last completed trading day
+    if pred_date is None:
+        check_date = date.today() - timedelta(days=1)
+        while check_date.weekday() >= 5:
+            check_date -= timedelta(days=1)
+    else:
+        check_date = pred_date
+
+    try:
+        uid = user_id or "anonymous"
+        q = (supabase.table("watchlist_predictions")
+             .select("*")
+             .eq("user_id", uid)
+             .eq("verified", False)
+             .eq("pred_date", str(check_date)))
+        res = q.execute()
+        pending = res.data or []
+    except Exception as e:
+        return {"verified": 0, "correct": 0, "accuracy": 0.0, "error": str(e)}
+
+    if not pending:
+        return {"verified": 0, "correct": 0, "accuracy": 0.0,
+                "date": str(check_date),
+                "error": f"No unverified predictions found for {check_date}"}
+
+    verified_count = 0
+    correct_count  = 0
+
+    with ThreadPoolExecutor(max_workers=min(8, len(pending))) as executor:
+        future_map = {
+            executor.submit(
+                _score_single_ticker, api_key, secret_key,
+                p["ticker"], check_date, "iex"
+            ): p
+            for p in pending
+        }
+        for future in as_completed(future_map):
+            pred = future_map[future]
+            try:
+                sym, _tcs, actual_structure, _conf = future.result()
+                if not actual_structure or actual_structure in ("—", ""):
+                    continue
+                predicted   = pred.get("predicted_structure", "")
+                is_correct  = (
+                    _strip_emoji(predicted) in _strip_emoji(actual_structure) or
+                    _strip_emoji(actual_structure) in _strip_emoji(predicted)
+                )
+                correct_str = "✅" if is_correct else "❌"
+
+                # Persist result back to the prediction row
+                try:
+                    supabase.table("watchlist_predictions").update({
+                        "actual_structure": actual_structure,
+                        "verified":         True,
+                        "correct":          correct_str,
+                    }).eq("id", pred["id"]).execute()
+                except Exception:
+                    pass
+
+                # Feed into accuracy_tracker → triggers brain recalibration
+                log_accuracy_entry(
+                    symbol=sym,
+                    predicted=predicted,
+                    actual=actual_structure,
+                    compare_key="watchlist_pred",
+                    user_id=user_id,
+                )
+                verified_count += 1
+                if is_correct:
+                    correct_count += 1
+            except Exception:
+                continue
+
+    accuracy = (correct_count / verified_count * 100) if verified_count > 0 else 0.0
+    return {
+        "verified": verified_count,
+        "correct":  correct_count,
+        "accuracy": round(accuracy, 1),
+        "date":     str(check_date),
+    }
+
+
 # ── God Mode — Live Trade Execution ──────────────────────────────────────────
 
 def execute_alpaca_trade(
