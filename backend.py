@@ -3016,10 +3016,21 @@ def compute_adaptive_weights(user_id: str = "") -> dict:
     rows_used (int), calibrated (bool).
     """
     df = load_backtest_sim_history(user_id)
-    if df.empty or len(df) < 15:
-        return {**_DEFAULT_EDGE_WEIGHTS, "rows_used": len(df), "calibrated": False}
+    if df.empty:
+        return {**_DEFAULT_EDGE_WEIGHTS, "rows_used": 0, "calibrated": False}
 
     try:
+        # Deduplicate: keep only the most recent run for each (ticker, sim_date) pair
+        # so replaying the same backtest day doesn't skew the weights
+        df["sim_date"] = pd.to_datetime(df.get("sim_date", pd.NaT), errors="coerce")
+        if "ticker" in df.columns and "sim_date" in df.columns:
+            df = (df.sort_values("created_at", errors="ignore")
+                    .drop_duplicates(subset=["ticker", "sim_date"], keep="last")
+                    .reset_index(drop=True))
+
+        if len(df) < 15:
+            return {**_DEFAULT_EDGE_WEIGHTS, "rows_used": len(df), "calibrated": False}
+
         df["win_bin"] = (df["win_loss"] == "Win").astype(float)
         df["tcs_num"] = pd.to_numeric(df["tcs"], errors="coerce").fillna(0)
 
@@ -3066,6 +3077,11 @@ def get_recent_env_stats(user_id: str = "", days: int = 5) -> dict:
 
     try:
         df["sim_date"] = pd.to_datetime(df["sim_date"], errors="coerce")
+        # Deduplicate replays: one row per (ticker, sim_date), most recent run
+        if "ticker" in df.columns and "sim_date" in df.columns:
+            df = (df.sort_values("created_at", errors="ignore")
+                    .drop_duplicates(subset=["ticker", "sim_date"], keep="last")
+                    .reset_index(drop=True))
         cutoff = pd.Timestamp.now(tz="UTC").tz_localize(None) - pd.Timedelta(days=days)
         recent = df[df["sim_date"] >= cutoff]
         if len(recent) < 10:
