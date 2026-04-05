@@ -30,3 +30,9 @@ id = "XQVvSaYnnlCmGvDq5jJwi"
 uri = "file://volume_profile_dashboard.tar.gz"
 type = "unspecified"
 title = "Volume Profile Dashboard — Source Code"
+
+[[outputs]]
+id = "uPNIdZvCXvZtEWe80_en9"
+uri = "file://code_for_ai.txt"
+type = "text"
+title = "Full Codebase for AI (backend + app + engine + weights)"
