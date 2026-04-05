@@ -18,9 +18,9 @@ _raw_supabase_url = os.environ.get("SUPABASE_URL", "")
 _url_match = _re.search(r'https://[a-z0-9]+\.supabase\.co', _raw_supabase_url)
 SUPABASE_URL = _url_match.group(0) if _url_match else _raw_supabase_url
 SUPABASE_KEY = (
+    os.environ.get("SUPABASE_KEY") or
     os.environ.get("SUPABASE_ANON_KEY") or
-    os.environ.get("VITE_SUPABASE_ANON_KEY") or
-    os.environ.get("SUPABASE_KEY")
+    os.environ.get("VITE_SUPABASE_ANON_KEY")
 )
 
 if SUPABASE_URL and SUPABASE_KEY:
