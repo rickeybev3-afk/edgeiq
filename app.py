@@ -944,12 +944,27 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     expanded=(_nd == str(date.today()))
                 ):
                     if _nw:
+                        import re as _re
+                        _above = _re.findall(r'[Pp]rice\s+[Aa]bove\s+([\$]?[\d\.]+)', _nt)
+                        _below = _re.findall(r'[Pp]rice\s+[Bb]elow\s+([\$]?[\d\.]+)', _nt)
+                        _price_chips = "".join([
+                            f'<span style="display:inline-block;background:#1b3a2a;border:1px solid #4caf50;'
+                            f'color:#4caf50;font-size:11px;font-weight:600;padding:2px 8px;'
+                            f'border-radius:10px;margin-left:6px;">▲ {v}</span>'
+                            for v in _above
+                        ] + [
+                            f'<span style="display:inline-block;background:#3a1b1b;border:1px solid #ef5350;'
+                            f'color:#ef5350;font-size:11px;font-weight:600;padding:2px 8px;'
+                            f'border-radius:10px;margin-left:6px;">▼ {v}</span>'
+                            for v in _below
+                        ])
                         st.markdown(
                             f'<div style="background:#12122299;border-left:3px solid #90caf9;'
                             f'padding:8px 14px;border-radius:4px;margin-bottom:10px;">'
                             f'<span style="font-size:11px;color:#888;text-transform:uppercase;'
                             f'letter-spacing:1px;">Watch Tomorrow</span><br>'
-                            f'<span style="color:#90caf9;font-weight:700;">{_nw}</span></div>',
+                            f'<span style="color:#90caf9;font-weight:700;">{_nw}</span>'
+                            f'{_price_chips}</div>',
                             unsafe_allow_html=True,
                         )
                     if _nt:
