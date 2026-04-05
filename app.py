@@ -1904,6 +1904,20 @@ with st.sidebar:
     secret_key = st.text_input("Secret Key", type="password", placeholder="Alpaca Secret Key")
 
     st.markdown("---")
+    st.header("🔔 Discord Alerts")
+    _dw_input = st.text_input(
+        "Webhook URL",
+        type="password",
+        placeholder="https://discord.com/api/webhooks/…",
+        help="Paste your Discord webhook URL. Alerts fire automatically when a ticker scores TCS ≥ 80 and Edge Score ≥ 75 during Playbook scoring. Each ticker only alerts once per day.",
+    )
+    if _dw_input:
+        st.session_state["discord_webhook_url"] = _dw_input
+    discord_webhook_url = st.session_state.get("discord_webhook_url", "")
+    if discord_webhook_url:
+        st.success("✅ Alerts active", icon="🔔")
+
+    st.markdown("---")
     mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)
 
     st.markdown("---")
@@ -2494,6 +2508,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
                 _rows_to_score, api_key, secret_key,
                 feed=_pb_feed_str, max_tickers=int(_pb_max_score),
                 user_id=_AUTH_USER_ID,
+                discord_webhook_url=st.session_state.get("discord_webhook_url", ""),
             )
         st.session_state[_pb_score_key] = _scored_rows
         _rows = _scored_rows

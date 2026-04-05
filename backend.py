@@ -2941,9 +2941,95 @@ def _score_single_ticker(api_key: str, secret_key: str, sym: str,
         return sym, None, None, 0.0
 
 
+# ── Discord Alert Engine ─────────────────────────────────────────────────────
+_discord_alert_cache: dict = {}   # {ticker_YYYY-MM-DD: timestamp_float}
+
+
+def send_discord_alert(
+    webhook_url: str,
+    ticker: str,
+    price: float,
+    rvol: float,
+    tcs: float,
+    structure: str,
+    edge_score: float = 0.0,
+) -> bool:
+    """Send a high-conviction signal embed to a Discord webhook.
+
+    Returns True on success, False on failure or if the webhook URL is blank.
+    Callers should check the per-day de-dup cache before calling this.
+    """
+    if not webhook_url or not webhook_url.startswith("http"):
+        return False
+
+    rvol_str   = f"{rvol:.1f}x" if rvol else "—"
+    price_str  = f"${price:.2f}" if price else "—"
+    tcs_bar    = "🟩" * int(tcs // 20) + "⬜" * (5 - int(tcs // 20))
+    edge_color = 0x4CAF50 if edge_score >= 85 else (0xFFA726 if edge_score >= 75 else 0x90CAF9)
+
+    payload = {
+        "username": "VolumeProfile Bot",
+        "avatar_url": "https://cdn-icons-png.flaticon.com/512/2172/2172832.png",
+        "embeds": [
+            {
+                "title": f"🚀 HIGH CONVICTION SIGNAL — ${ticker}",
+                "color": edge_color,
+                "fields": [
+                    {"name": "💰 Price",       "value": price_str,           "inline": True},
+                    {"name": "📊 TCS",         "value": f"{tcs:.0f}/100 {tcs_bar}", "inline": True},
+                    {"name": "⚡ Edge Score",  "value": f"{edge_score:.0f}/100",    "inline": True},
+                    {"name": "🔥 RVOL",        "value": rvol_str,            "inline": True},
+                    {"name": "🏗️ Structure",   "value": structure or "—",    "inline": True},
+                    {"name": "📅 Date",        "value": date.today().strftime("%b %d, %Y"), "inline": True},
+                ],
+                "footer": {"text": "Volume Profile Terminal · Auto-Alert"},
+            }
+        ],
+    }
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=5)
+        return resp.status_code in (200, 204)
+    except Exception:
+        return False
+
+
+def _maybe_discord_alert(
+    webhook_url: str,
+    ticker: str,
+    price: float,
+    rvol: float,
+    tcs: float,
+    structure: str,
+    edge_score: float,
+) -> None:
+    """Fire a Discord alert for this ticker if it hasn't been alerted today."""
+    if not webhook_url:
+        return
+    cache_key = f"{ticker}_{date.today().isoformat()}"
+    if cache_key in _discord_alert_cache:
+        return
+    success = send_discord_alert(
+        webhook_url=webhook_url,
+        ticker=ticker,
+        price=price,
+        rvol=rvol,
+        tcs=tcs,
+        structure=structure,
+        edge_score=edge_score,
+    )
+    if success:
+        _discord_alert_cache[cache_key] = True
+        # Prune old keys (keep only today's entries)
+        today = date.today().isoformat()
+        stale = [k for k in list(_discord_alert_cache) if not k.endswith(today)]
+        for k in stale:
+            _discord_alert_cache.pop(k, None)
+
+
 def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
                            feed: str = "iex", max_tickers: int = 20,
-                           user_id: str = "") -> list:
+                           user_id: str = "",
+                           discord_webhook_url: str = "") -> list:
     """Enrich Playbook rows with TCS, structure, and self-calibrating Edge Score.
 
     Edge Score (0–100) combines TCS, structure confidence, recent market
@@ -2998,6 +3084,17 @@ def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
                 )
                 row["edge_score"]     = edge
                 row["edge_breakdown"] = breakdown
+                # ── Discord alert: TCS ≥ 80 and Edge Score ≥ 75 ──────────────
+                if discord_webhook_url and tcs >= 80 and edge >= 75:
+                    _maybe_discord_alert(
+                        webhook_url=discord_webhook_url,
+                        ticker=sym,
+                        price=float(row.get("price") or 0),
+                        rvol=float(row.get("rvol") or 0),
+                        tcs=tcs,
+                        structure=structure,
+                        edge_score=edge,
+                    )
             else:
                 row["edge_score"]     = None
                 row["edge_breakdown"] = {}
