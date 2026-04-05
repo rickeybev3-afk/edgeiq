@@ -948,14 +948,14 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         _above = _re.findall(r'[Pp]rice\s+[Aa]bove\s+([\$]?[\d\.]+)', _nt)
                         _below = _re.findall(r'[Pp]rice\s+[Bb]elow\s+([\$]?[\d\.]+)', _nt)
                         _price_chips = "".join([
-                            f'<span style="display:inline-block;background:#1b3a2a;border:1px solid #4caf50;'
-                            f'color:#4caf50;font-size:11px;font-weight:600;padding:2px 8px;'
-                            f'border-radius:10px;margin-left:6px;">▲ {v}</span>'
+                            f'<span style="display:inline-block;background:#1e1e3a;border:1px solid #5c6bc0;'
+                            f'color:#9fa8da;font-size:11px;font-weight:600;padding:2px 8px;'
+                            f'border-radius:10px;margin-left:6px;">Above {v}</span>'
                             for v in _above
                         ] + [
-                            f'<span style="display:inline-block;background:#3a1b1b;border:1px solid #ef5350;'
-                            f'color:#ef5350;font-size:11px;font-weight:600;padding:2px 8px;'
-                            f'border-radius:10px;margin-left:6px;">▼ {v}</span>'
+                            f'<span style="display:inline-block;background:#1e1e3a;border:1px solid #5c6bc0;'
+                            f'color:#9fa8da;font-size:11px;font-weight:600;padding:2px 8px;'
+                            f'border-radius:10px;margin-left:6px;">Below {v}</span>'
                             for v in _below
                         ])
                         st.markdown(
