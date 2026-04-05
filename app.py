@@ -506,370 +506,372 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
 
     if df.empty:
         st.info("No entries yet. Run an analysis and click **💾 LOG ENTRY** under the chart.")
-        return
 
-    # Grade badges + table
-    st.markdown("---")
-    for _, row in df.iterrows():
-        grade = str(row.get("grade", "?"))
-        gc = _GRADE_COLORS.get(grade, "#aaaaaa")
-        reason = row.get("grade_reason", "")
-        ts = row.get("timestamp", "")
-        sym = row.get("ticker", "")
-        price = row.get("price", "")
-        struct = row.get("structure", "")
-        tcs_v = row.get("tcs", "")
-        rvol_v = row.get("rvol", "")
-        notes_v = row.get("notes", "")
-
-        _j_cols = st.columns([8, 1])
-        with _j_cols[0]:
-            st.markdown(f"""
-            <div style="display:flex; gap:16px; align-items:center; background:#12122288;
-                        border:1px solid #2a2a4a; border-radius:10px;
-                        padding:12px 18px; margin:8px 0;">
-                <div style="flex-shrink:0; width:52px; height:52px; border-radius:50%;
-                            background:{gc}22; border:2.5px solid {gc};
-                            display:flex; align-items:center; justify-content:center;
-                            font-size:24px; font-weight:900; color:{gc};">{grade}</div>
-                <div style="flex:1; min-width:0;">
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:baseline;">
-                        <span style="font-size:20px; font-weight:800; color:#e0e0e0;">{sym}</span>
-                        <span style="font-size:13px; color:#aaa;">${price}</span>
-                        <span style="font-size:11px; color:#666;">{ts}</span>
+    # ── Journal entries (only when not empty) ─────────────────────────────────
+    if not df.empty:
+        # Grade badges + table
+        st.markdown("---")
+        for _, row in df.iterrows():
+            grade = str(row.get("grade", "?"))
+            gc = _GRADE_COLORS.get(grade, "#aaaaaa")
+            reason = row.get("grade_reason", "")
+            ts = row.get("timestamp", "")
+            sym = row.get("ticker", "")
+            price = row.get("price", "")
+            struct = row.get("structure", "")
+            tcs_v = row.get("tcs", "")
+            rvol_v = row.get("rvol", "")
+            notes_v = row.get("notes", "")
+    
+            _j_cols = st.columns([8, 1])
+            with _j_cols[0]:
+                st.markdown(f"""
+                <div style="display:flex; gap:16px; align-items:center; background:#12122288;
+                            border:1px solid #2a2a4a; border-radius:10px;
+                            padding:12px 18px; margin:8px 0;">
+                    <div style="flex-shrink:0; width:52px; height:52px; border-radius:50%;
+                                background:{gc}22; border:2.5px solid {gc};
+                                display:flex; align-items:center; justify-content:center;
+                                font-size:24px; font-weight:900; color:{gc};">{grade}</div>
+                    <div style="flex:1; min-width:0;">
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:baseline;">
+                            <span style="font-size:20px; font-weight:800; color:#e0e0e0;">{sym}</span>
+                            <span style="font-size:13px; color:#aaa;">${price}</span>
+                            <span style="font-size:11px; color:#666;">{ts}</span>
+                        </div>
+                        <div style="font-size:12px; color:#90caf9; margin:2px 0;">{struct}</div>
+                        <div style="font-size:11px; color:#888;">
+                            TCS {tcs_v}%  ·  RVOL {rvol_v}×
+                            {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
+                        </div>
+                        <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
                     </div>
-                    <div style="font-size:12px; color:#90caf9; margin:2px 0;">{struct}</div>
-                    <div style="font-size:11px; color:#888;">
-                        TCS {tcs_v}%  ·  RVOL {rvol_v}×
-                        {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
-                    </div>
-                    <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
-        with _j_cols[1]:
-            st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-            _ts_str = str(ts)[:10] if ts else ""
-            _replay_key = f"journal_replay_{_}_{sym}"
-            if st.button("📈 Replay", key=_replay_key, use_container_width=True,
-                         help=f"Load {sym} on {_ts_str} in the Main Chart tab"):
-                try:
-                    from datetime import date as _date_cls
-                    _replay_dt = _date_cls.fromisoformat(_ts_str) if _ts_str else None
-                except Exception:
-                    _replay_dt = None
-                st.session_state["ticker_input"]   = str(sym).upper().strip()
-                st.session_state["_load_ticker"]   = str(sym).upper().strip()
-                if _replay_dt:
-                    st.session_state["_replay_date"] = _replay_dt
-                st.success(f"✅ {sym} loaded — switch to Main Chart tab and click Fetch & Analyze")
+                """, unsafe_allow_html=True)
+            with _j_cols[1]:
+                st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+                _ts_str = str(ts)[:10] if ts else ""
+                _replay_key = f"journal_replay_{_}_{sym}"
+                if st.button("📈 Replay", key=_replay_key, use_container_width=True,
+                             help=f"Load {sym} on {_ts_str} in the Main Chart tab"):
+                    try:
+                        from datetime import date as _date_cls
+                        _replay_dt = _date_cls.fromisoformat(_ts_str) if _ts_str else None
+                    except Exception:
+                        _replay_dt = None
+                    st.session_state["ticker_input"]   = str(sym).upper().strip()
+                    st.session_state["_load_ticker"]   = str(sym).upper().strip()
+                    if _replay_dt:
+                        st.session_state["_replay_date"] = _replay_dt
+                    st.success(f"✅ {sym} loaded — switch to Main Chart tab and click Fetch & Analyze")
 
-    # Equity curve — grade average over entries
-    st.markdown("---")
-    st.markdown("**Grade Discipline Curve**")
-    df2 = df.copy()
-    df2["grade_score"] = df2["grade"].map(_GRADE_SCORE).fillna(1)
-    df2["entry_num"]   = range(1, len(df2) + 1)
-    df2["rolling_avg"] = df2["grade_score"].expanding().mean()
-
-    import plotly.graph_objects as _go
-    fig = _go.Figure()
-    fig.add_trace(_go.Scatter(
-        x=df2["entry_num"], y=df2["rolling_avg"],
-        mode="lines+markers",
-        line=dict(color="#00bcd4", width=2.5),
-        marker=dict(size=7, color=df2["grade_score"].map(
-            {4: "#4caf50", 3: "#26a69a", 2: "#ffa726", 1: "#ef5350"}
-        ).fillna("#aaa")),
-        name="Grade Average",
-        hovertemplate="Entry %{x} — Avg %{y:.2f}<extra></extra>",
-    ))
-    fig.add_hline(y=3.0, line=dict(color="rgba(76,175,80,0.4)", dash="dot"),
-                  annotation_text="B threshold", annotation_font_color="#4caf50")
-    fig.update_layout(
-        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
-        font=dict(color="#e0e0e0"), height=220,
-        xaxis=dict(title="Entry #", gridcolor="#2a2a4a"),
-        yaxis=dict(title="Avg Grade (F=1 \u2013 A=4)", gridcolor="#2a2a4a",
-                   tickvals=[1, 2, 3, 4], ticktext=["F", "C", "B", "A"],
-                   range=[0.5, 4.5]),
-        margin=dict(l=10, r=10, t=20, b=40),
-        showlegend=False,
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ── Review Trades ────────────────────────────────────────────────────────
-    st.markdown("---")
-    with st.expander("🔍 Review Trades — Log Actual Outcome", expanded=False):
-        st.markdown(
-            '<div style="font-size:12px; color:#90caf9; margin-bottom:8px;">'
-            'Pick a logged trade, enter your actual exit price and what structure '
-            'the day turned out to be, and save the result to the Accuracy Tracker.'
-            '</div>', unsafe_allow_html=True,
+    if not df.empty:
+        # Equity curve — grade average over entries
+        st.markdown("---")
+        st.markdown("**Grade Discipline Curve**")
+        df2 = df.copy()
+        df2["grade_score"] = df2["grade"].map(_GRADE_SCORE).fillna(1)
+        df2["entry_num"]   = range(1, len(df2) + 1)
+        df2["rolling_avg"] = df2["grade_score"].expanding().mean()
+    
+        import plotly.graph_objects as _go
+        fig = _go.Figure()
+        fig.add_trace(_go.Scatter(
+            x=df2["entry_num"], y=df2["rolling_avg"],
+            mode="lines+markers",
+            line=dict(color="#00bcd4", width=2.5),
+            marker=dict(size=7, color=df2["grade_score"].map(
+                {4: "#4caf50", 3: "#26a69a", 2: "#ffa726", 1: "#ef5350"}
+            ).fillna("#aaa")),
+            name="Grade Average",
+            hovertemplate="Entry %{x} — Avg %{y:.2f}<extra></extra>",
+        ))
+        fig.add_hline(y=3.0, line=dict(color="rgba(76,175,80,0.4)", dash="dot"),
+                      annotation_text="B threshold", annotation_font_color="#4caf50")
+        fig.update_layout(
+            paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+            font=dict(color="#e0e0e0"), height=220,
+            xaxis=dict(title="Entry #", gridcolor="#2a2a4a"),
+            yaxis=dict(title="Avg Grade (F=1 \u2013 A=4)", gridcolor="#2a2a4a",
+                       tickvals=[1, 2, 3, 4], ticktext=["F", "C", "B", "A"],
+                       range=[0.5, 4.5]),
+            margin=dict(l=10, r=10, t=20, b=40),
+            showlegend=False,
         )
-
-        _STRUCTURES = [
-            "Trend Day", "Non-Trend", "Normal", "Normal Variation",
-            "Neutral", "Neutral Extreme", "Double Distribution",
-        ]
-
-        # Build display labels for the selectbox
-        _trade_labels = []
-        for _, _r in df.iterrows():
-            _ts  = str(_r.get("timestamp", ""))[:16]
-            _sym = str(_r.get("ticker", "?"))
-            _px  = _r.get("price", 0.0)
-            _st  = str(_r.get("structure", ""))[:20]
-            _trade_labels.append(f"{_ts}  ·  {_sym}  @${_px:.2f}  [{_st}]")
-
-        _sel_idx = st.selectbox(
-            "Select a trade to review",
-            options=range(len(_trade_labels)),
-            format_func=lambda i: _trade_labels[i],
-            key="review_trade_select",
-        )
-
-        _sel_row = df.iloc[_sel_idx].to_dict()
-        _entry_px = float(_sel_row.get("price", 0.0))
-        _pred_struct = str(_sel_row.get("structure", ""))
-
-        # Summary card
-        _gc = _GRADE_COLORS.get(str(_sel_row.get("grade", "?")), "#aaa")
-        st.markdown(
-            f'<div style="background:#12122288; border:1px solid #2a2a4a; border-radius:8px; '
-            f'padding:10px 16px; margin:8px 0; display:flex; gap:20px; align-items:center;">'
-            f'<div style="color:{_gc}; font-weight:900; font-size:20px;">'
-            f'{_sel_row.get("grade","?")} Grade</div>'
-            f'<div><span style="color:#e0e0e0; font-weight:700;">{_sel_row.get("ticker","")}</span>'
-            f'&nbsp;<span style="color:#90caf9;">Entry @ ${_entry_px:.2f}</span></div>'
-            f'<div style="color:#888; font-size:11px;">Predicted: '
-            f'<span style="color:#ffcc80;">{_pred_struct}</span></div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        _rc1, _rc2, _rc3 = st.columns([2, 2, 1])
-        with _rc1:
-            _exit_price = st.number_input(
-                "Actual Exit Price ($)", min_value=0.01, value=float(_entry_px),
-                step=0.01, format="%.4f", key="review_exit_price",
+        st.plotly_chart(fig, use_container_width=True)
+    
+        # ── Review Trades ────────────────────────────────────────────────────────
+        st.markdown("---")
+        with st.expander("🔍 Review Trades — Log Actual Outcome", expanded=False):
+            st.markdown(
+                '<div style="font-size:12px; color:#90caf9; margin-bottom:8px;">'
+                'Pick a logged trade, enter your actual exit price and what structure '
+                'the day turned out to be, and save the result to the Accuracy Tracker.'
+                '</div>', unsafe_allow_html=True,
             )
-        with _rc2:
-            # Pre-select predicted structure if it exists in list
-            _def_idx = 0
-            for _si, _sl in enumerate(_STRUCTURES):
-                if _strip_emoji(_pred_struct.lower()) in _strip_emoji(_sl.lower()):
-                    _def_idx = _si; break
-            _actual_struct = st.selectbox(
-                "Actual Market Structure",
-                options=_STRUCTURES,
-                index=_def_idx,
-                key="review_actual_structure",
+    
+            _STRUCTURES = [
+                "Trend Day", "Non-Trend", "Normal", "Normal Variation",
+                "Neutral", "Neutral Extreme", "Double Distribution",
+            ]
+    
+            # Build display labels for the selectbox
+            _trade_labels = []
+            for _, _r in df.iterrows():
+                _ts  = str(_r.get("timestamp", ""))[:16]
+                _sym = str(_r.get("ticker", "?"))
+                _px  = _r.get("price", 0.0)
+                _st  = str(_r.get("structure", ""))[:20]
+                _trade_labels.append(f"{_ts}  ·  {_sym}  @${_px:.2f}  [{_st}]")
+    
+            _sel_idx = st.selectbox(
+                "Select a trade to review",
+                options=range(len(_trade_labels)),
+                format_func=lambda i: _trade_labels[i],
+                key="review_trade_select",
             )
-        with _rc3:
-            _direction = st.radio(
-                "Direction", options=["Long", "Short"],
-                key="review_direction", horizontal=False,
+    
+            _sel_row = df.iloc[_sel_idx].to_dict()
+            _entry_px = float(_sel_row.get("price", 0.0))
+            _pred_struct = str(_sel_row.get("structure", ""))
+    
+            # Summary card
+            _gc = _GRADE_COLORS.get(str(_sel_row.get("grade", "?")), "#aaa")
+            st.markdown(
+                f'<div style="background:#12122288; border:1px solid #2a2a4a; border-radius:8px; '
+                f'padding:10px 16px; margin:8px 0; display:flex; gap:20px; align-items:center;">'
+                f'<div style="color:{_gc}; font-weight:900; font-size:20px;">'
+                f'{_sel_row.get("grade","?")} Grade</div>'
+                f'<div><span style="color:#e0e0e0; font-weight:700;">{_sel_row.get("ticker","")}</span>'
+                f'&nbsp;<span style="color:#90caf9;">Entry @ ${_entry_px:.2f}</span></div>'
+                f'<div style="color:#888; font-size:11px;">Predicted: '
+                f'<span style="color:#ffcc80;">{_pred_struct}</span></div>'
+                f'</div>',
+                unsafe_allow_html=True,
             )
-
-        _submit_review = st.button(
-            "💾 Save Review to Accuracy Tracker",
-            use_container_width=True, key="review_submit_btn",
-        )
-
-        if _submit_review:
-            if _exit_price <= 0:
-                st.error("Exit price must be greater than zero.")
-            else:
-                with st.spinner("Saving review…"):
-                    _res = save_trade_review(
-                        journal_row=_sel_row,
-                        exit_price=_exit_price,
-                        actual_structure=_actual_struct,
-                        direction=_direction,
-                        user_id=_uid,
-                    )
-                if _res.get("error"):
-                    st.error(f"Error: {_res['error']}")
-                else:
-                    _wl       = _res["win_loss"]
-                    _pnl_d    = _res["pnl_dollars"]
-                    _pnl_p    = _res["pnl_pct"]
-                    _corr_s   = _res["correct_structure"]
-                    _wl_color = "#4caf50" if _wl == "Win" else ("#ef5350" if _wl == "Loss" else "#ffa726")
-                    _wl_icon  = "✅" if _wl == "Win" else ("❌" if _wl == "Loss" else "➖")
-                    _pnl_sign = "+" if _pnl_d >= 0 else ""
-                    _struct_badge = (
-                        '<span style="color:#4caf50;">✅ Structure Correct</span>'
-                        if _corr_s else
-                        '<span style="color:#ef5350;">❌ Structure Wrong</span>'
-                    )
-                    st.markdown(
-                        f'<div style="background:#0a0a1a; border:2px solid {_wl_color}; '
-                        f'border-radius:10px; padding:16px 22px; margin:10px 0;">'
-                        f'<div style="font-size:22px; font-weight:900; color:{_wl_color};">'
-                        f'{_wl_icon} {_wl}</div>'
-                        f'<div style="font-size:14px; color:#e0e0e0; margin-top:6px;">'
-                        f'P&L: <b style="color:{_wl_color};">'
-                        f'{_pnl_sign}${_pnl_d:.4f} ({_pnl_sign}{_pnl_p:.2f}%)</b>'
-                        f'&nbsp;&nbsp;·&nbsp;&nbsp;{_struct_badge}</div>'
-                        f'<div style="font-size:11px; color:#666; margin-top:4px;">'
-                        f'Saved to Accuracy Tracker · '
-                        f'{_direction} {_sel_row.get("ticker","")} '
-                        f'${_entry_px:.4f} → ${_exit_price:.4f}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-
-    # ── Sync from Alpaca ─────────────────────────────────────────────────────
-    st.markdown("---")
-    with st.expander("📥 Sync from Alpaca — Auto-Import Closed Trades", expanded=False):
-        st.markdown(
-            '<div style="font-size:12px; color:#90caf9; margin-bottom:10px;">'
-            'Pulls your actual filled orders from Alpaca, matches buy+sell pairs '
-            'into round-trip trades, calculates real P&amp;L, and saves directly '
-            'to the Accuracy Tracker — no manual entry needed.'
-            '</div>', unsafe_allow_html=True,
-        )
-        if not api_key or not secret_key:
-            st.warning("Enter your Alpaca API Key and Secret Key in the sidebar first.")
-        else:
-            _sc1, _sc2, _sc3 = st.columns([2, 1, 1])
-            with _sc1:
-                _sync_date = st.date_input(
-                    "Trade Date", value=date.today(), key="sync_alpaca_date",
+    
+            _rc1, _rc2, _rc3 = st.columns([2, 2, 1])
+            with _rc1:
+                _exit_price = st.number_input(
+                    "Actual Exit Price ($)", min_value=0.01, value=float(_entry_px),
+                    step=0.01, format="%.4f", key="review_exit_price",
                 )
-            with _sc2:
-                _is_paper = st.radio(
-                    "Account", ["Paper", "Live"],
-                    key="sync_alpaca_mode", horizontal=True,
-                ) == "Paper"
-            with _sc3:
-                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-                _sync_btn = st.button("🔄 Fetch Orders", use_container_width=True,
-                                      key="sync_alpaca_btn")
-
-            if _sync_btn:
-                with st.spinner("Connecting to Alpaca…"):
-                    _fills, _err = fetch_alpaca_fills(
-                        api_key, secret_key,
-                        is_paper=_is_paper,
-                        trade_date=str(_sync_date),
-                    )
-                if _err:
-                    st.error(f"Alpaca error: {_err}")
-                elif not _fills:
-                    st.info(f"No filled orders found for {_sync_date} "
-                            f"({'paper' if _is_paper else 'live'} account).")
-                else:
-                    _trips = match_fills_to_roundtrips(_fills)
-                    st.session_state["_alpaca_roundtrips"] = _trips
-                    st.session_state["_alpaca_date"]       = str(_sync_date)
-                    if not _trips:
-                        st.info(f"Found {len(_fills)} fills but no complete round-trips "
-                                "(need both a buy and a sell for the same ticker).")
-
-            _trips = st.session_state.get("_alpaca_roundtrips", [])
-            if _trips:
-                st.markdown(
-                    f'<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
-                    f'letter-spacing:1px; margin:8px 0 4px 0;">'
-                    f'Found {len(_trips)} round-trip trade(s) — '
-                    f'{st.session_state.get("_alpaca_date","")}</div>',
-                    unsafe_allow_html=True,
+            with _rc2:
+                # Pre-select predicted structure if it exists in list
+                _def_idx = 0
+                for _si, _sl in enumerate(_STRUCTURES):
+                    if _strip_emoji(_pred_struct.lower()) in _strip_emoji(_sl.lower()):
+                        _def_idx = _si; break
+                _actual_struct = st.selectbox(
+                    "Actual Market Structure",
+                    options=_STRUCTURES,
+                    index=_def_idx,
+                    key="review_actual_structure",
                 )
-                for _ti, _t in enumerate(_trips):
-                    _tw_color = ("#4caf50" if _t["win_loss"] == "Win"
-                                 else "#ef5350" if _t["win_loss"] == "Loss"
-                                 else "#ffa726")
-                    _pnl_sign = "+" if _t["pnl_dollars"] >= 0 else ""
-                    st.markdown(
-                        f'<div style="background:#0a0a1a; border:1px solid {_tw_color}44; '
-                        f'border-radius:8px; padding:10px 16px; margin:6px 0; '
-                        f'display:flex; gap:20px; align-items:center; flex-wrap:wrap;">'
-                        f'<span style="font-weight:800; color:#e0e0e0; font-size:16px;">'
-                        f'{_t["symbol"]}</span>'
-                        f'<span style="color:#888; font-size:11px;">Entry '
-                        f'<b style="color:#90caf9;">${_t["avg_entry"]:.4f}</b></span>'
-                        f'<span style="color:#888; font-size:11px;">Exit '
-                        f'<b style="color:#90caf9;">${_t["avg_exit"]:.4f}</b></span>'
-                        f'<span style="color:#888; font-size:11px;">Qty '
-                        f'<b style="color:#e0e0e0;">{int(_t["qty"])}</b></span>'
-                        f'<span style="font-weight:700; color:{_tw_color};">'
-                        f'{_t["win_loss"]} &nbsp;'
-                        f'{_pnl_sign}${_t["pnl_dollars"]:.2f} '
-                        f'({_pnl_sign}{_t["pnl_pct"]:.2f}%)</span>'
-                        f'<span style="color:#555; font-size:10px;">{_t["fill_time"]}</span>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-
-                    # Per-trade save button
-                    _imp_key = f"import_alpaca_{_ti}"
-                    if st.session_state.get(f"_imported_{_imp_key}"):
+            with _rc3:
+                _direction = st.radio(
+                    "Direction", options=["Long", "Short"],
+                    key="review_direction", horizontal=False,
+                )
+    
+            _submit_review = st.button(
+                "💾 Save Review to Accuracy Tracker",
+                use_container_width=True, key="review_submit_btn",
+            )
+    
+            if _submit_review:
+                if _exit_price <= 0:
+                    st.error("Exit price must be greater than zero.")
+                else:
+                    with st.spinner("Saving review…"):
+                        _res = save_trade_review(
+                            journal_row=_sel_row,
+                            exit_price=_exit_price,
+                            actual_structure=_actual_struct,
+                            direction=_direction,
+                            user_id=_uid,
+                        )
+                    if _res.get("error"):
+                        st.error(f"Error: {_res['error']}")
+                    else:
+                        _wl       = _res["win_loss"]
+                        _pnl_d    = _res["pnl_dollars"]
+                        _pnl_p    = _res["pnl_pct"]
+                        _corr_s   = _res["correct_structure"]
+                        _wl_color = "#4caf50" if _wl == "Win" else ("#ef5350" if _wl == "Loss" else "#ffa726")
+                        _wl_icon  = "✅" if _wl == "Win" else ("❌" if _wl == "Loss" else "➖")
+                        _pnl_sign = "+" if _pnl_d >= 0 else ""
+                        _struct_badge = (
+                            '<span style="color:#4caf50;">✅ Structure Correct</span>'
+                            if _corr_s else
+                            '<span style="color:#ef5350;">❌ Structure Wrong</span>'
+                        )
                         st.markdown(
-                            '<span style="color:#4caf50; font-size:11px;">'
-                            '✅ Saved to Accuracy Tracker</span>',
+                            f'<div style="background:#0a0a1a; border:2px solid {_wl_color}; '
+                            f'border-radius:10px; padding:16px 22px; margin:10px 0;">'
+                            f'<div style="font-size:22px; font-weight:900; color:{_wl_color};">'
+                            f'{_wl_icon} {_wl}</div>'
+                            f'<div style="font-size:14px; color:#e0e0e0; margin-top:6px;">'
+                            f'P&L: <b style="color:{_wl_color};">'
+                            f'{_pnl_sign}${_pnl_d:.4f} ({_pnl_sign}{_pnl_p:.2f}%)</b>'
+                            f'&nbsp;&nbsp;·&nbsp;&nbsp;{_struct_badge}</div>'
+                            f'<div style="font-size:11px; color:#666; margin-top:4px;">'
+                            f'Saved to Accuracy Tracker · '
+                            f'{_direction} {_sel_row.get("ticker","")} '
+                            f'${_entry_px:.4f} → ${_exit_price:.4f}</div>'
+                            f'</div>',
                             unsafe_allow_html=True,
                         )
+    
+        # ── Sync from Alpaca ─────────────────────────────────────────────────────
+        st.markdown("---")
+        with st.expander("📥 Sync from Alpaca — Auto-Import Closed Trades", expanded=False):
+            st.markdown(
+                '<div style="font-size:12px; color:#90caf9; margin-bottom:10px;">'
+                'Pulls your actual filled orders from Alpaca, matches buy+sell pairs '
+                'into round-trip trades, calculates real P&amp;L, and saves directly '
+                'to the Accuracy Tracker — no manual entry needed.'
+                '</div>', unsafe_allow_html=True,
+            )
+            if not api_key or not secret_key:
+                st.warning("Enter your Alpaca API Key and Secret Key in the sidebar first.")
+            else:
+                _sc1, _sc2, _sc3 = st.columns([2, 1, 1])
+                with _sc1:
+                    _sync_date = st.date_input(
+                        "Trade Date", value=date.today(), key="sync_alpaca_date",
+                    )
+                with _sc2:
+                    _is_paper = st.radio(
+                        "Account", ["Paper", "Live"],
+                        key="sync_alpaca_mode", horizontal=True,
+                    ) == "Paper"
+                with _sc3:
+                    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                    _sync_btn = st.button("🔄 Fetch Orders", use_container_width=True,
+                                          key="sync_alpaca_btn")
+    
+                if _sync_btn:
+                    with st.spinner("Connecting to Alpaca…"):
+                        _fills, _err = fetch_alpaca_fills(
+                            api_key, secret_key,
+                            is_paper=_is_paper,
+                            trade_date=str(_sync_date),
+                        )
+                    if _err:
+                        st.error(f"Alpaca error: {_err}")
+                    elif not _fills:
+                        st.info(f"No filled orders found for {_sync_date} "
+                                f"({'paper' if _is_paper else 'live'} account).")
                     else:
-                        _imp_col1, _imp_col2 = st.columns([3, 1])
-                        with _imp_col2:
-                            if st.button(f"💾 Save", key=_imp_key,
-                                         use_container_width=True):
-                                # Find matching journal row for predicted structure
-                                _jrow = {"ticker": _t["symbol"],
-                                         "price":  _t["avg_entry"],
-                                         "structure": ""}
+                        _trips = match_fills_to_roundtrips(_fills)
+                        st.session_state["_alpaca_roundtrips"] = _trips
+                        st.session_state["_alpaca_date"]       = str(_sync_date)
+                        if not _trips:
+                            st.info(f"Found {len(_fills)} fills but no complete round-trips "
+                                    "(need both a buy and a sell for the same ticker).")
+    
+                _trips = st.session_state.get("_alpaca_roundtrips", [])
+                if _trips:
+                    st.markdown(
+                        f'<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+                        f'letter-spacing:1px; margin:8px 0 4px 0;">'
+                        f'Found {len(_trips)} round-trip trade(s) — '
+                        f'{st.session_state.get("_alpaca_date","")}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for _ti, _t in enumerate(_trips):
+                        _tw_color = ("#4caf50" if _t["win_loss"] == "Win"
+                                     else "#ef5350" if _t["win_loss"] == "Loss"
+                                     else "#ffa726")
+                        _pnl_sign = "+" if _t["pnl_dollars"] >= 0 else ""
+                        st.markdown(
+                            f'<div style="background:#0a0a1a; border:1px solid {_tw_color}44; '
+                            f'border-radius:8px; padding:10px 16px; margin:6px 0; '
+                            f'display:flex; gap:20px; align-items:center; flex-wrap:wrap;">'
+                            f'<span style="font-weight:800; color:#e0e0e0; font-size:16px;">'
+                            f'{_t["symbol"]}</span>'
+                            f'<span style="color:#888; font-size:11px;">Entry '
+                            f'<b style="color:#90caf9;">${_t["avg_entry"]:.4f}</b></span>'
+                            f'<span style="color:#888; font-size:11px;">Exit '
+                            f'<b style="color:#90caf9;">${_t["avg_exit"]:.4f}</b></span>'
+                            f'<span style="color:#888; font-size:11px;">Qty '
+                            f'<b style="color:#e0e0e0;">{int(_t["qty"])}</b></span>'
+                            f'<span style="font-weight:700; color:{_tw_color};">'
+                            f'{_t["win_loss"]} &nbsp;'
+                            f'{_pnl_sign}${_t["pnl_dollars"]:.2f} '
+                            f'({_pnl_sign}{_t["pnl_pct"]:.2f}%)</span>'
+                            f'<span style="color:#555; font-size:10px;">{_t["fill_time"]}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+    
+                        # Per-trade save button
+                        _imp_key = f"import_alpaca_{_ti}"
+                        if st.session_state.get(f"_imported_{_imp_key}"):
+                            st.markdown(
+                                '<span style="color:#4caf50; font-size:11px;">'
+                                '✅ Saved to Accuracy Tracker</span>',
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            _imp_col1, _imp_col2 = st.columns([3, 1])
+                            with _imp_col2:
+                                if st.button(f"💾 Save", key=_imp_key,
+                                             use_container_width=True):
+                                    # Find matching journal row for predicted structure
+                                    _jrow = {"ticker": _t["symbol"],
+                                             "price":  _t["avg_entry"],
+                                             "structure": ""}
+                                    if not df.empty:
+                                        _mask = df["ticker"].str.upper() == _t["symbol"]
+                                        _match = df[_mask]
+                                        if not _match.empty:
+                                            _jrow = _match.iloc[-1].to_dict()
+                                    log_accuracy_entry(
+                                        symbol      = _t["symbol"],
+                                        predicted   = str(_jrow.get("structure", "")),
+                                        actual      = "",
+                                        compare_key = "alpaca_sync",
+                                        entry_price = _t["avg_entry"],
+                                        exit_price  = _t["avg_exit"],
+                                        mfe         = _t["pnl_dollars"],
+                                        user_id     = _uid,
+                                    )
+                                    st.session_state[f"_imported_{_imp_key}"] = True
+                                    st.rerun()
+    
+                    if st.button("💾 Save ALL to Accuracy Tracker",
+                                 use_container_width=True, key="sync_alpaca_save_all"):
+                        _saved = 0
+                        for _ti2, _t2 in enumerate(_trips):
+                            _ak2 = f"_imported_import_alpaca_{_ti2}"
+                            if not st.session_state.get(_ak2):
+                                _jrow2 = {"ticker": _t2["symbol"], "price": _t2["avg_entry"],
+                                          "structure": ""}
                                 if not df.empty:
-                                    _mask = df["ticker"].str.upper() == _t["symbol"]
-                                    _match = df[_mask]
-                                    if not _match.empty:
-                                        _jrow = _match.iloc[-1].to_dict()
+                                    _mask2 = df["ticker"].str.upper() == _t2["symbol"]
+                                    _match2 = df[_mask2]
+                                    if not _match2.empty:
+                                        _jrow2 = _match2.iloc[-1].to_dict()
                                 log_accuracy_entry(
-                                    symbol      = _t["symbol"],
-                                    predicted   = str(_jrow.get("structure", "")),
+                                    symbol      = _t2["symbol"],
+                                    predicted   = str(_jrow2.get("structure", "")),
                                     actual      = "",
                                     compare_key = "alpaca_sync",
-                                    entry_price = _t["avg_entry"],
-                                    exit_price  = _t["avg_exit"],
-                                    mfe         = _t["pnl_dollars"],
+                                    entry_price = _t2["avg_entry"],
+                                    exit_price  = _t2["avg_exit"],
+                                    mfe         = _t2["pnl_dollars"],
                                     user_id     = _uid,
                                 )
-                                st.session_state[f"_imported_{_imp_key}"] = True
-                                st.rerun()
-
-                if st.button("💾 Save ALL to Accuracy Tracker",
-                             use_container_width=True, key="sync_alpaca_save_all"):
-                    _saved = 0
-                    for _ti2, _t2 in enumerate(_trips):
-                        _ak2 = f"_imported_import_alpaca_{_ti2}"
-                        if not st.session_state.get(_ak2):
-                            _jrow2 = {"ticker": _t2["symbol"], "price": _t2["avg_entry"],
-                                      "structure": ""}
-                            if not df.empty:
-                                _mask2 = df["ticker"].str.upper() == _t2["symbol"]
-                                _match2 = df[_mask2]
-                                if not _match2.empty:
-                                    _jrow2 = _match2.iloc[-1].to_dict()
-                            log_accuracy_entry(
-                                symbol      = _t2["symbol"],
-                                predicted   = str(_jrow2.get("structure", "")),
-                                actual      = "",
-                                compare_key = "alpaca_sync",
-                                entry_price = _t2["avg_entry"],
-                                exit_price  = _t2["avg_exit"],
-                                mfe         = _t2["pnl_dollars"],
-                                user_id     = _uid,
-                            )
-                            st.session_state[f"_imported_import_alpaca_{_ti2}"] = True
-                            _saved += 1
-                    if _saved > 0:
-                        st.success(f"Saved {_saved} trade(s) to Accuracy Tracker.")
-                        st.session_state["_alpaca_roundtrips"] = []
-                        st.rerun()
-                    else:
-                        st.info("All trades already saved.")
+                                st.session_state[f"_imported_import_alpaca_{_ti2}"] = True
+                                _saved += 1
+                        if _saved > 0:
+                            st.success(f"Saved {_saved} trade(s) to Accuracy Tracker.")
+                            st.session_state["_alpaca_roundtrips"] = []
+                            st.rerun()
+                        else:
+                            st.info("All trades already saved.")
 
     # ── End-of-Day Review ─────────────────────────────────────────────────────
     st.markdown("---")
