@@ -3678,6 +3678,17 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
         # Supabase down — return local backup only
         merged = local_rows
 
+    # Deduplicate by (note_date, watch_tickers) — keep the most recently updated version
+    _seen: dict = {}
+    for _r in merged:
+        _k = (str(_r.get("note_date", "")), _r.get("watch_tickers", "").strip())
+        if _k not in _seen:
+            _seen[_k] = _r
+        else:
+            if str(_r.get("updated_at", "")) > str(_seen[_k].get("updated_at", "")):
+                _seen[_k] = _r
+    merged = list(_seen.values())
+
     merged.sort(key=lambda r: (r.get("note_date", ""), r.get("watch_tickers", "")), reverse=True)
     return merged[:limit]
 

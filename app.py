@@ -1097,13 +1097,13 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                     data=_b64mod.b64decode(_img_data),
                                     file_name=_img.get("filename", f"chart_{_ic+1}.jpg"),
                                     mime="image/jpeg",
-                                    key=f"dl_img_{_nd}_{_nw}_{_ic}",
+                                    key=f"dl_img_{_ni_idx}_{_ic}",
                                     use_container_width=True,
                                 )
 
                     # ── Outcome verification panel ────────────────────────────
                     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
-                    _vkey = f"eod_verify_{_nd}_{_nw.replace(' ','_')}"
+                    _vkey = f"eod_verify_{_nd}_{_nw.replace(' ','_')}_{_ni_idx}"
                     # Parse individual tickers for the selector
                     _ticker_list = [t.strip().upper() for t in
                                     _re.split(r"[,\s]+", _nw) if t.strip()] if _nw else []
@@ -1191,7 +1191,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
 
                     # ── Edit this entry ────────────────────────────────────────
                     st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
-                    if st.button("✏️ Edit this entry", key=f"edit_{_vkey}",
+                    if st.button("✏️ Edit this entry", key=f"edit_entry_{_ni_idx}",
                                  use_container_width=False,
                                  help="Load this review into the form above to edit it"):
                         import datetime as _dtmod

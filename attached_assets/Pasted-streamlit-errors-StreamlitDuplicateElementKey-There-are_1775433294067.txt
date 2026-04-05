@@ -1,0 +1,27 @@
+streamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same key='sel_eod_verify_2026-04-05_SATL'. To fix this, please make sure that the key argument is unique for each element you create.
+
+Traceback:
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 129, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 689, in code_to_exec
+    exec(code, module.__dict__)  # noqa: S102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/app.py", line 5810, in <module>
+    render_journal_tab(api_key=api_key, secret_key=secret_key)
+File "/home/runner/workspace/app.py", line 1110, in render_journal_tab
+    _sel_tickers = st.multiselect(
+                   ^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/metrics_util.py", line 532, in wrapped_func
+    result = non_optional_func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/elements/widgets/multiselect.py", line 496, in multiselect
+    return self._multiselect(
+           ^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/elements/widgets/multiselect.py", line 573, in _multiselect
+    element_id = compute_and_register_element_id(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/elements/lib/utils.py", line 265, in compute_and_register_element_id
+    _register_element_id(ctx, element_type, element_id)
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/elements/lib/utils.py", line 145, in _register_element_id
+    raise StreamlitDuplicateElementKey(user_key)
