@@ -871,6 +871,120 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     else:
                         st.info("All trades already saved.")
 
+    # ── End-of-Day Review ─────────────────────────────────────────────────────
+    st.markdown("---")
+    st.header("📸 End-of-Day Review")
+    st.caption("Chart screenshots, trendline notes, and watchlist for tomorrow — all saved per day.")
+
+    _eod_col1, _eod_col2 = st.columns([1, 2])
+    with _eod_col1:
+        _eod_date = st.date_input("Review Date", value=date.today(), key="eod_note_date")
+    with _eod_col2:
+        _eod_watch = st.text_input(
+            "👀 Watch Tomorrow",
+            placeholder="NVDA, GME, AMC — tickers to monitor at open",
+            key="eod_watch_tickers",
+        )
+
+    _eod_notes = st.text_area(
+        "📝 Notes — what happened today / key levels / thesis for tomorrow",
+        height=130,
+        placeholder="e.g. NVDA rejected VWAP twice, watching $118.50 reclaim. "
+                    "GME broke out of balance — watch for continuation above $22.",
+        key="eod_notes_text",
+    )
+
+    _eod_uploads = st.file_uploader(
+        "📷 Chart Images (up to 5, PNG/JPG)",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="eod_image_uploader",
+    )
+
+    _eod_save_col, _eod_load_col = st.columns(2)
+    if _eod_save_col.button("💾 Save Review", use_container_width=True, key="eod_save_btn"):
+        _imgs_payload = []
+        for _f in (_eod_uploads or [])[:5]:
+            try:
+                _b64 = _compress_image_b64(_f.read())
+                _imgs_payload.append({"filename": _f.name, "data": _b64, "caption": ""})
+            except Exception:
+                pass
+        _ok = save_eod_note(
+            note_date     = _eod_date,
+            notes         = _eod_notes,
+            watch_tickers = _eod_watch,
+            images_b64    = _imgs_payload,
+            user_id       = _uid,
+        )
+        if _ok:
+            st.success(f"✅ Review saved for {_eod_date}")
+            st.session_state["_eod_notes_loaded"] = None
+        else:
+            st.warning("Saved locally — create the `eod_notes` Supabase table to persist. See setup below.")
+
+    if _eod_load_col.button("📂 Load Past Reviews", use_container_width=True, key="eod_load_btn"):
+        st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=30)
+
+    # ── Display loaded notes ──────────────────────────────────────────────────
+    _loaded_notes = st.session_state.get("_eod_notes_loaded")
+    if _loaded_notes is not None:
+        if not _loaded_notes:
+            st.info("No reviews saved yet.")
+        else:
+            for _n in _loaded_notes:
+                _nd = _n.get("note_date", "")
+                _nw = _n.get("watch_tickers", "")
+                _nt = _n.get("notes", "")
+                _ni = _n.get("images", [])
+                with st.expander(
+                    f"📅 {_nd}" + (f"  ·  👀 {_nw}" if _nw else ""),
+                    expanded=(_nd == str(date.today()))
+                ):
+                    if _nw:
+                        st.markdown(
+                            f'<div style="background:#12122299;border-left:3px solid #90caf9;'
+                            f'padding:8px 14px;border-radius:4px;margin-bottom:10px;">'
+                            f'<span style="font-size:11px;color:#888;text-transform:uppercase;'
+                            f'letter-spacing:1px;">Watch Tomorrow</span><br>'
+                            f'<span style="color:#90caf9;font-weight:700;">{_nw}</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    if _nt:
+                        st.markdown(
+                            f'<div style="white-space:pre-wrap;font-size:13px;'
+                            f'color:#e0e0e0;line-height:1.6;">{_nt}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    if _ni:
+                        import base64 as _b64e
+                        _img_cols = st.columns(min(len(_ni), 3))
+                        for _ic, _img in enumerate(_ni):
+                            _img_data = _img.get("data", "")
+                            if _img_data:
+                                _img_cols[_ic % 3].image(
+                                    f"data:image/jpeg;base64,{_img_data}",
+                                    caption=_img.get("filename", ""),
+                                    use_container_width=True,
+                                )
+
+    # ── Supabase setup SQL ────────────────────────────────────────────────────
+    with st.expander("⚙️ First-time setup — create eod_notes table", expanded=False):
+        st.code(
+            "CREATE TABLE IF NOT EXISTS eod_notes (\n"
+            "  id           BIGSERIAL PRIMARY KEY,\n"
+            "  user_id      TEXT,\n"
+            "  note_date    DATE,\n"
+            "  notes        TEXT DEFAULT '',\n"
+            "  watch_tickers TEXT DEFAULT '',\n"
+            "  images       JSONB DEFAULT '[]',\n"
+            "  updated_at   TIMESTAMPTZ DEFAULT NOW(),\n"
+            "  UNIQUE(user_id, note_date)\n"
+            ");",
+            language="sql",
+        )
+        st.caption("Run this once in your Supabase SQL editor.")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHART & RENDER

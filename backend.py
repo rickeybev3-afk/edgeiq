@@ -3450,6 +3450,83 @@ def load_watchlist(user_id: str = "") -> list:
         return []
 
 
+# ── End-of-Day Review Notes ───────────────────────────────────────────────────
+
+def _compress_image_b64(file_bytes: bytes, max_px: int = 900) -> str:
+    """Resize image to max_px on longest side and return as base64 JPEG string."""
+    from PIL import Image as _Image
+    import io as _io, base64 as _b64
+    img = _Image.open(_io.BytesIO(file_bytes)).convert("RGB")
+    w, h = img.size
+    if max(w, h) > max_px:
+        scale = max_px / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), _Image.LANCZOS)
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG", quality=75, optimize=True)
+    return _b64.b64encode(buf.getvalue()).decode()
+
+
+def save_eod_note(note_date, notes: str, watch_tickers: str,
+                  images_b64: list, user_id: str = "") -> bool:
+    """Upsert an end-of-day review note to Supabase (table: eod_notes).
+
+    images_b64: list of dicts  {filename, data (base64 JPEG), caption}
+    One row per (user_id, note_date) — re-saving same date overwrites.
+    """
+    if not supabase:
+        return False
+    try:
+        import json as _json
+        payload = {
+            "user_id":       user_id or "anonymous",
+            "note_date":     str(note_date),
+            "notes":         notes.strip(),
+            "watch_tickers": watch_tickers.strip(),
+            "images":        _json.dumps(images_b64),
+            "updated_at":    datetime.utcnow().isoformat(),
+        }
+        supabase.table("eod_notes").upsert(
+            payload, on_conflict="user_id,note_date"
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"save_eod_note error: {e}")
+        return False
+
+
+def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
+    """Load EOD review notes from Supabase, newest first.
+
+    Returns a list of dicts with keys:
+        note_date, notes, watch_tickers, images (list of {filename,data,caption})
+    """
+    if not supabase:
+        return []
+    try:
+        import json as _json
+        uid = user_id or "anonymous"
+        res = (supabase.table("eod_notes")
+               .select("note_date,notes,watch_tickers,images,updated_at")
+               .eq("user_id", uid)
+               .order("note_date", desc=True)
+               .limit(limit)
+               .execute())
+        rows = []
+        for r in (res.data or []):
+            imgs = r.get("images", "[]")
+            if isinstance(imgs, str):
+                try:
+                    imgs = _json.loads(imgs)
+                except Exception:
+                    imgs = []
+            r["images"] = imgs
+            rows.append(r)
+        return rows
+    except Exception as e:
+        print(f"load_eod_notes error: {e}")
+        return []
+
+
 # ── Watchlist Prediction Engine ───────────────────────────────────────────────
 
 def save_watchlist_predictions(predictions: list, user_id: str = "") -> bool:
