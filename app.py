@@ -2469,6 +2469,19 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     else:
         _rows, _err = st.session_state.get(_pb_cache_key, ([], ""))
 
+    # ── Weekend/after-hours notice ───────────────────────────────────────────────
+    import datetime as _dt
+    _today_wd = _dt.date.today().weekday()   # 0=Mon … 6=Sun
+    if _today_wd >= 5:                       # Sat or Sun
+        _days_back = _today_wd - 4           # Sat→1, Sun→2
+        _last_td   = _dt.date.today() - _dt.timedelta(days=_days_back)
+        st.info(
+            f"📅 Market is closed (weekend). Quant Score will use the most recent "
+            f"trading day: **{_last_td.strftime('%A, %b %d')}**."
+        )
+    elif _dt.datetime.now().hour < 9 or (_dt.datetime.now().hour == 9 and _dt.datetime.now().minute < 30):
+        st.info("⏰ Pre-market — Quant Score will use yesterday's intraday bars.")
+
     # ── Run quant scoring ────────────────────────────────────────────────────────
     if _pb_score_btn and _rows:
         with st.spinner(

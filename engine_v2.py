@@ -1,3 +1,10 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  ⛔  READ-ONLY FILE — DO NOT MODIFY                                         ║
+# ║  engine_v2.py                                                                ║
+# ║  Core signal engine.  All structure classification, TCS, buy/sell           ║
+# ║  pressure, and probability scoring live here.  Any edit here risks          ║
+# ║  breaking the entire signal chain and historical consistency.               ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 import pandas as pd
 import numpy as np
 from datetime import datetime, time

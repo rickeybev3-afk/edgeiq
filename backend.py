@@ -86,7 +86,7 @@ from engine_v2 import (
 
 STATE_FILE   = "trade_state.json"
 TRACKER_FILE = "accuracy_tracker.csv"
-WEIGHTS_FILE = "brain_weights.json"
+WEIGHTS_FILE = "brain_weights.json"   # ⛔ READ-ONLY — hand-calibrated signal weights; do not edit manually
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
 SA_JOURNAL_FILE  = "sa_journal.csv"
@@ -826,6 +826,12 @@ def compute_ib_volume_stats(df, ib_high, ib_low):
     return round(ib_vol_pct, 3), round(ib_range_ratio, 3)
 
 
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  ⛔  READ-ONLY — DO NOT MODIFY                                              ║
+# ║  classify_day_structure()                                                    ║
+# ║  Core 7-structure IB-interaction decision tree.  Any change here breaks     ║
+# ║  the entire signal engine and all downstream scoring.                        ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
                            avg_daily_vol=None):
     """7-structure classification using the exact IB-interaction decision tree.
@@ -1006,6 +1012,12 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
             detail, insight)
 
 
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  ⛔  READ-ONLY — DO NOT MODIFY                                              ║
+# ║  compute_structure_probabilities()                                           ║
+# ║  Probabilistic scorer using the same decision tree as classify_day_         ║
+# ║  structure().  Weights are hand-calibrated — do not touch.                  ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price):
     """Score each of the 7 structures using the same IB-interaction decision tree
     as classify_day_structure.  Scores are converted to percentages at the end.
@@ -1266,6 +1278,12 @@ def compute_rvol(df, intraday_curve=None, avg_daily_vol=None):
     return None
 
 
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  ⛔  READ-ONLY — DO NOT MODIFY                                              ║
+# ║  compute_buy_sell_pressure()                                                 ║
+# ║  Tape-reading signal (uptick ratio, delta, absorption).  Core input to      ║
+# ║  Edge Score and TCS.  Calibrated thresholds — do not touch.                 ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 def compute_buy_sell_pressure(df,
                                lookback_len=10,
                                baseline_weight=0.5,
@@ -2949,8 +2967,12 @@ def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
     weights  = compute_adaptive_weights(user_id)
     env_stat = get_recent_env_stats(user_id, days=5)
 
+    # Roll back to most recent trading weekday (Mon=0 … Fri=4)
     trade_date = date.today()
-    subset     = rows[:max_tickers]
+    while trade_date.weekday() >= 5:          # 5=Sat, 6=Sun
+        trade_date -= timedelta(days=1)
+
+    subset = rows[:max_tickers]
     scored: dict = {}
 
     with ThreadPoolExecutor(max_workers=min(8, len(subset))) as executor:
