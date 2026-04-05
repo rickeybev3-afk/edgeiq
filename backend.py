@@ -201,12 +201,6 @@ def compute_macd(close_series, fast=12, slow=26, signal=9):
     return macd, sig, macd - sig
 
 
-def compute_atr(df, period=14):
-    """14-period Average True Range."""
-    hi = df["high"]; lo = df["low"]; pc = df["close"].shift(1)
-    tr = pd.concat([(hi - lo), (hi - pc).abs(), (lo - pc).abs()], axis=1).max(axis=1)
-    return float(tr.rolling(window=period, min_periods=1).mean().iloc[-1])
-
 
 def get_whole_half_levels(price_low, price_high):
     """Return all $0.50 increment levels between price_low and price_high.
