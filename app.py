@@ -2298,12 +2298,15 @@ with st.sidebar:
             st.success(f"Saved {len(_wl_list)} tickers")
         else:
             st.warning("Saved locally (Supabase unavailable)")
-    if _wl_cols[1].button("📋 Load Ticker", use_container_width=True, key="wl_load_btn"):
+    if _wl_cols[1].button("▶ Next Ticker", use_container_width=True, key="wl_load_btn"):
         _wl_list = [t.strip().upper() for t in _wl_raw.replace("\n", ",").split(",")
                     if t.strip()]
         if _wl_list:
-            st.session_state["_load_ticker"] = _wl_list[0]
-            st.caption(f"Loaded: {_wl_list[0]}")
+            _wl_idx = st.session_state.get("_wl_cycle_idx", 0) % len(_wl_list)
+            _sym = _wl_list[_wl_idx]
+            st.session_state["_load_ticker"] = _sym
+            st.session_state["_wl_cycle_idx"] = (_wl_idx + 1) % len(_wl_list)
+            st.caption(f"{_wl_idx + 1}/{len(_wl_list)}: {_sym}")
 
     # ── Account & Sign Out ────────────────────────────────────────────────────
     st.markdown("---")
