@@ -912,18 +912,21 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 _imgs_payload.append({"filename": _f.name, "data": _b64, "caption": ""})
             except Exception:
                 pass
-        _ok = save_eod_note(
+        _ok, _src = save_eod_note(
             note_date     = _eod_date,
             notes         = _eod_notes,
             watch_tickers = _eod_watch,
             images_b64    = _imgs_payload,
             user_id       = _uid,
         )
-        if _ok:
+        if _ok and _src == "supabase":
             st.success(f"✅ Review saved for {_eod_date}")
             st.session_state["_eod_notes_loaded"] = None
+        elif _ok and _src == "local":
+            st.warning("⚠️ Supabase unreachable — review saved locally on the server. It will auto-sync to the cloud next time you load reviews and Supabase is back online.")
+            st.session_state["_eod_notes_loaded"] = None
         else:
-            st.error("❌ Save failed — review was NOT stored. Check your Supabase connection or see the setup expander below.")
+            st.error("❌ Save failed completely. Contact support.")
 
     if _eod_load_col.button("📂 Load Past Reviews", use_container_width=True, key="eod_load_btn"):
         st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=30)

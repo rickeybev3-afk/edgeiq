@@ -3466,65 +3466,150 @@ def _compress_image_b64(file_bytes: bytes, max_px: int = 900) -> str:
     return _b64.b64encode(buf.getvalue()).decode()
 
 
-def save_eod_note(note_date, notes: str, watch_tickers: str,
-                  images_b64: list, user_id: str = "") -> bool:
-    """Upsert an end-of-day review note to Supabase (table: eod_notes).
+_EOD_BACKUP = os.path.join(os.path.dirname(__file__), ".local", "eod_notes_backup.json")
 
-    images_b64: list of dicts  {filename, data (base64 JPEG), caption}
-    One row per (user_id, note_date) — re-saving same date overwrites.
-    """
-    if not supabase:
-        return False
+
+def _load_local_eod_backup() -> list:
+    """Read the local JSON backup file. Returns list of note dicts."""
+    import json as _json
     try:
-        import json as _json
-        payload = {
-            "user_id":       user_id or "anonymous",
-            "note_date":     str(note_date),
-            "notes":         notes.strip(),
-            "watch_tickers": watch_tickers.strip(),
-            "images":        _json.dumps(images_b64),
-            "updated_at":    datetime.utcnow().isoformat(),
-        }
-        supabase.table("eod_notes").upsert(
-            payload, on_conflict="user_id,note_date"
-        ).execute()
-        return True
-    except Exception as e:
-        print(f"save_eod_note error: {e}")
-        return False
+        if os.path.exists(_EOD_BACKUP):
+            with open(_EOD_BACKUP, "r") as _f:
+                data = _json.load(_f)
+                return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+
+def _save_local_eod_backup(note: dict) -> None:
+    """Upsert a note dict into the local backup file (keyed by user_id+note_date)."""
+    import json as _json
+    rows = _load_local_eod_backup()
+    key = (note.get("user_id", ""), note.get("note_date", ""))
+    rows = [r for r in rows if (r.get("user_id", ""), r.get("note_date", "")) != key]
+    rows.append(note)
+    rows.sort(key=lambda r: r.get("note_date", ""), reverse=True)
+    os.makedirs(os.path.dirname(_EOD_BACKUP), exist_ok=True)
+    with open(_EOD_BACKUP, "w") as _f:
+        _json.dump(rows, _f)
+
+
+def save_eod_note(note_date, notes: str, watch_tickers: str,
+                  images_b64: list, user_id: str = "") -> tuple:
+    """Upsert an end-of-day review note.
+
+    Tries Supabase first; always also writes to local backup so data is
+    never lost during outages.
+
+    Returns (ok: bool, source: str) where source is 'supabase', 'local', or 'error'.
+    """
+    import json as _json
+    uid = user_id or "anonymous"
+    payload = {
+        "user_id":       uid,
+        "note_date":     str(note_date),
+        "notes":         notes.strip(),
+        "watch_tickers": watch_tickers.strip(),
+        "images":        images_b64,          # list — local backup stores natively
+        "outcome":       {},
+        "updated_at":    datetime.utcnow().isoformat(),
+    }
+
+    # Always persist locally first so nothing is ever lost
+    _save_local_eod_backup(payload)
+
+    # Then try Supabase
+    if supabase:
+        try:
+            sb_payload = dict(payload)
+            sb_payload["images"] = _json.dumps(images_b64)
+            sb_payload["outcome"] = _json.dumps({})
+            supabase.table("eod_notes").upsert(
+                sb_payload, on_conflict="user_id,note_date"
+            ).execute()
+            return True, "supabase"
+        except Exception as e:
+            print(f"save_eod_note Supabase error (local backup kept): {e}")
+            return True, "local"
+
+    return True, "local"
+
+
+def _sync_local_to_supabase(user_id: str = "") -> int:
+    """Push any local-only notes to Supabase. Returns count synced."""
+    if not supabase:
+        return 0
+    import json as _json
+    uid = user_id or "anonymous"
+    local = [r for r in _load_local_eod_backup() if r.get("user_id") == uid]
+    synced = 0
+    for note in local:
+        try:
+            sb = dict(note)
+            if isinstance(sb.get("images"), list):
+                sb["images"] = _json.dumps(sb["images"])
+            if isinstance(sb.get("outcome"), dict):
+                sb["outcome"] = _json.dumps(sb["outcome"])
+            supabase.table("eod_notes").upsert(sb, on_conflict="user_id,note_date").execute()
+            synced += 1
+        except Exception:
+            pass
+    return synced
 
 
 def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
-    """Load EOD review notes from Supabase, newest first.
+    """Load EOD review notes — merges Supabase + local backup, newest first.
 
-    Returns a list of dicts with keys:
-        note_date, notes, watch_tickers, images (list of {filename,data,caption})
+    Supabase records win on conflicts. Local-only records are included and
+    auto-synced to Supabase in the background when it's reachable.
     """
-    if not supabase:
-        return []
-    try:
-        import json as _json
-        uid = user_id or "anonymous"
-        res = (supabase.table("eod_notes")
-               .select("note_date,notes,watch_tickers,images,updated_at")
-               .eq("user_id", uid)
-               .order("note_date", desc=True)
-               .limit(limit)
-               .execute())
-        rows = []
-        for r in (res.data or []):
-            imgs = r.get("images", "[]")
-            if isinstance(imgs, str):
-                try:
-                    imgs = _json.loads(imgs)
-                except Exception:
-                    imgs = []
-            r["images"] = imgs
-            rows.append(r)
-        return rows
-    except Exception as e:
-        print(f"load_eod_notes error: {e}")
-        return []
+    import json as _json
+    uid = user_id or "anonymous"
+
+    # Load local backup
+    local_rows = [r for r in _load_local_eod_backup() if r.get("user_id") == uid]
+    local_by_date = {r["note_date"]: r for r in local_rows}
+
+    sb_rows = []
+    sb_ok = False
+    if supabase:
+        try:
+            res = (supabase.table("eod_notes")
+                   .select("note_date,notes,watch_tickers,images,outcome,updated_at")
+                   .eq("user_id", uid)
+                   .order("note_date", desc=True)
+                   .limit(limit)
+                   .execute())
+            sb_ok = True
+            for r in (res.data or []):
+                for field in ("images", "outcome"):
+                    val = r.get(field, "[]" if field == "images" else "{}")
+                    if isinstance(val, str):
+                        try: val = _json.loads(val)
+                        except: val = [] if field == "images" else {}
+                    r[field] = val
+                sb_rows.append(r)
+        except Exception as e:
+            print(f"load_eod_notes Supabase error (using local backup): {e}")
+
+    if sb_ok:
+        # Merge: Supabase wins, add any local-only dates on top
+        sb_dates = {r["note_date"] for r in sb_rows}
+        local_only = [v for k, v in local_by_date.items() if k not in sb_dates]
+        merged = sb_rows + local_only
+        # Auto-sync local-only entries to Supabase quietly
+        if local_only:
+            try:
+                _sync_local_to_supabase(uid)
+            except Exception:
+                pass
+    else:
+        # Supabase down — return local backup only
+        merged = local_rows
+
+    merged.sort(key=lambda r: r.get("note_date", ""), reverse=True)
+    return merged[:limit]
 
 
 # ── EOD Prediction Verification ───────────────────────────────────────────────
