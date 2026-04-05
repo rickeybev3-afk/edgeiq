@@ -1043,7 +1043,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
 
                     # ── Outcome verification panel ────────────────────────────
                     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
-                    _vkey = f"eod_verify_{_nd}"
+                    _vkey = f"eod_verify_{_nd}_{_nw.replace(' ','_')}"
                     # Parse individual tickers for the selector
                     _ticker_list = [t.strip().upper() for t in
                                     _re.split(r"[,\s]+", _nw) if t.strip()] if _nw else []
