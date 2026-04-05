@@ -929,22 +929,76 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=30)
 
     # ── Display loaded notes ──────────────────────────────────────────────────
+    import re as _re
     _loaded_notes = st.session_state.get("_eod_notes_loaded")
     if _loaded_notes is not None:
         if not _loaded_notes:
             st.info("No reviews saved yet.")
         else:
-            for _n in _loaded_notes:
-                _nd = _n.get("note_date", "")
-                _nw = _n.get("watch_tickers", "")
-                _nt = _n.get("notes", "")
-                _ni = _n.get("images", [])
+            # ── Accuracy summary ──────────────────────────────────────────────
+            _verified_notes = [_n for _n in _loaded_notes if _n.get("outcome")]
+            if _verified_notes:
+                _total_hits = 0
+                _total_checks = 0
+                for _vn in _verified_notes:
+                    import json as _j
+                    _oc = _vn["outcome"]
+                    if isinstance(_oc, str):
+                        try: _oc = _j.loads(_oc)
+                        except: _oc = {}
+                    for _tk, _tr in _oc.items():
+                        if isinstance(_tr, dict) and "above_hit" in _tr:
+                            if _tr.get("above_hit") is not None:
+                                _total_checks += 1
+                                if _tr["above_hit"]: _total_hits += 1
+                        if isinstance(_tr, dict) and "below_hit" in _tr:
+                            if _tr.get("below_hit") is not None:
+                                _total_checks += 1
+                                if _tr["below_hit"]: _total_hits += 1
+                _hit_pct = (_total_hits / _total_checks * 100) if _total_checks else 0
+                _hit_color = "#4caf50" if _hit_pct >= 60 else "#ffa726" if _hit_pct >= 40 else "#ef5350"
+                st.markdown(
+                    f'<div style="background:#12122299;border:1px solid #2a2a4a;border-radius:8px;'
+                    f'padding:12px 18px;margin-bottom:14px;display:flex;gap:32px;align-items:center;">'
+                    f'<div><span style="font-size:11px;color:#888;text-transform:uppercase;'
+                    f'letter-spacing:1px;">Level Hit Rate</span><br>'
+                    f'<span style="font-size:26px;font-weight:800;color:{_hit_color};">'
+                    f'{_hit_pct:.0f}%</span>'
+                    f'<span style="font-size:12px;color:#666;margin-left:6px;">'
+                    f'{_total_hits}/{_total_checks} levels touched</span></div>'
+                    f'<div><span style="font-size:11px;color:#888;text-transform:uppercase;'
+                    f'letter-spacing:1px;">Reviews Verified</span><br>'
+                    f'<span style="font-size:22px;font-weight:700;color:#90caf9;">'
+                    f'{len(_verified_notes)}</span>'
+                    f'<span style="font-size:12px;color:#666;"> / {len(_loaded_notes)}</span></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            for _ni_idx, _n in enumerate(_loaded_notes):
+                _nd  = _n.get("note_date", "")
+                _nw  = _n.get("watch_tickers", "")
+                _nt  = _n.get("notes", "")
+                _nim = _n.get("images", [])
+                _noc = _n.get("outcome", {})
+                if isinstance(_noc, str):
+                    try:
+                        import json as _j2; _noc = _j2.loads(_noc)
+                    except: _noc = {}
+                _has_outcome = bool(_noc)
+
+                # Build header status badge
+                _outcome_badge = ""
+                if _has_outcome:
+                    _hits = sum(1 for _r in _noc.values()
+                                if isinstance(_r, dict) and (_r.get("above_hit") or _r.get("below_hit")))
+                    _outcome_badge = f"  ✅ Verified ({_hits} hit)" if _hits else "  🔍 Verified"
+
                 with st.expander(
-                    f"📅 {_nd}" + (f"  ·  👀 {_nw}" if _nw else ""),
-                    expanded=(_nd == str(date.today()))
+                    f"📅 {_nd}" + (f"  ·  👀 {_nw}" if _nw else "") + _outcome_badge,
+                    expanded=True
                 ):
                     if _nw:
-                        import re as _re
                         _above = _re.findall(r'[Pp]rice\s+[Aa]bove\s+([\$]?[\d\.]+)', _nt)
                         _below = _re.findall(r'[Pp]rice\s+[Bb]elow\s+([\$]?[\d\.]+)', _nt)
                         _price_chips = "".join([
@@ -973,10 +1027,9 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                             f'color:#e0e0e0;line-height:1.6;">{_nt}</div>',
                             unsafe_allow_html=True,
                         )
-                    if _ni:
-                        import base64 as _b64e
-                        _img_cols = st.columns(min(len(_ni), 3))
-                        for _ic, _img in enumerate(_ni):
+                    if _nim:
+                        _img_cols = st.columns(min(len(_nim), 3))
+                        for _ic, _img in enumerate(_nim):
                             _img_data = _img.get("data", "")
                             if _img_data:
                                 _img_cols[_ic % 3].image(
@@ -984,6 +1037,82 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                     caption=_img.get("filename", ""),
                                     use_container_width=True,
                                 )
+
+                    # ── Outcome verification panel ────────────────────────────
+                    st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+                    _vcol1, _vcol2 = st.columns([1, 1])
+                    _vkey = f"eod_verify_{_nd}"
+                    if _vcol1.button("📊 Verify Next Day", key=f"btn_{_vkey}",
+                                     use_container_width=True,
+                                     help="Fetch next trading day's actual price action"):
+                        if not _nw:
+                            st.warning("No watch tickers saved for this review.")
+                        else:
+                            with st.spinner("Fetching next-day price data…"):
+                                _vresult = verify_eod_predictions(
+                                    _nd, _nw, _nt,
+                                    st.session_state.get("alpaca_key", ""),
+                                    st.session_state.get("alpaca_secret", ""),
+                                )
+                            st.session_state[_vkey] = _vresult
+
+                    # Show stored outcome OR freshly fetched result
+                    _show_outcome = st.session_state.get(_vkey) or (_noc if _noc else None)
+                    if _show_outcome and isinstance(_show_outcome, dict):
+                        for _vticker, _vr in _show_outcome.items():
+                            if not isinstance(_vr, dict): continue
+                            if _vr.get("no_data") or _vr.get("error"):
+                                st.warning(f"**{_vticker}**: No data for {_vr.get('next_date','?')} — market closed or pre-market.")
+                                continue
+                            _v_nd   = _vr.get("next_date", "")
+                            _v_h    = _vr.get("high", 0)
+                            _v_l    = _vr.get("low", 0)
+                            _v_o    = _vr.get("open", 0)
+                            _v_c    = _vr.get("close", 0)
+                            _v_la   = _vr.get("levels_above", [])
+                            _v_lb   = _vr.get("levels_below", [])
+                            _v_ah   = _vr.get("above_hit")
+                            _v_bh   = _vr.get("below_hit")
+                            # Build level result chips
+                            _lchips = ""
+                            for _lv in _v_la:
+                                _hit = _v_h >= _lv
+                                _c = "#4caf50" if _hit else "#ef5350"
+                                _lchips += (f'<span style="display:inline-block;background:{_c}22;'
+                                            f'border:1px solid {_c};color:{_c};font-size:11px;'
+                                            f'font-weight:600;padding:2px 8px;border-radius:10px;'
+                                            f'margin:2px 4px;">Above {_lv} {"✓" if _hit else "✗"}</span>')
+                            for _lv in _v_lb:
+                                _hit = _v_l <= _lv
+                                _c = "#4caf50" if _hit else "#ef5350"
+                                _lchips += (f'<span style="display:inline-block;background:{_c}22;'
+                                            f'border:1px solid {_c};color:{_c};font-size:11px;'
+                                            f'font-weight:600;padding:2px 8px;border-radius:10px;'
+                                            f'margin:2px 4px;">Below {_lv} {"✓" if _hit else "✗"}</span>')
+                            st.markdown(
+                                f'<div style="background:#0d1117;border:1px solid #2a2a4a;'
+                                f'border-radius:8px;padding:10px 14px;margin:6px 0;">'
+                                f'<span style="font-size:14px;font-weight:700;color:#e0e0e0;">'
+                                f'{_vticker}</span>'
+                                f'<span style="font-size:11px;color:#666;margin-left:8px;">'
+                                f'{_v_nd}</span><br>'
+                                f'<span style="font-size:12px;color:#aaa;">'
+                                f'O {_v_o}  H <b style="color:#4caf50">{_v_h}</b>  '
+                                f'L <b style="color:#ef5350">{_v_l}</b>  C {_v_c}</span><br>'
+                                f'<div style="margin-top:6px;">{_lchips}</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                        # Save outcome button
+                        if _vcol2.button("💾 Save Outcome", key=f"save_{_vkey}",
+                                         use_container_width=True):
+                            _saved_oc = save_eod_outcome(_nd, _show_outcome, user_id=_uid)
+                            if _saved_oc:
+                                st.success("Outcome saved — contributes to your hit rate!")
+                                st.session_state["_eod_notes_loaded"] = None
+                                st.rerun()
+                            else:
+                                st.warning("Save failed — check Supabase connection.")
 
     # ── Supabase setup SQL ────────────────────────────────────────────────────
     with st.expander("⚙️ First-time setup — create eod_notes table", expanded=False):

@@ -3527,6 +3527,96 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
         return []
 
 
+# ── EOD Prediction Verification ───────────────────────────────────────────────
+
+def get_next_trading_day(after_date, api_key: str = "", secret_key: str = ""):
+    """Return the first trading day strictly after `after_date`."""
+    from datetime import timedelta
+    candidate = after_date + timedelta(days=1)
+    for _ in range(10):
+        if is_trading_day(candidate):
+            return candidate
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def verify_eod_predictions(note_date, watch_tickers_str: str, notes_text: str,
+                           api_key: str, secret_key: str) -> dict:
+    """Fetch next trading day's OHLC for each watched ticker and check if
+    price levels mentioned in notes were touched.
+
+    Returns dict keyed by ticker:
+        {next_date, open, high, low, close,
+         levels_above: [...], levels_below: [...],
+         above_hit: bool, below_hit: bool}
+    """
+    import re as _re
+    from datetime import date as _date
+
+    if isinstance(note_date, str):
+        note_date = _date.fromisoformat(note_date)
+
+    next_day = get_next_trading_day(note_date, api_key, secret_key)
+
+    # Parse tickers
+    raw_tickers = [t.strip().upper() for t in _re.split(r"[,\s]+", watch_tickers_str) if t.strip()]
+
+    # Parse price levels from notes (global — apply to all tickers for now)
+    above_levels = [float(v.replace("$", "")) for v in
+                    _re.findall(r"[Pp]rice\s+[Aa]bove\s+([\$]?[\d\.]+)", notes_text)]
+    below_levels = [float(v.replace("$", "")) for v in
+                    _re.findall(r"[Pp]rice\s+[Bb]elow\s+([\$]?[\d\.]+)", notes_text)]
+
+    results = {}
+    for ticker in raw_tickers:
+        try:
+            bars = fetch_bars(api_key, secret_key, ticker, next_day)
+            if bars.empty:
+                results[ticker] = {"next_date": str(next_day), "no_data": True,
+                                   "levels_above": above_levels,
+                                   "levels_below": below_levels}
+                continue
+            day_open  = float(bars["open"].iloc[0])
+            day_high  = float(bars["high"].max())
+            day_low   = float(bars["low"].min())
+            day_close = float(bars["close"].iloc[-1])
+            above_hit = any(day_high >= lv for lv in above_levels) if above_levels else None
+            below_hit = any(day_low  <= lv for lv in below_levels) if below_levels else None
+            results[ticker] = {
+                "next_date":    str(next_day),
+                "open":         round(day_open, 4),
+                "high":         round(day_high, 4),
+                "low":          round(day_low, 4),
+                "close":        round(day_close, 4),
+                "levels_above": above_levels,
+                "levels_below": below_levels,
+                "above_hit":    above_hit,
+                "below_hit":    below_hit,
+                "no_data":      False,
+            }
+        except Exception as e:
+            results[ticker] = {"next_date": str(next_day), "error": str(e),
+                               "levels_above": above_levels,
+                               "levels_below": below_levels}
+    return results
+
+
+def save_eod_outcome(note_date, outcome: dict, user_id: str = "") -> bool:
+    """Persist the verification outcome into eod_notes.outcome column."""
+    if not supabase:
+        return False
+    try:
+        import json as _json
+        supabase.table("eod_notes").update(
+            {"outcome": _json.dumps(outcome),
+             "updated_at": datetime.utcnow().isoformat()}
+        ).eq("user_id", user_id or "anonymous").eq("note_date", str(note_date)).execute()
+        return True
+    except Exception as e:
+        print(f"save_eod_outcome error: {e}")
+        return False
+
+
 # ── Watchlist Prediction Engine ───────────────────────────────────────────────
 
 def save_watchlist_predictions(predictions: list, user_id: str = "") -> bool:
