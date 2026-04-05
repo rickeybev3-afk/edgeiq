@@ -3515,7 +3515,7 @@ def save_eod_note(note_date, notes: str, watch_tickers: str,
         "note_date":     str(note_date),
         "notes":         notes.strip(),
         "watch_tickers": watch_tickers.strip(),
-        "images":        images_b64,          # list — local backup stores natively
+        "images":        images_b64,
         "outcome":       {},
         "updated_at":    datetime.utcnow().isoformat(),
     }
@@ -3523,12 +3523,17 @@ def save_eod_note(note_date, notes: str, watch_tickers: str,
     # Always persist locally first so nothing is ever lost
     _save_local_eod_backup(payload)
 
-    # Then try Supabase
+    # Then try Supabase — outcome is excluded from upsert (saved separately)
     if supabase:
         try:
-            sb_payload = dict(payload)
-            sb_payload["images"] = _json.dumps(images_b64)
-            sb_payload["outcome"] = _json.dumps({})
+            sb_payload = {
+                "user_id":       uid,
+                "note_date":     str(note_date),
+                "notes":         notes.strip(),
+                "watch_tickers": watch_tickers.strip(),
+                "images":        _json.dumps(images_b64),
+                "updated_at":    datetime.utcnow().isoformat(),
+            }
             supabase.table("eod_notes").upsert(
                 sb_payload, on_conflict="user_id,note_date,watch_tickers"
             ).execute()
@@ -3538,6 +3543,40 @@ def save_eod_note(note_date, notes: str, watch_tickers: str,
             return True, "local"
 
     return True, "local"
+
+
+def delete_eod_note(note_date, watch_tickers: str, user_id: str = "") -> bool:
+    """Delete a specific EOD note from both Supabase and local backup."""
+    import json as _json
+    uid = user_id or "anonymous"
+    nd  = str(note_date)
+    wt  = watch_tickers.strip()
+
+    # Remove from local backup
+    all_local = _load_local_eod_backup()
+    filtered  = [r for r in all_local
+                 if not (r.get("user_id") == uid
+                         and str(r.get("note_date", "")) == nd
+                         and r.get("watch_tickers", "").strip() == wt)]
+    if len(filtered) < len(all_local):
+        try:
+            os.makedirs(os.path.dirname(_EOD_BACKUP), exist_ok=True)
+            with open(_EOD_BACKUP, "w") as _ff:
+                _json.dump(filtered, _ff)
+        except Exception:
+            pass
+
+    # Remove from Supabase
+    if supabase:
+        try:
+            supabase.table("eod_notes").delete()\
+                .eq("user_id", uid)\
+                .eq("note_date", nd)\
+                .eq("watch_tickers", wt)\
+                .execute()
+        except Exception as e:
+            print(f"delete_eod_note error: {e}")
+    return True
 
 
 def _sync_local_to_supabase(user_id: str = "") -> int:
@@ -3550,11 +3589,14 @@ def _sync_local_to_supabase(user_id: str = "") -> int:
     synced = 0
     for note in local:
         try:
-            sb = dict(note)
-            if isinstance(sb.get("images"), list):
-                sb["images"] = _json.dumps(sb["images"])
-            if isinstance(sb.get("outcome"), dict):
-                sb["outcome"] = _json.dumps(sb["outcome"])
+            sb = {
+                "user_id":       note.get("user_id", uid),
+                "note_date":     note.get("note_date", ""),
+                "notes":         note.get("notes", ""),
+                "watch_tickers": note.get("watch_tickers", ""),
+                "images":        _json.dumps(note.get("images", [])),
+                "updated_at":    note.get("updated_at", datetime.utcnow().isoformat()),
+            }
             supabase.table("eod_notes").upsert(sb, on_conflict="user_id,note_date,watch_tickers").execute()
             synced += 1
         except Exception:
@@ -3594,24 +3636,31 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
     sb_rows = []
     sb_ok = False
     if supabase:
-        try:
-            res = (supabase.table("eod_notes")
-                   .select("note_date,notes,watch_tickers,images,outcome,updated_at")
-                   .eq("user_id", uid)
-                   .order("note_date", desc=True)
-                   .limit(limit)
-                   .execute())
-            sb_ok = True
-            for r in (res.data or []):
-                for field in ("images", "outcome"):
-                    val = r.get(field, "[]" if field == "images" else "{}")
-                    if isinstance(val, str):
-                        try: val = _json.loads(val)
-                        except: val = [] if field == "images" else {}
-                    r[field] = val
-                sb_rows.append(r)
-        except Exception as e:
-            print(f"load_eod_notes Supabase error (using local backup): {e}")
+        for _select in (
+            "note_date,notes,watch_tickers,images,outcome,updated_at",
+            "note_date,notes,watch_tickers,images,updated_at",
+        ):
+            try:
+                res = (supabase.table("eod_notes")
+                       .select(_select)
+                       .eq("user_id", uid)
+                       .order("note_date", desc=True)
+                       .limit(limit)
+                       .execute())
+                sb_ok = True
+                for r in (res.data or []):
+                    for field in ("images", "outcome"):
+                        val = r.get(field, "[]" if field == "images" else {})
+                        if isinstance(val, str):
+                            try: val = _json.loads(val)
+                            except: val = [] if field == "images" else {}
+                        r[field] = val
+                    sb_rows.append(r)
+                break
+            except Exception as e:
+                print(f"load_eod_notes Supabase error (using local backup): {e}")
+                if _select.endswith("updated_at") and "outcome" not in _select:
+                    break
 
     if sb_ok:
         # Merge: Supabase wins, add any local-only (date+ticker) entries
@@ -3968,5 +4017,67 @@ def execute_alpaca_trade(
 
     except Exception as exc:
         return {"success": False, "order_id": None, "message": f"Alpaca error: {exc}"}
+
+
+# ── User Preferences ──────────────────────────────────────────────────────────
+_USER_PREFS_FILE = ".local/user_prefs.json"
+
+
+def save_user_prefs(user_id: str, prefs: dict) -> bool:
+    """Persist user preferences (API keys, webhook, etc.) to Supabase + local file."""
+    import json as _json
+    uid = user_id or "anonymous"
+
+    # Always write locally first
+    try:
+        all_prefs: dict = {}
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                all_prefs = _json.load(_f)
+        all_prefs[uid] = prefs
+        os.makedirs(os.path.dirname(_USER_PREFS_FILE), exist_ok=True)
+        with open(_USER_PREFS_FILE, "w") as _f:
+            _json.dump(all_prefs, _f)
+    except Exception:
+        pass
+
+    # Then Supabase
+    if supabase:
+        try:
+            supabase.table("user_preferences").upsert(
+                {"user_id": uid, "prefs": _json.dumps(prefs),
+                 "updated_at": datetime.utcnow().isoformat()},
+                on_conflict="user_id",
+            ).execute()
+        except Exception as e:
+            print(f"save_user_prefs error: {e}")
+    return True
+
+
+def load_user_prefs(user_id: str) -> dict:
+    """Load user preferences — Supabase first, local file fallback."""
+    import json as _json
+    uid = user_id or "anonymous"
+
+    if supabase:
+        try:
+            res = (supabase.table("user_preferences")
+                   .select("prefs")
+                   .eq("user_id", uid)
+                   .limit(1)
+                   .execute())
+            if res.data:
+                raw = res.data[0].get("prefs", "{}")
+                return _json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            pass
+
+    try:
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                return _json.load(_f).get(uid, {})
+    except Exception:
+        pass
+    return {}
 
 

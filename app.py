@@ -881,10 +881,12 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     # ── Edit-mode prefill: copy pending values into widget keys before render ──
     if st.session_state.get("_eod_prefill_pending"):
         _pf = st.session_state.pop("_eod_prefill_pending")
-        st.session_state["eod_note_date"]    = _pf["date"]
-        st.session_state["eod_watch_tickers"] = _pf["ticker"]
-        st.session_state["eod_notes_text"]   = _pf["notes"]
-        st.session_state["_eod_edit_images"] = _pf["images"]
+        st.session_state["eod_note_date"]       = _pf["date"]
+        st.session_state["eod_watch_tickers"]   = _pf["ticker"]
+        st.session_state["eod_notes_text"]      = _pf["notes"]
+        st.session_state["_eod_edit_images"]    = _pf["images"]
+        st.session_state["_eod_edit_orig_date"]   = str(_pf["date"])
+        st.session_state["_eod_edit_orig_ticker"] = _pf["ticker"]
 
     # ── Edit-mode banner ──────────────────────────────────────────────────────
     _edit_imgs = st.session_state.get("_eod_edit_images", [])
@@ -945,6 +947,16 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     pass
         else:
             _imgs_payload = st.session_state.get("_eod_edit_images", [])
+
+        # If ticker or date changed during edit, delete the old entry first
+        _orig_date   = st.session_state.get("_eod_edit_orig_date", "")
+        _orig_ticker = st.session_state.get("_eod_edit_orig_ticker", "")
+        if _orig_date:
+            _new_ticker_str = _eod_watch.strip() if _eod_watch else ""
+            if (_orig_ticker.strip() != _new_ticker_str
+                    or _orig_date != str(_eod_date)):
+                delete_eod_note(_orig_date, _orig_ticker, user_id=_uid)
+
         _ok, _src = save_eod_note(
             note_date     = _eod_date,
             notes         = _eod_notes,
@@ -952,16 +964,17 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             images_b64    = _imgs_payload,
             user_id       = _uid,
         )
-        if _ok and _src == "supabase":
-            st.success(f"✅ Review saved for {_eod_date}")
-            st.session_state.pop("_eod_edit_images", None)
-            st.session_state.pop("_eod_edit_active", None)
-            st.session_state["_eod_notes_loaded"] = None
-        elif _ok and _src == "local":
-            st.warning("⚠️ Supabase unreachable — review saved locally on the server. It will auto-sync to the cloud next time you load reviews and Supabase is back online.")
-            st.session_state.pop("_eod_edit_images", None)
-            st.session_state.pop("_eod_edit_active", None)
-            st.session_state["_eod_notes_loaded"] = None
+        if _ok:
+            for _k in ("_eod_edit_images", "_eod_edit_active",
+                       "_eod_edit_orig_date", "_eod_edit_orig_ticker"):
+                st.session_state.pop(_k, None)
+            if _src == "supabase":
+                st.success(f"✅ Review saved for {_eod_date}")
+            else:
+                st.warning("⚠️ Saved locally — will sync to cloud on next load when Supabase is available.")
+            # Auto-reload so changes appear immediately without manual button click
+            st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=30)
+            st.rerun()
         else:
             st.error("❌ Save failed completely. Contact support.")
 
@@ -2267,8 +2280,26 @@ _DEFAULT_WATCHLIST = (
 
 with st.sidebar:
     st.header("🔑 Alpaca Credentials")
-    api_key = st.text_input("API Key", type="password", placeholder="Alpaca API Key")
-    secret_key = st.text_input("Secret Key", type="password", placeholder="Alpaca Secret Key")
+    api_key = st.text_input(
+        "API Key", type="password", placeholder="Alpaca API Key",
+        value=st.session_state.get("_pref_alpaca_key", ""),
+        key="_sb_api_key",
+    )
+    secret_key = st.text_input(
+        "Secret Key", type="password", placeholder="Alpaca Secret Key",
+        value=st.session_state.get("_pref_alpaca_secret", ""),
+        key="_sb_secret_key",
+    )
+    # Auto-save credentials whenever they're filled in
+    if api_key and secret_key and _AUTH_USER_ID:
+        _cur_prefs = st.session_state.get("_cached_prefs", {})
+        if (_cur_prefs.get("alpaca_key") != api_key or
+                _cur_prefs.get("alpaca_secret") != secret_key):
+            _new_prefs = {**_cur_prefs, "alpaca_key": api_key, "alpaca_secret": secret_key}
+            save_user_prefs(_AUTH_USER_ID, _new_prefs)
+            st.session_state["_cached_prefs"]       = _new_prefs
+            st.session_state["_pref_alpaca_key"]    = api_key
+            st.session_state["_pref_alpaca_secret"] = secret_key
 
     st.markdown("---")
     st.header("🔔 Discord Alerts")
@@ -2276,10 +2307,18 @@ with st.sidebar:
         "Webhook URL",
         type="password",
         placeholder="https://discord.com/api/webhooks/…",
+        value=st.session_state.get("discord_webhook_url", ""),
+        key="_sb_discord_webhook",
         help="Paste your Discord webhook URL. Alerts fire automatically when a ticker scores TCS ≥ 80 and Edge Score ≥ 75 during Playbook scoring. Each ticker only alerts once per day.",
     )
     if _dw_input:
         st.session_state["discord_webhook_url"] = _dw_input
+        if _AUTH_USER_ID:
+            _cur_prefs = st.session_state.get("_cached_prefs", {})
+            if _cur_prefs.get("discord_webhook") != _dw_input:
+                _new_prefs = {**_cur_prefs, "discord_webhook": _dw_input}
+                save_user_prefs(_AUTH_USER_ID, _new_prefs)
+                st.session_state["_cached_prefs"] = _new_prefs
     discord_webhook_url = st.session_state.get("discord_webhook_url", "")
     if discord_webhook_url:
         st.success("✅ Alerts active", icon="🔔")
@@ -2676,6 +2715,17 @@ if not st.session_state.get("auth_user"):
     st.stop()
 
 _AUTH_USER_ID = st.session_state.get("auth_user_id", "")
+
+# ── Auto-load user preferences once per session after login ───────────────────
+if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
+    _prefs = load_user_prefs(_AUTH_USER_ID)
+    if _prefs.get("alpaca_key"):
+        st.session_state["_pref_alpaca_key"]    = _prefs["alpaca_key"]
+    if _prefs.get("alpaca_secret"):
+        st.session_state["_pref_alpaca_secret"] = _prefs["alpaca_secret"]
+    if _prefs.get("discord_webhook"):
+        st.session_state["discord_webhook_url"] = _prefs["discord_webhook"]
+    st.session_state["_prefs_loaded"] = True
 
 # ── Cross-tab High Conviction alert (T005) ────────────────────────────────────
 _hc_alert_state = st.session_state.get("_hc_alert_state")
