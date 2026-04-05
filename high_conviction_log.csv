@@ -57,3 +57,4 @@ timestamp,ticker,date,structure,prob_pct,ib_high,ib_low,poc_price
 2026-04-04 20:59:25,SKYQ,2026-04-01,Ntrl Extreme,86.7,2.65,2.55,2.6495
 2026-04-04 21:00:10,SKYQ,2026-04-02,Neutral,86.7,5.78,4.12,5.2713
 2026-04-04 22:05:48,ELAB,2026-04-02,Neutral,86.7,5.84,4.79,6.09
+2026-04-04 22:15:54,SST,2026-04-02,Ntrl Extreme,86.7,5.25,3.67,3.8684
