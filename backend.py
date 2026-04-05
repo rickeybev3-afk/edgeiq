@@ -2648,19 +2648,40 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         else:
             aft_move = 0.0
 
+        # ── False break detection ────────────────────────────────────────────────
+        # A false break = IB violated but price closed back inside within 30 min
+        # (6 × 5-min bars). This is the classic "shake & bake" reversal trap.
+        _aft_r = aft_df.reset_index()
+        false_break_up   = False
+        false_break_down = False
+        if broke_up:
+            _up_bars = _aft_r[_aft_r["high"] > ib_high]
+            if not _up_bars.empty:
+                _fi = _up_bars.index[0]
+                _w  = _aft_r.loc[_fi : _fi + 6]
+                false_break_up = bool((_w["close"] < ib_high).any())
+        if broke_down:
+            _dn_bars = _aft_r[_aft_r["low"] < ib_low]
+            if not _dn_bars.empty:
+                _fi = _dn_bars.index[0]
+                _w  = _aft_r.loc[_fi : _fi + 6]
+                false_break_down = bool((_w["close"] > ib_low).any())
+
         return {
-            "ticker":          sym,
-            "open_price":      round(open_px, 2),
-            "ib_high":         round(ib_high, 2),
-            "ib_low":          round(ib_low, 2),
-            "tcs":             round(tcs, 1),
-            "predicted":       predicted,
-            "confidence":      confidence,
-            "actual_outcome":  actual_outcome,
-            "actual_icon":     actual_icon,
-            "close_price":     round(close_px, 2),
-            "aft_move_pct":    round(aft_move, 2),
-            "win_loss":        "Win" if win else "Loss",
+            "ticker":           sym,
+            "open_price":       round(open_px, 2),
+            "ib_high":          round(ib_high, 2),
+            "ib_low":           round(ib_low, 2),
+            "tcs":              round(tcs, 1),
+            "predicted":        predicted,
+            "confidence":       confidence,
+            "actual_outcome":   actual_outcome,
+            "actual_icon":      actual_icon,
+            "close_price":      round(close_px, 2),
+            "aft_move_pct":     round(aft_move, 2),
+            "win_loss":         "Win" if win else "Loss",
+            "false_break_up":   false_break_up,
+            "false_break_down": false_break_down,
         }
     except Exception:
         return None
@@ -2721,26 +2742,161 @@ def run_historical_backtest(
     avg_bear_ft = (round(sum(abs(r["aft_move_pct"]) for r in bear_rows) / len(bear_rows), 1)
                    if bear_rows else 0.0)
 
-    # Long-only win rate: if you blindly bought every IB bullish break
     long_win_rate = round(len(bull_rows) / len(results) * 100, 1) if results else 0.0
 
+    # False break stats
+    fb_up   = [r for r in results if r.get("false_break_up")]
+    fb_down = [r for r in results if r.get("false_break_down")]
+    _breakable = len(bull_rows) + len(bear_rows) + len(both_rows)
+    false_break_rate = (round((len(fb_up) + len(fb_down)) / _breakable * 100, 1)
+                        if _breakable else 0.0)
+
     summary = {
-        "win_rate":      win_rate,
-        "total":         len(results),
-        "wins":          wins,
-        "losses":        losses,
-        "highest_tcs":   round(max(r["tcs"] for r in results), 1),
-        "avg_tcs":       round(sum(r["tcs"] for r in results) / len(results), 1),
-        # Directional stats
-        "bull_breaks":   len(bull_rows),
-        "bear_breaks":   len(bear_rows),
-        "both_breaks":   len(both_rows),
-        "range_bound":   len(range_rows),
-        "avg_bull_ft":   avg_bull_ft,   # avg follow-thru on bullish breaks (%)
-        "avg_bear_ft":   avg_bear_ft,   # avg follow-thru on bearish breaks (abs %)
-        "long_win_rate": long_win_rate, # % of setups that went bullish
+        "win_rate":         win_rate,
+        "total":            len(results),
+        "wins":             wins,
+        "losses":           losses,
+        "highest_tcs":      round(max(r["tcs"] for r in results), 1),
+        "avg_tcs":          round(sum(r["tcs"] for r in results) / len(results), 1),
+        "bull_breaks":      len(bull_rows),
+        "bear_breaks":      len(bear_rows),
+        "both_breaks":      len(both_rows),
+        "range_bound":      len(range_rows),
+        "avg_bull_ft":      avg_bull_ft,
+        "avg_bear_ft":      avg_bear_ft,
+        "long_win_rate":    long_win_rate,
+        "false_break_rate": false_break_rate,
+        "fb_up_count":      len(fb_up),
+        "fb_down_count":    len(fb_down),
     }
     return results, summary
+
+
+def run_backtest_range(
+    api_key: str, secret_key: str,
+    start_date, end_date,
+    tickers: list,
+    feed: str = "sip",
+    price_min: float = 2.0,
+    price_max: float = 20.0,
+) -> tuple:
+    """Run the backtest across a date range (max 10 weekdays).
+
+    Returns (all_results, agg_summary, daily_list) where:
+    - all_results   : flat list of every row with 'sim_date' added
+    - agg_summary   : aggregate stats across all days
+    - daily_list    : [(date, results, summary), ...] one entry per trading day
+    """
+    # Collect weekdays in range, cap at 10
+    trading_days = []
+    cur = start_date
+    while cur <= end_date and len(trading_days) < 10:
+        if cur.weekday() < 5:
+            trading_days.append(cur)
+        cur += timedelta(days=1)
+
+    if not trading_days:
+        return [], {"error": "No trading days in selected range."}, []
+
+    daily_list = []
+    for d in trading_days:
+        r, s = run_historical_backtest(
+            api_key, secret_key, d, tickers, feed, price_min, price_max
+        )
+        if not s.get("error") and r:
+            for row in r:
+                row["sim_date"] = str(d)
+            daily_list.append((d, r, s))
+
+    if not daily_list:
+        return [], {"error": "No valid data for any date in range."}, []
+
+    all_results = []
+    for _, r, _ in daily_list:
+        all_results.extend(r)
+
+    total = len(all_results)
+    wins  = sum(1 for r in all_results if r["win_loss"] == "Win")
+
+    bull_rows  = [r for r in all_results if r["actual_outcome"] == "Bullish Break"]
+    bear_rows  = [r for r in all_results if r["actual_outcome"] == "Bearish Break"]
+    both_rows  = [r for r in all_results if r["actual_outcome"] == "Both Sides"]
+    range_rows = [r for r in all_results if r["actual_outcome"] == "Range-Bound"]
+    fb_up      = [r for r in all_results if r.get("false_break_up")]
+    fb_down    = [r for r in all_results if r.get("false_break_down")]
+
+    _breakable    = len(bull_rows) + len(bear_rows) + len(both_rows)
+    avg_bull_ft   = (round(sum(r["aft_move_pct"] for r in bull_rows) / len(bull_rows), 1)
+                     if bull_rows else 0.0)
+    avg_bear_ft   = (round(sum(abs(r["aft_move_pct"]) for r in bear_rows) / len(bear_rows), 1)
+                     if bear_rows else 0.0)
+    false_brk_rt  = (round((len(fb_up) + len(fb_down)) / _breakable * 100, 1)
+                     if _breakable else 0.0)
+
+    agg_summary = {
+        "win_rate":         round(wins / total * 100, 1) if total else 0.0,
+        "total":            total,
+        "wins":             wins,
+        "losses":           total - wins,
+        "highest_tcs":      round(max(r["tcs"] for r in all_results), 1),
+        "avg_tcs":          round(sum(r["tcs"] for r in all_results) / total, 1),
+        "bull_breaks":      len(bull_rows),
+        "bear_breaks":      len(bear_rows),
+        "both_breaks":      len(both_rows),
+        "range_bound":      len(range_rows),
+        "avg_bull_ft":      avg_bull_ft,
+        "avg_bear_ft":      avg_bear_ft,
+        "long_win_rate":    round(len(bull_rows) / total * 100, 1) if total else 0.0,
+        "false_break_rate": false_brk_rt,
+        "fb_up_count":      len(fb_up),
+        "fb_down_count":    len(fb_down),
+        "days_run":         len(daily_list),
+    }
+    return all_results, agg_summary, daily_list
+
+
+# ── Backtest Supabase persistence ────────────────────────────────────────────
+def save_backtest_sim_runs(rows: list, user_id: str = ""):
+    """Batch-insert backtest simulation rows to Supabase."""
+    if not supabase or not rows:
+        return
+    try:
+        records = [
+            {
+                "user_id":        user_id or "",
+                "sim_date":       str(r.get("sim_date", "")),
+                "ticker":         r.get("ticker", ""),
+                "open_price":     r.get("open_price"),
+                "ib_low":         r.get("ib_low"),
+                "ib_high":        r.get("ib_high"),
+                "tcs":            r.get("tcs"),
+                "predicted":      r.get("predicted", ""),
+                "actual_outcome": r.get("actual_outcome", ""),
+                "win_loss":       r.get("win_loss", ""),
+                "follow_thru_pct": r.get("aft_move_pct"),
+                "false_break_up":   bool(r.get("false_break_up", False)),
+                "false_break_down": bool(r.get("false_break_down", False)),
+            }
+            for r in rows
+        ]
+        supabase.table("backtest_sim_runs").insert(records).execute()
+    except Exception as e:
+        print(f"Backtest save error: {e}")
+
+
+def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
+    """Load saved backtest runs from Supabase (most recent first, up to 1000 rows)."""
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        q = supabase.table("backtest_sim_runs").select("*")
+        if user_id:
+            q = q.eq("user_id", user_id)
+        data = q.order("sim_date", desc=True).limit(1000).execute().data
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        print(f"Backtest load error: {e}")
+        return pd.DataFrame()
 
 
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────

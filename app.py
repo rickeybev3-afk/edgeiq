@@ -2502,6 +2502,36 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         unsafe_allow_html=True,
     )
 
+    # ── Supabase migration reminder ──────────────────────────────────────────────
+    if supabase:
+        try:
+            supabase.table("backtest_sim_runs").select("id").limit(1).execute()
+        except Exception:
+            st.info(
+                "**One-time setup:** Run this SQL in your Supabase SQL editor to enable "
+                "automatic backtest history saving:\n\n"
+                "```sql\n"
+                "CREATE TABLE IF NOT EXISTS backtest_sim_runs (\n"
+                "  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n"
+                "  user_id TEXT,\n"
+                "  sim_date DATE,\n"
+                "  ticker TEXT,\n"
+                "  open_price NUMERIC,\n"
+                "  ib_low NUMERIC,\n"
+                "  ib_high NUMERIC,\n"
+                "  tcs NUMERIC,\n"
+                "  predicted TEXT,\n"
+                "  actual_outcome TEXT,\n"
+                "  win_loss TEXT,\n"
+                "  follow_thru_pct NUMERIC,\n"
+                "  false_break_up BOOLEAN DEFAULT FALSE,\n"
+                "  false_break_down BOOLEAN DEFAULT FALSE,\n"
+                "  run_at TIMESTAMPTZ DEFAULT NOW()\n"
+                ");\n"
+                "```",
+                icon="🗄️",
+            )
+
     if not api_key or not secret_key:
         st.warning("Enter your **Alpaca API Key** and **Secret Key** in the sidebar to run backtests.")
         return
@@ -2533,21 +2563,15 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
             value=(2.0, 20.0), step=0.5, key="bt_price_range",
         )
     with _bt_col4:
-        _BT_CUTOFF_OPTIONS = {
-            "10:30 AM — IB Only":        (10, 30),
-            "11:00 AM — +30 min":        (11,  0),
-            "11:30 AM — +1 hr post-IB":  (11, 30),
-            "12:00 PM — Full Morning":   (12,  0),
-        }
-        _bt_cutoff_label = st.selectbox(
-            "Prediction Cutoff",
-            options=list(_BT_CUTOFF_OPTIONS.keys()),
-            index=0,
-            key="bt_cutoff_select",
-            help="How much data the engine sees before making its prediction. "
-                 "More data = richer structure signals. IB boundary stays fixed at 10:30 AM.",
+        _bt_end_date = st.date_input(
+            "To Date (range)",
+            value=yesterday,
+            max_value=date.today() - timedelta(days=1),
+            key="bt_end_date_picker",
+            help="Same as From Date = single day. Earlier From Date = multi-day range (max 10 weekdays). "
+                 "Use a full week to see market bias patterns.",
         )
-        _bt_cutoff_h, _bt_cutoff_m = _BT_CUTOFF_OPTIONS[_bt_cutoff_label]
+    _bt_is_range = _bt_end_date > _bt_date
 
     st.markdown(
         '<div style="font-size:11px; color:#37474f; margin:10px 0 4px 0;">Ticker Watchlist '
@@ -2567,8 +2591,9 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
 
     st.markdown(
         '<div style="font-size:10px; color:#263238; margin-top:6px;">'
-        'Engine logic: IB always 9:30–10:30 AM (fixed) · Prediction cutoff = selectable · '
-        'More data → richer structures · Win = predicted type matches afternoon reality'
+        'IB fixed at 9:30–10:30 AM · Set From = To for single day · '
+        'Set a date range (max 10 weekdays) to see weekly market bias · '
+        'Results auto-saved to your account history'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -2587,23 +2612,52 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         _pmin, _pmax = float(_bt_price_range[0]), float(_bt_price_range[1])
         _total = len(_tickers)
 
-        with st.spinner(
-            f"⏳ Simulating {_total} tickers on {_bt_date} "
-            f"(cutoff {_bt_cutoff_h}:{_bt_cutoff_m:02d}) — "
-            f"fetching bars & running quant engine concurrently…"
-        ):
-            _results, _summary = run_historical_backtest(
-                api_key, secret_key,
-                trade_date=_bt_date,
-                tickers=_tickers,
-                feed=_bt_feed_str,
-                price_min=_pmin,
-                price_max=_pmax,
-                cutoff_hour=_bt_cutoff_h,
-                cutoff_minute=_bt_cutoff_m,
-            )
+        if _bt_is_range:
+            _range_label = f"{_bt_date} → {_bt_end_date}"
+            with st.spinner(
+                f"⏳ Range simulation {_range_label} · {_total} tickers — "
+                f"this may take 30–60 seconds…"
+            ):
+                _results, _summary, _daily_list = run_backtest_range(
+                    api_key, secret_key,
+                    start_date=_bt_date,
+                    end_date=_bt_end_date,
+                    tickers=_tickers,
+                    feed=_bt_feed_str,
+                    price_min=_pmin,
+                    price_max=_pmax,
+                )
+            _date_label = _range_label
+        else:
+            _daily_list  = None
+            _range_label = str(_bt_date)
+            with st.spinner(
+                f"⏳ Simulating {_total} tickers on {_bt_date} — "
+                f"fetching bars & running quant engine concurrently…"
+            ):
+                _results, _summary = run_historical_backtest(
+                    api_key, secret_key,
+                    trade_date=_bt_date,
+                    tickers=_tickers,
+                    feed=_bt_feed_str,
+                    price_min=_pmin,
+                    price_max=_pmax,
+                )
+            _date_label = str(_bt_date)
+
+        # Auto-save to Supabase
+        if _results and not _summary.get("error"):
+            _rows_to_save = _results if _bt_is_range else [
+                dict(r, sim_date=str(_bt_date)) for r in _results
+            ]
+            try:
+                save_backtest_sim_runs(_rows_to_save, user_id=_AUTH_USER_ID)
+            except Exception:
+                pass
+
         st.session_state[_bt_cache] = (
-            _results, _summary, _bt_date, _bt_cutoff_label
+            _results, _summary, _date_label,
+            _bt_is_range, _daily_list if _bt_is_range else None,
         )
 
     # ── Load cached results ─────────────────────────────────────────────────────
@@ -2618,11 +2672,14 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         return
 
     _bt_cached = st.session_state[_bt_cache]
-    if len(_bt_cached) == 4:
-        _results, _summary, _sim_date, _sim_cutoff_label = _bt_cached
+    if len(_bt_cached) == 5:
+        _results, _summary, _sim_date, _sim_is_range, _sim_daily = _bt_cached
+    elif len(_bt_cached) == 4:
+        _results, _summary, _sim_date, _ = _bt_cached
+        _sim_is_range, _sim_daily = False, None
     else:
         _results, _summary, _sim_date = _bt_cached
-        _sim_cutoff_label = "10:30 AM"
+        _sim_is_range, _sim_daily = False, None
 
     if _summary.get("error"):
         st.error(_summary["error"])
@@ -2641,8 +2698,9 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         f'padding:18px 24px; margin-bottom:20px;">'
         f'<div style="font-size:10px; color:#1565c0; letter-spacing:2px; '
         f'text-transform:uppercase; margin-bottom:12px; font-family:monospace;">'
-        f'SIMULATION RESULTS — {_sim_date.strftime("%A %B %d, %Y").upper()} '
-        f'· CUTOFF {_sim_cutoff_label.split("—")[0].strip()}</div>'
+        f'SIMULATION RESULTS — {str(_sim_date).upper()}'
+        f'{" · " + str(_summary.get("days_run", "")) + " TRADING DAYS" if _sim_is_range else ""}'
+        f'</div>'
         f'<div style="display:flex; gap:40px; flex-wrap:wrap;">'
 
         f'<div>'
@@ -2752,9 +2810,75 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         f'font-family:monospace;">{_summary["range_bound"]}</div>'
         f'</div>'
 
+        f'<div style="border-left:1px solid #0d2137; padding-left:24px;">'
+        f'<div style="font-size:9px; color:#ffa726; letter-spacing:1px; '
+        f'text-transform:uppercase; margin-bottom:2px;">⚠ False Break Rate</div>'
+        f'<div style="font-size:22px; font-weight:800; color:#ffa726; '
+        f'font-family:monospace;">{_summary.get("false_break_rate", 0.0):.1f}%</div>'
+        f'<div style="font-size:9px; color:#37474f;">'
+        f'↑{_summary.get("fb_up_count", 0)} ↓{_summary.get("fb_down_count", 0)} traps</div>'
+        f'</div>'
+
         f'</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Day-by-day breakdown (range only) ───────────────────────────────────────
+    if _sim_is_range and _sim_daily:
+        st.markdown(
+            '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
+            'letter-spacing:1.5px; margin-bottom:8px; font-weight:700;">📅 Day-by-Day Breakdown</div>',
+            unsafe_allow_html=True,
+        )
+        _d_cols = st.columns([0.9, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7, 0.8, 0.8])
+        _d_hdrs = ["Date", "Setups", "Wins", "Losses", "Win %",
+                   "Long Hit %", "Bull FT", "Bear FT", "False Brk%"]
+        for _c, _h in zip(_d_cols, _d_hdrs):
+            _c.markdown(
+                f'<div style="font-size:9px; font-weight:700; color:#1565c0; '
+                f'text-transform:uppercase; letter-spacing:1px; padding:4px 6px;">{_h}</div>',
+                unsafe_allow_html=True,
+            )
+        for _dd, _dr, _ds in _sim_daily:
+            _dwr   = _ds.get("win_rate", 0)
+            _dlhr  = _ds.get("long_win_rate", 0)
+            _dbft  = _ds.get("avg_bull_ft", 0)
+            _dbear = _ds.get("avg_bear_ft", 0)
+            _dfbr  = _ds.get("false_break_rate", 0)
+            _dwr_c = "#4caf50" if _dwr >= 60 else "#ffa726" if _dwr >= 40 else "#ef5350"
+            _dlr_c = "#4caf50" if _dlhr >= 50 else "#ffa726" if _dlhr >= 35 else "#ef5350"
+            _row_d = st.columns([0.9, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7, 0.8, 0.8])
+            _row_d[0].markdown(
+                f'<div style="font-size:11px; font-weight:700; color:#e0e0e0; '
+                f'padding:6px 6px; font-family:monospace;">'
+                f'{_dd.strftime("%a %b %d")}</div>', unsafe_allow_html=True)
+            _row_d[1].markdown(
+                f'<div style="font-size:11px; color:#90a4ae; padding:6px 6px;">'
+                f'{_ds.get("total", 0)}</div>', unsafe_allow_html=True)
+            _row_d[2].markdown(
+                f'<div style="font-size:11px; color:#4caf50; padding:6px 6px;">'
+                f'{_ds.get("wins", 0)}</div>', unsafe_allow_html=True)
+            _row_d[3].markdown(
+                f'<div style="font-size:11px; color:#ef5350; padding:6px 6px;">'
+                f'{_ds.get("losses", 0)}</div>', unsafe_allow_html=True)
+            _row_d[4].markdown(
+                f'<div style="font-size:12px; font-weight:800; color:{_dwr_c}; '
+                f'padding:6px 6px; font-family:monospace;">{_dwr:.1f}%</div>',
+                unsafe_allow_html=True)
+            _row_d[5].markdown(
+                f'<div style="font-size:12px; font-weight:800; color:{_dlr_c}; '
+                f'padding:6px 6px; font-family:monospace;">{_dlhr:.1f}%</div>',
+                unsafe_allow_html=True)
+            _row_d[6].markdown(
+                f'<div style="font-size:11px; color:#4caf50; padding:6px 6px; '
+                f'font-family:monospace;">+{_dbft:.1f}%</div>', unsafe_allow_html=True)
+            _row_d[7].markdown(
+                f'<div style="font-size:11px; color:#ef5350; padding:6px 6px; '
+                f'font-family:monospace;">-{_dbear:.1f}%</div>', unsafe_allow_html=True)
+            _row_d[8].markdown(
+                f'<div style="font-size:11px; color:#ffa726; padding:6px 6px; '
+                f'font-family:monospace;">{_dfbr:.1f}%</div>', unsafe_allow_html=True)
+        st.markdown("---")
 
     # ── Column headers ──────────────────────────────────────────────────────────
     st.markdown(
@@ -2764,9 +2888,9 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         unsafe_allow_html=True,
     )
 
-    _BT_COLS  = [0.7, 0.7, 0.75, 0.6, 1.2, 1.5, 1.2, 0.8, 0.6]
+    _BT_COLS  = [0.65, 0.65, 0.75, 0.55, 1.1, 1.4, 1.1, 0.75, 0.45, 0.55]
     _BT_HDRS  = ["Ticker", "Open", "IB Range", "TCS", "Morning Prediction",
-                 "EOD Reality", "Close", "Follow-Thru", "Result"]
+                 "EOD Reality", "Close", "Follow-Thru", "⚠", "Result"]
 
     _hdr_row = st.columns(_BT_COLS)
     for _col, _lbl in zip(_hdr_row, _BT_HDRS):
@@ -2846,7 +2970,19 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
             f'{_move_sign}{_move:.1f}%</div>',
             unsafe_allow_html=True,
         )
+        _fb_icon = ""
+        if _r.get("false_break_up"):
+            _fb_icon = '<span title="False bullish break — reversed within 30 min" ' \
+                       'style="color:#ffa726; font-size:14px;">⚠↑</span>'
+        elif _r.get("false_break_down"):
+            _fb_icon = '<span title="False bearish break — reversed within 30 min" ' \
+                       'style="color:#ffa726; font-size:14px;">⚠↓</span>'
         _row[8].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 4px; text-align:center;">'
+            f'{_fb_icon}</div>',
+            unsafe_allow_html=True,
+        )
+        _row[9].markdown(
             f'<div style="background:{_row_bg}; padding:8px 6px;">'
             f'<span style="background:{_wl_clr}22; color:{_wl_clr}; '
             f'font-size:11px; font-weight:800; padding:3px 10px; border-radius:10px; '
