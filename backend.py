@@ -3483,40 +3483,17 @@ def _load_local_eod_backup() -> list:
 
 
 def _save_local_eod_backup(note: dict) -> None:
-    """Upsert/merge a note dict into the local backup (keyed by user_id+note_date).
+    """Upsert a note dict into the local backup (keyed by user_id + note_date + watch_tickers).
 
-    If an entry already exists for the same date, tickers and notes are merged
-    rather than overwritten so multiple same-day saves accumulate correctly.
+    Each ticker on each date is a fully independent entry — no merging.
     """
     import json as _json
     rows = _load_local_eod_backup()
-    key = (note.get("user_id", ""), note.get("note_date", ""))
-    existing = next((r for r in rows if (r.get("user_id", ""), r.get("note_date", "")) == key), None)
-
-    if existing:
-        # Merge watch_tickers — deduplicate, preserve order
-        old_tickers = [t.strip() for t in existing.get("watch_tickers", "").split(",") if t.strip()]
-        new_tickers = [t.strip() for t in note.get("watch_tickers", "").split(",") if t.strip()]
-        merged_tickers = old_tickers + [t for t in new_tickers if t not in old_tickers]
-        # Merge notes — append new notes below a separator if different
-        old_notes = existing.get("notes", "").strip()
-        new_notes = note.get("notes", "").strip()
-        if new_notes and new_notes not in old_notes:
-            merged_notes = old_notes + ("\n\n---\n\n" if old_notes else "") + new_notes
-        else:
-            merged_notes = old_notes
-        # Merge images
-        merged_images = existing.get("images", []) + note.get("images", [])
-        existing.update({
-            "watch_tickers": ", ".join(merged_tickers),
-            "notes":         merged_notes,
-            "images":        merged_images,
-            "updated_at":    note.get("updated_at", ""),
-        })
-    else:
-        rows.append(note)
-
-    rows.sort(key=lambda r: r.get("note_date", ""), reverse=True)
+    key = (note.get("user_id", ""), note.get("note_date", ""), note.get("watch_tickers", "").strip())
+    rows = [r for r in rows
+            if (r.get("user_id", ""), r.get("note_date", ""), r.get("watch_tickers", "").strip()) != key]
+    rows.append(note)
+    rows.sort(key=lambda r: (r.get("note_date", ""), r.get("watch_tickers", "")), reverse=True)
     os.makedirs(os.path.dirname(_EOD_BACKUP), exist_ok=True)
     with open(_EOD_BACKUP, "w") as _f:
         _json.dump(rows, _f)
@@ -3553,7 +3530,7 @@ def save_eod_note(note_date, notes: str, watch_tickers: str,
             sb_payload["images"] = _json.dumps(images_b64)
             sb_payload["outcome"] = _json.dumps({})
             supabase.table("eod_notes").upsert(
-                sb_payload, on_conflict="user_id,note_date"
+                sb_payload, on_conflict="user_id,note_date,watch_tickers"
             ).execute()
             return True, "supabase"
         except Exception as e:
@@ -3578,7 +3555,7 @@ def _sync_local_to_supabase(user_id: str = "") -> int:
                 sb["images"] = _json.dumps(sb["images"])
             if isinstance(sb.get("outcome"), dict):
                 sb["outcome"] = _json.dumps(sb["outcome"])
-            supabase.table("eod_notes").upsert(sb, on_conflict="user_id,note_date").execute()
+            supabase.table("eod_notes").upsert(sb, on_conflict="user_id,note_date,watch_tickers").execute()
             synced += 1
         except Exception:
             pass
@@ -3596,7 +3573,6 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
 
     # Load local backup
     local_rows = [r for r in _load_local_eod_backup() if r.get("user_id") == uid]
-    local_by_date = {r["note_date"]: r for r in local_rows}
 
     sb_rows = []
     sb_ok = False
@@ -3606,6 +3582,7 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
                    .select("note_date,notes,watch_tickers,images,outcome,updated_at")
                    .eq("user_id", uid)
                    .order("note_date", desc=True)
+                   .order("watch_tickers", desc=False)
                    .limit(limit)
                    .execute())
             sb_ok = True
@@ -3621,9 +3598,10 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
             print(f"load_eod_notes Supabase error (using local backup): {e}")
 
     if sb_ok:
-        # Merge: Supabase wins, add any local-only dates on top
-        sb_dates = {r["note_date"] for r in sb_rows}
-        local_only = [v for k, v in local_by_date.items() if k not in sb_dates]
+        # Merge: Supabase wins, add any local-only (date+ticker) entries
+        sb_keys = {(r["note_date"], r.get("watch_tickers", "").strip()) for r in sb_rows}
+        local_only = [r for r in local_rows
+                      if (r.get("note_date", ""), r.get("watch_tickers", "").strip()) not in sb_keys]
         merged = sb_rows + local_only
         # Auto-sync local-only entries to Supabase quietly
         if local_only:
@@ -3635,7 +3613,7 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
         # Supabase down — return local backup only
         merged = local_rows
 
-    merged.sort(key=lambda r: r.get("note_date", ""), reverse=True)
+    merged.sort(key=lambda r: (r.get("note_date", ""), r.get("watch_tickers", "")), reverse=True)
     return merged[:limit]
 
 
