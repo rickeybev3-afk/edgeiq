@@ -2563,7 +2563,15 @@ def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
         errors.append(f"movers: {exc}")
 
     rows = sorted(pool.values(), key=lambda x: x["change_pct"], reverse=True)
-    err  = "; ".join(errors) if (errors and not rows) else ""
+    if errors and not rows:
+        # If every failure was a 400/422, the market is simply closed/inactive
+        non_auth = [e for e in errors if "400" in e or "422" in e]
+        if len(non_auth) == len(errors):
+            err = "market_closed"
+        else:
+            err = "; ".join(errors)
+    else:
+        err = ""
     return rows, err
 
 
