@@ -3197,14 +3197,13 @@ def save_watchlist(tickers: list, user_id: str = "") -> bool:
     Stores one row per user with a JSON-encoded list of tickers.
     Returns True on success, False on failure.
     """
-    supabase = _get_supabase()
     if not supabase:
         return False
     try:
         import json as _json
         payload = {
-            "user_id":  user_id or "anonymous",
-            "tickers":  _json.dumps([t.strip().upper() for t in tickers if t.strip()]),
+            "user_id":   user_id or "anonymous",
+            "tickers":   _json.dumps([t.strip().upper() for t in tickers if t.strip()]),
             "updated_at": datetime.utcnow().isoformat(),
         }
         supabase.table("user_watchlist").upsert(payload, on_conflict="user_id").execute()
@@ -3218,7 +3217,6 @@ def load_watchlist(user_id: str = "") -> list:
 
     Returns a list of ticker strings, or [] if not found / table missing.
     """
-    supabase = _get_supabase()
     if not supabase:
         return []
     try:
