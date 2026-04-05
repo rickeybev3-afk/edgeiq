@@ -3571,8 +3571,25 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
     import json as _json
     uid = user_id or "anonymous"
 
-    # Load local backup
-    local_rows = [r for r in _load_local_eod_backup() if r.get("user_id") == uid]
+    # Load local backup — include both uid-specific AND 'anonymous' entries (migration safety)
+    all_local = _load_local_eod_backup()
+    local_rows = [r for r in all_local
+                  if r.get("user_id") == uid or r.get("user_id") == "anonymous"]
+    # Re-stamp anonymous entries with the real uid so future syncs are correct
+    for r in local_rows:
+        if r.get("user_id") == "anonymous" and uid and uid != "anonymous":
+            r["user_id"] = uid
+    # Persist the re-stamped backup
+    if any(r.get("user_id") == "anonymous" for r in all_local) and uid and uid != "anonymous":
+        non_anon = [r for r in all_local if r.get("user_id") != "anonymous"]
+        updated  = non_anon + local_rows
+        try:
+            import json as _jj
+            os.makedirs(os.path.dirname(_EOD_BACKUP), exist_ok=True)
+            with open(_EOD_BACKUP, "w") as _ff:
+                _jj.dump(updated, _ff)
+        except Exception:
+            pass
 
     sb_rows = []
     sb_ok = False
@@ -3582,7 +3599,6 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
                    .select("note_date,notes,watch_tickers,images,outcome,updated_at")
                    .eq("user_id", uid)
                    .order("note_date", desc=True)
-                   .order("watch_tickers", desc=False)
                    .limit(limit)
                    .execute())
             sb_ok = True
