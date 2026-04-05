@@ -2302,7 +2302,6 @@ with st.sidebar:
         _wl_list = [t.strip().upper() for t in _wl_raw.replace("\n", ",").split(",")
                     if t.strip()]
         if _wl_list:
-            st.session_state["ticker_input"] = _wl_list[0]
             st.session_state["_load_ticker"] = _wl_list[0]
             st.caption(f"Loaded: {_wl_list[0]}")
 
