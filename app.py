@@ -2291,6 +2291,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             _scored_rows = score_playbook_tickers(
                 _rows_to_score, api_key, secret_key,
                 feed=_pb_feed_str, max_tickers=int(_pb_max_score),
+                user_id=_AUTH_USER_ID,
             )
         st.session_state[_pb_score_key] = _scored_rows
         _rows = _scored_rows
@@ -2335,14 +2336,41 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
         )
 
     # ── Column layout ───────────────────────────────────────────────────────────
-    _COL_W = [1.0, 0.9, 0.9, 1.2, 0.9, 0.8, 1.2, 0.8]
+    # ── Calibration status banner ────────────────────────────────────────────────
+    if _scores_loaded:
+        _w_info = compute_adaptive_weights(_AUTH_USER_ID)
+        _rows_used = _w_info.get("rows_used", 0)
+        if _w_info.get("calibrated"):
+            st.markdown(
+                f'<div style="background:#0a1628; border:1px solid #1565c0; border-radius:6px; '
+                f'padding:8px 16px; margin-bottom:10px; font-size:11px; color:#90caf9; '
+                f'font-family:monospace;">🧠 EDGE SCORE AUTO-CALIBRATED · '
+                f'{_rows_used} historical rows · '
+                f'TCS weight {_w_info["tcs"]*100:.0f}% · '
+                f'Structure {_w_info["structure"]*100:.0f}% · '
+                f'Environment {_w_info["environment"]*100:.0f}% · '
+                f'False Break {_w_info["false_break"]*100:.0f}% · '
+                f'Sorted by Edge Score ↓</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="background:#0a1628; border:1px solid #37474f; border-radius:6px; '
+                f'padding:8px 16px; margin-bottom:10px; font-size:11px; color:#546e7a; '
+                f'font-family:monospace;">⚙ EDGE SCORE using DEFAULT weights '
+                f'(TCS 35% · Structure 25% · Environment 25% · False Break 15%) · '
+                f'Run backtests to auto-calibrate · {_rows_used} rows saved so far</div>',
+                unsafe_allow_html=True,
+            )
+
+    _COL_W = [0.85, 0.75, 0.8, 1.0, 0.8, 0.7, 0.85, 1.1, 0.7]
     _COL_LABELS = ["Ticker", "Price", "% Change", "Volume", "Source",
-                   "TCS Score", "Predicted Setup", "Action"]
+                   "TCS", "Edge Score", "Predicted Setup", "Action"]
 
     # ── Column headers ──────────────────────────────────────────────────────────
     _hdr = st.columns(_COL_W)
     for _col, _lbl in zip(_hdr, _COL_LABELS):
-        _hdr_clr = "#7c4dff" if _lbl in ("TCS Score", "Predicted Setup") else "#90caf9"
+        _hdr_clr = "#4caf50" if _lbl == "Edge Score" else "#7c4dff" if _lbl in ("TCS", "Predicted Setup") else "#90caf9"
         _col.markdown(
             f'<div style="font-size:11px; font-weight:700; color:{_hdr_clr}; '
             f'text-transform:uppercase; letter-spacing:0.8px; padding:4px 0 8px 0; '
@@ -2409,7 +2437,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             f'border:1px solid {_src_color}55; text-transform:uppercase;">'
             f'{_src}</span></div>', unsafe_allow_html=True,
         )
-        # TCS Score cell — pill badge
+        # TCS cell
         _row_cols[5].markdown(
             f'<div style="padding:8px 0;">'
             f'<span style="background:{_tcs_color}22; color:{_tcs_color}; '
@@ -2417,13 +2445,45 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             f'border:1px solid {_tcs_color}55;">{_tcs_str}</span>'
             f'</div>', unsafe_allow_html=True,
         )
+        # Edge Score cell
+        _edge = _row.get("edge_score")
+        _bkd  = _row.get("edge_breakdown", {})
+        if _edge is None:
+            _edge_str   = "—"
+            _edge_color = "#37474f"
+            _edge_bg    = "#37474f"
+        elif _edge >= 75:
+            _edge_str   = f"{_edge:.0f}"
+            _edge_color = "#4caf50"
+            _edge_bg    = "#4caf50"
+        elif _edge >= 50:
+            _edge_str   = f"{_edge:.0f}"
+            _edge_color = "#ffa726"
+            _edge_bg    = "#ffa726"
+        else:
+            _edge_str   = f"{_edge:.0f}"
+            _edge_color = "#ef5350"
+            _edge_bg    = "#ef5350"
+        _bkd_tip = (
+            f"TCS {_bkd.get('tcs_pts',0):.0f} + "
+            f"Struct {_bkd.get('struct_pts',0):.0f} + "
+            f"Env {_bkd.get('env_pts',0):.0f} + "
+            f"Tape {_bkd.get('fb_pts',0):.0f}"
+        ) if _bkd else ""
+        _row_cols[6].markdown(
+            f'<div style="padding:8px 0;" title="{_bkd_tip}">'
+            f'<span style="background:{_edge_bg}22; color:{_edge_color}; '
+            f'font-size:14px; font-weight:900; padding:3px 12px; border-radius:12px; '
+            f'border:2px solid {_edge_bg}66; font-family:monospace;">{_edge_str}</span>'
+            f'</div>', unsafe_allow_html=True,
+        )
         # Predicted Setup cell
         _setup_short = (_setup[:16] + "…") if len(str(_setup)) > 16 else _setup
-        _row_cols[6].markdown(
+        _row_cols[7].markdown(
             f'<div style="padding:10px 0; font-size:12px; color:#ce93d8; font-weight:600;">'
             f'{_setup_short}</div>', unsafe_allow_html=True,
         )
-        with _row_cols[7]:
+        with _row_cols[8]:
             if st.button("📝 Log", key=f"playbook_log_{_i}_{_sym}",
                          use_container_width=True):
                 st.session_state["_fetched_price"]        = _price

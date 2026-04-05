@@ -2902,15 +2902,15 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────
 def _score_single_ticker(api_key: str, secret_key: str, sym: str,
                          trade_date, feed: str = "iex"):
-    """Fetch intraday bars for one ticker and return (sym, tcs, top_structure).
+    """Fetch intraday bars for one ticker and return (sym, tcs, top_structure, struct_conf).
 
-    Returns (sym, None, None) on any data or calculation failure so that callers
-    can gracefully degrade without crashing the whole batch.
+    Returns (sym, None, None, 0.0) on any data or calculation failure.
+    struct_conf = probability (0–100) of the top structure prediction.
     """
     try:
         df = fetch_bars(api_key, secret_key, sym, trade_date, feed=feed)
         if df.empty or len(df) < 5:
-            return sym, None, None
+            return sym, None, None, 0.0
 
         ib_high, ib_low = compute_initial_balance(df)
         if not ib_high or not ib_low:
@@ -2918,31 +2918,36 @@ def _score_single_ticker(api_key: str, secret_key: str, sym: str,
             ib_low  = float(df["low"].min())
 
         bin_centers, vap, poc_price = compute_volume_profile(df, num_bins=50)
-        tcs     = compute_tcs(df, ib_high, ib_low, poc_price)
-        probs   = compute_structure_probabilities(
+        tcs   = compute_tcs(df, ib_high, ib_low, poc_price)
+        probs = compute_structure_probabilities(
             df, bin_centers, vap, ib_high, ib_low, poc_price
         )
-        top_struct = max(probs, key=probs.get) if probs else "—"
-        return sym, round(float(tcs), 1), top_struct
+        top_struct  = max(probs, key=probs.get) if probs else "—"
+        struct_conf = round(float(probs.get(top_struct, 0.0)), 1) if probs else 0.0
+        return sym, round(float(tcs), 1), top_struct, struct_conf
     except Exception:
-        return sym, None, None
+        return sym, None, None, 0.0
 
 
 def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
-                           feed: str = "iex", max_tickers: int = 20) -> list:
-    """Enrich Playbook rows with TCS score and predicted structure.
+                           feed: str = "iex", max_tickers: int = 20,
+                           user_id: str = "") -> list:
+    """Enrich Playbook rows with TCS, structure, and self-calibrating Edge Score.
 
-    Fetches intraday bar data concurrently for up to *max_tickers* tickers
-    (taken from the front of *rows*, which is already sorted by % change).
-    Adds 'tcs' (float | None) and 'structure' (str) keys to every row dict.
-    Rows beyond max_tickers get tcs=None and structure='—'.
-    Returns the mutated rows list.
+    Edge Score (0–100) combines TCS, structure confidence, recent market
+    environment, and false break rate — weights auto-calibrate from saved
+    backtest history.
     """
     if not rows or not api_key or not secret_key:
         for row in rows:
             row.setdefault("tcs", None)
             row.setdefault("structure", "—")
+            row.setdefault("edge_score", None)
         return rows
+
+    # Pre-load adaptive weights + environment stats once for the whole batch
+    weights  = compute_adaptive_weights(user_id)
+    env_stat = get_recent_env_stats(user_id, days=5)
 
     trade_date = date.today()
     subset     = rows[:max_tickers]
@@ -2957,19 +2962,166 @@ def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
             for r in subset
         }
         for future in as_completed(future_map):
-            sym, tcs, structure = future.result()
-            scored[sym] = (tcs, structure if structure else "—")
+            sym, tcs, structure, struct_conf = future.result()
+            scored[sym] = (tcs, structure if structure else "—", struct_conf)
 
     for row in rows:
         sym = row["ticker"]
         if sym in scored:
-            tcs, structure = scored[sym]
-            row["tcs"]       = tcs
-            row["structure"] = structure
+            tcs, structure, struct_conf = scored[sym]
+            row["tcs"]         = tcs
+            row["structure"]   = structure
+            row["struct_conf"] = struct_conf
+            if tcs is not None:
+                edge, breakdown = compute_edge_score(
+                    tcs=tcs,
+                    structure_conf=struct_conf,
+                    env_long_rate=env_stat["long_rate"],
+                    recent_false_brk_rate=env_stat["false_brk_rate"],
+                    weights=weights,
+                )
+                row["edge_score"]     = edge
+                row["edge_breakdown"] = breakdown
+            else:
+                row["edge_score"]     = None
+                row["edge_breakdown"] = {}
         else:
-            row["tcs"]       = None
-            row["structure"] = "—"
+            row["tcs"]         = None
+            row["structure"]   = "—"
+            row["struct_conf"] = 0.0
+            row["edge_score"]  = None
+            row["edge_breakdown"] = {}
 
+    # Sort by edge score descending (None last)
+    rows.sort(key=lambda r: r.get("edge_score") or -1, reverse=True)
     return rows
+
+
+# ── Self-Calibrating Edge Score Engine ──────────────────────────────────────
+_DEFAULT_EDGE_WEIGHTS = {
+    "tcs":         0.35,
+    "structure":   0.25,
+    "environment": 0.25,
+    "false_break": 0.15,
+}
+
+
+def compute_adaptive_weights(user_id: str = "") -> dict:
+    """Load backtest history and compute data-calibrated signal weights.
+
+    Requires at least 15 saved rows to calibrate. Falls back to defaults
+    if there is insufficient data or Supabase is unavailable.
+
+    Returns a dict with keys: tcs, structure, environment, false_break,
+    rows_used (int), calibrated (bool).
+    """
+    df = load_backtest_sim_history(user_id)
+    if df.empty or len(df) < 15:
+        return {**_DEFAULT_EDGE_WEIGHTS, "rows_used": len(df), "calibrated": False}
+
+    try:
+        df["win_bin"] = (df["win_loss"] == "Win").astype(float)
+        df["tcs_num"] = pd.to_numeric(df["tcs"], errors="coerce").fillna(0)
+
+        # TCS correlation with wins (Pearson)
+        tcs_corr = float(df["tcs_num"].corr(df["win_bin"]))
+        if pd.isna(tcs_corr):
+            tcs_corr = 0.0
+        # Shift base weight by correlation signal, clamp to [0.15, 0.55]
+        tcs_w = max(0.15, min(0.55, 0.35 + tcs_corr * 0.25))
+
+        # Structure reliability: how well has the model been winning overall?
+        overall_wr = float(df["win_bin"].mean())
+        # Higher overall win rate → structure predictions are reliable → weight more
+        struct_w = max(0.10, min(0.40, 0.25 + (overall_wr - 0.50) * 0.30))
+
+        # Remaining weight split 60/40 between environment and false break
+        remaining = max(0.10, 1.0 - tcs_w - struct_w)
+        env_w = round(remaining * 0.60, 3)
+        fb_w  = round(remaining * 0.40, 3)
+
+        return {
+            "tcs":         round(tcs_w, 3),
+            "structure":   round(struct_w, 3),
+            "environment": env_w,
+            "false_break": fb_w,
+            "rows_used":   len(df),
+            "calibrated":  True,
+        }
+    except Exception:
+        return {**_DEFAULT_EDGE_WEIGHTS, "rows_used": len(df), "calibrated": False}
+
+
+def get_recent_env_stats(user_id: str = "", days: int = 5) -> dict:
+    """Get recent market environment stats from saved backtest history.
+
+    Returns dict with:
+    - long_rate (float 0–100): % of recent setups that went bullish
+    - false_brk_rate (float 0–100): % of IB breaks that reversed within 30 min
+    - rows_used (int): how many rows were used
+    """
+    df = load_backtest_sim_history(user_id)
+    if df.empty:
+        return {"long_rate": 50.0, "false_brk_rate": 0.0, "rows_used": 0}
+
+    try:
+        df["sim_date"] = pd.to_datetime(df["sim_date"], errors="coerce")
+        cutoff = pd.Timestamp.now(tz="UTC").tz_localize(None) - pd.Timedelta(days=days)
+        recent = df[df["sim_date"] >= cutoff]
+        if len(recent) < 10:
+            recent = df.tail(50)   # fallback: last 50 rows regardless of date
+
+        bull  = (recent["actual_outcome"] == "Bullish Break").sum()
+        total = len(recent)
+        long_rate = round(float(bull) / total * 100, 1) if total else 50.0
+
+        fb_up   = recent["false_break_up"].fillna(False).astype(bool).sum()
+        fb_down = recent["false_break_down"].fillna(False).astype(bool).sum()
+        breakable = int((recent["actual_outcome"] != "Range-Bound").sum())
+        false_brk_rate = (round((int(fb_up) + int(fb_down)) / breakable * 100, 1)
+                          if breakable else 0.0)
+
+        return {
+            "long_rate":      long_rate,
+            "false_brk_rate": false_brk_rate,
+            "rows_used":      total,
+        }
+    except Exception:
+        return {"long_rate": 50.0, "false_brk_rate": 0.0, "rows_used": 0}
+
+
+def compute_edge_score(
+    tcs: float,
+    structure_conf: float,
+    env_long_rate: float,
+    recent_false_brk_rate: float,
+    weights: dict,
+) -> tuple:
+    """Compute a composite 0–100 Edge Score for a live setup.
+
+    Returns (score: float, breakdown: dict).
+
+    Inputs (all 0–100):
+    - tcs                  : TCS momentum score
+    - structure_conf       : model's confidence in its top structure pick
+    - env_long_rate        : % of recent setups that went bullish (market environment)
+    - recent_false_brk_rate: % of recent IB breaks that faked out (lower = cleaner tape)
+    """
+    w = weights
+
+    tcs_pts    = min(100.0, max(0.0, tcs))            * w.get("tcs",         0.35)
+    struct_pts = min(100.0, max(0.0, structure_conf))  * w.get("structure",   0.25)
+    env_pts    = min(100.0, max(0.0, env_long_rate))   * w.get("environment", 0.25)
+    fb_clean   = max(0.0, 100.0 - recent_false_brk_rate)
+    fb_pts     = fb_clean                              * w.get("false_break", 0.15)
+
+    score = round(min(100.0, tcs_pts + struct_pts + env_pts + fb_pts), 1)
+    return score, {
+        "tcs_pts":    round(tcs_pts,    1),
+        "struct_pts": round(struct_pts, 1),
+        "env_pts":    round(env_pts,    1),
+        "fb_pts":     round(fb_pts,     1),
+        "total":      score,
+    }
 
 
