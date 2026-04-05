@@ -3257,3 +3257,87 @@ def load_watchlist(user_id: str = "") -> list:
         return []
 
 
+# ── God Mode — Live Trade Execution ──────────────────────────────────────────
+
+def execute_alpaca_trade(
+    api_key: str,
+    secret_key: str,
+    is_paper: bool,
+    ticker: str,
+    qty: int,
+    side: str,
+    limit_price: float = None,
+) -> dict:
+    """Submit a live or paper trade to Alpaca.
+
+    Parameters
+    ----------
+    api_key, secret_key : Alpaca credentials entered in the sidebar.
+    is_paper            : True  → paper trading endpoint
+                          False → live trading endpoint
+    ticker              : Stock symbol, e.g. 'GME'
+    qty                 : Number of shares (whole shares only)
+    side                : 'buy' or 'sell'
+    limit_price         : If provided, submits a Day Limit order;
+                          otherwise submits a Market order.
+
+    Returns
+    -------
+    dict with keys:
+        success  (bool)
+        order_id (str)   — Alpaca order UUID on success
+        message  (str)   — human-readable confirmation or error detail
+    """
+    if not api_key or not secret_key:
+        return {"success": False, "order_id": None,
+                "message": "No API credentials — enter your Alpaca key and secret in the sidebar."}
+    if qty <= 0:
+        return {"success": False, "order_id": None,
+                "message": "Quantity must be at least 1 share."}
+    if side not in ("buy", "sell"):
+        return {"success": False, "order_id": None,
+                "message": f"Invalid side '{side}' — must be 'buy' or 'sell'."}
+
+    try:
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        client = TradingClient(api_key, secret_key, paper=is_paper)
+
+        order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
+
+        if limit_price is not None and limit_price > 0:
+            req = LimitOrderRequest(
+                symbol=ticker.upper(),
+                qty=qty,
+                side=order_side,
+                time_in_force=TimeInForce.DAY,
+                limit_price=round(float(limit_price), 2),
+            )
+            order_type_label = f"LIMIT @ ${limit_price:.2f}"
+        else:
+            req = MarketOrderRequest(
+                symbol=ticker.upper(),
+                qty=qty,
+                side=order_side,
+                time_in_force=TimeInForce.DAY,
+            )
+            order_type_label = "MARKET"
+
+        order = client.submit_order(req)
+        env_label = "PAPER" if is_paper else "LIVE"
+        return {
+            "success":  True,
+            "order_id": str(order.id),
+            "message":  (
+                f"✅ {env_label} {side.upper()} {qty} {ticker.upper()} "
+                f"({order_type_label}) submitted. "
+                f"Order ID: {order.id} · Status: {order.status}"
+            ),
+        }
+
+    except Exception as exc:
+        return {"success": False, "order_id": None, "message": f"Alpaca error: {exc}"}
+
+

@@ -4468,6 +4468,103 @@ def render_sa_tab():
         unsafe_allow_html=True,
     )
 
+    # ── SECTION 5b — GOD MODE LIVE EXECUTION ────────────────────────────────
+    st.markdown("---")
+    st.markdown(
+        '<div style="background:linear-gradient(135deg,#1a0a2e,#0d1b2a);'
+        'border:2px solid #7c4dff;border-radius:12px;padding:14px 18px;margin-bottom:8px;">'
+        '<span style="font-size:18px;font-weight:900;color:#e040fb;letter-spacing:1px;">'
+        '⚡ GOD MODE — Live Trade Execution</span>'
+        '<span style="font-size:11px;color:#546e7a;margin-left:12px;">'
+        'Routes directly to Alpaca broker</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    _gm_sa_ticker = st.session_state.get("sa_ticker_input", "").strip().upper() or ticker
+    _gm_c1, _gm_c2, _gm_c3 = st.columns([1.2, 1.2, 1.6])
+
+    with _gm_c1:
+        _gm_ticker = st.text_input(
+            "Ticker", value=_gm_sa_ticker, key="gm_ticker",
+            placeholder="GME",
+        ).strip().upper()
+        _gm_side = st.selectbox(
+            "Side", ["buy", "sell"], key="gm_side",
+            format_func=lambda x: "🟢 BUY" if x == "buy" else "🔴 SELL",
+        )
+
+    with _gm_c2:
+        _gm_env = st.selectbox(
+            "Environment", ["Paper Trading", "Live Trading"], key="gm_env",
+        )
+        _gm_is_paper = _gm_env == "Paper Trading"
+        _gm_order_type = st.selectbox(
+            "Order Type", ["Market", "Limit"], key="gm_order_type",
+        )
+
+    with _gm_c3:
+        _gm_qty = st.number_input(
+            "Shares", min_value=1, max_value=10_000,
+            value=max(1, max_shares),
+            step=1, key="gm_qty",
+        )
+        _gm_limit_px = None
+        if _gm_order_type == "Limit":
+            _gm_limit_px = st.number_input(
+                "Limit Price ($)", min_value=0.01, max_value=10_000.0,
+                value=round(float(price) if price else 1.00, 2),
+                step=0.01, format="%.2f", key="gm_limit_px",
+            )
+
+    # Safety warning for live mode
+    if not _gm_is_paper:
+        st.warning(
+            "⚠️ **LIVE trading is enabled.** This will send a REAL order with REAL money "
+            "to your Alpaca brokerage account. Double-check everything before firing.",
+            icon="⚠️",
+        )
+
+    _gm_env_badge  = "🔵 PAPER" if _gm_is_paper else "🔴 LIVE"
+    _gm_btn_color  = "#5c6bc0" if _gm_is_paper else "#b71c1c"
+    _gm_btn_label  = (
+        f"🚀 EXECUTE {_gm_env_badge} ORDER — "
+        f"{_gm_side.upper()} {_gm_qty} {_gm_ticker or '???'}"
+    )
+
+    st.markdown(
+        f'<style>.gm-fire-btn button{{background:{_gm_btn_color}!important;'
+        f'color:#fff!important;font-size:17px!important;font-weight:900!important;'
+        f'border-radius:10px!important;padding:14px!important;'
+        f'letter-spacing:1px!important;border:none!important;}}</style>',
+        unsafe_allow_html=True,
+    )
+    with st.container():
+        st.markdown('<div class="gm-fire-btn">', unsafe_allow_html=True)
+        _gm_fire = st.button(_gm_btn_label, use_container_width=True, key="gm_fire_btn")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    if _gm_fire:
+        if not _gm_ticker:
+            st.error("Enter a ticker symbol first.")
+        elif not api_key or not secret_key:
+            st.error("No Alpaca credentials — enter your API Key and Secret in the sidebar.")
+        else:
+            with st.spinner(f"Sending {'paper' if _gm_is_paper else 'LIVE'} order to Alpaca…"):
+                _gm_result = execute_alpaca_trade(
+                    api_key=api_key,
+                    secret_key=secret_key,
+                    is_paper=_gm_is_paper,
+                    ticker=_gm_ticker,
+                    qty=int(_gm_qty),
+                    side=_gm_side,
+                    limit_price=_gm_limit_px,
+                )
+            if _gm_result["success"]:
+                st.success(_gm_result["message"])
+                st.caption(f"Order ID: `{_gm_result['order_id']}`")
+            else:
+                st.error(_gm_result["message"])
+
     # ── SECTION 6 — RECOVERY RATIO ───────────────────────────────────────────
     st.markdown("---")
     st.markdown("### 📉 Recovery Ratio — The Math of Drawdown")
