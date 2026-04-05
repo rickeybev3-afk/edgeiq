@@ -2291,12 +2291,13 @@ with st.sidebar:
         key="_sb_secret_key",
     )
     # Auto-save credentials whenever they're filled in
-    if api_key and secret_key and _AUTH_USER_ID:
+    _sb_uid = st.session_state.get("auth_user_id", "")
+    if api_key and secret_key and _sb_uid:
         _cur_prefs = st.session_state.get("_cached_prefs", {})
         if (_cur_prefs.get("alpaca_key") != api_key or
                 _cur_prefs.get("alpaca_secret") != secret_key):
             _new_prefs = {**_cur_prefs, "alpaca_key": api_key, "alpaca_secret": secret_key}
-            save_user_prefs(_AUTH_USER_ID, _new_prefs)
+            save_user_prefs(_sb_uid, _new_prefs)
             st.session_state["_cached_prefs"]       = _new_prefs
             st.session_state["_pref_alpaca_key"]    = api_key
             st.session_state["_pref_alpaca_secret"] = secret_key
@@ -2313,11 +2314,11 @@ with st.sidebar:
     )
     if _dw_input:
         st.session_state["discord_webhook_url"] = _dw_input
-        if _AUTH_USER_ID:
+        if _sb_uid:
             _cur_prefs = st.session_state.get("_cached_prefs", {})
             if _cur_prefs.get("discord_webhook") != _dw_input:
                 _new_prefs = {**_cur_prefs, "discord_webhook": _dw_input}
-                save_user_prefs(_AUTH_USER_ID, _new_prefs)
+                save_user_prefs(_sb_uid, _new_prefs)
                 st.session_state["_cached_prefs"] = _new_prefs
     discord_webhook_url = st.session_state.get("discord_webhook_url", "")
     if discord_webhook_url:
