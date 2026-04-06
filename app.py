@@ -1131,13 +1131,14 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                             _img_data = _img.get("data", "")
                             if _img_data:
                                 _col = _img_cols[_ic % 3]
-                                _col.image(
+                                _thumb, _ = _col.columns([1, 1])
+                                _thumb.image(
                                     f"data:image/jpeg;base64,{_img_data}",
                                     caption=_img.get("filename", ""),
                                     use_container_width=True,
                                 )
                                 import base64 as _b64mod
-                                _col.download_button(
+                                _thumb.download_button(
                                     label="⬇ Download",
                                     data=_b64mod.b64decode(_img_data),
                                     file_name=_img.get("filename", f"chart_{_ic+1}.jpg"),
