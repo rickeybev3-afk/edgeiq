@@ -405,6 +405,24 @@ def render_log_entry_ui():
             # Use fetched price in the log entry
             price = _fp
 
+        # ── Entry time override ───────────────────────────────────────────────
+        st.markdown(
+            '<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+            'letter-spacing:1px; margin:8px 0 4px 0;">⏱ Entry Time (ET)</div>',
+            unsafe_allow_html=True,
+        )
+        _tc1, _tc2 = st.columns([1, 1])
+        _now_et = datetime.now(EASTERN)
+        _entry_date = _tc1.date_input(
+            "Entry date", value=_now_et.date(),
+            key="journal_entry_date", label_visibility="collapsed",
+        )
+        _entry_time = _tc2.time_input(
+            "Entry time (ET)", value=_now_et.time().replace(second=0, microsecond=0),
+            key="journal_entry_time", label_visibility="collapsed",
+            step=60,
+        )
+
         notes = st.text_input(
             "Mental State / Notes",
             placeholder="e.g. Calm, FOMO, Greed, Hesitated...",
@@ -416,8 +434,9 @@ def render_log_entry_ui():
                 state.get("ib_high"), state.get("ib_low"), state.get("structure"),
             )
             _log_ticker = st.session_state.get("_fetched_symbol") or state.get("ticker", "")
+            _entry_dt = datetime.combine(_entry_date, _entry_time)
             entry = {
-                "timestamp": datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
+                "timestamp": _entry_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 "ticker":    _log_ticker,
                 "price":     round(float(price), 4),
                 "structure": state.get("structure", ""),
