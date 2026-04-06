@@ -36,3 +36,9 @@ id = "uPNIdZvCXvZtEWe80_en9"
 uri = "file://code_for_ai.txt"
 type = "text"
 title = "Full Codebase for AI (backend + app + engine + weights)"
+
+[[outputs]]
+id = "KGOgK2SGgY6N34b-9K-cM"
+uri = "file://code_export.zip"
+type = "unspecified"
+title = "Volume Profile Terminal — Source Code"
