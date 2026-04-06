@@ -2081,6 +2081,14 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
                     avg_daily_vol=None, sector_bonus=0.0, sector_etf="IWM",
                     intraday_curve=None, is_live=False):
     ib_high, ib_low = compute_initial_balance(df)
+
+    # ── IB override: user can correct from their broker ───────────────────────
+    _ib_ovr_key = f"ib_override_{ticker}"
+    _ib_ovr = st.session_state.get(_ib_ovr_key)
+    if _ib_ovr:
+        ib_high = _ib_ovr.get("high") or ib_high
+        ib_low  = _ib_ovr.get("low")  or ib_low
+
     bin_centers, vap, poc_price = compute_volume_profile(df, num_bins)
     # ── Cache raw bars + VP data for Small Account Challenge tab ─────────────
     st.session_state.last_bars      = df.copy()
@@ -2208,6 +2216,35 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     col6.metric("POC", f"${poc_price:.2f}" if poc_price is not None else "—")
     col7.metric("RVOL", rvol_display)
     col8.metric("Sector", sector_display)
+
+    # ── IB Manual Override ────────────────────────────────────────────────────
+    _ib_ovr_key = f"ib_override_{ticker}"
+    _has_override = bool(st.session_state.get(_ib_ovr_key))
+    _ovr_label = "✏️ IB Override (active)" if _has_override else "✏️ Override IB Levels (if your broker differs)"
+    with st.expander(_ovr_label, expanded=False):
+        st.caption("Enter your broker's IB high/low (e.g. from Webull/Thinkorswim). "
+                   "Leave a field at 0 to keep the auto-computed value. "
+                   "Click Apply — the chart and all signals will recalculate.")
+        _ovc1, _ovc2, _ovc3 = st.columns([1, 1, 1])
+        _curr_high = st.session_state.get(_ib_ovr_key, {}).get("high") or ib_high or 0.0
+        _curr_low  = st.session_state.get(_ib_ovr_key, {}).get("low")  or ib_low  or 0.0
+        _ovr_high = _ovc1.number_input("IB High override", value=float(_curr_high),
+                                        min_value=0.0, step=0.001, format="%.3f",
+                                        key=f"ovr_high_{ticker}")
+        _ovr_low  = _ovc2.number_input("IB Low override",  value=float(_curr_low),
+                                        min_value=0.0, step=0.001, format="%.3f",
+                                        key=f"ovr_low_{ticker}")
+        _ovc3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _ovc3_cols = _ovc3.columns(2)
+        if _ovc3_cols[0].button("Apply", key=f"ovr_apply_{ticker}", use_container_width=True):
+            st.session_state[_ib_ovr_key] = {
+                "high": _ovr_high if _ovr_high > 0 else None,
+                "low":  _ovr_low  if _ovr_low  > 0 else None,
+            }
+            st.rerun()
+        if _ovc3_cols[1].button("Clear", key=f"ovr_clear_{ticker}", use_container_width=True):
+            st.session_state.pop(_ib_ovr_key, None)
+            st.rerun()
 
     # ── IB Volume Stats widget ─────────────────────────────────────────────────
     ib_vol_pct_disp, ib_range_ratio_disp = compute_ib_volume_stats(df, ib_high, ib_low)

@@ -294,8 +294,23 @@ def compute_vwap(df: "pd.DataFrame") -> "pd.Series":
 
 
 def compute_initial_balance(df):
-    ib_end = df.index[0].replace(hour=10, minute=30, second=0)
-    ib_data = df[df.index <= ib_end]
+    """Return (ib_high, ib_low) for the 9:30–10:29 first-hour window.
+
+    Uses strict ``< 10:30`` so the 10:30 bar (which runs 10:30:00–10:30:59,
+    i.e. *after* the IB closes) is excluded.  Builds the cutoff from the
+    date of the first bar to avoid any tz-replace edge cases.
+    """
+    if df.empty:
+        return None, None
+    first_ts = df.index[0]
+    # Build the IB cutoff in the same timezone as the dataframe index
+    tz = first_ts.tzinfo
+    ib_end = pd.Timestamp(
+        year=first_ts.year, month=first_ts.month, day=first_ts.day,
+        hour=10, minute=30, second=0, tz=tz,
+    )
+    # Strict < 10:30 → bars 9:30–10:29 only (last complete first-hour bar)
+    ib_data = df[df.index < ib_end]
     if ib_data.empty:
         return None, None
     return float(ib_data["high"].max()), float(ib_data["low"].min())
