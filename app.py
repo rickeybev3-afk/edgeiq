@@ -18,6 +18,7 @@ from backend import (
     save_signal_conditions, log_signal_outcome, get_predictive_context,
     compute_win_rates, monte_carlo_equity_curves,
     compute_order_flow_signals,
+    load_watchlist,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
