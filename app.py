@@ -881,12 +881,14 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     # ── Edit-mode prefill: copy pending values into widget keys before render ──
     if st.session_state.get("_eod_prefill_pending"):
         _pf = st.session_state.pop("_eod_prefill_pending")
-        st.session_state["eod_note_date"]       = _pf["date"]
-        st.session_state["eod_watch_tickers"]   = _pf["ticker"]
-        st.session_state["eod_notes_text"]      = _pf["notes"]
-        st.session_state["_eod_edit_images"]    = _pf["images"]
+        st.session_state["eod_note_date"]         = _pf["date"]
+        st.session_state["eod_watch_tickers"]     = _pf["ticker"]
+        st.session_state["eod_notes_text"]        = _pf["notes"]
+        st.session_state["_eod_edit_images"]      = _pf["images"]
         st.session_state["_eod_edit_orig_date"]   = str(_pf["date"])
         st.session_state["_eod_edit_orig_ticker"] = _pf["ticker"]
+        # Reset the uploader so stale files from a previous edit don't carry over
+        st.session_state["_eod_upload_gen"] = st.session_state.get("_eod_upload_gen", 0) + 1
 
     # ── Edit-mode banner ──────────────────────────────────────────────────────
     _edit_imgs = st.session_state.get("_eod_edit_images", [])
@@ -912,11 +914,12 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         key="eod_notes_text",
     )
 
+    _upload_gen = st.session_state.get("_eod_upload_gen", 0)
     _eod_uploads = st.file_uploader(
         "📷 Chart Images (up to 5, PNG/JPG) — leave blank to keep existing images",
         type=["png", "jpg", "jpeg"],
         accept_multiple_files=True,
-        key="eod_image_uploader",
+        key=f"eod_image_uploader_{_upload_gen}",
     )
 
     # Show existing images that will be kept (edit mode)
@@ -968,6 +971,8 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             for _k in ("_eod_edit_images", "_eod_edit_active",
                        "_eod_edit_orig_date", "_eod_edit_orig_ticker"):
                 st.session_state.pop(_k, None)
+            # Bump upload gen so the file uploader resets completely
+            st.session_state["_eod_upload_gen"] = st.session_state.get("_eod_upload_gen", 0) + 1
             if _src == "supabase":
                 st.success(f"✅ Review saved for {_eod_date}")
             else:
