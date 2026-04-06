@@ -13,6 +13,7 @@ from backend import (
     _parse_batch_pairs, _RECALIBRATE_EVERY, _BRAIN_WEIGHT_KEYS,
     _JOURNAL_COLS, _find_peaks, _is_strong_hvn, _detect_double_distribution,
     _label_to_weight_key, _save_brain_weights, _stream_worker, _GRADE_COLORS, _GRADE_SCORE,
+    _compress_image_b64,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -885,21 +886,32 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             "paste this SQL into your **Supabase → SQL Editor** and click **Run**. "
             "You only need to do this once."
         )
+        st.warning(
+            "**Run each block separately** in the SQL editor — paste one, click Run, then paste the next."
+        )
+        st.caption("**Step 1 — Drop old constraint** (run this first on its own)")
         st.code(
-            """-- 1. Allow multiple tickers per day
-ALTER TABLE eod_notes DROP CONSTRAINT IF EXISTS eod_notes_user_id_note_date_key;
-ALTER TABLE eod_notes ADD CONSTRAINT eod_notes_unique_ticker
-    UNIQUE (user_id, note_date, watch_tickers);
-
--- 2. Add outcome column (for prediction verification)
-ALTER TABLE eod_notes ADD COLUMN IF NOT EXISTS outcome JSONB DEFAULT '{}';
-
--- 3. User preferences table (credential storage)
-CREATE TABLE IF NOT EXISTS user_preferences (
-    user_id TEXT PRIMARY KEY,
-    prefs   JSONB DEFAULT '{}',
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);""",
+            "ALTER TABLE eod_notes DROP CONSTRAINT IF EXISTS eod_notes_user_id_note_date_key;",
+            language="sql",
+        )
+        st.caption("**Step 2 — Add correct constraint** (run after Step 1 succeeds)")
+        st.code(
+            "ALTER TABLE eod_notes ADD CONSTRAINT eod_notes_unique_ticker\n"
+            "    UNIQUE (user_id, note_date, watch_tickers);",
+            language="sql",
+        )
+        st.caption("**Step 3 — Add outcome column**")
+        st.code(
+            "ALTER TABLE eod_notes ADD COLUMN IF NOT EXISTS outcome JSONB DEFAULT '{}';",
+            language="sql",
+        )
+        st.caption("**Step 4 — User preferences table**")
+        st.code(
+            "CREATE TABLE IF NOT EXISTS user_preferences (\n"
+            "    user_id TEXT PRIMARY KEY,\n"
+            "    prefs   JSONB DEFAULT '{}',\n"
+            "    updated_at TIMESTAMPTZ DEFAULT NOW()\n"
+            ");",
             language="sql",
         )
 

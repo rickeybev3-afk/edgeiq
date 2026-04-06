@@ -3650,31 +3650,24 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
     sb_rows = []
     sb_ok = False
     if supabase:
-        for _select in (
-            "note_date,notes,watch_tickers,images,outcome,updated_at",
-            "note_date,notes,watch_tickers,images,updated_at",
-        ):
-            try:
-                res = (supabase.table("eod_notes")
-                       .select(_select)
-                       .eq("user_id", uid)
-                       .order("note_date", desc=True)
-                       .limit(limit)
-                       .execute())
-                sb_ok = True
-                for r in (res.data or []):
-                    for field in ("images", "outcome"):
-                        val = r.get(field, "[]" if field == "images" else {})
-                        if isinstance(val, str):
-                            try: val = _json.loads(val)
-                            except: val = [] if field == "images" else {}
-                        r[field] = val
-                    sb_rows.append(r)
-                break
-            except Exception as e:
-                print(f"load_eod_notes Supabase error (using local backup): {e}")
-                if _select.endswith("updated_at") and "outcome" not in _select:
-                    break
+        try:
+            res = (supabase.table("eod_notes")
+                   .select("note_date,notes,watch_tickers,images,updated_at")
+                   .eq("user_id", uid)
+                   .order("note_date", desc=True)
+                   .limit(limit)
+                   .execute())
+            sb_ok = True
+            for r in (res.data or []):
+                val = r.get("images", "[]")
+                if isinstance(val, str):
+                    try: val = _json.loads(val)
+                    except: val = []
+                r["images"] = val
+                r.setdefault("outcome", {})
+                sb_rows.append(r)
+        except Exception as e:
+            print(f"load_eod_notes Supabase error: {e}")
 
     if sb_ok:
         # Merge by (note_date, watch_tickers) — whichever version has the newer
