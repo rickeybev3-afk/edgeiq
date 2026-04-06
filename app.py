@@ -21,6 +21,7 @@ from backend import (
     load_watchlist,
     get_next_trading_day,
     detect_chart_patterns,
+    parse_webull_csv,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -538,6 +539,90 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 mime="text/csv",
                 use_container_width=True,
             )
+
+    # ── Webull CSV Import ──────────────────────────────────────────────────────
+    with st.expander("📥 Import Trades from Webull CSV", expanded=df.empty):
+        st.markdown(
+            '<div style="font-size:12px; color:#546e7a; margin-bottom:10px;">'
+            'In Webull: <b>Orders → History → Export CSV</b>. '
+            'Upload your file below — all closed round-trips are auto-detected, '
+            'paired buy→sell, graded by P&L, and saved to your journal instantly. '
+            'Open positions are skipped automatically.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        _wb_file = st.file_uploader(
+            "Drop your Webull order history CSV here",
+            type=["csv"],
+            key="webull_csv_uploader",
+            label_visibility="collapsed",
+        )
+        if _wb_file is not None:
+            try:
+                _wb_df = pd.read_csv(_wb_file)
+                _wb_trades = parse_webull_csv(_wb_df)
+                if not _wb_trades:
+                    st.warning(
+                        "Could not detect any closed round-trip trades in this file. "
+                        "Make sure you exported **Order History** (not Account History) "
+                        "and that the file contains both Buy and Sell filled orders."
+                    )
+                    st.caption(f"Columns found: {', '.join(_wb_df.columns.tolist())}")
+                else:
+                    _wb_preview = pd.DataFrame([{
+                        "Ticker":      t["ticker"],
+                        "Entry Date":  str(t["timestamp"])[:10],
+                        "Entry Price": f"${t['price']:.4f}",
+                        "Grade":       t["grade"],
+                        "Notes":       t["notes"],
+                    } for t in _wb_trades])
+                    st.success(f"Found **{len(_wb_trades)} closed trades** ready to import:")
+                    st.dataframe(_wb_preview, use_container_width=True, height=220)
+
+                    _wb_col1, _wb_col2 = st.columns([1, 1])
+                    with _wb_col1:
+                        _wb_skip_dups = st.checkbox(
+                            "Skip duplicates (same ticker + date already in journal)",
+                            value=True, key="wb_skip_dups",
+                        )
+                    with _wb_col2:
+                        _wb_import_btn = st.button(
+                            f"💾 IMPORT {len(_wb_trades)} TRADES",
+                            type="primary", use_container_width=True,
+                            key="wb_import_btn",
+                        )
+
+                    if _wb_import_btn:
+                        _existing_keys: set = set()
+                        if _wb_skip_dups and not df.empty:
+                            for _, _erow in df.iterrows():
+                                _ekey = (
+                                    str(_erow.get("ticker", "")).upper(),
+                                    str(_erow.get("timestamp", ""))[:10],
+                                )
+                                _existing_keys.add(_ekey)
+
+                        _imported = 0
+                        _skipped  = 0
+                        for _t in _wb_trades:
+                            _key = (_t["ticker"].upper(), str(_t["timestamp"])[:10])
+                            if _wb_skip_dups and _key in _existing_keys:
+                                _skipped += 1
+                                continue
+                            save_journal_entry(_t, user_id=_uid)
+                            _imported += 1
+
+                        st.success(
+                            f"Imported **{_imported} trades** into your journal"
+                            + (f" ({_skipped} skipped as duplicates)" if _skipped else "")
+                            + ". Refresh the page to see them below."
+                        )
+                        if _imported > 0:
+                            st.balloons()
+            except Exception as _wb_err:
+                st.error(f"Could not parse CSV: {_wb_err}. Make sure you uploaded an unmodified Webull export.")
+
+    st.markdown("---")
 
     if df.empty:
         st.info("No entries yet. Run an analysis and click **💾 LOG ENTRY** under the chart.")

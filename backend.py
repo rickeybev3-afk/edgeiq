@@ -2818,6 +2818,136 @@ def save_journal_entry(entry: dict, user_id: str = ""):
         print(f"Database write error (journal): {e}")
 
 
+def parse_webull_csv(df: "pd.DataFrame") -> list:
+    """Parse a Webull order-history CSV DataFrame into round-trip trade dicts.
+
+    Handles multiple Webull export formats (column name variations).
+    Pairs Buy→Sell using FIFO per ticker. Open positions (no matching sell)
+    are silently skipped — they have not yet been closed.
+
+    Returns a list of dicts compatible with save_journal_entry().
+    """
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    cols_lower = {c.lower(): c for c in df.columns}
+
+    def _find(candidates):
+        for cand in candidates:
+            if cand in cols_lower:
+                return cols_lower[cand]
+        for cand in candidates:
+            for col_l, col in cols_lower.items():
+                if cand in col_l:
+                    return col
+        return None
+
+    sym_col    = _find(["symbol", "sym.", "ticker", "sym", "stock"])
+    side_col   = _find(["side", "b/s", "action", "type", "order side"])
+    qty_col    = _find(["filled qty", "fill qty", "qty filled", "executed qty",
+                         "filled", "qty", "quantity", "shares"])
+    price_col  = _find(["avg price", "avg. price", "fill price", "exec price",
+                         "filled price", "executed price", "price"])
+    time_col   = _find(["create time", "filled time", "time placed", "order time",
+                         "time", "date", "datetime"])
+    status_col = _find(["status"])
+
+    if not sym_col or not side_col or not qty_col or not price_col or not time_col:
+        return []
+
+    if status_col:
+        df = df[df[status_col].astype(str).str.lower().str.contains("fill", na=False)]
+
+    df["_side"] = df[side_col].astype(str).str.lower().str.strip()
+    df = df[df["_side"].str.contains("buy|sell", na=False)]
+
+    df["_qty"]   = pd.to_numeric(df[qty_col],   errors="coerce")
+    df["_price"] = pd.to_numeric(df[price_col], errors="coerce")
+    df["_time"]  = pd.to_datetime(df[time_col], errors="coerce", infer_datetime_format=True)
+    df["_sym"]   = df[sym_col].astype(str).str.upper().str.strip()
+
+    df = df.dropna(subset=["_qty", "_price", "_time", "_sym"]).sort_values("_time")
+
+    buy_queues: dict = {}
+    trades = []
+
+    for _, row in df.iterrows():
+        sym   = row["_sym"]
+        side  = row["_side"]
+        qty   = float(row["_qty"])
+        price = float(row["_price"])
+        ts    = row["_time"]
+
+        if "buy" in side:
+            buy_queues.setdefault(sym, []).append(
+                {"time": ts, "price": price, "qty": qty, "remaining": qty}
+            )
+
+        elif "sell" in side:
+            queue = buy_queues.get(sym, [])
+            if not queue:
+                continue
+
+            qty_left       = qty
+            entry_cost     = 0.0
+            entry_qty_tot  = 0.0
+            entry_price_wt = 0.0
+            entry_time     = None
+
+            while qty_left > 0 and queue:
+                buy     = queue[0]
+                matched = min(buy["remaining"], qty_left)
+                entry_cost     += buy["price"] * matched
+                entry_price_wt += buy["price"] * matched
+                entry_qty_tot  += matched
+                if entry_time is None:
+                    entry_time = buy["time"]
+                buy["remaining"] -= matched
+                qty_left         -= matched
+                if buy["remaining"] <= 0:
+                    queue.pop(0)
+
+            if entry_qty_tot == 0:
+                continue
+
+            avg_entry  = entry_price_wt / entry_qty_tot
+            sell_total = price * qty
+            pnl        = sell_total - entry_cost
+            pnl_pct    = pnl / entry_cost * 100 if entry_cost > 0 else 0
+            shares_int = int(round(entry_qty_tot))
+
+            if pnl_pct > 5:
+                grade = "A"
+            elif pnl_pct > 1:
+                grade = "B"
+            elif pnl_pct > -2:
+                grade = "C"
+            elif pnl_pct > -5:
+                grade = "D"
+            else:
+                grade = "F"
+
+            trades.append({
+                "timestamp":   entry_time.isoformat() if hasattr(entry_time, "isoformat") else str(entry_time),
+                "ticker":      sym,
+                "price":       round(avg_entry, 4),
+                "structure":   "Unknown",
+                "tcs":         None,
+                "rvol":        None,
+                "ib_high":     None,
+                "ib_low":      None,
+                "notes": (
+                    f"Webull import | Exit: ${price:.4f} | "
+                    f"P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%) | "
+                    f"Shares: {shares_int} | "
+                    f"Exit: {ts.strftime('%Y-%m-%d %H:%M') if hasattr(ts, 'strftime') else ts}"
+                ),
+                "grade":        grade,
+                "grade_reason": f"Auto-graded from P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%)",
+            })
+
+    return trades
+
+
 def fetch_live_quote(ticker: str) -> dict:
     """Fetch current price and today's volume via yfinance.
     Returns dict with keys: price, volume, error (None on success).
