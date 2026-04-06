@@ -4499,13 +4499,18 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
     else:
         check_date = pred_date
 
+    # When user explicitly provides a date, fetch ALL predictions for that date
+    # (including already-verified) so they can re-run verification.
+    _explicit_date = pred_date is not None
+
     try:
         uid = user_id or "anonymous"
         q = (supabase.table("watchlist_predictions")
              .select("*")
              .eq("user_id", uid)
-             .eq("verified", False)
              .eq("pred_date", str(check_date)))
+        if not _explicit_date:
+            q = q.eq("verified", False)
         res = q.execute()
         pending = res.data or []
     except Exception as e:
@@ -4514,7 +4519,7 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
     if not pending:
         return {"verified": 0, "correct": 0, "accuracy": 0.0,
                 "date": str(check_date),
-                "error": f"No unverified predictions found for {check_date}"}
+                "error": f"No predictions found for {check_date}"}
 
     verified_count = 0
     correct_count  = 0

@@ -5905,14 +5905,23 @@ with tab_scan:
         _wpe_col1.button("🔮 Predict All", use_container_width=True, key="wpe_predict_btn", disabled=True)
         st.caption("⬅ Add tickers in **⭐ My Watchlist** sidebar then Save to enable Predict All.")
 
-    # ── Verify Yesterday — always visible ──────────────────────────────────────
-    if _wpe_col2.button("✅ Verify Yesterday", use_container_width=True, key="wpe_verify_btn"):
+    # ── Verify — date picker + button ──────────────────────────────────────────
+    _verify_date = _wpe_col2.date_input(
+        "Verify date",
+        value=date.today() - timedelta(days=1),
+        max_value=date.today() - timedelta(days=1),
+        key="wpe_verify_date",
+        label_visibility="collapsed",
+    )
+    if _wpe_col2.button("✅ Verify Date", use_container_width=True, key="wpe_verify_btn"):
         if not api_key or not secret_key:
             st.error("Add your Alpaca credentials in the sidebar first.")
         else:
             with st.spinner("Fetching end-of-day data and verifying predictions…"):
                 _vr = verify_watchlist_predictions(
-                    api_key, secret_key, user_id=_AUTH_USER_ID
+                    api_key, secret_key,
+                    user_id=_AUTH_USER_ID,
+                    pred_date=_verify_date,
                 )
             st.session_state["_wpe_verify_result"] = _vr
 
