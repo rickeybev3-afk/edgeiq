@@ -1917,89 +1917,67 @@ def render_order_flow_widget(ofs):
     _bar_left   = max(0.0, min(50.0, _bar_left))
     _bar_width  = max(0.0, min(50.0, _bar_width))
 
-    st.markdown(f"""
-    <div style="background:#1a1a2e; border:1px solid {_sig_color}44; border-radius:8px;
-                padding:10px 16px; margin:4px 0 6px 0;">
-      {_ib_html}
-      <div style="display:flex; justify-content:space-between; align-items:center;
-                  margin-bottom:8px;">
-        <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">
-          Order Flow Signals &nbsp;<span style="color:#555;">(Tier 2)</span>
-        </span>
-        <span style="font-size:12px; font-weight:700; color:{_sig_color};">
-          {_sig_icon}&nbsp;{_sig}
-        </span>
-        <span style="font-size:11px; color:{_sig_color};">{_score:+.0f}</span>
-      </div>
-
-      <!-- Composite score bar (centered, -100 to +100) -->
-      <div style="background:#333; border-radius:4px; height:10px; width:100%;
-                  position:relative; overflow:hidden; margin-bottom:8px;">
-        <div style="position:absolute; left:50%; top:0; height:100%;
-                    width:2px; background:#ffffff44;"></div>
-        <div style="position:absolute; left:{_bar_left:.1f}%; top:0; height:100%;
-                    width:{_bar_width:.1f}%; background:{_sig_color};
-                    border-radius:4px;"></div>
-      </div>
-
-      <!-- 4 sub-signals in a row -->
-      <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px;">
-
-        <!-- Pressure Acceleration -->
-        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
-                    padding:6px 8px; text-align:center;">
-          <div style="font-size:9px; color:#555; text-transform:uppercase;
-                      letter-spacing:0.8px; margin-bottom:3px;">Pressure</div>
-          <div style="font-size:13px; font-weight:700; color:{_accel_color};">
-            {_accel_arrow} {ofs["pressure_accel"]}
-          </div>
-          <div style="font-size:10px; color:#666; margin-top:2px;">
-            3b:{ofs["pressure_short"]:.0f}% | 10b:{ofs["pressure_medium"]:.0f}%
-          </div>
-        </div>
-
-        <!-- Bar Quality -->
-        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
-                    padding:6px 8px; text-align:center;">
-          <div style="font-size:9px; color:#555; text-transform:uppercase;
-                      letter-spacing:0.8px; margin-bottom:3px;">Bar Quality</div>
-          <div style="font-size:13px; font-weight:700; color:{_bq_color};">
-            {_bq:.0f}%
-          </div>
-          <div style="font-size:10px; color:#666; margin-top:2px;">
-            {ofs["bar_quality_label"]}
-          </div>
-        </div>
-
-        <!-- Vol Surge -->
-        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
-                    padding:6px 8px; text-align:center;">
-          <div style="font-size:9px; color:#555; text-transform:uppercase;
-                      letter-spacing:0.8px; margin-bottom:3px;">Vol Surge</div>
-          <div style="font-size:13px; font-weight:700; color:{_vs_color};">
-            {_vsr:.1f}×
-          </div>
-          <div style="font-size:10px; color:#666; margin-top:2px;">
-            {ofs["vol_surge_label"]}
-          </div>
-        </div>
-
-        <!-- Streak -->
-        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
-                    padding:6px 8px; text-align:center;">
-          <div style="font-size:9px; color:#555; text-transform:uppercase;
-                      letter-spacing:0.8px; margin-bottom:3px;">Tape Streak</div>
-          <div style="font-size:13px; font-weight:700; color:{_stk_color};">
-            {_stk_sign}{_streak} bars
-          </div>
-          <div style="font-size:10px; color:#666; margin-top:2px;">
-            {ofs["streak_label"].replace(" Tape","").replace(" Upward","▲").replace(" Downward","▼")}
-          </div>
-        </div>
-
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    _streak_short = (
+        ofs["streak_label"]
+        .replace(" Tape", "")
+        .replace(" Upward", " \u25b2")
+        .replace(" Downward", " \u25bc")
+    )
+    _of_html = (
+        f'<div style="background:#1a1a2e; border:1px solid {_sig_color}44;'
+        f' border-radius:8px; padding:10px 16px; margin:4px 0 6px 0;">'
+        f'{_ib_html}'
+        f'<div style="display:flex; justify-content:space-between; align-items:center;'
+        f' margin-bottom:8px;">'
+        f'<span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">'
+        f'Order Flow Signals <span style="color:#555;">(Tier 2)</span></span>'
+        f'<span style="font-size:12px; font-weight:700; color:{_sig_color};">'
+        f'{_sig_icon}&nbsp;{_sig}</span>'
+        f'<span style="font-size:11px; color:{_sig_color};">{_score:+.0f}</span>'
+        f'</div>'
+        f'<div style="background:#333; border-radius:4px; height:10px; width:100%;'
+        f' position:relative; overflow:hidden; margin-bottom:8px;">'
+        f'<div style="position:absolute; left:50%; top:0; height:100%;'
+        f' width:2px; background:#ffffff44;"></div>'
+        f'<div style="position:absolute; left:{_bar_left:.1f}%; top:0; height:100%;'
+        f' width:{_bar_width:.1f}%; background:{_sig_color}; border-radius:4px;"></div>'
+        f'</div>'
+        f'<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px;">'
+        f'<div style="background:rgba(18,18,34,0.4); border:1px solid rgba(255,255,255,0.05);'
+        f' border-radius:6px; padding:6px 8px; text-align:center;">'
+        f'<div style="font-size:9px; color:#555; text-transform:uppercase;'
+        f' letter-spacing:0.8px; margin-bottom:3px;">Pressure</div>'
+        f'<div style="font-size:13px; font-weight:700; color:{_accel_color};">'
+        f'{_accel_arrow} {ofs["pressure_accel"]}</div>'
+        f'<div style="font-size:10px; color:#666; margin-top:2px;">'
+        f'3b:{ofs["pressure_short"]:.0f}% | 10b:{ofs["pressure_medium"]:.0f}%</div>'
+        f'</div>'
+        f'<div style="background:rgba(18,18,34,0.4); border:1px solid rgba(255,255,255,0.05);'
+        f' border-radius:6px; padding:6px 8px; text-align:center;">'
+        f'<div style="font-size:9px; color:#555; text-transform:uppercase;'
+        f' letter-spacing:0.8px; margin-bottom:3px;">Bar Quality</div>'
+        f'<div style="font-size:13px; font-weight:700; color:{_bq_color};">{_bq:.0f}%</div>'
+        f'<div style="font-size:10px; color:#666; margin-top:2px;">{ofs["bar_quality_label"]}</div>'
+        f'</div>'
+        f'<div style="background:rgba(18,18,34,0.4); border:1px solid rgba(255,255,255,0.05);'
+        f' border-radius:6px; padding:6px 8px; text-align:center;">'
+        f'<div style="font-size:9px; color:#555; text-transform:uppercase;'
+        f' letter-spacing:0.8px; margin-bottom:3px;">Vol Surge</div>'
+        f'<div style="font-size:13px; font-weight:700; color:{_vs_color};">{_vsr:.1f}x</div>'
+        f'<div style="font-size:10px; color:#666; margin-top:2px;">{ofs["vol_surge_label"]}</div>'
+        f'</div>'
+        f'<div style="background:rgba(18,18,34,0.4); border:1px solid rgba(255,255,255,0.05);'
+        f' border-radius:6px; padding:6px 8px; text-align:center;">'
+        f'<div style="font-size:9px; color:#555; text-transform:uppercase;'
+        f' letter-spacing:0.8px; margin-bottom:3px;">Tape Streak</div>'
+        f'<div style="font-size:13px; font-weight:700; color:{_stk_color};">'
+        f'{_stk_sign}{_streak} bars</div>'
+        f'<div style="font-size:10px; color:#666; margin-top:2px;">{_streak_short}</div>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+    )
+    st.markdown(_of_html, unsafe_allow_html=True)
 
 
 def render_model_prediction(outcome, reasoning):
