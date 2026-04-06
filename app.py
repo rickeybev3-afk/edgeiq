@@ -1026,13 +1026,13 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             else:
                 st.warning("⚠️ Saved locally — will sync to cloud on next load when Supabase is available.")
             # Auto-reload so changes appear immediately without manual button click
-            st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=30)
+            st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=100)
             st.rerun()
         else:
             st.error("❌ Save failed completely. Contact support.")
 
     if _eod_load_col.button("📂 Load Past Reviews", use_container_width=True, key="eod_load_btn"):
-        st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=30)
+        st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=100)
 
     # ── Display loaded notes ──────────────────────────────────────────────────
     import re as _re
