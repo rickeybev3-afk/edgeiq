@@ -14,6 +14,9 @@ from backend import (
     _JOURNAL_COLS, _find_peaks, _is_strong_hvn, _detect_double_distribution,
     _label_to_weight_key, _save_brain_weights, _stream_worker, _GRADE_COLORS, _GRADE_SCORE,
     _compress_image_b64,
+    _edge_band, _rvol_band,
+    save_signal_conditions, log_signal_outcome, get_predictive_context,
+    compute_win_rates, monte_carlo_equity_curves,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -1237,6 +1240,27 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                          use_container_width=True):
                             _saved_oc = save_eod_outcome(_nd, _show_outcome, user_id=_uid)
                             if _saved_oc:
+                                # ── Feed predictive probability engine ────────────
+                                try:
+                                    _oc_hits = sum(
+                                        1 for _rr in _show_outcome.values()
+                                        if isinstance(_rr, dict)
+                                        and (_rr.get("above_hit") or _rr.get("below_hit"))
+                                    )
+                                    _oc_win = _oc_hits > 0
+                                    # Pick first ticker from the watch list
+                                    _first_tk = (str(_nw or "").split(",")[0].strip().upper()
+                                                 if _nw else "")
+                                    if _first_tk and _uid:
+                                        log_signal_outcome(
+                                            user_id=_uid,
+                                            ticker=_first_tk,
+                                            trade_date=_nd,
+                                            outcome_win=_oc_win,
+                                            outcome_pct=0.0,
+                                        )
+                                except Exception:
+                                    pass
                                 st.success("Outcome saved — contributes to your hit rate!")
                                 st.session_state["_eod_notes_loaded"] = None
                                 st.rerun()
@@ -1941,6 +1965,25 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         pass
     audio_enabled = st.session_state.get("audio_alerts_enabled", True)
     check_tcs_alerts(tcs, audio_enabled)
+
+    # ── Signal conditions snapshot (predictive engine feed) ─────────────────────
+    # Save conditions every time the chart runs so EOD verification can pair them
+    # with outcomes later and build your personal win-rate probability database.
+    try:
+        if _chart_edge is not None and _AUTH_USER_ID and rvol_pre is not None:
+            _bp, _ = compute_buy_sell_pressure(df)
+            save_signal_conditions(
+                user_id=_AUTH_USER_ID,
+                ticker=ticker,
+                trade_date=selected_date,
+                edge_score=float(_chart_edge),
+                rvol=float(rvol_pre),
+                structure=label,
+                tcs=float(tcs),
+                buy_pressure=float(_bp) if _bp is not None else 0.0,
+            )
+    except Exception:
+        pass
 
     # ── MarketBrain — real-time structure prediction ───────────────────────────
     brain = MarketBrain()
@@ -2914,6 +2957,45 @@ if _las:
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Predictive context — your personal historical win rate for this setup ───
+    try:
+        if _AUTH_USER_ID and _edge is not None and _rvol is not None:
+            _pred_ctx = get_predictive_context(
+                _AUTH_USER_ID, float(_edge), float(_rvol), str(_lbl)
+            )
+            _pe = _pred_ctx.get("exact", {})
+            _pb = _pred_ctx.get("by_struct", {})
+            _po = _pred_ctx.get("overall", {})
+            _show_pred = _pe or (_pb and _pb.get("n", 0) >= 3) or (_po and _po.get("n", 0) >= 5)
+            if _show_pred:
+                if _pe and _pe.get("n", 0) >= 3:
+                    _wr = _pe["win_rate"] * 100
+                    _wn = _pe["n"]
+                    _wlbl = f"Exact setup: {_wr:.0f}% win rate ({_wn} trades)"
+                    _wcol = "#4caf50" if _wr >= 60 else "#ffa726" if _wr >= 45 else "#ef5350"
+                elif _pb and _pb.get("n", 0) >= 3:
+                    _wr = _pb["win_rate"] * 100
+                    _wn = _pb["n"]
+                    _wlbl = f"{_lbl}: {_wr:.0f}% win rate ({_wn} trades)"
+                    _wcol = "#4caf50" if _wr >= 60 else "#ffa726" if _wr >= 45 else "#ef5350"
+                elif _po and _po.get("n", 0) >= 5:
+                    _wr = _po["win_rate"] * 100
+                    _wn = _po["n"]
+                    _wlbl = f"Overall: {_wr:.0f}% win rate ({_wn} trades logged)"
+                    _wcol = "#4caf50" if _wr >= 60 else "#ffa726" if _wr >= 45 else "#ef5350"
+                else:
+                    _show_pred = False
+                if _show_pred:
+                    st.markdown(
+                        f'<div style="background:{_wcol}18; border:1px solid {_wcol}55; '
+                        f'border-radius:6px; padding:7px 16px; font-size:13px; '
+                        f'font-weight:600; color:{_wcol}; margin:4px 0 6px 0;">'
+                        f'📊 Your historical data: {_wlbl}</div>',
+                        unsafe_allow_html=True
+                    )
+    except Exception:
+        pass
+
     # Alert Banner
     if _runner or _tcs >= 80:
         st.markdown(
@@ -3438,17 +3520,45 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         height=68, key="bt_tickers_input", label_visibility="collapsed",
     )
 
+    _bt_adv_cols = st.columns([2, 2, 1])
+    with _bt_adv_cols[0]:
+        _bt_slippage = st.slider(
+            "Slippage % (each side)",
+            min_value=0.0, max_value=2.0, value=0.5, step=0.1,
+            key="bt_slippage_pct",
+            help=(
+                "Real-world cost of entering and exiting a trade. "
+                "Applied once on entry + once on exit. "
+                "0.5% each side = 1% total drag per trade. "
+                "Small caps typically need 0.3–0.8%."
+            ),
+        )
+    with _bt_adv_cols[1]:
+        _bt_monte_equity = st.number_input(
+            "Monte Carlo Starting Equity ($)",
+            min_value=1000, max_value=1_000_000, value=10_000, step=1000,
+            key="bt_mc_equity",
+            help="Simulated starting account size for equity curve projection.",
+        )
+    with _bt_adv_cols[2]:
+        _bt_monte_risk = st.slider(
+            "Risk per Trade (%)",
+            min_value=0.5, max_value=5.0, value=2.0, step=0.5,
+            key="bt_mc_risk",
+            help="What % of equity is risked per trade in the Monte Carlo simulation.",
+        )
+
     _bt_run = st.button(
         "▶ RUN SIMULATION", use_container_width=True, key="backtest_sim_run_btn",
         type="primary",
     )
 
     st.markdown(
-        '<div style="font-size:10px; color:#263238; margin-top:6px;">'
-        'IB fixed at 9:30–10:30 AM · Set From = To for single day · '
-        'Set a date range (max 22 weekdays ≈ 1 month) to see market bias · '
-        'Results auto-saved to your account history'
-        '</div>',
+        f'<div style="font-size:10px; color:#263238; margin-top:6px;">'
+        f'IB fixed at 9:30–10:30 AM · Set From = To for single day · '
+        f'Set a date range (max 22 weekdays ≈ 1 month) for walk-forward analysis · '
+        f'Results auto-saved · Slippage {_bt_slippage:.1f}% each side applied'
+        f'</div>',
         unsafe_allow_html=True,
     )
     st.markdown("---")
@@ -3480,6 +3590,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
                     feed=_bt_feed_str,
                     price_min=_pmin,
                     price_max=_pmax,
+                    slippage_pct=_bt_slippage,
                 )
             _date_label = _range_label
         else:
@@ -3496,6 +3607,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
                     feed=_bt_feed_str,
                     price_min=_pmin,
                     price_max=_pmax,
+                    slippage_pct=_bt_slippage,
                 )
             _date_label = str(_bt_date)
 
@@ -3676,6 +3788,116 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         f'</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Walk-forward train / test comparison (range only) ───────────────────────
+    _wf_train = _summary.get("train", {})
+    _wf_test  = _summary.get("test", {})
+    if _sim_is_range and _wf_train and _wf_test and _wf_test.get("total", 0) > 0:
+        st.markdown(
+            '<div style="font-size:10px; color:#7c4dff; text-transform:uppercase; '
+            'letter-spacing:1.5px; margin-bottom:8px; font-weight:700;">'
+            '🔬 Walk-Forward Validation — Train (70%) vs Test (30%)</div>',
+            unsafe_allow_html=True,
+        )
+        _wf_cols = st.columns(2)
+        for _wf_d, _wf_col in [(_wf_train, _wf_cols[0]), (_wf_test, _wf_cols[1])]:
+            _wfn  = _wf_d.get("total", 0)
+            _wfwr = _wf_d.get("win_rate", 0.0)
+            _wflb = _wf_d.get("label", "?")
+            _wfc  = "#4caf50" if _wfwr >= 60 else "#ffa726" if _wfwr >= 45 else "#ef5350"
+            _is_test = "out-of-sample" in _wflb.lower()
+            _bg   = "#0d1b0d" if not _is_test else "#1a0d26"
+            _bd   = "#4caf50" if not _is_test else "#7c4dff"
+            _wf_col.markdown(
+                f'<div style="background:{_bg}; border:1px solid {_bd}44; border-left:4px solid {_bd}; '
+                f'border-radius:8px; padding:14px 18px;">'
+                f'<div style="font-size:10px; color:{_bd}; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:6px; font-weight:700;">{_wflb}</div>'
+                f'<div style="font-size:32px; font-weight:900; color:{_wfc}; font-family:monospace;">'
+                f'{_wfwr:.1f}%</div>'
+                f'<div style="font-size:12px; color:#546e7a; margin-top:4px;">'
+                f'{_wf_d.get("wins",0)}W / {_wf_d.get("losses",0)}L · {_wfn} setups · '
+                f'Avg TCS {_wf_d.get("avg_tcs",0):.0f}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        _oos_wr = _wf_test.get("win_rate", 0.0)
+        _is_wr  = _wf_train.get("win_rate", 0.0)
+        _drift  = _oos_wr - _is_wr
+        _drift_msg = (
+            f"Out-of-sample win rate is {abs(_drift):.1f}% {'better' if _drift >= 0 else 'worse'} "
+            f"than in-sample ({'good — model generalises' if abs(_drift) <= 10 else 'large gap — check overfitting'})."
+        )
+        st.caption(f"📐 {_drift_msg}")
+        st.markdown("<div style='margin:8px 0;'></div>", unsafe_allow_html=True)
+
+    # ── Monte Carlo equity simulation ────────────────────────────────────────────
+    if _results and len(_results) >= 3:
+        _mc_risk_frac = st.session_state.get("bt_mc_risk", 2.0) / 100.0
+        _mc_eq        = float(st.session_state.get("bt_mc_equity", 10_000))
+        _mc_slip      = st.session_state.get("bt_slippage_pct", 0.5) / 100.0
+        _mc = monte_carlo_equity_curves(
+            _results,
+            starting_equity=float(_mc_eq),
+            n_simulations=1000,
+            risk_pct=_mc_risk_frac,
+            slippage_drag_pct=_mc_slip,
+        )
+        if _mc:
+            st.markdown(
+                '<div style="font-size:10px; color:#00bcd4; text-transform:uppercase; '
+                'letter-spacing:1.5px; margin-bottom:8px; font-weight:700;">'
+                '🎲 Monte Carlo Equity Simulation — 1,000 Trade Sequence Shuffles</div>',
+                unsafe_allow_html=True,
+            )
+            _mc_x = list(range(len(_mc["p50"])))
+            fig_mc = go.Figure()
+            fig_mc.add_trace(go.Scatter(
+                x=_mc_x + _mc_x[::-1],
+                y=_mc["p90"] + _mc["p10"][::-1],
+                fill="toself", fillcolor="rgba(0,188,212,0.08)",
+                line=dict(color="rgba(0,0,0,0)"),
+                name="P10–P90 range", showlegend=True,
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=_mc_x, y=_mc["p90"],
+                line=dict(color="#4caf50", dash="dot", width=1),
+                name="P90 (best 10%)", showlegend=True,
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=_mc_x, y=_mc["p50"],
+                line=dict(color="#00bcd4", width=2.5),
+                name="Median outcome", showlegend=True,
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=_mc_x, y=_mc["p10"],
+                line=dict(color="#ef5350", dash="dot", width=1),
+                name="P10 (worst 10%)", showlegend=True,
+            ))
+            fig_mc.add_hline(
+                y=float(_mc_eq), line_dash="dash",
+                line_color="#546e7a", opacity=0.6,
+                annotation_text="Starting equity",
+                annotation_font_color="#546e7a",
+            )
+            fig_mc.update_layout(
+                paper_bgcolor="#0a0a1a", plot_bgcolor="#0d1117",
+                font=dict(color="#e0e0e0"), height=300,
+                margin=dict(t=20, b=40, l=60, r=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                xaxis=dict(title="Trade #", gridcolor="#1a1a2e", zeroline=False),
+                yaxis=dict(title="Equity ($)", gridcolor="#1a1a2e", zeroline=False,
+                           tickformat="$,.0f"),
+            )
+            st.plotly_chart(fig_mc, use_container_width=True)
+            _mc_kpi_cols = st.columns(4)
+            _mc_kpi_cols[0].metric("Median Final", f"${_mc['median_final']:,.0f}",
+                                   f"{(_mc['median_final']/_mc_eq - 1)*100:+.1f}%")
+            _mc_kpi_cols[1].metric("P90 Final (best)", f"${_mc['p90_final']:,.0f}")
+            _mc_kpi_cols[2].metric("P10 Final (worst)", f"${_mc['p10_final']:,.0f}")
+            _mc_kpi_cols[3].metric("% Simulations Profitable",
+                                   f"{_mc['pct_profitable']:.1f}%")
+            st.markdown("<div style='margin:10px 0;'></div>", unsafe_allow_html=True)
 
     # ── Day-by-day breakdown (range only) ───────────────────────────────────────
     if _sim_is_range and _sim_daily:
@@ -4522,6 +4744,103 @@ def render_tracker_tab():
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2.5 — Predictive Probability Engine
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📊 Your Predictive Win Rates")
+    st.caption(
+        "Based on your logged signal outcomes. Every time you verify an EOD result, "
+        "the conditions (Edge Score, RVOL, Structure) are paired with the outcome and "
+        "stored here. After 3+ samples per setup, the system shows you your actual "
+        "historical win rate for each condition cluster."
+    )
+    _pred_rates = compute_win_rates(_AUTH_USER_ID, min_samples=1)
+    if not _pred_rates:
+        st.info(
+            "No outcome data yet. Verify predictions in the EOD review panel (Journal tab) "
+            "to start building your personal win rate database. Each verification adds a data point."
+        )
+    else:
+        _pred_total = _pred_rates.get("_total", {})
+        _pred_by_struct = _pred_rates.get("_by_struct", {})
+        _pred_by_edge   = _pred_rates.get("_by_edge", {})
+
+        # Overall stat
+        if _pred_total.get("n", 0) > 0:
+            _pt_wr = _pred_total["win_rate"] * 100
+            _pt_n  = _pred_total["n"]
+            _pt_c  = "#4caf50" if _pt_wr >= 60 else "#ffa726" if _pt_wr >= 45 else "#ef5350"
+            st.markdown(
+                f'<div style="background:{_pt_c}11; border:1px solid {_pt_c}44; '
+                f'border-radius:8px; padding:12px 18px; margin-bottom:12px;">'
+                f'<span style="font-size:13px; color:#888;">Overall (all setups logged):</span> '
+                f'<span style="font-size:22px; font-weight:900; color:{_pt_c};">{_pt_wr:.0f}%</span>'
+                f'<span style="font-size:12px; color:#555;"> win rate — {_pt_n} outcomes recorded</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # By structure
+        if _pred_by_struct:
+            st.markdown("**Win Rate by Structure**")
+            _struct_rows = sorted(
+                [(k, v) for k, v in _pred_by_struct.items() if v.get("n", 0) >= 1],
+                key=lambda x: x[1]["win_rate"], reverse=True
+            )
+            for _sk, _sv in _struct_rows:
+                _swr = _sv["win_rate"] * 100
+                _sn  = _sv["n"]
+                _sc  = "#4caf50" if _swr >= 60 else "#ffa726" if _swr >= 45 else "#ef5350"
+                _bar = int(_swr)
+                st.markdown(
+                    f'<div style="display:flex; align-items:center; gap:10px; '
+                    f'margin:3px 0; font-size:12px;">'
+                    f'<span style="min-width:160px; color:#ccc;">{_sk}</span>'
+                    f'<div style="flex:1; background:#1a1a2e; border-radius:4px; height:12px; '
+                    f'position:relative; overflow:hidden;">'
+                    f'<div style="width:{_bar}%; background:{_sc}; height:100%; '
+                    f'border-radius:4px;"></div></div>'
+                    f'<span style="min-width:60px; color:{_sc}; font-weight:700;">'
+                    f'{_swr:.0f}% ({_sn})</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # By edge band
+        if _pred_by_edge:
+            st.markdown("**Win Rate by Edge Score Band**")
+            _edge_order = ["75+", "65-75", "50-65", "<50"]
+            _ec_cols = st.columns(len(_edge_order))
+            for _ec_i, _eb in enumerate(_edge_order):
+                _ev = _pred_by_edge.get(_eb, {})
+                if _ev and _ev.get("n", 0) > 0:
+                    _ewr = _ev["win_rate"] * 100
+                    _en  = _ev["n"]
+                    _ec  = "#4caf50" if _ewr >= 60 else "#ffa726" if _ewr >= 45 else "#ef5350"
+                    _ec_cols[_ec_i].markdown(
+                        f'<div style="background:#12122288; border:1px solid {_ec}44; '
+                        f'border-radius:6px; padding:10px; text-align:center;">'
+                        f'<div style="font-size:10px; color:#666; text-transform:uppercase; '
+                        f'letter-spacing:1px; margin-bottom:4px;">Edge {_eb}</div>'
+                        f'<div style="font-size:22px; font-weight:900; color:{_ec};">'
+                        f'{_ewr:.0f}%</div>'
+                        f'<div style="font-size:11px; color:#555;">{_en} trades</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    _ec_cols[_ec_i].markdown(
+                        f'<div style="background:#12122244; border:1px solid #1a1a2e; '
+                        f'border-radius:6px; padding:10px; text-align:center; opacity:0.4;">'
+                        f'<div style="font-size:10px; color:#555; text-transform:uppercase; '
+                        f'letter-spacing:1px;">Edge {_eb}</div>'
+                        f'<div style="font-size:16px; color:#333;">—</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
     # SECTION 3 — Adaptive Learning Status
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown("### 🔬 Adaptive Learning Status")
@@ -4530,8 +4849,8 @@ def render_tracker_tab():
         f"Structures with ≥5 samples are eligible. Multiplier > 1.0 = trusted; < 1.0 = confidence reduced."
     )
 
-    _ws_rows = brain_weights_summary()
-    _raw_w   = load_brain_weights()
+    _ws_rows = brain_weights_summary(_AUTH_USER_ID)
+    _raw_w   = load_brain_weights(_AUTH_USER_ID)
 
     if not _ws_rows:
         st.info(f"Learning begins once at least 5 comparisons are logged for any structure. "
@@ -4585,7 +4904,7 @@ def render_tracker_tab():
 
         # ── Manual recalibrate button ─────────────────────────────────────────
         if st.button("⚡ Recalibrate Now", help="Force immediate weight update from all logged data"):
-            _new_w = recalibrate_brain_weights()
+            _new_w = recalibrate_brain_weights(_AUTH_USER_ID)
             st.success("Weights updated! Brain probabilities will use the new calibration on next analysis.")
             st.rerun()
 

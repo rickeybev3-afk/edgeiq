@@ -801,28 +801,61 @@ def _label_to_weight_key(label: str) -> str:
     return "normal"   # safe default
 
 
-def load_brain_weights() -> dict:
-    """Load adaptive calibration weights from disk (defaults to 1.0 for all)."""
+def load_brain_weights(user_id: str = "") -> dict:
+    """Load adaptive calibration weights — per-user from Supabase prefs, then local file.
+
+    Per-user weights are stored inside user_preferences.prefs["brain_weights"] so no
+    extra table is needed.  Falls back to the global brain_weights.json for backward
+    compatibility and anonymous use.
+    """
+    import json as _json
     defaults = {k: 1.0 for k in _BRAIN_WEIGHT_KEYS}
+
+    # Per-user path (Supabase prefs)
+    if user_id:
+        try:
+            prefs  = load_user_prefs(user_id)
+            stored = prefs.get("brain_weights", {})
+            if stored and isinstance(stored, dict):
+                return {k: float(stored.get(k, defaults.get(k, 1.0)))
+                        for k in _BRAIN_WEIGHT_KEYS}
+        except Exception:
+            pass
+
+    # Global file fallback
     if not os.path.exists(WEIGHTS_FILE):
         return defaults
     try:
-        import json
         with open(WEIGHTS_FILE) as f:
-            stored = json.load(f)
-        # Merge: keep stored values, fill any missing keys with 1.0
+            stored = _json.load(f)
         return {k: float(stored.get(k, 1.0)) for k in _BRAIN_WEIGHT_KEYS}
     except Exception:
         return defaults
 
 
-def _save_brain_weights(weights: dict) -> None:
-    import json
-    with open(WEIGHTS_FILE, "w") as f:
-        json.dump({k: round(float(v), 4) for k, v in weights.items()}, f, indent=2)
+def _save_brain_weights(weights: dict, user_id: str = "") -> None:
+    """Persist weights to global file AND, if user_id supplied, to per-user Supabase prefs."""
+    import json as _json
+    clean = {k: round(float(v), 4) for k, v in weights.items()}
+
+    # Always write global file (backward compat / anonymous)
+    try:
+        with open(WEIGHTS_FILE, "w") as f:
+            _json.dump(clean, f, indent=2)
+    except Exception:
+        pass
+
+    # Per-user persistence via user_preferences.prefs
+    if user_id:
+        try:
+            prefs = load_user_prefs(user_id)
+            prefs["brain_weights"] = clean
+            save_user_prefs(user_id, prefs)
+        except Exception:
+            pass
 
 
-def recalibrate_brain_weights() -> dict:
+def recalibrate_brain_weights(user_id: str = "") -> dict:
     """Read the accuracy tracker, compute per-structure accuracy, and update weights.
 
     Learning rule (smoothed exponential moving average):
@@ -832,7 +865,7 @@ def recalibrate_brain_weights() -> dict:
     Structures with fewer than 5 samples are left unchanged (avoid overfitting).
     Returns the updated weights dict.
     """
-    weights = load_brain_weights()
+    weights = load_brain_weights(user_id)
     if not os.path.exists(TRACKER_FILE):
         return weights
     try:
@@ -857,15 +890,15 @@ def recalibrate_brain_weights() -> dict:
             old = weights.get(wk, 1.0)
             weights[wk] = round(old * 0.70 + target * 0.30, 4)
 
-        _save_brain_weights(weights)
+        _save_brain_weights(weights, user_id)
     except Exception:
         pass
     return weights
 
 
-def brain_weights_summary() -> list[dict]:
+def brain_weights_summary(user_id: str = "") -> list[dict]:
     """Return a list of dicts for displaying the learned weight table."""
-    weights  = load_brain_weights()
+    weights  = load_brain_weights(user_id)
     if not os.path.exists(TRACKER_FILE):
         return []
     try:
@@ -892,6 +925,301 @@ def brain_weights_summary() -> list[dict]:
         return rows
     except Exception:
         return []
+
+
+# ── Predictive probability engine (signal conditions + outcomes) ──────────────
+_SIGNAL_CONDITIONS_FILE = ".local/signal_conditions.json"
+_SIGNAL_OUTCOMES_FILE   = ".local/signal_outcomes.json"
+
+
+def _edge_band(score: float) -> str:
+    if score >= 75:   return "75+"
+    if score >= 65:   return "65-75"
+    if score >= 50:   return "50-65"
+    return "<50"
+
+
+def _rvol_band(rvol: float) -> str:
+    if rvol >= 3:  return "3+"
+    if rvol >= 2:  return "2-3"
+    if rvol >= 1:  return "1-2"
+    return "<1"
+
+
+def save_signal_conditions(user_id: str, ticker: str, trade_date,
+                           edge_score: float, rvol: float, structure: str,
+                           tcs: float = 0.0, buy_pressure: float = 0.0) -> None:
+    """Store signal conditions at analysis time so they can be paired with outcomes later.
+
+    Called from the Main Chart tab every time a full analysis runs.
+    Keyed by user_id + ticker + date so repeated analyses on the same day overwrite.
+    """
+    import json as _json
+    key = f"{user_id}_{ticker.upper()}_{str(trade_date)}"
+    entry = {
+        "ticker":       ticker.upper(),
+        "date":         str(trade_date),
+        "user_id":      user_id,
+        "edge_score":   round(float(edge_score), 1),
+        "edge_band":    _edge_band(float(edge_score)),
+        "rvol":         round(float(rvol), 2),
+        "rvol_band":    _rvol_band(float(rvol)),
+        "structure":    str(structure),
+        "tcs":          round(float(tcs), 1),
+        "buy_pressure": round(float(buy_pressure), 1),
+        "saved_at":     datetime.utcnow().isoformat(),
+    }
+    try:
+        data: dict = {}
+        os.makedirs(".local", exist_ok=True)
+        if os.path.exists(_SIGNAL_CONDITIONS_FILE):
+            with open(_SIGNAL_CONDITIONS_FILE) as _f:
+                data = _json.load(_f)
+        data[key] = entry
+        with open(_SIGNAL_CONDITIONS_FILE, "w") as _f:
+            _json.dump(data, _f)
+    except Exception:
+        pass
+
+
+def get_signal_conditions(user_id: str, ticker: str, trade_date) -> dict:
+    """Retrieve stored signal conditions for a specific user+ticker+date."""
+    import json as _json
+    key = f"{user_id}_{ticker.upper()}_{str(trade_date)}"
+    try:
+        if os.path.exists(_SIGNAL_CONDITIONS_FILE):
+            with open(_SIGNAL_CONDITIONS_FILE) as _f:
+                data = _json.load(_f)
+            return data.get(key, {})
+    except Exception:
+        pass
+    return {}
+
+
+def log_signal_outcome(user_id: str, ticker: str, trade_date,
+                       outcome_win: bool, outcome_pct: float = 0.0) -> None:
+    """Pair stored signal conditions with a verified outcome.
+
+    Called when the user marks a prediction correct/wrong in the EOD review.
+    Deduplicates by user+ticker+date so re-marking updates the record.
+    """
+    import json as _json
+    conditions = get_signal_conditions(user_id, ticker, str(trade_date))
+    edge  = conditions.get("edge_score", 0.0)
+    rvol  = conditions.get("rvol", 0.0)
+    struct = conditions.get("structure", "Unknown")
+    tcs   = conditions.get("tcs", 0.0)
+
+    entry = {
+        "user_id":      user_id,
+        "ticker":       ticker.upper(),
+        "date":         str(trade_date),
+        "edge_score":   float(conditions.get("edge_score", edge)),
+        "edge_band":    _edge_band(float(edge)),
+        "rvol":         float(rvol),
+        "rvol_band":    _rvol_band(float(rvol)),
+        "structure":    str(struct),
+        "tcs":          float(tcs),
+        "buy_pressure": float(conditions.get("buy_pressure", 0.0)),
+        "outcome_win":  bool(outcome_win),
+        "outcome_pct":  round(float(outcome_pct), 2),
+        "logged_at":    datetime.utcnow().isoformat(),
+    }
+    try:
+        os.makedirs(".local", exist_ok=True)
+        outcomes: list = []
+        if os.path.exists(_SIGNAL_OUTCOMES_FILE):
+            with open(_SIGNAL_OUTCOMES_FILE) as _f:
+                outcomes = _json.load(_f)
+        outcomes = [o for o in outcomes if not (
+            o.get("user_id") == user_id and
+            o.get("ticker")  == ticker.upper() and
+            o.get("date")    == str(trade_date)
+        )]
+        outcomes.append(entry)
+        with open(_SIGNAL_OUTCOMES_FILE, "w") as _f:
+            _json.dump(outcomes, _f)
+    except Exception:
+        pass
+
+
+def compute_win_rates(user_id: str, min_samples: int = 3) -> dict:
+    """Compute historical win rates grouped by condition cluster from logged outcomes.
+
+    Returns a dict with three sub-keys:
+      "_total"    : {"n": ..., "win_rate": ...}
+      "_by_edge"  : {band: {"n": ..., "win_rate": ...}, ...}
+      "_by_struct": {structure: {"n": ..., "win_rate": ..., "avg_pct": ...}, ...}
+      <cluster>   : {"n": ..., "wins": ..., "win_rate": ..., "avg_pct": ..., "sufficient": bool}
+                    where <cluster> = "edge:<band> rvol:<band> struct:<structure>"
+    """
+    import json as _json
+    from collections import defaultdict
+    try:
+        if not os.path.exists(_SIGNAL_OUTCOMES_FILE):
+            return {}
+        with open(_SIGNAL_OUTCOMES_FILE) as _f:
+            all_outcomes = _json.load(_f)
+        outcomes = [o for o in all_outcomes if o.get("user_id") == user_id]
+        if not outcomes:
+            return {}
+
+        result: dict = {}
+
+        # Full cluster grouping
+        clusters: dict = defaultdict(list)
+        for o in outcomes:
+            k = (f"edge:{o.get('edge_band','?')} "
+                 f"rvol:{o.get('rvol_band','?')} "
+                 f"struct:{o.get('structure','?')}")
+            clusters[k].append(o)
+        for k, grp in clusters.items():
+            n    = len(grp)
+            wins = sum(1 for o in grp if o.get("outcome_win"))
+            avg  = (sum(o.get("outcome_pct", 0) for o in grp) / n) if n else 0
+            result[k] = {
+                "n":          n,
+                "wins":       wins,
+                "win_rate":   round(wins / n, 3) if n else 0,
+                "avg_pct":    round(avg, 2),
+                "sufficient": n >= min_samples,
+            }
+
+        # By edge band
+        by_edge: dict = defaultdict(list)
+        for o in outcomes:
+            by_edge[o.get("edge_band", "?")].append(o)
+        result["_by_edge"] = {
+            band: {
+                "n":        len(g),
+                "win_rate": round(sum(1 for o in g if o.get("outcome_win")) / len(g), 3),
+            }
+            for band, g in by_edge.items() if g
+        }
+
+        # By structure
+        by_struct: dict = defaultdict(list)
+        for o in outcomes:
+            by_struct[o.get("structure", "?")].append(o)
+        result["_by_struct"] = {}
+        for struct, grp in by_struct.items():
+            n    = len(grp)
+            wins = sum(1 for o in grp if o.get("outcome_win"))
+            avg  = (sum(o.get("outcome_pct", 0) for o in grp) / n) if n else 0
+            result["_by_struct"][struct] = {
+                "n":        n,
+                "win_rate": round(wins / n, 3) if n else 0,
+                "avg_pct":  round(avg, 2),
+            }
+
+        # Overall
+        n_total = len(outcomes)
+        result["_total"] = {
+            "n":        n_total,
+            "win_rate": round(
+                sum(1 for o in outcomes if o.get("outcome_win")) / n_total, 3
+            ) if n_total else 0,
+        }
+        return result
+    except Exception:
+        return {}
+
+
+def get_predictive_context(user_id: str, edge_score: float,
+                           rvol: float, structure: str) -> dict:
+    """Return historical win-rate context for the current signal conditions.
+
+    Tries exact cluster match first; falls back to edge-band and overall.
+    Returns empty dict if no signal log exists yet.
+    """
+    rates = compute_win_rates(user_id, min_samples=3)
+    if not rates:
+        return {}
+
+    cluster_key = (f"edge:{_edge_band(edge_score)} "
+                   f"rvol:{_rvol_band(rvol)} "
+                   f"struct:{structure}")
+    exact      = rates.get(cluster_key, {})
+    by_edge    = rates.get("_by_edge", {}).get(_edge_band(edge_score), {})
+    by_struct  = rates.get("_by_struct", {}).get(structure, {})
+    overall    = rates.get("_total", {})
+
+    return {
+        "cluster_key": cluster_key,
+        "exact":       exact if exact.get("sufficient") else {},
+        "by_edge":     by_edge,
+        "by_struct":   by_struct,
+        "overall":     overall,
+    }
+
+
+# ── Monte Carlo equity simulation ─────────────────────────────────────────────
+
+def monte_carlo_equity_curves(
+    trade_results: list,
+    starting_equity: float = 10_000.0,
+    n_simulations: int = 1_000,
+    risk_pct: float = 0.02,
+    slippage_drag_pct: float = 0.0,
+) -> dict:
+    """Simulate N equity curves by randomly reshuffling the trade sequence.
+
+    Each trade risks `risk_pct` of current equity.  A win grows equity by
+    (risk_pct × |aft_move_pct| / 100) and a loss shrinks it by risk_pct.
+    slippage_drag_pct is subtracted from every trade (win or lose).
+
+    Returns P10 / P50 / P90 equity curves and final-equity distribution stats.
+    Empty dict if fewer than 3 trades.
+    """
+    import random
+    import numpy as np
+
+    outcomes = []
+    for r in trade_results:
+        move = r.get("aft_move_pct", 0.0)
+        win  = r.get("win_loss", "") == "Win"
+        ret  = (risk_pct * (abs(move) / 100.0) if win else -risk_pct) - slippage_drag_pct
+        outcomes.append(float(ret))
+
+    if len(outcomes) < 3:
+        return {}
+
+    random.seed(42)
+    all_curves   = []
+    final_equities = []
+
+    for _ in range(n_simulations):
+        shuffled = outcomes.copy()
+        random.shuffle(shuffled)
+        equity = starting_equity
+        curve  = [equity]
+        for ret in shuffled:
+            equity = max(0.01, equity * (1.0 + ret))
+            curve.append(equity)
+        all_curves.append(curve)
+        final_equities.append(equity)
+
+    arr  = np.array(all_curves)
+    p10  = np.percentile(arr, 10, axis=0).tolist()
+    p50  = np.percentile(arr, 50, axis=0).tolist()
+    p90  = np.percentile(arr, 90, axis=0).tolist()
+
+    final_equities.sort()
+    profitable = sum(1 for e in final_equities if e > starting_equity)
+
+    return {
+        "p10":            p10,
+        "p50":            p50,
+        "p90":            p90,
+        "final_equities": final_equities,
+        "pct_profitable": round(profitable / len(final_equities) * 100, 1),
+        "median_final":   round(float(np.percentile(final_equities, 50)), 2),
+        "p10_final":      round(float(np.percentile(final_equities, 10)), 2),
+        "p90_final":      round(float(np.percentile(final_equities, 90)), 2),
+        "n_trades":       len(outcomes),
+        "n_simulations":  n_simulations,
+        "starting":       starting_equity,
+    }
 
 
 # ── Position state persistence ────────────────────────────────────────────────
@@ -2724,9 +3052,12 @@ _BACKTEST_NORMAL       = ("Normal",)   # Normal (not Var) — range-ish
 
 def _backtest_single(api_key: str, secret_key: str, sym: str,
                      trade_date, feed: str, price_min: float, price_max: float,
-                     cutoff_hour: int = 10, cutoff_minute: int = 30):
+                     cutoff_hour: int = 10, cutoff_minute: int = 30,
+                     slippage_pct: float = 0.0):
     """Fetch one ticker's historical bars, score the morning, evaluate the afternoon.
 
+    slippage_pct: one-way slippage as a percentage (e.g. 0.5 = 0.5%).
+    Applied to both entry and exit, so total drag = slippage_pct × 2.
     Returns a result dict or None if data is insufficient / out of price range.
     """
     try:
@@ -2827,6 +3158,14 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         else:
             aft_move = 0.0
 
+        # Slippage drag: entry + exit, each side costs slippage_pct
+        # Applied to the magnitude (directional sign preserved)
+        _slip_drag = slippage_pct * 2.0
+        if aft_move > 0:
+            aft_move = max(0.0, aft_move - _slip_drag)
+        elif aft_move < 0:
+            aft_move = min(0.0, aft_move + _slip_drag)
+
         # ── False break detection ────────────────────────────────────────────────
         # A false break = IB violated but price closed back inside within 30 min
         # (6 × 5-min bars). This is the classic "shake & bake" reversal trap.
@@ -2875,6 +3214,7 @@ def run_historical_backtest(
     price_max: float = 20.0,
     cutoff_hour: int = 10,
     cutoff_minute: int = 30,
+    slippage_pct: float = 0.0,
 ) -> tuple:
     """Run the quant engine on morning-only historical data and score against afternoon.
 
@@ -2892,7 +3232,7 @@ def run_historical_backtest(
             executor.submit(
                 _backtest_single, api_key, secret_key, sym,
                 trade_date, feed, price_min, price_max,
-                cutoff_hour, cutoff_minute
+                cutoff_hour, cutoff_minute, slippage_pct
             ): sym
             for sym in tickers
         }
@@ -2958,14 +3298,53 @@ def run_backtest_range(
     feed: str = "sip",
     price_min: float = 2.0,
     price_max: float = 20.0,
+    slippage_pct: float = 0.0,
 ) -> tuple:
     """Run the backtest across a date range (max 22 weekdays ≈ 1 month).
 
     Returns (all_results, agg_summary, daily_list) where:
-    - all_results   : flat list of every row with 'sim_date' added
-    - agg_summary   : aggregate stats across all days
+    - all_results   : flat list of every row with 'sim_date' and 'split' ('train'/'test') added
+    - agg_summary   : aggregate stats with walk-forward train/test breakdown
     - daily_list    : [(date, results, summary), ...] one entry per trading day
+
+    Walk-forward split: first 70% of trading days = train, last 30% = test.
+    This gives an honest out-of-sample win rate on dates the model never saw.
     """
+    def _summarise(rows: list, label: str) -> dict:
+        if not rows:
+            return {"label": label, "total": 0, "win_rate": 0.0}
+        total = len(rows)
+        wins  = sum(1 for r in rows if r["win_loss"] == "Win")
+        bull  = [r for r in rows if r["actual_outcome"] == "Bullish Break"]
+        bear  = [r for r in rows if r["actual_outcome"] == "Bearish Break"]
+        both  = [r for r in rows if r["actual_outcome"] == "Both Sides"]
+        rng   = [r for r in rows if r["actual_outcome"] == "Range-Bound"]
+        fb_u  = [r for r in rows if r.get("false_break_up")]
+        fb_d  = [r for r in rows if r.get("false_break_down")]
+        brk   = len(bull) + len(bear) + len(both)
+        return {
+            "label":            label,
+            "total":            total,
+            "wins":             wins,
+            "losses":           total - wins,
+            "win_rate":         round(wins / total * 100, 1) if total else 0.0,
+            "highest_tcs":      round(max(r["tcs"] for r in rows), 1),
+            "avg_tcs":          round(sum(r["tcs"] for r in rows) / total, 1),
+            "bull_breaks":      len(bull),
+            "bear_breaks":      len(bear),
+            "both_breaks":      len(both),
+            "range_bound":      len(rng),
+            "avg_bull_ft":      (round(sum(r["aft_move_pct"] for r in bull) / len(bull), 1)
+                                 if bull else 0.0),
+            "avg_bear_ft":      (round(sum(abs(r["aft_move_pct"]) for r in bear) / len(bear), 1)
+                                 if bear else 0.0),
+            "long_win_rate":    round(len(bull) / total * 100, 1) if total else 0.0,
+            "false_break_rate": (round((len(fb_u) + len(fb_d)) / brk * 100, 1)
+                                 if brk else 0.0),
+            "fb_up_count":      len(fb_u),
+            "fb_down_count":    len(fb_d),
+        }
+
     # Collect weekdays in range, cap at 22 (~1 calendar month)
     trading_days = []
     cur = start_date
@@ -2977,60 +3356,39 @@ def run_backtest_range(
     if not trading_days:
         return [], {"error": "No trading days in selected range."}, []
 
+    # Walk-forward split: first 70% = train, last 30% = test
+    split_idx   = max(1, int(len(trading_days) * 0.70))
+    train_days  = set(str(d) for d in trading_days[:split_idx])
+
     daily_list = []
     for d in trading_days:
         r, s = run_historical_backtest(
-            api_key, secret_key, d, tickers, feed, price_min, price_max
+            api_key, secret_key, d, tickers, feed, price_min, price_max,
+            slippage_pct=slippage_pct
         )
         if not s.get("error") and r:
+            split_label = "train" if str(d) in train_days else "test"
             for row in r:
                 row["sim_date"] = str(d)
+                row["split"]    = split_label
             daily_list.append((d, r, s))
 
     if not daily_list:
         return [], {"error": "No valid data for any date in range."}, []
 
-    all_results = []
+    all_results  = []
     for _, r, _ in daily_list:
         all_results.extend(r)
 
-    total = len(all_results)
-    wins  = sum(1 for r in all_results if r["win_loss"] == "Win")
+    train_rows  = [r for r in all_results if r.get("split") == "train"]
+    test_rows   = [r for r in all_results if r.get("split") == "test"]
 
-    bull_rows  = [r for r in all_results if r["actual_outcome"] == "Bullish Break"]
-    bear_rows  = [r for r in all_results if r["actual_outcome"] == "Bearish Break"]
-    both_rows  = [r for r in all_results if r["actual_outcome"] == "Both Sides"]
-    range_rows = [r for r in all_results if r["actual_outcome"] == "Range-Bound"]
-    fb_up      = [r for r in all_results if r.get("false_break_up")]
-    fb_down    = [r for r in all_results if r.get("false_break_down")]
+    agg_summary = _summarise(all_results, "All")
+    agg_summary["days_run"]    = len(daily_list)
+    agg_summary["slippage_pct"] = slippage_pct
+    agg_summary["train"]       = _summarise(train_rows, "Train (in-sample)")
+    agg_summary["test"]        = _summarise(test_rows,  "Test  (out-of-sample)")
 
-    _breakable    = len(bull_rows) + len(bear_rows) + len(both_rows)
-    avg_bull_ft   = (round(sum(r["aft_move_pct"] for r in bull_rows) / len(bull_rows), 1)
-                     if bull_rows else 0.0)
-    avg_bear_ft   = (round(sum(abs(r["aft_move_pct"]) for r in bear_rows) / len(bear_rows), 1)
-                     if bear_rows else 0.0)
-    false_brk_rt  = (round((len(fb_up) + len(fb_down)) / _breakable * 100, 1)
-                     if _breakable else 0.0)
-
-    agg_summary = {
-        "win_rate":         round(wins / total * 100, 1) if total else 0.0,
-        "total":            total,
-        "wins":             wins,
-        "losses":           total - wins,
-        "highest_tcs":      round(max(r["tcs"] for r in all_results), 1),
-        "avg_tcs":          round(sum(r["tcs"] for r in all_results) / total, 1),
-        "bull_breaks":      len(bull_rows),
-        "bear_breaks":      len(bear_rows),
-        "both_breaks":      len(both_rows),
-        "range_bound":      len(range_rows),
-        "avg_bull_ft":      avg_bull_ft,
-        "avg_bear_ft":      avg_bear_ft,
-        "long_win_rate":    round(len(bull_rows) / total * 100, 1) if total else 0.0,
-        "false_break_rate": false_brk_rt,
-        "fb_up_count":      len(fb_up),
-        "fb_down_count":    len(fb_down),
-        "days_run":         len(daily_list),
-    }
     return all_results, agg_summary, daily_list
 
 
