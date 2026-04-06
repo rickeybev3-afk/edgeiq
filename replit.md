@@ -69,6 +69,7 @@ A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for 
 - `has_double_dist` now passed from `_detect_double_distribution()` to `brain.update()` in both live flow (line ~2303) and batch runner (line ~3168)
 - High conviction threshold = 75% (`HICONS_THRESHOLD = 75.0`)
 - All tracking data reset clean: `accuracy_tracker.csv`, `high_conviction_log.csv` empty, `brain_weights.json` all 1.0
+- **Tier 3 — Chart Pattern Detection** added (April 6): `detect_chart_patterns()` in backend.py, `render_pattern_widget()` in app.py. Detects on 5m and 1hr resampled bars: Reverse H&S, H&S, Double Bottom, Double Top, Cup & Handle, Bull Flag, Bear Flag. Confluence scoring: POC/IB level alignment, neckline proximity, pattern stacking boost. Widget renders below Tier 2 order flow in render_analysis().
 - TODO next session: run batch backtest on 20+ tickers to rebuild training data with correct logic; consider tightening Trend Day threshold or adding RVOL floor
 
 ### Running

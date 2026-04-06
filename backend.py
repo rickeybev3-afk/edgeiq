@@ -504,6 +504,323 @@ def compute_atr(df, period=14):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TIER 3 — CHART PATTERN DETECTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _resample_bars(df_1m, rule="5min"):
+    """Resample 1-minute OHLCV bars to a coarser timeframe."""
+    if df_1m is None or df_1m.empty:
+        return pd.DataFrame()
+    agg = {c: ("first" if c == "open" else "max" if c == "high"
+               else "min" if c == "low" else "last" if c == "close"
+               else "sum")
+           for c in ["open", "high", "low", "close", "volume"] if c in df_1m.columns}
+    if not agg:
+        return pd.DataFrame()
+    try:
+        return df_1m.resample(rule).agg(agg).dropna(subset=["close"])
+    except Exception:
+        return pd.DataFrame()
+
+
+def _find_swing_highs(df, lookback=2):
+    """Return integer positions of swing high bars (local maxima ± lookback bars)."""
+    highs = df["high"].values
+    n = len(highs)
+    out = []
+    for i in range(lookback, n - lookback):
+        if all(highs[i] >= highs[i - j] for j in range(1, lookback + 1)) and \
+           all(highs[i] >= highs[i + j] for j in range(1, lookback + 1)):
+            out.append(i)
+    return out
+
+
+def _find_swing_lows(df, lookback=2):
+    """Return integer positions of swing low bars (local minima ± lookback bars)."""
+    lows = df["low"].values
+    n = len(lows)
+    out = []
+    for i in range(lookback, n - lookback):
+        if all(lows[i] <= lows[i - j] for j in range(1, lookback + 1)) and \
+           all(lows[i] <= lows[i + j] for j in range(1, lookback + 1)):
+            out.append(i)
+    return out
+
+
+def detect_chart_patterns(df_1m, poc_price=None, ib_high=None, ib_low=None):
+    """Detect classic chart patterns on 5m and 1hr resampled bars.
+
+    Returns a list of pattern dicts sorted by score descending.  Each dict:
+        name        — pattern name (str)
+        direction   — 'Bullish' | 'Bearish'
+        timeframe   — '5m' | '1hr'
+        score       — 0.0–1.0 weighted confidence
+        confluence  — list[str] of confluence reasons
+        description — plain-language explanation
+        neckline    — key price level (float | None)
+    """
+    if df_1m is None or df_1m.empty or len(df_1m) < 20:
+        return []
+
+    patterns = []
+
+    for tf_label, rule in [("5m", "5min"), ("1hr", "60min")]:
+        df_tf = _resample_bars(df_1m, rule)
+        if df_tf is None or len(df_tf) < 8:
+            continue
+
+        sh_idx = _find_swing_highs(df_tf, lookback=2)
+        sl_idx = _find_swing_lows(df_tf, lookback=2)
+        atr_val = compute_atr(df_tf, period=min(14, len(df_tf)))
+        close_now = float(df_tf["close"].iloc[-1])
+        n = len(df_tf)
+
+        # ── Reverse Head & Shoulders (Bullish) ────────────────────────────
+        if len(sl_idx) >= 3:
+            ls_i, h_i, rs_i = sl_idx[-3], sl_idx[-2], sl_idx[-1]
+            p_ls = float(df_tf["low"].iloc[ls_i])
+            p_h  = float(df_tf["low"].iloc[h_i])
+            p_rs = float(df_tf["low"].iloc[rs_i])
+            if p_h < p_ls and p_h < p_rs:
+                sym = abs(p_ls - p_rs) / max(abs(p_h - (p_ls + p_rs) / 2), 0.001)
+                if sym < 0.80:
+                    hl = float(df_tf["high"].iloc[ls_i:h_i + 1].max()) if h_i > ls_i else p_ls
+                    hr = float(df_tf["high"].iloc[h_i:rs_i + 1].max()) if rs_i > h_i else p_rs
+                    neckline = round((hl + hr) / 2.0, 4)
+                    score = 0.70
+                    conf = []
+                    if poc_price and abs(p_h - poc_price) / max(poc_price, 0.001) < 0.02:
+                        score += 0.10
+                        conf.append("Head at POC")
+                    if ib_low and abs(p_h - ib_low) / max(ib_low, 0.001) < 0.02:
+                        score += 0.10
+                        conf.append("Head at IB Low")
+                    if close_now >= neckline * 0.985:
+                        score += 0.10
+                        conf.append("Price at neckline — breakout imminent")
+                    nl_str = f"${neckline:.2f}"
+                    desc = (f"L-shoulder ${p_ls:.2f} → Head ${p_h:.2f} → "
+                            f"R-shoulder ${p_rs:.2f}. Neckline ~{nl_str}.")
+                    patterns.append({"name": "Reverse Head & Shoulders",
+                                     "direction": "Bullish", "timeframe": tf_label,
+                                     "score": round(min(score, 1.0), 2),
+                                     "confluence": conf, "description": desc,
+                                     "neckline": neckline})
+
+        # ── Head & Shoulders (Bearish) ────────────────────────────────────
+        if len(sh_idx) >= 3:
+            ls_i, h_i, rs_i = sh_idx[-3], sh_idx[-2], sh_idx[-1]
+            p_ls = float(df_tf["high"].iloc[ls_i])
+            p_h  = float(df_tf["high"].iloc[h_i])
+            p_rs = float(df_tf["high"].iloc[rs_i])
+            if p_h > p_ls and p_h > p_rs:
+                sym = abs(p_ls - p_rs) / max(abs(p_h - (p_ls + p_rs) / 2), 0.001)
+                if sym < 0.80:
+                    ll = float(df_tf["low"].iloc[ls_i:h_i + 1].min()) if h_i > ls_i else p_ls
+                    lr = float(df_tf["low"].iloc[h_i:rs_i + 1].min()) if rs_i > h_i else p_rs
+                    neckline = round((ll + lr) / 2.0, 4)
+                    score = 0.70
+                    conf = []
+                    if poc_price and abs(p_h - poc_price) / max(poc_price, 0.001) < 0.02:
+                        score += 0.10
+                        conf.append("Head at POC")
+                    if ib_high and abs(p_h - ib_high) / max(ib_high, 0.001) < 0.02:
+                        score += 0.10
+                        conf.append("Head at IB High")
+                    if close_now <= neckline * 1.015:
+                        score += 0.10
+                        conf.append("Price testing neckline")
+                    nl_str = f"${neckline:.2f}"
+                    desc = (f"L-shoulder ${p_ls:.2f} → Head ${p_h:.2f} → "
+                            f"R-shoulder ${p_rs:.2f}. Neckline ~{nl_str}.")
+                    patterns.append({"name": "Head & Shoulders",
+                                     "direction": "Bearish", "timeframe": tf_label,
+                                     "score": round(min(score, 1.0), 2),
+                                     "confluence": conf, "description": desc,
+                                     "neckline": neckline})
+
+        # ── Double Bottom (Bullish) ───────────────────────────────────────
+        if len(sl_idx) >= 2:
+            i1, i2 = sl_idx[-2], sl_idx[-1]
+            p1 = float(df_tf["low"].iloc[i1])
+            p2 = float(df_tf["low"].iloc[i2])
+            mid_price = (p1 + p2) / 2.0
+            diff_pct = abs(p1 - p2) / max(mid_price, 0.001)
+            if diff_pct < 0.03:
+                neckline = round(float(df_tf["high"].iloc[i1:i2 + 1].max()), 4)
+                score = 0.65
+                conf = []
+                if poc_price and abs(mid_price - poc_price) / max(poc_price, 0.001) < 0.025:
+                    score += 0.10
+                    conf.append("Bottoms at POC")
+                if ib_low and abs(mid_price - ib_low) / max(ib_low, 0.001) < 0.025:
+                    score += 0.10
+                    conf.append("Bottoms at IB Low")
+                if close_now > neckline:
+                    score += 0.15
+                    conf.append("Neckline broken — confirmed")
+                elif close_now >= neckline * 0.985:
+                    score += 0.05
+                    conf.append("Price at neckline")
+                diff_pct_str = f"{diff_pct * 100:.1f}"
+                neckline_str = f"${neckline:.2f}"
+                desc = (f"Two lows at ${p1:.2f} / ${p2:.2f} ({diff_pct_str}% apart). "
+                        f"Neckline {neckline_str}.")
+                patterns.append({"name": "Double Bottom",
+                                 "direction": "Bullish", "timeframe": tf_label,
+                                 "score": round(min(score, 1.0), 2),
+                                 "confluence": conf, "description": desc,
+                                 "neckline": neckline})
+
+        # ── Double Top (Bearish) ──────────────────────────────────────────
+        if len(sh_idx) >= 2:
+            i1, i2 = sh_idx[-2], sh_idx[-1]
+            p1 = float(df_tf["high"].iloc[i1])
+            p2 = float(df_tf["high"].iloc[i2])
+            mid_price = (p1 + p2) / 2.0
+            diff_pct = abs(p1 - p2) / max(mid_price, 0.001)
+            if diff_pct < 0.03:
+                neckline = round(float(df_tf["low"].iloc[i1:i2 + 1].min()), 4)
+                score = 0.65
+                conf = []
+                if poc_price and abs(mid_price - poc_price) / max(poc_price, 0.001) < 0.025:
+                    score += 0.10
+                    conf.append("Tops at POC")
+                if ib_high and abs(mid_price - ib_high) / max(ib_high, 0.001) < 0.025:
+                    score += 0.10
+                    conf.append("Tops at IB High")
+                if close_now < neckline:
+                    score += 0.15
+                    conf.append("Neckline broken — confirmed")
+                diff_pct_str = f"{diff_pct * 100:.1f}"
+                neckline_str = f"${neckline:.2f}"
+                desc = (f"Two highs at ${p1:.2f} / ${p2:.2f} ({diff_pct_str}% apart). "
+                        f"Neckline {neckline_str}.")
+                patterns.append({"name": "Double Top",
+                                 "direction": "Bearish", "timeframe": tf_label,
+                                 "score": round(min(score, 1.0), 2),
+                                 "confluence": conf, "description": desc,
+                                 "neckline": neckline})
+
+        # ── Bull Flag (Bullish) ───────────────────────────────────────────
+        if n >= 10:
+            mid = n // 2
+            pole_move = float(df_tf["close"].iloc[mid]) - float(df_tf["close"].iloc[0])
+            pole_range = (float(df_tf["high"].iloc[:mid].max())
+                         - float(df_tf["low"].iloc[:mid].min()))
+            flag_hi = float(df_tf["high"].iloc[mid:].max())
+            flag_lo = float(df_tf["low"].iloc[mid:].min())
+            flag_range = flag_hi - flag_lo
+            flag_slope = ((float(df_tf["close"].iloc[-1]) - float(df_tf["close"].iloc[mid]))
+                         / max(n - mid, 1))
+            is_pole = pole_move > atr_val * 2.5 and pole_move > 0
+            is_tight = flag_range < pole_range * 0.55
+            is_down_drift = flag_slope < 0
+            if is_pole and is_tight and is_down_drift:
+                score = 0.68
+                conf = []
+                if poc_price and flag_lo <= poc_price <= flag_hi:
+                    score += 0.12
+                    conf.append("Flag consolidating at POC")
+                if ib_high and flag_lo <= ib_high <= flag_hi:
+                    score += 0.10
+                    conf.append("Flag at IB High")
+                pole_str = f"${pole_move:.2f}"
+                flag_str = f"${flag_range:.2f}"
+                target_str = f"${flag_hi + pole_move:.2f}"
+                desc = (f"Pole +{pole_str} → tight flag range {flag_str}. "
+                        f"Breakout target ~{target_str}.")
+                patterns.append({"name": "Bull Flag",
+                                 "direction": "Bullish", "timeframe": tf_label,
+                                 "score": round(min(score, 1.0), 2),
+                                 "confluence": conf, "description": desc,
+                                 "neckline": round(flag_hi, 4)})
+
+        # ── Bear Flag (Bearish) ───────────────────────────────────────────
+        if n >= 10:
+            mid = n // 2
+            pole_move = float(df_tf["close"].iloc[0]) - float(df_tf["close"].iloc[mid])
+            pole_range = (float(df_tf["high"].iloc[:mid].max())
+                         - float(df_tf["low"].iloc[:mid].min()))
+            flag_hi = float(df_tf["high"].iloc[mid:].max())
+            flag_lo = float(df_tf["low"].iloc[mid:].min())
+            flag_range = flag_hi - flag_lo
+            flag_slope = ((float(df_tf["close"].iloc[-1]) - float(df_tf["close"].iloc[mid]))
+                         / max(n - mid, 1))
+            is_pole = pole_move > atr_val * 2.5 and pole_move > 0
+            is_tight = flag_range < pole_range * 0.55
+            is_up_drift = flag_slope > 0
+            if is_pole and is_tight and is_up_drift:
+                score = 0.68
+                conf = []
+                if poc_price and flag_lo <= poc_price <= flag_hi:
+                    score += 0.12
+                    conf.append("Flag at POC")
+                target_str = f"${flag_lo - pole_move:.2f}"
+                pole_str = f"${pole_move:.2f}"
+                flag_str = f"${flag_range:.2f}"
+                desc = (f"Pole drop -{pole_str} → counter-rally {flag_str}. "
+                        f"Breakdown target ~{target_str}.")
+                patterns.append({"name": "Bear Flag",
+                                 "direction": "Bearish", "timeframe": tf_label,
+                                 "score": round(min(score, 1.0), 2),
+                                 "confluence": conf, "description": desc,
+                                 "neckline": round(flag_lo, 4)})
+
+        # ── Cup & Handle (Bullish) ────────────────────────────────────────
+        if n >= 15:
+            cup_end = n * 2 // 3
+            cup_df = df_tf.iloc[:cup_end]
+            cup_start = float(cup_df["close"].iloc[0])
+            cup_low = float(cup_df["low"].min())
+            cup_end_price = float(cup_df["close"].iloc[-1])
+            depth = cup_start - cup_low
+            recovery = (cup_end_price - cup_low) / max(depth, 0.001)
+            handle_df = df_tf.iloc[cup_end:]
+            if len(handle_df) > 0:
+                h_hi = float(handle_df["high"].max())
+                h_lo = float(handle_df["low"].min())
+                handle_depth_ratio = (h_hi - h_lo) / max(depth, 0.001)
+                is_cup = recovery > 0.65 and depth > atr_val * 2
+                is_handle = 0.04 < handle_depth_ratio < 0.45
+                if is_cup and is_handle:
+                    score = 0.72
+                    conf = []
+                    if poc_price and abs(cup_low - poc_price) / max(poc_price, 0.001) < 0.025:
+                        score += 0.12
+                        conf.append("Cup base at POC")
+                    target = cup_start + depth
+                    recovery_str = f"{recovery * 100:.0f}"
+                    h_lo_str = f"${h_lo:.2f}"
+                    h_hi_str = f"${h_hi:.2f}"
+                    target_str = f"${target:.2f}"
+                    desc = (f"Cup base ${cup_low:.2f} → {recovery_str}% recovered. "
+                            f"Handle {h_lo_str}–{h_hi_str}. Target {target_str}.")
+                    patterns.append({"name": "Cup & Handle",
+                                     "direction": "Bullish", "timeframe": tf_label,
+                                     "score": round(min(score, 1.0), 2),
+                                     "confluence": conf, "description": desc,
+                                     "neckline": round(cup_start, 4)})
+
+    # ── Confluence boost: stacked patterns ────────────────────────────────────
+    bull = [p for p in patterns if p["direction"] == "Bullish"]
+    bear = [p for p in patterns if p["direction"] == "Bearish"]
+    if len(bull) >= 2:
+        extra = f"Stacked with {len(bull) - 1} other bullish pattern(s)"
+        for p in bull:
+            p["confluence"].append(extra)
+            p["score"] = round(min(p["score"] * 1.15, 1.0), 2)
+    if len(bear) >= 2:
+        extra = f"Stacked with {len(bear) - 1} other bearish pattern(s)"
+        for p in bear:
+            p["confluence"].append(extra)
+            p["score"] = round(min(p["score"] * 1.15, 1.0), 2)
+
+    patterns.sort(key=lambda x: x["score"], reverse=True)
+    return patterns
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MARKET BRAIN  — real-time IB tracker + structure predictor
 # ══════════════════════════════════════════════════════════════════════════════
 

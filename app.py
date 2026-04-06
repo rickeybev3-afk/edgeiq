@@ -20,6 +20,7 @@ from backend import (
     compute_order_flow_signals,
     load_watchlist,
     get_next_trading_day,
+    detect_chart_patterns,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -2001,6 +2002,72 @@ def render_order_flow_widget(ofs):
     st.markdown(_of_html, unsafe_allow_html=True)
 
 
+def render_pattern_widget(patterns):
+    """Tier 3 — Chart Pattern Detection panel rendered below Tier 2 order flow."""
+    dir_colors = {"Bullish": "#4caf50", "Bearish": "#ef5350"}
+    dir_icons  = {"Bullish": "▲", "Bearish": "▼"}
+    tf_colors  = {"1hr": "#90caf9", "5m": "#b0bec5"}
+
+    if not patterns:
+        st.markdown(
+            '<div style="background:#1a1a2e; border:1px solid #2a2a4a; border-radius:8px; '
+            'padding:8px 16px; margin:4px 0 6px 0; display:flex; align-items:center; gap:12px;">'
+            '<span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">'
+            'Chart Patterns <span style="color:#555;">(Tier 3)</span></span>'
+            '<span style="font-size:12px; color:#555;">No patterns detected yet — '
+            'more bars needed or no classic setup forming</span>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+        return
+
+    top = patterns[0]
+    top_color = dir_colors.get(top["direction"], "#aaaaaa")
+    top_icon  = dir_icons.get(top["direction"], "")
+    extra_lbl = f" + {len(patterns) - 1} more" if len(patterns) > 1 else ""
+
+    rows_html = ""
+    for p in patterns:
+        dc = dir_colors.get(p["direction"], "#aaaaaa")
+        di = dir_icons.get(p["direction"], "")
+        tfc = tf_colors.get(p["timeframe"], "#b0bec5")
+        pct = int(p["score"] * 100)
+        sc  = "#4caf50" if pct >= 80 else "#ffa726" if pct >= 65 else "#ef9a9a"
+        conf_str = " &middot; ".join(p["confluence"]) if p["confluence"] else ""
+        nl = p.get("neckline")
+        nl_html = (f'&nbsp;&middot;&nbsp;Neckline <b style="color:#FFD700;">'
+                   f'${nl:.2f}</b>') if nl else ""
+        conf_html = (f'<div style="font-size:10px; color:#FFD700; margin-top:2px;">'
+                     f'&#9889; {conf_str}</div>') if conf_str else ""
+        rows_html += (
+            f'<div style="border-bottom:1px solid #1e1e3a; padding:7px 0 5px 0;">'
+            f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+            f'<span style="font-size:12px; font-weight:700; color:{dc};">{di}&nbsp;{p["name"]}</span>'
+            f'<span style="font-size:11px; color:{tfc}; margin:0 8px;">{p["timeframe"]}</span>'
+            f'<span style="font-size:12px; font-weight:700; color:{sc};">{pct}%</span>'
+            f'</div>'
+            f'<div style="font-size:11px; color:#888; margin-top:2px;">'
+            f'{p["description"]}{nl_html}</div>'
+            f'{conf_html}'
+            f'</div>'
+        )
+
+    st.markdown(
+        f'<div style="background:#1a1a2e; border:1px solid {top_color}44;'
+        f' border-radius:8px; padding:10px 16px; margin:4px 0 6px 0;">'
+        f'<div style="display:flex; justify-content:space-between; align-items:center;'
+        f' margin-bottom:8px;">'
+        f'<span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">'
+        f'Chart Patterns <span style="color:#555;">(Tier 3)</span></span>'
+        f'<span style="font-size:12px; font-weight:700; color:{top_color};">'
+        f'{top_icon}&nbsp;{top["name"]}{extra_lbl}</span>'
+        f'</div>'
+        f'{rows_html}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+
 def render_model_prediction(outcome, reasoning):
     """Show the volume-price divergence model prediction in a styled text box.
 
@@ -2284,6 +2351,9 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     render_buy_sell_widget(compute_buy_sell_pressure(df), rvol_val=rvol_val)
     render_order_flow_widget(
         compute_order_flow_signals(df, ib_high=ib_high, ib_low=ib_low)
+    )
+    render_pattern_widget(
+        detect_chart_patterns(df, poc_price=poc_price, ib_high=ib_high, ib_low=ib_low)
     )
     render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
