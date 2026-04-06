@@ -3665,6 +3665,13 @@ _BT_DEFAULT_TICKERS = (
     "ATER,PROG,BIOR,CTRM,SIGA,GFAI,ONDS,ATNM,CTXR,PAVS"
 )
 
+_CALIBRATION_TICKERS = [
+    "GME", "AMC", "SOFI", "SPCE", "SNDL", "TLRY", "OCGN", "CLOV", "MVIS",
+    "WKHS", "NKLA", "RIDE", "BBIG", "SENS", "FFIE", "MULN",
+    "ATER", "PROG", "CTRM", "GFAI", "ONDS", "ATNM", "CTXR", "PAVS",
+    "PHUN", "CIDM", "WISH", "XELA",
+]
+
 _BT_WIN_CLR   = "#4caf50"
 _BT_LOSS_CLR  = "#ef5350"
 _BT_NEUT_CLR  = "#546e7a"
@@ -3738,6 +3745,100 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     if not api_key or not secret_key:
         st.warning("Enter your **Alpaca API Key** and **Secret Key** in the sidebar to run backtests.")
         return
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BRAIN CALIBRATION RUN — one click, 28 tickers × last 5 trading days
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown(
+        '<div style="background:#0a1628; border:1px solid #1565c044; border-radius:10px; '
+        'padding:14px 20px; margin-bottom:14px;">'
+        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:2px; margin-bottom:4px;">🧠 BRAIN CALIBRATION</div>'
+        '<div style="font-size:15px; font-weight:700; color:#e0e0e0; margin-bottom:4px;">'
+        'One-Click Calibration Run</div>'
+        '<div style="font-size:12px; color:#546e7a;">'
+        'Runs the quant model across 28 small-cap tickers over the last 5 trading days. '
+        'Saves all results to Supabase so the structure probability model can recalibrate '
+        'against correctly-classified historical sessions.'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    _cal_feed_col, _cal_btn_col = st.columns([2, 1])
+    with _cal_feed_col:
+        _cal_days = st.slider(
+            "Trading days to look back", min_value=1, max_value=22,
+            value=5, step=1, key="cal_lookback_days",
+            help="1 day = yesterday only. 5 = last full week. 22 = ~1 month."
+        )
+        _cal_feed = st.radio(
+            "Feed", ["IEX (free)", "SIP (paid — accurate)"],
+            key="cal_feed_radio", horizontal=True,
+        )
+        _cal_feed_str = "sip" if "SIP" in _cal_feed else "iex"
+    with _cal_btn_col:
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        _cal_run = st.button(
+            "🧠 RUN CALIBRATION", use_container_width=True,
+            key="cal_run_btn", type="primary",
+        )
+
+    if _cal_run:
+        _cal_end = get_last_trading_day(as_of=date.today())
+        import math as _math
+        _cal_days_back = _math.ceil(_cal_days * 7 / 5) + 3
+        _cal_start = _cal_end - timedelta(days=_cal_days_back)
+        _cal_label = f"{_cal_start} → {_cal_end}"
+        _cal_ticker_str = ", ".join(_CALIBRATION_TICKERS)
+        st.info(
+            f"Running {len(_CALIBRATION_TICKERS)} tickers · {_cal_start} → {_cal_end} "
+            f"· Feed: {_cal_feed_str.upper()} · Saving to Supabase…"
+        )
+        with st.spinner(
+            f"⏳ Calibrating model on {len(_CALIBRATION_TICKERS)} tickers × "
+            f"{_cal_days} days ({_cal_label}) — this takes 1–3 minutes…"
+        ):
+            try:
+                _cal_results, _cal_summary, _cal_daily = run_backtest_range(
+                    api_key, secret_key,
+                    start_date=_cal_start,
+                    end_date=_cal_end,
+                    tickers=_CALIBRATION_TICKERS,
+                    feed=_cal_feed_str,
+                    price_min=0.50,
+                    price_max=100.0,
+                    slippage_pct=0.5,
+                )
+                if _cal_results:
+                    try:
+                        save_backtest_sim_runs(_cal_results, user_id=_AUTH_USER_ID)
+                        _saved_ok = True
+                    except Exception:
+                        _saved_ok = False
+                    _wins   = sum(1 for r in _cal_results if r.get("win_loss") == "Win")
+                    _losses = sum(1 for r in _cal_results if r.get("win_loss") == "Loss")
+                    _total_r = len(_cal_results)
+                    _wr = _wins / _total_r * 100 if _total_r else 0
+                    _save_msg = "✅ Saved to Supabase" if _saved_ok else "⚠️ Supabase save failed"
+                    st.success(
+                        f"Calibration complete — {_total_r} sessions processed · "
+                        f"Win rate: {_wr:.1f}% ({_wins}W / {_losses}L) · {_save_msg}"
+                    )
+                    _cal_struct_counts: dict = {}
+                    for _r in _cal_results:
+                        _s = _r.get("predicted", "Unknown")
+                        _cal_struct_counts[_s] = _cal_struct_counts.get(_s, 0) + 1
+                    _struct_parts = [f"{k}: {v}" for k, v in
+                                     sorted(_cal_struct_counts.items(), key=lambda x: -x[1])]
+                    st.caption("Structure distribution: " + " · ".join(_struct_parts))
+                else:
+                    st.warning("No results returned — check tickers or date range. "
+                               "Tickers not in price range are skipped.")
+            except Exception as _cal_err:
+                st.error(f"Calibration run failed: {_cal_err}")
+
+    st.markdown("---")
 
     # ── Configuration panel ─────────────────────────────────────────────────────
     st.markdown(
