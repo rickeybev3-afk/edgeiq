@@ -4458,7 +4458,9 @@ def load_watchlist_predictions(user_id: str = "", pred_date=None) -> pd.DataFram
         uid = user_id or "anonymous"
         q = q.eq("user_id", uid)
         if pred_date:
-            q = q.eq("pred_date", str(pred_date))
+            _ld_date  = str(pred_date)
+            _ld_next  = str(pred_date + timedelta(days=1))
+            q = q.gte("pred_date", _ld_date).lt("pred_date", _ld_next)
         q = q.order("edge_score", desc=True).limit(300)
         res = q.execute()
         if not res.data:
@@ -4505,10 +4507,13 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
 
     try:
         uid = user_id or "anonymous"
+        _date_str  = str(check_date)
+        _next_str  = str(check_date + timedelta(days=1))
         q = (supabase.table("watchlist_predictions")
              .select("*")
              .eq("user_id", uid)
-             .eq("pred_date", str(check_date)))
+             .gte("pred_date", _date_str)
+             .lt("pred_date", _next_str))
         if not _explicit_date:
             q = q.eq("verified", False)
         res = q.execute()
