@@ -66,6 +66,69 @@ def auth_signout() -> None:
         supabase.auth.sign_out()
     except Exception:
         pass
+    clear_session_cache()
+
+
+_SESSION_CACHE = os.path.join(os.path.dirname(__file__), ".local", "session_cache.json")
+
+
+def save_session_cache(user_id: str, email: str, refresh_token: str) -> None:
+    """Persist the Supabase refresh token to disk so we can restore the session
+    after a server restart without asking the user to log in again."""
+    try:
+        os.makedirs(os.path.dirname(_SESSION_CACHE), exist_ok=True)
+        with open(_SESSION_CACHE, "w") as _f:
+            json.dump({"user_id": user_id, "email": email,
+                       "refresh_token": refresh_token}, _f)
+    except Exception:
+        pass
+
+
+def load_session_cache() -> dict:
+    """Read the persisted session cache. Returns {} if missing or corrupt."""
+    try:
+        if os.path.exists(_SESSION_CACHE):
+            with open(_SESSION_CACHE) as _f:
+                return json.load(_f)
+    except Exception:
+        pass
+    return {}
+
+
+def clear_session_cache() -> None:
+    """Delete the session cache (called on explicit sign-out)."""
+    try:
+        if os.path.exists(_SESSION_CACHE):
+            os.remove(_SESSION_CACHE)
+    except Exception:
+        pass
+
+
+def try_restore_session() -> dict:
+    """Attempt to restore a previous session from the cached refresh token.
+
+    Returns {"user": <User>, "email": str} on success, {} on failure.
+    """
+    if not supabase:
+        return {}
+    cache = load_session_cache()
+    token = cache.get("refresh_token", "")
+    if not token:
+        return {}
+    try:
+        resp = supabase.auth.refresh_session(token)
+        if resp and resp.user:
+            # Persist the new refresh token (it rotates on each use)
+            save_session_cache(
+                str(resp.user.id),
+                str(resp.user.email),
+                resp.session.refresh_token if resp.session else token,
+            )
+            return {"user": resp.user, "email": str(resp.user.email)}
+    except Exception as _e:
+        print(f"Session restore failed: {_e}")
+        clear_session_cache()
+    return {}
 
 
 def check_user_id_column_exists() -> bool:

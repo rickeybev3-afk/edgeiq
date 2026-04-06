@@ -287,10 +287,15 @@ def render_login_page():
                     if _res["error"]:
                         st.error(_res["error"])
                     else:
-                        _u = _res["user"]
+                        _u  = _res["user"]
+                        _s  = _res.get("session") or (_res.get("session"))
                         st.session_state["auth_user"]    = _u
                         st.session_state["auth_user_id"] = str(_u.id) if _u else ""
                         st.session_state["auth_email"]   = str(_u.email) if _u else _email
+                        # Persist session so next restart auto-logs in
+                        _rt = getattr(_res.get("session"), "refresh_token", None)
+                        if _u and _rt:
+                            save_session_cache(str(_u.id), str(_u.email), _rt)
                         st.success("Logged in! Loading dashboard…")
                         st.rerun()
         else:
@@ -312,6 +317,9 @@ def render_login_page():
                             st.session_state["auth_user"]    = _u
                             st.session_state["auth_user_id"] = str(_u.id)
                             st.session_state["auth_email"]   = str(_u.email)
+                            _rt2 = getattr(_res.get("session"), "refresh_token", None)
+                            if _rt2:
+                                save_session_cache(str(_u.id), str(_u.email), _rt2)
                             st.success("Account created! Loading dashboard…")
                             st.rerun()
                         else:
@@ -2755,6 +2763,17 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
+
+# ── Auto-restore session from disk (survives server restarts) ─────────────────
+if not st.session_state.get("auth_user") and not st.session_state.get("_restore_tried"):
+    st.session_state["_restore_tried"] = True
+    _restored = try_restore_session()
+    if _restored.get("user"):
+        _ru = _restored["user"]
+        st.session_state["auth_user"]    = _ru
+        st.session_state["auth_user_id"] = str(_ru.id)
+        st.session_state["auth_email"]   = _restored.get("email", "")
+        st.rerun()
 
 # ── Auth gate: show login page if not authenticated ───────────────────────────
 if not st.session_state.get("auth_user"):
