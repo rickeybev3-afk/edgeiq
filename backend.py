@@ -4539,6 +4539,25 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
             _dbg_msg = (f" Found {len(_dbg_rows)} row(s) for that date but stored "
                         f"under user_id={_stored_uids}; "
                         f"queried with user_id={uid}")
+        else:
+            # No rows for that date at all — show what dates DO exist
+            try:
+                _all = (supabase.table("watchlist_predictions")
+                        .select("user_id,ticker,pred_date")
+                        .order("pred_date", desc=True)
+                        .limit(10)
+                        .execute())
+                _all_rows = _all.data or []
+            except Exception:
+                _all_rows = []
+            if _all_rows:
+                _dates = list({r.get("pred_date","")[:10] for r in _all_rows})
+                _tickers = list({r.get("ticker","") for r in _all_rows})
+                _dbg_msg = (f" No rows exist for that date in the table. "
+                            f"Dates actually stored: {sorted(_dates)}. "
+                            f"Tickers: {_tickers}.")
+            else:
+                _dbg_msg = " The watchlist_predictions table appears empty."
         return {"verified": 0, "correct": 0, "accuracy": 0.0,
                 "date": str(check_date),
                 "error": f"No predictions found for {check_date}.{_dbg_msg}"}
