@@ -1844,6 +1844,201 @@ def compute_buy_sell_pressure(df,
     }
 
 
+def compute_order_flow_signals(df, ib_high=None, ib_low=None):
+    """Tier 2 order flow proxy signals derived from 1-min OHLCV bars.
+
+    Signals returned (all based on bar structure — no L2 data required):
+
+    pressure_accel   : "Accelerating" | "Decelerating" | "Flat"
+                       Compares 3-bar vs 10-bar buy pressure windows.
+    pressure_short   : buy% for last 3 bars  (0-100)
+    pressure_medium  : buy% for last 10 bars (0-100)
+    pressure_long    : buy% for last 20 bars (0-100)
+
+    bar_quality      : 0-100. % of last 10 bars where close > midpoint of bar range.
+                       100 = all bars closed near high; 0 = all closed near low.
+    bar_quality_label: "Buyers Dominant" | "Sellers Dominant" | "Contested"
+
+    vol_surge_ratio  : current-bar volume / 10-bar avg volume (1.0 = baseline)
+    vol_surge_label  : "Surge" | "Above Avg" | "Normal" | "Thin"
+
+    streak           : int. +N = N consecutive bars closing higher than prior close.
+                       -N = N consecutive bars closing lower than prior close.
+    streak_label     : "Strong Upward Tape" | "Moderate Upward Tape" | etc.
+
+    ib_proximity     : "At IB High" | "At IB Low" | "Mid-Range" | None
+    ib_vol_confirm   : True if vol_surge_ratio >= 1.5 while at IB extreme
+
+    composite_signal : "Strong Buy Flow" | "Moderate Buy Flow" | "Neutral" |
+                       "Moderate Sell Flow" | "Strong Sell Flow"
+    composite_score  : -100 to +100 (positive = bullish flow)
+    """
+    if df is None or df.empty or len(df) < 3:
+        return None
+
+    _df = df.dropna(subset=["open", "high", "low", "close", "volume"]).copy()
+    if len(_df) < 3:
+        return None
+
+    # ── Per-bar buy fraction (reuse CLV+Tick formula) ─────────────────────────
+    hl = (_df["high"] - _df["low"]).replace(0, np.nan)
+    sell_clv  = ((_df["high"] - _df["close"]) / hl).fillna(0.5).clip(0, 1)
+    close_prev = _df["close"].shift(1)
+    sell_tick  = np.where(
+        _df["close"] < close_prev, 1.0,
+        np.where(_df["close"] > close_prev, 0.0, 0.5)
+    )
+    sell_frac = pd.Series(
+        ((sell_clv + pd.Series(sell_tick, index=_df.index)) / 2.0).values,
+        index=_df.index,
+    ).clip(0, 1)
+    buy_frac = 1.0 - sell_frac
+
+    def _win_buy_pct(sub_buy, sub_vol):
+        bv = (sub_buy * sub_vol).sum()
+        tv = sub_vol.sum()
+        return float(bv / tv * 100.0) if tv > 0 else 50.0
+
+    n = len(_df)
+    buy_f = buy_frac.values
+    vols  = _df["volume"].values
+
+    short_n  = min(3,  n)
+    medium_n = min(10, n)
+    long_n   = min(20, n)
+
+    p_short  = _win_buy_pct(buy_f[-short_n:],  vols[-short_n:])
+    p_medium = _win_buy_pct(buy_f[-medium_n:], vols[-medium_n:])
+    p_long   = _win_buy_pct(buy_f[-long_n:],   vols[-long_n:])
+
+    accel_delta = p_short - p_medium
+    if accel_delta > 4:
+        pressure_accel = "Accelerating"
+    elif accel_delta < -4:
+        pressure_accel = "Decelerating"
+    else:
+        pressure_accel = "Flat"
+
+    # ── Bar quality (close vs midpoint of each bar's range) ──────────────────
+    bq_n    = min(10, n)
+    bq_sub  = _df.tail(bq_n)
+    mid     = (bq_sub["high"] + bq_sub["low"]) / 2.0
+    bar_quality = float((bq_sub["close"] > mid).sum() / bq_n * 100.0)
+    if bar_quality >= 65:
+        bar_quality_label = "Buyers Dominant"
+    elif bar_quality <= 35:
+        bar_quality_label = "Sellers Dominant"
+    else:
+        bar_quality_label = "Contested"
+
+    # ── Volume surge ratio (last bar vs 10-bar avg) ───────────────────────────
+    avg_vol_10 = float(np.mean(vols[-min(10, n):])) if n >= 2 else 1.0
+    cur_vol    = float(vols[-1]) if n >= 1 else 0.0
+    vol_surge_ratio = (cur_vol / avg_vol_10) if avg_vol_10 > 0 else 1.0
+    if vol_surge_ratio >= 2.0:
+        vol_surge_label = "Surge"
+    elif vol_surge_ratio >= 1.3:
+        vol_surge_label = "Above Avg"
+    elif vol_surge_ratio >= 0.7:
+        vol_surge_label = "Normal"
+    else:
+        vol_surge_label = "Thin"
+
+    # ── Consecutive close streak ───────────────────────────────────────────────
+    closes = _df["close"].values
+    streak = 0
+    if len(closes) >= 2:
+        direction = 1 if closes[-1] >= closes[-2] else -1
+        for i in range(len(closes) - 2, 0, -1):
+            if direction == 1 and closes[i] >= closes[i - 1]:
+                streak += 1
+            elif direction == -1 and closes[i] <= closes[i - 1]:
+                streak -= 1
+            else:
+                break
+        if direction == 1:
+            streak = max(streak, 1)
+        else:
+            streak = min(streak, -1)
+
+    if streak >= 5:
+        streak_label = "Strong Upward Tape"
+    elif streak >= 3:
+        streak_label = "Moderate Upward Tape"
+    elif streak >= 1:
+        streak_label = "Mild Upward Tape"
+    elif streak <= -5:
+        streak_label = "Strong Downward Tape"
+    elif streak <= -3:
+        streak_label = "Moderate Downward Tape"
+    elif streak <= -1:
+        streak_label = "Mild Downward Tape"
+    else:
+        streak_label = "Mixed Tape"
+
+    # ── IB proximity + volume confirmation ────────────────────────────────────
+    last_close  = float(closes[-1])
+    ib_proximity    = None
+    ib_vol_confirm  = False
+    if ib_high is not None and ib_low is not None:
+        ib_range = ib_high - ib_low
+        if ib_range > 0:
+            if last_close >= ib_high - 0.05 * ib_range:
+                ib_proximity   = "At IB High"
+                ib_vol_confirm = vol_surge_ratio >= 1.5
+            elif last_close <= ib_low + 0.05 * ib_range:
+                ib_proximity   = "At IB Low"
+                ib_vol_confirm = vol_surge_ratio >= 1.5
+            else:
+                ib_proximity = "Mid-Range"
+
+    # ── Composite score (-100 to +100) ────────────────────────────────────────
+    # Components:
+    #   pressure short vs 50  → weight 35
+    #   bar quality vs 50     → weight 30
+    #   streak contribution   → weight 20
+    #   vol surge             → weight 15 (surge amplifies direction)
+    p_score   = (p_short - 50.0) * (35.0 / 50.0)          # -35 to +35
+    bq_score  = (bar_quality - 50.0) * (30.0 / 50.0)       # -30 to +30
+    str_score = float(np.clip(streak, -5, 5)) / 5.0 * 20.0 # -20 to +20
+    if vol_surge_ratio >= 1.5:
+        vol_score = 10.0 if p_short >= 50 else -10.0
+    elif vol_surge_ratio >= 1.2:
+        vol_score = 5.0 if p_short >= 50 else -5.0
+    else:
+        vol_score = 0.0
+    composite_score = float(np.clip(p_score + bq_score + str_score + vol_score, -100, 100))
+
+    if composite_score >= 40:
+        composite_signal = "Strong Buy Flow"
+    elif composite_score >= 15:
+        composite_signal = "Moderate Buy Flow"
+    elif composite_score <= -40:
+        composite_signal = "Strong Sell Flow"
+    elif composite_score <= -15:
+        composite_signal = "Moderate Sell Flow"
+    else:
+        composite_signal = "Neutral"
+
+    return {
+        "pressure_accel":    pressure_accel,
+        "pressure_short":    round(p_short,  1),
+        "pressure_medium":   round(p_medium, 1),
+        "pressure_long":     round(p_long,   1),
+        "accel_delta":       round(accel_delta, 1),
+        "bar_quality":       round(bar_quality, 1),
+        "bar_quality_label": bar_quality_label,
+        "vol_surge_ratio":   round(vol_surge_ratio, 2),
+        "vol_surge_label":   vol_surge_label,
+        "streak":            streak,
+        "streak_label":      streak_label,
+        "ib_proximity":      ib_proximity,
+        "ib_vol_confirm":    ib_vol_confirm,
+        "composite_signal":  composite_signal,
+        "composite_score":   round(composite_score, 1),
+    }
+
+
 def rvol_classify(rvol, pct_chg_today, elapsed_bars=None, price_now=None):
     """Time-aware RVOL label.
 

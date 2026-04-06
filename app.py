@@ -17,6 +17,7 @@ from backend import (
     _edge_band, _rvol_band,
     save_signal_conditions, log_signal_outcome, get_predictive_context,
     compute_win_rates, monte_carlo_equity_curves,
+    compute_order_flow_signals,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -1846,6 +1847,161 @@ def render_buy_sell_widget(bsp, rvol_val=None):
     """, unsafe_allow_html=True)
 
 
+def render_order_flow_widget(ofs):
+    """Tier 2 order flow panel — pressure acceleration, bar quality, vol surge, streak."""
+    if ofs is None:
+        return
+
+    # ── Color helpers ─────────────────────────────────────────────────────────
+    _sig = ofs["composite_signal"]
+    _score = ofs["composite_score"]
+    if _sig == "Strong Buy Flow":
+        _sig_color, _sig_icon = "#4caf50", "🟢"
+    elif _sig == "Moderate Buy Flow":
+        _sig_color, _sig_icon = "#8bc34a", "↑"
+    elif _sig == "Strong Sell Flow":
+        _sig_color, _sig_icon = "#ef5350", "🔴"
+    elif _sig == "Moderate Sell Flow":
+        _sig_color, _sig_icon = "#ef9a9a", "↓"
+    else:
+        _sig_color, _sig_icon = "#ffa726", "⇔"
+
+    _accel_color = (
+        "#4caf50" if ofs["pressure_accel"] == "Accelerating"
+        else "#ef5350" if ofs["pressure_accel"] == "Decelerating"
+        else "#aaaaaa"
+    )
+    _accel_arrow = (
+        "▲" if ofs["pressure_accel"] == "Accelerating"
+        else "▼" if ofs["pressure_accel"] == "Decelerating"
+        else "→"
+    )
+
+    _bq = ofs["bar_quality"]
+    _bq_color = (
+        "#4caf50" if _bq >= 65
+        else "#ef5350" if _bq <= 35
+        else "#ffa726"
+    )
+
+    _vsr = ofs["vol_surge_ratio"]
+    _vs_color = (
+        "#4caf50" if _vsr >= 2.0
+        else "#8bc34a" if _vsr >= 1.3
+        else "#aaaaaa" if _vsr >= 0.7
+        else "#ef5350"
+    )
+
+    _streak = ofs["streak"]
+    _stk_color = "#4caf50" if _streak > 0 else "#ef5350" if _streak < 0 else "#aaaaaa"
+    _stk_sign  = "+" if _streak > 0 else ""
+
+    # ── IB proximity badge ────────────────────────────────────────────────────
+    _ib_html = ""
+    if ofs["ib_proximity"] and ofs["ib_proximity"] != "Mid-Range":
+        _ib_c  = "#FFD700" if ofs["ib_vol_confirm"] else "#ffa72666"
+        _ib_bd = "#FFD70088" if ofs["ib_vol_confirm"] else "#ffa72644"
+        _ib_confirm_txt = " ✓ Vol Confirmed" if ofs["ib_vol_confirm"] else " (low vol)"
+        _ib_html = (
+            f'<div style="background:{_ib_c}18; border:1px solid {_ib_bd}; '
+            f'border-radius:5px; padding:3px 10px; display:inline-block; '
+            f'font-size:11px; font-weight:700; color:{_ib_c}; margin-bottom:6px;">'
+            f'⚡ {ofs["ib_proximity"]}{_ib_confirm_txt}'
+            f'</div>'
+        )
+
+    # ── Composite score bar (centered at 0) ───────────────────────────────────
+    _abs_score  = abs(_score)
+    _bar_left   = 50.0 if _score >= 0 else 50.0 - _abs_score / 2.0
+    _bar_width  = _abs_score / 2.0
+    _bar_left   = max(0.0, min(50.0, _bar_left))
+    _bar_width  = max(0.0, min(50.0, _bar_width))
+
+    st.markdown(f"""
+    <div style="background:#1a1a2e; border:1px solid {_sig_color}44; border-radius:8px;
+                padding:10px 16px; margin:4px 0 6px 0;">
+      {_ib_html}
+      <div style="display:flex; justify-content:space-between; align-items:center;
+                  margin-bottom:8px;">
+        <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">
+          Order Flow Signals &nbsp;<span style="color:#555;">(Tier 2)</span>
+        </span>
+        <span style="font-size:12px; font-weight:700; color:{_sig_color};">
+          {_sig_icon}&nbsp;{_sig}
+        </span>
+        <span style="font-size:11px; color:{_sig_color};">{_score:+.0f}</span>
+      </div>
+
+      <!-- Composite score bar (centered, -100 to +100) -->
+      <div style="background:#333; border-radius:4px; height:10px; width:100%;
+                  position:relative; overflow:hidden; margin-bottom:8px;">
+        <div style="position:absolute; left:50%; top:0; height:100%;
+                    width:2px; background:#ffffff44;"></div>
+        <div style="position:absolute; left:{_bar_left:.1f}%; top:0; height:100%;
+                    width:{_bar_width:.1f}%; background:{_sig_color};
+                    border-radius:4px;"></div>
+      </div>
+
+      <!-- 4 sub-signals in a row -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px;">
+
+        <!-- Pressure Acceleration -->
+        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
+                    padding:6px 8px; text-align:center;">
+          <div style="font-size:9px; color:#555; text-transform:uppercase;
+                      letter-spacing:0.8px; margin-bottom:3px;">Pressure</div>
+          <div style="font-size:13px; font-weight:700; color:{_accel_color};">
+            {_accel_arrow} {ofs["pressure_accel"]}
+          </div>
+          <div style="font-size:10px; color:#666; margin-top:2px;">
+            3b:{ofs["pressure_short"]:.0f}% | 10b:{ofs["pressure_medium"]:.0f}%
+          </div>
+        </div>
+
+        <!-- Bar Quality -->
+        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
+                    padding:6px 8px; text-align:center;">
+          <div style="font-size:9px; color:#555; text-transform:uppercase;
+                      letter-spacing:0.8px; margin-bottom:3px;">Bar Quality</div>
+          <div style="font-size:13px; font-weight:700; color:{_bq_color};">
+            {_bq:.0f}%
+          </div>
+          <div style="font-size:10px; color:#666; margin-top:2px;">
+            {ofs["bar_quality_label"]}
+          </div>
+        </div>
+
+        <!-- Vol Surge -->
+        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
+                    padding:6px 8px; text-align:center;">
+          <div style="font-size:9px; color:#555; text-transform:uppercase;
+                      letter-spacing:0.8px; margin-bottom:3px;">Vol Surge</div>
+          <div style="font-size:13px; font-weight:700; color:{_vs_color};">
+            {_vsr:.1f}×
+          </div>
+          <div style="font-size:10px; color:#666; margin-top:2px;">
+            {ofs["vol_surge_label"]}
+          </div>
+        </div>
+
+        <!-- Streak -->
+        <div style="background:#12122266; border:1px solid #ffffff0d; border-radius:6px;
+                    padding:6px 8px; text-align:center;">
+          <div style="font-size:9px; color:#555; text-transform:uppercase;
+                      letter-spacing:0.8px; margin-bottom:3px;">Tape Streak</div>
+          <div style="font-size:13px; font-weight:700; color:{_stk_color};">
+            {_stk_sign}{_streak} bars
+          </div>
+          <div style="font-size:10px; color:#666; margin-top:2px;">
+            {ofs["streak_label"].replace(" Tape","").replace(" Upward","▲").replace(" Downward","▼")}
+          </div>
+        </div>
+
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_model_prediction(outcome, reasoning):
     """Show the volume-price divergence model prediction in a styled text box.
 
@@ -2088,6 +2244,9 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
     render_buy_sell_widget(compute_buy_sell_pressure(df), rvol_val=rvol_val)
+    render_order_flow_widget(
+        compute_order_flow_signals(df, ib_high=ib_high, ib_low=ib_low)
+    )
     render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
