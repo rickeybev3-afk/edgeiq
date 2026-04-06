@@ -4522,9 +4522,26 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
         return {"verified": 0, "correct": 0, "accuracy": 0.0, "error": str(e)}
 
     if not pending:
+        # Debug: query without user_id filter to see what's actually stored
+        try:
+            _dbg = (supabase.table("watchlist_predictions")
+                    .select("user_id,ticker,pred_date,verified")
+                    .gte("pred_date", _date_str)
+                    .lt("pred_date", _next_str)
+                    .limit(10)
+                    .execute())
+            _dbg_rows = _dbg.data or []
+        except Exception:
+            _dbg_rows = []
+        _dbg_msg = ""
+        if _dbg_rows:
+            _stored_uids = list({r.get("user_id") for r in _dbg_rows})
+            _dbg_msg = (f" Found {len(_dbg_rows)} row(s) for that date but stored "
+                        f"under user_id={_stored_uids}; "
+                        f"queried with user_id={uid}")
         return {"verified": 0, "correct": 0, "accuracy": 0.0,
                 "date": str(check_date),
-                "error": f"No predictions found for {check_date}"}
+                "error": f"No predictions found for {check_date}.{_dbg_msg}"}
 
     verified_count = 0
     correct_count  = 0
