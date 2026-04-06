@@ -2220,29 +2220,31 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     # ── IB Manual Override ────────────────────────────────────────────────────
     _ib_ovr_key = f"ib_override_{ticker}"
     _has_override = bool(st.session_state.get(_ib_ovr_key))
-    _ovr_label = "✏️ IB Override (active)" if _has_override else "✏️ Override IB Levels (if your broker differs)"
-    with st.expander(_ovr_label, expanded=False):
-        st.caption("Enter your broker's IB high/low (e.g. from Webull/Thinkorswim). "
-                   "Leave a field at 0 to keep the auto-computed value. "
-                   "Click Apply — the chart and all signals will recalculate.")
-        _ovc1, _ovc2, _ovc3 = st.columns([1, 1, 1])
-        _curr_high = st.session_state.get(_ib_ovr_key, {}).get("high") or ib_high or 0.0
-        _curr_low  = st.session_state.get(_ib_ovr_key, {}).get("low")  or ib_low  or 0.0
-        _ovr_high = _ovc1.number_input("IB High override", value=float(_curr_high),
-                                        min_value=0.0, step=0.001, format="%.3f",
-                                        key=f"ovr_high_{ticker}")
-        _ovr_low  = _ovc2.number_input("IB Low override",  value=float(_curr_low),
-                                        min_value=0.0, step=0.001, format="%.3f",
-                                        key=f"ovr_low_{ticker}")
-        _ovc3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        _ovc3_cols = _ovc3.columns(2)
-        if _ovc3_cols[0].button("Apply", key=f"ovr_apply_{ticker}", use_container_width=True):
+    _ovr_label = "✏️ IB Override — ACTIVE" if _has_override else "✏️ Override IB Levels (broker correction)"
+    with st.expander(_ovr_label, expanded=_has_override):
+        st.caption("Type your broker's IB values and click **Apply**. "
+                   "Leave at 0 to keep the auto-computed value.")
+        with st.form(key=f"ib_override_form_{ticker}", clear_on_submit=False):
+            _fc1, _fc2, _fc3 = st.columns([2, 2, 1])
+            _curr_high = float(st.session_state.get(_ib_ovr_key, {}).get("high") or ib_high or 0.0)
+            _curr_low  = float(st.session_state.get(_ib_ovr_key, {}).get("low")  or ib_low  or 0.0)
+            _ovr_high = _fc1.number_input("IB High", value=_curr_high,
+                                           min_value=0.0, step=0.001, format="%.3f")
+            _ovr_low  = _fc2.number_input("IB Low",  value=_curr_low,
+                                           min_value=0.0, step=0.001, format="%.3f")
+            _fc3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            _sub_cols = _fc3.columns(2)
+            _submitted = _sub_cols[0].form_submit_button("✓", use_container_width=True,
+                                                          help="Apply override")
+            _cleared   = _sub_cols[1].form_submit_button("✕", use_container_width=True,
+                                                          help="Clear override")
+        if _submitted:
             st.session_state[_ib_ovr_key] = {
                 "high": _ovr_high if _ovr_high > 0 else None,
                 "low":  _ovr_low  if _ovr_low  > 0 else None,
             }
             st.rerun()
-        if _ovc3_cols[1].button("Clear", key=f"ovr_clear_{ticker}", use_container_width=True):
+        if _cleared:
             st.session_state.pop(_ib_ovr_key, None)
             st.rerun()
 
