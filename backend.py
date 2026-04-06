@@ -3509,34 +3509,43 @@ def save_eod_note(note_date, notes: str, watch_tickers: str,
     Returns (ok: bool, source: str) where source is 'supabase', 'local', or 'error'.
     """
     import json as _json
-    uid = user_id or "anonymous"
+    uid  = user_id or "anonymous"
+    nd   = str(note_date)
+    wt   = watch_tickers.strip()
+    now  = datetime.utcnow().isoformat()
+
     payload = {
         "user_id":       uid,
-        "note_date":     str(note_date),
+        "note_date":     nd,
         "notes":         notes.strip(),
-        "watch_tickers": watch_tickers.strip(),
+        "watch_tickers": wt,
         "images":        images_b64,
-        "outcome":       {},
-        "updated_at":    datetime.utcnow().isoformat(),
+        "updated_at":    now,
     }
 
-    # Always persist locally first so nothing is ever lost
+    # Always persist locally first — never lost
     _save_local_eod_backup(payload)
+    print(f"save_eod_note local backup: {nd} | {wt} | {len(images_b64)} images")
 
-    # Then try Supabase — outcome is excluded from upsert (saved separately)
+    # Then try Supabase using DELETE + INSERT (avoids any ON CONFLICT constraint issues)
     if supabase:
         try:
             sb_payload = {
                 "user_id":       uid,
-                "note_date":     str(note_date),
+                "note_date":     nd,
                 "notes":         notes.strip(),
-                "watch_tickers": watch_tickers.strip(),
+                "watch_tickers": wt,
                 "images":        _json.dumps(images_b64),
-                "updated_at":    datetime.utcnow().isoformat(),
+                "updated_at":    now,
             }
-            supabase.table("eod_notes").upsert(
-                sb_payload, on_conflict="user_id,note_date,watch_tickers"
-            ).execute()
+            # Delete existing row for this user+date+ticker, then insert fresh
+            supabase.table("eod_notes").delete()\
+                .eq("user_id", uid)\
+                .eq("note_date", nd)\
+                .eq("watch_tickers", wt)\
+                .execute()
+            supabase.table("eod_notes").insert(sb_payload).execute()
+            print(f"save_eod_note Supabase OK: {nd} | {wt}")
             return True, "supabase"
         except Exception as e:
             print(f"save_eod_note Supabase error (local backup kept): {e}")
@@ -3580,7 +3589,7 @@ def delete_eod_note(note_date, watch_tickers: str, user_id: str = "") -> bool:
 
 
 def _sync_local_to_supabase(user_id: str = "") -> int:
-    """Push any local-only notes to Supabase. Returns count synced."""
+    """Push local notes to Supabase using DELETE+INSERT. Returns count synced."""
     if not supabase:
         return 0
     import json as _json
@@ -3589,15 +3598,20 @@ def _sync_local_to_supabase(user_id: str = "") -> int:
     synced = 0
     for note in local:
         try:
+            nd = str(note.get("note_date", ""))
+            wt = note.get("watch_tickers", "").strip()
             sb = {
-                "user_id":       note.get("user_id", uid),
-                "note_date":     note.get("note_date", ""),
+                "user_id":       uid,
+                "note_date":     nd,
                 "notes":         note.get("notes", ""),
-                "watch_tickers": note.get("watch_tickers", ""),
+                "watch_tickers": wt,
                 "images":        _json.dumps(note.get("images", [])),
                 "updated_at":    note.get("updated_at", datetime.utcnow().isoformat()),
             }
-            supabase.table("eod_notes").upsert(sb, on_conflict="user_id,note_date,watch_tickers").execute()
+            supabase.table("eod_notes").delete()\
+                .eq("user_id", uid).eq("note_date", nd).eq("watch_tickers", wt)\
+                .execute()
+            supabase.table("eod_notes").insert(sb).execute()
             synced += 1
         except Exception:
             pass
@@ -3663,13 +3677,28 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
                     break
 
     if sb_ok:
-        # Merge: Supabase wins, add any local-only (date+ticker) entries
-        sb_keys = {(r["note_date"], r.get("watch_tickers", "").strip()) for r in sb_rows}
-        local_only = [r for r in local_rows
-                      if (r.get("note_date", ""), r.get("watch_tickers", "").strip()) not in sb_keys]
-        merged = sb_rows + local_only
+        # Merge by (note_date, watch_tickers) — whichever version has the newer
+        # updated_at wins.  This means a locally-saved entry (with images) beats
+        # a stale Supabase row even when Supabase successfully loaded.
+        _merged_dict: dict = {}
+        for _r in sb_rows:
+            _k = (str(_r.get("note_date", "")), _r.get("watch_tickers", "").strip())
+            _merged_dict[_k] = _r
+        _local_only_keys = []
+        for _r in local_rows:
+            _k = (str(_r.get("note_date", "")), _r.get("watch_tickers", "").strip())
+            if _k in _merged_dict:
+                # Both exist — prefer whichever is newer
+                _local_ts = str(_r.get("updated_at", ""))
+                _sb_ts    = str(_merged_dict[_k].get("updated_at", ""))
+                if _local_ts > _sb_ts:
+                    _merged_dict[_k] = _r  # local is newer (e.g. has images)
+            else:
+                _merged_dict[_k] = _r
+                _local_only_keys.append(_k)
+        merged = list(_merged_dict.values())
         # Auto-sync local-only entries to Supabase quietly
-        if local_only:
+        if _local_only_keys:
             try:
                 _sync_local_to_supabase(uid)
             except Exception:
@@ -3677,17 +3706,6 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
     else:
         # Supabase down — return local backup only
         merged = local_rows
-
-    # Deduplicate by (note_date, watch_tickers) — keep the most recently updated version
-    _seen: dict = {}
-    for _r in merged:
-        _k = (str(_r.get("note_date", "")), _r.get("watch_tickers", "").strip())
-        if _k not in _seen:
-            _seen[_k] = _r
-        else:
-            if str(_r.get("updated_at", "")) > str(_seen[_k].get("updated_at", "")):
-                _seen[_k] = _r
-    merged = list(_seen.values())
 
     merged.sort(key=lambda r: (r.get("note_date", ""), r.get("watch_tickers", "")), reverse=True)
     return merged[:limit]

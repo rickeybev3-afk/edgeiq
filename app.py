@@ -878,6 +878,31 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     st.header("📸 End-of-Day Review")
     st.caption("Chart screenshots, trendline notes, and watchlist for tomorrow — all saved per day.")
 
+    # ── One-time Supabase schema helper ──────────────────────────────────────
+    with st.expander("⚙️ First-time Supabase setup (run once in your Supabase SQL editor)", expanded=False):
+        st.markdown(
+            "If images or multi-ticker entries aren't saving to the cloud, "
+            "paste this SQL into your **Supabase → SQL Editor** and click **Run**. "
+            "You only need to do this once."
+        )
+        st.code(
+            """-- 1. Allow multiple tickers per day
+ALTER TABLE eod_notes DROP CONSTRAINT IF EXISTS eod_notes_user_id_note_date_key;
+ALTER TABLE eod_notes ADD CONSTRAINT eod_notes_unique_ticker
+    UNIQUE (user_id, note_date, watch_tickers);
+
+-- 2. Add outcome column (for prediction verification)
+ALTER TABLE eod_notes ADD COLUMN IF NOT EXISTS outcome JSONB DEFAULT '{}';
+
+-- 3. User preferences table (credential storage)
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id TEXT PRIMARY KEY,
+    prefs   JSONB DEFAULT '{}',
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);""",
+            language="sql",
+        )
+
     # ── Edit-mode prefill: copy pending values into widget keys before render ──
     if st.session_state.get("_eod_prefill_pending"):
         _pf = st.session_state.pop("_eod_prefill_pending")
@@ -946,10 +971,13 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 try:
                     _b64 = _compress_image_b64(_f.read())
                     _imgs_payload.append({"filename": _f.name, "data": _b64, "caption": ""})
-                except Exception:
-                    pass
+                except Exception as _img_err:
+                    import traceback as _tb
+                    print(f"Image compress error for {_f.name}: {_img_err}\n{_tb.format_exc()}")
+            print(f"EOD save: {len(_eod_uploads)} uploads → {len(_imgs_payload)} compressed")
         else:
             _imgs_payload = st.session_state.get("_eod_edit_images", [])
+            print(f"EOD save: no new uploads, using {len(_imgs_payload)} existing images from session")
 
         # If ticker or date changed during edit, delete the old entry first
         _orig_date   = st.session_state.get("_eod_edit_orig_date", "")
