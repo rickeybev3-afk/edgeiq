@@ -19,6 +19,7 @@ from backend import (
     compute_win_rates, monte_carlo_equity_curves,
     compute_order_flow_signals,
     load_watchlist,
+    get_next_trading_day,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -5884,7 +5885,12 @@ with tab_scan:
                         max_tickers=_wpe_count,
                         user_id=_AUTH_USER_ID,
                     )
-                    _wpe_pred_date = date.today()
+                    # Use next/current trading day — avoids saving on weekends/holidays
+                    _wpe_pred_date = get_next_trading_day(
+                        as_of=date.today(),
+                        api_key=api_key,
+                        secret_key=secret_key,
+                    )
                     _wpe_payload = [
                         {
                             "ticker":              r["ticker"],

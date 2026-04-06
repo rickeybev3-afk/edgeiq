@@ -4475,6 +4475,49 @@ def load_watchlist_predictions(user_id: str = "", pred_date=None) -> pd.DataFram
         return pd.DataFrame(columns=_cols)
 
 
+def get_next_trading_day(as_of: date = None,
+                         api_key: str = "",
+                         secret_key: str = "") -> date:
+    """Return the next NYSE trading day on or after as_of.
+
+    - If as_of is already a trading day, returns as_of.
+    - If it's a weekend/holiday, advances to the next open day.
+    Uses Alpaca calendar when credentials available; falls back to
+    weekend-skip + hardcoded holiday list.
+    """
+    if as_of is None:
+        as_of = date.today()
+
+    if api_key and secret_key:
+        try:
+            start_str = as_of.isoformat()
+            end_str   = (as_of + timedelta(days=14)).isoformat()
+            r = requests.get(
+                "https://paper-api.alpaca.markets/v1/calendar",
+                params={"start": start_str, "end": end_str},
+                headers={
+                    "APCA-API-KEY-ID":     api_key,
+                    "APCA-API-SECRET-KEY": secret_key,
+                },
+                timeout=5,
+            )
+            if r.status_code == 200:
+                cal = r.json()
+                trading_dates = sorted([c["date"] for c in cal if c["date"] >= start_str])
+                if trading_dates:
+                    return date.fromisoformat(trading_dates[0])
+        except Exception:
+            pass
+
+    # Fallback: skip weekends and hardcoded holidays
+    d = as_of
+    for _ in range(14):
+        if is_trading_day(d):
+            return d
+        d += timedelta(days=1)
+    return as_of
+
+
 def verify_watchlist_predictions(api_key: str, secret_key: str,
                                   user_id: str = "", pred_date=None) -> dict:
     """Fetch end-of-day data and verify pending watchlist predictions.
@@ -4522,45 +4565,9 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
         return {"verified": 0, "correct": 0, "accuracy": 0.0, "error": str(e)}
 
     if not pending:
-        # Debug: query without user_id filter to see what's actually stored
-        try:
-            _dbg = (supabase.table("watchlist_predictions")
-                    .select("user_id,ticker,pred_date,verified")
-                    .gte("pred_date", _date_str)
-                    .lt("pred_date", _next_str)
-                    .limit(10)
-                    .execute())
-            _dbg_rows = _dbg.data or []
-        except Exception:
-            _dbg_rows = []
-        _dbg_msg = ""
-        if _dbg_rows:
-            _stored_uids = list({r.get("user_id") for r in _dbg_rows})
-            _dbg_msg = (f" Found {len(_dbg_rows)} row(s) for that date but stored "
-                        f"under user_id={_stored_uids}; "
-                        f"queried with user_id={uid}")
-        else:
-            # No rows for that date at all — show what dates DO exist
-            try:
-                _all = (supabase.table("watchlist_predictions")
-                        .select("user_id,ticker,pred_date")
-                        .order("pred_date", desc=True)
-                        .limit(10)
-                        .execute())
-                _all_rows = _all.data or []
-            except Exception:
-                _all_rows = []
-            if _all_rows:
-                _dates = list({r.get("pred_date","")[:10] for r in _all_rows})
-                _tickers = list({r.get("ticker","") for r in _all_rows})
-                _dbg_msg = (f" No rows exist for that date in the table. "
-                            f"Dates actually stored: {sorted(_dates)}. "
-                            f"Tickers: {_tickers}.")
-            else:
-                _dbg_msg = " The watchlist_predictions table appears empty."
         return {"verified": 0, "correct": 0, "accuracy": 0.0,
                 "date": str(check_date),
-                "error": f"No predictions found for {check_date}.{_dbg_msg}"}
+                "error": f"No predictions found for {check_date}"}
 
     verified_count = 0
     correct_count  = 0
