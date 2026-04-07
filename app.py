@@ -3096,11 +3096,11 @@ with st.sidebar:
         help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
     )
-    scan_feed = st.selectbox("Scanner Feed", ["iex", "sip"], index=0, key="scan_feed_select",
-                             help="IEX = free tier (gap % only). SIP = full tape with pre-market vol (paid subscription).")
+    scan_feed = st.selectbox("Scanner Feed", ["sip", "iex"], index=0, key="scan_feed_select",
+                             help="SIP = full tape with pre-market vol (recommended). IEX = free tier (gap % only).")
     if scan_feed == "iex":
         st.info("ℹ️ IEX (free tier): scanner shows **Gap %** ranked results. "
-                "PM Volume will be blank. Upgrade to SIP for pre-market RVOL.")
+                "PM Volume and IB accuracy will be reduced. Switch to SIP for best results.")
     scan_button = st.button("🔍 Scan Gap Plays", use_container_width=True)
 
     st.markdown("---")
@@ -6435,15 +6435,43 @@ with tab_scan:
             # ── Pre-Trade Quality Badge ──────────────────────────────────────
             _sq = st.session_state.get("scanner_quality", {}).get(sym)
             if _sq and not _sq.get("error"):
-                _tcs_v      = _sq["tcs"]
-                _tcs_bkt    = _sq["tcs_bucket"]
-                _ib_pos     = _sq["ib_position"]
-                _tcs_ok     = _sq["tcs_ok"]
-                _ib_ok      = _sq["ib_ok"]
-                _go         = _sq["go_signal"]
-                _ib_formed  = _sq.get("ib_formed", True)
-                _ib_h       = _sq["ib_high"]
-                _ib_l       = _sq["ib_low"]
+                _tcs_v     = _sq["tcs"]
+                _tcs_bkt   = _sq["tcs_bucket"]
+                _tcs_ok    = _sq["tcs_ok"]
+                _ib_formed = _sq.get("ib_formed", True)
+
+                # Check for user IB override (stored per ticker in session_state)
+                _ov_key_h = f"_ib_ov_high_{sym}"
+                _ov_key_l = f"_ib_ov_low_{sym}"
+                _ov_h = st.session_state.get(_ov_key_h)
+                _ov_l = st.session_state.get(_ov_key_l)
+
+                # Use override if both values set, else use Alpaca data
+                if _ov_h and _ov_l and _ov_h > _ov_l:
+                    _ib_h = _ov_h
+                    _ib_l = _ov_l
+                    _ib_src = "Webull"
+                else:
+                    _ib_h = _sq["ib_high"]
+                    _ib_l = _sq["ib_low"]
+                    _ib_src = "Alpaca"
+
+                # Recompute IB position against (possibly overridden) IB levels
+                _cp = price  # current price from scanner row
+                _margin = (_ib_h - _ib_l) * 0.05
+                if _cp >= _ib_h + _margin:
+                    _ib_pos = "Extended Above IB"
+                elif _cp <= _ib_l - _margin:
+                    _ib_pos = "Extended Below IB"
+                elif _cp <= _ib_l + _margin:
+                    _ib_pos = "At IB Low"
+                elif _cp >= _ib_h - _margin:
+                    _ib_pos = "At IB High"
+                else:
+                    _ib_pos = "Inside IB"
+
+                _ib_ok = _ib_pos == "At IB Low"
+                _go    = _tcs_ok and _ib_ok
 
                 _tcs_clr = (
                     "#4caf50" if _tcs_ok else
@@ -6456,10 +6484,11 @@ with tab_scan:
                 _go_txt = "✅ GO — Rule conditions met" if _go else "⛔ WAIT — Rule not satisfied"
                 _go_clr = "#4caf50" if _go else "#ef5350"
                 _ib_warn = "" if _ib_formed else " ⚠️ IB forming"
+                _src_tag = f' <span style="color:#444;font-size:9px;">({_ib_src})</span>'
 
                 st.markdown(
                     f'<div style="background:#0c1420;border:1px solid #1e3050;border-radius:8px;'
-                    f'padding:10px 16px;margin:4px 0 8px 0;display:flex;flex-wrap:wrap;'
+                    f'padding:10px 16px;margin:4px 0 4px 0;display:flex;flex-wrap:wrap;'
                     f'align-items:center;gap:16px;">'
                     f'<div style="font-size:11px;color:#555;text-transform:uppercase;'
                     f'letter-spacing:1px;margin-right:4px;">Pre-Trade Check</div>'
@@ -6471,7 +6500,7 @@ with tab_scan:
                     f'<div style="text-align:center;">'
                     f'<div style="font-size:10px;color:#666;margin-bottom:2px;">IB Position{_ib_warn}</div>'
                     f'<div style="font-size:13px;font-weight:700;color:{_ib_clr};">{_ib_pos}</div>'
-                    f'<div style="font-size:10px;color:#444;">IB {_ib_l}–{_ib_h}</div>'
+                    f'<div style="font-size:10px;color:#444;">IB ${_ib_l}–${_ib_h}{_src_tag}</div>'
                     f'</div>'
                     f'<div style="margin-left:auto;background:{_go_bg};border:1px solid {_go_brd};'
                     f'border-radius:6px;padding:6px 14px;">'
@@ -6482,6 +6511,31 @@ with tab_scan:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+                # IB Override expander
+                with st.expander(f"✏️ Override IB levels for {sym} (use your Webull values)", expanded=False):
+                    _ov_cols = st.columns(3)
+                    _new_ib_h = _ov_cols[0].number_input(
+                        "IB High", min_value=0.01, value=float(_ib_h),
+                        step=0.01, format="%.2f", key=f"ib_h_input_{sym}"
+                    )
+                    _new_ib_l = _ov_cols[1].number_input(
+                        "IB Low", min_value=0.01, value=float(_ib_l),
+                        step=0.01, format="%.2f", key=f"ib_l_input_{sym}"
+                    )
+                    if _ov_cols[2].button("Apply", key=f"ib_ov_btn_{sym}", use_container_width=True):
+                        if _new_ib_h > _new_ib_l:
+                            st.session_state[_ov_key_h] = _new_ib_h
+                            st.session_state[_ov_key_l] = _new_ib_l
+                            st.rerun()
+                        else:
+                            st.error("IB High must be greater than IB Low.")
+                    if _ov_h and _ov_l:
+                        if st.button("↩ Reset to Alpaca values", key=f"ib_ov_reset_{sym}"):
+                            st.session_state.pop(_ov_key_h, None)
+                            st.session_state.pop(_ov_key_l, None)
+                            st.rerun()
+
             elif _sq and _sq.get("error"):
                 st.caption(f"⚠️ Quality check unavailable: {_sq['error']}")
 
