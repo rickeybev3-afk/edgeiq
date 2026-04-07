@@ -4761,6 +4761,80 @@ def render_analytics_tab():
                 f"Re-run calibration with more days to close this gap."
             )
 
+        # ── Within-Neutral Quality Filter ─────────────────────────────────
+        _nq = _xref.get("neutral_quality", {})
+        if _nq.get("tcs_buckets") or _nq.get("ib_position"):
+            st.markdown("---")
+            st.markdown("#### 🎯 Within-Neutral Quality Filter")
+            st.caption(
+                "Since your tickers live almost entirely in Neutral/Ntrl Extreme days, "
+                "the edge isn't in the structure — it's in the conditions *within* that structure. "
+                "This shows what actually separated your wins from your losses."
+            )
+
+            _nq_col1, _nq_col2 = st.columns(2)
+
+            with _nq_col1:
+                st.markdown("**By TCS Score (session conviction)**")
+                if _nq.get("tcs_buckets"):
+                    _tcs_rows = []
+                    for _b in _nq["tcs_buckets"]:
+                        _gc = _b["grade_counts"]
+                        _go = ["A", "B", "C", "D", "F", "?"]
+                        _gs = " · ".join(f'{g}:{_gc[g]}' for g in _go if g in _gc)
+                        _ab_color = (
+                            "🟢" if _b["ab_pct"] >= 60 else
+                            "🟡" if _b["ab_pct"] >= 40 else "🔴"
+                        )
+                        _tcs_rows.append({
+                            "TCS Range":     _b["bucket"],
+                            "Trades":        _b["trades"],
+                            "A/B Rate":      f"{_ab_color} {_b['ab_pct']}%",
+                            "D/F Rate":      f"{_b['df_pct']}%",
+                            "Grades":        _gs,
+                        })
+                    st.dataframe(pd.DataFrame(_tcs_rows),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No TCS data available for matched trades.")
+
+            with _nq_col2:
+                st.markdown("**By Entry Position vs IB Range**")
+                if _nq.get("ib_position"):
+                    _ib_rows = []
+                    for _p in _nq["ib_position"]:
+                        _gc = _p["grade_counts"]
+                        _go = ["A", "B", "C", "D", "F", "?"]
+                        _gs = " · ".join(f'{g}:{_gc[g]}' for g in _go if g in _gc)
+                        _ab_color = (
+                            "🟢" if _p["ab_pct"] >= 60 else
+                            "🟡" if _p["ab_pct"] >= 40 else "🔴"
+                        )
+                        _ib_rows.append({
+                            "Entry Position": _p["position"],
+                            "Trades":         _p["trades"],
+                            "A/B Rate":       f"{_ab_color} {_p['ab_pct']}%",
+                            "D/F Rate":       f"{_p['df_pct']}%",
+                            "Grades":         _gs,
+                        })
+                    st.dataframe(pd.DataFrame(_ib_rows),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.caption(
+                        "IB position data not available — re-run calibration to populate "
+                        "IB high/low for your tickers."
+                    )
+
+            if _nq.get("recommendation"):
+                st.markdown(
+                    f'<div style="background:#0d2137; border-left:4px solid #00e5ff; '
+                    f'padding:12px 16px; border-radius:4px; margin-top:10px; '
+                    f'font-size:13px; color:#e0e0e0;">'
+                    f'<b style="color:#00e5ff;">Derived Rule:</b> {_nq["recommendation"]}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
     if no_data:
         st.info(
             "No synced trades yet. After you log trades and use **Sync from Alpaca** "

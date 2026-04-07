@@ -2991,8 +2991,12 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
 
     jdf["_pnl_est"] = jdf["notes"].apply(_extract_pnl)
 
+    _bt_cols = ["_ticker", "_date", "predicted", "tcs", "win_loss",
+                "follow_thru_pct", "ib_high", "ib_low", "open_price"]
+    _bt_cols = [c for c in _bt_cols if c in bdf.columns]
+
     merged = jdf.merge(
-        bdf[["_ticker", "_date", "predicted", "tcs", "win_loss", "follow_thru_pct"]],
+        bdf[_bt_cols],
         on=["_ticker", "_date"],
         how="left",
     )
@@ -3057,12 +3061,115 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
         warned = df_trades["predicted"].isin(_NEUTRAL_STRUCTS).sum()
         alignment = round(warned / len(df_trades) * 100, 1)
 
+    # ── Within-Neutral Quality Analysis ─────────────────────────────────────
+    neutral_rows = matched_df[matched_df["predicted"].isin(_NEUTRAL_STRUCTS)].copy()
+    neutral_quality: dict = {"tcs_buckets": [], "ib_position": [], "recommendation": ""}
+
+    if not neutral_rows.empty:
+        tcs_num = pd.to_numeric(neutral_rows.get("tcs", pd.Series(dtype=float)),
+                                errors="coerce")
+        neutral_rows = neutral_rows.copy()
+        neutral_rows["_tcs_num"] = tcs_num
+
+        def _tcs_bucket(v):
+            if pd.isna(v):    return "No TCS"
+            if v < 40:        return "< 40 (Weak)"
+            if v < 55:        return "40–55 (Moderate)"
+            if v < 70:        return "55–70 (Strong)"
+            return "70+ (Extreme)"
+
+        _bucket_order = ["< 40 (Weak)", "40–55 (Moderate)", "55–70 (Strong)",
+                         "70+ (Extreme)", "No TCS"]
+        neutral_rows["_tcs_bucket"] = neutral_rows["_tcs_num"].apply(_tcs_bucket)
+
+        tcs_buckets = []
+        for bucket in _bucket_order:
+            grp = neutral_rows[neutral_rows["_tcs_bucket"] == bucket]
+            if grp.empty:
+                continue
+            grades = grp["grade"].fillna("?").tolist()
+            ab_ct  = sum(1 for g in grades if g in {"A", "B"})
+            df_ct  = sum(1 for g in grades if g in {"D", "F"})
+            ab_pct = round(ab_ct / len(grades) * 100, 1)
+            df_pct = round(df_ct / len(grades) * 100, 1)
+            gc = {}
+            for g in grades:
+                gc[g] = gc.get(g, 0) + 1
+            tcs_buckets.append({
+                "bucket": bucket, "trades": len(grp),
+                "ab_pct": ab_pct, "df_pct": df_pct, "grade_counts": gc,
+            })
+        neutral_quality["tcs_buckets"] = tcs_buckets
+
+        if "ib_high" in neutral_rows.columns and "ib_low" in neutral_rows.columns:
+            entry_price = pd.to_numeric(neutral_rows["price"], errors="coerce")
+            ib_h = pd.to_numeric(neutral_rows["ib_high"], errors="coerce")
+            ib_l = pd.to_numeric(neutral_rows["ib_low"],  errors="coerce")
+            ib_range = (ib_h - ib_l).replace(0, pd.NA)
+
+            def _ib_pos(row_tuple):
+                ep, ih, il = row_tuple
+                if pd.isna(ep) or pd.isna(ih) or pd.isna(il) or ih == il:
+                    return "Unknown"
+                margin = (ih - il) * 0.05
+                if ep >= ih - margin and ep <= ih + margin:
+                    return "At IB High"
+                if ep >= il - margin and ep <= il + margin:
+                    return "At IB Low"
+                if il < ep < ih:
+                    return "Inside IB"
+                if ep > ih + margin:
+                    return "Extended Above IB"
+                return "Extended Below IB"
+
+            neutral_rows["_ib_pos"] = list(map(
+                _ib_pos,
+                zip(entry_price, ib_h, ib_l),
+            ))
+
+            _ib_order = ["At IB High", "At IB Low", "Inside IB",
+                         "Extended Above IB", "Extended Below IB", "Unknown"]
+            ib_positions = []
+            for pos in _ib_order:
+                grp = neutral_rows[neutral_rows["_ib_pos"] == pos]
+                if grp.empty:
+                    continue
+                grades = grp["grade"].fillna("?").tolist()
+                ab_ct  = sum(1 for g in grades if g in {"A", "B"})
+                df_ct  = sum(1 for g in grades if g in {"D", "F"})
+                ab_pct = round(ab_ct / len(grades) * 100, 1)
+                df_pct = round(df_ct / len(grades) * 100, 1)
+                gc = {}
+                for g in grades:
+                    gc[g] = gc.get(g, 0) + 1
+                ib_positions.append({
+                    "position": pos, "trades": len(grp),
+                    "ab_pct": ab_pct, "df_pct": df_pct, "grade_counts": gc,
+                })
+            neutral_quality["ib_position"] = ib_positions
+
+        best_bucket = max(tcs_buckets, key=lambda x: x["ab_pct"] - x["df_pct"],
+                          default=None) if tcs_buckets else None
+        best_pos    = max(neutral_quality["ib_position"],
+                          key=lambda x: x["ab_pct"] - x["df_pct"],
+                          default=None) if neutral_quality["ib_position"] else None
+        rec_parts = []
+        if best_bucket:
+            rec_parts.append(f"TCS in {best_bucket['bucket']} ({best_bucket['ab_pct']}% A/B rate)")
+        if best_pos:
+            rec_parts.append(f"entry at {best_pos['position']} ({best_pos['ab_pct']}% A/B rate)")
+        if rec_parts:
+            neutral_quality["recommendation"] = (
+                "On Neutral days, best outcomes when: " + " AND ".join(rec_parts) + "."
+            )
+
     return {
-        "matched_df":   matched_df,
-        "unmatched_n":  int(unmatched_n),
-        "by_structure": by_structure,
-        "filter_sim":   filter_sim,
-        "alignment":    alignment,
+        "matched_df":      matched_df,
+        "unmatched_n":     int(unmatched_n),
+        "by_structure":    by_structure,
+        "filter_sim":      filter_sim,
+        "alignment":       alignment,
+        "neutral_quality": neutral_quality,
     }
 
 
