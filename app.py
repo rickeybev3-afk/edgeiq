@@ -4645,6 +4645,122 @@ def render_analytics_tab():
                          f"{s['total_trades']} synced to tracker"),
                     unsafe_allow_html=True)
 
+    # ── JOURNAL × MODEL CROSS-REFERENCE (runs regardless of tracker state) ────
+    st.markdown("---")
+    st.markdown("### 🔬 Personal Trades × Model Predictions — Cross-Reference")
+    st.caption(
+        "Joins your journal trades to the model's structure call on that same day & ticker. "
+        "Shows whether the model was warning you on days you lost."
+    )
+
+    _xref_bt_df = load_backtest_sim_history(user_id=_uid)
+    _xref = compute_journal_model_crossref(journal_df, _xref_bt_df)
+
+    if not _xref["by_structure"] and _xref["unmatched_n"] == 0 and journal_df.empty:
+        st.info("Import your trades and run Brain Calibration first — both datasets are needed.")
+    elif not _xref["by_structure"]:
+        _total_j = len(journal_df) if not journal_df.empty else 0
+        st.warning(
+            f"Your journal has {_total_j} entries but none matched to a model prediction yet. "
+            f"Run Brain Calibration (22 days) so the model has predictions for the same "
+            f"ticker/date combinations as your trades."
+        )
+        if _xref["unmatched_n"] > 0:
+            st.caption(f"{_xref['unmatched_n']} journal trades have no matching model session.")
+    else:
+        _xr_al = _xref["alignment"]
+        _al_color = "#4caf50" if _xr_al >= 70 else ("#ffa726" if _xr_al >= 40 else "#ef5350")
+        _al_label = "Model was correctly warning you" if _xr_al >= 60 else (
+            "Partial alignment" if _xr_al >= 40 else "Model missed these losses")
+        _fs = _xref["filter_sim"]
+        _blocked_n = _fs.get("blocked_n", 0)
+        _allowed_n = _fs.get("allowed_n", 0)
+        _total_matched = _blocked_n + _allowed_n
+        _block_pct = round(_blocked_n / _total_matched * 100) if _total_matched else 0
+
+        _xc1, _xc2, _xc3 = st.columns(3)
+        with _xc1:
+            st.markdown(
+                f'<div style="background:#12122288; border:1px solid #2a2a4a; '
+                f'border-radius:10px; padding:14px 18px; text-align:center;">'
+                f'<div style="font-size:10px; color:#5c6bc0; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:4px;">Model Alignment on Losses</div>'
+                f'<div style="font-size:32px; font-weight:900; color:{_al_color};">{_xr_al}%</div>'
+                f'<div style="font-size:10px; color:#666; margin-top:2px;">{_al_label}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with _xc2:
+            st.markdown(
+                f'<div style="background:#12122288; border:1px solid #2a2a4a; '
+                f'border-radius:10px; padding:14px 18px; text-align:center;">'
+                f'<div style="font-size:10px; color:#5c6bc0; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:4px;">Trades Filter Would Block</div>'
+                f'<div style="font-size:32px; font-weight:900; color:#ef5350;">'
+                f'{_blocked_n}<span style="font-size:14px; color:#666;"> / {_total_matched}</span></div>'
+                f'<div style="font-size:10px; color:#666; margin-top:2px;">'
+                f'{_block_pct}% of matched trades · non-Neutral + TCS≥75 filter</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with _xc3:
+            _pnl_blocked = _fs.get("pnl_blocked", 0.0)
+            _pnl_color = "#4caf50" if _pnl_blocked >= 0 else "#ef5350"
+            _pnl_sign  = "+" if _pnl_blocked >= 0 else ""
+            _df_blk = _fs.get("d_f_blocked_pct", 0.0)
+            st.markdown(
+                f'<div style="background:#12122288; border:1px solid #2a2a4a; '
+                f'border-radius:10px; padding:14px 18px; text-align:center;">'
+                f'<div style="font-size:10px; color:#5c6bc0; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:4px;">P&L of Blocked Trades</div>'
+                f'<div style="font-size:32px; font-weight:900; color:{_pnl_color};">'
+                f'{_pnl_sign}${abs(_pnl_blocked):.0f}</div>'
+                f'<div style="font-size:10px; color:#666; margin-top:2px;">'
+                f'{_df_blk}% of blocked were D/F grade</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+        _xref_rows = []
+        for _s in _xref["by_structure"]:
+            _gc  = _s["grade_counts"]
+            _grade_order = ["A", "B", "C", "D", "F", "?"]
+            _grade_str = " · ".join(
+                f'{g}: {_gc[g]}' for g in _grade_order if g in _gc
+            )
+            _pnl_disp = f"${_s['avg_pnl_est']:+.2f}" if _s["avg_pnl_est"] is not None else "N/A"
+            _xref_rows.append({
+                "Model Called":    _s["structure"],
+                "Your Trades":     _s["trades"],
+                "Grade Breakdown": _grade_str,
+                "D/F Rate":        f"{_s['d_f_pct']}%",
+                "Avg P&L":         _pnl_disp,
+            })
+        st.dataframe(pd.DataFrame(_xref_rows), use_container_width=True, hide_index=True)
+
+        _df_allowed = _fs.get("d_f_allowed_pct", 0.0)
+        _df_blk2 = _fs.get("d_f_blocked_pct", 0.0)
+        st.markdown(
+            f'<div style="background:#0a1628; border-left:4px solid #1565c0; '
+            f'padding:12px 16px; border-radius:4px; margin-top:8px; font-size:12px; color:#b0bec5;">'
+            f'<b style="color:#90caf9;">Filter Simulation:</b> '
+            f'If the non-Neutral + TCS≥75 filter had been active — '
+            f'<b>{_blocked_n} trades would have been blocked</b> ({_df_blk2}% D/F grade) · '
+            f'<b>{_allowed_n} would have been allowed</b> ({_df_allowed}% D/F grade). '
+            f'Model alignment on your losing trades: '
+            f'<b style="color:{_al_color};">{_xr_al}%</b> — '
+            f'{"it was correctly flagging Neutral on most of your worst sessions." if _xr_al >= 60 else "filter needs further tuning before autonomous use."}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        if _xref["unmatched_n"] > 0:
+            st.caption(
+                f"⚠️ {_xref['unmatched_n']} journal trades had no matching model prediction. "
+                f"Re-run calibration with more days to close this gap."
+            )
+
     if no_data:
         st.info(
             "No synced trades yet. After you log trades and use **Sync from Alpaca** "
@@ -4909,132 +5025,6 @@ def render_analytics_tab():
                 lambda v: f"{'+'if v>=0 else''}{v:.2f}")
             eq_disp.columns = ["Time", "Symbol", "Trade P&L", "Cumulative P&L"]
             st.dataframe(eq_disp, use_container_width=True, hide_index=True)
-
-    # ── JOURNAL × MODEL CROSS-REFERENCE ───────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🔬 Personal Trades × Model Predictions — Cross-Reference")
-    st.caption(
-        "Joins your journal trades to the model's structure call on that same day & ticker. "
-        "Shows whether the model was warning you on days you lost."
-    )
-
-    _xref_bt_df = load_backtest_sim_history(user_id=_uid)
-    _xref = compute_journal_model_crossref(journal_df, _xref_bt_df)
-
-    if not _xref["by_structure"] and _xref["unmatched_n"] == 0 and journal_df.empty:
-        st.info("Import your trades and run Brain Calibration first — both datasets are needed for this analysis.")
-    elif not _xref["by_structure"]:
-        _total_j = len(journal_df) if not journal_df.empty else 0
-        st.warning(
-            f"Your journal has {_total_j} entries but none matched to a model prediction yet. "
-            f"Run Brain Calibration (22 days) so the model has predictions for the same "
-            f"ticker/date combinations as your trades."
-        )
-        if _xref["unmatched_n"] > 0:
-            st.caption(f"{_xref['unmatched_n']} journal trades have no matching model session.")
-    else:
-        _xr_al = _xref["alignment"]
-        _al_color = "#4caf50" if _xr_al >= 70 else ("#ffa726" if _xr_al >= 40 else "#ef5350")
-        _al_label = "Model was correctly warning you" if _xr_al >= 60 else (
-            "Partial alignment" if _xr_al >= 40 else "Model missed these losses")
-
-        _fs = _xref["filter_sim"]
-
-        _xc1, _xc2, _xc3 = st.columns(3)
-        with _xc1:
-            st.markdown(
-                f'<div style="background:#12122288; border:1px solid #2a2a4a; '
-                f'border-radius:10px; padding:14px 18px; text-align:center;">'
-                f'<div style="font-size:10px; color:#5c6bc0; text-transform:uppercase; '
-                f'letter-spacing:1px; margin-bottom:4px;">Model Alignment on Losses</div>'
-                f'<div style="font-size:32px; font-weight:900; color:{_al_color};">{_xr_al}%</div>'
-                f'<div style="font-size:10px; color:#666; margin-top:2px;">{_al_label}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        with _xc2:
-            _blocked_n = _fs.get("blocked_n", 0)
-            _allowed_n = _fs.get("allowed_n", 0)
-            _total_matched = _blocked_n + _allowed_n
-            _block_pct = round(_blocked_n / _total_matched * 100) if _total_matched else 0
-            st.markdown(
-                f'<div style="background:#12122288; border:1px solid #2a2a4a; '
-                f'border-radius:10px; padding:14px 18px; text-align:center;">'
-                f'<div style="font-size:10px; color:#5c6bc0; text-transform:uppercase; '
-                f'letter-spacing:1px; margin-bottom:4px;">Trades Filter Would Block</div>'
-                f'<div style="font-size:32px; font-weight:900; color:#ef5350;">'
-                f'{_blocked_n}<span style="font-size:14px; color:#666;"> / {_total_matched}</span></div>'
-                f'<div style="font-size:10px; color:#666; margin-top:2px;">'
-                f'{_block_pct}% of matched trades · non-Neutral + TCS≥75 filter</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        with _xc3:
-            _pnl_blocked = _fs.get("pnl_blocked", 0.0)
-            _pnl_color = "#4caf50" if _pnl_blocked >= 0 else "#ef5350"
-            _pnl_sign  = "+" if _pnl_blocked >= 0 else ""
-            _df_blk = _fs.get("d_f_blocked_pct", 0.0)
-            st.markdown(
-                f'<div style="background:#12122288; border:1px solid #2a2a4a; '
-                f'border-radius:10px; padding:14px 18px; text-align:center;">'
-                f'<div style="font-size:10px; color:#5c6bc0; text-transform:uppercase; '
-                f'letter-spacing:1px; margin-bottom:4px;">P&L of Blocked Trades</div>'
-                f'<div style="font-size:32px; font-weight:900; color:{_pnl_color};">'
-                f'{_pnl_sign}${abs(_pnl_blocked):.0f}</div>'
-                f'<div style="font-size:10px; color:#666; margin-top:2px;">'
-                f'{_df_blk}% of blocked were D/F grade trades</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
-        _xref_rows = []
-        for _s in _xref["by_structure"]:
-            _gc  = _s["grade_counts"]
-            _tot = _s["trades"]
-            _grade_str = " · ".join(
-                f'{g}: {c}' for g, c in
-                sorted(_gc.items(), key=lambda x: ["A","B","C","D","F","?"].index(x[0])
-                       if x[0] in ["A","B","C","D","F","?"] else 9)
-            )
-            _pnl_disp = f"${_s['avg_pnl_est']:+.2f}" if _s["avg_pnl_est"] is not None else "N/A"
-            _df_color = "#ef5350" if _s["d_f_pct"] >= 50 else (
-                "#ffa726" if _s["d_f_pct"] >= 25 else "#4caf50")
-            _xref_rows.append({
-                "Model Called": _s["structure"],
-                "Your Trades": _tot,
-                "Grade Breakdown": _grade_str,
-                "D/F Rate": f"{_s['d_f_pct']}%",
-                "Avg P&L": _pnl_disp,
-            })
-
-        _xref_display_df = pd.DataFrame(_xref_rows)
-        st.dataframe(_xref_display_df, use_container_width=True, hide_index=True)
-
-        _df_allowed = _fs.get("d_f_allowed_pct", 0.0)
-        _df_blocked_val = _fs.get("d_f_blocked_pct", 0.0)
-        st.markdown(
-            f'<div style="background:#0a1628; border-left:4px solid #1565c0; '
-            f'padding:12px 16px; border-radius:4px; margin-top:8px; font-size:12px; color:#b0bec5;">'
-            f'<b style="color:#90caf9;">Filter Simulation:</b> '
-            f'If the model\'s non-Neutral + TCS≥75 filter had been active on your past trades — '
-            f'<b>{_blocked_n} trades would have been blocked</b> '
-            f'({_df_blocked_val}% of those were D/F grade) and '
-            f'<b>{_allowed_n} trades would have been taken</b> '
-            f'({_df_allowed}% of those were D/F grade). '
-            f'The model alignment score on your losing trades is '
-            f'<b style="color:{_al_color};">{_xr_al}%</b> — '
-            f'{"meaning it was correctly flagging Neutral conditions on most of your worst sessions." if _xr_al >= 60 else "meaning the filter would need further tuning before autonomous use."}'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        if _xref["unmatched_n"] > 0:
-            st.caption(
-                f"⚠️ {_xref['unmatched_n']} journal trades had no matching model prediction "
-                f"(ticker or date not in calibration history). Re-run calibration with more days to close this gap."
-            )
 
     # ── Brain Accuracy (formerly Tracker tab) ─────────────────────────────
     st.markdown("---")
