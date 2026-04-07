@@ -2983,6 +2983,19 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
     bdf["_ticker"] = bdf["ticker"].astype(str).str.upper().str.strip()
     bdf["_date"]   = bdf["sim_date"].astype(str).str[:10]
 
+    # Deduplicate backtest rows: multiple calibration runs (IEX → SIP) create
+    # duplicate (ticker, date) entries.  Keep the row with the best TCS data so
+    # the merge stays 1-to-1 with the journal.
+    if "tcs" in bdf.columns:
+        bdf = bdf.sort_values(
+            by=["_ticker", "_date", "tcs"],
+            ascending=[True, True, False],
+            na_position="last",
+        )
+    else:
+        bdf = bdf.sort_values(by=["_ticker", "_date"])
+    bdf = bdf.drop_duplicates(subset=["_ticker", "_date"], keep="first").reset_index(drop=True)
+
     _PNL_RE = re.compile(r"P&L:\s*\$([\-\+]?[\d\.]+)")
 
     def _extract_pnl(notes_str):
@@ -4310,7 +4323,7 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
         q = supabase.table("backtest_sim_runs").select("*")
         if user_id:
             q = q.eq("user_id", user_id)
-        data = q.order("sim_date", desc=True).limit(1000).execute().data
+        data = q.order("sim_date", desc=True).limit(5000).execute().data
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e:
         print(f"Backtest load error: {e}")
