@@ -4696,9 +4696,11 @@ def render_analytics_tab():
                            f"TCS: {_tcs_null} null values (all null)")
             else:
                 st.warning("No 'tcs' column in backtest data.")
-            st.dataframe(_xref_bt_df[["ticker","sim_date","tcs","ib_high","ib_low","predicted"]
-                         if all(c in _xref_bt_df.columns for c in ["tcs","ib_high","ib_low"])
-                         else _xref_bt_df.columns[:6]].head(10),
+            _diag_cols = ["ticker","sim_date","tcs","ib_high","ib_low","predicted"]
+            _diag_cols = [c for c in _diag_cols if c in _xref_bt_df.columns]
+            if not _diag_cols:
+                _diag_cols = list(_xref_bt_df.columns[:6])
+            st.dataframe(_xref_bt_df[_diag_cols].head(10),
                          use_container_width=True, hide_index=True)
 
     _xref = compute_journal_model_crossref(journal_df, _xref_bt_df)

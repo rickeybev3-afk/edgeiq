@@ -2996,6 +2996,11 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
         bdf = bdf.sort_values(by=["_ticker", "_date"])
     bdf = bdf.drop_duplicates(subset=["_ticker", "_date"], keep="first").reset_index(drop=True)
 
+    # Rename backtest columns that clash with journal column names (tcs, ib_high, ib_low)
+    # so pandas merge doesn't silently rename them to _x/_y suffixes.
+    _bt_rename = {"tcs": "bt_tcs", "ib_high": "bt_ib_high", "ib_low": "bt_ib_low"}
+    bdf = bdf.rename(columns={k: v for k, v in _bt_rename.items() if k in bdf.columns})
+
     _PNL_RE = re.compile(r"P&L:\s*\$([\-\+]?[\d\.]+)")
 
     def _extract_pnl(notes_str):
@@ -3004,8 +3009,8 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
 
     jdf["_pnl_est"] = jdf["notes"].apply(_extract_pnl)
 
-    _bt_cols = ["_ticker", "_date", "predicted", "tcs", "win_loss",
-                "follow_thru_pct", "ib_high", "ib_low", "open_price"]
+    _bt_cols = ["_ticker", "_date", "predicted", "bt_tcs", "win_loss",
+                "follow_thru_pct", "bt_ib_high", "bt_ib_low", "open_price"]
     _bt_cols = [c for c in _bt_cols if c in bdf.columns]
 
     merged = jdf.merge(
@@ -3043,7 +3048,7 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
     by_structure.sort(key=lambda x: -x["trades"])
 
     is_neutral = matched_df["predicted"].isin(_NEUTRAL_STRUCTS)
-    tcs_vals   = pd.to_numeric(matched_df.get("tcs", pd.Series(dtype=float)),
+    tcs_vals   = pd.to_numeric(matched_df.get("bt_tcs", pd.Series(dtype=float)),
                                errors="coerce")
     high_tcs   = tcs_vals >= 75
 
@@ -3079,7 +3084,7 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
     neutral_quality: dict = {"tcs_buckets": [], "ib_position": [], "recommendation": ""}
 
     if not neutral_rows.empty:
-        tcs_num = pd.to_numeric(neutral_rows.get("tcs", pd.Series(dtype=float)),
+        tcs_num = pd.to_numeric(neutral_rows.get("bt_tcs", pd.Series(dtype=float)),
                                 errors="coerce")
         neutral_rows = neutral_rows.copy()
         neutral_rows["_tcs_num"] = tcs_num
@@ -3114,10 +3119,10 @@ def compute_journal_model_crossref(journal_df: "pd.DataFrame",
             })
         neutral_quality["tcs_buckets"] = tcs_buckets
 
-        if "ib_high" in neutral_rows.columns and "ib_low" in neutral_rows.columns:
+        if "bt_ib_high" in neutral_rows.columns and "bt_ib_low" in neutral_rows.columns:
             entry_price = pd.to_numeric(neutral_rows["price"], errors="coerce")
-            ib_h = pd.to_numeric(neutral_rows["ib_high"], errors="coerce")
-            ib_l = pd.to_numeric(neutral_rows["ib_low"],  errors="coerce")
+            ib_h = pd.to_numeric(neutral_rows["bt_ib_high"], errors="coerce")
+            ib_l = pd.to_numeric(neutral_rows["bt_ib_low"],  errors="coerce")
             ib_range = (ib_h - ib_l).replace(0, pd.NA)
 
             def _ib_pos(row_tuple):
