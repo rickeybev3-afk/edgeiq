@@ -3800,9 +3800,15 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
 
     # ── Supabase migration reminder ──────────────────────────────────────────────
     if supabase:
+        _bt_table_ok = False
+        _bt_cols_missing = []
         try:
-            supabase.table("backtest_sim_runs").select("id").limit(1).execute()
+            _bt_probe = supabase.table("backtest_sim_runs").select("id").limit(1).execute()
+            _bt_table_ok = True
         except Exception:
+            pass
+
+        if not _bt_table_ok:
             st.info(
                 "**One-time setup:** Run this SQL in your Supabase SQL editor to enable "
                 "automatic backtest history saving:\n\n"
@@ -3827,6 +3833,27 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
                 "```",
                 icon="🗄️",
             )
+        else:
+            # Check whether key analytic columns exist (table may pre-date them)
+            for _col in ["tcs", "ib_high", "ib_low"]:
+                try:
+                    supabase.table("backtest_sim_runs").select(_col).limit(1).execute()
+                except Exception:
+                    _bt_cols_missing.append(_col)
+
+            if _bt_cols_missing:
+                _alter_sql = "\n".join(
+                    f"ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS {c} NUMERIC;"
+                    for c in _bt_cols_missing
+                )
+                st.warning(
+                    f"**Schema upgrade needed.** Your `backtest_sim_runs` table is missing "
+                    f"column(s): `{'`, `'.join(_bt_cols_missing)}`. "
+                    f"Run the SQL below in your **Supabase SQL editor**, then re-run calibration "
+                    f"once to populate the new columns.\n\n"
+                    f"```sql\n{_alter_sql}\n```",
+                    icon="⚠️",
+                )
 
     if not api_key or not secret_key:
         st.warning("Enter your **Alpaca API Key** and **Secret Key** in the sidebar to run backtests.")
@@ -4773,6 +4800,21 @@ def render_analytics_tab():
             )
 
             _nq_col1, _nq_col2 = st.columns(2)
+
+            # Detect if TCS data is entirely missing (table schema gap)
+            _all_no_tcs = (
+                _nq.get("tcs_buckets")
+                and len(_nq["tcs_buckets"]) == 1
+                and _nq["tcs_buckets"][0]["bucket"] == "No TCS"
+            )
+            if _all_no_tcs:
+                st.warning(
+                    "All trades are landing in **No TCS** — this means your "
+                    "`backtest_sim_runs` table is missing the `tcs` column. "
+                    "Go to the **Backtest tab** for the exact SQL to run in your "
+                    "Supabase SQL editor, then re-run calibration once.",
+                    icon="⚠️",
+                )
 
             with _nq_col1:
                 st.markdown("**By TCS Score (session conviction)**")
