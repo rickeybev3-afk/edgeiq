@@ -569,8 +569,11 @@ def detect_chart_patterns(df_1m, poc_price=None, ib_high=None, ib_low=None):
         if df_tf is None or len(df_tf) < 8:
             continue
 
-        sh_idx = _find_swing_highs(df_tf, lookback=2)
-        sl_idx = _find_swing_lows(df_tf, lookback=2)
+        # 5m: lookback=3 (15 min on each side) — filters micro-noise on fast bars
+        # 1hr: lookback=2 (2 hrs on each side) — already structural
+        _lb = 3 if tf_label == "5m" else 2
+        sh_idx = _find_swing_highs(df_tf, lookback=_lb)
+        sl_idx = _find_swing_lows(df_tf, lookback=_lb)
         atr_val = compute_atr(df_tf, period=min(14, len(df_tf)))
         close_now = float(df_tf["close"].iloc[-1])
         n = len(df_tf)
@@ -818,6 +821,22 @@ def detect_chart_patterns(df_1m, poc_price=None, ib_high=None, ib_low=None):
 
     patterns.sort(key=lambda x: x["score"], reverse=True)
     return patterns
+
+
+def scan_ticker_patterns(api_key: str, secret_key: str, ticker: str,
+                         trade_date, feed: str = "iex") -> list:
+    """Fetch intraday bars for a single ticker and return detected chart patterns.
+
+    Wrapper around fetch_bars + detect_chart_patterns used by the gap scanner
+    to show pattern alerts alongside each scanner card.  Returns [] on failure.
+    """
+    try:
+        df = fetch_bars(api_key, secret_key, ticker, trade_date, feed=feed)
+        if df is None or df.empty or len(df) < 20:
+            return []
+        return detect_chart_patterns(df)
+    except Exception:
+        return []
 
 
 # ══════════════════════════════════════════════════════════════════════════════

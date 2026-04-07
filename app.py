@@ -24,6 +24,7 @@ from backend import (
     parse_webull_csv,
     compute_journal_model_crossref,
     compute_pretrade_quality,
+    scan_ticker_patterns,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -6354,12 +6355,13 @@ with tab_scan:
                         st.session_state.scanner_results = results
                         st.session_state.scanner_filtered_out = _filtered_out
                         st.session_state.scanner_last_run = datetime.now(EASTERN)
-                        # Pre-trade quality check — run in parallel for all tickers
+                        # Pre-trade quality + pattern detection — run in parallel for all tickers
                         if results:
                             from concurrent.futures import ThreadPoolExecutor, as_completed as _asc
                             _quality = {}
+                            _patterns_map = {}
                             with ThreadPoolExecutor(max_workers=min(8, len(results))) as _ex:
-                                _futs = {
+                                _q_futs = {
                                     _ex.submit(
                                         compute_pretrade_quality,
                                         api_key, secret_key,
@@ -6367,9 +6369,20 @@ with tab_scan:
                                     ): r["ticker"]
                                     for r in results
                                 }
-                                for _f in _asc(_futs):
-                                    _quality[_futs[_f]] = _f.result()
+                                _p_futs = {
+                                    _ex.submit(
+                                        scan_ticker_patterns,
+                                        api_key, secret_key,
+                                        r["ticker"], date.today(), scan_feed
+                                    ): r["ticker"]
+                                    for r in results
+                                }
+                                for _f in _asc(_q_futs):
+                                    _quality[_q_futs[_f]] = _f.result()
+                                for _f in _asc(_p_futs):
+                                    _patterns_map[_p_futs[_f]] = _f.result()
                             st.session_state.scanner_quality = _quality
+                            st.session_state.scanner_patterns = _patterns_map
                         if not results:
                             st.warning(
                                 "Scan ran but returned no results. "
@@ -6566,6 +6579,49 @@ with tab_scan:
 
             elif _sq and _sq.get("error"):
                 st.caption(f"⚠️ Quality check unavailable: {_sq['error']}")
+
+            # ── Pattern Alert Badge ──────────────────────────────────────────
+            _sp = st.session_state.get("scanner_patterns", {}).get(sym, [])
+            _bullish_sp = [p for p in _sp if p["direction"] == "Bullish"]
+            if _bullish_sp:
+                _p_rows_html = ""
+                for _p in _bullish_sp:
+                    _pct = int(_p["score"] * 100)
+                    _sc = "#4caf50" if _pct >= 80 else "#ffa726" if _pct >= 65 else "#ef9a9a"
+                    _tfc = "#90caf9" if _p["timeframe"] == "1hr" else "#b0bec5"
+                    _nl = _p.get("neckline")
+                    _nl_html = (f' &middot; Neckline <b style="color:#FFD700;">'
+                                f'${_nl:.2f}</b>') if _nl else ""
+                    _cf = " &middot; ".join(_p["confluence"]) if _p["confluence"] else ""
+                    _cf_html = (f'<div style="font-size:10px;color:#FFD700;margin-top:2px;">'
+                                f'&#9889; {_cf}</div>') if _cf else ""
+                    _p_rows_html += (
+                        f'<div style="display:flex;align-items:flex-start;gap:10px;'
+                        f'padding:6px 0;border-bottom:1px solid #1a3a1a;">'
+                        f'<span style="font-size:18px;line-height:1;">&#128276;</span>'
+                        f'<div style="flex:1;">'
+                        f'<div style="font-size:12px;font-weight:700;color:#4caf50;">'
+                        f'&#9650;&nbsp;{_p["name"]}</div>'
+                        f'<div style="font-size:11px;color:#888;margin-top:1px;">'
+                        f'{_p["description"]}{_nl_html}</div>'
+                        f'{_cf_html}'
+                        f'</div>'
+                        f'<div style="text-align:right;white-space:nowrap;">'
+                        f'<span style="font-size:11px;color:{_tfc};">{_p["timeframe"]}</span>'
+                        f'&nbsp;<span style="font-size:14px;font-weight:700;color:{_sc};">'
+                        f'{_pct}%</span></div>'
+                        f'</div>'
+                    )
+                st.markdown(
+                    f'<div style="background:#0a1f0a;border:1px solid #2a5a2a;'
+                    f'border-radius:8px;padding:10px 16px;margin:4px 0;">'
+                    f'<div style="font-size:11px;color:#4caf50;text-transform:uppercase;'
+                    f'letter-spacing:1px;margin-bottom:6px;font-weight:700;">'
+                    f'&#128276; Pattern Alerts</div>'
+                    f'{_p_rows_html}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             # Clickable button — loads Volume Profile for this ticker
             if st.button(f"📊 Load {sym} Volume Profile", key=f"load_{sym}",
