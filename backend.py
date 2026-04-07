@@ -3626,6 +3626,90 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
     return rows[:10]
 
 
+def compute_pretrade_quality(
+    api_key: str, secret_key: str,
+    sym: str,
+    trade_date,
+    feed: str = "sip",
+) -> dict:
+    """Compute real-time pre-trade quality metrics for a single ticker.
+
+    Uses today's bars (up to now).  IB is locked at 9:30–10:30 AM per the
+    standard Volume Profile protocol.
+
+    Returns a dict with keys:
+        tcs, tcs_bucket, ib_high, ib_low, current_price, ib_position,
+        tcs_ok, ib_ok, go_signal, ib_formed
+    or {"error": <str>} on failure.
+    """
+    try:
+        df = fetch_bars(api_key, secret_key, sym, trade_date, feed=feed)
+        if df.empty or len(df) < 5:
+            return {"error": "No bar data available"}
+
+        # IB window: 9:30–10:30 AM
+        ib_cutoff = df.index[0].replace(hour=10, minute=30, second=0)
+        ib_df = df[df.index <= ib_cutoff]
+        ib_formed = len(ib_df) >= 5  # IB needs at least 5 bars
+
+        if ib_formed:
+            ib_high, ib_low = compute_initial_balance(ib_df)
+        else:
+            ib_high, ib_low = compute_initial_balance(df)
+
+        if not ib_high or not ib_low or ib_high == ib_low:
+            return {"error": "IB could not be computed (insufficient range)"}
+
+        _, vap, poc_price = compute_volume_profile(
+            ib_df if ib_formed else df, num_bins=30
+        )
+        tcs = float(compute_tcs(ib_df if ib_formed else df, ib_high, ib_low, poc_price))
+
+        current_price = float(df["close"].iloc[-1])
+
+        # IB position — 5% of IB range as "at boundary" tolerance
+        margin = (ib_high - ib_low) * 0.05
+        if current_price >= ib_high + margin:
+            ib_pos = "Extended Above IB"
+        elif current_price <= ib_low - margin:
+            ib_pos = "Extended Below IB"
+        elif current_price <= ib_low + margin:
+            ib_pos = "At IB Low"
+        elif current_price >= ib_high - margin:
+            ib_pos = "At IB High"
+        else:
+            ib_pos = "Inside IB"
+
+        # TCS bucket
+        if tcs < 40:
+            tcs_bucket = "Weak"
+        elif tcs < 55:
+            tcs_bucket = "Moderate"
+        elif tcs < 70:
+            tcs_bucket = "Strong"
+        else:
+            tcs_bucket = "Extreme"
+
+        # Derived rule from calibration: TCS 55–70 AND At IB Low → best outcomes
+        tcs_ok = 55 <= tcs < 70
+        ib_ok  = ib_pos == "At IB Low"
+
+        return {
+            "tcs":           round(tcs, 1),
+            "tcs_bucket":    tcs_bucket,
+            "ib_high":       round(ib_high, 2),
+            "ib_low":        round(ib_low, 2),
+            "current_price": round(current_price, 2),
+            "ib_position":   ib_pos,
+            "ib_formed":     ib_formed,
+            "tcs_ok":        tcs_ok,
+            "ib_ok":         ib_ok,
+            "go_signal":     tcs_ok and ib_ok,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def _parse_batch_pairs(text: str) -> list[tuple]:
     """Parse 'M/D: T1, T2, ...' lines into [(ticker, date), ...] for year 2026."""
     import re

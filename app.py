@@ -23,6 +23,7 @@ from backend import (
     detect_chart_patterns,
     parse_webull_csv,
     compute_journal_model_crossref,
+    compute_pretrade_quality,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -4682,27 +4683,6 @@ def render_analytics_tab():
 
     _xref_bt_df = load_backtest_sim_history(user_id=_uid)
 
-    with st.expander("🔍 Backtest data diagnostic (click to inspect)", expanded=False):
-        if _xref_bt_df.empty:
-            st.warning("No backtest data loaded from Supabase.")
-        else:
-            st.caption(f"Rows loaded: {len(_xref_bt_df)} | Columns: {list(_xref_bt_df.columns)}")
-            _tcs_col = _xref_bt_df.get("tcs")
-            if _tcs_col is not None:
-                _tcs_null = int(_tcs_col.isna().sum())
-                _tcs_notnull = int(_tcs_col.notna().sum())
-                st.caption(f"TCS: {_tcs_notnull} non-null, {_tcs_null} null "
-                           f"| Range: {_tcs_col.min():.1f}–{_tcs_col.max():.1f}" if _tcs_notnull else
-                           f"TCS: {_tcs_null} null values (all null)")
-            else:
-                st.warning("No 'tcs' column in backtest data.")
-            _diag_cols = ["ticker","sim_date","tcs","ib_high","ib_low","predicted"]
-            _diag_cols = [c for c in _diag_cols if c in _xref_bt_df.columns]
-            if not _diag_cols:
-                _diag_cols = list(_xref_bt_df.columns[:6])
-            st.dataframe(_xref_bt_df[_diag_cols].head(10),
-                         use_container_width=True, hide_index=True)
-
     _xref = compute_journal_model_crossref(journal_df, _xref_bt_df)
 
     if not _xref["by_structure"] and _xref["unmatched_n"] == 0 and journal_df.empty:
@@ -6356,6 +6336,22 @@ with tab_scan:
                             api_key, secret_key, watchlist, date.today(), feed=scan_feed)
                         st.session_state.scanner_results = results
                         st.session_state.scanner_last_run = datetime.now(EASTERN)
+                        # Pre-trade quality check — run in parallel for all tickers
+                        if results:
+                            from concurrent.futures import ThreadPoolExecutor, as_completed as _asc
+                            _quality = {}
+                            with ThreadPoolExecutor(max_workers=min(8, len(results))) as _ex:
+                                _futs = {
+                                    _ex.submit(
+                                        compute_pretrade_quality,
+                                        api_key, secret_key,
+                                        r["ticker"], date.today(), scan_feed
+                                    ): r["ticker"]
+                                    for r in results
+                                }
+                                for _f in _asc(_futs):
+                                    _quality[_futs[_f]] = _f.result()
+                            st.session_state.scanner_quality = _quality
                         if not results:
                             st.warning(
                                 "Scan ran but returned no results. "
@@ -6435,6 +6431,59 @@ with tab_scan:
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
+
+            # ── Pre-Trade Quality Badge ──────────────────────────────────────
+            _sq = st.session_state.get("scanner_quality", {}).get(sym)
+            if _sq and not _sq.get("error"):
+                _tcs_v      = _sq["tcs"]
+                _tcs_bkt    = _sq["tcs_bucket"]
+                _ib_pos     = _sq["ib_position"]
+                _tcs_ok     = _sq["tcs_ok"]
+                _ib_ok      = _sq["ib_ok"]
+                _go         = _sq["go_signal"]
+                _ib_formed  = _sq.get("ib_formed", True)
+                _ib_h       = _sq["ib_high"]
+                _ib_l       = _sq["ib_low"]
+
+                _tcs_clr = (
+                    "#4caf50" if _tcs_ok else
+                    "#FFD700" if _tcs_v >= 70 else
+                    "#ef5350"
+                )
+                _ib_clr = "#4caf50" if _ib_ok else "#ef5350" if "Extended" in _ib_pos else "#FF9500"
+                _go_bg  = "#0d2e1a" if _go else "#2e0d0d"
+                _go_brd = "#4caf50" if _go else "#ef5350"
+                _go_txt = "✅ GO — Rule conditions met" if _go else "⛔ WAIT — Rule not satisfied"
+                _go_clr = "#4caf50" if _go else "#ef5350"
+                _ib_warn = "" if _ib_formed else " ⚠️ IB forming"
+
+                st.markdown(
+                    f'<div style="background:#0c1420;border:1px solid #1e3050;border-radius:8px;'
+                    f'padding:10px 16px;margin:4px 0 8px 0;display:flex;flex-wrap:wrap;'
+                    f'align-items:center;gap:16px;">'
+                    f'<div style="font-size:11px;color:#555;text-transform:uppercase;'
+                    f'letter-spacing:1px;margin-right:4px;">Pre-Trade Check</div>'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:10px;color:#666;margin-bottom:2px;">TCS</div>'
+                    f'<div style="font-size:18px;font-weight:800;color:{_tcs_clr};">'
+                    f'{_tcs_v} <span style="font-size:11px;font-weight:400;">({_tcs_bkt})</span></div>'
+                    f'</div>'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:10px;color:#666;margin-bottom:2px;">IB Position{_ib_warn}</div>'
+                    f'<div style="font-size:13px;font-weight:700;color:{_ib_clr};">{_ib_pos}</div>'
+                    f'<div style="font-size:10px;color:#444;">IB {_ib_l}–{_ib_h}</div>'
+                    f'</div>'
+                    f'<div style="margin-left:auto;background:{_go_bg};border:1px solid {_go_brd};'
+                    f'border-radius:6px;padding:6px 14px;">'
+                    f'<div style="font-size:13px;font-weight:700;color:{_go_clr};">{_go_txt}</div>'
+                    f'<div style="font-size:10px;color:#666;margin-top:2px;">'
+                    f'TCS 55–70 {"✓" if _tcs_ok else "✗"} &nbsp;|&nbsp; At IB Low {"✓" if _ib_ok else "✗"}</div>'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            elif _sq and _sq.get("error"):
+                st.caption(f"⚠️ Quality check unavailable: {_sq['error']}")
 
             # Clickable button — loads Volume Profile for this ticker
             if st.button(f"📊 Load {sym} Volume Profile", key=f"load_{sym}",
