@@ -2948,6 +2948,124 @@ def parse_webull_csv(df: "pd.DataFrame") -> list:
     return trades
 
 
+def compute_journal_model_crossref(journal_df: "pd.DataFrame",
+                                   bt_df: "pd.DataFrame") -> dict:
+    """Cross-reference personal trade journal against backtest model predictions.
+
+    Joins on ticker + trade date.  Returns a dict with:
+        matched_df   : rows where both journal entry and model prediction exist
+        unmatched_n  : journal trades with no model prediction on that day
+        by_structure : list of dicts {structure, trades, grades, d_f_pct, avg_pnl_est}
+        filter_sim   : {blocked, allowed, d_f_blocked_pct, d_f_allowed_pct}
+        alignment    : pct of D/F trades the model had flagged as Neutral/NtrlExtreme
+    """
+    import re
+
+    empty = {
+        "matched_df": pd.DataFrame(),
+        "unmatched_n": 0,
+        "by_structure": [],
+        "filter_sim": {},
+        "alignment": 0.0,
+    }
+
+    if journal_df is None or journal_df.empty:
+        return empty
+    if bt_df is None or bt_df.empty:
+        return empty
+
+    jdf = journal_df.copy()
+    bdf = bt_df.copy()
+
+    jdf["_ticker"] = jdf["ticker"].astype(str).str.upper().str.strip()
+    jdf["_date"]   = pd.to_datetime(jdf["timestamp"], errors="coerce").dt.date.astype(str)
+
+    bdf["_ticker"] = bdf["ticker"].astype(str).str.upper().str.strip()
+    bdf["_date"]   = bdf["sim_date"].astype(str).str[:10]
+
+    _PNL_RE = re.compile(r"P&L:\s*\$([\-\+]?[\d\.]+)")
+
+    def _extract_pnl(notes_str):
+        m = _PNL_RE.search(str(notes_str))
+        return float(m.group(1)) if m else None
+
+    jdf["_pnl_est"] = jdf["notes"].apply(_extract_pnl)
+
+    merged = jdf.merge(
+        bdf[["_ticker", "_date", "predicted", "tcs", "win_loss", "follow_thru_pct"]],
+        on=["_ticker", "_date"],
+        how="left",
+    )
+
+    unmatched_n = merged["predicted"].isna().sum()
+    matched_df  = merged[merged["predicted"].notna()].copy()
+
+    if matched_df.empty:
+        return {**empty, "unmatched_n": int(unmatched_n)}
+
+    _NEUTRAL_STRUCTS = {"Neutral", "Ntrl Extreme", "Ntrl_Extreme",
+                        "Neutral Extreme", "NtrlExtreme"}
+
+    by_structure = []
+    for struct, grp in matched_df.groupby("predicted"):
+        grades   = grp["grade"].fillna("?").tolist()
+        df_count = sum(1 for g in grades if g in {"D", "F"})
+        df_pct   = round(df_count / len(grades) * 100, 1) if grades else 0.0
+        pnl_vals = grp["_pnl_est"].dropna().tolist()
+        avg_pnl  = round(sum(pnl_vals) / len(pnl_vals), 2) if pnl_vals else None
+        grade_counts = {}
+        for g in grades:
+            grade_counts[g] = grade_counts.get(g, 0) + 1
+        by_structure.append({
+            "structure":   struct,
+            "trades":      len(grp),
+            "grade_counts": grade_counts,
+            "d_f_pct":     df_pct,
+            "avg_pnl_est": avg_pnl,
+        })
+    by_structure.sort(key=lambda x: -x["trades"])
+
+    is_neutral = matched_df["predicted"].isin(_NEUTRAL_STRUCTS)
+    tcs_vals   = pd.to_numeric(matched_df.get("tcs", pd.Series(dtype=float)),
+                               errors="coerce")
+    high_tcs   = tcs_vals >= 75
+
+    would_block = is_neutral | (~high_tcs)
+    blocked     = matched_df[would_block]
+    allowed     = matched_df[~would_block]
+
+    def _df_pct_of(df):
+        if df.empty:
+            return 0.0
+        total = len(df)
+        bad   = sum(1 for g in df["grade"].fillna("?") if g in {"D", "F"})
+        return round(bad / total * 100, 1)
+
+    filter_sim = {
+        "blocked_n":       int(len(blocked)),
+        "allowed_n":       int(len(allowed)),
+        "d_f_blocked_pct": _df_pct_of(blocked),
+        "d_f_allowed_pct": _df_pct_of(allowed),
+        "pnl_blocked":     round(blocked["_pnl_est"].dropna().sum(), 2),
+        "pnl_allowed":     round(allowed["_pnl_est"].dropna().sum(), 2),
+    }
+
+    df_trades = matched_df[matched_df["grade"].isin({"D", "F"})]
+    if df_trades.empty:
+        alignment = 0.0
+    else:
+        warned = df_trades["predicted"].isin(_NEUTRAL_STRUCTS).sum()
+        alignment = round(warned / len(df_trades) * 100, 1)
+
+    return {
+        "matched_df":   matched_df,
+        "unmatched_n":  int(unmatched_n),
+        "by_structure": by_structure,
+        "filter_sim":   filter_sim,
+        "alignment":    alignment,
+    }
+
+
 def fetch_live_quote(ticker: str) -> dict:
     """Fetch current price and today's volume via yfinance.
     Returns dict with keys: price, volume, error (None on success).
