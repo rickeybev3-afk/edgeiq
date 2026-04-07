@@ -3458,11 +3458,46 @@ def fetch_snapshots_bulk(api_key, secret_key, tickers, feed="iex"):
         if any(k in snap_err_str.lower() for k in ("forbidden", "unauthorized", "403", "401")):
             raise  # bad credentials — surface immediately
 
+    # ── Step 1b: if SIP snapshot returned empty, retry with IEX ───────────────
+    if not snap_result and feed != "iex":
+        try:
+            req   = StockSnapshotRequest(symbol_or_symbols=list(tickers), feed="iex")
+            snaps = client.get_stock_snapshot(req)
+            for sym, snap in snaps.items():
+                if sym in snap_result:
+                    continue  # already have it
+                try:
+                    price = None
+                    if getattr(snap, "latest_trade", None) and snap.latest_trade.price:
+                        price = float(snap.latest_trade.price)
+                    if price is None and getattr(snap, "latest_quote", None):
+                        q = snap.latest_quote
+                        ask = getattr(q, "ask_price", None)
+                        bid = getattr(q, "bid_price", None)
+                        if ask and bid and ask > 0 and bid > 0:
+                            price = (float(ask) + float(bid)) / 2
+                    if price is None and getattr(snap, "daily_bar", None) and snap.daily_bar.close:
+                        price = float(snap.daily_bar.close)
+                    prev_close = None
+                    if getattr(snap, "prev_daily_bar", None) and snap.prev_daily_bar.close:
+                        prev_close = float(snap.prev_daily_bar.close)
+                    if prev_close is None and getattr(snap, "daily_bar", None) and snap.daily_bar.open:
+                        prev_close = float(snap.daily_bar.open)
+                    if price and price > 0:
+                        snap_result[sym] = {
+                            "price":      price,
+                            "prev_close": prev_close if prev_close and prev_close > 0 else price,
+                        }
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     if snap_result:
         return snap_result
 
     # ── Step 2: fallback — fetch last 5 daily bars for each ticker ─────────────
-    # This path is used when the snapshot returns empty (e.g. after hours on IEX)
+    # This path is used when both snapshot endpoints returned empty (e.g. after hours)
     daily_result = {}
     end_dt   = datetime.now(pytz.UTC)
     start_dt = end_dt - timedelta(days=10)
@@ -3474,7 +3509,7 @@ def fetch_snapshots_bulk(api_key, secret_key, tickers, feed="iex"):
                 timeframe=TimeFrame.Day,
                 start=start_dt,
                 end=end_dt,
-                feed=feed,
+                feed="iex",  # always use IEX for daily bar fallback
             )
             bars = client.get_stock_bars(req)
             df   = bars.df

@@ -3096,15 +3096,15 @@ with st.sidebar:
         help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
     )
-    scan_feed = st.selectbox("Scanner Feed", ["sip", "iex"], index=0, key="scan_feed_select",
-                             help="SIP = full tape with pre-market vol (recommended). IEX = free tier (gap % only).")
+    scan_feed = st.selectbox("Scanner Feed", ["iex", "sip"], index=0, key="scan_feed_select",
+                             help="IEX = free tier, works for all accounts. SIP = full tape with PM RVOL (requires paid Alpaca SIP subscription).")
     if scan_feed == "iex":
-        st.info("ℹ️ IEX (free tier): scanner shows **Gap %** ranked results. "
-                "PM Volume and IB accuracy will be reduced. Switch to SIP for best results.")
+        st.info("ℹ️ IEX (free tier): scanner shows Gap % ranked results. "
+                "PM Volume will be blank. Switch to SIP if you have a paid Alpaca data subscription.")
     _price_cols = st.columns(2)
     scan_min_price = _price_cols[0].number_input(
-        "Min Price ($)", min_value=0.10, max_value=999.0, value=1.0,
-        step=0.50, format="%.2f", key="scan_min_price",
+        "Min Price ($)", min_value=0.01, max_value=999.0, value=0.10,
+        step=0.10, format="%.2f", key="scan_min_price",
         help="Exclude tickers below this price"
     )
     scan_max_price = _price_cols[1].number_input(
