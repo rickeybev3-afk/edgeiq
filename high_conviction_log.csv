@@ -79,3 +79,4 @@ timestamp,ticker,date,structure,prob_pct,ib_high,ib_low,poc_price
 2026-04-07 10:16:44,IPST,2026-04-07,Neutral,85.9,0.4046,0.3462,0.3465
 2026-04-07 10:20:22,TDIC,2026-04-07,Ntrl Extreme,85.9,0.286,0.1512,0.2098
 2026-04-07 10:26:40,RENX,2026-04-07,Ntrl Extreme,85.9,2.35,2.31,2.3498
+2026-04-07 13:28:02,HCAI,2026-04-07,Ntrl Extreme,85.9,0.54,0.3649,0.4009
