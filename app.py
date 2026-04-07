@@ -4681,6 +4681,26 @@ def render_analytics_tab():
     )
 
     _xref_bt_df = load_backtest_sim_history(user_id=_uid)
+
+    with st.expander("🔍 Backtest data diagnostic (click to inspect)", expanded=False):
+        if _xref_bt_df.empty:
+            st.warning("No backtest data loaded from Supabase.")
+        else:
+            st.caption(f"Rows loaded: {len(_xref_bt_df)} | Columns: {list(_xref_bt_df.columns)}")
+            _tcs_col = _xref_bt_df.get("tcs")
+            if _tcs_col is not None:
+                _tcs_null = int(_tcs_col.isna().sum())
+                _tcs_notnull = int(_tcs_col.notna().sum())
+                st.caption(f"TCS: {_tcs_notnull} non-null, {_tcs_null} null "
+                           f"| Range: {_tcs_col.min():.1f}–{_tcs_col.max():.1f}" if _tcs_notnull else
+                           f"TCS: {_tcs_null} null values (all null)")
+            else:
+                st.warning("No 'tcs' column in backtest data.")
+            st.dataframe(_xref_bt_df[["ticker","sim_date","tcs","ib_high","ib_low","predicted"]
+                         if all(c in _xref_bt_df.columns for c in ["tcs","ib_high","ib_low"])
+                         else _xref_bt_df.columns[:6]].head(10),
+                         use_container_width=True, hide_index=True)
+
     _xref = compute_journal_model_crossref(journal_df, _xref_bt_df)
 
     if not _xref["by_structure"] and _xref["unmatched_n"] == 0 and journal_df.empty:
