@@ -3832,23 +3832,56 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         return
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BRAIN CALIBRATION RUN — one click, 28 tickers × last 5 trading days
+    # BRAIN CALIBRATION RUN — uses YOUR journal tickers, falls back to defaults
+    # Build calibration ticker list: journal tickers first, fallback to defaults
     # ══════════════════════════════════════════════════════════════════════════
+    _cal_uid = st.session_state.get("auth_user_id", "")
+    _cal_journal_df = load_journal(user_id=_cal_uid)
+    if not _cal_journal_df.empty and "ticker" in _cal_journal_df.columns:
+        _journal_tickers = sorted(set(
+            str(t).upper().strip()
+            for t in _cal_journal_df["ticker"].dropna().unique()
+            if str(t).strip()
+        ))
+        _cal_ticker_pool = _journal_tickers
+        _cal_source_label = f"your journal ({len(_cal_ticker_pool)} tickers)"
+    else:
+        _cal_ticker_pool = _CALIBRATION_TICKERS
+        _cal_source_label = f"default list ({len(_cal_ticker_pool)} tickers)"
+
     st.markdown(
-        '<div style="background:#0a1628; border:1px solid #1565c044; border-radius:10px; '
-        'padding:14px 20px; margin-bottom:14px;">'
-        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
-        'letter-spacing:2px; margin-bottom:4px;">🧠 BRAIN CALIBRATION</div>'
-        '<div style="font-size:15px; font-weight:700; color:#e0e0e0; margin-bottom:4px;">'
-        'One-Click Calibration Run</div>'
-        '<div style="font-size:12px; color:#546e7a;">'
-        'Runs the quant model across 28 small-cap tickers over the last 5 trading days. '
-        'Saves all results to Supabase so the structure probability model can recalibrate '
-        'against correctly-classified historical sessions.'
-        '</div>'
-        '</div>',
+        f'<div style="background:#0a1628; border:1px solid #1565c044; border-radius:10px; '
+        f'padding:14px 20px; margin-bottom:14px;">'
+        f'<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        f'letter-spacing:2px; margin-bottom:4px;">🧠 BRAIN CALIBRATION</div>'
+        f'<div style="font-size:15px; font-weight:700; color:#e0e0e0; margin-bottom:4px;">'
+        f'One-Click Calibration Run</div>'
+        f'<div style="font-size:12px; color:#546e7a;">'
+        f'Runs the quant model across <b style="color:#90caf9">{_cal_source_label}</b> '
+        f'over your chosen lookback window. '
+        f'Saves all results to Supabase so the structure probability model can recalibrate '
+        f'against correctly-classified historical sessions.'
+        f'</div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
+
+    with st.expander(
+        f"📋 Ticker list ({len(_cal_ticker_pool)}) — click to view / edit",
+        expanded=False,
+    ):
+        _cal_ticker_edit = st.text_area(
+            "One ticker per line or comma-separated — edits apply to this run only:",
+            value="\n".join(_cal_ticker_pool),
+            height=160,
+            key="cal_ticker_edit",
+        )
+        _cal_ticker_pool = [
+            t.strip().upper() for t in
+            _cal_ticker_edit.replace(",", "\n").splitlines()
+            if t.strip()
+        ]
+        st.caption(f"{len(_cal_ticker_pool)} tickers queued for calibration")
 
     _cal_feed_col, _cal_btn_col = st.columns([2, 1])
     with _cal_feed_col:
@@ -3865,7 +3898,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     with _cal_btn_col:
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         _cal_run = st.button(
-            "🧠 RUN CALIBRATION", use_container_width=True,
+            f"🧠 RUN ({len(_cal_ticker_pool)} tickers)", use_container_width=True,
             key="cal_run_btn", type="primary",
         )
 
@@ -3875,24 +3908,23 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         _cal_days_back = _math.ceil(_cal_days * 7 / 5) + 3
         _cal_start = _cal_end - timedelta(days=_cal_days_back)
         _cal_label = f"{_cal_start} → {_cal_end}"
-        _cal_ticker_str = ", ".join(_CALIBRATION_TICKERS)
         st.info(
-            f"Running {len(_CALIBRATION_TICKERS)} tickers · {_cal_start} → {_cal_end} "
+            f"Running {len(_cal_ticker_pool)} tickers · {_cal_start} → {_cal_end} "
             f"· Feed: {_cal_feed_str.upper()} · Saving to Supabase…"
         )
         with st.spinner(
-            f"⏳ Calibrating model on {len(_CALIBRATION_TICKERS)} tickers × "
-            f"{_cal_days} days ({_cal_label}) — this takes 1–3 minutes…"
+            f"⏳ Calibrating model on {len(_cal_ticker_pool)} tickers × "
+            f"{_cal_days} days ({_cal_label}) — this may take a few minutes…"
         ):
             try:
                 _cal_results, _cal_summary, _cal_daily = run_backtest_range(
                     api_key, secret_key,
                     start_date=_cal_start,
                     end_date=_cal_end,
-                    tickers=_CALIBRATION_TICKERS,
+                    tickers=_cal_ticker_pool,
                     feed=_cal_feed_str,
-                    price_min=0.50,
-                    price_max=100.0,
+                    price_min=0.10,
+                    price_max=500.0,
                     slippage_pct=0.5,
                 )
                 if _cal_results:
@@ -3901,8 +3933,8 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
                         _saved_ok = True
                     except Exception:
                         _saved_ok = False
-                    _wins   = sum(1 for r in _cal_results if r.get("win_loss") == "Win")
-                    _losses = sum(1 for r in _cal_results if r.get("win_loss") == "Loss")
+                    _wins    = sum(1 for r in _cal_results if r.get("win_loss") == "Win")
+                    _losses  = sum(1 for r in _cal_results if r.get("win_loss") == "Loss")
                     _total_r = len(_cal_results)
                     _wr = _wins / _total_r * 100 if _total_r else 0
                     _save_msg = "✅ Saved to Supabase" if _saved_ok else "⚠️ Supabase save failed"
@@ -3919,7 +3951,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
                     st.caption("Structure distribution: " + " · ".join(_struct_parts))
                 else:
                     st.warning("No results returned — check tickers or date range. "
-                               "Tickers not in price range are skipped.")
+                               "Tickers not in the price range or with no data are skipped.")
             except Exception as _cal_err:
                 st.error(f"Calibration run failed: {_cal_err}")
 
