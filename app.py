@@ -6561,9 +6561,42 @@ with tab_scan:
         "then verify next day to see how accurate the engine was."
     )
 
+    # ── Supabase connectivity check ────────────────────────────────────────────
+    _sb_ok = False
+    if supabase:
+        try:
+            supabase.table("trade_journal").select("id").limit(1).execute()
+            _sb_ok = True
+        except Exception:
+            _sb_ok = False
+    if not _sb_ok:
+        st.warning(
+            "⚠️ **Supabase is offline** — predictions will score on-screen only "
+            "and won't be saved. To enable saving, go to "
+            "[supabase.com](https://supabase.com) → your project → "
+            "**Restore / Resume** if paused. Once online, also run the table setup SQL "
+            "in the expander below.",
+            icon=None,
+        )
+
+    # ── Ticker source: saved watchlist OR direct input (fallback) ─────────────
+    _saved_ticker_str = (
+        st.session_state.get("_watchlist_tickers", "")
+        or st.session_state.get("watchlist_textarea", "")
+        or st.session_state.get("watchlist_raw", "")
+    )
+    _wpe_ticker_input = st.text_area(
+        "Tickers to score (comma or newline separated)",
+        value=_saved_ticker_str,
+        height=60,
+        key="wpe_ticker_input",
+        placeholder="AAPL, GME, AMC — or paste from your watchlist",
+        help="These tickers will be scored by the prediction engine. "
+             "Auto-filled from your saved watchlist if available.",
+    )
     _wpe_saved_tickers = [
         t.strip().upper()
-        for t in st.session_state.get("_watchlist_tickers", "").replace("\n", ",").split(",")
+        for t in _wpe_ticker_input.replace("\n", ",").split(",")
         if t.strip()
     ]
     _wpe_count = len(_wpe_saved_tickers)
@@ -6573,7 +6606,7 @@ with tab_scan:
                              help="IEX = free tier. SIP = full tape.")
     _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
 
-    # Predict All — only active when watchlist is loaded in session
+    # Predict All — only active when tickers are entered
     if _wpe_count > 0:
         if _wpe_col1.button(f"🔮 Predict All ({_wpe_count})", use_container_width=True, key="wpe_predict_btn"):
             if not api_key or not secret_key:
