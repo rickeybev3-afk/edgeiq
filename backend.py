@@ -3542,15 +3542,16 @@ def fetch_premarket_vols(api_key, secret_key, ticker, trade_date,
     return today_vol, avg_vol
 
 
-def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
-    """Run the full gap-scanner pipeline and return the top 10 tickers by PM RVOL.
+def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex",
+                    min_price: float = 1.0, max_price: float = 50.0):
+    """Run the full gap-scanner pipeline and return qualifying tickers by gap/RVOL.
 
     Pipeline:
       1. Batch-fetch snapshots (price + prev_close)
-      2. Filter to $1–$50 price range (covers most small-cap universe)
+      2. Filter to configurable price range (default $1–$50)
       3. Fetch pre-market volumes + 10-day historical average per qualifying ticker
       4. Compute Gap % and Pre-Market RVOL
-      5. Sort by RVOL descending, return top 10
+      5. Sort by absolute gap %, return all qualifying tickers (no hard cap)
 
     Returns list of dicts: [{ticker, price, gap_pct, pm_vol, avg_pm_vol, pm_rvol}]
     Raises exceptions so the caller can surface them to the UI.
@@ -3564,17 +3565,21 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
             "tickers exist on Alpaca."
         )
 
-    # Step 2 — filter by price ($1–$50 covers the small-cap universe)
+    # Step 2 — filter by configurable price range
     qualifying = {
         sym: d for sym, d in snaps.items()
-        if d.get("price") is not None and 1.0 <= d["price"] <= 50.0
+        if d.get("price") is not None and min_price <= d["price"] <= max_price
     }
+    filtered_out = [
+        f"{sym} (${d['price']:.2f})" for sym, d in snaps.items()
+        if d.get("price") is not None and not (min_price <= d["price"] <= max_price)
+    ]
     if not qualifying:
         out_of_range = [s for s, d in snaps.items() if d.get("price") is not None]
         raise ValueError(
-            f"All {len(out_of_range)} tickers are outside the $1–$50 scan range "
+            f"All {len(out_of_range)} tickers are outside the ${min_price:.0f}–${max_price:.0f} scan range "
             f"({', '.join(out_of_range[:5])}). "
-            "Add small-cap tickers to your watchlist."
+            "Adjust the price range filter or add different tickers."
         )
 
     # Step 3 & 4 — pre-market volume + compute metrics
@@ -3613,7 +3618,7 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
             "pm_data_available": pm_data_available,
         })
 
-    # Step 5 — sort by absolute gap %, then RVOL as tiebreaker, top 10
+    # Step 5 — sort by absolute gap %, then RVOL as tiebreaker
     rows.sort(key=lambda r: (
         abs(r["gap_pct"]),
         r["pm_rvol"] if r["pm_rvol"] is not None else -1,
@@ -3623,7 +3628,7 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex"):
     for r in rows:
         r["pm_data_available"] = pm_data_available
 
-    return rows[:10]
+    return {"rows": rows, "filtered_out": filtered_out}
 
 
 def compute_pretrade_quality(

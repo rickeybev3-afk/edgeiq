@@ -3101,6 +3101,17 @@ with st.sidebar:
     if scan_feed == "iex":
         st.info("ℹ️ IEX (free tier): scanner shows **Gap %** ranked results. "
                 "PM Volume and IB accuracy will be reduced. Switch to SIP for best results.")
+    _price_cols = st.columns(2)
+    scan_min_price = _price_cols[0].number_input(
+        "Min Price ($)", min_value=0.10, max_value=999.0, value=1.0,
+        step=0.50, format="%.2f", key="scan_min_price",
+        help="Exclude tickers below this price"
+    )
+    scan_max_price = _price_cols[1].number_input(
+        "Max Price ($)", min_value=0.10, max_value=9999.0, value=50.0,
+        step=5.0, format="%.2f", key="scan_max_price",
+        help="Exclude tickers above this price"
+    )
     scan_button = st.button("🔍 Scan Gap Plays", use_container_width=True)
 
     st.markdown("---")
@@ -6332,9 +6343,16 @@ with tab_scan:
             else:
                 with st.spinner(f"Scanning {len(watchlist)} tickers for pre-market gaps…"):
                     try:
-                        results = run_gap_scanner(
-                            api_key, secret_key, watchlist, date.today(), feed=scan_feed)
+                        _scan_out = run_gap_scanner(
+                            api_key, secret_key, watchlist, date.today(),
+                            feed=scan_feed,
+                            min_price=scan_min_price,
+                            max_price=scan_max_price,
+                        )
+                        results = _scan_out["rows"]
+                        _filtered_out = _scan_out.get("filtered_out", [])
                         st.session_state.scanner_results = results
+                        st.session_state.scanner_filtered_out = _filtered_out
                         st.session_state.scanner_last_run = datetime.now(EASTERN)
                         # Pre-trade quality check — run in parallel for all tickers
                         if results:
@@ -6355,10 +6373,10 @@ with tab_scan:
                         if not results:
                             st.warning(
                                 "Scan ran but returned no results. "
-                                "Possible reasons: all tickers outside $1–$50 range, "
+                                f"Possible reasons: all tickers outside ${scan_min_price:.0f}–${scan_max_price:.0f} range, "
                                 "no gap data available (market closed / weekend), "
                                 "or IEX feed selected (no pre-market data). "
-                                "Try switching to SIP feed or checking your watchlist."
+                                "Try adjusting the price range filter or switching to SIP feed."
                             )
                     except Exception as e:
                         st.error(f"Scanner error: {e}")
@@ -6367,20 +6385,30 @@ with tab_scan:
     results = st.session_state.scanner_results
     last_run = st.session_state.scanner_last_run
 
+    _scan_filtered_out = st.session_state.get("scanner_filtered_out", [])
     if last_run:
         _pm_ok = results[0].get("pm_data_available", True) if results else True
         _sort_by = "Pre-Market RVOL" if _pm_ok else "Gap %"
+        _p_min = st.session_state.get("scan_min_price", 1.0)
+        _p_max = st.session_state.get("scan_max_price", 50.0)
         st.caption(f"Last scan: {last_run.strftime('%H:%M:%S')} EST  ·  "
-                   f"tickers $1–$50 · sorted by {_sort_by}")
+                   f"${_p_min:.0f}–${_p_max:.0f} filter · {len(results)} showing · sorted by {_sort_by}")
         if not _pm_ok:
             st.info("📊 **Gap-Only Mode** — Pre-market volume unavailable on free IEX tier. "
                     "Results are sorted by largest gap %. PM Vol / RVOL columns will be blank. "
                     "Upgrade to Alpaca SIP subscription to unlock pre-market RVOL.")
+        if _scan_filtered_out:
+            st.warning(
+                f"⚠️ **{len(_scan_filtered_out)} ticker(s) excluded** by price filter "
+                f"(${_p_min:.0f}–${_p_max:.0f}): "
+                + ", ".join(_scan_filtered_out)
+                + " — adjust Min/Max Price in the scanner settings to include them."
+            )
 
     if not results:
         st.info("👈 Click **🔍 Scan Gap Plays** in the sidebar to populate this panel.\n\n"
-                "The scanner checks every ticker in your watchlist, filters to the $1–$50 "
-                "price range, and ranks them by gap % (free IEX tier) or pre-market RVOL (SIP).")
+                "The scanner checks every ticker in your watchlist, applies the price range filter, "
+                "and ranks results by gap % (free IEX tier) or pre-market RVOL (SIP).")
     else:
         _gap_colors = {
             "up":   ("#4caf50", "#1b5e20"),   # (text, bg-tint)
