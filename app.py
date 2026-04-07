@@ -3892,7 +3892,7 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
             help="1 day = yesterday only. 5 = last full week. 22 = ~1 month."
         )
         _cal_feed = st.radio(
-            "Feed", ["IEX (free)", "SIP (paid — accurate)"],
+            "Feed", ["SIP (paid — accurate)", "IEX (free)"],
             key="cal_feed_radio", horizontal=True,
         )
         _cal_feed_str = "sip" if "SIP" in _cal_feed else "iex"
