@@ -4976,6 +4976,70 @@ Measures how accurately the 7-structure framework classified those days in hinds
         st.markdown("---")
 
     # ── Column headers ──────────────────────────────────────────────────────────
+    # ── Deduplicate by (ticker, sim_date) ────────────────────────────────────────
+    _seen_keys: set = set()
+    _results_deduped = []
+    for _r in _results:
+        _dedup_key = (
+            _r.get("ticker", ""),
+            str(_r.get("sim_date", _r.get("trade_date", ""))),
+        )
+        if _dedup_key not in _seen_keys:
+            _seen_keys.add(_dedup_key)
+            _results_deduped.append(_r)
+    _dupes_removed = len(_results) - len(_results_deduped)
+    if _dupes_removed > 0:
+        st.caption(f"ℹ️ {_dupes_removed} duplicate row(s) removed from log.")
+    _results = _results_deduped
+
+    # ── Per-Ticker Breakdown ──────────────────────────────────────────────────
+    import pandas as _pd_bt
+    _bt_df = _pd_bt.DataFrame(_results)
+    if not _bt_df.empty and "ticker" in _bt_df.columns:
+        with st.expander(
+            f"📊 Per-Ticker Breakdown — {_bt_df['ticker'].nunique()} tickers across all dates",
+            expanded=True,
+        ):
+            _tkr_rows = []
+            for _tk, _tgrp in _bt_df.groupby("ticker"):
+                _tw   = (_tgrp["win_loss"] == "Win").sum()
+                _tl   = (_tgrp["win_loss"] == "Loss").sum()
+                _twr  = round(_tw / len(_tgrp) * 100, 1) if len(_tgrp) > 0 else 0
+                _tavg_tcs = round(_tgrp["tcs"].mean(), 0) if "tcs" in _tgrp else 0
+                _tft  = round(_tgrp["aft_move_pct"].mean(), 1) if "aft_move_pct" in _tgrp else 0
+                _top_struct = (
+                    _tgrp["predicted"].value_counts().index[0]
+                    if "predicted" in _tgrp.columns and not _tgrp["predicted"].empty
+                    else "—"
+                )
+                _top_struct = _clean_structure_label(_top_struct)
+                _fb_count = (
+                    _tgrp.get("false_break_up", _pd_bt.Series(dtype=bool)).sum()
+                    + _tgrp.get("false_break_down", _pd_bt.Series(dtype=bool)).sum()
+                ) if "false_break_up" in _tgrp else 0
+                _fb_rate = round(_fb_count / len(_tgrp) * 100) if len(_tgrp) > 0 else 0
+                _dates = sorted(_tgrp["sim_date"].astype(str).unique()) if "sim_date" in _tgrp else []
+                _tkr_rows.append({
+                    "Ticker":         _tk,
+                    "Setups":         len(_tgrp),
+                    "Win %":          f"{'🟢' if _twr >= 60 else '🟡' if _twr >= 45 else '🔴'} {_twr}%",
+                    "W/L":            f"{_tw}/{_tl}",
+                    "Avg TCS":        int(_tavg_tcs),
+                    "Top Structure":  _top_struct,
+                    "Avg Follow-Thru": f"{'+' if _tft >= 0 else ''}{_tft}%",
+                    "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
+                    "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
+                })
+            _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values("Win %", ascending=False)
+            st.dataframe(_tkr_summary_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "🟢 Win % ≥ 60% — model reads this ticker well  · "
+                "🟡 45–60% — mixed signal, paper trade first  · "
+                "🔴 < 45% — IB framework doesn't fit this ticker · "
+                "False Brk % = how often IB breakouts reversed within 30 min"
+            )
+
+    st.markdown("---")
     st.markdown(
         '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
         'letter-spacing:1.5px; margin-bottom:10px; font-weight:700;">'
@@ -4983,8 +5047,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
         unsafe_allow_html=True,
     )
 
-    _BT_COLS  = [0.65, 0.65, 0.75, 0.55, 1.1, 1.4, 1.1, 0.75, 0.45, 0.55]
-    _BT_HDRS  = ["Ticker", "Open", "IB Range", "TCS", "Morning Prediction",
+    _BT_COLS  = [0.55, 0.6, 0.65, 0.75, 0.55, 1.1, 1.2, 1.0, 0.75, 0.45, 0.55]
+    _BT_HDRS  = ["Date", "Ticker", "Open", "IB Range", "TCS", "Morning Prediction",
                  "EOD Reality", "Close", "Follow-Thru", "⚠", "Result"]
 
     _hdr_row = st.columns(_BT_COLS)
@@ -5009,29 +5073,37 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _move_clr   = "#4caf50" if _move >= 0 else "#ef5350"
         _pred_short = (_r["predicted"][:18] + "…") if len(_r["predicted"]) > 18 else _r["predicted"]
         _pred_clean = _clean_structure_label(_r["predicted"])
+        _sim_date_raw = str(_r.get("sim_date", _r.get("trade_date", "")))
+        _sim_date_disp = _sim_date_raw[:10] if len(_sim_date_raw) >= 10 else _sim_date_raw
 
         _row_bg = "#051015" if _wl == "Win" else "#120508"
 
         _row = st.columns(_BT_COLS)
         _row[0].markdown(
             f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'font-size:10px; color:#546e7a; font-family:monospace;">'
+            f'{_sim_date_disp}</div>',
+            unsafe_allow_html=True,
+        )
+        _row[1].markdown(
+            f'<div style="background:{_row_bg}; padding:10px 6px; '
             f'font-size:14px; font-weight:900; color:#e0e0e0; '
             f'font-family:monospace;">{_r["ticker"]}</div>',
             unsafe_allow_html=True,
         )
-        _row[1].markdown(
+        _row[2].markdown(
             f'<div style="background:{_row_bg}; padding:10px 6px; '
             f'font-size:12px; color:#90a4ae; font-family:monospace;">'
             f'${_r["open_price"]:.2f}</div>',
             unsafe_allow_html=True,
         )
-        _row[2].markdown(
+        _row[3].markdown(
             f'<div style="background:{_row_bg}; padding:10px 6px; '
             f'font-size:11px; color:#607d8b; font-family:monospace;">'
             f'${_r["ib_low"]:.2f}–${_r["ib_high"]:.2f}</div>',
             unsafe_allow_html=True,
         )
-        _row[3].markdown(
+        _row[4].markdown(
             f'<div style="background:{_row_bg}; padding:8px 6px;">'
             f'<span style="background:{_tcs_clr}22; color:{_tcs_clr}; '
             f'font-size:13px; font-weight:800; padding:2px 8px; border-radius:10px; '
@@ -5039,13 +5111,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
             f'{_tcs:.0f}</span></div>',
             unsafe_allow_html=True,
         )
-        _row[4].markdown(
+        _row[5].markdown(
             f'<div style="background:{_row_bg}; padding:10px 6px; '
             f'font-size:11px; color:#ce93d8; font-weight:600;">'
             f'{_pred_clean}</div>',
             unsafe_allow_html=True,
         )
-        _row[5].markdown(
+        _row[6].markdown(
             f'<div style="background:{_row_bg}; padding:8px 6px;">'
             f'<span style="background:{_out_clr}22; color:{_out_clr}; '
             f'font-size:11px; font-weight:700; padding:3px 10px; border-radius:10px; '
@@ -5053,13 +5125,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
             f'{_r["actual_icon"]} {_r["actual_outcome"]}</span></div>',
             unsafe_allow_html=True,
         )
-        _row[6].markdown(
+        _row[7].markdown(
             f'<div style="background:{_row_bg}; padding:10px 6px; '
             f'font-size:12px; color:#90a4ae; font-family:monospace;">'
             f'${_r["close_price"]:.2f}</div>',
             unsafe_allow_html=True,
         )
-        _row[7].markdown(
+        _row[8].markdown(
             f'<div style="background:{_row_bg}; padding:10px 6px; '
             f'font-size:12px; font-weight:700; color:{_move_clr}; font-family:monospace;">'
             f'{_move_sign}{_move:.1f}%</div>',
@@ -5072,12 +5144,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
         elif _r.get("false_break_down"):
             _fb_icon = '<span title="False bearish break — reversed within 30 min" ' \
                        'style="color:#ffa726; font-size:14px;">⚠↓</span>'
-        _row[8].markdown(
+        _row[9].markdown(
             f'<div style="background:{_row_bg}; padding:10px 4px; text-align:center;">'
             f'{_fb_icon}</div>',
             unsafe_allow_html=True,
         )
-        _row[9].markdown(
+        _row[10].markdown(
             f'<div style="background:{_row_bg}; padding:8px 6px;">'
             f'<span style="background:{_wl_clr}22; color:{_wl_clr}; '
             f'font-size:11px; font-weight:800; padding:3px 10px; border-radius:10px; '
