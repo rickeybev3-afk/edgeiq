@@ -1044,6 +1044,98 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     st.header("📸 End-of-Day Review")
     st.caption("Chart screenshots, trendline notes, and watchlist for tomorrow — all saved per day.")
 
+    # ── Pre-market watchlist prediction panel ─────────────────────────────────
+    _pm_preds_df = load_watchlist_predictions(user_id=_uid, pred_date=date.today())
+    if not _pm_preds_df.empty:
+        _pm_tickers = _pm_preds_df["ticker"].tolist()
+        _pm_verified_count = int(_pm_preds_df["verified"].sum()) if "verified" in _pm_preds_df.columns else 0
+        _pm_pending  = len(_pm_tickers) - _pm_verified_count
+        _pm_color    = "#29b6f6"
+
+        st.markdown(
+            f'<div style="background:#071b2e;border:1px solid #1e3a5f;border-left:4px solid {_pm_color};'
+            f'border-radius:8px;padding:12px 18px;margin-bottom:14px;">'
+            f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">'
+            f'<span style="font-size:13px;font-weight:700;color:{_pm_color};">📋 PRE-MARKET WATCHLIST</span>'
+            f'<span style="background:#0d2a42;border:1px solid {_pm_color};border-radius:10px;'
+            f'padding:2px 10px;font-size:11px;color:{_pm_color};">'
+            f'{len(_pm_tickers)} ticker{"s" if len(_pm_tickers)!=1 else ""} on watch</span>'
+            f'<span style="font-size:11px;color:#555;margin-left:auto;">'
+            f'These predictions were saved pre-market and will be auto-verified against '
+            f'today\'s EOD structure — they feed brain recalibration.</span></div>'
+            f'<div style="display:flex;flex-wrap:wrap;gap:8px;">',
+            unsafe_allow_html=True,
+        )
+
+        _struct_colors = {
+            "Trending Up":   ("#4caf50", "▲"),
+            "Trending Down": ("#ef5350", "▼"),
+            "At IB High":    ("#ffa726", "◆"),
+            "At IB Low":     ("#29b6f6", "◆"),
+            "Inside IB":     ("#9e9e9e", "◼"),
+        }
+        _chips_html = ""
+        for _, _pr in _pm_preds_df.iterrows():
+            _ptk  = _pr.get("ticker", "")
+            _pstr = _pr.get("predicted_structure", "—")
+            _pver = _pr.get("verified", False)
+            _pcor = _pr.get("correct", "")
+            _pclr, _pico = _struct_colors.get(_pstr, ("#888", "●"))
+            _vstamp = (f' <span style="color:#4caf50;font-size:10px;">✅</span>' if _pver and _pcor == "✅"
+                       else f' <span style="color:#ef5350;font-size:10px;">❌</span>' if _pver
+                       else "")
+            _chips_html += (
+                f'<div style="background:#0d2a42;border:1px solid {_pclr}44;border-radius:6px;'
+                f'padding:5px 12px;font-size:12px;">'
+                f'<span style="font-weight:700;color:#fff;">{_ptk}</span>'
+                f'<span style="color:{_pclr};margin-left:6px;">{_pico} {_pstr}</span>'
+                f'{_vstamp}</div>'
+            )
+        st.markdown(_chips_html + "</div></div>", unsafe_allow_html=True)
+
+        _pm_col1, _pm_col2 = st.columns([1, 1])
+        with _pm_col1:
+            if _pm_col1.button(
+                f"🔍 Verify EOD Outcomes ({_pm_pending} pending)",
+                use_container_width=True,
+                key="eod_verify_premarket_btn",
+                disabled=(_pm_pending == 0),
+            ):
+                _vak  = st.session_state.get("api_key", "")
+                _vask = st.session_state.get("secret_key", "")
+                if not _vak or not _vask:
+                    st.warning("Enter your Alpaca API keys in Settings first.")
+                else:
+                    with st.spinner("Verifying predictions against today's EOD bar data..."):
+                        _vr = verify_watchlist_predictions(
+                            api_key=_vak, secret_key=_vask,
+                            user_id=_uid, pred_date=date.today(),
+                        )
+                    _vc = _vr.get("correct", 0)
+                    _vt = _vr.get("verified", 0)
+                    _va = _vr.get("accuracy", 0)
+                    if _vt > 0:
+                        _vcol = "#4caf50" if _va >= 60 else "#ffa726" if _va >= 40 else "#ef5350"
+                        st.success(f"Verified {_vt} predictions — {_vc}/{_vt} correct ({_va:.0f}% accuracy). Brain recalibration queued.")
+                    else:
+                        st.info(_vr.get("error", "No predictions to verify for today."))
+                    st.rerun()
+        with _pm_col2:
+            if _pm_col2.button(
+                "📋 Use These Tickers in EOD Note",
+                use_container_width=True,
+                key="eod_use_pm_tickers_btn",
+            ):
+                st.session_state["eod_watch_tickers"] = ", ".join(_pm_tickers)
+                st.rerun()
+    else:
+        st.info(
+            "📋 **No pre-market watchlist predictions on file for today.** "
+            "Run the Gap Scanner, expand any ticker, and save a prediction — "
+            "it will appear here at end of day for one-click verification.",
+            icon=None,
+        )
+
     # ── One-time Supabase schema helper ──────────────────────────────────────
     with st.expander("⚙️ First-time Supabase setup (run once in your Supabase SQL editor)", expanded=False):
         st.markdown(
