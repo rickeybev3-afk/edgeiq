@@ -5076,6 +5076,111 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+# ── Paper Trading ─────────────────────────────────────────────────────────────
+
+_PAPER_TRADES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS paper_trades (
+  id             SERIAL PRIMARY KEY,
+  user_id        TEXT,
+  trade_date     DATE,
+  ticker         TEXT,
+  tcs            FLOAT,
+  predicted      TEXT,
+  ib_low         FLOAT,
+  ib_high        FLOAT,
+  open_price     FLOAT,
+  actual_outcome TEXT,
+  follow_thru_pct FLOAT,
+  win_loss       TEXT,
+  false_break_up  BOOLEAN DEFAULT FALSE,
+  false_break_down BOOLEAN DEFAULT FALSE,
+  min_tcs_filter  INT DEFAULT 50,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
+
+def ensure_paper_trades_table() -> bool:
+    """Auto-create paper_trades table if missing. Returns True if ready."""
+    if not supabase:
+        return False
+    try:
+        supabase.table("paper_trades").select("id").limit(1).execute()
+        return True
+    except Exception:
+        try:
+            supabase.rpc("exec_sql", {"sql": _PAPER_TRADES_SCHEMA}).execute()
+            return True
+        except Exception as e:
+            print(f"Paper trades table setup error: {e}")
+            return False
+
+
+def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
+    """Save paper trade scan results to paper_trades table.
+    Deduplicates by (user_id, trade_date, ticker) — won't double-log same day.
+    Returns dict with saved count and skipped count."""
+    if not supabase or not rows:
+        return {"saved": 0, "skipped": 0, "error": "No data"}
+    try:
+        existing = (
+            supabase.table("paper_trades")
+            .select("ticker, trade_date")
+            .eq("user_id", user_id)
+            .execute()
+            .data or []
+        )
+        existing_keys = {(r["ticker"], str(r["trade_date"])) for r in existing}
+        records, skipped = [], 0
+        for r in rows:
+            key = (r.get("ticker", ""), str(r.get("sim_date", r.get("trade_date", ""))))
+            if key in existing_keys:
+                skipped += 1
+                continue
+            records.append({
+                "user_id":        user_id or "",
+                "trade_date":     str(r.get("sim_date", r.get("trade_date", ""))),
+                "ticker":         r.get("ticker", ""),
+                "tcs":            r.get("tcs"),
+                "predicted":      r.get("predicted", ""),
+                "ib_low":         r.get("ib_low"),
+                "ib_high":        r.get("ib_high"),
+                "open_price":     r.get("open_price"),
+                "actual_outcome": r.get("actual_outcome", ""),
+                "follow_thru_pct": r.get("aft_move_pct"),
+                "win_loss":       r.get("win_loss", ""),
+                "false_break_up":  bool(r.get("false_break_up", False)),
+                "false_break_down": bool(r.get("false_break_down", False)),
+                "min_tcs_filter": min_tcs,
+            })
+        if records:
+            supabase.table("paper_trades").insert(records).execute()
+        return {"saved": len(records), "skipped": skipped}
+    except Exception as e:
+        return {"saved": 0, "skipped": 0, "error": str(e)}
+
+
+def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
+    """Load paper trades from the last N days (default 21 = 3 weeks)."""
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        from datetime import date, timedelta
+        cutoff = str(date.today() - timedelta(days=days + 7))
+        q = (
+            supabase.table("paper_trades")
+            .select("*")
+            .eq("user_id", user_id)
+            .gte("trade_date", cutoff)
+            .order("trade_date", desc=True)
+        )
+        data = q.execute().data
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        print(f"Paper trades load error: {e}")
+        return pd.DataFrame()
+
+
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────
 def _score_single_ticker(api_key: str, secret_key: str, sym: str,
                          trade_date, feed: str = "iex"):

@@ -7673,9 +7673,319 @@ def render_sa_tab():
         st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
 
 
-tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa = st.tabs(
+def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
+    st.markdown(
+        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:2px; font-weight:700; margin-bottom:4px;">📄 AUTO PAPER TRADING</div>'
+        '<div style="font-size:12px; color:#546e7a; margin-bottom:18px;">'
+        'Run the IB engine on any date with a TCS ≥ filter. Results log automatically '
+        'so you build 3 weeks of calibrated paper data without touching Alpaca again.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _pt_ready = ensure_paper_trades_table()
+    if not _pt_ready:
+        st.warning(
+            "The paper_trades table doesn't exist yet in your Supabase database. "
+            "Run the SQL below in your Supabase SQL editor, then reload the page.",
+            icon="⚠️",
+        )
+        st.code(
+            "CREATE TABLE IF NOT EXISTS paper_trades (\n"
+            "  id SERIAL PRIMARY KEY,\n"
+            "  user_id TEXT, trade_date DATE, ticker TEXT, tcs FLOAT,\n"
+            "  predicted TEXT, ib_low FLOAT, ib_high FLOAT, open_price FLOAT,\n"
+            "  actual_outcome TEXT, follow_thru_pct FLOAT, win_loss TEXT,\n"
+            "  false_break_up BOOLEAN DEFAULT FALSE,\n"
+            "  false_break_down BOOLEAN DEFAULT FALSE,\n"
+            "  min_tcs_filter INT DEFAULT 50,\n"
+            "  created_at TIMESTAMPTZ DEFAULT NOW()\n"
+            ");",
+            language="sql",
+        )
+        return
+
+    # ── Section 1: Scan & Log ────────────────────────────────────────────────
+    st.markdown(
+        '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:1.5px; font-weight:700; margin:12px 0 8px 0;">'
+        '🔍 SECTION 1 — SCAN & LOG PAPER TRADES</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Pick a date, paste your tickers, set a TCS minimum. "
+        "Hit Scan — the engine fetches bars, runs the full IB analysis, "
+        "filters to TCS ≥ your minimum, and saves qualifying setups automatically. "
+        "Best run after 10:30 AM ET so the full IB window is captured."
+    )
+
+    _pt_c1, _pt_c2, _pt_c3 = st.columns([1, 1, 1])
+    with _pt_c1:
+        _pt_date = st.date_input(
+            "Trade Date",
+            value=date.today(),
+            key="pt_scan_date",
+            help="Set to today for live paper trades, or any past date to backfill.",
+        )
+    with _pt_c2:
+        _pt_feed = st.radio(
+            "Bar Data Feed",
+            ["SIP (paid — accurate)", "IEX (free — limited)"],
+            key="pt_feed",
+            horizontal=True,
+        )
+        _pt_feed_str = "sip" if "SIP" in _pt_feed else "iex"
+    with _pt_c3:
+        _pt_min_tcs = st.slider(
+            "Min TCS Filter",
+            min_value=0, max_value=80, value=50, step=5,
+            key="pt_min_tcs",
+            help="Only setups with TCS ≥ this value get logged. 50 is the recommended minimum.",
+        )
+
+    _pt_price_range = st.slider(
+        "Price Range ($)",
+        min_value=0.5, max_value=30.0,
+        value=(1.0, 20.0), step=0.5,
+        key="pt_price_range",
+    )
+
+    _pt_default_tickers = "SATL, UGRO, ANNA, VCX, CODX, ARTL, SWMR, FEED, RBNE, PAVS, LNKS, BIAF, ACXP, GOAI"
+    _pt_tickers_raw = st.text_area(
+        "Tickers to scan (comma-separated)",
+        value=_pt_default_tickers,
+        height=80,
+        key="pt_tickers",
+        help="Enter your watchlist. Add gap scanner picks each morning for best coverage.",
+    )
+
+    _pt_scan_btn = st.button(
+        "🔍 Scan & Log Paper Trades",
+        use_container_width=True,
+        key="pt_scan_btn",
+        type="primary",
+    )
+
+    if _pt_scan_btn:
+        if not api_key or not secret_key:
+            st.error("Add your Alpaca credentials in the sidebar first.")
+        else:
+            _pt_tickers = [
+                t.strip().upper()
+                for t in _pt_tickers_raw.replace("\n", ",").split(",")
+                if t.strip() and t.strip().isalpha()
+            ]
+            if not _pt_tickers:
+                st.error("No valid tickers found.")
+            else:
+                _pt_pmin, _pt_pmax = float(_pt_price_range[0]), float(_pt_price_range[1])
+                with st.spinner(
+                    f"Fetching bars for {len(_pt_tickers)} tickers on {_pt_date} · "
+                    f"filtering TCS ≥ {_pt_min_tcs}…"
+                ):
+                    _pt_results, _pt_summary = run_historical_backtest(
+                        api_key, secret_key,
+                        trade_date=_pt_date,
+                        tickers=_pt_tickers,
+                        feed=_pt_feed_str,
+                        price_min=_pt_pmin,
+                        price_max=_pt_pmax,
+                        slippage_pct=0.0,
+                    )
+                if _pt_summary.get("error"):
+                    st.error(_pt_summary["error"])
+                elif not _pt_results:
+                    st.warning("No setups found for that date / ticker list.")
+                else:
+                    _pt_qualified = [
+                        dict(r, sim_date=str(_pt_date))
+                        for r in _pt_results
+                        if float(r.get("tcs", 0)) >= _pt_min_tcs
+                    ]
+                    _pt_total_scanned = len(_pt_results)
+                    if not _pt_qualified:
+                        st.warning(
+                            f"Scanned {_pt_total_scanned} setups — none passed TCS ≥ {_pt_min_tcs}. "
+                            f"Try a lower TCS filter or add more tickers."
+                        )
+                    else:
+                        _pt_log_result = log_paper_trades(
+                            _pt_qualified,
+                            user_id=_AUTH_USER_ID,
+                            min_tcs=_pt_min_tcs,
+                        )
+                        st.session_state["_pt_last_scan"] = _pt_qualified
+                        if _pt_log_result.get("error"):
+                            st.error(f"Save error: {_pt_log_result['error']}")
+                        else:
+                            _sv = _pt_log_result["saved"]
+                            _sk = _pt_log_result["skipped"]
+                            st.success(
+                                f"✅ {_sv} paper trade(s) logged for {_pt_date} "
+                                f"(TCS ≥ {_pt_min_tcs}) · "
+                                f"{_pt_total_scanned - len(_pt_qualified)} below-TCS setups filtered out"
+                                + (f" · {_sk} already logged (skipped)" if _sk else "")
+                            )
+
+                    _pt_preview = _pt_qualified or _pt_results
+                    _pt_preview_df = pd.DataFrame(_pt_preview)[[
+                        c for c in ["ticker", "tcs", "predicted", "actual_outcome",
+                                    "win_loss", "aft_move_pct", "ib_low", "ib_high"]
+                        if c in pd.DataFrame(_pt_preview).columns
+                    ]]
+                    if not _pt_preview_df.empty and "aft_move_pct" in _pt_preview_df.columns:
+                        _pt_preview_df = _pt_preview_df.rename(columns={"aft_move_pct": "follow_thru_%"})
+                    st.dataframe(_pt_preview_df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # ── Section 2: 3-Week Performance Tracker ──────────────────────────────
+    st.markdown(
+        '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:1.5px; font-weight:700; margin:12px 0 8px 0;">'
+        '📊 SECTION 2 — 3-WEEK PAPER TRADE TRACKER</div>',
+        unsafe_allow_html=True,
+    )
+
+    _pt_reload = st.button("🔄 Refresh Tracker", key="pt_reload_btn")
+    if _pt_reload or "pt_tracker_df" not in st.session_state:
+        _pt_df = load_paper_trades(user_id=_AUTH_USER_ID, days=21)
+        st.session_state["pt_tracker_df"] = _pt_df
+    else:
+        _pt_df = st.session_state.get("pt_tracker_df", pd.DataFrame())
+
+    if _pt_df.empty:
+        st.info(
+            "No paper trades logged yet. Run Section 1 on a few days to build your history.",
+            icon="📋",
+        )
+        return
+
+    _pt_wins   = (_pt_df["win_loss"] == "Win").sum()
+    _pt_losses = (_pt_df["win_loss"] == "Loss").sum()
+    _pt_total  = len(_pt_df)
+    _pt_wr     = round(_pt_wins / _pt_total * 100, 1) if _pt_total > 0 else 0
+    _pt_dates  = _pt_df["trade_date"].nunique() if "trade_date" in _pt_df.columns else 0
+    _pt_avg_ft = round(_pt_df["follow_thru_pct"].mean(), 1) if "follow_thru_pct" in _pt_df.columns else 0
+    _pt_avg_tcs = round(_pt_df["tcs"].mean(), 0) if "tcs" in _pt_df.columns else 0
+    _pt_wr_clr = "#4caf50" if _pt_wr >= 60 else "#ff9800" if _pt_wr >= 50 else "#ef5350"
+
+    _pt_kpi_html = (
+        f'<div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px;">'
+        f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
+        f'padding:14px 22px; text-align:center; min-width:120px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Win Rate</div>'
+        f'<div style="font-size:30px; font-weight:900; color:{_pt_wr_clr}; font-family:monospace;">{_pt_wr}%</div>'
+        f'<div style="font-size:10px; color:#37474f;">{_pt_wins}W / {_pt_losses}L</div></div>'
+        f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
+        f'padding:14px 22px; text-align:center; min-width:120px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Total Setups</div>'
+        f'<div style="font-size:30px; font-weight:900; color:#e0e0e0; font-family:monospace;">{_pt_total}</div>'
+        f'<div style="font-size:10px; color:#37474f;">across {_pt_dates} day(s)</div></div>'
+        f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
+        f'padding:14px 22px; text-align:center; min-width:120px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Avg TCS</div>'
+        f'<div style="font-size:30px; font-weight:900; color:#ce93d8; font-family:monospace;">{int(_pt_avg_tcs)}</div>'
+        f'<div style="font-size:10px; color:#37474f;">min filter applied</div></div>'
+        f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
+        f'padding:14px 22px; text-align:center; min-width:120px;">'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Avg Follow-Thru</div>'
+        f'<div style="font-size:30px; font-weight:900; color:{"#4caf50" if _pt_avg_ft >= 0 else "#ef5350"}; font-family:monospace;">'
+        f'{("+" if _pt_avg_ft >= 0 else "")}{_pt_avg_ft}%</div>'
+        f'<div style="font-size:10px; color:#37474f;">best post-IB point</div></div>'
+        f'</div>'
+    )
+    st.markdown(_pt_kpi_html, unsafe_allow_html=True)
+
+    # Daily win rate trend
+    if "trade_date" in _pt_df.columns and "win_loss" in _pt_df.columns:
+        _pt_daily = (
+            _pt_df.groupby("trade_date")
+            .apply(lambda g: pd.Series({
+                "Win %":   round((g["win_loss"] == "Win").sum() / len(g) * 100, 1),
+                "Setups":  len(g),
+                "Avg TCS": round(g["tcs"].mean(), 0) if "tcs" in g.columns else 0,
+            }))
+            .reset_index()
+            .sort_values("trade_date")
+        )
+        import plotly.graph_objects as _pt_go
+        _pt_fig = _pt_go.Figure()
+        _pt_fig.add_trace(_pt_go.Scatter(
+            x=_pt_daily["trade_date"].astype(str),
+            y=_pt_daily["Win %"],
+            mode="lines+markers+text",
+            text=_pt_daily["Win %"].apply(lambda v: f"{v:.0f}%"),
+            textposition="top center",
+            line=dict(color="#1565c0", width=2),
+            marker=dict(size=8, color="#1565c0"),
+            name="Daily Win %",
+        ))
+        _pt_fig.add_hline(
+            y=55, line_dash="dot", line_color="#ff9800",
+            annotation_text="55% target", annotation_font_color="#ff9800",
+        )
+        _pt_fig.update_layout(
+            paper_bgcolor="#050d18", plot_bgcolor="#050d18",
+            font=dict(color="#90a4ae", size=11),
+            height=280, margin=dict(l=10, r=10, t=30, b=10),
+            xaxis=dict(showgrid=False, title=""),
+            yaxis=dict(gridcolor="#0d2137", range=[0, 105], title="Win %"),
+            title=dict(text="Daily Win Rate (Paper Trades)", font=dict(color="#1565c0", size=12)),
+            showlegend=False,
+        )
+        st.plotly_chart(_pt_fig, use_container_width=True)
+
+    # Per-ticker summary
+    st.markdown(
+        '<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        'letter-spacing:1px; margin:16px 0 8px 0; font-weight:700;">Per-Ticker Stats</div>',
+        unsafe_allow_html=True,
+    )
+    _pt_tkr_rows = []
+    for _ptk, _ptg in _pt_df.groupby("ticker"):
+        _ptw = (_ptg["win_loss"] == "Win").sum()
+        _ptl = (_ptg["win_loss"] == "Loss").sum()
+        _ptwr = round(_ptw / len(_ptg) * 100, 1) if len(_ptg) > 0 else 0
+        _pt_top_struct = (
+            _ptg["predicted"].value_counts().index[0]
+            if "predicted" in _ptg.columns and not _ptg["predicted"].empty
+            else "—"
+        )
+        _pt_tkr_rows.append({
+            "Ticker":        _ptk,
+            "Setups":        len(_ptg),
+            "W/L":           f"{_ptw}/{_ptl}",
+            "Win %":         f"{'🟢' if _ptwr >= 60 else '🟡' if _ptwr >= 50 else '🔴'} {_ptwr}%",
+            "Avg TCS":       round(_ptg["tcs"].mean(), 0) if "tcs" in _ptg.columns else 0,
+            "Top Structure": _pt_top_struct,
+            "Avg FT %":      round(_ptg["follow_thru_pct"].mean(), 1) if "follow_thru_pct" in _ptg.columns else 0,
+            "Days Seen":     _ptg["trade_date"].nunique() if "trade_date" in _ptg.columns else 0,
+        })
+    _pt_tkr_df = pd.DataFrame(_pt_tkr_rows).sort_values("Win %", ascending=False)
+    st.dataframe(_pt_tkr_df, use_container_width=True, hide_index=True)
+
+    # Full trade log
+    with st.expander("📋 Full Paper Trade Log", expanded=False):
+        _pt_log_cols = [
+            c for c in ["trade_date", "ticker", "tcs", "predicted",
+                         "actual_outcome", "follow_thru_pct", "win_loss",
+                         "false_break_up", "false_break_down", "min_tcs_filter"]
+            if c in _pt_df.columns
+        ]
+        _pt_log_show = _pt_df[_pt_log_cols].sort_values(
+            "trade_date", ascending=False
+        ).reset_index(drop=True)
+        st.dataframe(_pt_log_show, use_container_width=True, hide_index=True)
+        st.caption(
+            f"Showing {len(_pt_log_show)} paper trades from last 21 days · "
+            "Only TCS-filtered qualifying setups are stored here"
+        )
+
+
+tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa, tab_paper = st.tabs(
     ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "🔬 Backtest",
-     "📖 Journal", "📊 Analytics", "⚡ Small Account"]
+     "📖 Journal", "📊 Analytics", "⚡ Small Account", "📄 Paper Trade"]
 )
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
@@ -8844,6 +9154,10 @@ with tab_analytics:
 # ── Small Account Challenge tab ────────────────────────────────────────────────
 with tab_sa:
     render_sa_tab()
+
+# ── Paper Trade tab ────────────────────────────────────────────────────────────
+with tab_paper:
+    render_paper_trade_tab(api_key=api_key, secret_key=secret_key)
 
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:
