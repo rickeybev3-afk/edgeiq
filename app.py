@@ -7730,17 +7730,21 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
-    # ── Live Auto-Scan mode ──────────────────────────────────────────────────
-    _pt_live_col1, _pt_live_col2, _pt_live_col3 = st.columns([1.2, 1, 1])
-    with _pt_live_col1:
-        _pt_live_on = st.toggle(
-            "🔴 Live Auto-Scan (while browser open)",
-            value=st.session_state.get("_pt_live_mode", False),
-            key="pt_live_toggle",
-            help="When ON, auto-scans every 30 min during market hours (9:30–4:00 PM ET). "
-                 "The standalone bot runs 24/7 even when this is OFF.",
-        )
-        st.session_state["_pt_live_mode"] = _pt_live_on
+    # ── Live Auto-Scan mode — LOCKED ────────────────────────────────────────
+    _pt_live_on = False
+    st.session_state["_pt_live_mode"] = False
+    st.markdown(
+        '<div style="background:#1a0a00; border:1px solid #e65100; border-radius:8px; '
+        'padding:12px 16px; margin-bottom:12px;">'
+        '<span style="font-size:13px; font-weight:700; color:#ff6d00;">🔒 Live Auto-Scan — Disabled</span><br>'
+        '<span style="font-size:12px; color:#bf360c; line-height:1.6;">'
+        'The standalone bot already scans your 45-ticker watchlist automatically at <b>10:46 AM ET</b> every trading day — '
+        'no browser needs to be open. Turning this on would create duplicate paper trade entries on top of what the bot already logs. '
+        'If you ever need to trigger a manual scan outside the bot schedule, ask in <b>Replit chat first</b>.'
+        '</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     _now_et_pt = datetime.now(EASTERN)
     _pt_mkt_open  = _now_et_pt.replace(hour=9,  minute=30, second=0, microsecond=0)
@@ -7750,34 +7754,6 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         and _now_et_pt.weekday() < 5
     )
 
-    with _pt_live_col2:
-        if _pt_live_on:
-            _pt_last = st.session_state.get("_pt_last_auto_scan")
-            if _pt_last:
-                _pt_elapsed = int((_now_et_pt.timestamp() - _pt_last) / 60)
-                _pt_next_in = max(0, 30 - _pt_elapsed)
-                st.markdown(
-                    f'<div style="font-size:11px; color:#4caf50; padding-top:8px;">'
-                    f'✅ Auto-scan active · next in <b>{_pt_next_in} min</b></div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    '<div style="font-size:11px; color:#ff9800; padding-top:8px;">'
-                    '⏳ First scan pending…</div>',
-                    unsafe_allow_html=True,
-                )
-    with _pt_live_col3:
-        _mkt_str = (
-            f'<span style="color:#4caf50;">🟢 Market Open</span>'
-            if _pt_in_market else
-            f'<span style="color:#546e7a;">⚫ Market Closed</span>'
-        )
-        st.markdown(
-            f'<div style="font-size:11px; padding-top:8px;">{_mkt_str} '
-            f'· {_now_et_pt.strftime("%I:%M %p ET")}</div>',
-            unsafe_allow_html=True,
-        )
 
     st.markdown("---")
 
