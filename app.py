@@ -3175,6 +3175,21 @@ with st.sidebar:
     )
     # Auto-save credentials whenever they're filled in
     _sb_uid = st.session_state.get("auth_user_id", "")
+
+    # ── Load watchlist from Supabase early (before any text_area uses it) ──────
+    # Must happen here so _watchlist_tickers is set before Scanner + My Watchlist
+    # text areas render. Moving this load below those widgets caused them to show
+    # the hardcoded _DEFAULT_WATCHLIST on every page reload.
+    if not st.session_state.get("_watchlist_loaded") and _sb_uid:
+        _early_wl = load_watchlist(_sb_uid)
+        if _early_wl:
+            _joined = ", ".join(_early_wl)
+            st.session_state["_watchlist_tickers"] = _joined
+            st.session_state["watchlist_raw"]      = _joined
+            st.session_state["watchlist_textarea"] = _joined
+        st.session_state["_watchlist_loaded"] = True
+    # ──────────────────────────────────────────────────────────────────────────
+
     if api_key and secret_key and _sb_uid:
         _cur_prefs = st.session_state.get("_cached_prefs", {})
         if (_cur_prefs.get("alpaca_key") != api_key or
