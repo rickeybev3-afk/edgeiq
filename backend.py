@@ -1289,24 +1289,31 @@ def recalibrate_brain_weights(user_id: str = "") -> dict:
 def recalibrate_from_supabase(user_id: str = "") -> dict:
     """Read ALL live outcome data from Supabase and update brain weights.
 
-    Data sources (tracked SEPARATELY, then 50/50 blended):
+    Data sources (tracked SEPARATELY, then volume-weighted blended):
       1. accuracy_tracker table  — journal-verified trades (predicted / correct ✅/❌)
       2. paper_trades table      — bot paper trades (predicted / win_loss Win/Loss)
 
-    Blending approach (volume-neutral 50/50):
-      Each source's accuracy is computed independently per structure, then averaged.
-      This means your 45 journal entries carry EQUAL weight to 5,400 bot entries —
-      volume differences never let one source drown out the other.
+    Blending approach (volume-weighted, adapts with data):
+      Each source's accuracy is computed independently per structure, then blended
+      proportionally by sample count — NOT a fixed 50/50.
+      As data grows, the source with more verified trades earns more influence.
 
       blend rules per structure:
-        both sources have ≥5 samples  → acc = 0.5 * journal_acc + 0.5 * bot_acc
-        only journal  has ≥5 samples  → acc = journal_acc
-        only bot      has ≥5 samples  → acc = bot_acc
-        neither has ≥5 samples        → skip (no update)
+        both sources have ≥MIN_SAMPLES  → acc = (j_n*j_acc + b_n*b_acc) / (j_n+b_n)
+        only journal  has ≥MIN_SAMPLES  → acc = journal_acc
+        only bot      has ≥MIN_SAMPLES  → acc = bot_acc
+        neither has ≥MIN_SAMPLES        → skip (no update)
 
-    Learning rule (EMA, 30% rate):
+      MIN_SAMPLES scales with total verified data:
+        <50 total rows  → MIN_SAMPLES = 3   (early days, accept thin data)
+        50–200 rows     → MIN_SAMPLES = 5
+        200–500 rows    → MIN_SAMPLES = 8
+        500+ rows       → MIN_SAMPLES = 12
+
+    Learning rule (adaptive EMA, rate scales with per-structure sample count):
       target = 1.5 if acc ≥ 70% | 1.0 if 50–70% | 0.75 if 30–50% | 0.5 if <30%
-      new_weight = old_weight × 0.70 + target × 0.30
+      EMA rate scales with n:  <10→0.10 | 10–25→0.15 | 25–50→0.25 | 50–100→0.35 | 100+→0.40
+      new_weight = old_weight × (1−rate) + target × rate
 
     Returns dict:
       {
@@ -1378,8 +1385,14 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
         result["sources"]["accuracy_tracker"] + result["sources"]["paper_trades"]
     )
 
-    # ── 50/50 blend and EMA update ─────────────────────────────────────────
-    MIN_SAMPLES = 5
+    # ── Adaptive blend and EMA update ──────────────────────────────────────
+    # MIN_SAMPLES scales with total verified data — avoid overfitting on thin data
+    total_verified = result["sources"]["total"]
+    if   total_verified < 50:  MIN_SAMPLES = 3
+    elif total_verified < 200: MIN_SAMPLES = 5
+    elif total_verified < 500: MIN_SAMPLES = 8
+    else:                      MIN_SAMPLES = 12
+
     all_keys = set(journal_data.keys()) | set(bot_data.keys())
     deltas   = []
 
@@ -1393,12 +1406,14 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
         if not j_ok and not b_ok:
             continue   # not enough data in either source — skip
 
-        j_acc = (j["wins"] / j["total"]) if j_ok else None
-        b_acc = (b["wins"] / b["total"]) if b_ok else None
+        j_n   = j["total"]
+        b_n   = b["total"]
+        j_acc = (j["wins"] / j_n) if j_ok else None
+        b_acc = (b["wins"] / b_n) if b_ok else None
 
-        # Volume-neutral blend: each available source gets equal vote
+        # Volume-weighted blend — sample count determines influence, not a fixed split
         if j_ok and b_ok:
-            blended = 0.5 * j_acc + 0.5 * b_acc
+            blended = (j_n * j_acc + b_n * b_acc) / (j_n + b_n)
         elif j_ok:
             blended = j_acc   # only journal has enough data
         else:
@@ -1409,8 +1424,16 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
         elif blended >= 0.30: target = 0.75
         else:                 target = 0.50
 
+        # EMA rate scales with total per-structure samples — more data = faster learning
+        total_n = j_n + b_n
+        if   total_n >= 100: ema_rate = 0.40
+        elif total_n >=  50: ema_rate = 0.35
+        elif total_n >=  25: ema_rate = 0.25
+        elif total_n >=  10: ema_rate = 0.15
+        else:                ema_rate = 0.10
+
         old_val     = weights.get(wk, 1.0)
-        new_val     = round(old_val * 0.70 + target * 0.30, 4)
+        new_val     = round(old_val * (1 - ema_rate) + target * ema_rate, 4)
         weights[wk] = new_val
 
         deltas.append({
@@ -1421,8 +1444,10 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
             "blended_acc": round(blended * 100, 1),
             "journal_acc": round(j_acc * 100, 1) if j_ok else None,
             "bot_acc":     round(b_acc * 100, 1) if b_ok else None,
-            "journal_n":   j["total"],
-            "bot_n":       b["total"],
+            "journal_n":   j_n,
+            "bot_n":       b_n,
+            "ema_rate":    ema_rate,
+            "min_samples": MIN_SAMPLES,
             "target":      target,
         })
 
