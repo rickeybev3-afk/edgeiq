@@ -1,172 +1,164 @@
-# Workspace
+# EdgeIQ — Professional Trading Terminal
 
-## Overview
+## What This Is
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+A Python Streamlit trading terminal (port 8080) for Volume Profile analysis of small-cap stocks. Built around the Alpaca API (SIP feed) + Supabase (multi-user auth + cloud data). Dark-mode, Plotly charts. $79/month SaaS pricing target.
 
-## Streamlit Volume Profile Dashboard
+**Core thesis:** IB (Initial Balance — first hour of trading 9:30–10:30 AM) breakouts on high-TCS small-cap setups have asymmetric reward profiles — wins are 7–9× larger than losses in magnitude. The edge is in the SIZE of wins vs losses, not just win rate.
 
-A Python Streamlit app (`app.py`) that visualizes Volume Profile structures for small-cap stocks with advanced analysis engine.
+**Autonomous paper trading → calibration → live trading pipeline.**
 
-### Features
-- **4-Tab Layout** — Main Chart | Scanner | Journal | 🧠 Tracker
-- **3-Mode Sidebar** — Historical | 🎬 Replay | 🔴 Live Stream
-- Fetch 1-minute historical bars from Alpaca via `alpaca-py` (SIP / IEX feeds)
-- Live WebSocket stream mode via Alpaca `StockDataStream` — 2-second auto-refresh
-- **MarketBrain** — real-time IB tracker + structure predictor; compares Predicted vs Actual live on each analysis run; persists IB state across Streamlit reruns via session state; color-coded prediction badge shown below Model Prediction
-- **Position Management** (sidebar) — Enter/Exit buttons with entry price, shares, structure at entry; live P&L % and $ badge; MFE peak tracking per bar; persists to `trade_state.json`; auto-preloads last analysis ticker + price
-- **Position Chart Overlay** — solid white Entry line, cyan dashed MFE line, color-coded P&L annotation badge (all rendered on main candlestick chart when position is open)
-- **Accuracy Tracker** (`accuracy_tracker.csv`) — logs Predicted vs Actual + correct/wrong on each exit; 🧠 Tracker tab shows: total/correct/wrong metrics, accuracy % by structure bar chart, full history table with color-coded rows, CSV download
-- Initial Balance (IB High/Low: 9:30–10:30 EST) with dynamic live tracking
-- Volume Profile histogram (configurable bins), POC gold line, IB dashed lines
-- **7-Structure Classification** — strict 3-branch IB-interaction decision tree:
-  - **Branch A — No IB break**: Normal (wide IB, big players set range) or Non-Trend (narrow IB, low vol/interest)
-  - **Branch B — Both sides broken** (always Neutral family, NO fallthrough): Neutral Extreme (close top/bottom 20% of range) or Neutral (close anywhere else)
-  - **Branch C — One side only broken**: Trend Day (early violation + close at extreme + directional vol), Double Distribution (bimodal profile detected), or Normal Variation (moderate single-side break)
-  - KEY: Neutral vs Normal Variation are mutually exclusive by gate — both_hit → ONLY Neutral family; one_side → ONLY Trend/NrmVar/DblDist
-- **Key Insights box** — styled sub-panel with plain-language explanation under each structure label
-- **Structure Probability Meter** — 7 structures with percentage pills (updated scoring for all 7)
-- **Dynamic Target Zones** on chart (dotted lines + shaded bands):
-  - Coast-to-Coast (C2C) — fires when price violated an IB extreme and returned inside
-  - Range Extension (1.5× / 2.0× IB) — fires when TCS > 70%, bullish or bearish
-  - Gap Fill — Double Distribution LVN highlighted in yellow, target at next HVN
-- **Distance to Target** — sidebar widget showing each active target + % away + direction
-- **Target Reached** sound alert (4-note ascending chime) when price hits any target (0.5% tolerance)
-- **Trend Confidence Score (TCS)** — 0–100 gauge with sector tailwind bonus
-- **RVOL** — time-segmented pace-adjusted 5-day baseline with pattern labels
-- **Model Prediction box** — Fake-out / High Conviction / Consolidation
-- **Volume Velocity widget** — vol/min + acceleration label
-- **Audio/Visual Alert System** — Web Audio API tones (chime, low-tone, target-reached)
-- **Pre-Market Gap Scanner** — batch-scans 30-ticker watchlist for gap% + PM RVOL, top-3 results
-- **Trade Journal** — cloud-persisted via Supabase (`trade_journal` table):
-  - Captures: Ticker, Price, Timestamp, Structure, TCS, RVOL, Notes, Grade, Grade Reason
-  - Auto-grading engine: A / B / C / F with plain-language reason
-  - Colored grade badges (green A → red F)
-  - Grade discipline equity curve (rolling average over entries)
-  - CSV download button
-- **Accuracy Tracker** — cloud-persisted via Supabase (`accuracy_tracker` table)
+---
 
-### Dashboard Layout (3 tabs)
-- **📈 Main Chart** — Volume Profile chart, all indicators, `💾 LOG ENTRY` expander
-- **🔍 Scanner** — Pre-Market Gap Scanner with clickable Load buttons
-- **📖 Journal** — Trade Journal with grade circles, Why column, equity curve, CSV export
+## Current Phase: Phase 1 — Calibration
 
-### Live Pulse Header (visible after any analysis)
-- Structure Label card, TCS progress bar + %, RVOL card
-- Alert Banner: 🚀 STOCK IN PLAY (TCS ≥ 80% or Runner Mode) or ⚠ CAUTION (TCS ≤ 30%)
+Bot runs 100% autonomously. The user should only use:
+- Trade Journal (read-only)
+- Telegram alerts
+- Analytics tab (read-only)
+- Playbook tab (read-only)
 
-### Sidebar Settings
-- Alpaca API Key + Secret Key
-- Mode: Historical / Live Stream
-- Ticker Symbol, Volume Profile Bins
-- Sector ETF (IWM, XBI, SMH, QQQ, SPY, XLF, XLE) for tailwind detection
-- Enable Audio Alerts + browser unlock button
+**User must never touch:** orange 🔒 locked controls, brain_weights.json directly, or bot schedule.
 
-### Current State (session notes)
-- Brain `update()` rewritten with hard 3-branch gate (no_break / both_broken / one_side)
-- `classify_day_structure` rewritten same way — no fallthrough gap, both_touched always resolves to Neutral family
-- `compute_structure_probabilities` rewritten with same hard gates (scores floored at 2.0 for out-of-bucket structures — Neutral/Ntrl Extreme can NEVER score high on a one-side day, Normal Variation can NEVER score high on a both-hit day)
-- `has_double_dist` now passed from `_detect_double_distribution()` to `brain.update()` in both live flow (line ~2303) and batch runner (line ~3168)
-- High conviction threshold = 75% (`HICONS_THRESHOLD = 75.0`)
-- All tracking data reset clean: `accuracy_tracker.csv`, `high_conviction_log.csv` empty, `brain_weights.json` all 1.0
-- **Tier 3 — Chart Pattern Detection** added (April 6): `detect_chart_patterns()` in backend.py, `render_pattern_widget()` in app.py. Detects on 5m and 1hr resampled bars: Reverse H&S, H&S, Double Bottom, Double Top, Cup & Handle, Bull Flag, Bear Flag. Confluence scoring: POC/IB level alignment, neckline proximity, pattern stacking boost. Widget renders below Tier 2 order flow in render_analysis().
-- TODO next session: run batch backtest on 20+ tickers to rebuild training data with correct logic; consider tightening Trend Day threshold or adding RVOL floor
+---
 
-### Running
-```bash
-streamlit run app.py --server.port 8080
-```
+## Files
 
-### Dependencies (Python)
-- `streamlit`, `alpaca-py`, `plotly`, `pandas`, `numpy`, `pytz`
+| File | Purpose |
+|---|---|
+| `app.py` | All UI/rendering — Streamlit tabs, charts, widgets |
+| `backend.py` | All math/logic — IB engine, TCS, probabilities, backtest |
+| `paper_trader_bot.py` | Autonomous daily bot — scheduler, alerts, EOD, recalibration |
+| `brain_weights.json` | Adaptive brain multipliers — DO NOT MODIFY DIRECTLY |
+| `.local/build_notes.md` | Session build notes |
+| `.local/rls_setup.sql` | Supabase RLS policies |
+| `.streamlit/config.toml` | enableCORS=false, enableXsrfProtection=false, port 8080 |
+
+**Architecture rule:** Math/logic → `backend.py` only. UI/rendering → `app.py` only.
+
+---
+
+## Bot Schedule (ET — all times Eastern)
+
+| Time | Job |
+|---|---|
+| 9:15 AM | Finviz watchlist refresh → save to Supabase |
+| 10:47 AM | Morning scan + Telegram alerts (17 min after IB close — SIP safe) |
+| 2:00 PM | Intraday scan |
+| 4:20 PM | EOD outcome update (SIP free tier needs 16+ min delay after 4:00 PM close) |
+| 4:30 PM | Nightly brain recalibration |
+
+**SIP free-tier rule:** Alpaca free SIP blocks queries for data <15 min old — applies even after market close. `fetch_bars` always applies a 16-min cap for today's data. EOD at 4:20 PM ensures full-day bars including the 4:00 PM close bar are safely accessible.
+
+---
+
+## Supabase
+
+- **Project:** `kqrwrvtelexylqonsjsl`
+- **SQL Editor:** https://supabase.com/dashboard/project/kqrwrvtelexylqonsjsl/sql/new
+- **User ID:** `a5e1fcab-8369-42c4-8550-a8a19734510c`
+
+### `paper_trades` columns
+`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf`
+
+### `accuracy_tracker` columns
+Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL for all rows** — win/loss not being stored as True/False, data quality problem to fix in Phase 2.
+
+---
+
+## Brain / Adaptive Layer
+
+**HARD PRESERVATION RULE — NEVER MODIFY THESE FUNCTIONS:**
+- `compute_buy_sell_pressure`
+- `classify_day_structure`
+- `compute_structure_probabilities`
+
+**Baseline weights** (what the brain started at):
+- `normal` = 1.0
+- `neutral` = 1.4999
+- `ntrl_extreme` = 1.4999
+
+**Current weights (as of 2026-04-08 recalibration):**
+- `normal` = 1.2887 (↑ — 100% accuracy over 68 samples — gaining confidence)
+- `ntrl_extreme` = 1.2112 (↓ — 56.6% accuracy over 53 samples — becoming more skeptical)
+- `neutral` = 1.2112 (↓ — 59.1% accuracy over 67 samples — becoming more skeptical)
+
+**Recalibration thresholds:**
+- MIN_SAMPLES: <50 rows→3, 50-200→5, 200-500→8, 500+→12
+- EMA rate: <10 samples→0.10, 10-25→0.15, 25-50→0.25, 50-100→0.35, 100+→0.40
+- Volume-weighted blend replaces fixed 50/50 between journal + bot data sources
+
+---
+
+## Slippage
+
+- All Paper Trade sim calls: **0.75%** one-way (1.5% round-trip)
+- Backtest tab: `_bt_slippage` slider (default 0.5%)
+- Phase 4 live trading: 0.75%
+
+---
+
+## Telegram
+
+- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (chat_id=1606612573)
+- Alerts: morning scan setups, EOD summary, brain recalibration results
+- Format: ticker, structure prediction, IB range, scan time, price at IB close, % change from open
+
+---
+
+## Trade Data Log (running)
+
+### Paper Trades — Bot Generated
+**Goal: 60+ trades for statistical confidence. Currently: 7 total (3 days of data).**
+
+| Date | Ticker | TCS | Predicted | Actual | Result | Follow-thru |
+|---|---|---|---|---|---|---|
+| 2026-04-06 | AIB | 58.7 | Ntrl Extreme | Both Sides | ✅ Win | -4.55% |
+| 2026-04-06 | MIGI | 52.7 | Ntrl Extreme | Bullish Break | ✅ Win | +33.51% |
+| 2026-04-07 | CYCU | 60 | Ntrl Extreme | Bullish Break | ✅ Win | +6.25% |
+| 2026-04-07 | AGPU | 60 | Neutral | Range-Bound | ❌ Loss | 0% |
+| 2026-04-07 | AIB | 60 | Ntrl Extreme | Bullish Break | ✅ Win | +3.64% |
+| 2026-04-08 | SKYQ | 60 | Ntrl Extreme | Bullish Break | ✅ Win | +12.79% |
+| 2026-04-08 | CLIK | 60 | Ntrl Extreme | Range-Bound | ❌ Loss | 0% |
+
+**Running stats: 5W / 2L = 71.4% win rate** (too small to trust — need 60+)
+
+### Daily P&L Observations (simulated, $5k/trade equal sizing, 1.5% slippage)
+
+**2026-04-08:**
+- Full scan universe: 21 setups, 47.6% win rate (10W/8L/3 pending)
+- Alerted trades (TCS≥50): SKYQ +11.3% net, CLIK -1.5% net → **+$489 theoretical max, ~$275–325 realistic** on $10k capital
+- Profit factor (full scan): ~9.1 (avg win 10.9% vs avg loss 1.5%)
+- Brain recalibration ran: `normal` ↑, `ntrl_extreme` ↓, `neutral` ↓
+- Note: strong trending day (macro sell-off) — favorable for IB breakout strategy
+
+---
+
+## Known Issues / Pending
+
+- `accuracy_tracker.correct` field is NULL for all 181 rows — needs data audit (Phase 2)
+- `alert_price` and `structure_conf` are NULL for current paper_trades rows (not captured at alert time — needs investigation)
+- Inside bar flag at IB close per paper trade row (Phase 2)
+- `gap_pct` per paper trade row (Phase 2 — extra API call for prior close)
+- `rvol_at_ib` per paper trade row (Phase 2 — needs daily volume curve)
+- Pattern discovery engine (Phase 2, ~500 rows needed)
+- Collective brain layer (Phase 2/3)
+- WebSocket key-level triggers (Phase 4 only)
+- Webull CSV import pipeline (pending)
+- Clean accuracy_tracker of out-of-universe tickers (Unknown, —, etc.)
+
+---
+
+## Code Rules
+
+- **Plotly/HTML:** 6-digit hex or `rgba()` only. No HTML comments in f-strings. No backslashes in f-string expressions (Python 3.11).
+- **`_go` variable:** Reserved as `plotly.graph_objects` alias — never reuse as local var.
+- **SIP free-tier:** `fetch_bars` caps SIP end to `now - 16min` for today's data, always (during AND after market hours).
+
+---
 
 ## Stack
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
-
-## Structure
-
-```text
-artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
-├── lib/                    # Shared libraries
-│   ├── api-spec/           # OpenAPI spec + Orval codegen config
-│   ├── api-client-react/   # Generated React Query hooks
-│   ├── api-zod/            # Generated Zod schemas from OpenAPI
-│   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
-```
-
-## TypeScript & Composite Projects
-
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
-
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
-
-## Root Scripts
-
-- `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
-
-## Packages
-
-### `artifacts/api-server` (`@workspace/api-server`)
-
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
-
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
-
-### `lib/db` (`@workspace/db`)
-
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
-
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
-
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
-
-### `lib/api-spec` (`@workspace/api-spec`)
-
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
-
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
-
-Run codegen: `pnpm --filter @workspace/api-spec run codegen`
-
-### `lib/api-zod` (`@workspace/api-zod`)
-
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
-
-### `lib/api-client-react` (`@workspace/api-client-react`)
-
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
-
-### `scripts` (`@workspace/scripts`)
-
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+- Python 3.11, Streamlit, Plotly, Pandas, NumPy, PyTZ, Alpaca-py, Supabase-py
+- pnpm monorepo (legacy from template — ignore for trading terminal work)
+- Port: 8080
