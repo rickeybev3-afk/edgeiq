@@ -533,6 +533,42 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     _uid = st.session_state.get("auth_user_id", "")
     df = load_journal(user_id=_uid)
 
+    with st.expander("📋 How to use this tab — read this first", expanded=df.empty):
+        st.markdown(
+            """
+**This is your personal trade journal. It is the source of truth for your analytics.**
+
+---
+
+**STEP 1 — Import your trades from Webull**
+- In Webull: go to **Orders → History → Export CSV**
+- Upload that file using the **"Import Trades from Webull CSV"** section below
+- The system auto-pairs your Buy → Sell orders and grades each trade by P&L
+- Open positions (no matching sell) are skipped automatically
+
+**STEP 2 — Fix any "Unknown" structures** *(if the button appears)*
+- After importing, if you see a **"🔄 Fix X Unknown Structures"** button, click it
+- This pulls historical bar data from Alpaca for each trade and fills in the correct structure label (Trend Day, Normal, etc.)
+- Requires your Alpaca credentials to be entered in the sidebar
+
+**STEP 3 — Sync to Analytics** *(only needed once after first import)*
+- Go to the **📊 Analytics** tab
+- If you see a **"🔄 Sync Journal → Analytics"** button, click it to backfill your accuracy data
+- After that, new imports sync automatically
+
+**STEP 4 — Review your journal cards below**
+- Each card shows: Ticker · Entry price → Exit price · P&L · Shares · Hold time badge
+- Grades: **A/B = winner**, **C = breakeven/scratch**, **D/F = loss**
+- You can manually add notes or change the grade on any entry
+
+---
+
+⚠️ **What this tab is NOT for:**
+- Do not enter your watchlist or scan tickers here — that's the sidebar / Scanner tab
+- Do not manually type fabricated trades — the analytics are only useful if the data is real
+            """,
+        )
+
     cola, colb, colc = st.columns([2, 1, 1])
     with cola:
         st.subheader("📖 My Trade Journal")
@@ -4183,6 +4219,45 @@ def _bt_outcome_color(outcome):
 def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     """Render the 🔬 Backtest Engine tab — institutional backtesting terminal."""
 
+    with st.expander("📋 What each section does — read before running anything", expanded=False):
+        st.markdown(
+            """
+**This tab has two separate tools. They serve different purposes and write to different places.**
+
+---
+
+### 🧠 SECTION 1 — One-Click Calibration Run  *(top of this tab)*
+**What it does:** Runs the quant model across a broad list of small-cap stocks over a historical date range.
+Measures how accurately the 7-structure framework classified those days in hindsight.
+
+**Who enters the tickers?** The system uses a pre-built training universe. You should leave it alone unless you have a specific reason to change it.
+
+**⚠️ Do NOT paste your personal watchlist into the calibration ticker box.**
+
+**Where results go:** A separate Supabase table called `backtest_sim_runs`. This does **NOT** affect your personal win rate, journal, or Analytics data in any way.
+
+**When to run it:** Once per week or after adding new tickers to your watchlist, to keep the model calibrated on recent market behavior.
+
+---
+
+### 🔬 SECTION 2 — Single-Ticker / Multi-Ticker Simulation  *(below Calibration)*
+**What it does:** Lets you test any ticker on any date or date range to see how the model would have traded it.
+
+**Who enters the tickers?** You do — for research purposes. You can test a ticker you're considering adding to your watchlist, or check how the model did on a specific date.
+
+**Where results go:** Also saved to `backtest_sim_runs`. Does NOT affect your personal analytics.
+
+**When to use it:** When you want to audit a specific ticker or date before trading it live.
+
+---
+
+### 📊 Your personal data lives in:
+- **📖 Journal tab** → your real Webull imports
+- **📊 Analytics tab** → your real win rates derived from the journal
+- Neither is touched by anything in this tab.
+            """,
+        )
+
     # ── Terminal header ─────────────────────────────────────────────────────────
     st.markdown(
         '<div style="background:#020813; border:1px solid #0d2137; border-radius:10px; '
@@ -4295,10 +4370,30 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
         unsafe_allow_html=True,
     )
 
+    st.warning(
+        "⚠️ **CALIBRATION TICKERS ≠ YOUR WATCHLIST.**  "
+        "The tickers below are a broad small-cap universe used to train the model's "
+        "structure recognition on historical data. "
+        "**Do NOT paste your personal watchlist here.** "
+        "Your watchlist goes in the sidebar (Gap Scanner) and the ⭐ My Watchlist section — not here.",
+        icon="⚠️",
+    )
+
     with st.expander(
-        f"📋 Ticker list ({len(_cal_ticker_pool)}) — click to view / edit",
+        f"📋 Calibration ticker list ({len(_cal_ticker_pool)}) — click to view or edit",
         expanded=False,
     ):
+        st.markdown(
+            '<div style="background:#1a0000;border:1px solid #b71c1c;border-radius:6px;'
+            'padding:10px 14px;margin-bottom:10px;font-size:12px;color:#ef9a9a;">'
+            '<b>🚫 DO NOT put your personal watchlist here.</b><br>'
+            'These tickers are the model\'s training universe — small-cap stocks used to '
+            'teach the algorithm what each structure type looks like historically. '
+            'Results are saved to a separate simulation table and do NOT affect your personal '
+            'win rate or Analytics data.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         _cal_ticker_edit = st.text_area(
             "One ticker per line or comma-separated — edits apply to this run only:",
             value="\n".join(_cal_ticker_pool),
@@ -4324,11 +4419,16 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
             key="cal_feed_radio", horizontal=True,
         )
         _cal_feed_str = "sip" if "SIP" in _cal_feed else "iex"
+        _cal_confirmed = st.checkbox(
+            f"✅ I confirm: these are calibration tickers, NOT my personal watchlist",
+            key="cal_confirm_check",
+        )
     with _cal_btn_col:
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         _cal_run = st.button(
             f"🧠 RUN ({len(_cal_ticker_pool)} tickers)", use_container_width=True,
             key="cal_run_btn", type="primary",
+            disabled=not _cal_confirmed,
         )
 
     if _cal_run:
@@ -4424,13 +4524,18 @@ def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     _bt_is_range = _bt_end_date > _bt_date
 
     st.markdown(
-        '<div style="font-size:11px; color:#37474f; margin:10px 0 4px 0;">Ticker Watchlist '
-        '(comma-separated — engine will test all, keep only those in price range on that date)'
+        '<div style="font-size:11px; color:#37474f; margin:10px 0 2px 0;">'
+        '🔬 <b>SIMULATION TICKERS</b> — Research use only. '
+        'Enter any tickers you want to test on the selected date(s). '
+        'This is separate from calibration and does not affect your personal analytics.'
+        '</div>'
+        '<div style="font-size:10px; color:#546e7a; margin-bottom:6px;">'
+        'comma-separated · engine keeps only tickers in your price range on that date'
         '</div>',
         unsafe_allow_html=True,
     )
     _bt_tickers_raw = st.text_area(
-        "Ticker Watchlist", value=_BT_DEFAULT_TICKERS,
+        "Simulation Tickers", value=_BT_DEFAULT_TICKERS,
         height=68, key="bt_tickers_input", label_visibility="collapsed",
     )
 
@@ -5019,6 +5124,38 @@ def render_analytics_tab():
 
     st.markdown("## 📊 Analytics & Edge")
     st.caption("Live edge stats computed from your trade journal and accuracy tracker.")
+
+    with st.expander("📋 What this tab shows and how to read it", expanded=False):
+        st.markdown(
+            """
+**This tab is read-only. It shows your personal edge data derived from your real trades.**
+
+Nothing here requires any input from you. All numbers update automatically as you add trades in the Journal tab.
+
+---
+
+**What you'll find here:**
+
+| Section | What it shows |
+|---|---|
+| **KPI cards** (top) | Total trades, win rate, avg P&L, avg TCS — your headline stats |
+| **Pattern Correlation** | How your win rate varies by structure type, TCS range, and IB entry position |
+| **Saved Predictions** | Your Predict All outputs grouped by date — what the model said vs what happened |
+| **Trade Timing & Ticker Edge** | Win rate by entry hour, day of week, and ticker — tells you WHEN and WHERE you perform best |
+| **Win Rate by Hold Type** | Intraday vs Overnight vs Multi-day — tells you which style you're actually good at |
+| **Hold-Type Signal Profile** | For each hold style, the TCS/RVOL/structure fingerprint of your winning vs losing trades |
+
+---
+
+**When should you act on this data?**
+- With fewer than 20 trades, treat it as directional only — not statistically reliable yet
+- At 30+ trades, the timing and structure breakdowns start to be genuinely useful
+- At 50+ trades, the hold-type fingerprint becomes an actual decision rule
+
+**How to get more data in here:**
+→ Go to the **📖 Journal** tab → import your Webull CSV → click "🔄 Sync Journal → Analytics" if prompted
+            """,
+        )
 
     _uid = st.session_state.get("auth_user_id", "")
     journal_df = load_journal(user_id=_uid)
