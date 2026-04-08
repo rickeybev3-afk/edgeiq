@@ -5738,6 +5738,172 @@ def render_analytics_tab():
                         unsafe_allow_html=True,
                     )
 
+        # ── Multi-Day Setup Profile ───────────────────────────────────────────
+        if not _hold_df.empty and len(_hold_df) >= 3:
+            st.markdown("---")
+            st.markdown("### 🔎 Hold-Type Signal Profile")
+            st.caption(
+                "For each hold type, what did your winning trades have in common? "
+                "Use this to predict whether tomorrow's setup is an intraday trade or a multi-day hold."
+            )
+
+            _hold_types_present = [t for t in ["Intraday", "Overnight", "Multi-day"]
+                                   if t in _hold_df["_hold_type"].values]
+
+            for _ht in _hold_types_present:
+                _ht_color = {"Intraday": "#29b6f6", "Overnight": "#ffa726",
+                             "Multi-day": "#ce93d8"}.get(_ht, "#90caf9")
+                _ht_df = _hold_df[_hold_df["_hold_type"] == _ht].copy()
+                _ht_wins  = _ht_df[_ht_df["_win"] == 1]
+                _ht_loss  = _ht_df[_ht_df["_win"] == 0]
+                _ht_wr    = round(len(_ht_wins) / len(_ht_df) * 100, 1) if len(_ht_df) > 0 else 0
+
+                with st.expander(
+                    f"{_ht}  ·  {_ht_wr}% win rate  ·  {len(_ht_df)} trades",
+                    expanded=(_ht == "Intraday"),
+                ):
+                    _sp_col1, _sp_col2 = st.columns(2)
+
+                    # ── Winning trade fingerprint ──────────────────────────
+                    with _sp_col1:
+                        st.markdown(
+                            f'<div style="color:{_ht_color};font-weight:700;'
+                            f'font-size:12px;margin-bottom:8px;">✅ A/B WIN FINGERPRINT</div>',
+                            unsafe_allow_html=True,
+                        )
+                        if _ht_wins.empty:
+                            st.caption("Not enough winning trades yet.")
+                        else:
+                            # Avg TCS
+                            _tcs_vals = _pd_an.to_numeric(
+                                _ht_wins.get("tcs", _pd_an.Series()), errors="coerce"
+                            ).dropna()
+                            _rvol_vals = _pd_an.to_numeric(
+                                _ht_wins.get("rvol", _pd_an.Series()), errors="coerce"
+                            ).dropna()
+
+                            _stat_rows = []
+                            if not _tcs_vals.empty:
+                                _stat_rows.append(("Avg TCS", f"{_tcs_vals.mean():.0f}",
+                                                   f"range {_tcs_vals.min():.0f}–{_tcs_vals.max():.0f}"))
+                            if not _rvol_vals.empty:
+                                _stat_rows.append(("Avg RVOL", f"{_rvol_vals.mean():.1f}×",
+                                                   f"min {_rvol_vals.min():.1f}×"))
+
+                            # Most common entry hours
+                            if "_hour" in _ht_wins.columns:
+                                _hr_counts = _ht_wins["_hour"].value_counts().head(3)
+                                _hr_labels = ", ".join(
+                                    f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+                                    for h in _hr_counts.index
+                                )
+                                _stat_rows.append(("Best entry hours", _hr_labels, "most frequent"))
+
+                            # Most common structures
+                            if "structure" in _ht_wins.columns:
+                                _struct_counts = (
+                                    _ht_wins["structure"]
+                                    .astype(str)
+                                    .replace({"Unknown": None, "nan": None, "": None})
+                                    .dropna()
+                                    .value_counts()
+                                    .head(3)
+                                )
+                                if not _struct_counts.empty:
+                                    _struct_labels = ", ".join(
+                                        f"{s} ({c})" for s, c in _struct_counts.items()
+                                    )
+                                    _stat_rows.append(("Top structures", _struct_labels, ""))
+
+                            for _lbl, _val, _sub in _stat_rows:
+                                st.markdown(
+                                    f'<div style="display:flex;justify-content:space-between;'
+                                    f'align-items:center;padding:5px 0;'
+                                    f'border-bottom:1px solid #1e1e3a;">'
+                                    f'<span style="color:#888;font-size:11px;">{_lbl}</span>'
+                                    f'<span style="color:#e0e0e0;font-weight:700;font-size:13px;">'
+                                    f'{_val}</span>'
+                                    f'</div>'
+                                    f'{"<div style=\\"font-size:9px;color:#555;text-align:right;\\">" + _sub + "</div>" if _sub else ""}',
+                                    unsafe_allow_html=True,
+                                )
+
+                    # ── Losing trade fingerprint ───────────────────────────
+                    with _sp_col2:
+                        st.markdown(
+                            '<div style="color:#ef5350;font-weight:700;'
+                            'font-size:12px;margin-bottom:8px;">❌ C/D/F LOSS FINGERPRINT</div>',
+                            unsafe_allow_html=True,
+                        )
+                        if _ht_loss.empty:
+                            st.caption("No losing trades in this category — great!")
+                        else:
+                            _ltcs_vals = _pd_an.to_numeric(
+                                _ht_loss.get("tcs", _pd_an.Series()), errors="coerce"
+                            ).dropna()
+                            _lrvol_vals = _pd_an.to_numeric(
+                                _ht_loss.get("rvol", _pd_an.Series()), errors="coerce"
+                            ).dropna()
+
+                            _loss_rows = []
+                            if not _ltcs_vals.empty:
+                                _loss_rows.append(("Avg TCS", f"{_ltcs_vals.mean():.0f}",
+                                                   f"range {_ltcs_vals.min():.0f}–{_ltcs_vals.max():.0f}"))
+                            if not _lrvol_vals.empty:
+                                _loss_rows.append(("Avg RVOL", f"{_lrvol_vals.mean():.1f}×", ""))
+
+                            if "_hour" in _ht_loss.columns:
+                                _lhr_counts = _ht_loss["_hour"].value_counts().head(3)
+                                _lhr_labels = ", ".join(
+                                    f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+                                    for h in _lhr_counts.index
+                                )
+                                _loss_rows.append(("Danger hours", _lhr_labels, "most losses"))
+
+                            if "structure" in _ht_loss.columns:
+                                _lstruct_counts = (
+                                    _ht_loss["structure"]
+                                    .astype(str)
+                                    .replace({"Unknown": None, "nan": None, "": None})
+                                    .dropna()
+                                    .value_counts()
+                                    .head(3)
+                                )
+                                if not _lstruct_counts.empty:
+                                    _loss_rows.append(("Loss structures",
+                                                       ", ".join(f"{s} ({c})"
+                                                                 for s, c in _lstruct_counts.items()),
+                                                       "avoid these in this hold style"))
+
+                            for _lbl, _val, _sub in _loss_rows:
+                                st.markdown(
+                                    f'<div style="display:flex;justify-content:space-between;'
+                                    f'align-items:center;padding:5px 0;'
+                                    f'border-bottom:1px solid #1e1e3a;">'
+                                    f'<span style="color:#888;font-size:11px;">{_lbl}</span>'
+                                    f'<span style="color:#e0e0e0;font-weight:700;font-size:13px;">'
+                                    f'{_val}</span>'
+                                    f'</div>'
+                                    f'{"<div style=\\"font-size:9px;color:#555;text-align:right;\\">" + _sub + "</div>" if _sub else ""}',
+                                    unsafe_allow_html=True,
+                                )
+
+                    # ── Derived rule ───────────────────────────────────────
+                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+                    if not _ht_wins.empty and not _tcs_vals.empty:
+                        _rule_tcs = f"TCS ≥ {_tcs_vals.mean():.0f}"
+                        _rule_rvol = (f" · RVOL ≥ {_rvol_vals.mean():.1f}×"
+                                      if not _rvol_vals.empty else "")
+                        st.markdown(
+                            f'<div style="background:#0d1f2d;border-left:3px solid {_ht_color};'
+                            f'padding:8px 14px;border-radius:4px;font-size:12px;color:#cfd8dc;">'
+                            f'<b style="color:{_ht_color};">Derived Rule:</b> '
+                            f'For {_ht.lower()} trades, your wins cluster at {_rule_tcs}{_rule_rvol}. '
+                            f'Entries below these thresholds in this hold style have historically underperformed.'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
         # ── Top / Bottom Tickers ──────────────────────────────────────────────
         st.markdown("---")
         _tkr_grp = (
