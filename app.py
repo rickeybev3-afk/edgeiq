@@ -8263,16 +8263,21 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     for wk, label in _wk_labels.items():
         cur = _cur_weights.get(wk, 1.0)
         row = {
-            "Structure":   label,
-            "Weight":      f"{cur:.4f}",
-            "vs Default":  f"{cur - _w_default:+.4f}",
-            "Status":      "🟢 Boosted" if cur > 1.1 else ("🔴 Penalized" if cur < 0.9 else "⚪ Neutral"),
+            "Structure":    label,
+            "Weight":       f"{cur:.4f}",
+            "vs Default":   f"{cur - _w_default:+.4f}",
+            "Status":       "🟢 Boosted" if cur > 1.1 else ("🔴 Penalized" if cur < 0.9 else "⚪ Neutral"),
+            "Journal Acc":  "—",
+            "Bot Acc":      "—",
+            "Blended Acc":  "—",
+            "Last Δ":       "—",
         }
         if wk in _bh_deltas_map:
             d = _bh_deltas_map[wk]
-            row["Last Δ"]   = f"{d['delta']:+.4f}"
-            row["Accuracy"] = f"{d['accuracy']}%"
-            row["Samples"]  = d["samples"]
+            row["Last Δ"]      = f"{d['delta']:+.4f}"
+            row["Blended Acc"] = f"{d['blended_acc']}%"
+            row["Journal Acc"] = f"{d['journal_acc']}% ({d['journal_n']})" if d.get("journal_acc") is not None else f"< 5 samples ({d.get('journal_n', 0)})"
+            row["Bot Acc"]     = f"{d['bot_acc']}% ({d['bot_n']})"        if d.get("bot_acc")     is not None else f"< 5 samples ({d.get('bot_n', 0)})"
         _bh_rows.append(row)
 
     st.dataframe(

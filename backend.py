@@ -1249,61 +1249,73 @@ def recalibrate_brain_weights(user_id: str = "") -> dict:
 def recalibrate_from_supabase(user_id: str = "") -> dict:
     """Read ALL live outcome data from Supabase and update brain weights.
 
-    Data sources (combined):
+    Data sources (tracked SEPARATELY, then 50/50 blended):
       1. accuracy_tracker table  — journal-verified trades (predicted / correct ✅/❌)
       2. paper_trades table      — bot paper trades (predicted / win_loss Win/Loss)
 
-    Learning rule (same as recalibrate_brain_weights):
+    Blending approach (volume-neutral 50/50):
+      Each source's accuracy is computed independently per structure, then averaged.
+      This means your 45 journal entries carry EQUAL weight to 5,400 bot entries —
+      volume differences never let one source drown out the other.
+
+      blend rules per structure:
+        both sources have ≥5 samples  → acc = 0.5 * journal_acc + 0.5 * bot_acc
+        only journal  has ≥5 samples  → acc = journal_acc
+        only bot      has ≥5 samples  → acc = bot_acc
+        neither has ≥5 samples        → skip (no update)
+
+    Learning rule (EMA, 30% rate):
       target = 1.5 if acc ≥ 70% | 1.0 if 50–70% | 0.75 if 30–50% | 0.5 if <30%
-      new_weight = old_weight × 0.70 + target × 0.30  (30% EMA, min 5 samples)
+      new_weight = old_weight × 0.70 + target × 0.30
 
     Returns dict:
       {
-        "weights":  {structure_key: new_weight, …},
-        "deltas":   [{key, old, new, delta, accuracy, samples}, …],
-        "sources":  {"accuracy_tracker": N, "paper_trades": N, "total": N},
-        "calibrated": bool,
-        "timestamp": iso string,
+        "weights":      {structure_key: new_weight, …},
+        "deltas":       [{key, old, new, delta, blended_acc, journal_acc, bot_acc,
+                          journal_n, bot_n}, …],
+        "sources":      {"accuracy_tracker": N, "paper_trades": N, "total": N},
+        "calibrated":   bool,
+        "timestamp":    iso string,
       }
     """
     import collections as _col
 
-    weights  = load_brain_weights(user_id)
-    old_w    = dict(weights)
-    result   = {
-        "weights":   weights,
-        "deltas":    [],
-        "sources":   {"accuracy_tracker": 0, "paper_trades": 0, "total": 0},
+    weights = load_brain_weights(user_id)
+    result  = {
+        "weights":    weights,
+        "deltas":     [],
+        "sources":    {"accuracy_tracker": 0, "paper_trades": 0, "total": 0},
         "calibrated": False,
-        "timestamp": datetime.now(EASTERN).isoformat(),
+        "timestamp":  datetime.now(EASTERN).isoformat(),
     }
 
     if not supabase:
         return result
 
-    # ── Accumulate per-structure (wins, total) ─────────────────────────────
-    struct_data: dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
+    # ── Separate accumulators per source ──────────────────────────────────
+    journal_data: dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
+    bot_data:     dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
 
-    # Source 1: accuracy_tracker
+    # Source 1: accuracy_tracker (journal / manual trades)
     try:
         q = supabase.table("accuracy_tracker").select("predicted,correct")
         if user_id:
             q = q.eq("user_id", user_id)
         rows = q.execute().data or []
         for r in rows:
-            pred = str(r.get("predicted", "") or "").strip()
-            correct = str(r.get("correct", "") or "").strip()
+            pred    = str(r.get("predicted", "") or "").strip()
+            correct = str(r.get("correct",   "") or "").strip()
             if not pred:
                 continue
             wk = _label_to_weight_key(pred)
-            struct_data[wk]["total"] += 1
+            journal_data[wk]["total"] += 1
             if "✅" in correct:
-                struct_data[wk]["wins"] += 1
+                journal_data[wk]["wins"] += 1
         result["sources"]["accuracy_tracker"] = len(rows)
     except Exception as e:
         print(f"recalibrate_from_supabase: accuracy_tracker error: {e}")
 
-    # Source 2: paper_trades
+    # Source 2: paper_trades (bot automated signals)
     try:
         q = supabase.table("paper_trades").select("predicted,win_loss")
         if user_id:
@@ -1315,9 +1327,9 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
             if not pred or not wl or wl in ("", "none", "pending"):
                 continue
             wk = _label_to_weight_key(pred)
-            struct_data[wk]["total"] += 1
+            bot_data[wk]["total"] += 1
             if wl == "win":
-                struct_data[wk]["wins"] += 1
+                bot_data[wk]["wins"] += 1
         result["sources"]["paper_trades"] = len(rows)
     except Exception as e:
         print(f"recalibrate_from_supabase: paper_trades error: {e}")
@@ -1326,34 +1338,52 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
         result["sources"]["accuracy_tracker"] + result["sources"]["paper_trades"]
     )
 
-    if not struct_data:
-        return result
+    # ── 50/50 blend and EMA update ─────────────────────────────────────────
+    MIN_SAMPLES = 5
+    all_keys = set(journal_data.keys()) | set(bot_data.keys())
+    deltas   = []
 
-    # ── Apply EMA learning rule ─────────────────────────────────────────────
-    deltas = []
-    for wk, counts in struct_data.items():
-        n   = counts["total"]
-        if n < 5:
-            continue   # not enough samples
-        acc = counts["wins"] / n
+    for wk in all_keys:
+        j = journal_data[wk]
+        b = bot_data[wk]
 
-        if   acc >= 0.70: target = 1.50
-        elif acc >= 0.50: target = 1.00
-        elif acc >= 0.30: target = 0.75
-        else:             target = 0.50
+        j_ok = j["total"] >= MIN_SAMPLES
+        b_ok = b["total"] >= MIN_SAMPLES
 
-        old_val  = weights.get(wk, 1.0)
-        new_val  = round(old_val * 0.70 + target * 0.30, 4)
+        if not j_ok and not b_ok:
+            continue   # not enough data in either source — skip
+
+        j_acc = (j["wins"] / j["total"]) if j_ok else None
+        b_acc = (b["wins"] / b["total"]) if b_ok else None
+
+        # Volume-neutral blend: each available source gets equal vote
+        if j_ok and b_ok:
+            blended = 0.5 * j_acc + 0.5 * b_acc
+        elif j_ok:
+            blended = j_acc   # only journal has enough data
+        else:
+            blended = b_acc   # only bot has enough data
+
+        if   blended >= 0.70: target = 1.50
+        elif blended >= 0.50: target = 1.00
+        elif blended >= 0.30: target = 0.75
+        else:                 target = 0.50
+
+        old_val     = weights.get(wk, 1.0)
+        new_val     = round(old_val * 0.70 + target * 0.30, 4)
         weights[wk] = new_val
 
         deltas.append({
-            "key":      wk,
-            "old":      round(old_val, 4),
-            "new":      new_val,
-            "delta":    round(new_val - old_val, 4),
-            "accuracy": round(acc * 100, 1),
-            "samples":  n,
-            "target":   target,
+            "key":         wk,
+            "old":         round(old_val, 4),
+            "new":         new_val,
+            "delta":       round(new_val - old_val, 4),
+            "blended_acc": round(blended * 100, 1),
+            "journal_acc": round(j_acc * 100, 1) if j_ok else None,
+            "bot_acc":     round(b_acc * 100, 1) if b_ok else None,
+            "journal_n":   j["total"],
+            "bot_n":       b["total"],
+            "target":      target,
         })
 
     if deltas:
