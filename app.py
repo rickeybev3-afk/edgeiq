@@ -7085,22 +7085,40 @@ with tab_scan:
             st.warning(f"Verify: {_vr['error']}")
         else:
             _acc_color = "#4caf50" if _vr["accuracy"] >= 60 else "#ff9800" if _vr["accuracy"] >= 45 else "#ef5350"
+            _vr_total  = _vr.get("total", _vr["verified"])
+            _vr_wrong  = _vr["verified"] - _vr["correct"]
+            try:
+                _vr_date_fmt = date.fromisoformat(_vr.get("date","")).strftime("%b %-d, %Y")
+            except Exception:
+                _vr_date_fmt = _vr.get("date", "")
             st.markdown(
                 f'<div style="background:#12122299;border:1px solid #2a2a4a;border-radius:10px;'
-                f'padding:14px 20px;margin:8px 0;display:flex;gap:32px;align-items:center;">'
+                f'padding:14px 20px;margin:8px 0;">'
+                f'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">'
+                f'Verify Results — Session: {_vr_date_fmt}</div>'
+                f'<div style="display:flex;gap:32px;align-items:center;flex-wrap:wrap;">'
                 f'<div style="text-align:center;">'
-                f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Verified</div>'
-                f'<div style="font-size:26px;font-weight:800;color:#e0e0e0;">{_vr["verified"]}</div>'
+                f'<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:2px;">Verified</div>'
+                f'<div style="font-size:26px;font-weight:800;color:#e0e0e0;">{_vr["verified"]}'
+                f'<span style="font-size:13px;color:#555;">/{_vr_total}</span></div>'
+                f'<div style="font-size:9px;color:#555;">predictions checked</div>'
                 f'</div>'
                 f'<div style="text-align:center;">'
-                f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Correct</div>'
+                f'<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:2px;">Correct</div>'
                 f'<div style="font-size:26px;font-weight:800;color:#4caf50;">{_vr["correct"]}</div>'
+                f'<div style="font-size:9px;color:#555;">structure matched</div>'
                 f'</div>'
                 f'<div style="text-align:center;">'
-                f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Accuracy</div>'
-                f'<div style="font-size:26px;font-weight:800;color:{_acc_color};">{_vr["accuracy"]:.1f}%</div>'
+                f'<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:2px;">Wrong</div>'
+                f'<div style="font-size:26px;font-weight:800;color:#ef5350;">{_vr_wrong}</div>'
+                f'<div style="font-size:9px;color:#555;">structure missed</div>'
                 f'</div>'
-                f'<div style="font-size:12px;color:#666;">{_vr.get("date","")}</div>'
+                f'<div style="text-align:center;">'
+                f'<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:2px;">Accuracy</div>'
+                f'<div style="font-size:26px;font-weight:800;color:{_acc_color};">{_vr["accuracy"]:.1f}%</div>'
+                f'<div style="font-size:9px;color:#555;">correct / verified</div>'
+                f'</div>'
+                f'</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -7111,7 +7129,14 @@ with tab_scan:
 
     if _wpe_preds:
         _wpe_briefs_ss = st.session_state.get("_wpe_last_briefs", {})
-        st.subheader(f"Today's Predictions — {st.session_state.get('_wpe_pred_date', '')}")
+        _wpe_for_date = st.session_state.get("_wpe_pred_date", "")
+        try:
+            _wpe_for_fmt = date.fromisoformat(str(_wpe_for_date)).strftime("%b %-d, %Y")
+        except Exception:
+            _wpe_for_fmt = str(_wpe_for_date)
+        st.subheader(f"📋 Predictions for Trading Session: {_wpe_for_fmt}")
+        st.caption("These are your predictions to validate when the market opens on that date. "
+                   "Run ✅ Verify Date after close to check accuracy.")
 
         if _wpe_briefs_ss:
             # Rich setup brief cards (with key levels)
@@ -7231,14 +7256,33 @@ with tab_scan:
             )
 
     elif _wpe_df_loaded is not None and not _wpe_df_loaded.empty:
-        st.subheader("Saved Predictions")
+        st.subheader("📂 Saved Predictions")
+        st.caption("TCS and Edge columns are blank for predictions saved before the Supabase schema update. "
+                   "Run 🔮 Predict All again tonight to get fresh rows with all fields populated.")
         _show_cols = ["ticker", "pred_date", "predicted_structure", "tcs",
                       "edge_score", "actual_structure", "correct"]
         _disp_df = _wpe_df_loaded[[c for c in _show_cols if c in _wpe_df_loaded.columns]].copy()
-        _disp_df.columns = [c.replace("_", " ").title() for c in _disp_df.columns]
+        _col_rename = {
+            "ticker": "Ticker",
+            "pred_date": "For Session",
+            "predicted_structure": "Predicted Structure",
+            "tcs": "TCS Score",
+            "edge_score": "Edge Score",
+            "actual_structure": "Actual Structure",
+            "correct": "Correct?",
+        }
+        _disp_df.rename(columns=_col_rename, inplace=True)
+        if "TCS Score" in _disp_df.columns:
+            _disp_df["TCS Score"] = _disp_df["TCS Score"].apply(
+                lambda x: f"{x:.0f}" if pd.notna(x) and x != "" else "—"
+            )
+        if "Edge Score" in _disp_df.columns:
+            _disp_df["Edge Score"] = _disp_df["Edge Score"].apply(
+                lambda x: f"{x:.0f}" if pd.notna(x) and x != "" else "—"
+            )
         st.dataframe(_disp_df, use_container_width=True, height=min(500, 35 + 35 * len(_disp_df)))
     elif _wpe_df_loaded is not None:
-            st.info("No saved predictions found. Run **🔮 Predict All** first.")
+        st.info("No saved predictions found. Run **🔮 Predict All** first.")
 
     # ── Setup instructions if table missing ───────────────────────────────────
     with st.expander("⚙️ First-time Supabase setup for predictions", expanded=False):

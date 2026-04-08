@@ -6101,6 +6101,7 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
     accuracy = (correct_count / verified_count * 100) if verified_count > 0 else 0.0
     return {
         "verified": verified_count,
+        "total":    len(pending),
         "correct":  correct_count,
         "accuracy": round(accuracy, 1),
         "date":     str(check_date),
