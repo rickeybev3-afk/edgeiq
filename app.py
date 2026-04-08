@@ -3154,8 +3154,48 @@ _DEFAULT_WATCHLIST = (
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAIN AREA
+# SESSION RESTORE / AUTH GATE / PREFS  (must run before sidebar renders)
 # ══════════════════════════════════════════════════════════════════════════════
+
+if not st.session_state.get("auth_user") and not st.session_state.get("_restore_tried"):
+    st.session_state["_restore_tried"] = True
+    _restored = try_restore_session()
+    if _restored.get("user"):
+        _ru = _restored["user"]
+        st.session_state["auth_user"]    = _ru
+        st.session_state["auth_user_id"] = str(_ru.id)
+        st.session_state["auth_email"]   = _restored.get("email", "")
+        _rat = _restored.get("access_token",  "")
+        _rrt = _restored.get("refresh_token", "")
+        st.session_state["auth_access_token"]  = _rat
+        st.session_state["auth_refresh_token"] = _rrt
+        set_user_session(_rat, _rrt)
+        st.rerun()
+
+if not st.session_state.get("auth_user"):
+    render_login_page()
+    st.stop()
+
+_AUTH_USER_ID = st.session_state.get("auth_user_id", "")
+
+if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
+    _prefs = load_user_prefs(_AUTH_USER_ID)
+    if _prefs.get("alpaca_key"):
+        st.session_state["_pref_alpaca_key"]    = _prefs["alpaca_key"]
+    if _prefs.get("alpaca_secret"):
+        st.session_state["_pref_alpaca_secret"] = _prefs["alpaca_secret"]
+    if _prefs.get("discord_webhook"):
+        st.session_state["discord_webhook_url"] = _prefs["discord_webhook"]
+    st.session_state["_prefs_loaded"] = True
+
+if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
+    _early_wl = load_watchlist(_AUTH_USER_ID)
+    if _early_wl:
+        _joined = ", ".join(_early_wl)
+        st.session_state["_watchlist_tickers"] = _joined
+        st.session_state["watchlist_raw"]      = _joined
+        st.session_state["watchlist_textarea"] = _joined
+    st.session_state["_watchlist_loaded"] = True
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -3175,20 +3215,6 @@ with st.sidebar:
     )
     # Auto-save credentials whenever they're filled in
     _sb_uid = st.session_state.get("auth_user_id", "")
-
-    # ── Load watchlist from Supabase early (before any text_area uses it) ──────
-    # Must happen here so _watchlist_tickers is set before Scanner + My Watchlist
-    # text areas render. Moving this load below those widgets caused them to show
-    # the hardcoded _DEFAULT_WATCHLIST on every page reload.
-    if not st.session_state.get("_watchlist_loaded") and _sb_uid:
-        _early_wl = load_watchlist(_sb_uid)
-        if _early_wl:
-            _joined = ", ".join(_early_wl)
-            st.session_state["_watchlist_tickers"] = _joined
-            st.session_state["watchlist_raw"]      = _joined
-            st.session_state["watchlist_textarea"] = _joined
-        st.session_state["_watchlist_loaded"] = True
-    # ──────────────────────────────────────────────────────────────────────────
 
     if api_key and secret_key and _sb_uid:
         _cur_prefs = st.session_state.get("_cached_prefs", {})
@@ -3566,11 +3592,6 @@ with st.sidebar:
     # ── Saved Watchlist (T008) ────────────────────────────────────────────────
     st.markdown("---")
     st.header("⭐ My Watchlist")
-    if not st.session_state.get("_watchlist_loaded"):
-        _saved_wl = load_watchlist(st.session_state.get("auth_user_id", ""))
-        if _saved_wl:
-            st.session_state["_watchlist_tickers"] = ", ".join(_saved_wl)
-        st.session_state["_watchlist_loaded"] = True
     _wl_raw = st.text_area(
         "Tickers (comma-separated)",
         value=st.session_state.get("_watchlist_tickers", ""),
@@ -3608,8 +3629,11 @@ with st.sidebar:
         )
         if st.button("🚪 Sign Out", use_container_width=True, key="signout_btn"):
             auth_signout()
-            for _k in ("auth_user", "auth_user_id", "auth_email"):
-                st.session_state[_k] = "" if _k != "auth_user" else None
+            for _k in ("auth_user", "auth_user_id", "auth_email",
+                       "_watchlist_loaded", "_watchlist_tickers",
+                       "_prefs_loaded", "_restore_tried",
+                       "watchlist_raw", "watchlist_textarea"):
+                st.session_state.pop(_k, None)
             st.rerun()
     else:
         st.markdown(
@@ -3617,40 +3641,6 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-
-# ── Auto-restore session from disk (survives server restarts) ─────────────────
-if not st.session_state.get("auth_user") and not st.session_state.get("_restore_tried"):
-    st.session_state["_restore_tried"] = True
-    _restored = try_restore_session()
-    if _restored.get("user"):
-        _ru = _restored["user"]
-        st.session_state["auth_user"]    = _ru
-        st.session_state["auth_user_id"] = str(_ru.id)
-        st.session_state["auth_email"]   = _restored.get("email", "")
-        _rat = _restored.get("access_token",  "")
-        _rrt = _restored.get("refresh_token", "")
-        st.session_state["auth_access_token"]  = _rat
-        st.session_state["auth_refresh_token"] = _rrt
-        set_user_session(_rat, _rrt)
-        st.rerun()
-
-# ── Auth gate: show login page if not authenticated ───────────────────────────
-if not st.session_state.get("auth_user"):
-    render_login_page()
-    st.stop()
-
-_AUTH_USER_ID = st.session_state.get("auth_user_id", "")
-
-# ── Auto-load user preferences once per session after login ───────────────────
-if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
-    _prefs = load_user_prefs(_AUTH_USER_ID)
-    if _prefs.get("alpaca_key"):
-        st.session_state["_pref_alpaca_key"]    = _prefs["alpaca_key"]
-    if _prefs.get("alpaca_secret"):
-        st.session_state["_pref_alpaca_secret"] = _prefs["alpaca_secret"]
-    if _prefs.get("discord_webhook"):
-        st.session_state["discord_webhook_url"] = _prefs["discord_webhook"]
-    st.session_state["_prefs_loaded"] = True
 
 # ── Cross-tab High Conviction alert (T005) ────────────────────────────────────
 _hc_alert_state = st.session_state.get("_hc_alert_state")
