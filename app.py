@@ -693,6 +693,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
 
     # ── Journal entries (only when not empty) ─────────────────────────────────
     if not df.empty:
+        import re as _re_j
         # Grade badges + table
         st.markdown("---")
         for _, row in df.iterrows():
@@ -705,33 +706,76 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             struct = row.get("structure", "")
             tcs_v = row.get("tcs", "")
             rvol_v = row.get("rvol", "")
-            notes_v = row.get("notes", "")
-    
+            notes_v = str(row.get("notes", "") or "")
+
+            # Parse exit price, P&L, shares from Webull-imported notes
+            _ex_m  = _re_j.search(r"Exit:\s*\$([0-9.]+)", notes_v)
+            _pnl_m = _re_j.search(r"P&L:\s*\$([+-]?[0-9.]+)\s*\(([+-]?[0-9.]+)%\)", notes_v)
+            _sh_m  = _re_j.search(r"Shares:\s*([0-9]+)", notes_v)
+            _exit_str   = f"${float(_ex_m.group(1)):.4f}" if _ex_m else ""
+            _pnl_val    = float(_pnl_m.group(1)) if _pnl_m else 0.0
+            _pnl_pct    = _pnl_m.group(2) if _pnl_m else ""
+            _pnl_str    = f"${_pnl_val:+.2f} ({_pnl_pct}%)" if _pnl_m else ""
+            _pnl_color  = "#4caf50" if _pnl_val >= 0 else "#ef5350"
+            _shares_str = _sh_m.group(1) if _sh_m else ""
+            _entry_fmt  = f"${float(price):.4f}" if price not in (None, "", "nan") else "—"
+
+            if _exit_str:
+                _price_line = (
+                    f'<span style="color:#888;font-size:11px;">Entry</span> '
+                    f'<span style="color:#90caf9;">{_entry_fmt}</span>'
+                    f'<span style="color:#555;margin:0 5px;">→</span>'
+                    f'<span style="color:#888;font-size:11px;">Exit</span> '
+                    f'<span style="color:#90caf9;">{_exit_str}</span>'
+                )
+                if _pnl_str:
+                    _price_line += (
+                        f'<span style="color:#555;margin:0 6px;">·</span>'
+                        f'<span style="color:#888;font-size:11px;">P&amp;L</span> '
+                        f'<span style="color:{_pnl_color};font-weight:700;">{_pnl_str}</span>'
+                    )
+                if _shares_str:
+                    _price_line += (
+                        f'<span style="color:#666;font-size:11px;margin-left:6px;">{_shares_str} sh</span>'
+                    )
+            else:
+                _price_line = (
+                    f'<span style="color:#888;font-size:11px;">Entry</span> '
+                    f'<span style="color:#90caf9;">{_entry_fmt}</span>'
+                )
+
+            # Strip Webull boilerplate from display notes
+            _clean_notes = _re_j.sub(
+                r"Webull import\s*\|?\s*|Exit:\s*\$[0-9.]+\s*\|?\s*"
+                r"|P&L:\s*\$[+-]?[0-9.]+\s*\([+-]?[0-9.]+%\)\s*\|?\s*"
+                r"|Shares:\s*[0-9]+\s*\|?\s*|Exit:\s*[0-9]{4}-[0-9]{2}-[0-9]{2}[^|]*\|?\s*",
+                "", notes_v
+            ).strip(" |·").strip()
+
             _j_cols = st.columns([8, 1])
             with _j_cols[0]:
-                st.markdown(f"""
-                <div style="display:flex; gap:16px; align-items:center; background:#12122288;
-                            border:1px solid #2a2a4a; border-radius:10px;
-                            padding:12px 18px; margin:8px 0;">
-                    <div style="flex-shrink:0; width:52px; height:52px; border-radius:50%;
-                                background:{gc}22; border:2.5px solid {gc};
-                                display:flex; align-items:center; justify-content:center;
-                                font-size:24px; font-weight:900; color:{gc};">{grade}</div>
-                    <div style="flex:1; min-width:0;">
-                        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:baseline;">
-                            <span style="font-size:20px; font-weight:800; color:#e0e0e0;">{sym}</span>
-                            <span style="font-size:13px; color:#aaa;">${price}</span>
-                            <span style="font-size:11px; color:#666;">{ts}</span>
-                        </div>
-                        <div style="font-size:12px; color:#90caf9; margin:2px 0;">{struct}</div>
-                        <div style="font-size:11px; color:#888;">
-                            TCS {tcs_v}%  ·  RVOL {rvol_v}×
-                            {f'  ·  <em>{notes_v}</em>' if notes_v else ''}
-                        </div>
-                        <div style="font-size:12px; color:{gc}; margin-top:4px;">{reason}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(
+                    f'<div style="display:flex;gap:16px;align-items:center;background:#12122288;'
+                    f'border:1px solid #2a2a4a;border-radius:10px;padding:12px 18px;margin:8px 0;">'
+                    f'<div style="flex-shrink:0;width:52px;height:52px;border-radius:50%;'
+                    f'background:{gc}22;border:2.5px solid {gc};display:flex;'
+                    f'align-items:center;justify-content:center;'
+                    f'font-size:24px;font-weight:900;color:{gc};">{grade}</div>'
+                    f'<div style="flex:1;min-width:0;">'
+                    f'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;">'
+                    f'<span style="font-size:20px;font-weight:800;color:#e0e0e0;">{sym}</span>'
+                    f'<span style="font-size:11px;color:#666;">{ts}</span>'
+                    f'</div>'
+                    f'<div style="font-size:13px;margin:3px 0;">{_price_line}</div>'
+                    f'<div style="font-size:12px;color:#90caf9;margin:2px 0;">{struct}</div>'
+                    f'<div style="font-size:11px;color:#888;">'
+                    f'TCS {tcs_v}%  ·  RVOL {rvol_v}x'
+                    f'{("  ·  <em>" + _clean_notes + "</em>") if _clean_notes else ""}'
+                    f'</div>'
+                    f'<div style="font-size:12px;color:{gc};margin-top:4px;">{reason}</div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
             with _j_cols[1]:
                 st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
                 _ts_str = str(ts)[:10] if ts else ""
@@ -5460,6 +5504,195 @@ def render_analytics_tab():
                 lambda v: f"{'+'if v>=0 else''}{v:.2f}")
             eq_disp.columns = ["Time", "Symbol", "Trade P&L", "Cumulative P&L"]
             st.dataframe(eq_disp, use_container_width=True, hide_index=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION — Journal-Based Edge Analytics (time, day, ticker)
+    # ══════════════════════════════════════════════════════════════════════════
+    if not journal_df.empty:
+        st.markdown("---")
+        st.markdown("### 📅 Trade Timing & Ticker Edge")
+        st.caption("Based on your full journal history — grades A/B = win, C/D/F = loss.")
+
+        import pandas as _pd_an
+        _jdf = journal_df.copy()
+
+        # Coerce timestamp
+        _jdf["_ts"] = _pd_an.to_datetime(_jdf.get("timestamp", _pd_an.NaT), errors="coerce")
+        _jdf["_hour"] = _jdf["_ts"].dt.hour
+        _jdf["_dow"]  = _jdf["_ts"].dt.dayofweek   # 0=Mon … 4=Fri
+        _jdf["_win"]  = _jdf["grade"].isin(["A", "B"]).astype(int)
+
+        # Drop rows with no timestamp
+        _jdf = _jdf.dropna(subset=["_ts"])
+
+        _timing_col1, _timing_col2 = st.columns(2)
+
+        # ── Time-of-Day win rate ──────────────────────────────────────────────
+        with _timing_col1:
+            _hour_grp = (
+                _jdf.groupby("_hour")["_win"]
+                .agg(trades="count", wins="sum")
+                .reset_index()
+            )
+            _hour_grp = _hour_grp[_hour_grp["trades"] >= 1].copy()
+            _hour_grp["win_rate"] = (_hour_grp["wins"] / _hour_grp["trades"] * 100).round(1)
+            _hour_grp["label"]    = _hour_grp["_hour"].apply(
+                lambda h: f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+            )
+
+            if not _hour_grp.empty:
+                _hr_colors = [
+                    "#4caf50" if r >= 55 else "#ffa726" if r >= 40 else "#ef5350"
+                    for r in _hour_grp["win_rate"]
+                ]
+                fig_hr = _go.Figure()
+                fig_hr.add_trace(_go.Bar(
+                    x=_hour_grp["label"],
+                    y=_hour_grp["win_rate"],
+                    marker_color=_hr_colors,
+                    text=[f"{r}%<br>({t}T)" for r, t in
+                          zip(_hour_grp["win_rate"], _hour_grp["trades"])],
+                    textposition="outside",
+                    textfont=dict(size=9, color="#e0e0e0"),
+                    hovertemplate="<b>%{x}</b><br>Win Rate: %{y:.1f}%<extra></extra>",
+                ))
+                fig_hr.add_hline(y=50, line=dict(color="rgba(255,255,255,0.2)", dash="dot"))
+                fig_hr.update_layout(
+                    paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                    font=dict(color="#e0e0e0"), height=260,
+                    title=dict(text="Win Rate by Entry Hour (EST)", font=dict(size=13)),
+                    xaxis=dict(gridcolor="#2a2a4a"),
+                    yaxis=dict(gridcolor="#2a2a4a", range=[0, 110], title="Win %"),
+                    margin=dict(l=10, r=10, t=40, b=30),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_hr, use_container_width=True)
+            else:
+                st.info("Not enough timestamped entries for time-of-day analysis.")
+
+        # ── Day-of-Week win rate ──────────────────────────────────────────────
+        with _timing_col2:
+            _dow_names = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri"}
+            _dow_grp = (
+                _jdf[_jdf["_dow"].isin(range(5))]
+                .groupby("_dow")["_win"]
+                .agg(trades="count", wins="sum")
+                .reset_index()
+            )
+            _dow_grp["win_rate"] = (_dow_grp["wins"] / _dow_grp["trades"] * 100).round(1)
+            _dow_grp["label"]    = _dow_grp["_dow"].map(_dow_names)
+
+            if not _dow_grp.empty:
+                _dw_colors = [
+                    "#4caf50" if r >= 55 else "#ffa726" if r >= 40 else "#ef5350"
+                    for r in _dow_grp["win_rate"]
+                ]
+                fig_dw = _go.Figure()
+                fig_dw.add_trace(_go.Bar(
+                    x=_dow_grp["label"],
+                    y=_dow_grp["win_rate"],
+                    marker_color=_dw_colors,
+                    text=[f"{r}%<br>({t}T)" for r, t in
+                          zip(_dow_grp["win_rate"], _dow_grp["trades"])],
+                    textposition="outside",
+                    textfont=dict(size=9, color="#e0e0e0"),
+                    hovertemplate="<b>%{x}</b><br>Win Rate: %{y:.1f}%<extra></extra>",
+                ))
+                fig_dw.add_hline(y=50, line=dict(color="rgba(255,255,255,0.2)", dash="dot"))
+                fig_dw.update_layout(
+                    paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                    font=dict(color="#e0e0e0"), height=260,
+                    title=dict(text="Win Rate by Day of Week", font=dict(size=13)),
+                    xaxis=dict(gridcolor="#2a2a4a",
+                               categoryorder="array",
+                               categoryarray=["Mon","Tue","Wed","Thu","Fri"]),
+                    yaxis=dict(gridcolor="#2a2a4a", range=[0, 110], title="Win %"),
+                    margin=dict(l=10, r=10, t=40, b=30),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_dw, use_container_width=True)
+            else:
+                st.info("Not enough entries for day-of-week analysis.")
+
+        # ── Top / Bottom Tickers ──────────────────────────────────────────────
+        st.markdown("---")
+        _tkr_grp = (
+            _jdf.groupby("ticker")["_win"]
+            .agg(trades="count", wins="sum")
+            .reset_index()
+        )
+        _tkr_grp["win_rate"] = (_tkr_grp["wins"] / _tkr_grp["trades"] * 100).round(1)
+        _tkr_grp = _tkr_grp[_tkr_grp["trades"] >= 2].sort_values("win_rate", ascending=False)
+
+        # Try to join P&L from equity curve
+        _ec = ana.get("equity_curve", _pd_an.DataFrame())
+        if not _ec.empty and "symbol" in _ec.columns and "mfe" in _ec.columns:
+            _pnl_by_tkr = _ec.groupby("symbol")["mfe"].sum().reset_index()
+            _pnl_by_tkr.columns = ["ticker", "total_pnl"]
+            _tkr_grp = _tkr_grp.merge(_pnl_by_tkr, on="ticker", how="left")
+            _tkr_grp["total_pnl"] = _tkr_grp["total_pnl"].fillna(0.0).round(2)
+        else:
+            _tkr_grp["total_pnl"] = 0.0
+
+        if not _tkr_grp.empty:
+            _tkr_col1, _tkr_col2 = st.columns(2)
+            _best  = _tkr_grp.head(8)
+            _worst = _tkr_grp.tail(8).sort_values("win_rate")
+
+            with _tkr_col1:
+                st.markdown("**🏆 Best Tickers (≥2 trades)**")
+                _bc = ["#4caf50" if r >= 55 else "#ffa726" for r in _best["win_rate"]]
+                fig_bt = _go.Figure(_go.Bar(
+                    x=_best["ticker"], y=_best["win_rate"],
+                    marker_color=_bc,
+                    text=[f"{r}%<br>({t}T)" for r, t in
+                          zip(_best["win_rate"], _best["trades"])],
+                    textposition="outside",
+                    textfont=dict(size=9, color="#e0e0e0"),
+                ))
+                fig_bt.update_layout(
+                    paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                    font=dict(color="#e0e0e0"), height=240,
+                    yaxis=dict(gridcolor="#2a2a4a", range=[0, 120], title="Win %"),
+                    xaxis=dict(gridcolor="#2a2a4a"),
+                    margin=dict(l=10, r=10, t=10, b=30),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_bt, use_container_width=True)
+
+            with _tkr_col2:
+                st.markdown("**📉 Worst Tickers (≥2 trades)**")
+                _wc = ["#ef5350" if r < 40 else "#ffa726" for r in _worst["win_rate"]]
+                fig_wt = _go.Figure(_go.Bar(
+                    x=_worst["ticker"], y=_worst["win_rate"],
+                    marker_color=_wc,
+                    text=[f"{r}%<br>({t}T)" for r, t in
+                          zip(_worst["win_rate"], _worst["trades"])],
+                    textposition="outside",
+                    textfont=dict(size=9, color="#e0e0e0"),
+                ))
+                fig_wt.update_layout(
+                    paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                    font=dict(color="#e0e0e0"), height=240,
+                    yaxis=dict(gridcolor="#2a2a4a", range=[0, 120], title="Win %"),
+                    xaxis=dict(gridcolor="#2a2a4a"),
+                    margin=dict(l=10, r=10, t=10, b=30),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_wt, use_container_width=True)
+
+            # Full ticker table
+            with st.expander("📋 All Tickers — Full Breakdown", expanded=False):
+                _tkr_disp = _tkr_grp.sort_values("win_rate", ascending=False).copy()
+                _tkr_disp.columns = [c.replace("_", " ").title() for c in _tkr_disp.columns]
+                if "Total Pnl" in _tkr_disp.columns:
+                    _tkr_disp["Total Pnl"] = _tkr_disp["Total Pnl"].apply(
+                        lambda v: f"${v:+.2f}" if v != 0 else "—"
+                    )
+                    _tkr_disp = _tkr_disp.rename(columns={"Total Pnl": "Total P&L"})
+                st.dataframe(_tkr_disp, use_container_width=True, hide_index=True)
+        else:
+            st.info("Need at least 2 trades per ticker to compute ticker stats.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION — Webull Pattern Correlation
