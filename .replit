@@ -64,3 +64,8 @@ timeoutMs = 20000
 [nix]
 channel = "stable-25_05"
 packages = ["glibcLocales"]
+
+[userenv]
+
+[userenv.shared]
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxcndydnRlbGV4eWxxb25zanNsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTA5MjExNSwiZXhwIjoyMDkwNjY4MTE1fQ.STsSvFDTwDWVusufSVFkpdAwGOyn50fXB33UQgDoBNs"
