@@ -3868,6 +3868,185 @@ def enrich_trade_context(api_key: str, secret_key: str, ticker: str,
         return {}
 
 
+def _prior_trading_day(d) -> "date":
+    """Return the last NYSE trading day strictly before `d`."""
+    from datetime import timedelta
+    candidate = d - timedelta(days=1)
+    for _ in range(10):
+        if is_trading_day(candidate):
+            return candidate
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def fetch_key_levels(api_key: str, secret_key: str, ticker: str,
+                     trade_date, entry_low=None, entry_high=None,
+                     current_price=None, feed: str = "iex") -> dict:
+    """Fetch structural key levels for setup brief confluence detection.
+
+    Gathers four classes of price levels and checks each against the
+    entry zone ([entry_low, entry_high]) for confluence:
+
+    1. PDH / PDL / PDC — Prior day session High / Low / Close
+    2. ONH / ONL      — Overnight pre-market High / Low (4:00–9:30 AM)
+    3. Round numbers  — Psychologically significant levels near current price
+    4. Liquidity pools — Swing highs/lows from prior day (stop clusters)
+
+    Returns a dict with all levels and confluence annotations.
+    On any API failure, returns an empty dict (brief still works, just no levels).
+    """
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    import numpy as np
+
+    result = {
+        "pdh": None, "pdl": None, "pdc": None,
+        "onh": None, "onl": None, "on_vol": 0.0,
+        "round_numbers": [],
+        "swing_highs": [],
+        "swing_lows": [],
+        "confluence_notes": [],
+        "has_confluence": False,
+    }
+
+    if hasattr(trade_date, "date"):
+        trade_date = trade_date.date()
+    prior_day = _prior_trading_day(trade_date)
+    client    = StockHistoricalDataClient(api_key, secret_key)
+
+    # ── 1. Prior Day OHLC (regular session) ──────────────────────────────────
+    try:
+        pd_mo = EASTERN.localize(datetime(prior_day.year, prior_day.month, prior_day.day, 9, 30))
+        pd_mc = EASTERN.localize(datetime(prior_day.year, prior_day.month, prior_day.day, 16, 0))
+        req_pd = StockBarsRequest(symbol_or_symbols=ticker,
+                                  timeframe=TimeFrame.Minute,
+                                  start=pd_mo, end=pd_mc, feed=feed)
+        bars_pd = client.get_stock_bars(req_pd)
+        df_pd   = bars_pd.df
+        if not df_pd.empty:
+            if isinstance(df_pd.index, pd.MultiIndex):
+                df_pd = df_pd.xs(ticker, level="symbol")
+            df_pd.index = pd.to_datetime(df_pd.index)
+            if df_pd.index.tz is None:
+                df_pd.index = df_pd.index.tz_localize("UTC")
+            df_pd.index = df_pd.index.tz_convert(EASTERN)
+            df_pd = df_pd.sort_index()
+            df_pd = df_pd[(df_pd.index.time >= dtime(9, 30)) &
+                          (df_pd.index.time <= dtime(16, 0))]
+            if not df_pd.empty:
+                result["pdh"] = round(float(df_pd["high"].max()), 4)
+                result["pdl"] = round(float(df_pd["low"].min()), 4)
+                result["pdc"] = round(float(df_pd["close"].iloc[-1]), 4)
+
+                # ── Swing highs / lows (15-min aggregation for stability) ────
+                df_15 = df_pd.resample("15min").agg(
+                    {"high": "max", "low": "min", "close": "last", "volume": "sum"}
+                ).dropna()
+                if len(df_15) >= 5:
+                    highs = df_15["high"].values
+                    lows  = df_15["low"].values
+                    sh = [float(highs[i]) for i in range(1, len(highs) - 1)
+                          if highs[i] >= highs[i-1] and highs[i] >= highs[i+1]]
+                    sl = [float(lows[i]) for i in range(1, len(lows) - 1)
+                          if lows[i] <= lows[i-1] and lows[i] <= lows[i+1]]
+                    result["swing_highs"] = sorted(set(round(v, 4) for v in sh), reverse=True)[:3]
+                    result["swing_lows"]  = sorted(set(round(v, 4) for v in sl))[:3]
+    except Exception as _e:
+        print(f"fetch_key_levels prior day error: {_e}")
+
+    # ── 2. Overnight / Pre-market Bars (4:00 AM – 9:29 AM trade_date) ────────
+    try:
+        on_start = EASTERN.localize(
+            datetime(trade_date.year, trade_date.month, trade_date.day, 4, 0))
+        on_end   = EASTERN.localize(
+            datetime(trade_date.year, trade_date.month, trade_date.day, 9, 30))
+        now_et = datetime.now(EASTERN)
+        if on_end > now_et:
+            on_end = min(on_end, now_et)
+        if on_start < on_end:
+            req_on = StockBarsRequest(symbol_or_symbols=ticker,
+                                      timeframe=TimeFrame.Minute,
+                                      start=on_start, end=on_end, feed=feed)
+            bars_on = client.get_stock_bars(req_on)
+            df_on   = bars_on.df
+            if not df_on.empty:
+                if isinstance(df_on.index, pd.MultiIndex):
+                    df_on = df_on.xs(ticker, level="symbol")
+                df_on.index = pd.to_datetime(df_on.index)
+                if df_on.index.tz is None:
+                    df_on.index = df_on.index.tz_localize("UTC")
+                df_on.index = df_on.index.tz_convert(EASTERN)
+                df_on = df_on.sort_index()
+                df_on = df_on[(df_on.index.time >= dtime(4, 0)) &
+                               (df_on.index.time < dtime(9, 30))]
+                if not df_on.empty:
+                    result["onh"]    = round(float(df_on["high"].max()), 4)
+                    result["onl"]    = round(float(df_on["low"].min()), 4)
+                    result["on_vol"] = float(df_on["volume"].sum())
+    except Exception as _e:
+        print(f"fetch_key_levels overnight error: {_e}")
+
+    # ── 3. Round Numbers near current price ───────────────────────────────────
+    ref_price = current_price or result["pdc"] or 1.0
+    if ref_price > 0:
+        if ref_price < 1.0:
+            step = 0.25
+        elif ref_price < 5.0:
+            step = 0.50
+        elif ref_price < 20.0:
+            step = 1.00
+        elif ref_price < 50.0:
+            step = 5.00
+        else:
+            step = 10.00
+        import math
+        lo_rn = math.floor(ref_price / step) * step
+        rounds = [round(lo_rn + i * step, 4)
+                  for i in range(-4, 6)
+                  if abs(lo_rn + i * step - ref_price) / ref_price <= 0.20
+                  and lo_rn + i * step > 0]
+        result["round_numbers"] = rounds
+
+    # ── 4. Confluence detection ───────────────────────────────────────────────
+    if entry_low is not None and entry_high is not None:
+        mid = (entry_low + entry_high) / 2.0
+        tol = max((entry_high - entry_low) * 0.5, mid * 0.01)  # ±1% or half zone
+
+        def _near(level) -> bool:
+            return level is not None and abs(level - mid) <= tol
+
+        def _zone_overlap(level) -> bool:
+            """Level falls inside or very near the entry zone."""
+            return level is not None and (entry_low - tol) <= level <= (entry_high + tol)
+
+        notes = []
+        if _zone_overlap(result["pdh"]):
+            notes.append(f"Entry near Prior Day High ${result['pdh']:.4f} — resistance overhead")
+        if _zone_overlap(result["pdl"]):
+            notes.append(f"Entry at Prior Day Low ${result['pdl']:.4f} — strong support floor")
+        if _zone_overlap(result["pdc"]):
+            notes.append(f"Entry near Prior Day Close ${result['pdc']:.4f} — acceptance level")
+        if _zone_overlap(result["onh"]):
+            notes.append(f"Entry at Overnight High ${result['onh']:.4f} — pre-market resistance")
+        if _zone_overlap(result["onl"]):
+            notes.append(f"Entry at Overnight Low ${result['onl']:.4f} — pre-market support floor")
+        for sh in result["swing_highs"]:
+            if _zone_overlap(sh):
+                notes.append(f"Entry at prior swing high ${sh:.4f} — liquidity pool above")
+        for sl in result["swing_lows"]:
+            if _zone_overlap(sl):
+                notes.append(f"Entry at prior swing low ${sl:.4f} — stop cluster below")
+        for rn in result["round_numbers"]:
+            if _zone_overlap(rn):
+                notes.append(f"Round number ${rn:.2f} inside entry zone — psychological magnet")
+
+        result["confluence_notes"] = notes
+        result["has_confluence"]   = len(notes) > 0
+
+    return result
+
+
 def compute_setup_brief(api_key: str, secret_key: str, ticker: str,
                         pred_date, user_id: str = "", feed: str = "iex") -> dict:
     """Generate a full pre-market trade plan for one ticker on pred_date.
@@ -4020,7 +4199,22 @@ def compute_setup_brief(api_key: str, secret_key: str, ticker: str,
                 round(ib_high + ib_range * 2.0, 4),
             ]
 
-        # ── 10. User's personal win rate for this condition ───────────────────
+        # ── 10. Key Levels: PDH/PDL/PDC, Overnight, Round Numbers, Liq Pools ─
+        key_levels = {}
+        try:
+            key_levels = fetch_key_levels(
+                api_key, secret_key, ticker, _dt,
+                entry_low=entry_low, entry_high=entry_high,
+                current_price=final_price, feed=feed,
+            )
+            # Enhance trigger string with confluence notes (first 2 max)
+            if key_levels.get("has_confluence"):
+                conf_notes = key_levels.get("confluence_notes", [])[:2]
+                trigger = trigger + " ⭐ Confluence: " + " | ".join(conf_notes)
+        except Exception as _kle:
+            print(f"fetch_key_levels skipped: {_kle}")
+
+        # ── 11. User's personal win rate for this condition ───────────────────
         win_rate_pct     = None
         win_rate_context = "No data yet — keep trading to build calibration."
         confidence_label = "LOW"
@@ -4088,6 +4282,18 @@ def compute_setup_brief(api_key: str, secret_key: str, ticker: str,
             "win_rate_pct":      win_rate_pct,
             "win_rate_context":  win_rate_context,
             "confidence_label":  confidence_label,
+            # Key levels
+            "pdh":               key_levels.get("pdh"),
+            "pdl":               key_levels.get("pdl"),
+            "pdc":               key_levels.get("pdc"),
+            "onh":               key_levels.get("onh"),
+            "onl":               key_levels.get("onl"),
+            "on_vol":            key_levels.get("on_vol", 0.0),
+            "round_numbers":     key_levels.get("round_numbers", []),
+            "swing_highs":       key_levels.get("swing_highs", []),
+            "swing_lows":        key_levels.get("swing_lows", []),
+            "confluence_notes":  key_levels.get("confluence_notes", []),
+            "has_confluence":    key_levels.get("has_confluence", False),
         }
 
     except Exception as e:

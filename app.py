@@ -7009,6 +7009,7 @@ with tab_scan:
                     _wpe_ok = save_watchlist_predictions(_wpe_payload, user_id=_AUTH_USER_ID)
                     _wpe_brief_count = len(_wpe_briefs)
                     st.session_state["_wpe_last_predictions"] = _wpe_scored
+                    st.session_state["_wpe_last_briefs"]      = _wpe_briefs
                     st.session_state["_wpe_pred_date"] = str(_wpe_pred_date)
                     if _wpe_ok:
                         st.success(
@@ -7079,22 +7080,125 @@ with tab_scan:
     _wpe_df_loaded = st.session_state.get("_wpe_loaded_df")
 
     if _wpe_preds:
+        _wpe_briefs_ss = st.session_state.get("_wpe_last_briefs", {})
         st.subheader(f"Today's Predictions — {st.session_state.get('_wpe_pred_date', '')}")
-        _wpe_display = []
-        for r in _wpe_preds:
-            _tcs_v = r.get("tcs")
-            _edg_v = r.get("edge_score")
-            _wpe_display.append({
-                "Ticker":    r["ticker"],
-                "Structure": r.get("structure") or "—",
-                "TCS":       f"{_tcs_v:.0f}" if _tcs_v is not None else "—",
-                "Edge":      f"{_edg_v:.0f}" if _edg_v is not None else "—",
-            })
-        st.dataframe(
-            _wpe_display,
-            use_container_width=True,
-            height=min(400, 35 + 35 * len(_wpe_display)),
-        )
+
+        if _wpe_briefs_ss:
+            # Rich setup brief cards (with key levels)
+            _sc = {
+                "Trending Up":       ("#4caf50", "▲"), "Trending Down":     ("#ef5350", "▼"),
+                "At IB High":        ("#ffa726", "◆"), "At IB Low":         ("#29b6f6", "◆"),
+                "Inside IB":         ("#9e9e9e", "◼"), "Extended Above IB":  ("#7c4dff", "▲"),
+                "Extended Below IB": ("#ff5252", "▼"),
+            }
+            _cc = {"HIGH": ("#4caf50", "🟢"), "MODERATE": ("#ffa726", "🟡"), "LOW": ("#9e9e9e", "⚪")}
+            for r in _wpe_preds:
+                _tk = r["ticker"]
+                b   = _wpe_briefs_ss.get(_tk, {})
+                if not b:
+                    continue
+                _pstr = b.get("predicted_structure", r.get("structure", "—"))
+                _pclr, _pico = _sc.get(_pstr, ("#888", "●"))
+                _conf = b.get("confidence_label", "LOW")
+                _cclr, _cico = _cc.get(_conf, ("#9e9e9e", "⚪"))
+                _elo  = b.get("entry_zone_low")
+                _ehi  = b.get("entry_zone_high")
+                _stop = b.get("stop_level")
+                _tgts = b.get("targets") or []
+                _trig = str(b.get("entry_trigger") or "—")
+                _pat  = str(b.get("pattern") or "")
+                _nl   = b.get("pattern_neckline")
+                _wrc  = str(b.get("win_rate_context") or "No calibration data yet.")
+                _wrp  = b.get("win_rate_pct")
+                # Key levels
+                _pdh  = b.get("pdh"); _pdl = b.get("pdl"); _pdc = b.get("pdc")
+                _onh  = b.get("onh"); _onl = b.get("onl")
+                _rns  = b.get("round_numbers") or []
+                _sh   = b.get("swing_highs") or []
+                _sl   = b.get("swing_lows") or []
+                _has_conf = b.get("has_confluence", False)
+                _entry_str = (f"${_elo:.4f} – ${_ehi:.4f}"
+                              if _elo is not None and _ehi is not None else "—")
+                _stop_str  = f"${_stop:.4f}" if _stop is not None else "—"
+                _tgt_str   = "  ·  ".join(f"R{i+1} ${t:.4f}" for i, t in enumerate(_tgts[:3]))
+                _pat_str   = f"{_pat} · nkl ${_nl:.4f}" if _pat and _nl else (_pat or "")
+                _wr_display = (f"  ·  {_cico} {_conf} ({_wrp:.0f}%)" if _wrp
+                               else f"  ·  {_cico} {_conf}")
+                # Key level badges string
+                _kl_parts = []
+                if _pdh: _kl_parts.append(f'<span style="background:#ef535022;border:1px solid #ef535044;'
+                                           f'border-radius:3px;padding:1px 5px;font-size:9px;color:#ef5350;">PDH ${_pdh:.4f}</span>')
+                if _pdl: _kl_parts.append(f'<span style="background:#4caf5022;border:1px solid #4caf5044;'
+                                           f'border-radius:3px;padding:1px 5px;font-size:9px;color:#4caf50;">PDL ${_pdl:.4f}</span>')
+                if _pdc: _kl_parts.append(f'<span style="background:#ffa72622;border:1px solid #ffa72644;'
+                                           f'border-radius:3px;padding:1px 5px;font-size:9px;color:#ffa726;">PDC ${_pdc:.4f}</span>')
+                if _onh: _kl_parts.append(f'<span style="background:#7c4dff22;border:1px solid #7c4dff44;'
+                                           f'border-radius:3px;padding:1px 5px;font-size:9px;color:#ab82ff;">ONH ${_onh:.4f}</span>')
+                if _onl: _kl_parts.append(f'<span style="background:#29b6f622;border:1px solid #29b6f644;'
+                                           f'border-radius:3px;padding:1px 5px;font-size:9px;color:#29b6f6;">ONL ${_onl:.4f}</span>')
+                for _rn in _rns[:3]:
+                    _kl_parts.append(f'<span style="background:#37474f;border:1px solid #546e7a;'
+                                     f'border-radius:3px;padding:1px 5px;font-size:9px;color:#90a4ae;">'
+                                     f'${_rn:.2f} round</span>')
+                for _sv in _sh[:2]:
+                    _kl_parts.append(f'<span style="background:#ef535011;border:1px solid #ef535033;'
+                                     f'border-radius:3px;padding:1px 5px;font-size:9px;color:#ef9a9a;">liq↑ ${_sv:.4f}</span>')
+                for _sv in _sl[:2]:
+                    _kl_parts.append(f'<span style="background:#4caf5011;border:1px solid #4caf5033;'
+                                     f'border-radius:3px;padding:1px 5px;font-size:9px;color:#a5d6a7;">liq↓ ${_sv:.4f}</span>')
+                _kl_html = ('<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">'
+                            + "".join(_kl_parts) + '</div>') if _kl_parts else ""
+                _conf_badge = (' <span style="background:#ffa72633;border:1px solid #ffa72666;'
+                               'border-radius:3px;padding:1px 6px;font-size:9px;color:#ffa726;">⭐ CONFLUENCE</span>'
+                               if _has_conf else "")
+                st.markdown(
+                    f'<div style="background:#071b2e;border:1px solid #1e3a5f;border-left:4px solid {_pclr};'
+                    f'border-radius:8px;padding:12px 16px;margin-bottom:10px;">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                    f'<span style="font-size:15px;font-weight:800;color:#fff;">{_tk}</span>'
+                    f'<span style="background:{_pclr}22;border:1px solid {_pclr}66;border-radius:5px;'
+                    f'padding:2px 8px;font-size:11px;color:{_pclr};">{_pico} {_pstr}</span>'
+                    + (f'<span style="background:#1a1a1a;border:1px solid #333;border-radius:5px;'
+                       f'padding:2px 8px;font-size:10px;color:#aaa;">{_pat_str}</span>' if _pat_str else "")
+                    + f'<span style="font-size:10px;color:#666;margin-left:4px;">TCS {b.get("tcs",0):.0f}'
+                    f'  RVOL {b.get("rvol_band","")}</span>'
+                    + _conf_badge
+                    + f'</div>'
+                    + _kl_html
+                    + f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">'
+                    f'<div style="background:#0d2a42;border-radius:5px;padding:6px 10px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:3px;">Entry Zone</div>'
+                    f'<div style="font-size:12px;color:#29b6f6;font-weight:600;">{_entry_str}</div></div>'
+                    f'<div style="background:#0d2a42;border-radius:5px;padding:6px 10px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:3px;">Stop</div>'
+                    f'<div style="font-size:12px;color:#ef5350;font-weight:600;">{_stop_str}</div></div>'
+                    f'<div style="background:#0d2a42;border-radius:5px;padding:6px 10px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:3px;">Targets</div>'
+                    f'<div style="font-size:11px;color:#4caf50;font-weight:600;">{_tgt_str or "—"}</div></div></div>'
+                    f'<div style="font-size:10px;color:#aaa;margin-bottom:4px;line-height:1.4;">'
+                    f'<span style="color:#ffa726;font-weight:600;">Trigger:</span> {_trig}</div>'
+                    f'<div style="font-size:10px;color:#7986cb;line-height:1.4;">'
+                    f'<span style="font-weight:600;">Win Rate:</span> {_wrc}{_wr_display}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            # Fallback simple table when briefs not available
+            _wpe_display = []
+            for r in _wpe_preds:
+                _tcs_v = r.get("tcs")
+                _edg_v = r.get("edge_score")
+                _wpe_display.append({
+                    "Ticker":    r["ticker"],
+                    "Structure": r.get("structure") or "—",
+                    "TCS":       f"{_tcs_v:.0f}" if _tcs_v is not None else "—",
+                    "Edge":      f"{_edg_v:.0f}" if _edg_v is not None else "—",
+                })
+            st.dataframe(
+                _wpe_display,
+                use_container_width=True,
+                height=min(400, 35 + 35 * len(_wpe_display)),
+            )
 
     elif _wpe_df_loaded is not None and not _wpe_df_loaded.empty:
         st.subheader("Saved Predictions")
