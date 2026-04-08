@@ -7802,14 +7802,32 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         key="pt_price_range",
     )
 
-    _pt_default_tickers = "SATL, UGRO, ANNA, VCX, CODX, ARTL, SWMR, FEED, RBNE, PAVS, LNKS, BIAF, ACXP, GOAI"
-    _pt_tickers_raw = st.text_area(
-        "Tickers to scan (comma-separated)",
-        value=_pt_default_tickers,
-        height=80,
-        key="pt_tickers",
-        help="Enter your watchlist. Add gap scanner picks each morning for best coverage.",
+    # ── Auto-watchlist (Finviz) + optional extras ────────────────────────────
+    _pt_auto_wl = load_watchlist(user_id=_AUTH_USER_ID) or []
+    _pt_auto_str = ", ".join(_pt_auto_wl) if _pt_auto_wl else ""
+
+    st.markdown(
+        f'<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
+        f'padding:12px 16px; margin-bottom:10px;">'
+        f'<span style="font-size:13px; font-weight:700; color:#66bb6a;">🤖 Auto-Watchlist — {len(_pt_auto_wl)} tickers</span><br>'
+        f'<span style="font-size:11px; color:#388e3c; line-height:1.6;">'
+        f'Populated automatically from Finviz at <b>9:15 AM ET</b> every trading day '
+        f'using your exact filter settings (% Change ≥ 3% · Float ≤ 100M · Vol ≥ 1M · US only).<br>'
+        f'<span style="color:#81c784;">{_pt_auto_str[:120]}{"…" if len(_pt_auto_str) > 120 else ""}</span>'
+        f'</span>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
+    _pt_extra_raw = st.text_input(
+        "➕ Extra tickers to add (optional — leave blank to use auto-watchlist only)",
+        value="",
+        key="pt_extra_tickers",
+        placeholder="e.g. RENX, PFSA, VRAX",
+    )
+    _pt_extra = [t.strip().upper() for t in _pt_extra_raw.split(",") if t.strip() and t.strip().isalpha()]
+    _pt_combined = _pt_auto_wl + [t for t in _pt_extra if t not in _pt_auto_wl]
+    _pt_tickers_raw = ", ".join(_pt_combined)
+    _pt_default_tickers = _pt_tickers_raw
 
     _pt_scan_btn = st.button(
         "🔍 Scan & Log Paper Trades",
