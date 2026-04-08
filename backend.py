@@ -5253,6 +5253,62 @@ def load_eod_notes(user_id: str = "", limit: int = 60) -> list:
     return merged[:limit]
 
 
+def enrich_eod_from_journal(eod_notes: list, journal_df) -> list:
+    """Merge quantitative journal data into EOD notes without duplication.
+
+    For each EOD note, scans `journal_df` for a matching (ticker, date) entry.
+    When found:
+      - EOD note keeps its narrative text, images, and outcome (it is primary)
+      - TCS, RVOL, IB high/low, structure are pulled from the journal row if
+        the EOD note doesn't already carry them
+      - A `_journal_ctx` dict is attached to the EOD note for display/analytics:
+          {ticker: {tcs, rvol, ib_high, ib_low, structure, grade}}
+
+    This prevents double-counting: the same trade is represented once, combining
+    the qualitative depth of the EOD note with the quantitative precision of the
+    journal row.  Analytics (win rates, brain calibration) should prefer this
+    merged record over either source alone.
+    """
+    if not eod_notes or journal_df is None or journal_df.empty:
+        return eod_notes
+
+    import pandas as _pd
+
+    # Build lookup: (ticker_upper, date_str) → journal row dict
+    _jlookup: dict = {}
+    for _, _jr in journal_df.iterrows():
+        _tk = str(_jr.get("ticker", "")).upper().strip()
+        _ts = str(_jr.get("timestamp", ""))[:10]
+        if _tk and _ts:
+            _jlookup[(_tk, _ts)] = _jr.to_dict()
+
+    enriched = []
+    for note in eod_notes:
+        note = dict(note)  # copy — never mutate the original
+        _nd  = str(note.get("note_date", ""))[:10]
+        _wt  = str(note.get("watch_tickers", ""))
+        _ctx: dict = {}
+
+        for _tk_raw in [t.strip().upper() for t in _wt.split(",") if t.strip()]:
+            _jrow = _jlookup.get((_tk_raw, _nd))
+            if not _jrow:
+                continue
+
+            _entry: dict = {}
+            for _field in ("tcs", "rvol", "ib_high", "ib_low", "structure", "grade"):
+                _val = _jrow.get(_field)
+                if _val is not None and str(_val) not in ("", "nan", "None"):
+                    _entry[_field] = _val
+            if _entry:
+                _ctx[_tk_raw] = _entry
+
+        if _ctx:
+            note["_journal_ctx"] = _ctx
+        enriched.append(note)
+
+    return enriched
+
+
 # ── EOD Prediction Verification ───────────────────────────────────────────────
 
 def get_next_trading_day(after_date, api_key: str = "", secret_key: str = ""):

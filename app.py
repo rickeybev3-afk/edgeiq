@@ -26,6 +26,7 @@ from backend import (
     compute_pretrade_quality,
     scan_ticker_patterns,
     enrich_trade_context,
+    enrich_eod_from_journal,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -1182,13 +1183,15 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             else:
                 st.warning("⚠️ Saved locally — will sync to cloud on next load when Supabase is available.")
             # Auto-reload so changes appear immediately without manual button click
-            st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=100)
+            _raw_notes = load_eod_notes(user_id=_uid, limit=100)
+            st.session_state["_eod_notes_loaded"] = enrich_eod_from_journal(_raw_notes, df)
             st.rerun()
         else:
             st.error("❌ Save failed completely. Contact support.")
 
     if _eod_load_col.button("📂 Load Past Reviews", use_container_width=True, key="eod_load_btn"):
-        st.session_state["_eod_notes_loaded"] = load_eod_notes(user_id=_uid, limit=100)
+        _raw_notes = load_eod_notes(user_id=_uid, limit=100)
+        st.session_state["_eod_notes_loaded"] = enrich_eod_from_journal(_raw_notes, df)
 
     # ── Display loaded notes ──────────────────────────────────────────────────
     import re as _re
@@ -1260,6 +1263,37 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     f"📅 {_nd}" + (f"  ·  👀 {_nw}" if _nw else "") + _outcome_badge,
                     expanded=True
                 ):
+                    # ── Journal merge badge (shown when journal data found) ────
+                    _jctx = _n.get("_journal_ctx", {})
+                    if _jctx:
+                        _jbadges = []
+                        for _jtk, _jd in _jctx.items():
+                            _parts = []
+                            if _jd.get("tcs") is not None:
+                                _parts.append(f"TCS {float(_jd['tcs']):.0f}")
+                            if _jd.get("rvol") is not None:
+                                _parts.append(f"RVOL {float(_jd['rvol']):.1f}x")
+                            if _jd.get("structure"):
+                                _parts.append(str(_jd["structure"]))
+                            if _jd.get("grade"):
+                                _gc = {"A":"#4caf50","B":"#26a69a","C":"#ffa726","F":"#ef5350"}.get(str(_jd["grade"]),"#888")
+                                _parts.append(f'<span style="color:{_gc};font-weight:800;">Grade {_jd["grade"]}</span>')
+                            if _parts:
+                                _jbadges.append(
+                                    f'<span style="font-weight:700;color:#90caf9;">{_jtk}</span>'
+                                    f' &nbsp;{"  ·  ".join(_parts)}'
+                                )
+                        if _jbadges:
+                            st.markdown(
+                                f'<div style="background:#0d1b2a;border:1px solid #1e3a5f;'
+                                f'border-left:3px solid #29b6f6;border-radius:6px;'
+                                f'padding:7px 14px;margin-bottom:10px;font-size:12px;color:#aaa;">'
+                                f'<span style="font-size:10px;text-transform:uppercase;'
+                                f'letter-spacing:1px;color:#555;">📊 Journal data auto-merged</span><br>'
+                                + "<br>".join(_jbadges)
+                                + "</div>",
+                                unsafe_allow_html=True,
+                            )
                     if _nw:
                         _above = _re.findall(r'[Pp]rice\s+[Aa]bove\s+([\$]?[\d\.]+)', _nt)
                         _below = _re.findall(r'[Pp]rice\s+[Bb]elow\s+([\$]?[\d\.]+)', _nt)
