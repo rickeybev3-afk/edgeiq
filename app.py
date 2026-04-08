@@ -7857,7 +7857,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         feed=_pt_feed_str,
                         price_min=_pt_pmin,
                         price_max=_pt_pmax,
-                        slippage_pct=0.0,
+                        slippage_pct=0.75,
                     )
                 if _pt_summary.get("error"):
                     st.error(_pt_summary["error"])
@@ -8087,7 +8087,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 feed=_pt_feed_str,
                 price_min=float(_pt_price_range[0]),
                 price_max=float(_pt_price_range[1]),
-                slippage_pct=0.0,
+                slippage_pct=0.75,
             )
         if _eod_sum.get("error"):
             st.error(_eod_sum["error"])
@@ -8151,7 +8151,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         price_max=float(_pt_price_range[1]),
                         cutoff_hour=h,
                         cutoff_minute=m,
-                        slippage_pct=0.0,
+                        slippage_pct=0.75,
                     )
                     return label, res, summ
                 with _WCTP(max_workers=3) as _wc_ex:
@@ -9521,7 +9521,7 @@ if st.session_state.get("_pt_live_mode"):
                     feed=_pt_fd,
                     price_min=float(_pt_pr[0]),
                     price_max=float(_pt_pr[1]),
-                    slippage_pct=0.0,
+                    slippage_pct=0.75,
                 )
                 _auto_q = [
                     dict(r, sim_date=str(_pt_at))
