@@ -6732,6 +6732,22 @@ with tab_scan:
                 _ib_warn = "" if _ib_formed else " ⚠️"
                 _src_tag = f'({_ib_src})'
 
+            # ── Fallback quality row from gap data when market closed ────────
+            _sq_err = (_sq or {}).get("error", "") if not _has_quality else ""
+            _market_closed_fallback = not _has_quality and "No bar data" in _sq_err
+            if _market_closed_fallback:
+                _abs_gap = abs(gap)
+                if _abs_gap >= 10:
+                    _gq_lbl, _gq_clr = "Strong Gap", "#4caf50"
+                elif _abs_gap >= 5:
+                    _gq_lbl, _gq_clr = "Moderate Gap", "#FF9500"
+                elif _abs_gap >= 2:
+                    _gq_lbl, _gq_clr = "Weak Gap", "#FFD700"
+                else:
+                    _gq_lbl, _gq_clr = "Minimal", "#888"
+                _rvol_fb = f"{rvol:.1f}×" if rvol and rvol > 0 else "—"
+                _rvol_fb_clr = _rvol_color(rvol) if rvol and rvol > 0 else "#555"
+
             # ── Unified card — everything at a glance ────────────────────────
             _quality_row = ""
             if _has_quality:
@@ -6756,8 +6772,33 @@ with tab_scan:
                     f'</div>'
                     f'</div>'
                 )
+            elif _market_closed_fallback:
+                _quality_row = (
+                    f'<div style="display:flex;align-items:center;flex-wrap:wrap;gap:14px;'
+                    f'margin-top:10px;padding-top:10px;border-top:1px solid #1e2a3a;">'
+                    f'<div style="text-align:center;min-width:72px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:2px;">Gap Quality</div>'
+                    f'<div style="font-size:15px;font-weight:800;color:{_gq_clr};">{_gq_lbl}</div>'
+                    f'<div style="font-size:9px;color:#555;">{abs(gap):.1f}% move</div>'
+                    f'</div>'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:2px;">PM RVOL</div>'
+                    f'<div style="font-size:15px;font-weight:800;color:{_rvol_fb_clr};">{_rvol_fb}</div>'
+                    f'</div>'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:2px;">IB</div>'
+                    f'<div style="font-size:13px;font-weight:700;color:#555;">Pending</div>'
+                    f'<div style="font-size:9px;color:#444;">Forms 9:30–10:30 AM ET</div>'
+                    f'</div>'
+                    f'<div style="margin-left:auto;background:#1a1a2e;border:2px solid #333;'
+                    f'border-radius:8px;padding:6px 16px;text-align:center;">'
+                    f'<div style="font-size:14px;font-weight:700;color:#555;">🕐 After Open</div>'
+                    f'<div style="font-size:9px;color:#444;margin-top:1px;">TCS + GO/WAIT after 10:30 AM</div>'
+                    f'</div>'
+                    f'</div>'
+                )
 
-            _border_clr = _go_brd if _has_quality else "#2a2a4a"
+            _border_clr = _go_brd if _has_quality else ("#1e3a2e" if _market_closed_fallback else "#2a2a4a")
             st.markdown(
                 f'<div style="background:#12122299;border:1px solid {_border_clr};'
                 f'border-left:4px solid {_border_clr};'
@@ -6807,7 +6848,7 @@ with tab_scan:
                             st.session_state.pop(_ov_key_l, None)
                             st.rerun()
 
-            if _sq and _sq.get("error"):
+            if _sq and _sq.get("error") and "No bar data" not in _sq.get("error", ""):
                 st.caption(f"⚠️ Quality check unavailable: {_sq['error']}")
 
             # ── Pattern Alert Badge ──────────────────────────────────────────
