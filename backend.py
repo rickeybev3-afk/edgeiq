@@ -3868,6 +3868,232 @@ def enrich_trade_context(api_key: str, secret_key: str, ticker: str,
         return {}
 
 
+def compute_setup_brief(api_key: str, secret_key: str, ticker: str,
+                        pred_date, user_id: str = "", feed: str = "iex") -> dict:
+    """Generate a full pre-market trade plan for one ticker on pred_date.
+
+    Synthesizes all available signals into an actionable setup brief:
+      - Structure prediction + brain confidence
+      - Entry zone (from IB levels and/or detected pattern neckline)
+      - Entry trigger (human-readable condition: price level + RVOL + time gate)
+      - Stop level (from pattern geometry or IB Low floor)
+      - Price targets R1/R2/R3 (from volume profile extensions)
+      - User's personal win rate for this exact condition cluster
+
+    The win_rate_pct and win_rate_context fields update automatically every
+    time the brief is regenerated — no rebuild needed as more trades are logged.
+
+    Returns a dict on success, {"error": str} on failure.
+    """
+    try:
+        from datetime import date as _date
+
+        if hasattr(pred_date, "date"):
+            _dt = pred_date.date()
+        elif isinstance(pred_date, str):
+            from dateutil.parser import parse as _dp
+            _dt = _dp(pred_date).date()
+        else:
+            _dt = pred_date
+
+        # ── 1. Fetch intraday bars ────────────────────────────────────────────
+        df = fetch_bars(api_key, secret_key, ticker, _dt, feed=feed)
+        if df is None or df.empty or len(df) < 5:
+            return {"error": "Insufficient bar data"}
+
+        # ── 2. Volume profile and IB ──────────────────────────────────────────
+        bin_centers, vap, poc_price = compute_volume_profile(df, num_bins=100)
+        ib_high, ib_low = compute_initial_balance(df)
+        if ib_high is None or ib_low is None:
+            return {"error": "IB not formed yet"}
+        ib_range = ib_high - ib_low
+
+        # ── 3. TCS and IB position ───────────────────────────────────────────
+        tcs = float(compute_tcs(df, ib_high, ib_low, poc_price))
+        final_price = float(df["close"].iloc[-1])
+        margin      = ib_range * 0.05
+        if final_price >= ib_high + margin:
+            ib_pos = "Extended Above IB"
+        elif final_price <= ib_low - margin:
+            ib_pos = "Extended Below IB"
+        elif final_price <= ib_low + margin:
+            ib_pos = "At IB Low"
+        elif final_price >= ib_high - margin:
+            ib_pos = "At IB High"
+        else:
+            ib_pos = "Inside IB"
+
+        # ── 4. Pattern detection ──────────────────────────────────────────────
+        patterns    = detect_chart_patterns(df, poc_price=poc_price,
+                                            ib_high=ib_high, ib_low=ib_low)
+        top_pattern = patterns[0] if patterns else None
+        pattern_name     = top_pattern.get("name", "")    if top_pattern else ""
+        pattern_neckline = top_pattern.get("neckline")    if top_pattern else None
+        pattern_conf     = top_pattern.get("score", 0)   if top_pattern else 0
+        # Parse head price from description string (e.g. "Head $0.28")
+        import re as _re_sb
+        pattern_head = None
+        if top_pattern:
+            _hm = _re_sb.search(r"Head \$([\d\.]+)", top_pattern.get("description", ""))
+            if _hm:
+                try:
+                    pattern_head = float(_hm.group(1))
+                except ValueError:
+                    pattern_head = None
+
+        # ── 5. RVOL ──────────────────────────────────────────────────────────
+        try:
+            rvol_curve = build_rvol_intraday_curve(
+                api_key, secret_key, ticker, _dt, lookback_days=10, feed=feed)
+        except Exception:
+            rvol_curve = None
+        try:
+            avg_vol = fetch_avg_daily_volume(api_key, secret_key, ticker, _dt)
+        except Exception:
+            avg_vol = None
+        rvol = compute_rvol(df, intraday_curve=rvol_curve, avg_daily_vol=avg_vol)
+        rvol_band_label = _rvol_band(float(rvol)) if rvol else "Normal"
+
+        # ── 6. Brain model prediction ─────────────────────────────────────────
+        try:
+            brain_pred = compute_model_prediction(df, rvol, tcs, sector_bonus=0.0)
+            predicted_structure = brain_pred.get("label", ib_pos)
+            brain_confidence    = float(brain_pred.get("confidence", 0.5)) * 100
+        except Exception:
+            predicted_structure = ib_pos
+            brain_confidence    = 50.0
+
+        # ── 7. Entry zone ─────────────────────────────────────────────────────
+        _is_pattern_entry = (
+            pattern_neckline is not None and
+            any(k in pattern_name.lower() for k in ("head", "h&s", "reverse", "double"))
+        )
+        if _is_pattern_entry:
+            # Pattern-based: neckline is the trigger; enter within 1% of neckline
+            entry_low  = round(pattern_neckline * 0.990, 4)
+            entry_high = round(pattern_neckline * 1.010, 4)
+            trigger    = (f"Neckline reclaim ${pattern_neckline:.4f} "
+                          f"with RVOL > 2× after 10:30 ET")
+        elif ib_pos == "At IB Low":
+            entry_low  = round(ib_low - ib_range * 0.02, 4)
+            entry_high = round(ib_low + ib_range * 0.08, 4)
+            trigger    = (f"Hold above IB Low ${ib_low:.4f} with RVOL > 2× "
+                          f"after 10:30 ET — look for reclaim candle")
+        elif ib_pos == "At IB High":
+            entry_low  = round(ib_high - ib_range * 0.02, 4)
+            entry_high = round(ib_high + ib_range * 0.05, 4)
+            trigger    = (f"IB High ${ib_high:.4f} breakout + hold "
+                          f"with RVOL > 2× after 10:30 ET")
+        elif ib_pos == "Extended Above IB":
+            vwap_val   = float(df["vwap"].iloc[-1]) if "vwap" in df.columns else final_price
+            entry_low  = round(vwap_val * 0.990, 4)
+            entry_high = round(vwap_val * 1.010, 4)
+            trigger    = (f"Pullback to VWAP ${vwap_val:.4f} and reclaim "
+                          f"with RVOL > 1.5× — momentum continuation entry")
+        else:  # Inside IB / generic
+            entry_low  = round(poc_price * 0.985, 4)
+            entry_high = round(poc_price * 1.015, 4)
+            trigger    = (f"Wait for IB break with RVOL > 2.5× after 10:30 ET — "
+                          f"no edge inside IB without volume confirmation")
+
+        # ── 8. Stop level ─────────────────────────────────────────────────────
+        if pattern_head is not None:
+            stop_level = round(float(pattern_head) * 0.995, 4)  # 0.5% below head
+        elif ib_pos in ("At IB Low", "Extended Below IB"):
+            stop_level = round(ib_low - ib_range * 0.15, 4)
+        elif ib_pos == "At IB High":
+            stop_level = round(ib_high - ib_range * 0.20, 4)
+        else:
+            stop_level = round(entry_low - (entry_high - entry_low) * 1.5, 4)
+
+        # ── 9. Price targets from volume profile ──────────────────────────────
+        tz_list = compute_target_zones(df, ib_high, ib_low, bin_centers, vap, tcs)
+        # Collect upside target prices (above entry) sorted ascending
+        target_prices = sorted(
+            set(round(z["price"], 4) for z in tz_list if z["price"] > entry_high),
+        )[:3]
+        # Fallback targets from IB extensions if volume profile gave nothing
+        if not target_prices:
+            target_prices = [
+                round(ib_high + ib_range * 1.0, 4),
+                round(ib_high + ib_range * 1.5, 4),
+                round(ib_high + ib_range * 2.0, 4),
+            ]
+
+        # ── 10. User's personal win rate for this condition ───────────────────
+        win_rate_pct     = None
+        win_rate_context = "No data yet — keep trading to build calibration."
+        confidence_label = "LOW"
+        try:
+            if user_id:
+                wr_data = compute_win_rates(user_id, min_samples=1)
+                tcs_bucket = (
+                    "Weak" if tcs < 40 else
+                    "Moderate" if tcs < 55 else
+                    "Strong" if tcs < 70 else "Elite"
+                )
+                edge_band_label = _edge_band(tcs)
+                cluster_key = (
+                    f"edge:{edge_band_label} "
+                    f"rvol:{rvol_band_label} "
+                    f"struct:{ib_pos}"
+                )
+                cluster = wr_data.get(cluster_key)
+                if cluster and cluster.get("n", 0) >= 1:
+                    wr_pct = cluster["win_rate"] * 100
+                    n      = cluster["n"]
+                    win_rate_pct     = round(wr_pct, 1)
+                    win_rate_context = (
+                        f"{ib_pos} + TCS {tcs_bucket} + RVOL {rvol_band_label}: "
+                        f"{wr_pct:.0f}% win rate ({n} trade{'s' if n!=1 else ''})"
+                    )
+                    if wr_pct >= 75 and n >= 5:
+                        confidence_label = "HIGH"
+                    elif wr_pct >= 55 and n >= 3:
+                        confidence_label = "MODERATE"
+                    else:
+                        confidence_label = "LOW"
+                else:
+                    # Fall back to structure-only
+                    struct_data = wr_data.get("_by_struct", {}).get(ib_pos)
+                    if struct_data and struct_data.get("n", 0) >= 1:
+                        wr_pct = struct_data["win_rate"] * 100
+                        n      = struct_data["n"]
+                        win_rate_pct     = round(wr_pct, 1)
+                        win_rate_context = (
+                            f"{ib_pos}: {wr_pct:.0f}% win rate ({n} trade{'s' if n!=1 else ''}) "
+                            f"— building {ib_pos} + TCS history"
+                        )
+                        confidence_label = "MODERATE" if wr_pct >= 55 else "LOW"
+        except Exception:
+            pass
+
+        return {
+            "ticker":            ticker,
+            "pred_date":         str(_dt),
+            "predicted_structure": predicted_structure,
+            "brain_confidence":  round(brain_confidence, 1),
+            "ib_position":       ib_pos,
+            "tcs":               round(tcs, 1),
+            "rvol":              rvol,
+            "rvol_band":         rvol_band_label,
+            "pattern":           pattern_name,
+            "pattern_neckline":  pattern_neckline,
+            "pattern_confidence": pattern_conf,
+            "entry_zone_low":    entry_low,
+            "entry_zone_high":   entry_high,
+            "entry_trigger":     trigger,
+            "stop_level":        stop_level,
+            "targets":           target_prices,
+            "win_rate_pct":      win_rate_pct,
+            "win_rate_context":  win_rate_context,
+            "confidence_label":  confidence_label,
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def _parse_batch_pairs(text: str) -> list[tuple]:
     """Parse 'M/D: T1, T2, ...' lines into [(ticker, date), ...] for year 2026."""
     import re
@@ -5417,33 +5643,63 @@ def save_eod_outcome(note_date, outcome: dict, user_id: str = "") -> bool:
 def save_watchlist_predictions(predictions: list, user_id: str = "") -> bool:
     """Upsert batch structure+edge predictions for the user's watchlist.
 
-    predictions: list of dicts with keys:
+    predictions: list of dicts with base keys:
         ticker, pred_date, predicted_structure, tcs, edge_score
+    Optional setup brief keys (stored when present; ignored if schema not migrated):
+        entry_zone_low, entry_zone_high, entry_trigger, stop_level,
+        targets, pattern, pattern_neckline, win_rate_pct,
+        win_rate_context, confidence_label
     One row per (user_id, ticker, pred_date) — safe to re-run same day.
     """
+    import json as _json
     if not supabase or not predictions:
         return False
+
+    def _build_row(p, include_brief: bool) -> dict:
+        row = {
+            "user_id":             user_id or "anonymous",
+            "ticker":              str(p.get("ticker", "")).upper().strip(),
+            "pred_date":           str(p.get("pred_date", date.today())),
+            "predicted_structure": p.get("predicted_structure") or "—",
+            "tcs":                 float(p.get("tcs") or 0),
+            "edge_score":          float(p.get("edge_score") or 0),
+            "verified":            False,
+            "actual_structure":    "",
+            "correct":             "",
+        }
+        if include_brief:
+            targets_raw = p.get("targets")
+            row["entry_zone_low"]   = p.get("entry_zone_low")
+            row["entry_zone_high"]  = p.get("entry_zone_high")
+            row["entry_trigger"]    = p.get("entry_trigger") or ""
+            row["stop_level"]       = p.get("stop_level")
+            row["targets"]          = (_json.dumps(targets_raw)
+                                       if isinstance(targets_raw, list) else None)
+            row["pattern"]          = p.get("pattern") or ""
+            row["pattern_neckline"] = p.get("pattern_neckline")
+            row["win_rate_pct"]     = p.get("win_rate_pct")
+            row["win_rate_context"] = p.get("win_rate_context") or ""
+            row["confidence_label"] = p.get("confidence_label") or "LOW"
+        return row
+
     try:
-        rows = []
-        for p in predictions:
-            rows.append({
-                "user_id":             user_id or "anonymous",
-                "ticker":              str(p.get("ticker", "")).upper().strip(),
-                "pred_date":           str(p.get("pred_date", date.today())),
-                "predicted_structure": p.get("predicted_structure") or "—",
-                "tcs":                 float(p.get("tcs") or 0),
-                "edge_score":          float(p.get("edge_score") or 0),
-                "verified":            False,
-                "actual_structure":    "",
-                "correct":             "",
-            })
+        rows = [_build_row(p, include_brief=True) for p in predictions]
         supabase.table("watchlist_predictions").upsert(
             rows, on_conflict="user_id,ticker,pred_date"
         ).execute()
         return True
-    except Exception as e:
-        print(f"save_watchlist_predictions error: {e}")
-        return False
+    except Exception as e1:
+        # Schema not yet migrated — fall back to base columns only
+        print(f"save_watchlist_predictions full schema failed ({e1}), retrying base columns")
+        try:
+            rows = [_build_row(p, include_brief=False) for p in predictions]
+            supabase.table("watchlist_predictions").upsert(
+                rows, on_conflict="user_id,ticker,pred_date"
+            ).execute()
+            return True
+        except Exception as e2:
+            print(f"save_watchlist_predictions error: {e2}")
+            return False
 
 
 def load_watchlist_predictions(user_id: str = "", pred_date=None) -> pd.DataFrame:
@@ -5451,10 +5707,14 @@ def load_watchlist_predictions(user_id: str = "", pred_date=None) -> pd.DataFram
 
     If pred_date is None, loads all rows for the user sorted by date desc.
     """
-    _cols = ["ticker", "pred_date", "predicted_structure", "tcs",
-             "edge_score", "actual_structure", "verified", "correct"]
+    _base_cols = ["ticker", "pred_date", "predicted_structure", "tcs",
+                  "edge_score", "actual_structure", "verified", "correct"]
+    _brief_cols = ["entry_zone_low", "entry_zone_high", "entry_trigger",
+                   "stop_level", "targets", "pattern", "pattern_neckline",
+                   "win_rate_pct", "win_rate_context", "confidence_label"]
+    _all_cols = _base_cols + _brief_cols
     if not supabase:
-        return pd.DataFrame(columns=_cols)
+        return pd.DataFrame(columns=_all_cols)
     try:
         q = supabase.table("watchlist_predictions").select("*")
         uid = user_id or "anonymous"
@@ -5466,15 +5726,28 @@ def load_watchlist_predictions(user_id: str = "", pred_date=None) -> pd.DataFram
         q = q.order("edge_score", desc=True).limit(300)
         res = q.execute()
         if not res.data:
-            return pd.DataFrame(columns=_cols)
+            return pd.DataFrame(columns=_all_cols)
         df = pd.DataFrame(res.data)
-        for c in _cols:
+        for c in _all_cols:
             if c not in df.columns:
-                df[c] = ""
+                df[c] = "" if c in _base_cols else None
+        # Decode targets JSON string → list if needed
+        if "targets" in df.columns:
+            import json as _json
+            def _parse_targets(v):
+                if isinstance(v, list):
+                    return v
+                if isinstance(v, str) and v:
+                    try:
+                        return _json.loads(v)
+                    except Exception:
+                        pass
+                return []
+            df["targets"] = df["targets"].apply(_parse_targets)
         return df
     except Exception as e:
         print(f"load_watchlist_predictions error: {e}")
-        return pd.DataFrame(columns=_cols)
+        return pd.DataFrame(columns=_all_cols)
 
 
 def get_next_trading_day(as_of: date = None,

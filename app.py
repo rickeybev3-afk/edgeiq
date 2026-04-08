@@ -27,6 +27,7 @@ from backend import (
     scan_ticker_patterns,
     enrich_trade_context,
     enrich_eod_from_journal,
+    compute_setup_brief,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -1068,30 +1069,102 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         )
 
         _struct_colors = {
-            "Trending Up":   ("#4caf50", "▲"),
-            "Trending Down": ("#ef5350", "▼"),
-            "At IB High":    ("#ffa726", "◆"),
-            "At IB Low":     ("#29b6f6", "◆"),
-            "Inside IB":     ("#9e9e9e", "◼"),
+            "Trending Up":       ("#4caf50", "▲"),
+            "Trending Down":     ("#ef5350", "▼"),
+            "At IB High":        ("#ffa726", "◆"),
+            "At IB Low":         ("#29b6f6", "◆"),
+            "Inside IB":         ("#9e9e9e", "◼"),
+            "Extended Above IB": ("#7c4dff", "▲"),
+            "Extended Below IB": ("#ff5252", "▼"),
         }
-        _chips_html = ""
-        for _, _pr in _pm_preds_df.iterrows():
-            _ptk  = _pr.get("ticker", "")
-            _pstr = _pr.get("predicted_structure", "—")
-            _pver = _pr.get("verified", False)
-            _pcor = _pr.get("correct", "")
-            _pclr, _pico = _struct_colors.get(_pstr, ("#888", "●"))
-            _vstamp = (f' <span style="color:#4caf50;font-size:10px;">✅</span>' if _pver and _pcor == "✅"
-                       else f' <span style="color:#ef5350;font-size:10px;">❌</span>' if _pver
-                       else "")
-            _chips_html += (
-                f'<div style="background:#0d2a42;border:1px solid {_pclr}44;border-radius:6px;'
-                f'padding:5px 12px;font-size:12px;">'
-                f'<span style="font-weight:700;color:#fff;">{_ptk}</span>'
-                f'<span style="color:{_pclr};margin-left:6px;">{_pico} {_pstr}</span>'
-                f'{_vstamp}</div>'
-            )
-        st.markdown(_chips_html + "</div></div>", unsafe_allow_html=True)
+        _conf_colors = {
+            "HIGH":     ("#4caf50", "🟢"),
+            "MODERATE": ("#ffa726", "🟡"),
+            "LOW":      ("#9e9e9e", "⚪"),
+        }
+        _has_brief = (
+            "entry_zone_low" in _pm_preds_df.columns and
+            _pm_preds_df["entry_zone_low"].notna().any()
+        )
+
+        if _has_brief:
+            # Full setup brief cards — one per row
+            st.markdown("</div></div>", unsafe_allow_html=True)
+            for _, _pr in _pm_preds_df.iterrows():
+                _ptk  = _pr.get("ticker", "")
+                _pstr = _pr.get("predicted_structure", "—")
+                _pver = bool(_pr.get("verified", False))
+                _pcor = str(_pr.get("correct", ""))
+                _pclr, _pico = _struct_colors.get(_pstr, ("#888", "●"))
+                _conf = str(_pr.get("confidence_label") or "LOW")
+                _cclr, _cico = _conf_colors.get(_conf, ("#9e9e9e", "⚪"))
+                _elo  = _pr.get("entry_zone_low")
+                _ehi  = _pr.get("entry_zone_high")
+                _stop = _pr.get("stop_level")
+                _tgts = _pr.get("targets") or []
+                _trig = str(_pr.get("entry_trigger") or "—")
+                _pat  = str(_pr.get("pattern") or "")
+                _nl   = _pr.get("pattern_neckline")
+                _wrc  = str(_pr.get("win_rate_context") or "No win rate data yet.")
+                _wrp  = _pr.get("win_rate_pct")
+                _vstamp = ("✅ Correct" if _pver and _pcor == "✅"
+                           else "❌ Incorrect" if _pver
+                           else "⏳ Unverified")
+                _vstamp_clr = "#4caf50" if "Correct" in _vstamp else "#ef5350" if "Incorrect" in _vstamp else "#555"
+                _entry_str = (f"${_elo:.4f} – ${_ehi:.4f}"
+                              if _elo is not None and _ehi is not None else "—")
+                _stop_str  = f"${_stop:.4f}" if _stop is not None else "—"
+                _tgt_str   = "  ·  ".join(f"R{i+1} ${t:.4f}" for i, t in enumerate(_tgts[:3]))
+                _pat_str   = f"{_pat}  neckline ${_nl:.4f}" if _pat and _nl else (_pat or "")
+                _wr_display = f"  ·  {_cico} {_conf} confidence ({_wrp:.0f}%)" if _wrp else f"  ·  {_cico} {_conf} confidence"
+                st.markdown(
+                    f'<div style="background:#071b2e;border:1px solid #1e3a5f;border-left:4px solid {_pclr};'
+                    f'border-radius:8px;padding:12px 16px;margin-bottom:10px;">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                    f'<span style="font-size:15px;font-weight:800;color:#fff;">{_ptk}</span>'
+                    f'<span style="background:{_pclr}22;border:1px solid {_pclr}66;border-radius:5px;'
+                    f'padding:2px 8px;font-size:11px;color:{_pclr};">{_pico} {_pstr}</span>'
+                    + (f'<span style="background:#1a1a1a;border:1px solid #333;border-radius:5px;'
+                       f'padding:2px 8px;font-size:10px;color:#aaa;">{_pat_str}</span>' if _pat_str else "")
+                    + f'<span style="margin-left:auto;font-size:10px;color:{_vstamp_clr};">{_vstamp}</span>'
+                    f'</div>'
+                    f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">'
+                    f'<div style="background:#0d2a42;border-radius:5px;padding:6px 10px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:3px;">Entry Zone</div>'
+                    f'<div style="font-size:12px;color:#29b6f6;font-weight:600;">{_entry_str}</div></div>'
+                    f'<div style="background:#0d2a42;border-radius:5px;padding:6px 10px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:3px;">Stop</div>'
+                    f'<div style="font-size:12px;color:#ef5350;font-weight:600;">{_stop_str}</div></div>'
+                    f'<div style="background:#0d2a42;border-radius:5px;padding:6px 10px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:3px;">Targets</div>'
+                    f'<div style="font-size:11px;color:#4caf50;font-weight:600;">{_tgt_str or "—"}</div></div></div>'
+                    f'<div style="font-size:10px;color:#aaa;margin-bottom:4px;line-height:1.4;">'
+                    f'<span style="color:#ffa726;font-weight:600;">Trigger:</span> {_trig}</div>'
+                    f'<div style="font-size:10px;color:#7986cb;line-height:1.4;">'
+                    f'<span style="font-weight:600;">Win Rate:</span> {_wrc}{_wr_display}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            # Legacy: simple chips (schema not yet migrated)
+            _chips_html = ""
+            for _, _pr in _pm_preds_df.iterrows():
+                _ptk  = _pr.get("ticker", "")
+                _pstr = _pr.get("predicted_structure", "—")
+                _pver = bool(_pr.get("verified", False))
+                _pcor = str(_pr.get("correct", ""))
+                _pclr, _pico = _struct_colors.get(_pstr, ("#888", "●"))
+                _vstamp = (f' <span style="color:#4caf50;font-size:10px;">✅</span>' if _pver and _pcor == "✅"
+                           else f' <span style="color:#ef5350;font-size:10px;">❌</span>' if _pver
+                           else "")
+                _chips_html += (
+                    f'<div style="background:#0d2a42;border:1px solid {_pclr}44;border-radius:6px;'
+                    f'padding:5px 12px;font-size:12px;">'
+                    f'<span style="font-weight:700;color:#fff;">{_ptk}</span>'
+                    f'<span style="color:{_pclr};margin-left:6px;">{_pico} {_pstr}</span>'
+                    f'{_vstamp}</div>'
+                )
+            st.markdown(_chips_html + "</div></div>", unsafe_allow_html=True)
 
         _pm_col1, _pm_col2 = st.columns([1, 1])
         with _pm_col1:
@@ -6864,9 +6937,10 @@ with tab_scan:
             if not api_key or not secret_key:
                 st.error("Add your Alpaca credentials in the sidebar first.")
             else:
-                with st.spinner(f"Scoring {_wpe_count} tickers… (this may take ~30 s for large lists)"):
+                with st.spinner(f"Scoring {_wpe_count} tickers + generating setup briefs… (~45 s for large lists)"):
                     _wpe_rows = [{"ticker": t} for t in _wpe_saved_tickers]
                     import copy as _cp
+                    import concurrent.futures as _cf
                     _wpe_scored = score_playbook_tickers(
                         _cp.deepcopy(_wpe_rows),
                         api_key, secret_key,
@@ -6880,21 +6954,68 @@ with tab_scan:
                         api_key=api_key,
                         secret_key=secret_key,
                     )
-                    _wpe_payload = [
-                        {
-                            "ticker":              r["ticker"],
+
+                    # Generate full setup briefs in parallel (one per ticker)
+                    def _gen_brief(_r):
+                        return compute_setup_brief(
+                            api_key, secret_key,
+                            _r["ticker"],
+                            pred_date=_wpe_pred_date,
+                            user_id=_AUTH_USER_ID,
+                            feed=_wpe_feed,
+                        )
+
+                    _wpe_briefs = {}
+                    with _cf.ThreadPoolExecutor(max_workers=4) as _exec:
+                        _futures = {
+                            _exec.submit(_gen_brief, r): r["ticker"]
+                            for r in _wpe_scored
+                        }
+                        for _f in _cf.as_completed(_futures):
+                            _tk = _futures[_f]
+                            try:
+                                _b = _f.result()
+                                if _b and "error" not in _b:
+                                    _wpe_briefs[_tk] = _b
+                            except Exception:
+                                pass
+
+                    _wpe_payload = []
+                    for r in _wpe_scored:
+                        _tk = r["ticker"]
+                        _brief = _wpe_briefs.get(_tk, {})
+                        _row = {
+                            "ticker":              _tk,
                             "pred_date":           _wpe_pred_date,
                             "predicted_structure": r.get("structure") or "—",
                             "tcs":                 r.get("tcs") or 0,
                             "edge_score":          r.get("edge_score") or 0,
                         }
-                        for r in _wpe_scored
-                    ]
+                        if _brief:
+                            _row.update({
+                                "entry_zone_low":   _brief.get("entry_zone_low"),
+                                "entry_zone_high":  _brief.get("entry_zone_high"),
+                                "entry_trigger":    _brief.get("entry_trigger") or "",
+                                "stop_level":       _brief.get("stop_level"),
+                                "targets":          _brief.get("targets") or [],
+                                "pattern":          _brief.get("pattern") or "",
+                                "pattern_neckline": _brief.get("pattern_neckline"),
+                                "win_rate_pct":     _brief.get("win_rate_pct"),
+                                "win_rate_context": _brief.get("win_rate_context") or "",
+                                "confidence_label": _brief.get("confidence_label") or "LOW",
+                            })
+                        _wpe_payload.append(_row)
+
                     _wpe_ok = save_watchlist_predictions(_wpe_payload, user_id=_AUTH_USER_ID)
+                    _wpe_brief_count = len(_wpe_briefs)
                     st.session_state["_wpe_last_predictions"] = _wpe_scored
                     st.session_state["_wpe_pred_date"] = str(_wpe_pred_date)
                     if _wpe_ok:
-                        st.success(f"✅ {len(_wpe_payload)} predictions saved for {_wpe_pred_date}")
+                        st.success(
+                            f"✅ {len(_wpe_payload)} predictions saved for {_wpe_pred_date}"
+                            + (f" · Setup briefs generated for {_wpe_brief_count}/{len(_wpe_payload)} tickers"
+                               if _wpe_brief_count else "")
+                        )
                     else:
                         st.warning("Scored locally — Supabase table missing. See setup section below.")
     else:
@@ -6987,21 +7108,46 @@ with tab_scan:
 
     # ── Setup instructions if table missing ───────────────────────────────────
     with st.expander("⚙️ First-time Supabase setup for predictions", expanded=False):
-        st.caption("Run this SQL once in your Supabase SQL editor to enable the prediction engine:")
+        st.caption("**New table** — run this SQL once in your Supabase SQL editor to enable predictions + setup briefs:")
         st.code(
             "CREATE TABLE IF NOT EXISTS watchlist_predictions (\n"
-            "  id           BIGSERIAL PRIMARY KEY,\n"
-            "  user_id      TEXT,\n"
-            "  ticker       TEXT,\n"
-            "  pred_date    DATE,\n"
+            "  id                 BIGSERIAL PRIMARY KEY,\n"
+            "  user_id            TEXT,\n"
+            "  ticker             TEXT,\n"
+            "  pred_date          DATE,\n"
             "  predicted_structure TEXT,\n"
-            "  tcs          FLOAT,\n"
-            "  edge_score   FLOAT,\n"
-            "  actual_structure    TEXT DEFAULT '',\n"
-            "  verified     BOOLEAN DEFAULT FALSE,\n"
-            "  correct      TEXT DEFAULT '',\n"
+            "  tcs                FLOAT,\n"
+            "  edge_score         FLOAT,\n"
+            "  actual_structure   TEXT DEFAULT '',\n"
+            "  verified           BOOLEAN DEFAULT FALSE,\n"
+            "  correct            TEXT DEFAULT '',\n"
+            "  entry_zone_low     FLOAT,\n"
+            "  entry_zone_high    FLOAT,\n"
+            "  entry_trigger      TEXT DEFAULT '',\n"
+            "  stop_level         FLOAT,\n"
+            "  targets            JSONB,\n"
+            "  pattern            TEXT DEFAULT '',\n"
+            "  pattern_neckline   FLOAT,\n"
+            "  win_rate_pct       FLOAT,\n"
+            "  win_rate_context   TEXT DEFAULT '',\n"
+            "  confidence_label   TEXT DEFAULT 'LOW',\n"
             "  UNIQUE(user_id, ticker, pred_date)\n"
             ");",
+            language="sql",
+        )
+        st.caption("**Existing table migration** — if you already have the table, run this to add the setup brief columns:")
+        st.code(
+            "ALTER TABLE watchlist_predictions\n"
+            "  ADD COLUMN IF NOT EXISTS entry_zone_low     FLOAT,\n"
+            "  ADD COLUMN IF NOT EXISTS entry_zone_high    FLOAT,\n"
+            "  ADD COLUMN IF NOT EXISTS entry_trigger      TEXT DEFAULT '',\n"
+            "  ADD COLUMN IF NOT EXISTS stop_level         FLOAT,\n"
+            "  ADD COLUMN IF NOT EXISTS targets            JSONB,\n"
+            "  ADD COLUMN IF NOT EXISTS pattern            TEXT DEFAULT '',\n"
+            "  ADD COLUMN IF NOT EXISTS pattern_neckline   FLOAT,\n"
+            "  ADD COLUMN IF NOT EXISTS win_rate_pct       FLOAT,\n"
+            "  ADD COLUMN IF NOT EXISTS win_rate_context   TEXT DEFAULT '',\n"
+            "  ADD COLUMN IF NOT EXISTS confidence_label   TEXT DEFAULT 'LOW';",
             language="sql",
         )
         st.caption("Go to supabase.com → your project → SQL Editor → paste and run.")
