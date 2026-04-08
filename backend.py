@@ -5800,6 +5800,97 @@ def compute_backtest_structure_stats(user_id: str = "") -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+# ── Finviz Watchlist Fetcher ───────────────────────────────────────────────────
+def fetch_finviz_watchlist(
+    change_min_pct: float = 3.0,
+    float_max_m:    float = 100.0,
+    price_min:      float = 1.0,
+    price_max:      float = 20.0,
+    max_tickers:    int   = 60,
+) -> list:
+    """Scrape Finviz screener with the user's exact watchlist filters.
+
+    Matches Webull settings:
+      % Change ≥ 3%  |  Free Float ≤ 100M  |  Volume ≥ 1M avg
+      Relative Volume ≥ 1×  |  Price $1–$20  |  US only
+
+    Returns a deduplicated list of uppercase ticker strings (up to max_tickers).
+    Returns [] on any error so the bot falls back to its stored watchlist.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+
+    # Map change_min to nearest Finviz filter code
+    _change_map = {1: "u1", 2: "u2", 3: "u3", 5: "u5", 10: "u10", 15: "u15", 20: "u20"}
+    _c = min(_change_map.keys(), key=lambda k: abs(k - change_min_pct))
+    _change_filter = f"ta_change_{_change_map[_c]}"
+
+    # Float filter
+    _float_filter = f"sh_float_u{int(float_max_m)}"
+
+    # Price filters
+    _price_lo = f"sh_price_o{int(price_min)}"
+    _price_hi = f"sh_price_u{int(price_max)}"
+
+    _filters = ",".join([
+        "geo_usa",
+        _change_filter,
+        _float_filter,
+        "sh_avgvol_o1000",   # avg volume over 1M
+        "sh_relvol_o1",      # relative volume over 1× (turnover rate proxy)
+        _price_lo,
+        _price_hi,
+    ])
+
+    _headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    tickers = []
+    # Paginate: Finviz returns 20 per page; r=1,21,41 covers 60 results
+    for _start in [1, 21, 41]:
+        if len(tickers) >= max_tickers:
+            break
+        _url = (
+            f"https://finviz.com/screener.ashx"
+            f"?v=111&f={_filters}&o=-volume&r={_start}"
+        )
+        try:
+            _resp = requests.get(_url, headers=_headers, timeout=12)
+            _resp.raise_for_status()
+            _soup = BeautifulSoup(_resp.text, "html.parser")
+
+            # Finviz tickers: links with href="quote.ashx?t=TICKER"
+            # Filter: text is all-alpha, ≤5 chars (ticker), not company/sector name
+            import re as _re
+            _links = _soup.find_all(
+                "a", href=_re.compile(r"quote\.ashx\?t=")
+            )
+            _page_tickers = [
+                lnk.text.strip().upper()
+                for lnk in _links
+                if lnk.text.strip().isalpha() and len(lnk.text.strip()) <= 5
+            ]
+            for t in _page_tickers:
+                if t not in tickers:
+                    tickers.append(t)
+
+            if len(_page_tickers) < 20:
+                break  # Last page — no point fetching more
+            time.sleep(0.5)
+
+        except Exception as _e:
+            logging.warning(f"Finviz watchlist fetch error (r={_start}): {_e}")
+            break
+
+    return tickers[:max_tickers]
+
+
 # ── Watchlist Persistence ─────────────────────────────────────────────────────
 def save_watchlist(tickers: list, user_id: str = "") -> bool:
     """Upsert a user's custom watchlist to Supabase (table: user_watchlist).

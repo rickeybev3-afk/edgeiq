@@ -4,7 +4,8 @@ EdgeIQ Autonomous Paper Trader Bot
 Runs independently all day without the browser open.
 
 Schedule (ET):
-  10:35 AM  — IB forms → scan watchlist, filter TCS ≥ MIN_TCS, log entries
+   9:15 AM  — Auto-fetch watchlist from Finviz (your exact filter settings) → save to Supabase
+  10:46 AM  — IB close + 16 min buffer → scan watchlist, filter TCS ≥ MIN_TCS, log entries
    4:05 PM  — Market closes → re-scan and update outcomes with full-day data
 
 Required environment secrets (set in Replit Secrets):
@@ -57,6 +58,8 @@ try:
         update_paper_trade_outcomes,
         ensure_paper_trades_table,
         load_watchlist,
+        save_watchlist,
+        fetch_finviz_watchlist,
         recalibrate_from_supabase,
     )
 except ImportError as e:
@@ -104,6 +107,42 @@ def _market_is_open(now_et: datetime) -> bool:
     market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
     market_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
     return market_open <= now_et <= market_close
+
+
+def watchlist_refresh():
+    """Run at 9:15 AM ET: pull today's movers from Finviz, save to Supabase watchlist.
+
+    Uses the user's exact Webull-equivalent filter settings:
+      % Change ≥ 3%  |  Free Float ≤ 100M  |  Avg Volume ≥ 1M
+      Relative Volume ≥ 1×  |  Price $1–$20  |  US only
+      Sorted by volume descending, up to 60 tickers.
+
+    Falls back silently to the existing saved watchlist if Finviz is unreachable.
+    After saving, reloads the global TICKERS so the 10:46 AM scan uses fresh data.
+    """
+    global TICKERS
+    log.info("=" * 60)
+    log.info("WATCHLIST REFRESH — fetching from Finviz")
+    log.info("=" * 60)
+    try:
+        tickers = fetch_finviz_watchlist(
+            change_min_pct=3.0,
+            float_max_m=100.0,
+            price_min=PRICE_MIN,
+            price_max=PRICE_MAX,
+            max_tickers=60,
+        )
+        if tickers:
+            saved = save_watchlist(tickers, user_id=USER_ID)
+            if saved:
+                TICKERS = tickers
+                log.info(f"Watchlist updated: {len(tickers)} tickers → {', '.join(tickers)}")
+            else:
+                log.warning("Finviz returned tickers but Supabase save failed — keeping existing watchlist")
+        else:
+            log.warning("Finviz returned 0 tickers (possible block or no matches) — keeping existing watchlist")
+    except Exception as exc:
+        log.warning(f"Watchlist refresh failed: {exc} — keeping existing watchlist")
 
 
 def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
@@ -242,7 +281,7 @@ def main():
 
     log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
     log.info(f"User: {USER_ID}")
-    log.info("Schedule: 10:46 AM ET → morning scan | 4:05 PM ET → EOD update | 4:10 PM ET → brain recalibration")
+    log.info("Schedule: 9:15 AM ET → Finviz watchlist refresh | 10:46 AM ET → morning scan | 4:05 PM ET → EOD update | 4:10 PM ET → brain recalibration")
 
     _table_ok = ensure_paper_trades_table()
     if not _table_ok:
@@ -266,6 +305,7 @@ def main():
         )
         return
 
+    _watchlist_done     = False
     _morning_done       = False
     _eod_done           = False
     _recalibration_done = False
@@ -276,6 +316,7 @@ def main():
 
         # Reset flags at midnight
         if now_et.hour == 0 and now_et.minute == 0:
+            _watchlist_done     = False
             _morning_done       = False
             _eod_done           = False
             _recalibration_done = False
@@ -294,6 +335,15 @@ def main():
             log.debug(f"Market closed. Next check in {next_check}s")
             time.sleep(next_check)
             continue
+
+        # 9:15 AM — auto-fetch watchlist from Finviz (pre-market movers, your exact filters)
+        if (
+            not _watchlist_done
+            and now_et.hour == 9
+            and now_et.minute >= 15
+        ):
+            watchlist_refresh()
+            _watchlist_done = True
 
         # 10:46 AM — morning scan (IB close at 10:30 is now 16 min old → free SIP works)
         if (
