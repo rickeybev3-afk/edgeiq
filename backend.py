@@ -4897,8 +4897,10 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         pm_df  = df[df.index <= ib_cutoff]   # engine input (9:30 → cutoff)
         aft_df = df[df.index > ib_cutoff]    # actual outcome (cutoff → 4:00 PM)
 
-        if len(pm_df) < 5 or len(aft_df) < 5:
+        if len(pm_df) < 5:
             return None
+
+        morning_only = len(aft_df) < 5  # live scan before afternoon data is available
 
         # Morning engine run
         ib_high, ib_low = compute_initial_balance(pm_df)
@@ -4913,72 +4915,74 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         predicted = max(probs, key=probs.get) if probs else "—"
         confidence = round(probs.get(predicted, 0.0), 1)
 
-        # Afternoon reality
-        aft_high = float(aft_df["high"].max())
-        aft_low  = float(aft_df["low"].min())
-        close_px = float(aft_df["close"].iloc[-1])
-
-        broke_up   = aft_high > ib_high
-        broke_down = aft_low  < ib_low
-
-        if broke_up and broke_down:
-            actual_outcome = "Both Sides"
-            actual_icon    = "↕"
-        elif broke_up:
-            actual_outcome = "Bullish Break"
-            actual_icon    = "↑"
-        elif broke_down:
-            actual_outcome = "Bearish Break"
-            actual_icon    = "↓"
+        # Afternoon reality — placeholder when afternoon bars not yet available
+        if morning_only:
+            aft_high       = ib_high
+            aft_low        = ib_low
+            close_px       = float(pm_df["close"].iloc[-1])
+            actual_outcome = "Pending"
+            actual_icon    = "…"
+            broke_up       = False
+            broke_down     = False
         else:
-            actual_outcome = "Range-Bound"
-            actual_icon    = "—"
+            aft_high = float(aft_df["high"].max())
+            aft_low  = float(aft_df["low"].min())
+            close_px = float(aft_df["close"].iloc[-1])
+            broke_up   = aft_high > ib_high
+            broke_down = aft_low  < ib_low
+
+        if not morning_only:
+            if broke_up and broke_down:
+                actual_outcome = "Both Sides"
+                actual_icon    = "↕"
+            elif broke_up:
+                actual_outcome = "Bullish Break"
+                actual_icon    = "↑"
+            elif broke_down:
+                actual_outcome = "Bearish Break"
+                actual_icon    = "↓"
+            else:
+                actual_outcome = "Range-Bound"
+                actual_icon    = "—"
 
         # Win/Loss: does predicted category match actual outcome?
-        is_dir      = any(k in predicted for k in _BACKTEST_DIRECTIONAL)
-        is_range    = any(k in predicted for k in _BACKTEST_RANGE)
-        is_neut_ext = any(k in predicted for k in _BACKTEST_NEUTRAL_EXT)
-        is_balanced = (not is_neut_ext and
-                       any(k in predicted for k in _BACKTEST_BALANCED))
-        is_bimodal  = any(k in predicted for k in _BACKTEST_BIMODAL)
-        is_normal   = (not is_dir and not is_range and not is_neut_ext
-                       and not is_balanced and not is_bimodal
-                       and "Normal" in predicted)
-
-        if is_dir:
-            # Trend / Nrml Var → one side breaks in any direction
-            win = actual_outcome in ("Bullish Break", "Bearish Break")
-        elif is_neut_ext:
-            # Ntrl Extreme → high-vol structure: any IB break counts as win
-            win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
-        elif is_range or is_normal:
-            # Non-Trend / Normal → price stayed inside IB
-            win = actual_outcome == "Range-Bound"
-        elif is_balanced:
-            # Pure Neutral → balanced two-sided day
-            win = actual_outcome in ("Both Sides", "Bullish Break", "Bearish Break")
-        elif is_bimodal:
-            # Dbl Dist → any break away from low-volume node
-            win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
-        else:
-            win = False
-
-        # Follow-through % = how far price ran from the broken IB boundary
-        # to the best post-IB point (afternoon high or low).
-        # Bullish break  → (afternoon_high  − ib_high) / ib_high
-        # Bearish break  → (ib_low − afternoon_low)   / ib_low
-        # Both sides     → larger of the two
-        # Range-bound    → 0  (never broke)
-        if broke_up and broke_down:
-            _ft_up   = (aft_high - ib_high) / ib_high * 100
-            _ft_down = (ib_low   - aft_low)  / ib_low  * 100
-            aft_move = _ft_up if _ft_up >= _ft_down else -_ft_down
-        elif broke_up:
-            aft_move = (aft_high - ib_high) / ib_high * 100
-        elif broke_down:
-            aft_move = -((ib_low - aft_low) / ib_low * 100)
-        else:
+        if morning_only:
+            win      = None
             aft_move = 0.0
+        else:
+            is_dir      = any(k in predicted for k in _BACKTEST_DIRECTIONAL)
+            is_range    = any(k in predicted for k in _BACKTEST_RANGE)
+            is_neut_ext = any(k in predicted for k in _BACKTEST_NEUTRAL_EXT)
+            is_balanced = (not is_neut_ext and
+                           any(k in predicted for k in _BACKTEST_BALANCED))
+            is_bimodal  = any(k in predicted for k in _BACKTEST_BIMODAL)
+            is_normal   = (not is_dir and not is_range and not is_neut_ext
+                           and not is_balanced and not is_bimodal
+                           and "Normal" in predicted)
+
+            if is_dir:
+                win = actual_outcome in ("Bullish Break", "Bearish Break")
+            elif is_neut_ext:
+                win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+            elif is_range or is_normal:
+                win = actual_outcome == "Range-Bound"
+            elif is_balanced:
+                win = actual_outcome in ("Both Sides", "Bullish Break", "Bearish Break")
+            elif is_bimodal:
+                win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+            else:
+                win = False
+
+            if broke_up and broke_down:
+                _ft_up   = (aft_high - ib_high) / ib_high * 100
+                _ft_down = (ib_low   - aft_low)  / ib_low  * 100
+                aft_move = _ft_up if _ft_up >= _ft_down else -_ft_down
+            elif broke_up:
+                aft_move = (aft_high - ib_high) / ib_high * 100
+            elif broke_down:
+                aft_move = -((ib_low - aft_low) / ib_low * 100)
+            else:
+                aft_move = 0.0
 
         # Slippage drag: entry + exit, each side costs slippage_pct
         # Applied to the magnitude (directional sign preserved)
@@ -5019,7 +5023,7 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             "actual_icon":      actual_icon,
             "close_price":      round(close_px, 2),
             "aft_move_pct":     round(aft_move, 2),
-            "win_loss":         "Win" if win else "Loss",
+            "win_loss":         "Pending" if win is None else ("Win" if win else "Loss"),
             "false_break_up":   false_break_up,
             "false_break_down": false_break_down,
         }

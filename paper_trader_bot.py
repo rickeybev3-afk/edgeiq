@@ -107,13 +107,18 @@ def _market_is_open(now_et: datetime) -> bool:
 
 
 def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
-    """Fetch bars, run IB engine, return all results (unfiltered)."""
-    log.info(f"Running scan for {trade_date} | cutoff {cutoff_h:02d}:{cutoff_m:02d} | {len(TICKERS)} tickers")
+    """Fetch bars, run IB engine, return all results (unfiltered).
+
+    Uses IEX feed when scanning today's intraday data (free-tier SIP blocks
+    recent data). SIP is used for historical dates (yesterday and earlier).
+    """
+    scan_feed = "iex" if trade_date >= date.today() else FEED
+    log.info(f"Running scan for {trade_date} | cutoff {cutoff_h:02d}:{cutoff_m:02d} | {len(TICKERS)} tickers | feed: {scan_feed}")
     results, summary = run_historical_backtest(
         ALPACA_API_KEY, ALPACA_SECRET_KEY,
         trade_date=trade_date,
         tickers=TICKERS,
-        feed=FEED,
+        feed=scan_feed,
         price_min=PRICE_MIN,
         price_max=PRICE_MAX,
         cutoff_hour=cutoff_h,
