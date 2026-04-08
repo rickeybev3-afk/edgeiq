@@ -8229,38 +8229,24 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     st.caption(
         "The bot recalibrates brain weights automatically at 4:10 PM ET every trading day. "
         "It reads all verified journal trades (accuracy_tracker) + all paper trade outcomes "
-        "and nudges each structure's weight up or down using a 30% learning rate. "
-        "Use the button below to run it right now."
+        "and nudges each structure's weight up or down using a 30% learning rate."
     )
 
-    _bh_c1, _bh_c2 = st.columns([1, 1])
-    with _bh_c1:
-        _bh_run = st.button(
-            "🧠 Recalibrate Now from Live Data",
-            key="pt_bh_run",
-            use_container_width=True,
-            type="primary",
-        )
-    with _bh_c2:
-        _bh_reset = st.button(
-            "↺ Reset to Neutral (all weights = 1.0)",
-            key="pt_bh_reset",
-            use_container_width=True,
-        )
+    st.markdown(
+        '<div style="background:#1a0a00; border:1px solid #e65100; border-radius:8px; '
+        'padding:14px 16px; margin:10px 0;">'
+        '<span style="font-size:14px; font-weight:700; color:#ff6d00;">🔒 Brain Weight Controls — Locked</span><br>'
+        '<span style="font-size:12px; color:#bf360c; line-height:1.6;">'
+        'The <b>"Recalibrate Now"</b> and <b>"Reset to Neutral"</b> buttons have been disabled to protect the learning model.<br>'
+        'The bot handles both automatically: recalibration at <b>4:10 PM ET</b> daily.<br>'
+        'If you believe a manual recalibration is needed, ask in <b>Replit chat first</b>.'
+        '</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-    if _bh_reset:
-        _neutral = {k: 1.0 for k in [
-            "trend_bull", "trend_bear", "double_dist", "non_trend",
-            "normal", "neutral", "ntrl_extreme", "nrml_variation"
-        ]}
-        _save_brain_weights(_neutral, user_id=_AUTH_USER_ID)
-        st.session_state.pop("_pt_bh_result", None)
-        st.success("✅ All weights reset to 1.0 (neutral). Run 'Recalibrate Now' to re-learn from data.")
-
-    if _bh_run:
-        with st.spinner("Reading all Supabase outcome data and updating brain weights…"):
-            _bh_result = recalibrate_from_supabase(user_id=_AUTH_USER_ID)
-        st.session_state["_pt_bh_result"] = _bh_result
+    _bh_run   = False
+    _bh_reset = False
 
     _bh_stored = st.session_state.get("_pt_bh_result")
 
