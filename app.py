@@ -593,7 +593,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 _bf_api  = st.session_state.get("_sb_api_key", "")
                 _bf_sec  = st.session_state.get("_sb_secret_key", "")
                 _bf_uid  = st.session_state.get("auth_user_id", "")
-                _bf_feed = st.session_state.get("data_feed", "iex")
+                _bf_feed = st.session_state.get("data_feed", "sip")
                 if not _bf_api or not _bf_sec:
                     st.error("Enter your Alpaca credentials in the sidebar first.")
                 else:
@@ -720,7 +720,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                     _ak, _ask,
                                     trade["ticker"],
                                     trade.get("timestamp", ""),
-                                    feed="iex",
+                                    feed="sip",
                                 )
                                 enriched = dict(trade)
                                 for field in ("tcs", "rvol", "ib_high", "ib_low", "structure"):
@@ -3226,7 +3226,7 @@ with st.sidebar:
     selected_date = date.today()
     data_feed = "sip"
     watchlist_raw = ""
-    scan_feed = "iex"
+    scan_feed = "sip"
 
     if mode == "📅 Historical":
         today = date.today()
@@ -3239,8 +3239,8 @@ with st.sidebar:
             def_d = today - timedelta(days=2)
         selected_date = st.date_input("Trading Date", value=def_d, max_value=today,
                                        help="Pick a weekday (Mon–Fri). Today's intraday data is supported.")
-        data_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
-                                  help="IEX = free, works on all accounts. SIP = full tape, requires a paid Alpaca data subscription.")
+        data_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
+                                  help="SIP = full national tape (recommended). IEX = free tier, regular hours only.")
         run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
 
     elif mode == "🎬 Replay":
@@ -3253,8 +3253,8 @@ with st.sidebar:
             def_d = today - timedelta(days=2)
         selected_date = st.date_input("Trading Date", value=def_d, max_value=today,
                                        help="Pick a trading day to replay.", key="replay_date_input")
-        data_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
-                                  help="IEX = free. SIP = full tape, needs subscription.", key="replay_feed_sel")
+        data_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
+                                  help="SIP = full national tape (recommended). IEX = free tier fallback.", key="replay_feed_sel")
         replay_load = st.button("📥 Load Day for Replay", use_container_width=True, type="primary")
 
         # ── Replay controls (shown once bars are loaded) ───────────────────────
@@ -3321,8 +3321,8 @@ with st.sidebar:
                 st.rerun()
 
     else:
-        live_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
-                                  help="IEX works on all accounts. SIP needs a subscription.")
+        live_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
+                                  help="SIP = full national tape (recommended). IEX = free tier fallback.")
         if not st.session_state.live_active:
             start_live = st.button("▶ Start Live Stream", use_container_width=True, type="primary")
         else:
@@ -3521,11 +3521,10 @@ with st.sidebar:
         help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
     )
-    scan_feed = st.selectbox("Scanner Feed", ["iex", "sip"], index=0, key="scan_feed_select",
-                             help="IEX = free tier, works for all accounts. SIP = full tape with PM RVOL (requires paid Alpaca SIP subscription).")
+    scan_feed = st.selectbox("Scanner Feed", ["sip", "iex"], index=0, key="scan_feed_select",
+                             help="SIP = full national tape with PM RVOL (recommended). IEX = free tier, regular hours only.")
     if scan_feed == "iex":
-        st.info("ℹ️ IEX (free tier): scanner shows Gap % ranked results. "
-                "PM Volume will be blank. Switch to SIP if you have a paid Alpaca data subscription.")
+        st.info("ℹ️ IEX (free tier): PM Volume will be blank. Switch to SIP for full pre-market data.")
     _price_cols = st.columns(2)
     scan_min_price = _price_cols[0].number_input(
         "Min Price ($)", min_value=0.01, max_value=999.0, value=0.10,
@@ -3877,7 +3876,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     )
     _qs_c1, _qs_c2, _qs_c3 = st.columns([1.5, 1, 1])
     with _qs_c1:
-        _pb_feed = st.radio("Bar data feed", ["IEX (free)", "SIP (paid)"],
+        _pb_feed = st.radio("Bar data feed", ["SIP (recommended)", "IEX (free)"],
                             horizontal=True, key="playbook_feed_radio")
         _pb_feed_str = "iex" if "IEX" in _pb_feed else "sip"
     with _qs_c2:
