@@ -5181,6 +5181,40 @@ def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "") -> dict:
+    """Update paper trades for a given date with final EOD outcomes.
+
+    Matches on (user_id, trade_date, ticker) and patches
+    actual_outcome, follow_thru_pct, win_loss, false_break_up/down.
+    Returns dict with updated count.
+    """
+    if not supabase or not results:
+        return {"updated": 0}
+    updated = 0
+    for r in results:
+        try:
+            ticker = r.get("ticker", "")
+            patch = {
+                "actual_outcome":  r.get("actual_outcome", ""),
+                "follow_thru_pct": r.get("aft_move_pct"),
+                "win_loss":        r.get("win_loss", ""),
+                "false_break_up":  bool(r.get("false_break_up", False)),
+                "false_break_down": bool(r.get("false_break_down", False)),
+            }
+            (
+                supabase.table("paper_trades")
+                .update(patch)
+                .eq("user_id", user_id)
+                .eq("trade_date", str(trade_date))
+                .eq("ticker", ticker)
+                .execute()
+            )
+            updated += 1
+        except Exception as e:
+            print(f"Paper trade update error ({r.get('ticker')}): {e}")
+    return {"updated": updated}
+
+
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────
 def _score_single_ticker(api_key: str, secret_key: str, sym: str,
                          trade_date, feed: str = "iex"):

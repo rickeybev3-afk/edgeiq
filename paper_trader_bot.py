@@ -1,0 +1,211 @@
+"""
+EdgeIQ Autonomous Paper Trader Bot
+===================================
+Runs independently all day without the browser open.
+
+Schedule (ET):
+  10:35 AM  — IB forms → scan watchlist, filter TCS ≥ MIN_TCS, log entries
+   4:05 PM  — Market closes → re-scan and update outcomes with full-day data
+
+Required environment secrets (set in Replit Secrets):
+  ALPACA_API_KEY      — your Alpaca API key
+  ALPACA_SECRET_KEY   — your Alpaca secret key
+  PAPER_TRADE_USER_ID — your EdgeIQ user ID (a5e1fcab-8369-42c4-8550-a8a19734510c)
+
+Optional env vars (set in Replit Secrets or below):
+  PAPER_TRADE_TICKERS — comma-separated ticker list (defaults to watchlist below)
+  PAPER_TRADE_MIN_TCS — minimum TCS threshold (default: 50)
+  PAPER_TRADE_FEED    — sip or iex (default: sip)
+  PAPER_TRADE_PRICE_MIN — min price filter (default: 1.0)
+  PAPER_TRADE_PRICE_MAX — max price filter (default: 20.0)
+"""
+
+import os
+import time
+import logging
+from datetime import date, datetime
+
+import pytz
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("paper_trader_bot")
+
+EASTERN = pytz.timezone("America/New_York")
+
+# ── Config from environment ───────────────────────────────────────────────────
+ALPACA_API_KEY    = os.getenv("ALPACA_API_KEY", "")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
+USER_ID           = os.getenv("PAPER_TRADE_USER_ID", "a5e1fcab-8369-42c4-8550-a8a19734510c")
+MIN_TCS           = int(os.getenv("PAPER_TRADE_MIN_TCS", "50"))
+FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
+PRICE_MIN         = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
+PRICE_MAX         = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
+
+_DEFAULT_TICKERS = (
+    "SATL,UGRO,ANNA,VCX,CODX,ARTL,SWMR,FEED,RBNE,PAVS,LNKS,BIAF,ACXP,GOAI"
+)
+TICKERS = [
+    t.strip().upper()
+    for t in os.getenv("PAPER_TRADE_TICKERS", _DEFAULT_TICKERS).split(",")
+    if t.strip()
+]
+
+# ── Import backend functions ──────────────────────────────────────────────────
+try:
+    from backend import (
+        run_historical_backtest,
+        log_paper_trades,
+        update_paper_trade_outcomes,
+        ensure_paper_trades_table,
+    )
+except ImportError as e:
+    log.error(f"Cannot import backend: {e}. Make sure paper_trader_bot.py is in the same directory as backend.py.")
+    raise
+
+
+def _market_is_open(now_et: datetime) -> bool:
+    """Return True if now_et falls within regular market hours Mon–Fri."""
+    if now_et.weekday() >= 5:
+        return False
+    market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
+    return market_open <= now_et <= market_close
+
+
+def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
+    """Fetch bars, run IB engine, return all results (unfiltered)."""
+    log.info(f"Running scan for {trade_date} | cutoff {cutoff_h:02d}:{cutoff_m:02d} | {len(TICKERS)} tickers")
+    results, summary = run_historical_backtest(
+        ALPACA_API_KEY, ALPACA_SECRET_KEY,
+        trade_date=trade_date,
+        tickers=TICKERS,
+        feed=FEED,
+        price_min=PRICE_MIN,
+        price_max=PRICE_MAX,
+        cutoff_hour=cutoff_h,
+        cutoff_minute=cutoff_m,
+        slippage_pct=0.0,
+    )
+    if summary.get("error"):
+        log.warning(f"Scan error: {summary['error']}")
+        return []
+    log.info(
+        f"Scan complete — {summary.get('total', 0)} setups | "
+        f"win rate {summary.get('win_rate', 0)}% | avg TCS {summary.get('avg_tcs', 0)}"
+    )
+    return results
+
+
+def morning_scan():
+    """Run at 10:35 AM: log qualifying paper trade entries."""
+    today = date.today()
+    log.info("=" * 60)
+    log.info("MORNING SCAN — logging IB entries")
+    log.info("=" * 60)
+
+    results = _run_scan(today, cutoff_h=10, cutoff_m=30)
+    if not results:
+        log.warning("No results from morning scan.")
+        return
+
+    qualified = [
+        dict(r, sim_date=str(today))
+        for r in results
+        if float(r.get("tcs", 0)) >= MIN_TCS
+    ]
+    log.info(f"{len(qualified)} setups passed TCS ≥ {MIN_TCS} (of {len(results)} scanned)")
+
+    if qualified:
+        result = log_paper_trades(qualified, user_id=USER_ID, min_tcs=MIN_TCS)
+        log.info(f"Logged: {result.get('saved', 0)} new | skipped: {result.get('skipped', 0)} (already exist)")
+        for r in qualified:
+            log.info(
+                f"  {r['ticker']:6s} | TCS {r.get('tcs', 0):5.0f} | "
+                f"predicted: {r.get('predicted', '—'):20s} | IB {r.get('ib_low', 0):.2f}–{r.get('ib_high', 0):.2f}"
+            )
+    else:
+        log.info("No setups met TCS threshold today.")
+
+
+def eod_update():
+    """Run at 4:05 PM: update paper trades with full-day outcomes."""
+    today = date.today()
+    log.info("=" * 60)
+    log.info("EOD UPDATE — resolving outcomes with full-day bar data")
+    log.info("=" * 60)
+
+    results = _run_scan(today, cutoff_h=10, cutoff_m=30)
+    if not results:
+        log.warning("No results from EOD scan — cannot update outcomes.")
+        return
+
+    upd = update_paper_trade_outcomes(str(today), results, user_id=USER_ID)
+    log.info(f"Updated {upd.get('updated', 0)} paper trade outcome(s) for {today}")
+    for r in results:
+        log.info(
+            f"  {r['ticker']:6s} | {r.get('win_loss', '?'):4s} | "
+            f"actual: {r.get('actual_outcome', '—'):18s} | FT {r.get('aft_move_pct', 0):+.1f}%"
+        )
+
+
+def main():
+    log.info("EdgeIQ Paper Trader Bot starting up...")
+
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        log.error(
+            "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set as Replit Secrets. "
+            "Go to the Secrets tab and add them, then restart this workflow."
+        )
+        return
+
+    log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
+    log.info(f"User: {USER_ID}")
+    log.info("Schedule: 10:35 AM ET → morning scan | 4:05 PM ET → EOD update")
+
+    ensure_paper_trades_table()
+
+    _morning_done = False
+    _eod_done     = False
+
+    while True:
+        now_et = datetime.now(EASTERN)
+        today  = now_et.date()
+
+        # Reset flags at midnight
+        if now_et.hour == 0 and now_et.minute == 0:
+            _morning_done = False
+            _eod_done     = False
+
+        if not _market_is_open(now_et):
+            next_check = 60
+            log.debug(f"Market closed. Next check in {next_check}s")
+            time.sleep(next_check)
+            continue
+
+        # 10:35 AM — morning scan
+        if (
+            not _morning_done
+            and now_et.hour == 10
+            and now_et.minute >= 35
+        ):
+            morning_scan()
+            _morning_done = True
+
+        # 4:05 PM — EOD update
+        if (
+            not _eod_done
+            and now_et.hour == 16
+            and now_et.minute >= 5
+        ):
+            eod_update()
+            _eod_done = True
+
+        time.sleep(30)
+
+
+if __name__ == "__main__":
+    main()
