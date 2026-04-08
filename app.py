@@ -909,7 +909,6 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         _replay_dt = _date_cls.fromisoformat(_ts_str) if _ts_str else None
                     except Exception:
                         _replay_dt = None
-                    st.session_state["ticker_input"]   = str(sym).upper().strip()
                     st.session_state["_load_ticker"]   = str(sym).upper().strip()
                     if _replay_dt:
                         st.session_state["_replay_date"] = _replay_dt
