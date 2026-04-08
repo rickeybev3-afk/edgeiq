@@ -158,6 +158,10 @@ Note: AIB Apr 6 "Win" but negative P&L — brain correctly predicted structure (
 - At 1–3 alerts/day pace → ~3–6 weeks to hit 60 trades
 - Choppy/low-vol days will bring win rate down — that's when the real calibration happens
 - User noted: "thats crazy for how early this is" — acknowledged but cautioned appropriately
+- User confirmed understanding of macro context need: IWM, breadth, Fed regime
+- follow_thru% = MAX move past IB (theoretical ceiling). Realistic capture = 40–60% of that
+- Losses on range-bound days = essentially free (just 1.5% slippage, no real drawdown)
+- Key insight: the ASYMMETRY (big wins, tiny losses) is the actual edge — more important than win rate
 
 ---
 
