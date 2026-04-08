@@ -4580,6 +4580,115 @@ Measures how accurately the 7-structure framework classified those days in hinds
         f'</div>',
         unsafe_allow_html=True,
     )
+    # ── Load Saved Results ──────────────────────────────────────────────────────
+    with st.expander("📂 Load Saved Simulation Results", expanded=False):
+        st.caption("Load any previous simulation run from your history without re-fetching Alpaca data.")
+        _ls_col1, _ls_col2 = st.columns([1, 1])
+        with _ls_col1:
+            if st.button("🔄 Fetch My Saved Dates", use_container_width=True, key="bt_ls_fetch"):
+                _ls_hist = load_backtest_sim_history(user_id=_AUTH_USER_ID)
+                if _ls_hist.empty or "sim_date" not in _ls_hist.columns:
+                    st.session_state["_bt_ls_dates"]   = []
+                    st.session_state["_bt_ls_hist_all"] = pd.DataFrame()
+                else:
+                    _ls_avail = sorted(_ls_hist["sim_date"].astype(str).unique(), reverse=True)
+                    st.session_state["_bt_ls_dates"]   = _ls_avail
+                    st.session_state["_bt_ls_hist_all"] = _ls_hist
+
+        _ls_dates_avail = st.session_state.get("_bt_ls_dates", [])
+        if _ls_dates_avail:
+            _ls_sel = st.multiselect(
+                "Select date(s) to load",
+                options=_ls_dates_avail,
+                default=_ls_dates_avail[:1],
+                key="bt_ls_date_sel",
+                help="Select one date for a single-day view, or multiple to reconstruct a range.",
+            )
+            with _ls_col2:
+                _ls_load_btn = st.button(
+                    "📂 Load Selected", use_container_width=True,
+                    key="bt_ls_load_btn",
+                    disabled=not _ls_sel,
+                )
+            if _ls_load_btn and _ls_sel:
+                _ls_all_df = st.session_state.get("_bt_ls_hist_all", pd.DataFrame())
+                _ls_rows_df = _ls_all_df[_ls_all_df["sim_date"].astype(str).isin([str(d) for d in _ls_sel])]
+
+                def _icon_for(outcome: str) -> str:
+                    _lc = (outcome or "").lower()
+                    if "bull" in _lc:   return "+"
+                    if "bear" in _lc:   return "↓"
+                    if "both" in _lc:   return "⇅"
+                    if "range" in _lc:  return "—"
+                    return "·"
+
+                _ls_results = []
+                for _, _lrow in _ls_rows_df.iterrows():
+                    _ls_results.append({
+                        "ticker":         str(_lrow.get("ticker", "")),
+                        "sim_date":       str(_lrow.get("sim_date", "")),
+                        "open_price":     float(_lrow.get("open_price") or 0),
+                        "close_price":    float(_lrow.get("close_price") or 0),
+                        "ib_low":         float(_lrow.get("ib_low") or 0),
+                        "ib_high":        float(_lrow.get("ib_high") or 0),
+                        "tcs":            float(_lrow.get("tcs") or 0),
+                        "predicted":      str(_lrow.get("predicted", "")),
+                        "actual_outcome": str(_lrow.get("actual_outcome", "")),
+                        "actual_icon":    _icon_for(str(_lrow.get("actual_outcome", ""))),
+                        "win_loss":       str(_lrow.get("win_loss", "")),
+                        "aft_move_pct":   float(_lrow.get("follow_thru_pct") or _lrow.get("aft_move_pct") or 0),
+                        "false_break_up":   bool(_lrow.get("false_break_up", False)),
+                        "false_break_down": bool(_lrow.get("false_break_down", False)),
+                    })
+
+                if _ls_results:
+                    _ls_wins   = sum(1 for r in _ls_results if r["win_loss"] == "Win")
+                    _ls_losses = sum(1 for r in _ls_results if r["win_loss"] == "Loss")
+                    _ls_total  = len(_ls_results)
+                    _ls_wr     = round(_ls_wins / _ls_total * 100, 1) if _ls_total > 0 else 0.0
+                    _ls_tcs_vals  = [r["tcs"] for r in _ls_results if r["tcs"] > 0]
+                    _ls_bull_ft   = [r["aft_move_pct"] for r in _ls_results
+                                     if "bull" in r["actual_outcome"].lower() and r["aft_move_pct"] > 0]
+                    _ls_bear_ft   = [abs(r["aft_move_pct"]) for r in _ls_results
+                                     if "bear" in r["actual_outcome"].lower() and r["aft_move_pct"] < 0]
+                    _ls_bull_breaks  = sum(1 for r in _ls_results if "bull" in r["actual_outcome"].lower())
+                    _ls_bear_breaks  = sum(1 for r in _ls_results if "bear" in r["actual_outcome"].lower())
+                    _ls_both_breaks  = sum(1 for r in _ls_results if "both" in r["actual_outcome"].lower())
+                    _ls_range_bound  = sum(1 for r in _ls_results if "range" in r["actual_outcome"].lower())
+                    _ls_long_wins    = sum(1 for r in _ls_results
+                                         if "bull" in r["actual_outcome"].lower() and r["win_loss"] == "Win")
+                    _ls_long_total   = _ls_bull_breaks or 1
+                    _ls_fb_count     = sum(1 for r in _ls_results if r["false_break_up"] or r["false_break_down"])
+                    _ls_summary = {
+                        "win_rate":       _ls_wr,
+                        "total":          _ls_total,
+                        "wins":           _ls_wins,
+                        "losses":         _ls_losses,
+                        "highest_tcs":    max(_ls_tcs_vals) if _ls_tcs_vals else 0,
+                        "avg_tcs":        sum(_ls_tcs_vals) / len(_ls_tcs_vals) if _ls_tcs_vals else 0,
+                        "avg_bull_ft":    sum(_ls_bull_ft) / len(_ls_bull_ft) if _ls_bull_ft else 0,
+                        "avg_bear_ft":    sum(_ls_bear_ft) / len(_ls_bear_ft) if _ls_bear_ft else 0,
+                        "bull_breaks":    _ls_bull_breaks,
+                        "bear_breaks":    _ls_bear_breaks,
+                        "both_breaks":    _ls_both_breaks,
+                        "range_bound":    _ls_range_bound,
+                        "long_win_rate":  round(_ls_long_wins / _ls_long_total * 100, 1),
+                        "false_break_rate": round(_ls_fb_count / _ls_total * 100, 1) if _ls_total > 0 else 0,
+                    }
+                    _ls_date_label = (
+                        f"{min(_ls_sel)} → {max(_ls_sel)}" if len(_ls_sel) > 1 else _ls_sel[0]
+                    )
+                    _ls_is_range = len(_ls_sel) > 1
+                    st.session_state["bt_results_cache"] = (
+                        _ls_results, _ls_summary, _ls_date_label, _ls_is_range, None
+                    )
+                    st.success(f"Loaded {_ls_total} rows from {len(_ls_sel)} date(s). Scroll down to view results.")
+                    st.rerun()
+                else:
+                    st.warning("No data found for the selected date(s).")
+        elif not _ls_dates_avail and st.session_state.get("_bt_ls_dates") is not None:
+            st.info("No saved simulation runs found for your account.")
+
     st.markdown("---")
 
     # ── Run simulation ──────────────────────────────────────────────────────────
