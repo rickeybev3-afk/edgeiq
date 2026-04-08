@@ -3190,12 +3190,11 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
 
 if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
     _early_wl = load_watchlist(_AUTH_USER_ID)
-    if _early_wl:
-        _joined = ", ".join(_early_wl)
-        st.session_state["_watchlist_tickers"] = _joined
-        st.session_state["watchlist_raw"]      = _joined
-        st.session_state["watchlist_textarea"] = _joined
-    st.session_state["_watchlist_loaded"] = True
+    _joined = ", ".join(_early_wl) if _early_wl else _DEFAULT_WATCHLIST
+    st.session_state["_watchlist_tickers"] = _joined
+    st.session_state["watchlist_raw"]      = _joined
+    st.session_state["watchlist_textarea"] = _joined
+    st.session_state["_watchlist_loaded"]  = True
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -3564,7 +3563,6 @@ with st.sidebar:
     )
     watchlist_raw = st.text_area(
         "Watchlist (comma-separated)",
-        value=_scanner_default,
         height=110,
         help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
@@ -3594,7 +3592,6 @@ with st.sidebar:
     st.header("⭐ My Watchlist")
     _wl_raw = st.text_area(
         "Tickers (comma-separated)",
-        value=st.session_state.get("_watchlist_tickers", ""),
         height=80, key="watchlist_textarea",
         placeholder="AAPL, GME, AMC, MSTR",
     )
