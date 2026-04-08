@@ -166,7 +166,27 @@ def main():
     log.info(f"User: {USER_ID}")
     log.info("Schedule: 10:35 AM ET → morning scan | 4:05 PM ET → EOD update")
 
-    ensure_paper_trades_table()
+    _table_ok = ensure_paper_trades_table()
+    if not _table_ok:
+        log.error(
+            "\n"
+            "══════════════════════════════════════════════════════════\n"
+            "  paper_trades table is MISSING in your Supabase database.\n"
+            "  Go to your Supabase project → SQL Editor → run:\n\n"
+            "  CREATE TABLE IF NOT EXISTS paper_trades (\n"
+            "    id SERIAL PRIMARY KEY,\n"
+            "    user_id TEXT, trade_date DATE, ticker TEXT, tcs FLOAT,\n"
+            "    predicted TEXT, ib_low FLOAT, ib_high FLOAT, open_price FLOAT,\n"
+            "    actual_outcome TEXT, follow_thru_pct FLOAT, win_loss TEXT,\n"
+            "    false_break_up BOOLEAN DEFAULT FALSE,\n"
+            "    false_break_down BOOLEAN DEFAULT FALSE,\n"
+            "    min_tcs_filter INT DEFAULT 50,\n"
+            "    created_at TIMESTAMPTZ DEFAULT NOW()\n"
+            "  );\n\n"
+            "  Then restart the Paper Trader Bot workflow.\n"
+            "══════════════════════════════════════════════════════════"
+        )
+        return
 
     _morning_done = False
     _eod_done     = False

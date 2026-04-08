@@ -5101,19 +5101,21 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 
 
 def ensure_paper_trades_table() -> bool:
-    """Auto-create paper_trades table if missing. Returns True if ready."""
+    """Check if paper_trades table exists. Returns True if ready, False if missing."""
     if not supabase:
         return False
     try:
         supabase.table("paper_trades").select("id").limit(1).execute()
         return True
-    except Exception:
-        try:
-            supabase.rpc("exec_sql", {"sql": _PAPER_TRADES_SCHEMA}).execute()
-            return True
-        except Exception as e:
-            print(f"Paper trades table setup error: {e}")
+    except Exception as e:
+        err_str = str(e).lower()
+        # Supabase returns 404/relation-not-found when the table is missing
+        if "404" in err_str or "relation" in err_str or "does not exist" in err_str or "not found" in err_str:
+            print("paper_trades table not found. Create it in Supabase SQL editor — see Paper Trade tab for the SQL.")
             return False
+        # Any other error (auth, network) — log and treat as unavailable
+        print(f"paper_trades table check error: {e}")
+        return False
 
 
 def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
