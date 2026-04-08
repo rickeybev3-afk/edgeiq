@@ -2850,6 +2850,69 @@ def save_journal_entry(entry: dict, user_id: str = ""):
         print(f"Database write error (journal): {e}")
 
 
+def backfill_unknown_structures(api_key: str, secret_key: str, user_id: str,
+                                feed: str = "iex") -> dict:
+    """Re-enrich journal rows where structure is Unknown/null/empty.
+
+    Fetches the actual bar data for each affected row, runs enrich_trade_context,
+    and patches the row in Supabase with the correct structure, tcs, rvol,
+    ib_high, and ib_low values.
+
+    Returns dict: {updated: int, failed: int, skipped: int, errors: list}
+    """
+    if not supabase:
+        return {"updated": 0, "failed": 0, "skipped": 0, "errors": ["Supabase not connected"]}
+
+    _STALE = {"Unknown", "unknown", "", None}
+
+    try:
+        q = supabase.table("trade_journal").select("*")
+        if user_id:
+            q = q.eq("user_id", user_id)
+        resp = q.execute()
+        rows = resp.data or []
+    except Exception as e:
+        return {"updated": 0, "failed": 0, "skipped": 0, "errors": [str(e)]}
+
+    targets = [r for r in rows if r.get("structure") in _STALE]
+    if not targets:
+        return {"updated": 0, "failed": 0, "skipped": len(rows), "errors": []}
+
+    updated, failed, errors = 0, 0, []
+    for row in targets:
+        row_id   = row.get("id")
+        ticker   = row.get("ticker", "")
+        ts_raw   = row.get("timestamp", "")
+        if not row_id or not ticker or not ts_raw:
+            failed += 1
+            continue
+        try:
+            from dateutil.parser import parse as _dp
+            trade_dt = _dp(str(ts_raw)).date()
+        except Exception:
+            failed += 1
+            continue
+        try:
+            ctx = enrich_trade_context(api_key, secret_key, ticker, trade_dt, feed=feed)
+            if not ctx:
+                failed += 1
+                errors.append(f"{ticker} {trade_dt}: enrich returned empty")
+                continue
+            patch = {k: ctx[k] for k in ("structure", "tcs", "rvol", "ib_high", "ib_low")
+                     if k in ctx and ctx[k] is not None}
+            if not patch:
+                failed += 1
+                continue
+            supabase.table("trade_journal").update(patch).eq("id", row_id).execute()
+            updated += 1
+        except Exception as exc:
+            failed += 1
+            errors.append(f"{ticker} {trade_dt}: {exc}")
+
+    return {"updated": updated, "failed": failed,
+            "skipped": len(rows) - len(targets), "errors": errors}
+
+
 def parse_webull_csv(df: "pd.DataFrame") -> list:
     """Parse a Webull order-history CSV DataFrame into round-trip trade dicts.
 

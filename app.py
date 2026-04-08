@@ -533,10 +533,60 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     _uid = st.session_state.get("auth_user_id", "")
     df = load_journal(user_id=_uid)
 
-    cola, colb = st.columns([1, 1])
+    cola, colb, colc = st.columns([2, 1, 1])
     with cola:
         st.subheader("📖 My Trade Journal")
     with colb:
+        if not df.empty:
+            _unknown_count = (
+                df["structure"].isin(["Unknown", "", None]) |
+                df["structure"].isna()
+            ).sum() if "structure" in df.columns else 0
+            _bf_label = (
+                f"🔄 Fix {_unknown_count} Unknown Structures"
+                if _unknown_count > 0 else "✅ All Structures Enriched"
+            )
+            _bf_disabled = _unknown_count == 0
+            if st.button(
+                _bf_label,
+                disabled=_bf_disabled,
+                use_container_width=True,
+                key="backfill_structures_btn",
+                help="Re-fetches bar data from Alpaca for any journal entry showing 'Unknown' structure and fills in the correct Trend Day / Normal / Neutral etc. label.",
+            ):
+                _bf_api  = st.session_state.get("_sb_api_key", "")
+                _bf_sec  = st.session_state.get("_sb_secret_key", "")
+                _bf_uid  = st.session_state.get("auth_user_id", "")
+                _bf_feed = st.session_state.get("data_feed", "iex")
+                if not _bf_api or not _bf_sec:
+                    st.error("Enter your Alpaca credentials in the sidebar first.")
+                else:
+                    with st.spinner(
+                        f"Fetching bar data for {_unknown_count} entries… "
+                        "This may take a minute."
+                    ):
+                        _bf_result = backfill_unknown_structures(
+                            _bf_api, _bf_sec, _bf_uid, feed=_bf_feed
+                        )
+                    if _bf_result["updated"] > 0:
+                        st.success(
+                            f"✅ Fixed **{_bf_result['updated']}** entries. "
+                            f"{_bf_result['failed']} failed. Refresh to see updates."
+                        )
+                        if _bf_result["errors"]:
+                            with st.expander("Details"):
+                                for _e in _bf_result["errors"]:
+                                    st.caption(_e)
+                    elif _bf_result["failed"] > 0:
+                        st.warning(
+                            f"Could not enrich {_bf_result['failed']} entries. "
+                            "Check that your Alpaca key has market data access."
+                        )
+                        for _e in _bf_result["errors"][:5]:
+                            st.caption(_e)
+                    else:
+                        st.info("No Unknown structures found — journal is fully enriched.")
+    with colc:
         if not df.empty:
             csv_bytes = df.to_csv(index=False).encode()
             st.download_button(
