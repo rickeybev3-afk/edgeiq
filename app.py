@@ -6693,8 +6693,74 @@ with tab_scan:
             pm_str     = f"{pm_v:,}"
             avg_str    = f"{avg_v:,.0f}" if avg_v else "—"
 
+            # ── Pre-trade quality data (computed in parallel during scan) ────
+            _sq = st.session_state.get("scanner_quality", {}).get(sym)
+            _tcs_v = _ib_pos = _tcs_bkt = _ib_h = _ib_l = _ib_src = None
+            _tcs_ok = _ib_ok = _go = False
+            _tcs_clr = _ib_clr = "#888"
+            _go_txt = _go_clr = _go_bg = _go_brd = ""
+            _ib_warn = _src_tag = ""
+            _ov_key_h = f"_ib_ov_high_{sym}"
+            _ov_key_l = f"_ib_ov_low_{sym}"
+            _ov_h = st.session_state.get(_ov_key_h)
+            _ov_l = st.session_state.get(_ov_key_l)
+            _has_quality = bool(_sq and not _sq.get("error"))
+
+            if _has_quality:
+                _tcs_v     = _sq["tcs"]
+                _tcs_bkt   = _sq["tcs_bucket"]
+                _tcs_ok    = _sq["tcs_ok"]
+                _ib_formed = _sq.get("ib_formed", True)
+                if _ov_h and _ov_l and _ov_h > _ov_l:
+                    _ib_h, _ib_l, _ib_src = _ov_h, _ov_l, "Webull"
+                else:
+                    _ib_h, _ib_l, _ib_src = _sq["ib_high"], _sq["ib_low"], "Alpaca"
+                _margin = (_ib_h - _ib_l) * 0.05
+                if price >= _ib_h + _margin:       _ib_pos = "Extended Above IB"
+                elif price <= _ib_l - _margin:     _ib_pos = "Extended Below IB"
+                elif price <= _ib_l + _margin:     _ib_pos = "At IB Low"
+                elif price >= _ib_h - _margin:     _ib_pos = "At IB High"
+                else:                              _ib_pos = "Inside IB"
+                _ib_ok  = _ib_pos == "At IB Low"
+                _go     = _tcs_ok and _ib_ok
+                _tcs_clr = "#4caf50" if _tcs_ok else "#FFD700" if _tcs_v >= 70 else "#ef5350"
+                _ib_clr  = "#4caf50" if _ib_ok else "#ef5350" if "Extended" in _ib_pos else "#FF9500"
+                _go_bg   = "#0d2e1a" if _go else "#2e0d0d"
+                _go_brd  = "#4caf50" if _go else "#ef5350"
+                _go_txt  = "✅ GO" if _go else "⛔ WAIT"
+                _go_clr  = "#4caf50" if _go else "#ef5350"
+                _ib_warn = "" if _ib_formed else " ⚠️"
+                _src_tag = f'({_ib_src})'
+
+            # ── Unified card — everything at a glance ────────────────────────
+            _quality_row = ""
+            if _has_quality:
+                _quality_row = (
+                    f'<div style="display:flex;align-items:center;flex-wrap:wrap;gap:14px;'
+                    f'margin-top:10px;padding-top:10px;border-top:1px solid #1e2a3a;">'
+                    f'<div style="text-align:center;min-width:52px;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:2px;">TCS</div>'
+                    f'<div style="font-size:20px;font-weight:800;color:{_tcs_clr};">{_tcs_v}</div>'
+                    f'<div style="font-size:9px;color:#555;">{_tcs_bkt}</div>'
+                    f'</div>'
+                    f'<div style="text-align:center;">'
+                    f'<div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:2px;">Structure{_ib_warn}</div>'
+                    f'<div style="font-size:13px;font-weight:700;color:{_ib_clr};">{_ib_pos}</div>'
+                    f'<div style="font-size:9px;color:#444;">IB ${_ib_l}–${_ib_h} {_src_tag}</div>'
+                    f'</div>'
+                    f'<div style="margin-left:auto;background:{_go_bg};border:2px solid {_go_brd};'
+                    f'border-radius:8px;padding:6px 16px;text-align:center;">'
+                    f'<div style="font-size:16px;font-weight:800;color:{_go_clr};">{_go_txt}</div>'
+                    f'<div style="font-size:9px;color:#555;margin-top:1px;">'
+                    f'TCS 55–70 {"✓" if _tcs_ok else "✗"} · At IB Low {"✓" if _ib_ok else "✗"}</div>'
+                    f'</div>'
+                    f'</div>'
+                )
+
+            _border_clr = _go_brd if _has_quality else "#2a2a4a"
             st.markdown(
-                f'<div style="background:#12122299;border:1px solid #2a2a4a;'
+                f'<div style="background:#12122299;border:1px solid {_border_clr};'
+                f'border-left:4px solid {_border_clr};'
                 f'border-radius:10px;padding:16px 20px;margin:8px 0;">'
                 f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">'
                 f'<div>'
@@ -6710,91 +6776,14 @@ with tab_scan:
                 f'<div style="font-size:22px;font-weight:800;color:{rc};">{rvol_str}</div>'
                 f'<div style="font-size:11px;color:#555;">{pm_str} vs avg {avg_str}</div>'
                 f'</div>'
-                f'</div></div>',
+                f'</div>'
+                + _quality_row +
+                f'</div>',
                 unsafe_allow_html=True,
             )
 
-            # ── Pre-Trade Quality Badge ──────────────────────────────────────
-            _sq = st.session_state.get("scanner_quality", {}).get(sym)
-            if _sq and not _sq.get("error"):
-                _tcs_v     = _sq["tcs"]
-                _tcs_bkt   = _sq["tcs_bucket"]
-                _tcs_ok    = _sq["tcs_ok"]
-                _ib_formed = _sq.get("ib_formed", True)
-
-                # Check for user IB override (stored per ticker in session_state)
-                _ov_key_h = f"_ib_ov_high_{sym}"
-                _ov_key_l = f"_ib_ov_low_{sym}"
-                _ov_h = st.session_state.get(_ov_key_h)
-                _ov_l = st.session_state.get(_ov_key_l)
-
-                # Use override if both values set, else use Alpaca data
-                if _ov_h and _ov_l and _ov_h > _ov_l:
-                    _ib_h = _ov_h
-                    _ib_l = _ov_l
-                    _ib_src = "Webull"
-                else:
-                    _ib_h = _sq["ib_high"]
-                    _ib_l = _sq["ib_low"]
-                    _ib_src = "Alpaca"
-
-                # Recompute IB position against (possibly overridden) IB levels
-                _cp = price  # current price from scanner row
-                _margin = (_ib_h - _ib_l) * 0.05
-                if _cp >= _ib_h + _margin:
-                    _ib_pos = "Extended Above IB"
-                elif _cp <= _ib_l - _margin:
-                    _ib_pos = "Extended Below IB"
-                elif _cp <= _ib_l + _margin:
-                    _ib_pos = "At IB Low"
-                elif _cp >= _ib_h - _margin:
-                    _ib_pos = "At IB High"
-                else:
-                    _ib_pos = "Inside IB"
-
-                _ib_ok = _ib_pos == "At IB Low"
-                _go    = _tcs_ok and _ib_ok
-
-                _tcs_clr = (
-                    "#4caf50" if _tcs_ok else
-                    "#FFD700" if _tcs_v >= 70 else
-                    "#ef5350"
-                )
-                _ib_clr = "#4caf50" if _ib_ok else "#ef5350" if "Extended" in _ib_pos else "#FF9500"
-                _go_bg  = "#0d2e1a" if _go else "#2e0d0d"
-                _go_brd = "#4caf50" if _go else "#ef5350"
-                _go_txt = "✅ GO — Rule conditions met" if _go else "⛔ WAIT — Rule not satisfied"
-                _go_clr = "#4caf50" if _go else "#ef5350"
-                _ib_warn = "" if _ib_formed else " ⚠️ IB forming"
-                _src_tag = f' <span style="color:#444;font-size:9px;">({_ib_src})</span>'
-
-                st.markdown(
-                    f'<div style="background:#0c1420;border:1px solid #1e3050;border-radius:8px;'
-                    f'padding:10px 16px;margin:4px 0 4px 0;display:flex;flex-wrap:wrap;'
-                    f'align-items:center;gap:16px;">'
-                    f'<div style="font-size:11px;color:#555;text-transform:uppercase;'
-                    f'letter-spacing:1px;margin-right:4px;">Pre-Trade Check</div>'
-                    f'<div style="text-align:center;">'
-                    f'<div style="font-size:10px;color:#666;margin-bottom:2px;">TCS</div>'
-                    f'<div style="font-size:18px;font-weight:800;color:{_tcs_clr};">'
-                    f'{_tcs_v} <span style="font-size:11px;font-weight:400;">({_tcs_bkt})</span></div>'
-                    f'</div>'
-                    f'<div style="text-align:center;">'
-                    f'<div style="font-size:10px;color:#666;margin-bottom:2px;">IB Position{_ib_warn}</div>'
-                    f'<div style="font-size:13px;font-weight:700;color:{_ib_clr};">{_ib_pos}</div>'
-                    f'<div style="font-size:10px;color:#444;">IB ${_ib_l}–${_ib_h}{_src_tag}</div>'
-                    f'</div>'
-                    f'<div style="margin-left:auto;background:{_go_bg};border:1px solid {_go_brd};'
-                    f'border-radius:6px;padding:6px 14px;">'
-                    f'<div style="font-size:13px;font-weight:700;color:{_go_clr};">{_go_txt}</div>'
-                    f'<div style="font-size:10px;color:#666;margin-top:2px;">'
-                    f'TCS 55–70 {"✓" if _tcs_ok else "✗"} &nbsp;|&nbsp; At IB Low {"✓" if _ib_ok else "✗"}</div>'
-                    f'</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-                # IB Override expander
+            # IB Override expander (only shown when quality data loaded)
+            if _has_quality:
                 with st.expander(f"✏️ Override IB levels for {sym} (use your Webull values)", expanded=False):
                     _ov_cols = st.columns(3)
                     _new_ib_h = _ov_cols[0].number_input(
@@ -6818,7 +6807,7 @@ with tab_scan:
                             st.session_state.pop(_ov_key_l, None)
                             st.rerun()
 
-            elif _sq and _sq.get("error"):
+            if _sq and _sq.get("error"):
                 st.caption(f"⚠️ Quality check unavailable: {_sq['error']}")
 
             # ── Pattern Alert Badge ──────────────────────────────────────────
