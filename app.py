@@ -7705,6 +7705,57 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
+    # ── Live Auto-Scan mode ──────────────────────────────────────────────────
+    _pt_live_col1, _pt_live_col2, _pt_live_col3 = st.columns([1.2, 1, 1])
+    with _pt_live_col1:
+        _pt_live_on = st.toggle(
+            "🔴 Live Auto-Scan (while browser open)",
+            value=st.session_state.get("_pt_live_mode", False),
+            key="pt_live_toggle",
+            help="When ON, auto-scans every 30 min during market hours (9:30–4:00 PM ET). "
+                 "The standalone bot runs 24/7 even when this is OFF.",
+        )
+        st.session_state["_pt_live_mode"] = _pt_live_on
+
+    _now_et_pt = datetime.now(EASTERN)
+    _pt_mkt_open  = _now_et_pt.replace(hour=9,  minute=30, second=0, microsecond=0)
+    _pt_mkt_close = _now_et_pt.replace(hour=16, minute=0,  second=0, microsecond=0)
+    _pt_in_market = (
+        _pt_mkt_open <= _now_et_pt <= _pt_mkt_close
+        and _now_et_pt.weekday() < 5
+    )
+
+    with _pt_live_col2:
+        if _pt_live_on:
+            _pt_last = st.session_state.get("_pt_last_auto_scan")
+            if _pt_last:
+                _pt_elapsed = int((_now_et_pt.timestamp() - _pt_last) / 60)
+                _pt_next_in = max(0, 30 - _pt_elapsed)
+                st.markdown(
+                    f'<div style="font-size:11px; color:#4caf50; padding-top:8px;">'
+                    f'✅ Auto-scan active · next in <b>{_pt_next_in} min</b></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div style="font-size:11px; color:#ff9800; padding-top:8px;">'
+                    '⏳ First scan pending…</div>',
+                    unsafe_allow_html=True,
+                )
+    with _pt_live_col3:
+        _mkt_str = (
+            f'<span style="color:#4caf50;">🟢 Market Open</span>'
+            if _pt_in_market else
+            f'<span style="color:#546e7a;">⚫ Market Closed</span>'
+        )
+        st.markdown(
+            f'<div style="font-size:11px; padding-top:8px;">{_mkt_str} '
+            f'· {_now_et_pt.strftime("%I:%M %p ET")}</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
     # ── Section 1: Scan & Log ────────────────────────────────────────────────
     st.markdown(
         '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
@@ -7980,6 +8031,165 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         st.caption(
             f"Showing {len(_pt_log_show)} paper trades from last 21 days · "
             "Only TCS-filtered qualifying setups are stored here"
+        )
+
+    st.markdown("---")
+
+    # ── Section 3: Manual EOD Outcome Update ────────────────────────────────
+    st.markdown(
+        '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:1.5px; font-weight:700; margin:12px 0 8px 0;">'
+        '🔒 SECTION 3 — MANUAL EOD OUTCOME UPDATE</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "The bot auto-updates outcomes at 4:05 PM ET. Use this if you want to "
+        "force-refresh outcomes for a specific date right now (e.g. after market close)."
+    )
+    _eod_c1, _eod_c2 = st.columns([1, 2])
+    with _eod_c1:
+        _eod_date = st.date_input(
+            "Date to update", value=date.today(), key="pt_eod_date"
+        )
+    with _eod_c2:
+        _eod_tickers_raw = st.text_input(
+            "Tickers (leave blank to use same as Section 1)",
+            value="",
+            key="pt_eod_tickers",
+            placeholder="e.g. SATL, UGRO, ANNA — or leave blank",
+        )
+    if st.button("🔒 Update Outcomes for Selected Date", key="pt_eod_btn", use_container_width=True):
+        _eod_tickers = (
+            [t.strip().upper() for t in _eod_tickers_raw.split(",") if t.strip()]
+            or [t.strip().upper() for t in _pt_tickers_raw.replace("\n", ",").split(",") if t.strip()]
+        )
+        with st.spinner(f"Fetching full-day bars for {_eod_date} and updating outcomes…"):
+            _eod_res, _eod_sum = run_historical_backtest(
+                api_key, secret_key,
+                trade_date=_eod_date,
+                tickers=_eod_tickers,
+                feed=_pt_feed_str,
+                price_min=float(_pt_price_range[0]),
+                price_max=float(_pt_price_range[1]),
+                slippage_pct=0.0,
+            )
+        if _eod_sum.get("error"):
+            st.error(_eod_sum["error"])
+        elif _eod_res:
+            _upd = update_paper_trade_outcomes(str(_eod_date), _eod_res, user_id=_AUTH_USER_ID)
+            st.success(f"✅ Updated {_upd.get('updated', 0)} paper trade outcome(s) for {_eod_date}")
+            st.session_state.pop("pt_tracker_df", None)
+        else:
+            st.warning("No data returned for that date.")
+
+    st.markdown("---")
+
+    # ── Section 4: Time Window Comparison ───────────────────────────────────
+    st.markdown(
+        '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:1.5px; font-weight:700; margin:12px 0 8px 0;">'
+        '🕐 SECTION 4 — IB WINDOW vs FULL-DAY COMPARISON</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Run the same ticker list with three different cutoff windows and compare win rates side by side. "
+        "Window A = standard IB (9:30–10:30). Window B = extended morning (to 12:00 PM). "
+        "Window C = midday (to 2:00 PM). "
+        "Each window uses its bars as the signal, then evaluates what happened after."
+    )
+    _wc_date = st.date_input(
+        "Comparison Date", value=date.today(), key="pt_wc_date"
+    )
+    _wc_tickers_raw = st.text_input(
+        "Tickers for comparison",
+        value=_pt_default_tickers,
+        key="pt_wc_tickers",
+    )
+    _wc_run = st.button(
+        "▶ Run Window Comparison", key="pt_wc_run", use_container_width=True, type="primary"
+    )
+    if _wc_run:
+        if not api_key or not secret_key:
+            st.error("Add Alpaca credentials in the sidebar first.")
+        else:
+            _wc_tickers = [
+                t.strip().upper()
+                for t in _wc_tickers_raw.replace("\n", ",").split(",")
+                if t.strip() and t.strip().isalpha()
+            ]
+            _wc_windows = [
+                ("A — IB Only (10:30)",      10, 30),
+                ("B — Extended AM (12:00)",  12,  0),
+                ("C — Midday (14:00)",       14,  0),
+            ]
+            _wc_results = {}
+            with st.spinner("Running 3 time windows in parallel…"):
+                from concurrent.futures import ThreadPoolExecutor as _WCTP, as_completed as _wcac
+                def _run_window(label, h, m):
+                    res, summ = run_historical_backtest(
+                        api_key, secret_key,
+                        trade_date=_wc_date,
+                        tickers=_wc_tickers,
+                        feed=_pt_feed_str,
+                        price_min=float(_pt_price_range[0]),
+                        price_max=float(_pt_price_range[1]),
+                        cutoff_hour=h,
+                        cutoff_minute=m,
+                        slippage_pct=0.0,
+                    )
+                    return label, res, summ
+                with _WCTP(max_workers=3) as _wc_ex:
+                    _wc_futs = {
+                        _wc_ex.submit(_run_window, label, h, m): label
+                        for label, h, m in _wc_windows
+                    }
+                    for _wc_f in _wcac(_wc_futs):
+                        _lbl, _res, _summ = _wc_f.result()
+                        _wc_results[_lbl] = (_res, _summ)
+
+            st.session_state["_pt_wc_results"] = _wc_results
+
+    _wc_stored = st.session_state.get("_pt_wc_results", {})
+    if _wc_stored:
+        _wc_cols = st.columns(3)
+        _wc_summary_rows = []
+        for _wi, (_wlabel, (_wres, _wsumm)) in enumerate(sorted(_wc_stored.items())):
+            _wwr  = _wsumm.get("win_rate", 0)
+            _wtot = _wsumm.get("total", 0)
+            _wavg = _wsumm.get("avg_tcs", 0)
+            _wfb  = _wsumm.get("false_break_rate", 0)
+            _wbull_ft = _wsumm.get("avg_bull_ft", 0)
+            _wr_clr = "#4caf50" if _wwr >= 60 else "#ff9800" if _wwr >= 50 else "#ef5350"
+            _wc_summary_rows.append({
+                "Window":         _wlabel,
+                "Win Rate":       f"{_wwr}%",
+                "Setups":         _wtot,
+                "Avg TCS":        int(_wavg),
+                "Avg Bull FT":    f"+{_wbull_ft:.1f}%",
+                "False Brk %":    f"{_wfb:.1f}%",
+            })
+            with _wc_cols[_wi]:
+                st.markdown(
+                    f'<div style="background:#0a1929; border:1px solid #1565c055; '
+                    f'border-radius:10px; padding:16px; text-align:center;">'
+                    f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+                    f'letter-spacing:1px; margin-bottom:6px;">{_wlabel}</div>'
+                    f'<div style="font-size:34px; font-weight:900; color:{_wr_clr}; '
+                    f'font-family:monospace;">{_wwr}%</div>'
+                    f'<div style="font-size:11px; color:#37474f; margin-top:4px;">'
+                    f'{_wsumm.get("wins",0)}W / {_wsumm.get("losses",0)}L · {_wtot} setups</div>'
+                    f'<div style="font-size:11px; color:#546e7a; margin-top:8px;">'
+                    f'Avg TCS {int(_wavg)} · Bull FT +{_wbull_ft:.1f}% · False Brk {_wfb:.1f}%</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        st.markdown("<br>", unsafe_allow_html=True)
+        _best_window = max(_wc_stored.items(), key=lambda x: x[1][1].get("win_rate", 0))
+        st.info(
+            f"**Best window for {_wc_date}: {_best_window[0]}** with "
+            f"{_best_window[1][1].get('win_rate', 0)}% win rate. "
+            f"This tells you whether giving the engine more bar data before calling structure "
+            f"improves prediction accuracy for your ticker universe."
         )
 
 
@@ -9163,6 +9373,50 @@ with tab_paper:
 if mode == "🔴 Live Stream" and st.session_state.live_active:
     time.sleep(2)
     st.rerun()
+
+# ── Paper Trade live auto-scan loop ───────────────────────────────────────────
+if st.session_state.get("_pt_live_mode"):
+    _pt_now      = datetime.now(EASTERN)
+    _pt_mkt_on   = (
+        _pt_now.weekday() < 5
+        and _pt_now.replace(hour=9, minute=30, second=0, microsecond=0)
+        <= _pt_now
+        <= _pt_now.replace(hour=16, minute=0, second=0, microsecond=0)
+    )
+    if _pt_mkt_on:
+        _pt_last_ts  = st.session_state.get("_pt_last_auto_scan", 0)
+        _pt_elapsed  = _pt_now.timestamp() - _pt_last_ts
+        if _pt_elapsed >= 1800:
+            _pt_at  = st.session_state.get("pt_scan_date", date.today())
+            _pt_tkrs = [
+                t.strip().upper()
+                for t in st.session_state.get("pt_tickers", "").replace("\n", ",").split(",")
+                if t.strip() and t.strip().isalpha()
+            ]
+            _pt_min  = st.session_state.get("pt_min_tcs", 50)
+            _pt_fd   = "sip" if "SIP" in st.session_state.get("pt_feed", "SIP") else "iex"
+            _pt_pr   = st.session_state.get("pt_price_range", (1.0, 20.0))
+            if _pt_tkrs and api_key and secret_key:
+                _auto_res, _auto_sum = run_historical_backtest(
+                    api_key, secret_key,
+                    trade_date=_pt_at,
+                    tickers=_pt_tkrs,
+                    feed=_pt_fd,
+                    price_min=float(_pt_pr[0]),
+                    price_max=float(_pt_pr[1]),
+                    slippage_pct=0.0,
+                )
+                _auto_q = [
+                    dict(r, sim_date=str(_pt_at))
+                    for r in _auto_res
+                    if float(r.get("tcs", 0)) >= _pt_min
+                ]
+                if _auto_q:
+                    log_paper_trades(_auto_q, user_id=_AUTH_USER_ID, min_tcs=_pt_min)
+                st.session_state["_pt_last_auto_scan"] = _pt_now.timestamp()
+                st.session_state.pop("pt_tracker_df", None)
+        time.sleep(60)
+        st.rerun()
 
 # ── Replay auto-advance loop ──────────────────────────────────────────────────
 if (mode == "🎬 Replay"
