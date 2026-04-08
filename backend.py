@@ -22,12 +22,40 @@ SUPABASE_KEY = (
     os.environ.get("SUPABASE_ANON_KEY") or
     os.environ.get("VITE_SUPABASE_ANON_KEY")
 )
+SUPABASE_ANON_KEY = (
+    os.environ.get("SUPABASE_ANON_KEY") or
+    os.environ.get("VITE_SUPABASE_ANON_KEY") or
+    SUPABASE_KEY
+)
 
 if SUPABASE_URL and SUPABASE_KEY:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
     supabase = None
     print("WARNING: Supabase credentials not found in environment variables.")
+
+# ── RLS-enforcing client (anon key + user JWT) ────────────────────────────────
+# This client respects Row Level Security. After a user logs in, call
+# set_user_session() to bind their JWT so all queries are user-scoped.
+if SUPABASE_URL and SUPABASE_ANON_KEY:
+    supabase_anon: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+else:
+    supabase_anon = None
+
+
+def set_user_session(access_token: str, refresh_token: str) -> None:
+    """Bind a logged-in user's JWT to the RLS-enforcing client.
+
+    Must be called after every login or session restore so that
+    supabase_anon queries are automatically scoped to that user.
+    The paper_trader_bot continues to use the service-key client
+    (supabase) which bypasses RLS by design.
+    """
+    if supabase_anon and access_token:
+        try:
+            supabase_anon.auth.set_session(access_token, refresh_token or "")
+        except Exception:
+            pass
 
 # ── Supabase Auth helpers ─────────────────────────────────────────────────────
 
@@ -124,7 +152,12 @@ def try_restore_session() -> dict:
                 str(resp.user.email),
                 resp.session.refresh_token if resp.session else token,
             )
-            return {"user": resp.user, "email": str(resp.user.email)}
+            return {
+                "user":          resp.user,
+                "email":         str(resp.user.email),
+                "access_token":  resp.session.access_token  if resp.session else "",
+                "refresh_token": resp.session.refresh_token if resp.session else "",
+            }
     except Exception as _e:
         print(f"Session restore failed: {_e}")
         clear_session_cache()
