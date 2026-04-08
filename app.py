@@ -8693,8 +8693,8 @@ with tab_scan:
     _wpe_count = len(_wpe_saved_tickers)
 
     # ── Always-visible action buttons ─────────────────────────────────────────
-    _wpe_feed = st.selectbox("Feed", ["iex", "sip"], key="wpe_feed_select",
-                             help="IEX = free tier. SIP = full tape.")
+    _wpe_feed = st.selectbox("Feed", ["sip", "iex"], key="wpe_feed_select",
+                             help="SIP = full national tape (recommended). IEX = free tier fallback.")
     _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
 
     # Predict All — only active when tickers are entered
@@ -8714,10 +8714,14 @@ with tab_scan:
                         max_tickers=_wpe_count,
                         user_id=_AUTH_USER_ID,
                     )
-                    # Always target the NEXT trading session (strictly after today)
-                    # so predictions are never labeled with today's already-open session
+                    # Target today's session if before market open (9:30 AM ET),
+                    # otherwise target the next trading day so we don't label
+                    # a prediction with a session that's already underway.
+                    _now_et = datetime.now(EASTERN)
+                    _mkt_open_et = _now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+                    _wpe_as_of = date.today() if _now_et < _mkt_open_et else date.today() + timedelta(days=1)
                     _wpe_pred_date = get_next_trading_day(
-                        as_of=date.today() + timedelta(days=1),
+                        as_of=_wpe_as_of,
                         api_key=api_key,
                         secret_key=secret_key,
                     )
