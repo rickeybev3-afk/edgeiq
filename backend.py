@@ -5341,6 +5341,8 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 "ib_low":         r.get("ib_low"),
                 "ib_high":        r.get("ib_high"),
                 "open_price":     r.get("open_price"),
+                "alert_price":    r.get("close_price"),      # price at IB close = price when alert fires
+                "alert_time":     datetime.utcnow().isoformat(),  # UTC timestamp when alert was logged
                 "actual_outcome": r.get("actual_outcome", ""),
                 "follow_thru_pct": r.get("aft_move_pct"),
                 "win_loss":       r.get("win_loss", ""),
@@ -5380,21 +5382,46 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
     """Update paper trades for a given date with final EOD outcomes.
 
     Matches on (user_id, trade_date, ticker) and patches
-    actual_outcome, follow_thru_pct, win_loss, false_break_up/down.
+    actual_outcome, follow_thru_pct, win_loss, false_break_up/down,
+    and post_alert_move_pct (EOD close vs alert_price at IB close).
     Returns dict with updated count.
     """
     if not supabase or not results:
         return {"updated": 0}
+
+    # Batch-fetch stored alert_price values for this date so we can compute
+    # post_alert_move_pct = (eod_close − alert_price) / alert_price × 100
+    try:
+        existing = (
+            supabase.table("paper_trades")
+            .select("ticker, alert_price")
+            .eq("user_id", user_id)
+            .eq("trade_date", str(trade_date))
+            .execute()
+            .data or []
+        )
+        alert_prices = {row["ticker"]: row.get("alert_price") for row in existing}
+    except Exception:
+        alert_prices = {}
+
     updated = 0
     for r in results:
         try:
-            ticker = r.get("ticker", "")
+            ticker    = r.get("ticker", "")
+            eod_close = r.get("close_price")
+            ap        = alert_prices.get(ticker)
+            if ap and eod_close and float(ap) > 0:
+                post_alert = round((float(eod_close) - float(ap)) / float(ap) * 100, 2)
+            else:
+                post_alert = None
+
             patch = {
-                "actual_outcome":  r.get("actual_outcome", ""),
-                "follow_thru_pct": r.get("aft_move_pct"),
-                "win_loss":        r.get("win_loss", ""),
-                "false_break_up":  bool(r.get("false_break_up", False)),
-                "false_break_down": bool(r.get("false_break_down", False)),
+                "actual_outcome":      r.get("actual_outcome", ""),
+                "follow_thru_pct":     r.get("aft_move_pct"),
+                "win_loss":            r.get("win_loss", ""),
+                "false_break_up":      bool(r.get("false_break_up", False)),
+                "false_break_down":    bool(r.get("false_break_down", False)),
+                "post_alert_move_pct": post_alert,
             }
             (
                 supabase.table("paper_trades")
