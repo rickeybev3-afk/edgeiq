@@ -8192,6 +8192,112 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             f"improves prediction accuracy for your ticker universe."
         )
 
+    st.markdown("---")
+
+    # ── Section 5: Brain Health ──────────────────────────────────────────────
+    st.markdown(
+        '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:1.5px; font-weight:700; margin:12px 0 8px 0;">'
+        '🧠 SECTION 5 — BRAIN HEALTH & LIVE WEIGHT CALIBRATION</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "The bot recalibrates brain weights automatically at 4:10 PM ET every trading day. "
+        "It reads all verified journal trades (accuracy_tracker) + all paper trade outcomes "
+        "and nudges each structure's weight up or down using a 30% learning rate. "
+        "Use the button below to run it right now."
+    )
+
+    _bh_c1, _bh_c2 = st.columns([1, 1])
+    with _bh_c1:
+        _bh_run = st.button(
+            "🧠 Recalibrate Now from Live Data",
+            key="pt_bh_run",
+            use_container_width=True,
+            type="primary",
+        )
+    with _bh_c2:
+        _bh_reset = st.button(
+            "↺ Reset to Neutral (all weights = 1.0)",
+            key="pt_bh_reset",
+            use_container_width=True,
+        )
+
+    if _bh_reset:
+        _neutral = {k: 1.0 for k in [
+            "trend_bull", "trend_bear", "double_dist", "non_trend",
+            "normal", "neutral", "ntrl_extreme", "nrml_variation"
+        ]}
+        _save_brain_weights(_neutral, user_id=_AUTH_USER_ID)
+        st.session_state.pop("_pt_bh_result", None)
+        st.success("✅ All weights reset to 1.0 (neutral). Run 'Recalibrate Now' to re-learn from data.")
+
+    if _bh_run:
+        with st.spinner("Reading all Supabase outcome data and updating brain weights…"):
+            _bh_result = recalibrate_from_supabase(user_id=_AUTH_USER_ID)
+        st.session_state["_pt_bh_result"] = _bh_result
+
+    _bh_stored = st.session_state.get("_pt_bh_result")
+
+    # Always show current weights
+    _cur_weights = load_brain_weights(_AUTH_USER_ID)
+    _w_default   = 1.0
+    _wk_labels   = {
+        "trend_bull":    "📈 Trend Bull",
+        "trend_bear":    "📉 Trend Bear",
+        "double_dist":   "🔁 Double Dist",
+        "non_trend":     "↔ Non Trend",
+        "normal":        "🔲 Normal",
+        "neutral":       "⚖ Neutral",
+        "ntrl_extreme":  "⚡ Neutral Extreme",
+        "nrml_variation":"〰 Normal Variation",
+    }
+
+    # Build display table with delta if calibration was just run
+    _bh_deltas_map = {}
+    if _bh_stored:
+        for d in _bh_stored.get("deltas", []):
+            _bh_deltas_map[d["key"]] = d
+
+    _bh_rows = []
+    for wk, label in _wk_labels.items():
+        cur = _cur_weights.get(wk, 1.0)
+        row = {
+            "Structure":   label,
+            "Weight":      f"{cur:.4f}",
+            "vs Default":  f"{cur - _w_default:+.4f}",
+            "Status":      "🟢 Boosted" if cur > 1.1 else ("🔴 Penalized" if cur < 0.9 else "⚪ Neutral"),
+        }
+        if wk in _bh_deltas_map:
+            d = _bh_deltas_map[wk]
+            row["Last Δ"]   = f"{d['delta']:+.4f}"
+            row["Accuracy"] = f"{d['accuracy']}%"
+            row["Samples"]  = d["samples"]
+        _bh_rows.append(row)
+
+    st.dataframe(
+        pd.DataFrame(_bh_rows), use_container_width=True, hide_index=True
+    )
+
+    if _bh_stored:
+        _src = _bh_stored.get("sources", {})
+        _ts  = _bh_stored.get("timestamp", "")[:16].replace("T", " ")
+        if _bh_stored.get("calibrated"):
+            _n_adj = len(_bh_stored.get("deltas", []))
+            st.success(
+                f"✅ Calibration complete as of {_ts} — "
+                f"{_n_adj} structure(s) adjusted · "
+                f"Data: {_src.get('accuracy_tracker', 0)} journal entries + "
+                f"{_src.get('paper_trades', 0)} paper trades = "
+                f"{_src.get('total', 0)} total outcomes"
+            )
+        else:
+            st.info(
+                f"Not enough data yet to update weights (need ≥5 samples per structure). "
+                f"Read {_src.get('total', 0)} outcomes so far — keep trading and journaling. "
+                f"Weights unchanged."
+            )
+
 
 tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa, tab_paper = st.tabs(
     ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "🔬 Backtest",

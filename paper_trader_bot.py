@@ -57,6 +57,7 @@ try:
         update_paper_trade_outcomes,
         ensure_paper_trades_table,
         load_watchlist,
+        recalibrate_from_supabase,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}. Make sure paper_trader_bot.py is in the same directory as backend.py.")
@@ -181,6 +182,49 @@ def eod_update():
         )
 
 
+def nightly_recalibration():
+    """Run at 4:10 PM: read all Supabase outcome data, update brain weights.
+
+    Combines:
+      - accuracy_tracker  (journal-verified manual trades)
+      - paper_trades      (bot paper trading outcomes)
+
+    Uses 30% EMA learning rate with minimum 5 samples per structure.
+    """
+    log.info("=" * 60)
+    log.info("NIGHTLY RECALIBRATION — updating brain weights from live data")
+    log.info("=" * 60)
+    try:
+        cal = recalibrate_from_supabase(user_id=USER_ID)
+        src = cal.get("sources", {})
+        log.info(
+            f"Data sources — accuracy_tracker: {src.get('accuracy_tracker', 0)} rows | "
+            f"paper_trades: {src.get('paper_trades', 0)} rows | "
+            f"total: {src.get('total', 0)}"
+        )
+        if not cal.get("calibrated"):
+            log.info("Not enough data yet (need ≥5 samples per structure). Weights unchanged.")
+            return
+        deltas = cal.get("deltas", [])
+        log.info(f"Brain weights updated — {len(deltas)} structure(s) adjusted:")
+        for d in deltas:
+            direction = "▲" if d["delta"] > 0 else ("▼" if d["delta"] < 0 else "—")
+            log.info(
+                f"  {d['key']:16s} | {d['old']:.4f} → {d['new']:.4f} "
+                f"({direction}{abs(d['delta']):.4f}) | "
+                f"acc {d['accuracy']}% over {d['samples']} samples"
+            )
+        unchanged = [
+            k for k in ["trend_bull", "trend_bear", "double_dist", "non_trend",
+                         "normal", "neutral", "ntrl_extreme", "nrml_variation"]
+            if k not in [d["key"] for d in deltas]
+        ]
+        if unchanged:
+            log.info(f"  Unchanged (< 5 samples): {', '.join(unchanged)}")
+    except Exception as exc:
+        log.error(f"Nightly recalibration failed: {exc}")
+
+
 def main():
     log.info("EdgeIQ Paper Trader Bot starting up...")
 
@@ -193,7 +237,7 @@ def main():
 
     log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
     log.info(f"User: {USER_ID}")
-    log.info("Schedule: 10:35 AM ET → morning scan | 4:05 PM ET → EOD update")
+    log.info("Schedule: 10:35 AM ET → morning scan | 4:05 PM ET → EOD update | 4:10 PM ET → brain recalibration")
 
     _table_ok = ensure_paper_trades_table()
     if not _table_ok:
@@ -217,8 +261,9 @@ def main():
         )
         return
 
-    _morning_done = False
-    _eod_done     = False
+    _morning_done       = False
+    _eod_done           = False
+    _recalibration_done = False
 
     while True:
         now_et = datetime.now(EASTERN)
@@ -226,10 +271,20 @@ def main():
 
         # Reset flags at midnight
         if now_et.hour == 0 and now_et.minute == 0:
-            _morning_done = False
-            _eod_done     = False
+            _morning_done       = False
+            _eod_done           = False
+            _recalibration_done = False
 
         if not _market_is_open(now_et):
+            # Allow recalibration after market close (4:10+ PM)
+            if (
+                not _recalibration_done
+                and now_et.weekday() < 5
+                and now_et.hour == 16
+                and now_et.minute >= 10
+            ):
+                nightly_recalibration()
+                _recalibration_done = True
             next_check = 60
             log.debug(f"Market closed. Next check in {next_check}s")
             time.sleep(next_check)
@@ -252,6 +307,15 @@ def main():
         ):
             eod_update()
             _eod_done = True
+
+        # 4:10 PM — brain recalibration (5 min after EOD so outcomes are settled)
+        if (
+            not _recalibration_done
+            and now_et.hour == 16
+            and now_et.minute >= 10
+        ):
+            nightly_recalibration()
+            _recalibration_done = True
 
         time.sleep(30)
 

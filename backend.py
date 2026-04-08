@@ -1246,6 +1246,125 @@ def recalibrate_brain_weights(user_id: str = "") -> dict:
     return weights
 
 
+def recalibrate_from_supabase(user_id: str = "") -> dict:
+    """Read ALL live outcome data from Supabase and update brain weights.
+
+    Data sources (combined):
+      1. accuracy_tracker table  — journal-verified trades (predicted / correct ✅/❌)
+      2. paper_trades table      — bot paper trades (predicted / win_loss Win/Loss)
+
+    Learning rule (same as recalibrate_brain_weights):
+      target = 1.5 if acc ≥ 70% | 1.0 if 50–70% | 0.75 if 30–50% | 0.5 if <30%
+      new_weight = old_weight × 0.70 + target × 0.30  (30% EMA, min 5 samples)
+
+    Returns dict:
+      {
+        "weights":  {structure_key: new_weight, …},
+        "deltas":   [{key, old, new, delta, accuracy, samples}, …],
+        "sources":  {"accuracy_tracker": N, "paper_trades": N, "total": N},
+        "calibrated": bool,
+        "timestamp": iso string,
+      }
+    """
+    import collections as _col
+
+    weights  = load_brain_weights(user_id)
+    old_w    = dict(weights)
+    result   = {
+        "weights":   weights,
+        "deltas":    [],
+        "sources":   {"accuracy_tracker": 0, "paper_trades": 0, "total": 0},
+        "calibrated": False,
+        "timestamp": datetime.now(EASTERN).isoformat(),
+    }
+
+    if not supabase:
+        return result
+
+    # ── Accumulate per-structure (wins, total) ─────────────────────────────
+    struct_data: dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
+
+    # Source 1: accuracy_tracker
+    try:
+        q = supabase.table("accuracy_tracker").select("predicted,correct")
+        if user_id:
+            q = q.eq("user_id", user_id)
+        rows = q.execute().data or []
+        for r in rows:
+            pred = str(r.get("predicted", "") or "").strip()
+            correct = str(r.get("correct", "") or "").strip()
+            if not pred:
+                continue
+            wk = _label_to_weight_key(pred)
+            struct_data[wk]["total"] += 1
+            if "✅" in correct:
+                struct_data[wk]["wins"] += 1
+        result["sources"]["accuracy_tracker"] = len(rows)
+    except Exception as e:
+        print(f"recalibrate_from_supabase: accuracy_tracker error: {e}")
+
+    # Source 2: paper_trades
+    try:
+        q = supabase.table("paper_trades").select("predicted,win_loss")
+        if user_id:
+            q = q.eq("user_id", user_id)
+        rows = q.execute().data or []
+        for r in rows:
+            pred = str(r.get("predicted", "") or "").strip()
+            wl   = str(r.get("win_loss",  "") or "").strip().lower()
+            if not pred or not wl or wl in ("", "none", "pending"):
+                continue
+            wk = _label_to_weight_key(pred)
+            struct_data[wk]["total"] += 1
+            if wl == "win":
+                struct_data[wk]["wins"] += 1
+        result["sources"]["paper_trades"] = len(rows)
+    except Exception as e:
+        print(f"recalibrate_from_supabase: paper_trades error: {e}")
+
+    result["sources"]["total"] = (
+        result["sources"]["accuracy_tracker"] + result["sources"]["paper_trades"]
+    )
+
+    if not struct_data:
+        return result
+
+    # ── Apply EMA learning rule ─────────────────────────────────────────────
+    deltas = []
+    for wk, counts in struct_data.items():
+        n   = counts["total"]
+        if n < 5:
+            continue   # not enough samples
+        acc = counts["wins"] / n
+
+        if   acc >= 0.70: target = 1.50
+        elif acc >= 0.50: target = 1.00
+        elif acc >= 0.30: target = 0.75
+        else:             target = 0.50
+
+        old_val  = weights.get(wk, 1.0)
+        new_val  = round(old_val * 0.70 + target * 0.30, 4)
+        weights[wk] = new_val
+
+        deltas.append({
+            "key":      wk,
+            "old":      round(old_val, 4),
+            "new":      new_val,
+            "delta":    round(new_val - old_val, 4),
+            "accuracy": round(acc * 100, 1),
+            "samples":  n,
+            "target":   target,
+        })
+
+    if deltas:
+        _save_brain_weights(weights, user_id)
+        result["calibrated"] = True
+
+    result["weights"] = weights
+    result["deltas"]  = sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)
+    return result
+
+
 def brain_weights_summary(user_id: str = "") -> list[dict]:
     """Return a list of dicts for displaying the learned weight table."""
     weights  = load_brain_weights(user_id)
