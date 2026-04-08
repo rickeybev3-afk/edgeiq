@@ -25,6 +25,7 @@ from backend import (
     compute_journal_model_crossref,
     compute_pretrade_quality,
     scan_ticker_patterns,
+    enrich_trade_context,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -605,20 +606,61 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                 )
                                 _existing_keys.add(_ekey)
 
-                        _imported = 0
-                        _skipped  = 0
+                        # Filter to only trades that need saving
+                        _to_save = []
+                        _skipped = 0
                         for _t in _wb_trades:
                             _key = (_t["ticker"].upper(), str(_t["timestamp"])[:10])
                             if _wb_skip_dups and _key in _existing_keys:
                                 _skipped += 1
-                                continue
-                            save_journal_entry(_t, user_id=_uid)
-                            _imported += 1
+                            else:
+                                _to_save.append(_t)
+
+                        if _to_save:
+                            _enrich_status = st.empty()
+                            _enrich_status.info(
+                                f"Enriching {len(_to_save)} trade(s) with TCS, RVOL, IB levels "
+                                f"and structure — this may take a moment..."
+                            )
+
+                            _ak  = st.session_state.get("api_key", "")
+                            _ask = st.session_state.get("secret_key", "")
+
+                            def _enrich_one(trade):
+                                ctx = enrich_trade_context(
+                                    _ak, _ask,
+                                    trade["ticker"],
+                                    trade.get("timestamp", ""),
+                                    feed="iex",
+                                )
+                                enriched = dict(trade)
+                                for field in ("tcs", "rvol", "ib_high", "ib_low", "structure"):
+                                    if ctx.get(field) is not None and not enriched.get(field):
+                                        enriched[field] = ctx[field]
+                                return enriched
+
+                            from concurrent.futures import ThreadPoolExecutor, as_completed
+                            _enriched_trades = [None] * len(_to_save)
+                            with ThreadPoolExecutor(max_workers=min(6, len(_to_save))) as _ex:
+                                _futs = {_ex.submit(_enrich_one, t): i for i, t in enumerate(_to_save)}
+                                for _f in as_completed(_futs):
+                                    _enriched_trades[_futs[_f]] = _f.result()
+
+                            _enrich_status.empty()
+
+                            _imported = 0
+                            for _t in _enriched_trades:
+                                if _t is not None:
+                                    save_journal_entry(_t, user_id=_uid)
+                                    _imported += 1
+                        else:
+                            _imported = 0
 
                         st.success(
                             f"Imported **{_imported} trades** into your journal"
                             + (f" ({_skipped} skipped as duplicates)" if _skipped else "")
-                            + ". Refresh the page to see them below."
+                            + " — each entry includes TCS, RVOL, IB levels, and structure. "
+                            "Refresh the page to see them below."
                         )
                         if _imported > 0:
                             st.balloons()

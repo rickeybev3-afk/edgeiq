@@ -3769,6 +3769,92 @@ def compute_pretrade_quality(
         return {"error": str(e)}
 
 
+def enrich_trade_context(api_key: str, secret_key: str, ticker: str,
+                         trade_date, feed: str = "iex") -> dict:
+    """Retroactively compute TCS, RVOL, IB levels, and structure for a historical trade.
+
+    Called automatically during Webull CSV import so every journal entry has the
+    same context fields as a live analysis (TCS, RVOL, IB high/low, structure).
+    Feeds the Analytics calibration engine so win-rate slices by TCS bucket and
+    structure are accurate across all historical trades.
+
+    Returns a dict with keys: tcs, rvol, ib_high, ib_low, structure.
+    Returns {} on any failure — safe; caller keeps whatever data it already has.
+    """
+    try:
+        from datetime import date as _date, timedelta
+        import requests as _req
+
+        if hasattr(trade_date, "date"):
+            trade_dt = trade_date.date()
+        elif isinstance(trade_date, str):
+            from dateutil.parser import parse as _dp
+            trade_dt = _dp(trade_date).date()
+        else:
+            trade_dt = trade_date
+
+        # ── TCS and IB levels via pretrade quality pipeline ───────────────────
+        quality = compute_pretrade_quality(api_key, secret_key, ticker, trade_dt, feed=feed)
+        if quality.get("error"):
+            return {}
+
+        tcs      = quality.get("tcs")
+        ib_high  = quality.get("ib_high")
+        ib_low   = quality.get("ib_low")
+        ib_pos   = quality.get("ib_position", "")
+
+        # ── RVOL — total day volume vs 10-day prior average ───────────────────
+        rvol = None
+        try:
+            df_intra = fetch_bars(api_key, secret_key, ticker, trade_dt, feed=feed)
+            today_vol = float(df_intra["volume"].sum()) if not df_intra.empty else None
+
+            if today_vol:
+                start_window = (trade_dt - timedelta(days=18)).isoformat()
+                end_window   = trade_dt.isoformat()
+                daily_url = (
+                    f"https://data.alpaca.markets/v2/stocks/{ticker}/bars"
+                    f"?timeframe=1Day&start={start_window}&end={end_window}"
+                    f"&feed={feed}&limit=14"
+                )
+                headers = {
+                    "APCA-API-KEY-ID":     api_key,
+                    "APCA-API-SECRET-KEY": secret_key,
+                }
+                resp = _req.get(daily_url, headers=headers, timeout=8)
+                daily_bars = resp.json().get("bars", [])
+
+                prior_vols = [
+                    b["v"] for b in daily_bars
+                    if b.get("t", "")[:10] != trade_dt.isoformat() and "v" in b
+                ]
+                if prior_vols:
+                    avg_vol = sum(prior_vols) / len(prior_vols)
+                    rvol = round(today_vol / avg_vol, 2) if avg_vol > 0 else None
+        except Exception:
+            rvol = None
+
+        # ── Structure — derived from IB position (simplified for historical) ──
+        _pos_map = {
+            "Extended Above IB": "Trending Up",
+            "Extended Below IB": "Trending Down",
+            "At IB High":        "At IB High",
+            "At IB Low":         "At IB Low",
+        }
+        structure = _pos_map.get(ib_pos, "Inside IB")
+
+        return {
+            "tcs":      tcs,
+            "rvol":     rvol,
+            "ib_high":  ib_high,
+            "ib_low":   ib_low,
+            "structure": structure,
+        }
+
+    except Exception:
+        return {}
+
+
 def _parse_batch_pairs(text: str) -> list[tuple]:
     """Parse 'M/D: T1, T2, ...' lines into [(ticker, date), ...] for year 2026."""
     import re
