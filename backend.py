@@ -6025,6 +6025,16 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
     else:
         check_date = pred_date
 
+    # Bar data date: if check_date is a non-trading day (weekend/holiday),
+    # advance to the next actual trading day so we can still verify predictions
+    # that were saved with a weekend/holiday date.
+    if is_trading_day(check_date):
+        bar_date = check_date
+    else:
+        bar_date = get_next_trading_day(
+            as_of=check_date, api_key=api_key, secret_key=secret_key
+        )
+
     # When user explicitly provides a date, fetch ALL predictions for that date
     # (including already-verified) so they can re-run verification.
     _explicit_date = pred_date is not None
@@ -6057,7 +6067,7 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
         future_map = {
             executor.submit(
                 _score_single_ticker, api_key, secret_key,
-                p["ticker"], check_date, "iex"
+                p["ticker"], bar_date, "iex"
             ): p
             for p in pending
         }
@@ -6100,11 +6110,12 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
 
     accuracy = (correct_count / verified_count * 100) if verified_count > 0 else 0.0
     return {
-        "verified": verified_count,
-        "total":    len(pending),
-        "correct":  correct_count,
-        "accuracy": round(accuracy, 1),
-        "date":     str(check_date),
+        "verified":  verified_count,
+        "total":     len(pending),
+        "correct":   correct_count,
+        "accuracy":  round(accuracy, 1),
+        "date":      str(check_date),   # original pred_date (for display)
+        "bar_date":  str(bar_date),     # actual trading day bars were fetched from
     }
 
 

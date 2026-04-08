@@ -7124,9 +7124,10 @@ with tab_scan:
                         max_tickers=_wpe_count,
                         user_id=_AUTH_USER_ID,
                     )
-                    # Use next/current trading day — avoids saving on weekends/holidays
+                    # Always target the NEXT trading session (strictly after today)
+                    # so predictions are never labeled with today's already-open session
                     _wpe_pred_date = get_next_trading_day(
-                        as_of=date.today(),
+                        as_of=date.today() + timedelta(days=1),
                         api_key=api_key,
                         secret_key=secret_key,
                     )
@@ -7237,11 +7238,20 @@ with tab_scan:
                 _vr_date_fmt = date.fromisoformat(_vr.get("date","")).strftime("%b %-d, %Y")
             except Exception:
                 _vr_date_fmt = _vr.get("date", "")
+            # Show note if bar data came from a different (next) trading day
+            _vr_bar_date  = _vr.get("bar_date", _vr.get("date", ""))
+            _bar_note = ""
+            if _vr_bar_date and _vr_bar_date != _vr.get("date", ""):
+                try:
+                    _bar_fmt  = date.fromisoformat(_vr_bar_date).strftime("%b %-d")
+                    _bar_note = f" &nbsp;·&nbsp; bars from {_bar_fmt} (next trading day)"
+                except Exception:
+                    pass
             st.markdown(
                 f'<div style="background:#12122299;border:1px solid #2a2a4a;border-radius:10px;'
                 f'padding:14px 20px;margin:8px 0;">'
                 f'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">'
-                f'Verify Results — Session: {_vr_date_fmt}</div>'
+                f'Verify Results — Pred Date: {_vr_date_fmt}{_bar_note}</div>'
                 f'<div style="display:flex;gap:32px;align-items:center;flex-wrap:wrap;">'
                 f'<div style="text-align:center;">'
                 f'<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:2px;">Verified</div>'
