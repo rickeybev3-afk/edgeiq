@@ -626,8 +626,8 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                 f"and structure — this may take a moment..."
                             )
 
-                            _ak  = st.session_state.get("api_key", "")
-                            _ask = st.session_state.get("secret_key", "")
+                            _ak  = st.session_state.get("_sb_api_key", "")
+                            _ask = st.session_state.get("_sb_secret_key", "")
 
                             def _enrich_one(trade):
                                 ctx = enrich_trade_context(
@@ -655,6 +655,22 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                             for _t in _enriched_trades:
                                 if _t is not None:
                                     save_journal_entry(_t, user_id=_uid)
+                                    # Also write to accuracy_tracker so Analytics tab
+                                    # shows real P&L stats from your Webull history
+                                    _entry_p = float(_t.get("price", 0) or 0)
+                                    _exit_p  = float(_t.get("exit_price", 0) or 0)
+                                    _mfe_v   = float(_t.get("mfe", 0) or 0)
+                                    if _entry_p > 0 and _exit_p > 0:
+                                        log_accuracy_entry(
+                                            symbol=_t.get("ticker", ""),
+                                            predicted=_t.get("structure", "Unknown"),
+                                            actual=_t.get("structure", "Unknown"),
+                                            compare_key="webull_import",
+                                            entry_price=_entry_p,
+                                            exit_price=_exit_p,
+                                            mfe=_mfe_v,
+                                            user_id=_uid,
+                                        )
                                     _imported += 1
                         else:
                             _imported = 0
@@ -5134,11 +5150,58 @@ def render_analytics_tab():
                 )
 
     if no_data:
-        st.info(
-            "No synced trades yet. After you log trades and use **Sync from Alpaca** "
-            "or **Review Trades** in the Journal tab, your stats will appear here. "
-            "The Pattern Correlation section below is still available."
-        )
+        # If journal has entries but tracker is empty, offer one-click backfill
+        _j_count = len(journal_df) if not journal_df.empty else 0
+        if _j_count > 0:
+            st.warning(
+                f"Your journal has **{_j_count} entries** from your Webull import, but they haven't "
+                f"been linked to the analytics engine yet. Click below to sync them now — this is a "
+                f"one-time step for previously imported trades."
+            )
+            if st.button("🔄 Sync Journal → Analytics", type="primary",
+                         key="analytics_backfill_btn"):
+                _backfill_uid = st.session_state.get("auth_user_id", "")
+                _backfill_count = 0
+                _backfill_fail  = 0
+                for _, _jrow in journal_df.iterrows():
+                    try:
+                        _bp   = float(str(_jrow.get("price", 0)).replace("$","") or 0)
+                        # Try to extract exit price from notes ("Exit: $X.XXXX")
+                        _bnotes = str(_jrow.get("notes", ""))
+                        import re as _re
+                        _ex_m = _re.search(r"Exit:\s*\$([0-9.]+)", _bnotes)
+                        _bex  = float(_ex_m.group(1)) if _ex_m else 0.0
+                        # Try to extract P&L ("P&L: $+X.XX")
+                        _pnl_m = _re.search(r"P&L:\s*\$([+-]?[0-9.]+)", _bnotes)
+                        _bmfe  = float(_pnl_m.group(1)) if _pnl_m else 0.0
+                        if _bp > 0 and _bex > 0:
+                            log_accuracy_entry(
+                                symbol=str(_jrow.get("ticker", "")),
+                                predicted=str(_jrow.get("structure", "Unknown")),
+                                actual=str(_jrow.get("structure", "Unknown")),
+                                compare_key="webull_import",
+                                entry_price=_bp,
+                                exit_price=_bex,
+                                mfe=_bmfe,
+                                user_id=_backfill_uid,
+                            )
+                            _backfill_count += 1
+                        else:
+                            _backfill_fail += 1
+                    except Exception:
+                        _backfill_fail += 1
+                st.success(
+                    f"Synced **{_backfill_count} trades** to analytics."
+                    + (f" {_backfill_fail} entries skipped (missing P&L data)." if _backfill_fail else "")
+                    + " Refresh the page to see your stats."
+                )
+                st.rerun()
+        else:
+            st.info(
+                "No synced trades yet. Import your Webull CSV in the **Journal** tab, "
+                "then return here to see your edge stats. "
+                "The Pattern Correlation section below is still available."
+            )
 
     st.markdown("---")
 

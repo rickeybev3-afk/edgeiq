@@ -2962,6 +2962,9 @@ def parse_webull_csv(df: "pd.DataFrame") -> list:
                 "timestamp":   entry_time.isoformat() if hasattr(entry_time, "isoformat") else str(entry_time),
                 "ticker":      sym,
                 "price":       round(avg_entry, 4),
+                "exit_price":  round(price, 4),       # sell price — used by analytics
+                "mfe":         round(pnl, 2),         # P&L dollars — used by analytics
+                "shares":      shares_int,
                 "structure":   "Unknown",
                 "tcs":         None,
                 "rvol":        None,
