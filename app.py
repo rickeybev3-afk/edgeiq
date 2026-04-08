@@ -5409,8 +5409,8 @@ def render_analytics_tab():
         "on your A/B wins vs your C/F losses. Identifies which setups actually work for you."
     )
 
-    _pat_scan_api = st.session_state.get("alpaca_api_key", "")
-    _pat_scan_sec = st.session_state.get("alpaca_secret_key", "")
+    _pat_scan_api = st.session_state.get("_sb_api_key", "")
+    _pat_scan_sec = st.session_state.get("_sb_secret_key", "")
     _pat_scan_uid = st.session_state.get("auth_user_id", "")
     _pat_result   = st.session_state.get("_pat_scan_result")
 
