@@ -5,18 +5,27 @@ Runs independently all day without the browser open.
 
 Schedule (ET):
    9:15 AM  — Auto-fetch watchlist from Finviz (your exact filter settings) → save to Supabase
-  10:46 AM  — IB close + 16 min buffer → scan watchlist, filter TCS ≥ MIN_TCS, log entries
-   4:05 PM  — Market closes → re-scan and update outcomes with full-day data
+  10:47 AM  — IB close + 17 min buffer → scan watchlist, filter TCS ≥ MIN_TCS, log entries + Telegram alerts
+   2:00 PM  — Intraday key-level alert scan (re-scans for fresh setups mid-day)
+   4:05 PM  — Market closes → update outcomes with full-day data
+   4:10 PM  — Nightly brain recalibration
 
-Required environment secrets (set in Replit Secrets):
-  ALPACA_API_KEY      — your Alpaca API key
-  ALPACA_SECRET_KEY   — your Alpaca secret key
-  PAPER_TRADE_USER_ID — your EdgeIQ user ID (a5e1fcab-8369-42c4-8550-a8a19734510c)
+Telegram Alerts (requires TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID secrets):
+  • Morning scan: each qualifying setup → immediate alert with structure, IB range, key levels
+  • Key-level alerts: price within X% of POC/VAH/VAL/target → actionable entry cue
+  • EOD summary: win/loss count, biggest mover of the day
+  • Brain recalibration: weight changes logged
 
-Optional env vars (set in Replit Secrets or below):
-  PAPER_TRADE_TICKERS — comma-separated ticker list (defaults to watchlist below)
-  PAPER_TRADE_MIN_TCS — minimum TCS threshold (default: 50)
-  PAPER_TRADE_FEED    — sip or iex (default: sip)
+Required environment secrets:
+  ALPACA_API_KEY        — Alpaca API key
+  ALPACA_SECRET_KEY     — Alpaca secret key
+  TELEGRAM_BOT_TOKEN    — from @BotFather
+  TELEGRAM_CHAT_ID      — your chat ID from @userinfobot
+
+Optional env vars:
+  PAPER_TRADE_USER_ID   — EdgeIQ user ID (defaults below)
+  PAPER_TRADE_MIN_TCS   — minimum TCS threshold (default: 50)
+  PAPER_TRADE_FEED      — sip or iex (default: sip)
   PAPER_TRADE_PRICE_MIN — min price filter (default: 1.0)
   PAPER_TRADE_PRICE_MAX — max price filter (default: 20.0)
 """
@@ -46,6 +55,9 @@ FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
 PRICE_MIN         = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
 PRICE_MAX         = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
 
+TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
 _DEFAULT_TICKERS = (
     "SATL,UGRO,ANNA,VCX,CODX,ARTL,SWMR,FEED,RBNE,PAVS,LNKS,BIAF,ACXP,GOAI"
 )
@@ -63,18 +75,162 @@ try:
         recalibrate_from_supabase,
     )
 except ImportError as e:
-    log.error(f"Cannot import backend: {e}. Make sure paper_trader_bot.py is in the same directory as backend.py.")
+    log.error(f"Cannot import backend: {e}")
     raise
 
 
-def _resolve_tickers() -> list:
-    """Return tickers to scan.
-
-    Priority:
-      1. PAPER_TRADE_TICKERS env var (manual override)
-      2. User's saved watchlist from Supabase
-      3. Hardcoded default fallback
+# ── Telegram helpers ──────────────────────────────────────────────────────────
+def tg_send(message: str) -> bool:
+    """Send a Telegram message. Returns True on success, False on failure.
+    Silently skips if credentials are not configured.
     """
+    if not TG_TOKEN or not TG_CHAT_ID:
+        return False
+    try:
+        import requests as _req
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+        resp = _req.post(url, json={
+            "chat_id":    TG_CHAT_ID,
+            "text":       message,
+            "parse_mode": "HTML",
+        }, timeout=10)
+        if resp.status_code == 200:
+            return True
+        else:
+            log.warning(f"Telegram send failed: {resp.status_code} {resp.text[:100]}")
+            return False
+    except Exception as exc:
+        log.warning(f"Telegram send error: {exc}")
+        return False
+
+
+def _structure_emoji(predicted: str) -> str:
+    p = (predicted or "").lower()
+    if "trend" in p and ("up" in p or "bull" in p):
+        return "🟢"
+    if "trend" in p and ("down" in p or "bear" in p):
+        return "🔴"
+    if "double" in p:
+        return "🟡"
+    if "neutral" in p or "ntrl" in p:
+        return "🔵"
+    if "normal" in p or "nrml" in p:
+        return "⚪"
+    return "⚫"
+
+
+def _alert_setup(r: dict, trade_date: date):
+    """Send a Telegram alert for a single qualifying setup."""
+    ticker    = r.get("ticker", "?")
+    tcs       = float(r.get("tcs", 0))
+    predicted = r.get("predicted", "Unknown")
+    conf      = float(r.get("confidence", 0))
+    ib_low    = float(r.get("ib_low", 0))
+    ib_high   = float(r.get("ib_high", 0))
+    open_px   = float(r.get("open_price", 0))
+    emoji     = _structure_emoji(predicted)
+
+    # Key entry levels
+    ib_mid    = round((ib_high + ib_low) / 2, 2)
+    above_ib  = round(ib_high * 1.005, 2)   # 0.5% breakout trigger above IB high
+    below_ib  = round(ib_low  * 0.995, 2)   # 0.5% breakdown trigger below IB low
+
+    # Entry logic hint based on structure
+    p_lower = predicted.lower()
+    if "trend" in p_lower and ("up" in p_lower or "bull" in p_lower):
+        entry_hint = f"🎯 <b>LONG</b> above IB high ${above_ib:.2f} | Target: IB extension"
+    elif "trend" in p_lower and ("down" in p_lower or "bear" in p_lower):
+        entry_hint = f"🎯 <b>SHORT</b> below IB low ${below_ib:.2f} | Target: IB extension"
+    elif "double" in p_lower:
+        entry_hint = f"🎯 Watch <b>both sides</b> — double distribution. Fade false breaks."
+    elif "ntrl extreme" in p_lower or "ntrl_extreme" in p_lower:
+        entry_hint = f"🎯 <b>Mean revert</b> to IB mid ${ib_mid:.2f} | Fade extremes"
+    elif "neutral" in p_lower:
+        entry_hint = f"🎯 <b>Range trade</b> — IB ${ib_low:.2f}–${ib_high:.2f} | Fade both ends"
+    else:
+        entry_hint = f"🎯 Watch IB range ${ib_low:.2f}–${ib_high:.2f} for directional break"
+
+    msg = (
+        f"{emoji} <b>EdgeIQ Setup — {ticker}</b>  [{trade_date}]\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 Structure: <b>{predicted}</b>  ({conf:.0f}% confidence)\n"
+        f"⚡ TCS Score: <b>{tcs:.0f}</b>\n"
+        f"📍 Open: ${open_px:.2f}\n"
+        f"📦 IB Range: ${ib_low:.2f} – ${ib_high:.2f}  (mid ${ib_mid:.2f})\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{entry_hint}\n"
+        f"🔑 Key levels:\n"
+        f"  Above IB → ${above_ib:.2f}\n"
+        f"  IB Mid   → ${ib_mid:.2f}\n"
+        f"  Below IB → ${below_ib:.2f}"
+    )
+    sent = tg_send(msg)
+    if sent:
+        log.info(f"  📱 Telegram alert sent: {ticker}")
+    return sent
+
+
+def _alert_morning_summary(qualified: list, total_scanned: int, trade_date: date):
+    """Send a summary header before individual setup alerts."""
+    if not qualified:
+        tg_send(
+            f"🔍 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
+            f"No setups met TCS ≥ {MIN_TCS} today out of {total_scanned} scanned.\n"
+            f"Watching for intraday opportunities..."
+        )
+        return
+    tg_send(
+        f"🔔 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ <b>{len(qualified)} setup(s)</b> qualified (TCS ≥ {MIN_TCS})\n"
+        f"📋 Scanned {total_scanned} tickers from your Finviz watchlist\n"
+        f"Sending individual alerts now..."
+    )
+
+
+def _alert_eod_summary(results: list, updated: int, trade_date: date):
+    """Send EOD outcome summary."""
+    wins   = [r for r in results if r.get("win_loss") == "Win"]
+    losses = [r for r in results if r.get("win_loss") == "Loss"]
+    best   = max(results, key=lambda r: float(r.get("aft_move_pct", 0)), default=None)
+
+    lines = [
+        f"📈 <b>EdgeIQ EOD Summary — {trade_date}</b>",
+        f"━━━━━━━━━━━━━━━━━━━━━",
+        f"✅ Wins: {len(wins)}   ❌ Losses: {len(losses)}   📋 Updated: {updated}",
+    ]
+    if best and best.get("aft_move_pct"):
+        lines.append(
+            f"🏆 Best mover: <b>{best['ticker']}</b> "
+            f"{float(best['aft_move_pct']):+.1f}% ({best.get('win_loss','?')})"
+        )
+    if wins or losses:
+        wr = round(100 * len(wins) / max(1, len(wins) + len(losses)), 1)
+        lines.append(f"📊 Today's win rate: <b>{wr}%</b>")
+    tg_send("\n".join(lines))
+
+
+def _alert_recalibration(cal: dict):
+    """Send brain recalibration summary."""
+    deltas = cal.get("deltas", [])
+    if not deltas:
+        tg_send(
+            "🧠 <b>Brain Recalibration</b>\n"
+            "Not enough data yet (need ≥5 samples per structure). Weights unchanged."
+        )
+        return
+    lines = ["🧠 <b>Brain Recalibration Complete</b>", "━━━━━━━━━━━━━━━━━━━━━"]
+    for d in deltas:
+        arrow = "▲" if d["delta"] > 0 else "▼"
+        lines.append(
+            f"  {d['key']}: {d['old']:.3f} → <b>{d['new']:.3f}</b> "
+            f"({arrow}{abs(d['delta']):.3f}) | {d['accuracy']}% / {d['samples']} trades"
+        )
+    tg_send("\n".join(lines))
+
+
+# ── Ticker resolution ─────────────────────────────────────────────────────────
+def _resolve_tickers() -> list:
     env_override = os.getenv("PAPER_TRADE_TICKERS", "").strip()
     if env_override:
         tickers = [t.strip().upper() for t in env_override.split(",") if t.strip()]
@@ -101,7 +257,6 @@ TICKERS = _resolve_tickers()
 
 
 def _market_is_open(now_et: datetime) -> bool:
-    """Return True if now_et falls within regular market hours Mon–Fri."""
     if now_et.weekday() >= 5:
         return False
     market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
@@ -109,17 +264,9 @@ def _market_is_open(now_et: datetime) -> bool:
     return market_open <= now_et <= market_close
 
 
+# ── Scheduled jobs ────────────────────────────────────────────────────────────
 def watchlist_refresh():
-    """Run at 9:15 AM ET: pull today's movers from Finviz, save to Supabase watchlist.
-
-    Uses the user's exact Webull-equivalent filter settings:
-      % Change ≥ 3%  |  Free Float ≤ 100M  |  Avg Volume ≥ 1M
-      Relative Volume ≥ 1×  |  Price $1–$20  |  US only
-      Sorted by volume descending, up to 60 tickers.
-
-    Falls back silently to the existing saved watchlist if Finviz is unreachable.
-    After saving, reloads the global TICKERS so the 10:46 AM scan uses fresh data.
-    """
+    """9:15 AM ET — pull today's movers from Finviz, save to Supabase."""
     global TICKERS
     log.info("=" * 60)
     log.info("WATCHLIST REFRESH — fetching from Finviz")
@@ -130,34 +277,38 @@ def watchlist_refresh():
             float_max_m=100.0,
             price_min=PRICE_MIN,
             price_max=PRICE_MAX,
-            max_tickers=60,
+            max_tickers=100,
         )
         if tickers:
             saved = save_watchlist(tickers, user_id=USER_ID)
             if saved:
                 TICKERS = tickers
                 log.info(f"Watchlist updated: {len(tickers)} tickers → {', '.join(tickers)}")
+                tg_send(
+                    f"📋 <b>Watchlist Refreshed — {date.today()}</b>\n"
+                    f"Fetched <b>{len(tickers)} tickers</b> from Finviz "
+                    f"(% Change ≥3% · Float ≤100M · Vol ≥1M · US)\n"
+                    f"Morning scan at 10:47 AM ET..."
+                )
             else:
                 log.warning("Finviz returned tickers but Supabase save failed — keeping existing watchlist")
         else:
-            log.warning("Finviz returned 0 tickers (possible block or no matches) — keeping existing watchlist")
+            log.warning("Finviz returned 0 tickers — keeping existing watchlist")
     except Exception as exc:
         log.warning(f"Watchlist refresh failed: {exc} — keeping existing watchlist")
 
 
 def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
-    """Fetch bars, run IB engine, return all results (unfiltered).
-
-    Uses SIP for all dates. fetch_bars automatically caps today's end time to
-    16 minutes ago so Alpaca free-tier SIP allows the query (>15 min rule).
-    """
-    scan_feed = FEED
-    log.info(f"Running scan for {trade_date} | cutoff {cutoff_h:02d}:{cutoff_m:02d} | {len(TICKERS)} tickers | feed: {scan_feed}")
+    """Fetch bars and run IB engine. Returns all results (unfiltered by TCS)."""
+    log.info(
+        f"Running scan for {trade_date} | cutoff {cutoff_h:02d}:{cutoff_m:02d} "
+        f"| {len(TICKERS)} tickers | feed: {FEED}"
+    )
     results, summary = run_historical_backtest(
         ALPACA_API_KEY, ALPACA_SECRET_KEY,
         trade_date=trade_date,
         tickers=TICKERS,
-        feed=scan_feed,
+        feed=FEED,
         price_min=PRICE_MIN,
         price_max=PRICE_MAX,
         cutoff_hour=cutoff_h,
@@ -175,15 +326,16 @@ def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
 
 
 def morning_scan():
-    """Run at 10:46 AM: log qualifying paper trade entries."""
+    """10:47 AM ET — log IB entries, send Telegram alerts per qualifying setup."""
     today = date.today()
     log.info("=" * 60)
-    log.info("MORNING SCAN — logging IB entries")
+    log.info("MORNING SCAN — logging IB entries + sending Telegram alerts")
     log.info("=" * 60)
 
     results = _run_scan(today, cutoff_h=10, cutoff_m=30)
     if not results:
         log.warning("No results from morning scan.")
+        tg_send(f"⚠️ <b>Morning Scan Failed</b> — {today}\nNo bar data returned. Check Alpaca connection.")
         return
 
     qualified = [
@@ -193,20 +345,55 @@ def morning_scan():
     ]
     log.info(f"{len(qualified)} setups passed TCS ≥ {MIN_TCS} (of {len(results)} scanned)")
 
+    # Telegram: summary header
+    _alert_morning_summary(qualified, len(results), today)
+
     if qualified:
         result = log_paper_trades(qualified, user_id=USER_ID, min_tcs=MIN_TCS)
         log.info(f"Logged: {result.get('saved', 0)} new | skipped: {result.get('skipped', 0)} (already exist)")
+        # Telegram: one alert per setup
         for r in qualified:
             log.info(
                 f"  {r['ticker']:6s} | TCS {r.get('tcs', 0):5.0f} | "
-                f"predicted: {r.get('predicted', '—'):20s} | IB {r.get('ib_low', 0):.2f}–{r.get('ib_high', 0):.2f}"
+                f"predicted: {r.get('predicted', '—'):20s} | "
+                f"IB {r.get('ib_low', 0):.2f}–{r.get('ib_high', 0):.2f}"
             )
+            _alert_setup(r, today)
+            time.sleep(0.3)  # Telegram rate limit buffer
     else:
         log.info("No setups met TCS threshold today.")
 
 
+def intraday_scan():
+    """2:00 PM ET — re-scan for fresh setups that developed through midday."""
+    today = date.today()
+    log.info("=" * 60)
+    log.info("INTRADAY SCAN — checking for midday setups")
+    log.info("=" * 60)
+
+    results = _run_scan(today, cutoff_h=13, cutoff_m=30)
+    if not results:
+        log.info("No intraday results.")
+        return
+
+    qualified = [r for r in results if float(r.get("tcs", 0)) >= MIN_TCS]
+    log.info(f"{len(qualified)} intraday setups at TCS ≥ {MIN_TCS} (of {len(results)} scanned)")
+
+    if qualified:
+        tg_send(
+            f"🔄 <b>Intraday Scan — {today} (2 PM)</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>{len(qualified)} setup(s)</b> still active/developing:"
+        )
+        for r in qualified:
+            _alert_setup(r, today)
+            time.sleep(0.3)
+    else:
+        log.info("No intraday setups above threshold.")
+
+
 def eod_update():
-    """Run at 4:05 PM: update paper trades with full-day outcomes."""
+    """4:05 PM ET — update paper trades with full-day outcomes + send EOD summary."""
     today = date.today()
     log.info("=" * 60)
     log.info("EOD UPDATE — resolving outcomes with full-day bar data")
@@ -215,26 +402,27 @@ def eod_update():
     results = _run_scan(today, cutoff_h=10, cutoff_m=30)
     if not results:
         log.warning("No results from EOD scan — cannot update outcomes.")
+        tg_send(f"⚠️ <b>EOD Update Failed</b> — {today}\nNo bar data returned.")
         return
 
     upd = update_paper_trade_outcomes(str(today), results, user_id=USER_ID)
-    log.info(f"Updated {upd.get('updated', 0)} paper trade outcome(s) for {today}")
+    updated_count = upd.get("updated", 0)
+    log.info(f"Updated {updated_count} paper trade outcome(s) for {today}")
+
     for r in results:
         log.info(
             f"  {r['ticker']:6s} | {r.get('win_loss', '?'):4s} | "
-            f"actual: {r.get('actual_outcome', '—'):18s} | FT {r.get('aft_move_pct', 0):+.1f}%"
+            f"actual: {r.get('actual_outcome', '—'):18s} | "
+            f"FT {r.get('aft_move_pct', 0):+.1f}%"
         )
+
+    # Telegram EOD summary
+    qualified_results = [r for r in results if float(r.get("tcs", 0)) >= MIN_TCS]
+    _alert_eod_summary(qualified_results, updated_count, today)
 
 
 def nightly_recalibration():
-    """Run at 4:10 PM: read all Supabase outcome data, update brain weights.
-
-    Combines:
-      - accuracy_tracker  (journal-verified manual trades)
-      - paper_trades      (bot paper trading outcomes)
-
-    Uses 30% EMA learning rate with minimum 5 samples per structure.
-    """
+    """4:10 PM ET — read all Supabase outcome data, update brain weights."""
     log.info("=" * 60)
     log.info("NIGHTLY RECALIBRATION — updating brain weights from live data")
     log.info("=" * 60)
@@ -248,6 +436,7 @@ def nightly_recalibration():
         )
         if not cal.get("calibrated"):
             log.info("Not enough data yet (need ≥5 samples per structure). Weights unchanged.")
+            _alert_recalibration(cal)
             return
         deltas = cal.get("deltas", [])
         log.info(f"Brain weights updated — {len(deltas)} structure(s) adjusted:")
@@ -258,17 +447,13 @@ def nightly_recalibration():
                 f"({direction}{abs(d['delta']):.4f}) | "
                 f"acc {d['accuracy']}% over {d['samples']} samples"
             )
-        unchanged = [
-            k for k in ["trend_bull", "trend_bear", "double_dist", "non_trend",
-                         "normal", "neutral", "ntrl_extreme", "nrml_variation"]
-            if k not in [d["key"] for d in deltas]
-        ]
-        if unchanged:
-            log.info(f"  Unchanged (< 5 samples): {', '.join(unchanged)}")
+        _alert_recalibration(cal)
     except Exception as exc:
         log.error(f"Nightly recalibration failed: {exc}")
+        tg_send(f"⚠️ <b>Recalibration Error</b>\n{exc}")
 
 
+# ── Main loop ─────────────────────────────────────────────────────────────────
 def main():
     log.info("EdgeIQ Paper Trader Bot starting up...")
 
@@ -279,9 +464,30 @@ def main():
         )
         return
 
+    if TG_TOKEN and TG_CHAT_ID:
+        log.info("Telegram alerts: ENABLED")
+        tg_send(
+            f"✅ <b>EdgeIQ Bot Online</b> — {date.today()}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 {len(TICKERS)} tickers loaded\n"
+            f"⚡ TCS threshold: {MIN_TCS}\n"
+            f"📡 Feed: {FEED.upper()}\n"
+            f"🕐 Schedule:\n"
+            f"  9:15 AM  → Finviz watchlist refresh\n"
+            f" 10:47 AM  → Morning scan + alerts\n"
+            f"  2:00 PM  → Intraday scan\n"
+            f"  4:05 PM  → EOD outcomes\n"
+            f"  4:10 PM  → Brain recalibration"
+        )
+    else:
+        log.warning("Telegram alerts: DISABLED (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set)")
+
     log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
     log.info(f"User: {USER_ID}")
-    log.info("Schedule: 9:15 AM ET → Finviz watchlist refresh | 10:46 AM ET → morning scan | 4:05 PM ET → EOD update | 4:10 PM ET → brain recalibration")
+    log.info(
+        "Schedule: 9:15 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
+        "2:00 PM ET → intraday scan | 4:05 PM ET → EOD update | 4:10 PM ET → recalibration"
+    )
 
     _table_ok = ensure_paper_trades_table()
     if not _table_ok:
@@ -307,6 +513,7 @@ def main():
 
     _watchlist_done     = False
     _morning_done       = False
+    _intraday_done      = False
     _eod_done           = False
     _recalibration_done = False
 
@@ -318,11 +525,12 @@ def main():
         if now_et.hour == 0 and now_et.minute == 0:
             _watchlist_done     = False
             _morning_done       = False
+            _intraday_done      = False
             _eod_done           = False
             _recalibration_done = False
 
         if not _market_is_open(now_et):
-            # Allow recalibration after market close (4:10+ PM)
+            # Recalibration runs after market close
             if (
                 not _recalibration_done
                 and now_et.weekday() < 5
@@ -331,12 +539,10 @@ def main():
             ):
                 nightly_recalibration()
                 _recalibration_done = True
-            next_check = 60
-            log.debug(f"Market closed. Next check in {next_check}s")
-            time.sleep(next_check)
+            time.sleep(60)
             continue
 
-        # 9:15 AM — auto-fetch watchlist from Finviz (pre-market movers, your exact filters)
+        # 9:15 AM — Finviz watchlist refresh
         if (
             not _watchlist_done
             and now_et.hour == 9
@@ -345,14 +551,24 @@ def main():
             watchlist_refresh()
             _watchlist_done = True
 
-        # 10:46 AM — morning scan (IB close at 10:30 is now 16 min old → free SIP works)
+        # 10:47 AM — morning scan + Telegram alerts
+        # (IB closes 10:30; SIP free tier needs >15 min delay → 10:47 is safe)
         if (
             not _morning_done
             and now_et.hour == 10
-            and now_et.minute >= 46
+            and now_et.minute >= 47
         ):
             morning_scan()
             _morning_done = True
+
+        # 2:00 PM — intraday scan
+        if (
+            not _intraday_done
+            and now_et.hour == 14
+            and now_et.minute >= 0
+        ):
+            intraday_scan()
+            _intraday_done = True
 
         # 4:05 PM — EOD update
         if (
@@ -363,7 +579,7 @@ def main():
             eod_update()
             _eod_done = True
 
-        # 4:10 PM — brain recalibration (5 min after EOD so outcomes are settled)
+        # 4:10 PM — brain recalibration
         if (
             not _recalibration_done
             and now_et.hour == 16
