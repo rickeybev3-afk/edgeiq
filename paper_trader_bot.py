@@ -136,7 +136,7 @@ def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
 
 
 def morning_scan():
-    """Run at 10:50 AM: log qualifying paper trade entries."""
+    """Run at 10:46 AM: log qualifying paper trade entries."""
     today = date.today()
     log.info("=" * 60)
     log.info("MORNING SCAN — logging IB entries")
@@ -242,7 +242,7 @@ def main():
 
     log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
     log.info(f"User: {USER_ID}")
-    log.info("Schedule: 10:50 AM ET → morning scan | 4:05 PM ET → EOD update | 4:10 PM ET → brain recalibration")
+    log.info("Schedule: 10:46 AM ET → morning scan | 4:05 PM ET → EOD update | 4:10 PM ET → brain recalibration")
 
     _table_ok = ensure_paper_trades_table()
     if not _table_ok:
@@ -295,11 +295,11 @@ def main():
             time.sleep(next_check)
             continue
 
-        # 10:50 AM — morning scan (IB close at 10:30 is now 20 min old → free SIP works)
+        # 10:46 AM — morning scan (IB close at 10:30 is now 16 min old → free SIP works)
         if (
             not _morning_done
             and now_et.hour == 10
-            and now_et.minute >= 50
+            and now_et.minute >= 46
         ):
             morning_scan()
             _morning_done = True
