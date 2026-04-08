@@ -161,6 +161,43 @@ Note: AIB Apr 6 "Win" but negative P&L — brain correctly predicted structure (
 
 ---
 
+## Macro Context Layer — Roadmap (user discussion 2026-04-08)
+
+The two-layer brain architecture eventually incorporates macro/tape context as Layer 2 on top of price structure (Layer 1). Priority order:
+
+### Phase 2 — IWM Day Type Classifier (highest priority macro input)
+- IWM is the direct proxy for small-cap tape quality
+- Classify each day: Trending Up / Trending Down / Range-Bound
+- Wire into TCS scoring as a multiplier (e.g. trending day +5–10 TCS points, range-bound day −5 points)
+- Store `iwm_day_type` per paper_trade row for future regression analysis
+- Expected impact: highest single improvement available after more trade data
+
+### Phase 2/3 — Market Breadth Score (Stockbees-style)
+- Count: stocks up >4% on day, new highs, momentum thrusters
+- "Tape quality score" — multiplier on top of TCS
+- High breadth day: borderline TCS setups get a boost (everything is moving)
+- Low breadth day: even clean setups get penalized
+- Data source needed: Finviz screener or paid breadth API
+- Store `breadth_score` per paper_trade row
+
+### Phase 3 — Regime Filter (Fed rates / risk-on vs risk-off)
+- Moves slowly (months between changes) — not a daily signal
+- Affects sector rotation within small-caps (growth vs value)
+- Use as a long-term regime flag, not a per-trade weight
+- Lowest urgency — implement after Phase 2 macro inputs are stable
+
+### Combined scoring vision (Phase 3 target):
+```
+Final TCS = Base TCS (price structure)
+          × Tape Quality Multiplier (IWM day type + breadth)
+          × Regime Filter (macro environment)
+```
+Brain Layer 2 goal: learn separate weights per structure per tape condition
+e.g. "Ntrl Extreme on strong IWM day" vs "Ntrl Extreme on flat IWM day" = distinct entries
+This is the defensible data moat — no one else has your structure + tape + outcome dataset.
+
+---
+
 ## Known Issues / Pending
 
 - `accuracy_tracker.correct` field is NULL for all 181 rows — needs data audit (Phase 2)
@@ -168,6 +205,7 @@ Note: AIB Apr 6 "Win" but negative P&L — brain correctly predicted structure (
 - Inside bar flag at IB close per paper trade row (Phase 2)
 - `gap_pct` per paper trade row (Phase 2 — extra API call for prior close)
 - `rvol_at_ib` per paper trade row (Phase 2 — needs daily volume curve)
+- `iwm_day_type` per paper_trade row (Phase 2 — add to morning scan)
 - Pattern discovery engine (Phase 2, ~500 rows needed)
 - Collective brain layer (Phase 2/3)
 - WebSocket key-level triggers (Phase 4 only)
