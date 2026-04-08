@@ -2697,7 +2697,20 @@ def _stream_worker(api_key, secret_key, ticker, feed_str, data_queue, stop_event
             pass
 
 
-def start_stream(api_key, secret_key, ticker, feed_str):
+def start_stream(api_key, secret_key, ticker, feed_str,
+                 historical_bars: list | None = None):
+    """Start the WebSocket stream for `ticker`.
+
+    historical_bars — optional list of bar dicts pre-loaded from today's
+        session (9:30 AM to now).  If provided, live_bars is seeded with
+        this data so the volume profile, IB, VWAP, and TCS are all computed
+        from the full day context the moment the stream starts — not from
+        scratch on the first arriving bar.
+
+    Bar dict format:
+        {"open": float, "high": float, "low": float,
+         "close": float, "volume": float, "timestamp": <Timestamp>}
+    """
     q = queue.Queue(maxsize=10000)
     ev = threading.Event()
     t = threading.Thread(target=_stream_worker,
@@ -2708,7 +2721,7 @@ def start_stream(api_key, secret_key, ticker, feed_str):
     st.session_state.live_stop_event = ev
     st.session_state.live_thread = t
     st.session_state.live_active = True
-    st.session_state.live_bars = []
+    st.session_state.live_bars = list(historical_bars) if historical_bars else []
     st.session_state.live_current_bar = None
     st.session_state.live_trades = deque(maxlen=3000)
     st.session_state.live_ticker = ticker

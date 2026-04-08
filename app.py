@@ -7234,8 +7234,31 @@ with tab_chart:
             elif not ticker:
                 st.error("Enter a ticker symbol.")
             else:
-                # Pre-fetch RVOL baseline and sector ETF change before starting stream
                 today = date.today()
+
+                # ── Step 1: Pre-load today's historical bars (9:30 AM → now) ──
+                _hist_bars: list = []
+                with st.spinner(
+                    f"Pre-loading today's session bars for {ticker} — "
+                    "IB, VWAP, volume profile, and TCS will be fully seeded at start…"
+                ):
+                    try:
+                        _hist_df = fetch_bars(api_key, secret_key, ticker,
+                                              today, feed=live_feed)
+                        if not _hist_df.empty:
+                            for _ts, _row in _hist_df.iterrows():
+                                _hist_bars.append({
+                                    "open":      float(_row["open"]),
+                                    "high":      float(_row["high"]),
+                                    "low":       float(_row["low"]),
+                                    "close":     float(_row["close"]),
+                                    "volume":    float(_row["volume"]),
+                                    "timestamp": _ts,
+                                })
+                    except Exception:
+                        _hist_bars = []
+
+                # ── Step 2: RVOL baseline and sector ETF ───────────────────────
                 with st.spinner("Computing RVOL baseline & sector data…"):
                     try:
                         avg_vol = fetch_avg_daily_volume(api_key, secret_key, ticker, today)
@@ -7258,7 +7281,14 @@ with tab_chart:
                         etf_chg = 0.0
                     st.session_state.sector_pct_chg = etf_chg
 
-                start_stream(api_key, secret_key, ticker, live_feed)
+                # ── Step 3: Start WebSocket — seeded with full day context ─────
+                start_stream(api_key, secret_key, ticker, live_feed,
+                             historical_bars=_hist_bars if _hist_bars else None)
+                if _hist_bars:
+                    st.success(
+                        f"✅ Seeded {len(_hist_bars)} bars from today's session — "
+                        "IB, VWAP, and volume profile are fully loaded."
+                    )
                 st.rerun()
 
         if stop_live:
