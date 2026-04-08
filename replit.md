@@ -123,14 +123,41 @@ Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL f
 
 **Running stats: 5W / 2L = 71.4% win rate** (too small to trust — need 60+)
 
-### Daily P&L Observations (simulated, $5k/trade equal sizing, 1.5% slippage)
+### P&L Log — $1,000/trade fixed sizing, 1.5% round-trip slippage
 
-**2026-04-08:**
-- Full scan universe: 21 setups, 47.6% win rate (10W/8L/3 pending)
-- Alerted trades (TCS≥50): SKYQ +11.3% net, CLIK -1.5% net → **+$489 theoretical max, ~$275–325 realistic** on $10k capital
-- Profit factor (full scan): ~9.1 (avg win 10.9% vs avg loss 1.5%)
-- Brain recalibration ran: `normal` ↑, `ntrl_extreme` ↓, `neutral` ↓
-- Note: strong trending day (macro sell-off) — favorable for IB breakout strategy
+| Date | Ticker | Follow-thru | Net % | Net $ | Running Total |
+|---|---|---|---|---|---|
+| 2026-04-06 | MIGI | +33.51% | +32.01% | +$320 | +$320 |
+| 2026-04-06 | AIB | −4.55% | −6.05% | −$61 | +$259 |
+| 2026-04-07 | CYCU | +6.25% | +4.75% | +$48 | +$307 |
+| 2026-04-07 | AIB | +3.64% | +2.14% | +$21 | +$328 |
+| 2026-04-07 | AGPU | 0% | −1.5% | −$15 | +$313 |
+| 2026-04-08 | SKYQ | +12.79% | +11.29% | +$113 | +$426 |
+| 2026-04-08 | CLIK | 0% | −1.5% | −$15 | +$411 |
+
+**Total: +$411 on $7,000 deployed = +5.9% in 3 days**
+Note: follow_thru% = max move past IB level (theoretical). Realistic capture ~40–60% of this = +$165–$245 actual.
+Note: MIGI is carrying most of the weight (+$320 of $411 total). Outlier winner — normal for breakout strategies.
+Note: AIB Apr 6 "Win" but negative P&L — brain correctly predicted structure (Both Sides / Ntrl Extreme) but the down move reversed the long entry. Phase 4 stop at opposite IB level handles this.
+
+### Daily Scan Universe Observations
+
+**2026-04-08 (macro sell-off day — strong trending conditions):**
+- Full scan: 21 setups, 47.6% win rate (10W/8L/3 pending), avg TCS 42.8
+- Profit factor (full scan): ~9.1 (avg win 10.9% vs avg loss 1.5% slippage)
+- Alerted trades (TCS≥50): SKYQ +11.3%, CLIK −1.5% → +$489 theoretical on $10k
+- Brain recalibration: `normal` ↑ 1.175→1.289 (100% acc/68 samples), `ntrl_extreme` ↓ 1.325→1.211 (56.6%/53), `neutral` ↓ 1.325→1.211 (59.1%/67)
+
+### Early Performance Context (user conversation — 2026-04-08)
+- +5.9% in 3 days sounds impressive but is NOT representative yet (7 trades, no statistical weight)
+- MIGI single trade (+33.5%) is an outlier — these happen in small-caps but not every week
+- Apr 6–8 had strong macro sell-off conditions — favorable for directional IB breakouts
+- The EDGE is confirmed in the STRUCTURE: avg win (10.9%) >> avg loss (1.5%) = profit factor ~9
+- That asymmetry is what matters more than win rate at this stage
+- Goal: 60+ trades across varied market conditions before drawing conclusions
+- At 1–3 alerts/day pace → ~3–6 weeks to hit 60 trades
+- Choppy/low-vol days will bring win rate down — that's when the real calibration happens
+- User noted: "thats crazy for how early this is" — acknowledged but cautioned appropriately
 
 ---
 
