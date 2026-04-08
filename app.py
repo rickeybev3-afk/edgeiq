@@ -5136,9 +5136,9 @@ def render_analytics_tab():
     if no_data:
         st.info(
             "No synced trades yet. After you log trades and use **Sync from Alpaca** "
-            "or **Review Trades** in the Journal tab, your stats will appear here."
+            "or **Review Trades** in the Journal tab, your stats will appear here. "
+            "The Pattern Correlation section below is still available."
         )
-        return
 
     st.markdown("---")
 
@@ -7403,30 +7403,62 @@ with tab_scan:
 
     elif _wpe_df_loaded is not None and not _wpe_df_loaded.empty:
         st.subheader("📂 Saved Predictions")
-        st.caption("TCS and Edge columns are blank for predictions saved before the Supabase schema update. "
-                   "Run 🔮 Predict All again tonight to get fresh rows with all fields populated.")
-        _show_cols = ["ticker", "pred_date", "predicted_structure", "tcs",
-                      "edge_score", "actual_structure", "correct"]
-        _disp_df = _wpe_df_loaded[[c for c in _show_cols if c in _wpe_df_loaded.columns]].copy()
-        _col_rename = {
-            "ticker": "Ticker",
-            "pred_date": "For Session",
-            "predicted_structure": "Predicted Structure",
-            "tcs": "TCS Score",
-            "edge_score": "Edge Score",
-            "actual_structure": "Actual Structure",
-            "correct": "Correct?",
-        }
-        _disp_df.rename(columns=_col_rename, inplace=True)
-        if "TCS Score" in _disp_df.columns:
-            _disp_df["TCS Score"] = _disp_df["TCS Score"].apply(
-                lambda x: f"{x:.0f}" if pd.notna(x) and x != "" else "—"
-            )
-        if "Edge Score" in _disp_df.columns:
-            _disp_df["Edge Score"] = _disp_df["Edge Score"].apply(
-                lambda x: f"{x:.0f}" if pd.notna(x) and x != "" else "—"
-            )
-        st.dataframe(_disp_df, use_container_width=True, height=min(500, 35 + 35 * len(_disp_df)))
+        st.caption("Grouped by trading session date — most recent first. "
+                   "TCS and Edge are blank for rows saved before the Supabase schema update.")
+
+        _show_cols = ["ticker", "predicted_structure", "tcs", "edge_score",
+                      "actual_structure", "correct"]
+        _grp_df = _wpe_df_loaded.copy()
+
+        # Normalize pred_date to string for grouping
+        if "pred_date" in _grp_df.columns:
+            _grp_df["pred_date"] = _grp_df["pred_date"].astype(str)
+            _all_dates = sorted(_grp_df["pred_date"].unique(), reverse=True)
+        else:
+            _all_dates = ["(unknown)"]
+            _grp_df["pred_date"] = "(unknown)"
+
+        for _sess_date in _all_dates:
+            try:
+                _sess_fmt = date.fromisoformat(_sess_date).strftime("%b %-d, %Y")
+            except Exception:
+                _sess_fmt = _sess_date
+
+            _sess_df = _grp_df[_grp_df["pred_date"] == _sess_date].copy()
+            _n_rows  = len(_sess_df)
+            _n_corr  = (_sess_df.get("correct", pd.Series()) == "✅").sum() if "correct" in _sess_df.columns else 0
+            _n_ver   = (_sess_df.get("correct", pd.Series()).isin(["✅", "❌"])).sum() if "correct" in _sess_df.columns else 0
+            _acc_str = f" · {_n_corr}/{_n_ver} correct" if _n_ver > 0 else " · unverified"
+
+            # Most recent date auto-expanded
+            _is_next = (_sess_date == _all_dates[0])
+            with st.expander(
+                f"📅 Session: {_sess_fmt}  —  {_n_rows} ticker{'s' if _n_rows != 1 else ''}{_acc_str}",
+                expanded=_is_next,
+            ):
+                _disp_df = _sess_df[[c for c in _show_cols if c in _sess_df.columns]].copy()
+                _col_rename = {
+                    "ticker": "Ticker",
+                    "predicted_structure": "Predicted Structure",
+                    "tcs": "TCS",
+                    "edge_score": "Edge",
+                    "actual_structure": "Actual Structure",
+                    "correct": "Correct?",
+                }
+                _disp_df.rename(columns=_col_rename, inplace=True)
+                if "TCS" in _disp_df.columns:
+                    _disp_df["TCS"] = _disp_df["TCS"].apply(
+                        lambda x: f"{x:.0f}" if pd.notna(x) and x != "" else "—"
+                    )
+                if "Edge" in _disp_df.columns:
+                    _disp_df["Edge"] = _disp_df["Edge"].apply(
+                        lambda x: f"{x:.0f}" if pd.notna(x) and x != "" else "—"
+                    )
+                st.dataframe(
+                    _disp_df, use_container_width=True,
+                    height=min(400, 40 + 36 * len(_disp_df)),
+                    hide_index=True,
+                )
     elif _wpe_df_loaded is not None:
         st.info("No saved predictions found. Run **🔮 Predict All** first.")
 
