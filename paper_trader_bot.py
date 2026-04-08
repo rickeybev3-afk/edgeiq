@@ -48,11 +48,6 @@ PRICE_MAX         = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
 _DEFAULT_TICKERS = (
     "SATL,UGRO,ANNA,VCX,CODX,ARTL,SWMR,FEED,RBNE,PAVS,LNKS,BIAF,ACXP,GOAI"
 )
-TICKERS = [
-    t.strip().upper()
-    for t in os.getenv("PAPER_TRADE_TICKERS", _DEFAULT_TICKERS).split(",")
-    if t.strip()
-]
 
 # ── Import backend functions ──────────────────────────────────────────────────
 try:
@@ -61,10 +56,44 @@ try:
         log_paper_trades,
         update_paper_trade_outcomes,
         ensure_paper_trades_table,
+        load_watchlist,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}. Make sure paper_trader_bot.py is in the same directory as backend.py.")
     raise
+
+
+def _resolve_tickers() -> list:
+    """Return tickers to scan.
+
+    Priority:
+      1. PAPER_TRADE_TICKERS env var (manual override)
+      2. User's saved watchlist from Supabase
+      3. Hardcoded default fallback
+    """
+    env_override = os.getenv("PAPER_TRADE_TICKERS", "").strip()
+    if env_override:
+        tickers = [t.strip().upper() for t in env_override.split(",") if t.strip()]
+        log.info(f"Tickers from PAPER_TRADE_TICKERS env var: {len(tickers)}")
+        return tickers
+
+    try:
+        wl = load_watchlist(user_id=USER_ID)
+        if wl:
+            tickers = [t.strip().upper() for t in wl if t.strip()]
+            log.info(f"Tickers from Supabase watchlist: {len(tickers)} → {', '.join(tickers)}")
+            return tickers
+        else:
+            log.warning("Supabase watchlist is empty — falling back to default 14 tickers")
+    except Exception as exc:
+        log.warning(f"Could not load Supabase watchlist ({exc}) — falling back to default 14 tickers")
+
+    tickers = [t.strip().upper() for t in _DEFAULT_TICKERS.split(",") if t.strip()]
+    log.info(f"Using default fallback tickers: {len(tickers)}")
+    return tickers
+
+
+TICKERS = _resolve_tickers()
 
 
 def _market_is_open(now_et: datetime) -> bool:
