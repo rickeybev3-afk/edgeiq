@@ -5343,6 +5343,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 "open_price":     r.get("open_price"),
                 "alert_price":    r.get("close_price"),      # price at IB close = price when alert fires
                 "alert_time":     datetime.utcnow().isoformat(),  # UTC timestamp when alert was logged
+                "structure_conf": r.get("confidence"),            # brain confidence % in its own prediction
                 "actual_outcome": r.get("actual_outcome", ""),
                 "follow_thru_pct": r.get("aft_move_pct"),
                 "win_loss":       r.get("win_loss", ""),
