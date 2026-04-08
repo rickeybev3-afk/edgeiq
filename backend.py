@@ -2970,11 +2970,12 @@ def parse_webull_csv(df: "pd.DataFrame") -> list:
                 "rvol":        None,
                 "ib_high":     None,
                 "ib_low":      None,
+                "exit_timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                 "notes": (
                     f"Webull import | Exit: ${price:.4f} | "
                     f"P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%) | "
                     f"Shares: {shares_int} | "
-                    f"Exit: {ts.strftime('%Y-%m-%d %H:%M') if hasattr(ts, 'strftime') else ts}"
+                    f"ExitTS: {ts.strftime('%Y-%m-%d %H:%M') if hasattr(ts, 'strftime') else ts}"
                 ),
                 "grade":        grade,
                 "grade_reason": f"Auto-graded from P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%)",

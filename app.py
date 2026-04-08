@@ -708,10 +708,15 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             rvol_v = row.get("rvol", "")
             notes_v = str(row.get("notes", "") or "")
 
-            # Parse exit price, P&L, shares from Webull-imported notes
-            _ex_m  = _re_j.search(r"Exit:\s*\$([0-9.]+)", notes_v)
-            _pnl_m = _re_j.search(r"P&L:\s*\$([+-]?[0-9.]+)\s*\(([+-]?[0-9.]+)%\)", notes_v)
-            _sh_m  = _re_j.search(r"Shares:\s*([0-9]+)", notes_v)
+            # Parse exit price, P&L, shares, and exit timestamp from notes
+            _ex_m   = _re_j.search(r"Exit:\s*\$([0-9.]+)", notes_v)
+            _pnl_m  = _re_j.search(r"P&L:\s*\$([+-]?[0-9.]+)\s*\(([+-]?[0-9.]+)%\)", notes_v)
+            _sh_m   = _re_j.search(r"Shares:\s*([0-9]+)", notes_v)
+            # ExitTS: new format; also handle old "Exit: YYYY-MM-DD HH:MM"
+            _ets_m  = _re_j.search(r"ExitTS:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[T\s][0-9:]+)", notes_v)
+            if not _ets_m:
+                _ets_m = _re_j.search(r"Exit:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}\s[0-9:]+)", notes_v)
+
             _exit_str   = f"${float(_ex_m.group(1)):.4f}" if _ex_m else ""
             _pnl_val    = float(_pnl_m.group(1)) if _pnl_m else 0.0
             _pnl_pct    = _pnl_m.group(2) if _pnl_m else ""
@@ -719,6 +724,34 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _pnl_color  = "#4caf50" if _pnl_val >= 0 else "#ef5350"
             _shares_str = _sh_m.group(1) if _sh_m else ""
             _entry_fmt  = f"${float(price):.4f}" if price not in (None, "", "nan") else "—"
+
+            # Compute hold time from entry → exit timestamps
+            _hold_badge = ""
+            if _ets_m and ts:
+                try:
+                    import pandas as _pd_j
+                    _entry_dt = _pd_j.to_datetime(str(ts), errors="coerce")
+                    _exit_dt  = _pd_j.to_datetime(_ets_m.group(1).strip(), errors="coerce")
+                    if _pd_j.notna(_entry_dt) and _pd_j.notna(_exit_dt):
+                        _hold_days = (_exit_dt.date() - _entry_dt.date()).days
+                        if _hold_days == 0:
+                            _hold_mins = max(0, int((_exit_dt - _entry_dt).total_seconds() / 60))
+                            _hold_label = f"Intraday · {_hold_mins}m" if _hold_mins > 0 else "Intraday"
+                            _hold_color = "#29b6f6"
+                        elif _hold_days == 1:
+                            _hold_label = "Overnight"
+                            _hold_color = "#ffa726"
+                        else:
+                            _hold_label = f"Multi-day · {_hold_days}d"
+                            _hold_color = "#ce93d8"
+                        _hold_badge = (
+                            f'<span style="background:{_hold_color}22;border:1px solid {_hold_color}66;'
+                            f'color:{_hold_color};font-size:10px;font-weight:600;padding:2px 7px;'
+                            f'border-radius:10px;margin-left:6px;white-space:nowrap;">'
+                            f'{_hold_label}</span>'
+                        )
+                except Exception:
+                    pass
 
             if _exit_str:
                 _price_line = (
@@ -748,7 +781,9 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _clean_notes = _re_j.sub(
                 r"Webull import\s*\|?\s*|Exit:\s*\$[0-9.]+\s*\|?\s*"
                 r"|P&L:\s*\$[+-]?[0-9.]+\s*\([+-]?[0-9.]+%\)\s*\|?\s*"
-                r"|Shares:\s*[0-9]+\s*\|?\s*|Exit:\s*[0-9]{4}-[0-9]{2}-[0-9]{2}[^|]*\|?\s*",
+                r"|Shares:\s*[0-9]+\s*\|?\s*"
+                r"|ExitTS:\s*[0-9]{4}-[0-9]{2}-[0-9]{2}[T\s][0-9:]+\s*\|?\s*"
+                r"|Exit:\s*[0-9]{4}-[0-9]{2}-[0-9]{2}[^|]*\|?\s*",
                 "", notes_v
             ).strip(" |·").strip()
 
@@ -762,8 +797,9 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     f'align-items:center;justify-content:center;'
                     f'font-size:24px;font-weight:900;color:{gc};">{grade}</div>'
                     f'<div style="flex:1;min-width:0;">'
-                    f'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;">'
+                    f'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
                     f'<span style="font-size:20px;font-weight:800;color:#e0e0e0;">{sym}</span>'
+                    f'{_hold_badge}'
                     f'<span style="font-size:11px;color:#666;">{ts}</span>'
                     f'</div>'
                     f'<div style="font-size:13px;margin:3px 0;">{_price_line}</div>'
@@ -5613,6 +5649,94 @@ def render_analytics_tab():
                 st.plotly_chart(fig_dw, use_container_width=True)
             else:
                 st.info("Not enough entries for day-of-week analysis.")
+
+        # ── Intraday vs Multi-Day hold type win rate ─────────────────────────
+        st.markdown("---")
+        import re as _re_an
+        def _hold_type(row):
+            _notes = str(row.get("notes", "") or "")
+            _entry_ts = str(row.get("timestamp", "") or "")
+            _ets_m2 = _re_an.search(
+                r"ExitTS:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[T\s][0-9:]+)"
+                r"|Exit:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}\s[0-9:]+)", _notes
+            )
+            if not _ets_m2 or not _entry_ts:
+                return None
+            _exit_raw = (_ets_m2.group(1) or _ets_m2.group(2) or "").strip()
+            try:
+                import pandas as _pd_ht
+                _edt = _pd_ht.to_datetime(_entry_ts, errors="coerce")
+                _xdt = _pd_ht.to_datetime(_exit_raw, errors="coerce")
+                if _pd_ht.isna(_edt) or _pd_ht.isna(_xdt):
+                    return None
+                _days = (_xdt.date() - _edt.date()).days
+                if _days == 0:
+                    return "Intraday"
+                elif _days == 1:
+                    return "Overnight"
+                else:
+                    return "Multi-day"
+            except Exception:
+                return None
+
+        _jdf["_hold_type"] = _jdf.apply(_hold_type, axis=1)
+        _hold_df = _jdf.dropna(subset=["_hold_type"])
+
+        if not _hold_df.empty and len(_hold_df) >= 3:
+            _hold_grp = (
+                _hold_df.groupby("_hold_type")["_win"]
+                .agg(trades="count", wins="sum")
+                .reset_index()
+            )
+            _hold_grp["win_rate"] = (_hold_grp["wins"] / _hold_grp["trades"] * 100).round(1)
+            _hold_order = ["Intraday", "Overnight", "Multi-day"]
+            _hold_grp["_ord"] = _hold_grp["_hold_type"].map(
+                {t: i for i, t in enumerate(_hold_order)}
+            )
+            _hold_grp = _hold_grp.sort_values("_ord")
+            _hold_colors_map = {"Intraday": "#29b6f6", "Overnight": "#ffa726", "Multi-day": "#ce93d8"}
+            _hold_colors_list = [_hold_colors_map.get(t, "#90caf9") for t in _hold_grp["_hold_type"]]
+
+            _hold_left, _hold_right = st.columns([2, 1])
+            with _hold_left:
+                fig_hold = _go.Figure(_go.Bar(
+                    x=_hold_grp["_hold_type"],
+                    y=_hold_grp["win_rate"],
+                    marker_color=_hold_colors_list,
+                    text=[f"{r}%<br>({t} trades)" for r, t in
+                          zip(_hold_grp["win_rate"], _hold_grp["trades"])],
+                    textposition="outside",
+                    textfont=dict(size=10, color="#e0e0e0"),
+                    hovertemplate="<b>%{x}</b><br>Win Rate: %{y:.1f}%<extra></extra>",
+                ))
+                fig_hold.add_hline(y=50, line=dict(color="rgba(255,255,255,0.2)", dash="dot"))
+                fig_hold.update_layout(
+                    paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                    font=dict(color="#e0e0e0"), height=260,
+                    title=dict(text="Win Rate by Hold Type (from your actual Webull exits)",
+                               font=dict(size=13)),
+                    xaxis=dict(gridcolor="#2a2a4a"),
+                    yaxis=dict(gridcolor="#2a2a4a", range=[0, 120], title="Win %"),
+                    margin=dict(l=10, r=10, t=40, b=30),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_hold, use_container_width=True)
+            with _hold_right:
+                st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+                for _, _hrow in _hold_grp.iterrows():
+                    _hc = _hold_colors_map.get(_hrow["_hold_type"], "#90caf9")
+                    st.markdown(
+                        f'<div style="background:{_hc}11;border:1px solid {_hc}44;'
+                        f'border-radius:8px;padding:10px 14px;margin:6px 0;">'
+                        f'<div style="font-size:11px;color:{_hc};font-weight:700;">'
+                        f'{_hrow["_hold_type"]}</div>'
+                        f'<div style="font-size:22px;font-weight:900;color:#e0e0e0;">'
+                        f'{_hrow["win_rate"]}%</div>'
+                        f'<div style="font-size:10px;color:#666;">'
+                        f'{int(_hrow["wins"])}/{int(_hrow["trades"])} trades</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
         # ── Top / Bottom Tickers ──────────────────────────────────────────────
         st.markdown("---")
