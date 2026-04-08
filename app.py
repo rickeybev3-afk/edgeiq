@@ -28,6 +28,7 @@ from backend import (
     enrich_trade_context,
     enrich_eod_from_journal,
     compute_setup_brief,
+    scan_journal_patterns,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -5396,6 +5397,151 @@ def render_analytics_tab():
                 lambda v: f"{'+'if v>=0 else''}{v:.2f}")
             eq_disp.columns = ["Time", "Symbol", "Trade P&L", "Cumulative P&L"]
             st.dataframe(eq_disp, use_container_width=True, hide_index=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION — Webull Pattern Correlation
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("### 🔬 Pattern Correlation — Your Trade History")
+    st.caption(
+        "Scans every trade session in your journal retroactively. "
+        "Fetches the day's bar data and detects which chart patterns were present "
+        "on your A/B wins vs your C/F losses. Identifies which setups actually work for you."
+    )
+
+    _pat_scan_api = st.session_state.get("alpaca_api_key", "")
+    _pat_scan_sec = st.session_state.get("alpaca_secret_key", "")
+    _pat_scan_uid = st.session_state.get("auth_user_id", "")
+    _pat_result   = st.session_state.get("_pat_scan_result")
+
+    _pat_col1, _pat_col2 = st.columns([3, 1])
+    _pat_scan_feed = _pat_col2.selectbox(
+        "Feed", ["iex", "sip"], key="pat_scan_feed",
+        help="iex = free tier. sip = paid Alpaca subscription."
+    )
+
+    if _pat_col1.button("🔬 Scan Trade History for Patterns",
+                        use_container_width=True, key="pat_scan_btn"):
+        if not _pat_scan_api or not _pat_scan_sec:
+            st.error("Add your Alpaca credentials in the sidebar first.")
+        else:
+            _pat_jdf = load_journal(user_id=_pat_scan_uid)
+            if _pat_jdf.empty:
+                st.warning("No journal entries found. Import your Webull CSV in the Journal tab first.")
+            else:
+                _n_uniq = _pat_jdf[["ticker", "timestamp"]].drop_duplicates().shape[0] if "timestamp" in _pat_jdf.columns else len(_pat_jdf)
+                with st.spinner(f"Scanning {_n_uniq} trade sessions for patterns — may take 30–60 seconds…"):
+                    _pat_result = scan_journal_patterns(
+                        _pat_scan_api, _pat_scan_sec, _pat_jdf, feed=_pat_scan_feed
+                    )
+                st.session_state["_pat_scan_result"] = _pat_result
+
+    if _pat_result and _pat_result.get("scanned", 0) > 0:
+        import plotly.graph_objects as _go_pat
+
+        _ps  = _pat_result["summary"]
+        _sc  = _pat_result["scanned"]
+        _tw  = _pat_result["total_wins"]
+        _tl  = _pat_result["total_losses"]
+        _err = _pat_result["errors"]
+
+        _pk1, _pk2, _pk3, _pk4 = st.columns(4)
+        _pk1.metric("Sessions Scanned", _sc)
+        _pk2.metric("A/B Wins", _tw)
+        _pk3.metric("C/F Losses", _tl)
+        _pk4.metric("No Bar Data", _err, help="Too old or delisted on Alpaca")
+
+        if not _ps:
+            st.info("No patterns detected. Try switching to SIP feed or check that trades are recent enough for Alpaca history.")
+        else:
+            _sorted_pats = sorted(_ps.items(), key=lambda x: x[1]["total"], reverse=True)
+
+            _pat_names  = [p[0] for p in _sorted_pats]
+            _pat_wrates = [p[1]["win_rate"] for p in _sorted_pats]
+            _pat_totals = [p[1]["total"] for p in _sorted_pats]
+            _bar_clrs   = [
+                "#4caf50" if wr >= 60 else "#ffa726" if wr >= 45 else "#ef5350"
+                for wr in _pat_wrates
+            ]
+            _fig_pat = _go_pat.Figure(_go_pat.Bar(
+                x=_pat_names,
+                y=_pat_wrates,
+                marker_color=_bar_clrs,
+                text=[f"{wr:.0f}%<br>({t} trades)" for wr, t in zip(_pat_wrates, _pat_totals)],
+                textposition="outside",
+            ))
+            _fig_pat.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"), height=320,
+                title=dict(text="Win Rate When Pattern Present", font=dict(size=14), x=0.0),
+                yaxis=dict(range=[0, 115], gridcolor="#2a2a4a", title="Win Rate %", ticksuffix="%"),
+                xaxis=dict(gridcolor="#2a2a4a", tickangle=-20),
+                margin=dict(t=40, b=80, l=50, r=20),
+            )
+            _fig_pat.add_hline(y=50, line_dash="dot", line_color="#555",
+                               annotation_text="50% baseline", annotation_position="right")
+            st.plotly_chart(_fig_pat, use_container_width=True)
+
+            st.markdown("**Pattern breakdown:**")
+            _tbl_rows = []
+            for pat, data in _sorted_pats:
+                _wr = data["win_rate"]
+                _signal = "✅ Has Edge" if _wr >= 60 else "⚠️ Neutral" if _wr >= 45 else "🚫 No Edge"
+                _tbl_rows.append({
+                    "Pattern":         pat,
+                    "Total Trades":    data["total"],
+                    "On Wins (A/B)":   data["win"],
+                    "On Losses (C/F)": data["loss"],
+                    "Win Rate":        f"{_wr:.0f}%",
+                    "Signal":          _signal,
+                })
+            st.dataframe(
+                _tbl_rows,
+                use_container_width=True,
+                height=min(420, 40 + 36 * len(_tbl_rows)),
+            )
+
+            _win_pats  = _pat_result["by_outcome"]["win"]
+            _loss_pats = _pat_result["by_outcome"]["loss"]
+            _wp_sorted = sorted(_win_pats.items(), key=lambda x: x[1], reverse=True)[:5]
+            _lp_sorted = sorted(_loss_pats.items(), key=lambda x: x[1], reverse=True)[:5]
+
+            _pc1, _pc2 = st.columns(2)
+            with _pc1:
+                st.markdown("**Most common on your A/B wins:**")
+                for _pn, _cnt in _wp_sorted:
+                    _wr_v = _ps.get(_pn, {}).get("win_rate", 0)
+                    st.markdown(
+                        f'<div style="background:#0d2e1a;border:1px solid #2e5c3a;border-radius:6px;'
+                        f'padding:6px 12px;margin:4px 0;display:flex;justify-content:space-between;'
+                        f'align-items:center;">'
+                        f'<span style="color:#4caf50;font-weight:600;">{_pn}</span>'
+                        f'<span style="color:#888;font-size:11px;">{_cnt}x present &nbsp;·&nbsp; {_wr_v:.0f}% win rate</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            with _pc2:
+                st.markdown("**Most common on your C/F losses:**")
+                for _pn, _cnt in _lp_sorted:
+                    _wr_v = _ps.get(_pn, {}).get("win_rate", 0)
+                    st.markdown(
+                        f'<div style="background:#2e0d0d;border:1px solid #5c2e2e;border-radius:6px;'
+                        f'padding:6px 12px;margin:4px 0;display:flex;justify-content:space-between;'
+                        f'align-items:center;">'
+                        f'<span style="color:#ef5350;font-weight:600;">{_pn}</span>'
+                        f'<span style="color:#888;font-size:11px;">{_cnt}x present &nbsp;·&nbsp; {_wr_v:.0f}% win rate</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            st.caption(
+                f"Scan complete — {_sc} sessions analyzed, {_err} skipped (no bar data). "
+                "Results cached until you re-run."
+            )
+
+    elif _pat_result and _pat_result.get("scanned", 0) == 0:
+        st.warning("Scan ran but found no sessions with bar data. "
+                   "Make sure your journal has entries and try switching feeds.")
 
     # ── Brain Accuracy (formerly Tracker tab) ─────────────────────────────
     st.markdown("---")

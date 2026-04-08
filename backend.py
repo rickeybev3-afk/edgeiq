@@ -6108,6 +6108,136 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
     }
 
 
+# ── Webull Pattern Retroactive Scanner ───────────────────────────────────────
+
+def scan_journal_patterns(
+    api_key: str,
+    secret_key: str,
+    journal_df: "pd.DataFrame",
+    feed: str = "iex",
+) -> dict:
+    """Retroactively detect chart patterns on every trade session in journal_df.
+
+    For each unique (ticker, date) pair, fetches Alpaca 1-min bars and runs
+    detect_chart_patterns.  Grades A/B count as wins; C/F count as losses.
+
+    Returns a dict:
+        sessions      — list of {ticker, date, grade, patterns, is_win}
+        summary       — {pattern_name: {win, loss, total, win_rate}}
+        by_outcome    — {"win": {pat:count}, "loss": {pat:count}}
+        total_sessions— number of unique sessions attempted
+        scanned       — number successfully scanned (had bar data)
+        errors        — number that failed / had no data
+    """
+    if journal_df is None or journal_df.empty:
+        return {"sessions": [], "summary": {}, "by_outcome": {"win": {}, "loss": {}},
+                "total_sessions": 0, "scanned": 0, "errors": 0}
+
+    WIN_GRADES  = {"A", "B"}
+
+    # Build unique (ticker, date, grade) sessions — use the most recent grade per pair
+    records = []
+    ts_col = "timestamp"
+    if ts_col not in journal_df.columns:
+        return {"sessions": [], "summary": {}, "by_outcome": {"win": {}, "loss": {}},
+                "total_sessions": 0, "scanned": 0, "errors": 0}
+
+    _jdf = journal_df.copy()
+    _jdf["_ts"]  = pd.to_datetime(_jdf[ts_col], errors="coerce")
+    _jdf["_date"] = _jdf["_ts"].dt.date
+    _jdf["_grade"] = _jdf["grade"].astype(str).str.upper().str.strip() if "grade" in _jdf.columns else "—"
+
+    seen = {}
+    for _, row in _jdf.dropna(subset=["_date"]).iterrows():
+        tk = str(row.get("ticker", "")).upper().strip()
+        dt = row["_date"]
+        gr = row["_grade"]
+        if not tk or not dt or tk == "NAN":
+            continue
+        key = (tk, dt)
+        if key not in seen:
+            seen[key] = gr
+        else:
+            # Prefer A > B > C > F over whatever we already have
+            _rank = {"A": 0, "B": 1, "C": 2, "F": 3}
+            if _rank.get(gr, 9) < _rank.get(seen[key], 9):
+                seen[key] = gr
+
+    sessions_meta = [{"ticker": k[0], "date": k[1], "grade": v,
+                      "is_win": v in WIN_GRADES} for k, v in seen.items()]
+
+    if not sessions_meta:
+        return {"sessions": [], "summary": {}, "by_outcome": {"win": {}, "loss": {}},
+                "total_sessions": 0, "scanned": 0, "errors": 0}
+
+    # Batch-fetch bars + run pattern detection in parallel
+    def _scan_one(meta):
+        try:
+            df = fetch_bars(api_key, secret_key, meta["ticker"], meta["date"], feed=feed)
+            if df.empty or len(df) < 20:
+                return None
+            patterns = detect_chart_patterns(df)
+            return {**meta, "patterns": patterns}
+        except Exception:
+            return None
+
+    results = []
+    with ThreadPoolExecutor(max_workers=min(10, len(sessions_meta))) as ex:
+        future_map = {ex.submit(_scan_one, m): m for m in sessions_meta}
+        for fut in as_completed(future_map):
+            r = fut.result()
+            if r is not None:
+                results.append(r)
+
+    # Aggregate pattern counts by outcome
+    pat_stats: dict = {}
+    win_counts: dict = {}
+    loss_counts: dict = {}
+
+    for sess in results:
+        is_win = sess["is_win"]
+        seen_pats = set()
+        for p in sess.get("patterns", []):
+            name = p["name"]
+            if name in seen_pats:
+                continue
+            seen_pats.add(name)
+            if name not in pat_stats:
+                pat_stats[name] = {"win": 0, "loss": 0, "total": 0}
+            if is_win:
+                pat_stats[name]["win"] += 1
+                win_counts[name] = win_counts.get(name, 0) + 1
+            else:
+                pat_stats[name]["loss"] += 1
+                loss_counts[name] = loss_counts.get(name, 0) + 1
+            pat_stats[name]["total"] += 1
+
+    # Compute win rate per pattern
+    total_wins   = sum(1 for s in results if s["is_win"])
+    total_losses = sum(1 for s in results if not s["is_win"])
+
+    summary = {}
+    for pat, counts in pat_stats.items():
+        t = counts["total"]
+        summary[pat] = {
+            "win":       counts["win"],
+            "loss":      counts["loss"],
+            "total":     t,
+            "win_rate":  round(counts["win"] / t * 100, 1) if t > 0 else 0.0,
+        }
+
+    return {
+        "sessions":       results,
+        "summary":        summary,
+        "by_outcome":     {"win": win_counts, "loss": loss_counts},
+        "total_sessions": len(sessions_meta),
+        "scanned":        len(results),
+        "errors":         len(sessions_meta) - len(results),
+        "total_wins":     total_wins,
+        "total_losses":   total_losses,
+    }
+
+
 # ── God Mode — Live Trade Execution ──────────────────────────────────────────
 
 def execute_alpaca_trade(
