@@ -235,7 +235,8 @@ def _alert_recalibration(cal: dict):
         arrow = "▲" if d["delta"] > 0 else "▼"
         lines.append(
             f"  {d['key']}: {d['old']:.3f} → <b>{d['new']:.3f}</b> "
-            f"({arrow}{abs(d['delta']):.3f}) | {d['accuracy']}% / {d['samples']} trades"
+            f"({arrow}{abs(d['delta']):.3f}) | {d.get('blended_acc','?')}% / "
+            f"{(d.get('journal_n') or 0) + (d.get('bot_n') or 0)} trades"
         )
     tg_send("\n".join(lines))
 
