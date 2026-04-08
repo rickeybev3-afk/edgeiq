@@ -47,7 +47,7 @@ title = "Volume Profile Terminal — Source Code"
 id = "Q4z12P3OmfJbSbKWAJd1M"
 uri = "file://edgeiq_code.zip"
 type = "unspecified"
-title = "EdgeIQ — Full Codebase (latest — Telegram alerts, Finviz Elite, locked UI)"
+title = "EdgeIQ — Full Codebase (Apr 8 — alert tracking, slippage, Telegram, structure_conf)"
 
 [[outputs]]
 id = "MfQ3JfRRnItPcnCzYMJNL"
