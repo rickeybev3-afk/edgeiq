@@ -4438,10 +4438,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
     with _cal_btn_col:
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        _cal_run = st.button(
-            f"🧠 RUN ({len(_cal_ticker_pool)} tickers)", use_container_width=True,
-            key="cal_run_btn", type="primary",
-            disabled=not _cal_confirmed,
+        _cal_run = False
+        st.markdown(
+            '<div style="background:#1a0a00; border:1px solid #e65100; border-radius:8px; '
+            'padding:10px 12px; text-align:center;">'
+            '<span style="font-size:13px; font-weight:700; color:#ff6d00;">🔒 Locked</span><br>'
+            '<span style="font-size:11px; color:#bf360c;">Ask in Replit chat before running calibration</span>'
+            '</div>',
+            unsafe_allow_html=True,
         )
 
     if _cal_run:
@@ -6994,11 +6998,19 @@ def render_tracker_tab():
             st.info(f"🔄 Next recalibration in **{_next_recal}** more {_entry_word} "
                     f"({_current_n} logged so far).")
 
-        # ── Manual recalibrate button ─────────────────────────────────────────
-        if st.button("⚡ Recalibrate Now", help="Force immediate weight update from all logged data"):
-            _new_w = recalibrate_brain_weights(_AUTH_USER_ID)
-            st.success("Weights updated! Brain probabilities will use the new calibration on next analysis.")
-            st.rerun()
+        # ── Manual recalibrate button — LOCKED ───────────────────────────────
+        st.markdown(
+            '<div style="background:#1a0a00; border:1px solid #e65100; border-radius:8px; '
+            'padding:12px 16px; margin-top:8px;">'
+            '<span style="font-size:13px; font-weight:700; color:#ff6d00;">🔒 Auto-Managed — Do Not Touch</span><br>'
+            '<span style="font-size:12px; color:#bf360c;">'
+            'Brain weights are automatically recalibrated by the bot at <b>4:10 PM ET</b> every trading day. '
+            'Manual recalibration is disabled to protect the learning model. '
+            'If you believe a manual recalibration is needed, ask in Replit chat first.'
+            '</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
 
