@@ -3321,8 +3321,8 @@ with st.sidebar:
                 st.rerun()
 
     else:
-        live_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
-                                  help="SIP = full national tape (recommended). IEX = free tier fallback.")
+        live_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
+                                  help="IEX = free real-time feed. SIP = full national tape (requires paid Alpaca subscription).")
         if not st.session_state.live_active:
             start_live = st.button("▶ Start Live Stream", use_container_width=True, type="primary")
         else:
