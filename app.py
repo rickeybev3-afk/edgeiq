@@ -5174,8 +5174,8 @@ def render_analytics_tab():
                     _tcs_rows = []
                     for _b in _nq["tcs_buckets"]:
                         _gc = _b["grade_counts"]
-                        _go = ["A", "B", "C", "D", "F", "?"]
-                        _gs = " · ".join(f'{g}:{_gc[g]}' for g in _go if g in _gc)
+                        _grade_order = ["A", "B", "C", "D", "F", "?"]
+                        _gs = " · ".join(f'{g}:{_gc[g]}' for g in _grade_order if g in _gc)
                         _ab_color = (
                             "🟢" if _b["ab_pct"] >= 60 else
                             "🟡" if _b["ab_pct"] >= 40 else "🔴"
@@ -5198,8 +5198,8 @@ def render_analytics_tab():
                     _ib_rows = []
                     for _p in _nq["ib_position"]:
                         _gc = _p["grade_counts"]
-                        _go = ["A", "B", "C", "D", "F", "?"]
-                        _gs = " · ".join(f'{g}:{_gc[g]}' for g in _go if g in _gc)
+                        _grade_order = ["A", "B", "C", "D", "F", "?"]
+                        _gs = " · ".join(f'{g}:{_gc[g]}' for g in _grade_order if g in _gc)
                         _ab_color = (
                             "🟢" if _p["ab_pct"] >= 60 else
                             "🟡" if _p["ab_pct"] >= 40 else "🔴"
