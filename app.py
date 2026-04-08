@@ -3698,8 +3698,8 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
                             horizontal=True, key="playbook_feed_radio")
         _pb_feed_str = "iex" if "IEX" in _pb_feed else "sip"
     with _qs_c2:
-        _pb_max_score = st.number_input("Max tickers to score", min_value=5, max_value=30,
-                                        value=15, step=5, key="playbook_max_score")
+        _pb_max_score = st.number_input("Max tickers to score", min_value=5, max_value=100,
+                                        value=30, step=5, key="playbook_max_score")
     with _qs_c3:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
         _pb_score_btn = st.button("🧠 Run Quant Score", use_container_width=True,
