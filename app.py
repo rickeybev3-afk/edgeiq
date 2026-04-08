@@ -3184,8 +3184,6 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
         st.session_state["_pref_alpaca_key"]    = _prefs["alpaca_key"]
     if _prefs.get("alpaca_secret"):
         st.session_state["_pref_alpaca_secret"] = _prefs["alpaca_secret"]
-    if _prefs.get("discord_webhook"):
-        st.session_state["discord_webhook_url"] = _prefs["discord_webhook"]
     st.session_state["_prefs_loaded"] = True
 
 if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
@@ -3226,26 +3224,26 @@ with st.sidebar:
             st.session_state["_pref_alpaca_secret"] = secret_key
 
     st.markdown("---")
-    st.header("🔔 Discord Alerts")
-    _dw_input = st.text_input(
-        "Webhook URL",
-        type="password",
-        placeholder="https://discord.com/api/webhooks/…",
-        value=st.session_state.get("discord_webhook_url", ""),
-        key="_sb_discord_webhook",
-        help="Paste your Discord webhook URL. Alerts fire automatically when a ticker scores TCS ≥ 80 and Edge Score ≥ 75 during Playbook scoring. Each ticker only alerts once per day.",
+    st.header("📱 Telegram Alerts")
+    import os as _os_tg
+    _tg_live = bool(
+        _os_tg.environ.get("TELEGRAM_BOT_TOKEN", "").strip() and
+        _os_tg.environ.get("TELEGRAM_CHAT_ID", "").strip()
     )
-    if _dw_input:
-        st.session_state["discord_webhook_url"] = _dw_input
-        if _sb_uid:
-            _cur_prefs = st.session_state.get("_cached_prefs", {})
-            if _cur_prefs.get("discord_webhook") != _dw_input:
-                _new_prefs = {**_cur_prefs, "discord_webhook": _dw_input}
-                save_user_prefs(_sb_uid, _new_prefs)
-                st.session_state["_cached_prefs"] = _new_prefs
-    discord_webhook_url = st.session_state.get("discord_webhook_url", "")
-    if discord_webhook_url:
-        st.success("✅ Alerts active", icon="🔔")
+    if _tg_live:
+        st.markdown(
+            '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
+            'padding:10px 14px;">'
+            '<span style="font-size:13px; font-weight:700; color:#66bb6a;">✅ Telegram Active</span><br>'
+            '<span style="font-size:11px; color:#388e3c;">'
+            'Alerts fire automatically via <b>@edgeiq_alerts_bot</b>.<br>'
+            'Triggers: TCS ≥ 80 + Edge Score ≥ 75 (Playbook) · '
+            'Morning scan setups · EOD summary.'
+            '</span></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning("Telegram not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to Secrets.", icon="⚠️")
 
     st.markdown("---")
     mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)
@@ -3963,7 +3961,6 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
                 _rows_to_score, api_key, secret_key,
                 feed=_pb_feed_str, max_tickers=int(_pb_max_score),
                 user_id=_AUTH_USER_ID,
-                discord_webhook_url=st.session_state.get("discord_webhook_url", ""),
             )
         st.session_state[_pb_score_key] = _scored_rows
         _rows = _scored_rows

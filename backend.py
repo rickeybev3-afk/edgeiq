@@ -5525,6 +5525,62 @@ def _maybe_discord_alert(
             _discord_alert_cache.pop(k, None)
 
 
+_tg_playbook_cache: dict = {}   # {ticker_YYYY-MM-DD: True}
+
+
+def _maybe_telegram_playbook_alert(
+    ticker: str,
+    price: float,
+    rvol: float,
+    tcs: float,
+    structure: str,
+    edge_score: float,
+) -> None:
+    """Fire a Telegram alert for a high-conviction Playbook signal (TCS≥80, Edge≥75).
+    De-duped per ticker per day. Uses TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env vars.
+    """
+    import os as _os, requests as _req
+    _token   = _os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    _chat_id = _os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not _token or not _chat_id:
+        return
+
+    _cache_key = f"{ticker}_{date.today().isoformat()}"
+    if _cache_key in _tg_playbook_cache:
+        return
+
+    _price_str = f"${price:.2f}" if price else "—"
+    _rvol_str  = f"{rvol:.1f}×" if rvol else "—"
+    _tcs_bar   = "🟩" * int(tcs // 20) + "⬜" * (5 - int(tcs // 20))
+    _edge_lbl  = "🔥 ELITE" if edge_score >= 85 else "⚡ HIGH"
+
+    _msg = (
+        f"🚀 <b>HIGH CONVICTION — {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Price:      <b>{_price_str}</b>\n"
+        f"📊 TCS:        <b>{tcs:.0f}/100</b>  {_tcs_bar}\n"
+        f"{_edge_lbl} Edge Score: <b>{edge_score:.0f}/100</b>\n"
+        f"🔥 RVOL:       <b>{_rvol_str}</b>\n"
+        f"🏗️ Structure:  <b>{structure or '—'}</b>\n"
+        f"📅 {date.today().strftime('%b %d, %Y')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Playbook signal — review before entry."
+    )
+    try:
+        _resp = _req.post(
+            f"https://api.telegram.org/bot{_token}/sendMessage",
+            json={"chat_id": _chat_id, "text": _msg, "parse_mode": "HTML"},
+            timeout=8,
+        )
+        if _resp.status_code == 200:
+            _tg_playbook_cache[_cache_key] = True
+            _today = date.today().isoformat()
+            for _k in [k for k in list(_tg_playbook_cache) if not k.endswith(_today)]:
+                _tg_playbook_cache.pop(_k, None)
+    except Exception:
+        pass
+
+
 def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
                            feed: str = "iex", max_tickers: int = 20,
                            user_id: str = "",
@@ -5581,10 +5637,9 @@ def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
                 )
                 row["edge_score"]     = edge
                 row["edge_breakdown"] = breakdown
-                # ── Discord alert: TCS ≥ 80 and Edge Score ≥ 75 ──────────────
-                if discord_webhook_url and tcs >= 80 and edge >= 75:
-                    _maybe_discord_alert(
-                        webhook_url=discord_webhook_url,
+                # ── Telegram alert: TCS ≥ 80 and Edge Score ≥ 75 ────────────
+                if tcs >= 80 and edge >= 75:
+                    _maybe_telegram_playbook_alert(
                         ticker=sym,
                         price=float(row.get("price") or 0),
                         rvol=float(row.get("rvol") or 0),

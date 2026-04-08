@@ -121,6 +121,9 @@ def _structure_emoji(predicted: str) -> str:
 
 def _alert_setup(r: dict, trade_date: date):
     """Send a Telegram alert for a single qualifying setup."""
+    now_et    = datetime.now(EASTERN)
+    scan_time = now_et.strftime("%I:%M %p ET").lstrip("0")
+
     ticker    = r.get("ticker", "?")
     tcs       = float(r.get("tcs", 0))
     predicted = r.get("predicted", "Unknown")
@@ -128,12 +131,18 @@ def _alert_setup(r: dict, trade_date: date):
     ib_low    = float(r.get("ib_low", 0))
     ib_high   = float(r.get("ib_high", 0))
     open_px   = float(r.get("open_price", 0))
+    # close_price = last bar fetched = price at IB close ≈ current price at alert time
+    cur_px    = float(r.get("close_price") or ib_high)
     emoji     = _structure_emoji(predicted)
 
+    # Price move from open to IB close
+    chg_pct   = ((cur_px - open_px) / open_px * 100) if open_px else 0
+    chg_arrow = "▲" if chg_pct >= 0 else "▼"
+
     # Key entry levels
-    ib_mid    = round((ib_high + ib_low) / 2, 2)
-    above_ib  = round(ib_high * 1.005, 2)   # 0.5% breakout trigger above IB high
-    below_ib  = round(ib_low  * 0.995, 2)   # 0.5% breakdown trigger below IB low
+    ib_mid   = round((ib_high + ib_low) / 2, 2)
+    above_ib = round(ib_high * 1.005, 2)
+    below_ib = round(ib_low  * 0.995, 2)
 
     # Entry logic hint based on structure
     p_lower = predicted.lower()
@@ -151,18 +160,20 @@ def _alert_setup(r: dict, trade_date: date):
         entry_hint = f"🎯 Watch IB range ${ib_low:.2f}–${ib_high:.2f} for directional break"
 
     msg = (
-        f"{emoji} <b>EdgeIQ Setup — {ticker}</b>  [{trade_date}]\n"
+        f"{emoji} <b>EdgeIQ Setup — {ticker}</b>\n"
+        f"⏰ {scan_time}  ·  📅 {trade_date}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 Structure: <b>{predicted}</b>  ({conf:.0f}% confidence)\n"
-        f"⚡ TCS Score: <b>{tcs:.0f}</b>\n"
-        f"📍 Open: ${open_px:.2f}\n"
-        f"📦 IB Range: ${ib_low:.2f} – ${ib_high:.2f}  (mid ${ib_mid:.2f})\n"
+        f"💰 Price at IB close: <b>${cur_px:.2f}</b>  "
+        f"({chg_arrow}{abs(chg_pct):.1f}% from open ${open_px:.2f})\n"
+        f"📊 Structure: <b>{predicted}</b>  ({conf:.0f}% conf)\n"
+        f"⚡ TCS Score: <b>{tcs:.0f} / 100</b>\n"
+        f"📦 IB Range:  ${ib_low:.2f} – ${ib_high:.2f}  (mid ${ib_mid:.2f})\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{entry_hint}\n"
         f"🔑 Key levels:\n"
-        f"  Above IB → ${above_ib:.2f}\n"
-        f"  IB Mid   → ${ib_mid:.2f}\n"
-        f"  Below IB → ${below_ib:.2f}"
+        f"  Break above → ${above_ib:.2f}\n"
+        f"  IB Mid      → ${ib_mid:.2f}\n"
+        f"  Break below → ${below_ib:.2f}"
     )
     sent = tg_send(msg)
     if sent:
