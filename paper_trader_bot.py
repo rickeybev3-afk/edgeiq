@@ -7,8 +7,8 @@ Schedule (ET):
    9:15 AM  — Auto-fetch watchlist from Finviz (your exact filter settings) → save to Supabase
   10:47 AM  — IB close + 17 min buffer → scan watchlist, filter TCS ≥ MIN_TCS, log entries + Telegram alerts
    2:00 PM  — Intraday key-level alert scan (re-scans for fresh setups mid-day)
-   4:05 PM  — Market closes → update outcomes with full-day data
-   4:10 PM  — Nightly brain recalibration
+   4:20 PM  — Market closes → update outcomes with full-day data (SIP 16-min delay)
+   4:30 PM  — Nightly brain recalibration
 
 Telegram Alerts (requires TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID secrets):
   • Morning scan: each qualifying setup → immediate alert with structure, IB range, key levels
@@ -404,13 +404,13 @@ def intraday_scan():
 
 
 def eod_update():
-    """4:05 PM ET — update paper trades with full-day outcomes + send EOD summary."""
+    """4:20 PM ET — update paper trades with full-day outcomes + send EOD summary."""
     today = date.today()
     log.info("=" * 60)
     log.info("EOD UPDATE — resolving outcomes with full-day bar data")
     log.info("=" * 60)
 
-    results = _run_scan(today, cutoff_h=10, cutoff_m=30)
+    results = _run_scan(today, cutoff_h=15, cutoff_m=55)
     if not results:
         log.warning("No results from EOD scan — cannot update outcomes.")
         tg_send(f"⚠️ <b>EOD Update Failed</b> — {today}\nNo bar data returned.")
@@ -433,7 +433,7 @@ def eod_update():
 
 
 def nightly_recalibration():
-    """4:10 PM ET — read all Supabase outcome data, update brain weights."""
+    """4:30 PM ET — read all Supabase outcome data, update brain weights."""
     log.info("=" * 60)
     log.info("NIGHTLY RECALIBRATION — updating brain weights from live data")
     log.info("=" * 60)
@@ -453,10 +453,11 @@ def nightly_recalibration():
         log.info(f"Brain weights updated — {len(deltas)} structure(s) adjusted:")
         for d in deltas:
             direction = "▲" if d["delta"] > 0 else ("▼" if d["delta"] < 0 else "—")
+            total_n = (d.get("journal_n") or 0) + (d.get("bot_n") or 0)
             log.info(
                 f"  {d['key']:16s} | {d['old']:.4f} → {d['new']:.4f} "
                 f"({direction}{abs(d['delta']):.4f}) | "
-                f"acc {d['accuracy']}% over {d['samples']} samples"
+                f"acc {d.get('blended_acc', '?')}% over {total_n} samples"
             )
         _alert_recalibration(cal)
     except Exception as exc:
@@ -487,8 +488,8 @@ def main():
             f"  9:15 AM  → Finviz watchlist refresh\n"
             f" 10:47 AM  → Morning scan + alerts\n"
             f"  2:00 PM  → Intraday scan\n"
-            f"  4:05 PM  → EOD outcomes\n"
-            f"  4:10 PM  → Brain recalibration"
+            f"  4:20 PM  → EOD outcomes\n"
+            f"  4:30 PM  → Brain recalibration"
         )
     else:
         log.warning("Telegram alerts: DISABLED (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set)")
@@ -497,7 +498,7 @@ def main():
     log.info(f"User: {USER_ID}")
     log.info(
         "Schedule: 9:15 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
-        "2:00 PM ET → intraday scan | 4:05 PM ET → EOD update | 4:10 PM ET → recalibration"
+        "2:00 PM ET → intraday scan | 4:20 PM ET → EOD update | 4:30 PM ET → recalibration"
     )
 
     _table_ok = ensure_paper_trades_table()
@@ -541,12 +542,22 @@ def main():
             _recalibration_done = False
 
         if not _market_is_open(now_et):
-            # Recalibration runs after market close
+            # EOD outcome update — 4:20 PM ET (SIP free tier needs data >16 min old;
+            # market close is 4:00 PM so the 4:00 PM bars are safe by 4:16 PM)
+            if (
+                not _eod_done
+                and now_et.weekday() < 5
+                and now_et.hour == 16
+                and now_et.minute >= 20
+            ):
+                eod_update()
+                _eod_done = True
+            # Recalibration runs after EOD outcomes are written (4:30 PM ET)
             if (
                 not _recalibration_done
                 and now_et.weekday() < 5
                 and now_et.hour == 16
-                and now_et.minute >= 10
+                and now_et.minute >= 30
             ):
                 nightly_recalibration()
                 _recalibration_done = True
@@ -581,20 +592,21 @@ def main():
             intraday_scan()
             _intraday_done = True
 
-        # 4:05 PM — EOD update
+        # 4:20 PM — EOD update (only reachable if market extended session; normally
+        # handled in the after-close block above)
         if (
             not _eod_done
             and now_et.hour == 16
-            and now_et.minute >= 5
+            and now_et.minute >= 20
         ):
             eod_update()
             _eod_done = True
 
-        # 4:10 PM — brain recalibration
+        # 4:30 PM — brain recalibration (only reachable if market extended session)
         if (
             not _recalibration_done
             and now_et.hour == 16
-            and now_et.minute >= 10
+            and now_et.minute >= 30
         ):
             nightly_recalibration()
             _recalibration_done = True
