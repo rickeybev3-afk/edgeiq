@@ -5816,6 +5816,10 @@ def render_analytics_tab():
                                     _stat_rows.append(("Top structures", _struct_labels, ""))
 
                             for _lbl, _val, _sub in _stat_rows:
+                                _sub_html = (
+                                    '<div style="font-size:9px;color:#555;text-align:right;">'
+                                    + _sub + "</div>"
+                                ) if _sub else ""
                                 st.markdown(
                                     f'<div style="display:flex;justify-content:space-between;'
                                     f'align-items:center;padding:5px 0;'
@@ -5823,8 +5827,7 @@ def render_analytics_tab():
                                     f'<span style="color:#888;font-size:11px;">{_lbl}</span>'
                                     f'<span style="color:#e0e0e0;font-weight:700;font-size:13px;">'
                                     f'{_val}</span>'
-                                    f'</div>'
-                                    f'{"<div style=\\"font-size:9px;color:#555;text-align:right;\\">" + _sub + "</div>" if _sub else ""}',
+                                    f'</div>{_sub_html}',
                                     unsafe_allow_html=True,
                                 )
 
@@ -5876,6 +5879,10 @@ def render_analytics_tab():
                                                        "avoid these in this hold style"))
 
                             for _lbl, _val, _sub in _loss_rows:
+                                _lsub_html = (
+                                    '<div style="font-size:9px;color:#555;text-align:right;">'
+                                    + _sub + "</div>"
+                                ) if _sub else ""
                                 st.markdown(
                                     f'<div style="display:flex;justify-content:space-between;'
                                     f'align-items:center;padding:5px 0;'
@@ -5883,8 +5890,7 @@ def render_analytics_tab():
                                     f'<span style="color:#888;font-size:11px;">{_lbl}</span>'
                                     f'<span style="color:#e0e0e0;font-weight:700;font-size:13px;">'
                                     f'{_val}</span>'
-                                    f'</div>'
-                                    f'{"<div style=\\"font-size:9px;color:#555;text-align:right;\\">" + _sub + "</div>" if _sub else ""}',
+                                    f'</div>{_lsub_html}',
                                     unsafe_allow_html=True,
                                 )
 
