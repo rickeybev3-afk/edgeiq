@@ -48,3 +48,9 @@ id = "Q4z12P3OmfJbSbKWAJd1M"
 uri = "file://edgeiq_code.zip"
 type = "unspecified"
 title = "EdgeIQ Source Code"
+
+[[outputs]]
+id = "MfQ3JfRRnItPcnCzYMJNL"
+uri = "file://edgeiq_20260408.zip"
+type = "unspecified"
+title = "EdgeIQ Source Code — April 8 2026"
