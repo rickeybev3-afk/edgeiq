@@ -47,7 +47,7 @@ title = "Volume Profile Terminal — Source Code"
 id = "Q4z12P3OmfJbSbKWAJd1M"
 uri = "file://edgeiq_code.zip"
 type = "unspecified"
-title = "EdgeIQ — Full Codebase (Apr 8 end-of-day — fully updated)"
+title = "EdgeIQ — Full Codebase (Apr 8 — adaptive recalibration + full tracking)"
 
 [[outputs]]
 id = "MfQ3JfRRnItPcnCzYMJNL"
