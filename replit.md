@@ -153,8 +153,22 @@ Note: AIB Apr 6 "Win" but negative P&L — brain correctly predicted structure (
 **Bugs found and fixed:**
 - `import streamlit as st` in backend.py now conditional (`_ST_AVAILABLE` guard) — bot no longer loads Streamlit session_state at import time
 - `TICKERS = _resolve_tickers()` at import removed — bot starts with 14 safe defaults, `_run_scan()` fetches live Supabase list at scan time so restarts after 9:15 AM still work
-- **CRITICAL BUG FIXED:** CSV import `log_accuracy_entry` was setting `predicted = actual = same structure` on every imported trade → always ✅ regardless of P&L. Brain was receiving garbage signal from CSV imports. Fixed: win (exit > entry) = ✅, loss (exit ≤ entry) = ❌
-- `accuracy_tracker.correct` — confirmed NOT null. 132 ✅ + 49 ❌ across 181 rows. Old scratchpad note was wrong.
+- **CRITICAL BUG FIXED (code):** CSV import `log_accuracy_entry` was setting `predicted = actual = same structure` on every imported trade → always ✅ regardless of P&L. Fixed: win (exit > entry) = ✅, loss (exit ≤ entry) = ❌
+- **CRITICAL BUG FIXED (data):** 37 existing accuracy_tracker rows with valid prices were losses wrongly stored as ✅ (KLTR −33.9%, ORBS −14.6%, TURB −17.6%, etc.). Fixed directly in Supabase. All 37 corrected to ❌.
+- `import logging` missing from backend.py — caused watchlist refresh to crash on every bot startup. Fixed.
+- **Midday watchlist refresh added:** 11:45 AM ET secondary Finviz pull so 2 PM intraday scan has late movers too.
+
+**Corrected accuracy_tracker totals (post-fix):**
+- Total rows: 293 | ✅: 199 | ❌: 94 | Win rate: 67.9% (includes structure prediction rows without prices)
+
+**Real CSV trade stats (61 price-verified webull_import trades — ground truth):**
+- 24W / 37L = 39.3% win rate
+- Avg win: +25.8% / +$21.54
+- Avg loss: −11.8% / −$30.42
+- Net P&L: **−$608.48**
+- Best win: ACXP +95.0% | Worst loss: KLTR −33.9% (−$152.40)
+- **Key insight:** % edge is real (2.15x profit factor). Dollar loss > dollar win because of inconsistent position sizing pre-EdgeIQ. Losses sized bigger than wins. EdgeIQ's fixed $1k/trade sizing fixes this.
+- Tonight's 4:30 PM recalibration is the FIRST one running on clean data.
 
 **Architecture decisions locked:**
 - Do NOT split backend.py during Phase 1 — too risky while bot is running. Planned split: brain.py / data.py / trades.py / auth.py at Phase 2 maintenance window
