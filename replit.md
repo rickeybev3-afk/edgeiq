@@ -148,6 +148,38 @@ Note: AIB Apr 6 "Win" but negative P&L — brain correctly predicted structure (
 - Alerted trades (TCS≥50): SKYQ +11.3%, CLIK −1.5% → +$489 theoretical on $10k
 - Brain recalibration: `normal` ↑ 1.175→1.289 (100% acc/68 samples), `ntrl_extreme` ↓ 1.325→1.211 (56.6%/53), `neutral` ↓ 1.325→1.211 (59.1%/67)
 
+### Session Notes — 2026-04-09 (tonight)
+
+**Bugs found and fixed:**
+- `import streamlit as st` in backend.py now conditional (`_ST_AVAILABLE` guard) — bot no longer loads Streamlit session_state at import time
+- `TICKERS = _resolve_tickers()` at import removed — bot starts with 14 safe defaults, `_run_scan()` fetches live Supabase list at scan time so restarts after 9:15 AM still work
+- **CRITICAL BUG FIXED:** CSV import `log_accuracy_entry` was setting `predicted = actual = same structure` on every imported trade → always ✅ regardless of P&L. Brain was receiving garbage signal from CSV imports. Fixed: win (exit > entry) = ✅, loss (exit ≤ entry) = ❌
+- `accuracy_tracker.correct` — confirmed NOT null. 132 ✅ + 49 ❌ across 181 rows. Old scratchpad note was wrong.
+
+**Architecture decisions locked:**
+- Do NOT split backend.py during Phase 1 — too risky while bot is running. Planned split: brain.py / data.py / trades.py / auth.py at Phase 2 maintenance window
+- Do NOT add IWM/breadth to TCS scoring until 60+ trades. Passive tagging of `iwm_day_type` per trade is OK at 60 trades, wiring into scoring only at 150-200 trades
+- TCS threshold is the self-selection lever — raise MIN_TCS from 50 → 55 → 60 as data grows. Never hard-cut structure types, brain needs to keep seeing all structures to calibrate them
+- Brain naturally stops alerting weak structures as their weights drop and TCS scores fall below threshold — no manual exclusions needed
+
+**Beta tester setup (ready to onboard):**
+- They need: Telegram group (alerts) + EdgeIQ login (you create in Supabase) + Webull (they already have it)
+- They need ZERO API keys — bot runs on your server
+- Daily: ~2 min journal entry from Telegram alert observation
+- Weekly: Webull CSV export → drag into journal tab (60 seconds)
+- CSV import enriches every historical trade with IB structure, TCS, RVOL for that date via `enrich_trade_context`
+- Duplicate protection: CSV import skips ticker+date already in journal
+- Two users same trade: isolated by user_id RLS. Fine for Phase 1.
+
+**Telegram architecture (current):**
+- OUTPUT ONLY — bot sends alerts out, receives nothing
+- Multi-user: change TELEGRAM_CHAT_ID to group chat_id for now. Per-user chat_id in user_preferences is Phase 2.
+- Incoming Telegram → journal pipeline: NOT YET BUILT. High priority Phase 2 feature.
+
+**FBRX discussed:** $25.41, 1,744 shares volume on Apr 8, above $20 price max. Not EdgeIQ universe. Public offering = dilution headwind. Not a setup.
+
+**RENX discussed:** User holding from ~Apr 6-7. $3.10 target was touched Apr 8 (H=$3.11) and rejected — closed $2.80. Bearish Break classification by bot. $3.10 is now proven resistance twice (Apr 1 H=$3.44, Apr 8 H=$3.11). Volume very thin. Entry price coming in weekend CSV upload.
+
 ### Early Performance Context (user conversation — 2026-04-08)
 - +5.9% in 3 days sounds impressive but is NOT representative yet (7 trades, no statistical weight)
 - MIGI single trade (+33.5%) is an outlier — these happen in small-caps but not every week
