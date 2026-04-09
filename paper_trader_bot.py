@@ -78,6 +78,7 @@ try:
         save_telegram_trade,
         save_beta_chat_id,
         get_beta_chat_ids,
+        load_user_prefs,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -192,18 +193,31 @@ def telegram_listener() -> None:
                     parts = text.split(maxsplit=1)
                     payload = parts[1].strip() if len(parts) > 1 else ""
                     if payload:
+                        # Validate user_id before binding: confirm the account
+                        # exists in Supabase (prevents guessed-ID spoofing).
                         try:
-                            save_beta_chat_id(payload, chat_id)
+                            _prefs = load_user_prefs(payload)
+                            _user_known = isinstance(_prefs, dict) and len(_prefs) > 0
+                        except Exception:
+                            _user_known = False
+                        if _user_known:
+                            try:
+                                save_beta_chat_id(payload, chat_id)
+                                tg_reply(chat_id,
+                                    "✅ <b>You're connected to the EdgeIQ Scanner!</b>\n\n"
+                                    "You'll get morning setups and end-of-day results here "
+                                    "each trading day.\n\n"
+                                    "Keep logging your trades at your portal — "
+                                    "the scanner gets sharper the more data it has.")
+                                log.info(f"Beta subscriber connected: user_id={payload} chat_id={chat_id}")
+                            except Exception as _se:
+                                log.warning(f"save_beta_chat_id failed: {_se}")
+                                tg_reply(chat_id, "✅ <b>EdgeIQ Scanner</b>\nYou're connected!")
+                        else:
+                            log.warning(f"Rejected /start with unknown user_id={payload} from chat_id={chat_id}")
                             tg_reply(chat_id,
-                                "✅ <b>You're connected to the EdgeIQ Scanner!</b>\n\n"
-                                "You'll get morning setups and end-of-day results here "
-                                "each trading day.\n\n"
-                                "Keep logging your trades at your portal — "
-                                "the scanner gets sharper the more data it has.")
-                            log.info(f"Beta subscriber connected: user_id={payload} chat_id={chat_id}")
-                        except Exception as _se:
-                            log.warning(f"save_beta_chat_id failed: {_se}")
-                            tg_reply(chat_id, "✅ <b>EdgeIQ Scanner</b>\nYou're connected!")
+                                "❌ <b>Link not recognized.</b>\n\n"
+                                "Please use the button in your EdgeIQ portal to connect.")
                     else:
                         tg_reply(chat_id,
                             "👋 <b>EdgeIQ Scanner</b>\n\n"

@@ -3,8 +3,8 @@
   "trend_bear": 1.0,
   "double_dist": 1.0,
   "non_trend": 1.0,
-  "normal": 1.1039,
-  "neutral": 1.1819,
-  "ntrl_extreme": 1.1819,
+  "normal": 1.0623,
+  "neutral": 1.1182,
+  "ntrl_extreme": 1.1182,
   "nrml_variation": 1.0
 }
