@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import csv
 import os
+import logging
 import requests
 from collections import deque
 try:
