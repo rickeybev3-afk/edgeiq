@@ -76,6 +76,8 @@ try:
         verify_watchlist_predictions,
         ensure_telegram_columns,
         save_telegram_trade,
+        save_beta_chat_id,
+        get_beta_chat_ids,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -182,7 +184,30 @@ def telegram_listener() -> None:
                 if not text or not chat_id:
                     continue
 
-                if not text.startswith("/log"):
+                if not text.startswith("/log") and not text.startswith("/start"):
+                    continue
+
+                # ── /start USER_ID — beta tester connection via deep link ──
+                if text.startswith("/start"):
+                    parts = text.split(maxsplit=1)
+                    payload = parts[1].strip() if len(parts) > 1 else ""
+                    if payload:
+                        try:
+                            save_beta_chat_id(payload, chat_id)
+                            tg_reply(chat_id,
+                                "✅ <b>You're connected to the EdgeIQ Scanner!</b>\n\n"
+                                "You'll get morning setups and end-of-day results here "
+                                "each trading day.\n\n"
+                                "Keep logging your trades at your portal — "
+                                "the scanner gets sharper the more data it has.")
+                            log.info(f"Beta subscriber connected: user_id={payload} chat_id={chat_id}")
+                        except Exception as _se:
+                            log.warning(f"save_beta_chat_id failed: {_se}")
+                            tg_reply(chat_id, "✅ <b>EdgeIQ Scanner</b>\nYou're connected!")
+                    else:
+                        tg_reply(chat_id,
+                            "👋 <b>EdgeIQ Scanner</b>\n\n"
+                            "Open your personal portal link to connect your account for alerts.")
                     continue
 
                 parsed = _parse_log_command(text)
@@ -226,6 +251,36 @@ def telegram_listener() -> None:
         except Exception as exc:
             log.warning(f"Telegram listener error: {exc}")
             time.sleep(10)
+
+
+def _subscriber_direction(predicted: str) -> str:
+    """Map predicted structure to a clean direction label for beta subscribers."""
+    p = (predicted or "").lower()
+    if "bullish" in p or ("trend" in p and ("up" in p or "bull" in p)):
+        return "📈 Bullish"
+    if "bearish" in p or ("trend" in p and ("down" in p or "bear" in p)):
+        return "📉 Bearish"
+    return "◾ Watch"
+
+
+def _broadcast_to_subscribers(message: str) -> int:
+    """Send message to all beta subscribers. Returns count sent."""
+    try:
+        pairs = get_beta_chat_ids(exclude_user_id=USER_ID)
+    except Exception as exc:
+        log.warning(f"get_beta_chat_ids failed: {exc}")
+        return 0
+    sent = 0
+    for _uid, cid in pairs:
+        try:
+            tg_reply(cid, message)
+            sent += 1
+            time.sleep(0.1)
+        except Exception as exc:
+            log.warning(f"broadcast to {cid} failed: {exc}")
+    if sent:
+        log.info(f"Broadcast sent to {sent} subscriber(s)")
+    return sent
 
 
 def _structure_emoji(predicted: str) -> str:
@@ -467,6 +522,50 @@ def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
     return results
 
 
+def _broadcast_morning_to_subscribers(results: list, today) -> None:
+    """Send a clean morning setup list to all beta subscribers."""
+    if not results:
+        return
+    sorted_r = sorted(results, key=lambda x: float(x.get("tcs", 0)), reverse=True)
+    top = sorted_r[:7]
+    date_str = today.strftime("%b %-d") if hasattr(today, "strftime") else str(today)
+    lines = [f"🔍 <b>Scanner — {date_str}</b>", "━━━━━━━━━━━━━━━━"]
+    for r in top:
+        ticker = r.get("ticker", "?")
+        direction = _subscriber_direction(r.get("predicted", ""))
+        lines.append(f"{direction} — <b>{ticker}</b>")
+    remaining = len(results) - len(top)
+    if remaining > 0:
+        lines.append(f"+ {remaining} more on radar")
+    lines.append("")
+    lines.append("Log your best trade today via your portal.")
+    _broadcast_to_subscribers("\n".join(lines))
+
+
+def _broadcast_eod_to_subscribers(results: list, today) -> None:
+    """Send a clean EOD outcome summary to all beta subscribers."""
+    if not results:
+        return
+    wins   = [r for r in results if (r.get("win_loss") or "").lower() == "win"]
+    total  = len(results)
+    date_str = today.strftime("%b %-d") if hasattr(today, "strftime") else str(today)
+    top_movers = sorted(
+        results,
+        key=lambda x: abs(float(x.get("aft_move_pct") or x.get("follow_thru_pct") or 0)),
+        reverse=True,
+    )[:3]
+    lines = [f"📊 <b>Results — {date_str}</b>", "━━━━━━━━━━━━━━━━",
+             f"{len(wins)} of {total} setups played out today"]
+    if top_movers:
+        mover_parts = []
+        for r in top_movers:
+            pct = float(r.get("aft_move_pct") or r.get("follow_thru_pct") or 0)
+            sign = "+" if pct >= 0 else ""
+            mover_parts.append(f"{r.get('ticker','?')} {sign}{pct:.1f}%")
+        lines.append("Top: " + " · ".join(mover_parts))
+    _broadcast_to_subscribers("\n".join(lines))
+
+
 def morning_scan():
     """10:47 AM ET — log IB entries, send Telegram alerts per qualifying setup."""
     today = date.today()
@@ -504,6 +603,9 @@ def morning_scan():
             time.sleep(0.3)  # Telegram rate limit buffer
     else:
         log.info("No setups met TCS threshold today.")
+
+    # ── Beta subscriber broadcast (clean — no TCS/brain language) ─────────
+    _broadcast_morning_to_subscribers(results, today)
 
 
 def intraday_scan():
@@ -561,6 +663,9 @@ def eod_update():
     # Telegram EOD summary
     qualified_results = [r for r in results if float(r.get("tcs", 0)) >= MIN_TCS]
     _alert_eod_summary(qualified_results, updated_count, today)
+
+    # ── Beta subscriber broadcast (clean — no TCS/brain language) ─────────
+    _broadcast_eod_to_subscribers(results, today)
 
 
 def nightly_verify():

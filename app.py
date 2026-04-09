@@ -503,6 +503,29 @@ def render_beta_portal(beta_user_id: str):
 
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # ── Step 3: Get Alerts ────────────────────────────────────────────
+        st.markdown('<div class="beta-section">'
+                    '<div class="beta-section-title">Step 3 — Get Alerts</div>',
+                    unsafe_allow_html=True)
+        st.caption("Connect Telegram to receive morning scanner setups and end-of-day results each trading day.")
+
+        _b_prefs = load_user_prefs(beta_user_id)
+        _b_chat_id = _b_prefs.get("tg_chat_id")
+
+        if _b_chat_id:
+            st.success("✅ Connected — you'll receive morning alerts and EOD results via Telegram.")
+        else:
+            _tg_bot = os.getenv("TELEGRAM_BOT_USERNAME", "edgeiq_alerts_bot").lstrip("@")
+            _deep_link = f"https://t.me/{_tg_bot}?start={beta_user_id}"
+            st.link_button(
+                "📲 Connect Telegram for Alerts →",
+                url=_deep_link,
+                use_container_width=True,
+            )
+            st.caption("Tap the button → opens Telegram → you're connected. Takes 5 seconds.")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE STREAM

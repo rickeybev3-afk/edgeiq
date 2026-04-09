@@ -7123,3 +7123,39 @@ def load_user_prefs(user_id: str) -> dict:
     return {}
 
 
+def save_beta_chat_id(user_id: str, chat_id) -> bool:
+    """Store a beta tester's Telegram chat ID in their user prefs."""
+    if not user_id:
+        return False
+    prefs = load_user_prefs(user_id)
+    prefs["tg_chat_id"] = str(chat_id)
+    return save_user_prefs(user_id, prefs)
+
+
+def get_beta_chat_ids(exclude_user_id: str = "") -> list:
+    """Return list of (user_id, chat_id) tuples for all beta subscribers.
+
+    Skips exclude_user_id (the owner) so they don't get duplicate messages.
+    """
+    import json as _json
+    pairs = []
+    if supabase:
+        try:
+            res = supabase.table("user_preferences").select("user_id,prefs").execute()
+            for row in res.data:
+                uid = row.get("user_id", "")
+                if exclude_user_id and uid == exclude_user_id:
+                    continue
+                raw = row.get("prefs", "{}")
+                prefs = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+                cid = prefs.get("tg_chat_id")
+                if cid:
+                    try:
+                        pairs.append((uid, int(cid)))
+                    except (ValueError, TypeError):
+                        pass
+        except Exception as e:
+            print(f"get_beta_chat_ids error: {e}")
+    return pairs
+
+
