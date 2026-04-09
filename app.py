@@ -358,6 +358,124 @@ def render_login_page():
         )
 
 
+def render_beta_portal(beta_user_id: str):
+    """Private portal for beta testers. Accessible via /?beta=USER_ID.
+    Shows only: CSV upload + Telegram logging instructions. Nothing else."""
+
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { display: none !important; }
+    [data-testid="stHeader"]  { display: none !important; }
+    .beta-wrap { max-width: 560px; margin: 60px auto 0 auto; }
+    .beta-logo { text-align: center; font-size: 42px; margin-bottom: 4px; }
+    .beta-title { text-align: center; font-size: 22px; font-weight: 800;
+                  color: #e0e0e0; letter-spacing: -0.5px; margin-bottom: 2px; }
+    .beta-sub   { text-align: center; font-size: 11px; color: #5c6bc0;
+                  text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 36px; }
+    .beta-section { background: #12122288; border: 1px solid #2a2a4a;
+                    border-radius: 12px; padding: 24px 28px; margin-bottom: 20px; }
+    .beta-section-title { font-size: 13px; font-weight: 700; color: #7986cb;
+                          text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px; }
+    .tg-cmd { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 8px;
+              padding: 10px 14px; font-family: monospace; font-size: 13px;
+              color: #80cbc4; margin: 6px 0; }
+    </style>
+    <div class="beta-wrap">
+      <div class="beta-logo">📊</div>
+      <div class="beta-title">EdgeIQ Beta</div>
+      <div class="beta-sub">Scanner Testing Program</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _, col, _ = st.columns([1, 4, 1])
+    with col:
+
+        # ── Step 1: CSV Upload ─────────────────────────────────────────────
+        st.markdown('<div class="beta-section">'
+                    '<div class="beta-section-title">Step 1 — Weekly Trade Upload</div>',
+                    unsafe_allow_html=True)
+        st.caption("In Webull: Orders → History → Export CSV. Drop it below once a week.")
+
+        _b_file = st.file_uploader(
+            "Drop your Webull CSV here",
+            type=["csv"],
+            key="beta_csv_uploader",
+            label_visibility="collapsed",
+        )
+
+        if _b_file is not None:
+            try:
+                _b_df     = pd.read_csv(_b_file)
+                _b_trades = parse_webull_csv(_b_df)
+                if not _b_trades:
+                    st.warning("No closed trades found. Make sure you exported Order History (not Account History).")
+                else:
+                    # Dedup against existing journal
+                    _b_existing = load_journal(user_id=beta_user_id)
+                    _b_existing_keys: set = set()
+                    if not _b_existing.empty:
+                        for _, _br in _b_existing.iterrows():
+                            _bk = f"{_br.get('ticker','')}_{str(_br.get('timestamp',''))[:10]}"
+                            _b_existing_keys.add(_bk)
+
+                    _b_new, _b_skipped = [], 0
+                    for _bt in _b_trades:
+                        _bk = f"{_bt.get('ticker','')}_{str(_bt.get('timestamp',''))[:10]}"
+                        if _bk in _b_existing_keys:
+                            _b_skipped += 1
+                        else:
+                            _b_new.append(_bt)
+
+                    if not _b_new:
+                        st.success(f"All {len(_b_trades)} trades already uploaded. Nothing new to add.")
+                    else:
+                        st.success(f"Found **{len(_b_new)} new trades** to import"
+                                   + (f" ({_b_skipped} already uploaded)" if _b_skipped else "") + ".")
+
+                        if st.button(f"💾 Upload {len(_b_new)} Trades",
+                                     type="primary", use_container_width=True,
+                                     key="beta_import_btn"):
+                            _b_saved = 0
+                            for _bt in _b_new:
+                                try:
+                                    save_journal_entry(_bt, user_id=beta_user_id)
+                                    _b_saved += 1
+                                except Exception:
+                                    pass
+                            st.success(f"✅ {_b_saved} trades uploaded successfully.")
+                            st.balloons()
+
+            except Exception as _be:
+                st.error(f"Could not read file: {_be}")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── Step 2: Telegram Trade Log ────────────────────────────────────
+        st.markdown('<div class="beta-section">'
+                    '<div class="beta-section-title">Step 2 — Daily Trade Log</div>',
+                    unsafe_allow_html=True)
+        st.caption("Once a day, log your most important trade — win or loss — via Telegram.")
+
+        _tg_username = os.getenv("TELEGRAM_BOT_USERNAME", "edgeiq_alerts_bot")
+        st.link_button(
+            "📲 Open Telegram Bot →",
+            url=f"https://t.me/{_tg_username.lstrip('@')}",
+            use_container_width=True,
+        )
+
+        st.markdown("**Format:**")
+        st.markdown('<div class="tg-cmd">/log TICKER win|loss entry exit your note</div>',
+                    unsafe_allow_html=True)
+        st.markdown("**Examples:**")
+        st.markdown('<div class="tg-cmd">/log ARAI win 3.10 4.25 broke above VWAP on volume</div>',
+                    unsafe_allow_html=True)
+        st.markdown('<div class="tg-cmd">/log MIGI loss 2.85 2.40 chased, no follow through</div>',
+                    unsafe_allow_html=True)
+        st.caption("Log wins AND losses — both are equally important for the scanner.")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE STREAM
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3179,6 +3297,12 @@ if not st.session_state.get("auth_user") and not st.session_state.get("_restore_
         st.session_state["auth_refresh_token"] = _rrt
         set_user_session(_rat, _rrt)
         st.rerun()
+
+# ── Beta portal intercept — must come before auth gate ────────────────────────
+_beta_user_id = st.query_params.get("beta", "")
+if _beta_user_id:
+    render_beta_portal(_beta_user_id)
+    st.stop()
 
 if not st.session_state.get("auth_user"):
     render_login_page()
