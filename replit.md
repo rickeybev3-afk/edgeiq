@@ -202,9 +202,38 @@ This is the defensible data moat — no one else has your structure + tape + out
 
 ---
 
+## Technical Debt / Architecture (Phase 2 plan)
+
+### backend.py Split Plan — Phase 2 (DO NOT DO during Phase 1 calibration)
+backend.py is 7,006 lines — a god file. Safe to run in Phase 1 but a maintenance liability.
+Planned split when Phase 1 is complete and bot is paused for maintenance window:
+- `brain.py` — brain weights, recalibration, `load_brain_weights`, `_save_brain_weights`, `recalibrate_from_supabase`
+- `data.py` — Alpaca fetch, `fetch_bars`, `run_historical_backtest`, `fetch_finviz_watchlist`
+- `trades.py` — `log_paper_trades`, `update_paper_trade_outcomes`, `log_accuracy_entry`, position tracking
+- `auth.py` — `auth_login`, `auth_signup`, `auth_signout`, `set_user_session`, session cache
+- `backend.py` — kept as thin orchestration layer that imports from the above + UI-facing functions
+- ⛔ DO NOT split mid-Phase 1 — too many inter-dependencies, bot must keep running
+
+### Streamlit Import in backend.py — FIXED (2026-04-09)
+- Problem: `import streamlit as st` at line 13 + module-level `st.session_state` call at import time
+- Bot was loading all Streamlit infrastructure just to run scheduled tasks
+- Line 1849 `if not st.session_state.get("_position_loaded"):` ran at every bot startup
+- Fix: conditional import with `try/except`, guarded module-level call with `_ST_AVAILABLE` flag
+- `_ST_AVAILABLE = True` when running as Streamlit app (UI); `= True` but guarded when bot
+- Bot no longer at risk of session_state errors on startup
+
+### TICKERS initialization — FIXED (2026-04-09)
+- Problem: `TICKERS = _resolve_tickers()` at module import → Supabase call on every bot startup
+- If Supabase was down at 9:13 AM, bot started with stale/wrong ticker list silently
+- Fix 1: `TICKERS = [defaults]` at import — safe 14-ticker baseline, no network call
+- Fix 2: `_run_scan()` now calls `_resolve_tickers()` fresh at scan time (10:47 AM, 2:00 PM, EOD)
+- Even if bot restarts after 9:15 AM, scans use the live Supabase list, not startup defaults
+
+---
+
 ## Known Issues / Pending
 
-- `accuracy_tracker.correct` field is NULL for all 181 rows — needs data audit (Phase 2)
+- ~~`accuracy_tracker.correct` field is NULL for all 181 rows~~ — **CONFIRMED NOT NULL**: 132 ✅ + 49 ❌ across 181 rows. Old scratchpad note was inaccurate. Data is fine.
 - `alert_price` and `structure_conf` are NULL for current paper_trades rows (not captured at alert time — needs investigation)
 - Inside bar flag at IB close per paper trade row (Phase 2)
 - `gap_pct` per paper trade row (Phase 2 — extra API call for prior close)
@@ -215,6 +244,7 @@ This is the defensible data moat — no one else has your structure + tape + out
 - WebSocket key-level triggers (Phase 4 only)
 - Webull CSV import pipeline (pending)
 - Clean accuracy_tracker of out-of-universe tickers (Unknown, —, etc.)
+- backend.py split → brain.py / data.py / trades.py / auth.py (Phase 2 maintenance window)
 
 ---
 

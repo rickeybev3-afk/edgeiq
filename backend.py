@@ -10,7 +10,13 @@ import csv
 import os
 import requests
 from collections import deque
-import streamlit as st
+try:
+    import streamlit as st
+    _ST_AVAILABLE = True
+except (ImportError, Exception):
+    _ST_AVAILABLE = False
+    st = None  # type: ignore
+
 from supabase import create_client, Client
 
 import re as _re
@@ -1846,7 +1852,7 @@ def exit_position(exit_price, actual_structure=""):
 
 
 # Load persisted position on startup (only runs once per session via default init)
-if not st.session_state.get("_position_loaded"):
+if _ST_AVAILABLE and st is not None and not st.session_state.get("_position_loaded"):
     load_position_state()
     st.session_state["_position_loaded"] = True
 

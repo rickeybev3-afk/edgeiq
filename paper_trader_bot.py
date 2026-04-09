@@ -265,7 +265,10 @@ def _resolve_tickers() -> list:
     return tickers
 
 
-TICKERS = _resolve_tickers()
+# Initialize with safe defaults at import time — no Supabase call on startup.
+# watchlist_refresh() at 9:15 AM will fetch the live list from Supabase/Finviz
+# and overwrite this. If watchlist_refresh() fails, the bot falls back here.
+TICKERS = [t.strip().upper() for t in _DEFAULT_TICKERS.split(",") if t.strip()]
 
 
 def _market_is_open(now_et: datetime) -> bool:
@@ -312,14 +315,17 @@ def watchlist_refresh():
 
 def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
     """Fetch bars and run IB engine. Returns all results (unfiltered by TCS)."""
+    # Always resolve tickers fresh at scan time so bot restarts after 9:15 AM
+    # still pick up the full Supabase/Finviz watchlist, not just the startup defaults.
+    scan_tickers = _resolve_tickers()
     log.info(
         f"Running scan for {trade_date} | cutoff {cutoff_h:02d}:{cutoff_m:02d} "
-        f"| {len(TICKERS)} tickers | feed: {FEED}"
+        f"| {len(scan_tickers)} tickers | feed: {FEED}"
     )
     results, summary = run_historical_backtest(
         ALPACA_API_KEY, ALPACA_SECRET_KEY,
         trade_date=trade_date,
-        tickers=TICKERS,
+        tickers=scan_tickers,
         feed=FEED,
         price_min=PRICE_MIN,
         price_max=PRICE_MAX,
