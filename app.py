@@ -450,28 +450,67 @@ def render_beta_portal(beta_user_id: str):
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # ── Step 2: Telegram Trade Log ────────────────────────────────────
+        # ── Step 2: Daily Trade Log ───────────────────────────────────────
         st.markdown('<div class="beta-section">'
                     '<div class="beta-section-title">Step 2 — Daily Trade Log</div>',
                     unsafe_allow_html=True)
-        st.caption("Once a day, log your most important trade — win or loss — via Telegram.")
+        st.caption("Log your most important trade of the day — win or loss. Both matter equally.")
 
+        _b_col1, _b_col2 = st.columns([1, 1])
+        with _b_col1:
+            _b_ticker = st.text_input("Ticker", placeholder="ARAI", key="beta_ticker",
+                                      label_visibility="visible").upper().strip()
+        with _b_col2:
+            _b_wl = st.selectbox("Result", ["Win", "Loss"], key="beta_wl")
+
+        _b_col3, _b_col4 = st.columns([1, 1])
+        with _b_col3:
+            _b_entry = st.number_input("Entry Price", min_value=0.0, step=0.01,
+                                       format="%.4f", key="beta_entry")
+        with _b_col4:
+            _b_exit = st.number_input("Exit Price", min_value=0.0, step=0.01,
+                                      format="%.4f", key="beta_exit")
+
+        _b_note = st.text_input("Note (optional)", placeholder="what you saw, why you took it",
+                                key="beta_note", label_visibility="visible")
+
+        if st.button("📝 Log Trade", type="primary", use_container_width=True, key="beta_log_btn"):
+            if not _b_ticker:
+                st.warning("Enter a ticker.")
+            elif _b_entry <= 0 or _b_exit <= 0:
+                st.warning("Enter valid entry and exit prices.")
+            else:
+                _b_result = save_telegram_trade(
+                    ticker=_b_ticker,
+                    win_loss=_b_wl,
+                    entry_price=_b_entry,
+                    exit_price=_b_exit,
+                    notes=_b_note,
+                    user_id=beta_user_id,
+                )
+                if _b_result.get("duplicate"):
+                    st.warning(f"Already logged: {_b_ticker} {_b_entry}→{_b_exit}. Nothing added.")
+                elif _b_result.get("error"):
+                    st.error(f"Save failed: {_b_result['error']}")
+                else:
+                    _b_pnl  = _b_result["pnl_pct"]
+                    _b_sign = "+" if _b_pnl >= 0 else ""
+                    _b_emoji = "🟢" if _b_wl == "Win" else "🔴"
+                    st.success(
+                        f"{_b_emoji} Logged: **{_b_ticker}** | {_b_wl.upper()} | "
+                        f"${_b_entry:.2f} → ${_b_exit:.2f} | {_b_sign}{_b_pnl:.1f}%"
+                    )
+
+        st.markdown("---")
+        st.caption("Prefer Telegram? Message the bot directly:")
         _tg_username = os.getenv("TELEGRAM_BOT_USERNAME", "edgeiq_alerts_bot")
         st.link_button(
             "📲 Open Telegram Bot →",
             url=f"https://t.me/{_tg_username.lstrip('@')}",
             use_container_width=True,
         )
-
-        st.markdown("**Format:**")
-        st.markdown('<div class="tg-cmd">/log TICKER win|loss entry exit your note</div>',
+        st.markdown('<div class="tg-cmd">/log ARAI win 3.10 4.25 broke above VWAP</div>',
                     unsafe_allow_html=True)
-        st.markdown("**Examples:**")
-        st.markdown('<div class="tg-cmd">/log ARAI win 3.10 4.25 broke above VWAP on volume</div>',
-                    unsafe_allow_html=True)
-        st.markdown('<div class="tg-cmd">/log MIGI loss 2.85 2.40 chased, no follow through</div>',
-                    unsafe_allow_html=True)
-        st.caption("Log wins AND losses — both are equally important for the scanner.")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
