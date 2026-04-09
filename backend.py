@@ -7123,25 +7123,6 @@ def load_user_prefs(user_id: str) -> dict:
     return {}
 
 
-def beta_user_exists(user_id: str) -> bool:
-    """Return True if user_id has a row in user_preferences (any content).
-
-    This is more reliable than checking len(prefs) > 0 because valid users
-    may have an empty prefs dict if they haven't stored any preferences yet.
-    """
-    if not user_id or not supabase:
-        return False
-    try:
-        res = (supabase.table("user_preferences")
-               .select("user_id")
-               .eq("user_id", user_id)
-               .limit(1)
-               .execute())
-        return bool(res.data)
-    except Exception:
-        return False
-
-
 def save_beta_chat_id(user_id: str, chat_id) -> bool:
     """Store a beta tester's Telegram chat ID in their user prefs."""
     if not user_id:
@@ -7155,12 +7136,27 @@ def get_beta_chat_ids(exclude_user_id: str = "") -> list:
     """Return list of (user_id, chat_id) tuples for all beta subscribers.
 
     Skips exclude_user_id (the owner) so they don't get duplicate messages.
+    Falls back to the local prefs file when Supabase is unavailable.
     """
     import json as _json
-    pairs = []
+
+    def _extract_pairs(rows_dict: dict) -> list:
+        found = []
+        for uid, prefs in rows_dict.items():
+            if exclude_user_id and uid == exclude_user_id:
+                continue
+            cid = prefs.get("tg_chat_id") if isinstance(prefs, dict) else None
+            if cid:
+                try:
+                    found.append((uid, int(cid)))
+                except (ValueError, TypeError):
+                    pass
+        return found
+
     if supabase:
         try:
             res = supabase.table("user_preferences").select("user_id,prefs").execute()
+            pairs = []
             for row in res.data:
                 uid = row.get("user_id", "")
                 if exclude_user_id and uid == exclude_user_id:
@@ -7173,8 +7169,18 @@ def get_beta_chat_ids(exclude_user_id: str = "") -> list:
                         pairs.append((uid, int(cid)))
                     except (ValueError, TypeError):
                         pass
+            return pairs
         except Exception as e:
-            print(f"get_beta_chat_ids error: {e}")
-    return pairs
+            print(f"get_beta_chat_ids Supabase error, trying local fallback: {e}")
+
+    # Local file fallback when Supabase is unavailable
+    try:
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                all_prefs = _json.load(_f)
+            return _extract_pairs(all_prefs)
+    except Exception as e:
+        print(f"get_beta_chat_ids local fallback error: {e}")
+    return []
 
 
