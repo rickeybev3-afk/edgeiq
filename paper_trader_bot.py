@@ -78,7 +78,7 @@ try:
         save_telegram_trade,
         save_beta_chat_id,
         get_beta_chat_ids,
-        load_user_prefs,
+        beta_user_exists,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -193,16 +193,15 @@ def telegram_listener() -> None:
                     parts = text.split(maxsplit=1)
                     payload = parts[1].strip() if len(parts) > 1 else ""
                     if payload:
-                        # Validate user_id before binding: confirm the account
-                        # exists in Supabase (prevents guessed-ID spoofing).
-                        try:
-                            _prefs = load_user_prefs(payload)
-                            _user_known = isinstance(_prefs, dict) and len(_prefs) > 0
-                        except Exception:
-                            _user_known = False
-                        if _user_known:
+                        # Validate user_id before binding: confirm a row exists
+                        # in user_preferences (prevents guessed/spoofed ID binding).
+                        if beta_user_exists(payload):
+                            _saved = False
                             try:
-                                save_beta_chat_id(payload, chat_id)
+                                _saved = save_beta_chat_id(payload, chat_id)
+                            except Exception as _se:
+                                log.warning(f"save_beta_chat_id failed: {_se}")
+                            if _saved:
                                 tg_reply(chat_id,
                                     "✅ <b>You're connected to the EdgeIQ Scanner!</b>\n\n"
                                     "You'll get morning setups and end-of-day results here "
@@ -210,11 +209,13 @@ def telegram_listener() -> None:
                                     "Keep logging your trades at your portal — "
                                     "the scanner gets sharper the more data it has.")
                                 log.info(f"Beta subscriber connected: user_id={payload} chat_id={chat_id}")
-                            except Exception as _se:
-                                log.warning(f"save_beta_chat_id failed: {_se}")
-                                tg_reply(chat_id, "✅ <b>EdgeIQ Scanner</b>\nYou're connected!")
+                            else:
+                                tg_reply(chat_id,
+                                    "⚠️ <b>Connection failed.</b>\n\n"
+                                    "Please try tapping the button in your portal again.")
+                                log.warning(f"save_beta_chat_id returned False for user_id={payload}")
                         else:
-                            log.warning(f"Rejected /start with unknown user_id={payload} from chat_id={chat_id}")
+                            log.warning(f"Rejected /start: unknown user_id={payload} from chat_id={chat_id}")
                             tg_reply(chat_id,
                                 "❌ <b>Link not recognized.</b>\n\n"
                                 "Please use the button in your EdgeIQ portal to connect.")

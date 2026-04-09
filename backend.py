@@ -7123,6 +7123,25 @@ def load_user_prefs(user_id: str) -> dict:
     return {}
 
 
+def beta_user_exists(user_id: str) -> bool:
+    """Return True if user_id has a row in user_preferences (any content).
+
+    This is more reliable than checking len(prefs) > 0 because valid users
+    may have an empty prefs dict if they haven't stored any preferences yet.
+    """
+    if not user_id or not supabase:
+        return False
+    try:
+        res = (supabase.table("user_preferences")
+               .select("user_id")
+               .eq("user_id", user_id)
+               .limit(1)
+               .execute())
+        return bool(res.data)
+    except Exception:
+        return False
+
+
 def save_beta_chat_id(user_id: str, chat_id) -> bool:
     """Store a beta tester's Telegram chat ID in their user prefs."""
     if not user_id:
