@@ -755,10 +755,18 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                     _exit_p  = float(_t.get("exit_price", 0) or 0)
                                     _mfe_v   = float(_t.get("mfe", 0) or 0)
                                     if _entry_p > 0 and _exit_p > 0:
+                                        # Use P&L direction to determine correct/incorrect.
+                                        # Win (exit > entry) → structure prediction was useful → ✅
+                                        # Loss (exit ≤ entry) → prediction didn't play out → ❌
+                                        # Previously both were set to the same structure string
+                                        # which always logged ✅ regardless of trade outcome.
+                                        _was_win = _exit_p > _entry_p
+                                        _predicted_struct = _t.get("structure", "Unknown")
+                                        _actual_struct = _predicted_struct if _was_win else "Loss"
                                         log_accuracy_entry(
                                             symbol=_t.get("ticker", ""),
-                                            predicted=_t.get("structure", "Unknown"),
-                                            actual=_t.get("structure", "Unknown"),
+                                            predicted=_predicted_struct,
+                                            actual=_actual_struct,
                                             compare_key="webull_import",
                                             entry_price=_entry_p,
                                             exit_price=_exit_p,
