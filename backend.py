@@ -3073,6 +3073,119 @@ def save_journal_entry(entry: dict, user_id: str = ""):
         print(f"Database write error (journal): {e}")
 
 
+def ensure_telegram_columns() -> bool:
+    """Add Telegram-logging columns to trade_journal if they don't exist.
+    Safe to call on every bot startup — uses IF NOT EXISTS.
+    Returns True on success."""
+    if not supabase:
+        return False
+    cols = [
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS entry_price FLOAT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS exit_price FLOAT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS win_loss TEXT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS pnl_pct FLOAT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS dedup_key TEXT",
+    ]
+    try:
+        for sql in cols:
+            supabase.rpc("exec_sql", {"query": sql}).execute()
+        return True
+    except Exception:
+        try:
+            supabase.table("trade_journal").select("source,entry_price,exit_price,win_loss,pnl_pct,dedup_key").limit(1).execute()
+            return True
+        except Exception as e:
+            print(f"ensure_telegram_columns warning: {e}")
+            return False
+
+
+def save_telegram_trade(ticker: str, win_loss: str, entry_price: float,
+                        exit_price: float, notes: str = "",
+                        user_id: str = "", trade_date=None) -> dict:
+    """Insert a Telegram-logged trade into trade_journal with dedup protection.
+
+    Returns dict: {saved: bool, duplicate: bool, pnl_pct: float, error: str|None}
+    """
+    if not supabase:
+        return {"saved": False, "duplicate": False, "pnl_pct": 0.0,
+                "error": "Supabase not connected"}
+    try:
+        from datetime import date as _date, datetime as _dt
+        import math
+
+        today_str  = str(trade_date or _date.today())
+        entry_p    = round(float(entry_price), 4)
+        exit_p     = round(float(exit_price), 4)
+        pnl_pct    = round((exit_p - entry_p) / entry_p * 100, 2) if entry_p != 0 else 0.0
+        dedup_key  = f"{ticker.upper()}_{today_str}_{entry_p}_{exit_p}"
+
+        # Dedup check — prefer dedup_key column, fall back to grade_reason prefix
+        _grade_reason_key = f"tg|{dedup_key}"
+        try:
+            existing = (supabase.table("trade_journal")
+                        .select("id")
+                        .eq("dedup_key", dedup_key)
+                        .execute())
+        except Exception:
+            existing = (supabase.table("trade_journal")
+                        .select("id")
+                        .eq("grade_reason", _grade_reason_key)
+                        .execute())
+        if existing.data:
+            return {"saved": False, "duplicate": True,
+                    "pnl_pct": pnl_pct, "error": None}
+
+        # Dedup via grade_reason when dedup_key column may not exist yet
+        _grade_reason = f"tg|{dedup_key}"
+
+        # Packed notes: "[Entry: X → Exit: Y | Win | +Z%] user note"
+        sign = "+" if pnl_pct >= 0 else ""
+        _packed_notes = (
+            f"[Entry: {entry_p} → Exit: {exit_p} | "
+            f"{'Win' if win_loss.lower()=='win' else 'Loss'} | {sign}{pnl_pct:.1f}%]"
+        )
+        if notes:
+            _packed_notes += f" {notes}"
+
+        # Core row using always-existing columns
+        row = {
+            "timestamp":    _dt.utcnow().isoformat(),
+            "ticker":       ticker.upper(),
+            "price":        entry_p,
+            "notes":        _packed_notes,
+            "structure":    "",
+            "tcs":          None,
+            "rvol":         None,
+            "ib_high":      None,
+            "ib_low":       None,
+            "grade":        "W" if win_loss.lower() == "win" else "L",
+            "grade_reason": _grade_reason,
+        }
+        if user_id:
+            row["user_id"] = user_id
+
+        # Try to add extended columns — gracefully skip if they don't exist yet
+        try:
+            supabase.table("trade_journal").select("source").limit(1).execute()
+            row["source"]      = "telegram"
+            row["entry_price"] = entry_p
+            row["exit_price"]  = exit_p
+            row["win_loss"]    = win_loss.capitalize()
+            row["pnl_pct"]     = pnl_pct
+            row["dedup_key"]   = dedup_key
+        except Exception:
+            pass  # Extended columns not yet added — core columns still work
+
+        supabase.table("trade_journal").insert(row).execute()
+        return {"saved": True, "duplicate": False,
+                "pnl_pct": pnl_pct, "error": None}
+
+    except Exception as e:
+        return {"saved": False, "duplicate": False,
+                "pnl_pct": 0.0, "error": str(e)}
+
+
 def backfill_unknown_structures(api_key: str, secret_key: str, user_id: str,
                                 feed: str = "iex") -> dict:
     """Re-enrich journal rows where structure is Unknown/null/empty.

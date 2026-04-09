@@ -74,6 +74,8 @@ try:
         fetch_finviz_watchlist,
         recalibrate_from_supabase,
         verify_watchlist_predictions,
+        ensure_telegram_columns,
+        save_telegram_trade,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -103,6 +105,127 @@ def tg_send(message: str) -> bool:
     except Exception as exc:
         log.warning(f"Telegram send error: {exc}")
         return False
+
+
+def tg_reply(chat_id, text: str) -> None:
+    """Send a reply to a specific Telegram chat."""
+    if not TG_TOKEN:
+        return
+    try:
+        import requests as _req
+        _req.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception as exc:
+        log.warning(f"tg_reply error: {exc}")
+
+
+def _parse_log_command(text: str):
+    """Parse /log TICKER win|loss entry exit [optional note...]
+
+    Returns (ticker, win_loss, entry_price, exit_price, notes) or None on failure.
+    Accepted formats:
+      /log MIGI win 1.94 2.85
+      /log MIGI loss 2.85 1.94 stop hit, lost discipline
+      /log ARAI win 3.10 4.25 add on breakout, tp at r3
+    """
+    parts = text.strip().split()
+    if len(parts) < 5:
+        return None
+    cmd = parts[0].lower()
+    if cmd not in ("/log", "/log@edgeiqbot"):
+        return None
+    ticker   = parts[1].upper()
+    wl_raw   = parts[2].lower()
+    if wl_raw not in ("win", "loss", "w", "l"):
+        return None
+    win_loss = "Win" if wl_raw in ("win", "w") else "Loss"
+    try:
+        entry_price = float(parts[3])
+        exit_price  = float(parts[4])
+    except ValueError:
+        return None
+    notes = " ".join(parts[5:]) if len(parts) > 5 else ""
+    return ticker, win_loss, entry_price, exit_price, notes
+
+
+def telegram_listener() -> None:
+    """Long-poll Telegram for incoming /log commands.
+    Runs as a daemon thread — survives market hours, exits when bot exits.
+    """
+    if not TG_TOKEN:
+        log.info("Telegram listener: no token, skipping.")
+        return
+
+    import requests as _req
+    base   = f"https://api.telegram.org/bot{TG_TOKEN}"
+    offset = None
+    log.info("Telegram listener: started (polling for /log commands)")
+
+    while True:
+        try:
+            params = {"timeout": 30, "allowed_updates": ["message"]}
+            if offset is not None:
+                params["offset"] = offset
+            resp = _req.get(f"{base}/getUpdates", params=params, timeout=40)
+            if resp.status_code != 200:
+                time.sleep(5)
+                continue
+            updates = resp.json().get("result", [])
+            for upd in updates:
+                offset = upd["update_id"] + 1
+                msg    = upd.get("message", {})
+                text   = (msg.get("text") or "").strip()
+                chat_id = msg.get("chat", {}).get("id")
+                if not text or not chat_id:
+                    continue
+
+                if not text.startswith("/log"):
+                    continue
+
+                parsed = _parse_log_command(text)
+                if parsed is None:
+                    tg_reply(chat_id,
+                        "⚠️ Bad format. Use:\n"
+                        "<code>/log TICKER win|loss entry exit [note]</code>\n"
+                        "Example: <code>/log MIGI win 1.94 2.85 broke above VWAP</code>")
+                    continue
+
+                ticker, win_loss, entry_price, exit_price, notes = parsed
+                result = save_telegram_trade(
+                    ticker=ticker,
+                    win_loss=win_loss,
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    notes=notes,
+                    user_id=USER_ID,
+                )
+
+                if result.get("duplicate"):
+                    tg_reply(chat_id,
+                        f"⚠️ <b>Duplicate skipped</b> — {ticker} {entry_price}→{exit_price} "
+                        f"already in journal.")
+                elif result.get("error"):
+                    tg_reply(chat_id, f"❌ Save failed: {result['error']}")
+                else:
+                    pnl   = result["pnl_pct"]
+                    emoji = "✅" if win_loss == "Win" else "❌"
+                    sign  = "+" if pnl >= 0 else ""
+                    reply = (
+                        f"{emoji} <b>Logged:</b> {ticker} | {win_loss.upper()} | "
+                        f"${entry_price} → ${exit_price} | {sign}{pnl:.1f}%"
+                    )
+                    if notes:
+                        reply += f"\n📝 {notes}"
+                    tg_reply(chat_id, reply)
+                    log.info(f"Telegram log: {ticker} {win_loss} {entry_price}→{exit_price} "
+                             f"({sign}{pnl:.1f}%) note='{notes}'")
+
+        except Exception as exc:
+            log.warning(f"Telegram listener error: {exc}")
+            time.sleep(10)
 
 
 def _structure_emoji(predicted: str) -> str:
@@ -562,6 +685,15 @@ def main():
             "══════════════════════════════════════════════════════════"
         )
         return
+
+    # Ensure trade_journal has Telegram-logging columns
+    ensure_telegram_columns()
+
+    # Start Telegram listener in background daemon thread
+    import threading as _threading
+    _tg_thread = _threading.Thread(target=telegram_listener, daemon=True, name="TelegramListener")
+    _tg_thread.start()
+    log.info("Telegram listener thread started — send /log commands to the bot to log trades")
 
     _watchlist_done        = False
     _midday_watchlist_done = False
