@@ -501,17 +501,6 @@ def render_beta_portal(beta_user_id: str):
                         f"${_b_entry:.2f} → ${_b_exit:.2f} | {_b_sign}{_b_pnl:.1f}%"
                     )
 
-        st.markdown("---")
-        st.caption("Prefer Telegram? Message the bot directly:")
-        _tg_username = os.getenv("TELEGRAM_BOT_USERNAME", "edgeiq_alerts_bot")
-        st.link_button(
-            "📲 Open Telegram Bot →",
-            url=f"https://t.me/{_tg_username.lstrip('@')}",
-            use_container_width=True,
-        )
-        st.markdown('<div class="tg-cmd">/log ARAI win 3.10 4.25 broke above VWAP</div>',
-                    unsafe_allow_html=True)
-
         st.markdown('</div>', unsafe_allow_html=True)
 
 
