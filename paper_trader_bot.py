@@ -505,7 +505,8 @@ def main():
     log.info(f"User: {USER_ID}")
     log.info(
         "Schedule: 9:15 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
-        "2:00 PM ET → intraday scan | 4:20 PM ET → EOD update | 4:30 PM ET → recalibration"
+        "11:45 AM ET → midday watchlist refresh | 2:00 PM ET → intraday scan | "
+        "4:20 PM ET → EOD update | 4:30 PM ET → recalibration"
     )
 
     _table_ok = ensure_paper_trades_table()
@@ -530,11 +531,12 @@ def main():
         )
         return
 
-    _watchlist_done     = False
-    _morning_done       = False
-    _intraday_done      = False
-    _eod_done           = False
-    _recalibration_done = False
+    _watchlist_done        = False
+    _midday_watchlist_done = False
+    _morning_done          = False
+    _intraday_done         = False
+    _eod_done              = False
+    _recalibration_done    = False
 
     while True:
         now_et = datetime.now(EASTERN)
@@ -542,11 +544,12 @@ def main():
 
         # Reset flags at midnight
         if now_et.hour == 0 and now_et.minute == 0:
-            _watchlist_done     = False
-            _morning_done       = False
-            _intraday_done      = False
-            _eod_done           = False
-            _recalibration_done = False
+            _watchlist_done        = False
+            _midday_watchlist_done = False
+            _morning_done          = False
+            _intraday_done         = False
+            _eod_done              = False
+            _recalibration_done    = False
 
         if not _market_is_open(now_et):
             # EOD outcome update — 4:20 PM ET (SIP free tier needs data >16 min old;
@@ -589,6 +592,18 @@ def main():
         ):
             morning_scan()
             _morning_done = True
+
+        # 11:45 AM — midday watchlist refresh
+        # Catches late movers that weren't active at 9:15 AM open.
+        # Adds fresh tickers to the watchlist so the 2:00 PM scan has more targets.
+        if (
+            not _midday_watchlist_done
+            and now_et.hour == 11
+            and now_et.minute >= 45
+        ):
+            log.info("Midday watchlist refresh — catching late movers for 2 PM scan")
+            watchlist_refresh()
+            _midday_watchlist_done = True
 
         # 2:00 PM — intraday scan
         if (
