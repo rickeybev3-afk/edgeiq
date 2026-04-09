@@ -211,14 +211,14 @@ def telegram_listener() -> None:
                     tg_reply(chat_id, f"❌ Save failed: {result['error']}")
                 else:
                     pnl   = result["pnl_pct"]
-                    emoji = "✅" if win_loss == "Win" else "❌"
+                    emoji = "🟢" if win_loss == "Win" else "🔴"
                     sign  = "+" if pnl >= 0 else ""
                     reply = (
-                        f"{emoji} <b>Logged:</b> {ticker} | {win_loss.upper()} | "
+                        f"📝 <b>Logged:</b> {ticker} | {emoji} {win_loss.upper()} | "
                         f"${entry_price} → ${exit_price} | {sign}{pnl:.1f}%"
                     )
                     if notes:
-                        reply += f"\n📝 {notes}"
+                        reply += f"\n💬 {notes}"
                     tg_reply(chat_id, reply)
                     log.info(f"Telegram log: {ticker} {win_loss} {entry_price}→{exit_price} "
                              f"({sign}{pnl:.1f}%) note='{notes}'")
