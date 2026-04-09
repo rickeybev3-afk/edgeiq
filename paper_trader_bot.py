@@ -73,6 +73,7 @@ try:
         save_watchlist,
         fetch_finviz_watchlist,
         recalibrate_from_supabase,
+        verify_watchlist_predictions,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -439,6 +440,37 @@ def eod_update():
     _alert_eod_summary(qualified_results, updated_count, today)
 
 
+def nightly_verify():
+    """4:25 PM ET — auto-run Verify Date for today so brain gets fresh signal
+    without requiring manual button press in the UI."""
+    log.info("=" * 60)
+    log.info("AUTO VERIFY — running end-of-day prediction verification")
+    log.info("=" * 60)
+    try:
+        result = verify_watchlist_predictions(
+            api_key=ALPACA_API_KEY,
+            secret_key=ALPACA_SECRET_KEY,
+            user_id=USER_ID,
+        )
+        if result.get("error") and result.get("verified", 0) == 0:
+            log.warning(f"Auto-verify skipped: {result['error']}")
+            return
+        verified  = result.get("verified", 0)
+        correct   = result.get("correct", 0)
+        accuracy  = result.get("accuracy", 0.0)
+        bar_date  = result.get("bar_date", "—")
+        log.info(f"Verified {verified} prediction(s) for {bar_date} — "
+                 f"{correct} correct ({accuracy:.1f}% accuracy)")
+        if verified > 0:
+            tg_send(
+                f"✅ <b>Auto-Verify Complete</b> — {bar_date}\n"
+                f"Verified: {verified} | Correct: {correct} | "
+                f"Accuracy: {accuracy:.1f}%"
+            )
+    except Exception as e:
+        log.error(f"Auto-verify failed: {e}")
+
+
 def nightly_recalibration():
     """4:30 PM ET — read all Supabase outcome data, update brain weights."""
     log.info("=" * 60)
@@ -506,7 +538,7 @@ def main():
     log.info(
         "Schedule: 9:15 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
         "11:45 AM ET → midday watchlist refresh | 2:00 PM ET → intraday scan | "
-        "4:20 PM ET → EOD update | 4:30 PM ET → recalibration"
+        "4:20 PM ET → EOD update | 4:25 PM ET → auto-verify | 4:30 PM ET → recalibration"
     )
 
     _table_ok = ensure_paper_trades_table()
@@ -536,6 +568,7 @@ def main():
     _morning_done          = False
     _intraday_done         = False
     _eod_done              = False
+    _verify_done           = False
     _recalibration_done    = False
 
     while True:
@@ -549,6 +582,7 @@ def main():
             _morning_done          = False
             _intraday_done         = False
             _eod_done              = False
+            _verify_done           = False
             _recalibration_done    = False
 
         if not _market_is_open(now_et):
@@ -562,7 +596,18 @@ def main():
             ):
                 eod_update()
                 _eod_done = True
-            # Recalibration runs after EOD outcomes are written (4:30 PM ET)
+            # 4:25 PM — auto-verify today's watchlist predictions
+            # Runs AFTER EOD data is safe (SIP 16-min delay) and BEFORE recalibration
+            # so the brain gets fresh verified signal in tonight's weight update.
+            if (
+                not _verify_done
+                and now_et.weekday() < 5
+                and now_et.hour == 16
+                and now_et.minute >= 25
+            ):
+                nightly_verify()
+                _verify_done = True
+            # Recalibration runs after EOD outcomes + verify are written (4:30 PM ET)
             if (
                 not _recalibration_done
                 and now_et.weekday() < 5
