@@ -78,6 +78,7 @@ try:
         save_telegram_trade,
         save_beta_chat_id,
         get_beta_chat_ids,
+        get_breadth_regime,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -371,19 +372,34 @@ def _alert_setup(r: dict, trade_date: date):
 
 def _alert_morning_summary(qualified: list, total_scanned: int, trade_date: date):
     """Send a summary header before individual setup alerts."""
+    # Load macro regime for context line
+    _regime_line = ""
+    try:
+        _rg = get_breadth_regime()
+        if _rg and _rg.get("regime_tag", "unknown") != "unknown":
+            _mode_map = {"home_run": "🔥 Home Run", "singles": "🟡 Singles", "caution": "❄️ Caution"}
+            _mode_str = _mode_map.get(_rg.get("mode", ""), "")
+            _adj = _rg.get("tcs_floor_adj", 0)
+            _adj_str = f" (TCS adj {_adj:+d})" if _adj != 0 else ""
+            _regime_line = f"\n🌡️ Tape: {_rg['label']} · {_mode_str}{_adj_str}"
+    except Exception:
+        pass
+
     if not qualified:
         tg_send(
             f"🔍 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
             f"No setups met TCS ≥ {MIN_TCS} today out of {total_scanned} scanned.\n"
             f"Watching for intraday opportunities..."
+            + _regime_line
         )
         return
     tg_send(
         f"🔔 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"✅ <b>{len(qualified)} setup(s)</b> qualified (TCS ≥ {MIN_TCS})\n"
-        f"📋 Scanned {total_scanned} tickers from your Finviz watchlist\n"
-        f"Sending individual alerts now..."
+        f"📋 Scanned {total_scanned} tickers from your Finviz watchlist"
+        + _regime_line
+        + "\nSending individual alerts now..."
     )
 
 

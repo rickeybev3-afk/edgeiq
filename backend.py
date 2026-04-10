@@ -7184,3 +7184,242 @@ def get_beta_chat_ids(exclude_user_id: str = "") -> list:
     return []
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# MACRO BREADTH REGIME  (Stockbee breadth data — top-down regime filter)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def classify_macro_regime(
+    four_pct_count: int,
+    ratio_13_34: float,
+    q_up: int,
+    q_down: int,
+) -> dict:
+    """Classify macro market regime from Stockbee breadth inputs.
+
+    Inputs:
+      four_pct_count — Stocks up 4%+ on the day (from Stockbee Market Monitor)
+      ratio_13_34    — 5-day or 10-day Advance/Decline ratio (>1.0 = more advances)
+      q_up           — Stocks up 25%+ in a quarter
+      q_down         — Stocks down 25%+ in a quarter
+
+    Returns:
+      regime_tag:    "hot_tape" | "warm" | "cold"
+      label:         display label with emoji
+      color:         hex color for UI
+      mode:          "home_run" | "singles" | "caution"
+      tcs_floor_adj: int — TCS threshold shift (negative = lower bar on hot tape)
+      description:   brief explanation string
+    """
+    score = 0
+
+    # 4%/day count — primary signal
+    if four_pct_count >= 600:
+        score += 3      # Stampede
+    elif four_pct_count >= 300:
+        score += 2      # Strong breadth
+    elif four_pct_count >= 100:
+        score += 1      # Neutral / low
+    # < 100 = 0
+
+    # A/D ratio
+    if ratio_13_34 >= 2.0:
+        score += 2      # Very bullish breadth
+    elif ratio_13_34 >= 1.0:
+        score += 1      # Mild advance
+    # < 1.0 = 0
+
+    # Quarterly breadth
+    if q_up > 0 and q_down > 0:
+        spread = q_down - q_up   # positive = more stocks down
+        if spread < -200:        # q_up > q_down by 200+ = full flip
+            score += 2
+        elif spread < 0:         # q_up slightly > q_down
+            score += 1
+        elif spread > 500:       # deeply bearish quarterly
+            score -= 1
+
+    if score >= 5:
+        return {
+            "regime_tag":    "hot_tape",
+            "label":         "🔥 Hot Tape",
+            "color":         "#ff6b35",
+            "mode":          "home_run",
+            "tcs_floor_adj": -10,
+            "description":   (
+                f"{four_pct_count} stocks up 4%+ · A/D {ratio_13_34:.1f}x · "
+                f"Q: {q_up} up / {q_down} down"
+            ),
+        }
+    elif score >= 2:
+        return {
+            "regime_tag":    "warm",
+            "label":         "🟡 Warm Tape",
+            "color":         "#ffd700",
+            "mode":          "singles",
+            "tcs_floor_adj": 0,
+            "description":   (
+                f"{four_pct_count} stocks up 4%+ · A/D {ratio_13_34:.1f}x · "
+                f"Q: {q_up} up / {q_down} down"
+            ),
+        }
+    else:
+        return {
+            "regime_tag":    "cold",
+            "label":         "❄️ Cold Tape",
+            "color":         "#5c9bd4",
+            "mode":          "caution",
+            "tcs_floor_adj": +10,
+            "description":   (
+                f"{four_pct_count} stocks up 4%+ · A/D {ratio_13_34:.1f}x · "
+                f"Q: {q_up} up / {q_down} down"
+            ),
+        }
+
+
+_MACRO_BREADTH_SQL = """
+CREATE TABLE IF NOT EXISTS macro_breadth_log (
+  id              SERIAL PRIMARY KEY,
+  user_id         TEXT NOT NULL DEFAULT '',
+  trade_date      DATE NOT NULL,
+  four_pct_count  INT NOT NULL DEFAULT 0,
+  ratio_13_34     FLOAT NOT NULL DEFAULT 0.0,
+  q_up            INT NOT NULL DEFAULT 0,
+  q_down          INT NOT NULL DEFAULT 0,
+  regime_tag      TEXT,
+  mode            TEXT,
+  tcs_floor_adj   INT DEFAULT 0,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(trade_date, user_id)
+);
+""".strip()
+
+
+def ensure_macro_breadth_log_table() -> bool:
+    """Check if macro_breadth_log exists in Supabase. Returns True if ready.
+
+    If missing, prints the SQL needed and returns False.
+    Create the table by pasting _MACRO_BREADTH_SQL into the Supabase SQL editor.
+    """
+    if not supabase:
+        return False
+    try:
+        supabase.table("macro_breadth_log").select("id").limit(1).execute()
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if any(k in err for k in ("404", "relation", "does not exist", "not found", "pgrst205")):
+            print(
+                "macro_breadth_log table not found.\n"
+                "Run the following SQL in your Supabase SQL Editor:\n\n"
+                + _MACRO_BREADTH_SQL
+            )
+            return False
+        print(f"ensure_macro_breadth_log_table error: {e}")
+        return False
+
+
+def save_breadth_regime(
+    trade_date,
+    four_pct: int,
+    ratio_13_34: float,
+    q_up: int,
+    q_down: int,
+    user_id: str = "",
+) -> bool:
+    """Persist a breadth regime snapshot to Supabase (macro_breadth_log table).
+
+    Upserts by (trade_date, user_id) so re-logging the same day updates in-place.
+    Returns True on success.
+    """
+    if not supabase:
+        return False
+    regime = classify_macro_regime(four_pct, ratio_13_34, q_up, q_down)
+    row = {
+        "trade_date":     str(trade_date),
+        "four_pct_count": int(four_pct),
+        "ratio_13_34":    float(ratio_13_34),
+        "q_up":           int(q_up),
+        "q_down":         int(q_down),
+        "regime_tag":     regime["regime_tag"],
+        "mode":           regime["mode"],
+        "tcs_floor_adj":  regime["tcs_floor_adj"],
+        "user_id":        user_id or "",
+    }
+    try:
+        supabase.table("macro_breadth_log").upsert(
+            row, on_conflict="trade_date,user_id"
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"save_breadth_regime error: {e}")
+        return False
+
+
+def get_breadth_regime(trade_date=None, user_id: str = "") -> dict:
+    """Retrieve the most recent breadth regime from Supabase.
+
+    If trade_date is given, looks up that specific date.
+    Otherwise returns the most recent entry.
+    Falls back to a neutral 'no data' dict on any error.
+    """
+    _neutral = {
+        "regime_tag":    "unknown",
+        "label":         "⬜ No Data",
+        "color":         "#555555",
+        "mode":          "singles",
+        "tcs_floor_adj": 0,
+        "description":   "No breadth data yet — enter today's numbers in the sidebar.",
+        "trade_date":    "",
+    }
+    if not supabase:
+        return _neutral
+    try:
+        if trade_date:
+            res = (
+                supabase.table("macro_breadth_log")
+                .select("*")
+                .eq("trade_date", str(trade_date))
+                .limit(1)
+                .execute()
+            )
+        else:
+            res = (
+                supabase.table("macro_breadth_log")
+                .select("*")
+                .order("trade_date", desc=True)
+                .limit(1)
+                .execute()
+            )
+        if res.data:
+            row = res.data[0]
+            result = classify_macro_regime(
+                row.get("four_pct_count", 0),
+                row.get("ratio_13_34", 0.0),
+                row.get("q_up", 0),
+                row.get("q_down", 0),
+            )
+            result["trade_date"] = row.get("trade_date", "")
+            return result
+    except Exception as e:
+        print(f"get_breadth_regime error: {e}")
+    return _neutral
+
+
+def get_breadth_regime_history(days: int = 30, user_id: str = "") -> list:
+    """Return up to `days` breadth regime entries from Supabase, newest first."""
+    if not supabase:
+        return []
+    try:
+        res = (
+            supabase.table("macro_breadth_log")
+            .select("*")
+            .order("trade_date", desc=True)
+            .limit(days)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"get_breadth_regime_history error: {e}")
+        return []
+
+

@@ -29,6 +29,12 @@ from backend import (
     enrich_eod_from_journal,
     compute_setup_brief,
     scan_journal_patterns,
+    classify_macro_regime,
+    save_breadth_regime,
+    get_breadth_regime,
+    get_breadth_regime_history,
+    ensure_macro_breadth_log_table,
+    _MACRO_BREADTH_SQL,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -102,6 +108,12 @@ _DEFAULTS = {
     "sa_float_est":         0.0,
     "last_bars":            None,   # Real bars from last analysis run
     "sa_bin_centers":       None,   # VP bin centers for SA tab
+    # Macro breadth regime (Stockbee inputs)
+    "breadth_4pct_count":   0,
+    "breadth_13_34_ratio":  0.0,
+    "breadth_q_up":         0,
+    "breadth_q_down":       0,
+    "breadth_regime":       None,   # cached classify_macro_regime() result
     "sa_vap":               None,   # VP volumes for SA tab
 }
 for _k, _v in _DEFAULTS.items():
@@ -128,6 +140,13 @@ if st.session_state.brain_session_total == 0:
                         st.session_state.brain_last_compared = str(_non_empty.iloc[-1])
     except Exception:
         pass  # safe fallback — counters stay at 0
+
+# ── Load macro breadth regime from Supabase on first load ─────────────────────
+if st.session_state.breadth_regime is None:
+    try:
+        st.session_state.breadth_regime = get_breadth_regime()
+    except Exception:
+        pass
 
 # ── Audio JS (Web Audio API, synthesised tones — no external files) ────────────
 _CHIME_JS = """(function(){
@@ -3449,6 +3468,88 @@ with st.sidebar:
         index=0,
         help="If this ETF is up > 1% on the day, TCS gets a +10 pt Sector Tailwind bonus."
     )
+
+    st.markdown("---")
+    st.header("🌡️ Macro Regime")
+    st.caption("Stockbee breadth data — top-down tape filter")
+
+    _br_c1, _br_c2 = st.columns(2)
+    with _br_c1:
+        _br_4pct = st.number_input(
+            "Stocks up 4%+/day", min_value=0, max_value=3000, step=10,
+            value=st.session_state.get("breadth_4pct_count", 0),
+            key="breadth_4pct_input",
+            help="From Stockbee — # of stocks up 4%+ today. 300+ = strong, 600+ = stampede.",
+        )
+    with _br_c2:
+        _br_ratio = st.number_input(
+            "A/D Ratio (5/10d)", min_value=0.0, max_value=15.0, step=0.1,
+            format="%.1f",
+            value=st.session_state.get("breadth_13_34_ratio", 0.0),
+            key="breadth_ratio_input",
+            help="5-day or 10-day Advance/Decline ratio. Above 1.0 = more advances.",
+        )
+    _br_c3, _br_c4 = st.columns(2)
+    with _br_c3:
+        _br_qup = st.number_input(
+            "Stocks +25%/Q", min_value=0, max_value=4000, step=10,
+            value=st.session_state.get("breadth_q_up", 0),
+            key="breadth_qup_input",
+            help="Stocks up 25%+ in a quarter (green line on Stockbee chart).",
+        )
+    with _br_c4:
+        _br_qdown = st.number_input(
+            "Stocks -25%/Q", min_value=0, max_value=4000, step=10,
+            value=st.session_state.get("breadth_q_down", 0),
+            key="breadth_qdown_input",
+            help="Stocks down 25%+ in a quarter (red line on Stockbee chart).",
+        )
+
+    _table_ready = ensure_macro_breadth_log_table()
+    if not _table_ready:
+        with st.expander("⚠️ One-time setup required", expanded=False):
+            st.caption(
+                "The `macro_breadth_log` table doesn't exist in Supabase yet. "
+                "Open your [Supabase SQL Editor](https://supabase.com/dashboard) and run:"
+            )
+            st.code(_MACRO_BREADTH_SQL, language="sql")
+
+    if st.button("💾 Save Regime", use_container_width=True, key="breadth_save_btn"):
+        if _br_4pct > 0 or _br_ratio > 0:
+            _new_regime = classify_macro_regime(_br_4pct, _br_ratio, _br_qup, _br_qdown)
+            st.session_state["breadth_4pct_count"]  = int(_br_4pct)
+            st.session_state["breadth_13_34_ratio"] = float(_br_ratio)
+            st.session_state["breadth_q_up"]        = int(_br_qup)
+            st.session_state["breadth_q_down"]      = int(_br_qdown)
+            st.session_state["breadth_regime"]      = _new_regime
+            _uid = st.session_state.get("auth_user_id", "")
+            _saved = save_breadth_regime(
+                date.today(), _br_4pct, _br_ratio, _br_qup, _br_qdown, user_id=_uid
+            )
+            _save_label = "saved" if _saved else "saved locally (Supabase table missing)"
+            st.success(f"{_new_regime['label']} — {_new_regime['mode'].replace('_', ' ').title()} {_save_label}")
+            st.rerun()
+        else:
+            st.warning("Enter at least the 4%/day count to save.")
+
+    # Show current regime inline in sidebar
+    _sb_regime = st.session_state.get("breadth_regime")
+    if _sb_regime and _sb_regime.get("regime_tag", "unknown") != "unknown":
+        _sbrc = _sb_regime["color"]
+        _sbrl = _sb_regime["label"]
+        _sbrm = {"home_run": "🏠 Home Run", "singles": "⚾ Singles", "caution": "⚠️ Caution"}.get(
+            _sb_regime.get("mode", ""), ""
+        )
+        _sbd = _sb_regime.get("trade_date", "")
+        st.markdown(
+            f'<div style="background:#111; border-left:3px solid {_sbrc}; border-radius:6px; '
+            f'padding:8px 12px; margin-top:6px;">'
+            f'<span style="font-size:13px; font-weight:700; color:{_sbrc};">{_sbrl}</span>'
+            f'<span style="font-size:11px; color:#aaa;"> · {_sbrm}</span>'
+            + (f'<br><span style="font-size:10px; color:#666;">{_sbd}</span>' if _sbd else "")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
     run_button = start_live = stop_live = scan_button = replay_load = False
     selected_date = date.today()
@@ -8488,6 +8589,28 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 f"Weights unchanged."
             )
 
+
+# ── Macro Regime Banner ─────────────────────────────────────────────────────────
+_active_regime = st.session_state.get("breadth_regime")
+if _active_regime and _active_regime.get("regime_tag", "unknown") != "unknown":
+    _rc    = _active_regime["color"]
+    _rl    = _active_regime["label"]
+    _rm    = {"home_run": "Home Run Mode 🏠", "singles": "Singles Mode ⚾", "caution": "Caution Mode ⚠️"}.get(
+                _active_regime.get("mode", ""), ""
+             )
+    _rtcs  = _active_regime.get("tcs_floor_adj", 0)
+    _rtcs_str = (f"TCS floor +{_rtcs}" if _rtcs > 0 else f"TCS floor {_rtcs}") if _rtcs != 0 else "TCS floor unchanged"
+    _rd    = _active_regime.get("trade_date", "")
+    st.markdown(
+        f'<div style="background:#0d1117; border:1px solid {_rc}; border-radius:8px; '
+        f'padding:10px 16px; margin-bottom:12px; display:flex; align-items:center; gap:16px;">'
+        f'<span style="font-size:15px; font-weight:700; color:{_rc};">{_rl}</span>'
+        f'<span style="font-size:13px; color:#ccc;">{_rm}</span>'
+        f'<span style="font-size:12px; color:#888;">· {_rtcs_str}</span>'
+        + (f'<span style="font-size:11px; color:#555; margin-left:auto;">{_rd}</span>' if _rd else "")
+        + '</div>',
+        unsafe_allow_html=True,
+    )
 
 tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa, tab_paper = st.tabs(
     ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "🔬 Backtest",
