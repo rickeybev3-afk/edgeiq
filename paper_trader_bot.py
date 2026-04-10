@@ -899,10 +899,42 @@ def update_daily_build_notes() -> bool:
         "|---|---|---|---|---|---|\n"
     )
 
+    def _section_slice(text: str, heading: str) -> str:
+        """Return the text belonging to the section (from heading to next ## or EOF)."""
+        if heading not in text:
+            return ""
+        idx   = text.index(heading)
+        after = text[idx + len(heading):]
+        next_h = after.find("\n## ")
+        return after[:next_h] if next_h != -1 else after
+
+    def _already_logged(text: str, heading: str) -> bool:
+        """Return True if today's date already appears in the section — idempotency guard."""
+        return f"| {today_str} |" in _section_slice(text, heading)
+
+    def _parse_running_total(text: str) -> float:
+        """Parse the most recent running-total value from the P&L log table."""
+        section = _section_slice(text, _PNL_H)
+        data_rows = [
+            l.strip() for l in section.split("\n")
+            if l.strip().startswith("|")
+            and "|---|" not in l
+            and "Date" not in l
+            and l.strip() != "|"
+        ]
+        if not data_rows:
+            return 0.0
+        cols = [c.strip() for c in data_rows[-1].split("|") if c.strip()]
+        try:
+            return float(cols[-1].replace("$", "").replace("+", ""))
+        except Exception:
+            return 0.0
+
     def _append_rows_to_section(text: str, heading: str, init_block: str, new_rows: list) -> str:
         """Append new_rows inside the section identified by heading.
         Creates the section at the bottom if it doesn't exist yet.
         Never deletes or reformats any existing content.
+        Caller is responsible for checking _already_logged() before calling this.
         """
         if heading not in text:
             sep = "\n\n---\n\n"
@@ -912,9 +944,7 @@ def update_daily_build_notes() -> bool:
         after = text[idx + len(heading):]
         next_h = after.find("\n## ")
         if next_h == -1:
-            # Last section in the file — append at end
             return text.rstrip("\n") + "\n" + "\n".join(new_rows) + "\n"
-        # Insert rows just before the next ## heading
         insert_at = idx + len(heading) + next_h
         return (
             text[:insert_at].rstrip("\n")
@@ -923,10 +953,43 @@ def update_daily_build_notes() -> bool:
             + text[insert_at:].lstrip("\n")
         )
 
-    content = _append_rows_to_section(content, _TRADE_H, _TRADE_INIT, trade_rows)
-    content = _append_rows_to_section(content, _PNL_H,   _PNL_INIT,   [pnl_row])
-    content = _append_rows_to_section(content, _BRAIN_H, _BRAIN_INIT, [bw_row])
-    content = _append_rows_to_section(content, _SCAN_H,  _SCAN_INIT,  [scan_row])
+    # Compute running P&L total (prior total + today's sim P&L)
+    prior_total  = _parse_running_total(content)
+    running_total = round(prior_total + sim_pnl, 2)
+    _rt_sign      = "+" if running_total >= 0 else ""
+    pnl_row = (
+        f"| {today_str} | {win_n} | {loss_n} | {_wr} | {_awf} | {_alf} "
+        f"| {_sign}${sim_pnl:.2f} | {_rt_sign}${running_total:.2f} |"
+    )
+
+    # Update P&L table header to include Running Total column
+    _PNL_INIT = (
+        f"{_PNL_H}\n\n"
+        "| Date | Wins | Losses | Win Rate | Avg Win FT% | Avg Loss FT% "
+        "| Sim P&L (100sh) | Running Total |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+    )
+
+    # Append each section — idempotency: skip if today already logged
+    if not _already_logged(content, _TRADE_H):
+        content = _append_rows_to_section(content, _TRADE_H, _TRADE_INIT, trade_rows)
+    else:
+        log.info(f"Build notes: {_TRADE_H} already has {today_str} entry, skipping")
+
+    if not _already_logged(content, _PNL_H):
+        content = _append_rows_to_section(content, _PNL_H, _PNL_INIT, [pnl_row])
+    else:
+        log.info(f"Build notes: {_PNL_H} already has {today_str} entry, skipping")
+
+    if not _already_logged(content, _BRAIN_H):
+        content = _append_rows_to_section(content, _BRAIN_H, _BRAIN_INIT, [bw_row])
+    else:
+        log.info(f"Build notes: {_BRAIN_H} already has {today_str} entry, skipping")
+
+    if not _already_logged(content, _SCAN_H):
+        content = _append_rows_to_section(content, _SCAN_H, _SCAN_INIT, [scan_row])
+    else:
+        log.info(f"Build notes: {_SCAN_H} already has {today_str} entry, skipping")
 
     # ── Write back ────────────────────────────────────────────────────────────
     try:
