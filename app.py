@@ -8251,8 +8251,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             f"Try a lower TCS filter or add more tickers."
                         )
                     else:
+                        _regime_tag_ui = (st.session_state.get("breadth_regime") or {}).get("regime_tag")
+                        _pt_qualified_tagged = [
+                            dict(r, regime_tag=_regime_tag_ui) if _regime_tag_ui else r
+                            for r in _pt_qualified
+                        ]
                         _pt_log_result = log_paper_trades(
-                            _pt_qualified,
+                            _pt_qualified_tagged,
                             user_id=_AUTH_USER_ID,
                             min_tcs=_pt_min_tcs,
                         )
@@ -8904,7 +8909,16 @@ with tab_scan:
                     f'border-radius:8px;padding:6px 16px;text-align:center;">'
                     f'<div style="font-size:16px;font-weight:800;color:{_go_clr};">{_go_txt}</div>'
                     f'<div style="font-size:9px;color:#555;margin-top:1px;">'
-                    f'TCS 55–70 {"✓" if _tcs_ok else "✗"} · At IB Low {"✓" if _ib_ok else "✗"}</div>'
+                    + (
+                        lambda _rg=st.session_state.get("breadth_regime"): (
+                            f'Regime {_rg["label"]} · TCS floor '
+                            f'{55 + _rg.get("tcs_floor_adj", 0)} '
+                            f'{"✓" if _tcs_ok else "✗"}'
+                            if _rg and _rg.get("regime_tag", "unknown") != "unknown"
+                            else f'TCS 55–70 {"✓" if _tcs_ok else "✗"}'
+                        )
+                    )()
+                    + f' · At IB Low {"✓" if _ib_ok else "✗"}</div>'
                     f'</div>'
                     f'</div>'
                 )
@@ -9920,8 +9934,9 @@ if st.session_state.get("_pt_live_mode"):
                     price_max=float(_pt_pr[1]),
                     slippage_pct=0.75,
                 )
+                _auto_regime_tag = (st.session_state.get("breadth_regime") or {}).get("regime_tag")
                 _auto_q = [
-                    dict(r, sim_date=str(_pt_at))
+                    dict(r, sim_date=str(_pt_at), **({"regime_tag": _auto_regime_tag} if _auto_regime_tag else {}))
                     for r in _auto_res
                     if float(r.get("tcs", 0)) >= _pt_min
                 ]
