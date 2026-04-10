@@ -6838,6 +6838,22 @@ def verify_watchlist_predictions(api_key: str, secret_key: str,
                 if not actual_structure or actual_structure in ("—", ""):
                     continue
                 predicted   = pred.get("predicted_structure", "")
+                no_prediction = not predicted or predicted.strip() in ("—", "", "—")
+
+                if no_prediction:
+                    # No real structure was predicted — record actual for reference
+                    # but do NOT write to accuracy_tracker (nothing to evaluate)
+                    try:
+                        supabase.table("watchlist_predictions").update({
+                            "actual_structure": actual_structure,
+                            "verified":         True,
+                            "correct":          "",
+                        }).eq("id", pred["id"]).execute()
+                    except Exception:
+                        pass
+                    verified_count += 1
+                    continue
+
                 is_correct  = (
                     _strip_emoji(predicted) in _strip_emoji(actual_structure) or
                     _strip_emoji(actual_structure) in _strip_emoji(predicted)
