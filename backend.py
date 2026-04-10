@@ -7578,25 +7578,67 @@ _REGIME_BASE_CONFIDENCE = {
 
 
 def map_regime_to_kalshi(regime: dict, markets: list) -> list:
-    """Map breadth regime state to a scored list of Kalshi market opportunities.
+    """Map breadth regime signals directly to a scored list of Kalshi market opportunities.
 
-    For each macro-relevant market, computes:
-    - predicted_side: 'YES' or 'NO'
-    - confidence: 0.0–1.0 (base regime confidence × sentiment alignment)
-    - edge_score: confidence adjusted for current market price (how much edge vs 50¢)
-    - reasoning: short text explaining the signal
+    Confidence is derived from the three raw Stockbee breadth inputs stored in `regime`:
+      • four_pct_count  — stocks up 4%+ today  (daily thrust; threshold: 300/600)
+      • ratio_13_34     — 13-day / 34-day A/D ratio  (intermediate breadth; threshold: 1.0/2.0)
+      • q_ratio         — q_up / q_down (quarterly 25% flip ratio; threshold: 1.0)
+
+    Confidence is built in two stages:
+      1. Breadth confidence: how strongly each of the three inputs exceeds its threshold.
+         Each input contributes an independent boost on top of the regime base.
+      2. Market confidence: breadth confidence × sentiment alignment × price discount.
+
+    Reasoning strings embed concrete metric values so every prediction is auditable.
 
     Returns list sorted by edge_score descending.
-    Only includes markets with confidence > 0.55.
+    Only includes markets with confidence >= 0.55.
     """
     regime_tag = regime.get("regime_tag", "unknown")
     if regime_tag == "unknown":
         return []
 
+    # ── Extract raw breadth inputs ────────────────────────────────────────────
+    four_pct  = float(regime.get("four_pct_count", 0))
+    ratio     = float(regime.get("ratio_13_34",    0.0))
+    q_up      = float(regime.get("q_up",           0))
+    q_down    = float(regime.get("q_down",         0))
+    q_ratio   = (q_up / max(q_down, 1)) if (q_up > 0 or q_down > 0) else 1.0
+
+    # ── Compute per-input boosts relative to thresholds ──────────────────────
+    # Scale factor for each input: how much above its threshold is it?
+    # Capped at 1.0 (no bonus for being "very" hot beyond the hot tier).
+    #   4% count: hot threshold=600, warm threshold=300; scale to [0.0, 1.0]
+    four_pct_boost = min(max((four_pct - 300) / 300.0, 0.0), 1.0)
+    #   A/D ratio:  hot threshold=2.0, warm threshold=1.0; scale to [0.0, 1.0]
+    ratio_boost = min(max((ratio - 1.0) / 1.0, 0.0), 1.0)
+    #   Q ratio:    hot threshold=1.0 (neutral); scale above 1.0 up to 2.0
+    q_boost = min(max((q_ratio - 1.0) / 1.0, 0.0), 1.0) if regime_tag != "cold" else 0.0
+
+    # Aggregate breadth confidence: regime base + weighted signal boosts
+    # Weights: A/D ratio most informative (0.40), 4% count (0.35), Q ratio (0.25)
     base_conf = _REGIME_BASE_CONFIDENCE.get(regime_tag, 0.55)
+    breadth_max_boost = 0.12  # max additional confidence from perfect breadth
+    breadth_conf = base_conf + breadth_max_boost * (
+        0.35 * four_pct_boost + 0.40 * ratio_boost + 0.25 * q_boost
+    )
+    breadth_conf = min(breadth_conf, 0.92)  # hard cap
 
     # Directional bias: hot_tape/warm → bullish, cold → bearish
     macro_bullish = regime_tag in ("hot_tape", "warm")
+
+    # Build human-readable breadth evidence string (embedded in every alert)
+    _q_str = f"{int(q_up)}↑/{int(q_down)}↓ 25%Q (ratio {q_ratio:.1f}x)"
+    breadth_evidence = (
+        f"4%/day={int(four_pct)} "
+        f"({'✓' if four_pct >= 300 else '✗'}≥300"
+        f"{'✓' if four_pct >= 600 else ''}≥600), "
+        f"A/D={ratio:.2f}x "
+        f"({'✓' if ratio >= 1.0 else '✗'}≥1.0"
+        f"{'✓' if ratio >= 2.0 else ''}≥2.0), "
+        f"{_q_str}"
+    )
 
     results = []
     for m in markets:
@@ -7621,7 +7663,7 @@ def map_regime_to_kalshi(regime: dict, markets: list) -> list:
         fed_market = any(kw in combined for kw in ["fed", "federal reserve", "fomc", "rate", "hike", "cut"])
         if fed_market:
             # Rate cut/pause markets are bullish for stocks
-            rate_cut = any(kw in combined for kw in ["cut", "lower", "decrease", "pause", "hold"])
+            rate_cut  = any(kw in combined for kw in ["cut", "lower", "decrease", "pause", "hold"])
             rate_hike = any(kw in combined for kw in ["hike", "raise", "increase", "higher"])
             if rate_cut:
                 sentiment = 1.0 if macro_bullish else -1.0
@@ -7631,38 +7673,39 @@ def map_regime_to_kalshi(regime: dict, markets: list) -> list:
         # ── Determine our predicted side ────────────────────────────────────
         if macro_bullish:
             if sentiment > 0:
-                predicted_side = "YES"
+                predicted_side   = "YES"
                 price_of_our_side = yes_price
             elif sentiment < 0:
-                predicted_side = "NO"
+                predicted_side   = "NO"
                 price_of_our_side = no_price
             else:
                 continue
         else:  # cold tape = bearish
             if sentiment < 0:
-                predicted_side = "YES"
+                predicted_side   = "YES"
                 price_of_our_side = yes_price
             elif sentiment > 0:
-                predicted_side = "NO"
+                predicted_side   = "NO"
                 price_of_our_side = no_price
             else:
                 continue
 
         # ── Confidence / edge computation ────────────────────────────────────
-        # Sentiment strength multiplier: strong sentiment → higher confidence
+        # Sentiment strength multiplier: strong alignment → full confidence
         sentiment_strength = abs(sentiment)
-        confidence = base_conf * (0.7 + 0.3 * sentiment_strength)
+        confidence = breadth_conf * (0.75 + 0.25 * sentiment_strength)
 
         # Discount if the market already strongly prices in our view
         # (less edge buying at 85¢ vs 50¢ even if right direction)
         price_discount = 1.0
         if price_of_our_side > 75:
-            price_discount = 0.6    # already priced in — less edge
+            price_discount = 0.60   # already priced in — minimal edge
         elif price_of_our_side > 65:
-            price_discount = 0.8
+            price_discount = 0.80
         elif price_of_our_side < 30:
-            price_discount = 0.9    # contrarian — slightly discount
+            price_discount = 0.90   # contrarian — slight discount
         confidence *= price_discount
+        confidence = round(confidence, 4)
 
         if confidence < 0.55:
             continue
@@ -7670,27 +7713,32 @@ def map_regime_to_kalshi(regime: dict, markets: list) -> list:
         # Edge score: confidence premium over random (50% baseline)
         edge_score = round(confidence - 0.50, 4)
 
-        # Reasoning string
-        regime_label = regime.get("label", regime_tag)
+        # ── Auditable reasoning string (breadth metrics always included) ─────
+        regime_label  = regime.get("label", regime_tag)
         direction_word = "bullish" if macro_bullish else "bearish"
         reason = (
-            f"{regime_label} regime → {direction_word} bias | "
-            f"market sentiment: {'bullish' if sentiment > 0 else 'bearish'} "
-            f"({'YES' if sentiment > 0 else 'NO'} pays {100 - price_of_our_side}¢ on {price_of_our_side}¢ risk)"
+            f"{regime_label} → {direction_word} | "
+            f"Breadth: {breadth_evidence} | "
+            f"Market signal: {'bullish' if sentiment > 0 else 'bearish'} "
+            f"({predicted_side} pays {100 - price_of_our_side}¢ on {price_of_our_side}¢ risk)"
         )
 
         results.append({
-            "ticker":          m["ticker"],
-            "title":           m.get("title", ""),
-            "category":        m.get("category", ""),
-            "predicted_side":  predicted_side,
-            "yes_price":       yes_price,
-            "no_price":        no_price,
+            "ticker":           m["ticker"],
+            "title":            m.get("title", ""),
+            "category":         m.get("category", ""),
+            "predicted_side":   predicted_side,
+            "yes_price":        yes_price,
+            "no_price":         no_price,
             "price_of_our_side": price_of_our_side,
-            "confidence":      round(confidence, 4),
-            "edge_score":      edge_score,
-            "reasoning":       reason,
-            "expiration_time": m.get("expiration_time", ""),
+            "confidence":       confidence,
+            "edge_score":       edge_score,
+            "reasoning":        reason,
+            "breadth_evidence": breadth_evidence,   # stored in Supabase for auditability
+            "four_pct_count":   int(four_pct),
+            "ratio_13_34":      round(ratio, 3),
+            "q_ratio":          round(q_ratio, 3),
+            "expiration_time":  m.get("expiration_time", ""),
         })
 
     results.sort(key=lambda x: x["edge_score"], reverse=True)
@@ -7959,26 +8007,46 @@ def get_kalshi_predictions(
 def get_kalshi_performance_summary(user_id: str = "") -> dict:
     """Summarise Kalshi paper trading performance.
 
-    Returns: total, won, lost, pending, win_rate, total_pnl_cents, avg_confidence.
+    Returns:
+      total, won, lost, pending, win_rate, total_pnl_cents, avg_confidence,
+      first_trade_date (ISO date string of the oldest logged prediction),
+      paper_days_elapsed (calendar days since first logged trade).
     """
     rows = get_kalshi_predictions(days=365, user_id=user_id)
+    _empty = {
+        "total": 0, "won": 0, "lost": 0, "pending": 0,
+        "win_rate": 0.0, "total_pnl_cents": 0, "avg_confidence": 0.0,
+        "first_trade_date": None, "paper_days_elapsed": 0,
+    }
     if not rows:
-        return {
-            "total": 0, "won": 0, "lost": 0, "pending": 0,
-            "win_rate": 0.0, "total_pnl_cents": 0, "avg_confidence": 0.0,
-        }
-    settled  = [r for r in rows if r.get("outcome_result") is not None]
-    won      = [r for r in settled if r.get("won")]
-    lost     = [r for r in settled if not r.get("won")]
-    pending  = [r for r in rows if r.get("outcome_result") is None]
-    pnl      = sum(int(r.get("pnl_cents", 0) or 0) for r in settled)
+        return _empty
+    settled   = [r for r in rows if r.get("outcome_result") is not None]
+    won       = [r for r in settled if r.get("won")]
+    lost      = [r for r in settled if not r.get("won")]
+    pending   = [r for r in rows if r.get("outcome_result") is None]
+    pnl       = sum(int(r.get("pnl_cents", 0) or 0) for r in settled)
     conf_vals = [float(r["confidence"]) for r in rows if r.get("confidence")]
+
+    # Compute paper run duration (calendar days since first prediction logged)
+    trade_dates = [r.get("trade_date") for r in rows if r.get("trade_date")]
+    first_trade_date: str | None = min(trade_dates) if trade_dates else None
+    paper_days_elapsed = 0
+    if first_trade_date:
+        try:
+            from datetime import date as _date
+            start = _date.fromisoformat(str(first_trade_date))
+            paper_days_elapsed = (datetime.now(EASTERN).date() - start).days
+        except Exception:
+            paper_days_elapsed = 0
+
     return {
-        "total":           len(rows),
-        "won":             len(won),
-        "lost":            len(lost),
-        "pending":         len(pending),
-        "win_rate":        round(100 * len(won) / max(len(settled), 1), 1),
-        "total_pnl_cents": pnl,
-        "avg_confidence":  round(sum(conf_vals) / max(len(conf_vals), 1), 3),
+        "total":              len(rows),
+        "won":                len(won),
+        "lost":               len(lost),
+        "pending":            len(pending),
+        "win_rate":           round(100 * len(won) / max(len(settled), 1), 1),
+        "total_pnl_cents":    pnl,
+        "avg_confidence":     round(sum(conf_vals) / max(len(conf_vals), 1), 3),
+        "first_trade_date":   first_trade_date,
+        "paper_days_elapsed": paper_days_elapsed,
     }

@@ -129,36 +129,55 @@ def _get_token() -> str:
 
 # ── Alert formatters ──────────────────────────────────────────────────────────
 def _alert_opportunities(opps: list, regime: dict, trade_date: date) -> None:
-    """Send Telegram alert for top Kalshi opportunities."""
+    """Send Telegram alert for top Kalshi opportunities.
+
+    Each signal includes the concrete breadth metrics that triggered it so
+    every prediction is fully auditable from the Telegram message alone.
+    """
     if not opps:
         return
     regime_label = regime.get("label", "Unknown")
+
+    # Use breadth_evidence from the first opp (all share the same regime snapshot)
+    breadth_ev = opps[0].get("breadth_evidence", "") if opps else ""
+
     lines = [
         f"🎯 <b>Kalshi Signals — {trade_date}</b> [{_MODE_STR}]",
         f"🌡️ Regime: {regime_label}",
+        f"📊 Breadth: {breadth_ev}" if breadth_ev else "",
         f"━━━━━━━━━━━━━━━━━━━━━",
         f"Top {len(opps)} signal(s) from macro breadth framework:",
         "",
     ]
+    lines = [l for l in lines if l]  # remove blank lines from missing fields
+
     for i, opp in enumerate(opps, 1):
         title     = opp.get("title", "")[:60]
         side      = opp.get("predicted_side", "?")
         price     = opp.get("price_of_our_side", 50)
         conf      = opp.get("confidence", 0)
         edge      = opp.get("edge_score", 0)
-        reasoning = opp.get("reasoning", "")
         contracts = opp.get("_contracts", 1)
         cost      = opp.get("_cost_cents", price)
         max_win   = opp.get("_max_win_cents", 0)
         pct_gain  = round(max_win / max(cost, 1) * 100, 0) if max_win else 0
         side_emoji = "✅" if side == "YES" else "❌"
+
+        # Per-position breadth trigger summary for auditability
+        four_pct = opp.get("four_pct_count", "?")
+        ratio    = opp.get("ratio_13_34", "?")
+        q_r      = opp.get("q_ratio", "?")
+        trigger_line = (
+            f"   📐 Triggers: 4%={four_pct} · A/D={ratio}x · Q-ratio={q_r}x\n"
+        ) if four_pct != "?" else ""
+
         lines.append(
             f"<b>{i}. {opp.get('ticker', '?')}</b> — {side_emoji} <b>{side}</b>\n"
             f"   📝 {title}\n"
             f"   💰 Price: {price}¢ · Max gain: +{pct_gain:.0f}% "
             f"({contracts} contracts · ${cost/100:.2f} cost)\n"
             f"   🧠 Confidence: {conf:.0%} · Edge: +{edge:.2%}\n"
-            f"   💬 {reasoning[:100]}\n"
+            + trigger_line
         )
     lines.append("━━━━━━━━━━━━━━━━━━━━━")
     lines.append("All positions are PAPER trades — no live capital deployed.")
@@ -205,22 +224,27 @@ def _alert_eod_summary(summary: dict, updated: int, trade_date: date) -> None:
 # ── Live order placement (gated — activates only when KALSHI_LIVE=true) ──────
 
 # Minimum verified paper track record required before live trading activates
-_LIVE_MIN_TRADES   = int(os.getenv("KALSHI_LIVE_MIN_TRADES", "30"))
-_LIVE_MIN_WIN_RATE = float(os.getenv("KALSHI_LIVE_MIN_WIN_RATE", "60.0"))
+_LIVE_MIN_DAYS     = int(os.getenv("KALSHI_LIVE_MIN_DAYS",     "30"))   # calendar days in paper mode
+_LIVE_MIN_TRADES   = int(os.getenv("KALSHI_LIVE_MIN_TRADES",   "30"))   # settled predictions
+_LIVE_MIN_WIN_RATE = float(os.getenv("KALSHI_LIVE_MIN_WIN_RATE", "60.0")) # paper win rate %
 
 
 def _maybe_place_live_orders(opportunities: list, token: str) -> None:
     """Gate live order placement behind verified paper track-record criteria.
 
-    Only places live orders when ALL of the following are true:
-      1. KALSHI_LIVE=true  (must be explicitly opted in via environment)
-      2. Paper track record meets minimum: >= KALSHI_LIVE_MIN_TRADES settled
-         AND win rate >= KALSHI_LIVE_MIN_WIN_RATE %
+    Only places live orders when ALL THREE gates pass:
+      Gate 1 (time)    — bot has been running in paper mode for >= KALSHI_LIVE_MIN_DAYS
+                         calendar days since the first prediction was logged.
+                         Default: 30 days. Override via KALSHI_LIVE_MIN_DAYS env var.
+      Gate 2 (volume)  — >= KALSHI_LIVE_MIN_TRADES settled predictions logged.
+                         Default: 30 trades. Override via KALSHI_LIVE_MIN_TRADES.
+      Gate 3 (quality) — paper win rate >= KALSHI_LIVE_MIN_WIN_RATE %.
+                         Default: 60%. Override via KALSHI_LIVE_MIN_WIN_RATE.
 
-    This is a one-directional check — KALSHI_LIVE can be set, but the bot
-    will remain in observation mode until the evidence is there. The
-    `KALSHI_LIVE_MIN_TRADES` and `KALSHI_LIVE_MIN_WIN_RATE` thresholds
-    can be configured via env vars; defaults are 30 trades / 60% win rate.
+    The time gate is intentional and non-bypassable via normal operation: even a
+    lucky first-day win streak cannot unlock live capital. The bot must have proven
+    itself across at least `KALSHI_LIVE_MIN_DAYS` calendar days of real market
+    conditions before a single live order is placed.
 
     Order placement via POST /portfolio/orders — resting limit order at
     the current YES/NO ask price so we don't cross the spread.
@@ -228,26 +252,47 @@ def _maybe_place_live_orders(opportunities: list, token: str) -> None:
     if not KALSHI_LIVE:
         return
 
-    # ── Verify paper track record ────────────────────────────────────────────
+    # ── Load performance summary (includes paper_days_elapsed) ───────────────
     perf = get_kalshi_performance_summary(user_id=USER_ID)
-    settled = perf.get("won", 0) + perf.get("lost", 0)
-    win_rate = perf.get("win_rate", 0.0)
+    settled           = perf.get("won", 0) + perf.get("lost", 0)
+    win_rate          = perf.get("win_rate", 0.0)
+    paper_days        = perf.get("paper_days_elapsed", 0)
+    first_trade_date  = perf.get("first_trade_date", "N/A")
 
-    if settled < _LIVE_MIN_TRADES:
+    # ── Gate 1: Minimum paper duration (time-based, primary gate) ────────────
+    if paper_days < _LIVE_MIN_DAYS:
+        days_remaining = _LIVE_MIN_DAYS - paper_days
         log.info(
-            f"Live trading BLOCKED — paper track record insufficient: "
-            f"{settled}/{_LIVE_MIN_TRADES} settled trades required. "
+            f"Live trading BLOCKED — paper period insufficient: "
+            f"{paper_days}/{_LIVE_MIN_DAYS} calendar days elapsed "
+            f"(first trade: {first_trade_date}, {days_remaining} days to go). "
             f"Running in observation mode."
         )
         tg_send(
             f"⚠️ <b>Kalshi Live Mode: Observation Only</b>\n"
-            f"Paper track record: {settled} settled trades "
-            f"(need {_LIVE_MIN_TRADES}).\n"
-            f"Win rate: {win_rate:.1f}% (need {_LIVE_MIN_WIN_RATE:.0f}%).\n"
+            f"Paper period: {paper_days} days elapsed (need {_LIVE_MIN_DAYS}).\n"
+            f"First trade logged: {first_trade_date}.\n"
+            f"{days_remaining} more day(s) before live trading can unlock.\n"
             f"Bot is logging predictions but NOT placing live orders yet."
         )
         return
 
+    # ── Gate 2: Minimum settled trade count ──────────────────────────────────
+    if settled < _LIVE_MIN_TRADES:
+        log.info(
+            f"Live trading BLOCKED — insufficient settled trades: "
+            f"{settled}/{_LIVE_MIN_TRADES} required. "
+            f"Running in observation mode."
+        )
+        tg_send(
+            f"⚠️ <b>Kalshi Live Mode: Observation Only</b>\n"
+            f"Settled trades: {settled} (need {_LIVE_MIN_TRADES}).\n"
+            f"Win rate: {win_rate:.1f}% · Paper days: {paper_days}.\n"
+            f"Not placing live orders yet."
+        )
+        return
+
+    # ── Gate 3: Minimum win rate ──────────────────────────────────────────────
     if win_rate < _LIVE_MIN_WIN_RATE:
         log.info(
             f"Live trading BLOCKED — win rate below threshold: "
@@ -257,14 +302,15 @@ def _maybe_place_live_orders(opportunities: list, token: str) -> None:
         tg_send(
             f"⚠️ <b>Kalshi Live Mode: Observation Only</b>\n"
             f"Win rate: {win_rate:.1f}% (need {_LIVE_MIN_WIN_RATE:.0f}%).\n"
-            f"Settled trades: {settled}. Not placing live orders yet."
+            f"Settled: {settled} trades · Paper days: {paper_days}.\n"
+            f"Not placing live orders yet."
         )
         return
 
-    # ── Track record verified — place live orders ────────────────────────────
+    # ── All gates passed — place live orders ─────────────────────────────────
     log.info(
-        f"Live trading ACTIVE — track record verified: "
-        f"{settled} trades / {win_rate:.1f}% win rate"
+        f"Live trading ACTIVE — all gates passed: "
+        f"{paper_days}d paper / {settled} settled / {win_rate:.1f}% win rate"
     )
     placed = 0
     for opp in opportunities:
