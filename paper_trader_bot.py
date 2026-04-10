@@ -802,6 +802,38 @@ def update_daily_build_notes() -> bool:
     except Exception as _exc:
         log.warning(f"update_daily_build_notes: could not load brain_weights.json: {_exc}")
 
+    # ── Fetch structure win rates from accuracy_tracker ───────────────────────
+    struct_overall_n = struct_overall_c = 0
+    struct_bot_n = struct_bot_c = 0
+    struct_breakdown: dict = {}
+    try:
+        from backend import supabase as _sb
+        from collections import defaultdict as _dd
+        if _sb:
+            _at_rows = (
+                _sb.table("accuracy_tracker")
+                .select("predicted,correct,compare_key")
+                .eq("user_id", USER_ID)
+                .execute()
+                .data or []
+            )
+            struct_overall_n = len(_at_rows)
+            struct_overall_c = sum(1 for r in _at_rows if r.get("correct") == "✅")
+            bot_at = [r for r in _at_rows if r.get("compare_key") == "watchlist_pred"]
+            struct_bot_n = len(bot_at)
+            struct_bot_c = sum(1 for r in bot_at if r.get("correct") == "✅")
+            _by = _dd(lambda: {"t": 0, "c": 0})
+            for r in bot_at:
+                _lbl = str(r.get("predicted") or "—").strip()
+                if _lbl in ("—", "", "Unknown"):
+                    continue
+                _by[_lbl]["t"] += 1
+                if r.get("correct") == "✅":
+                    _by[_lbl]["c"] += 1
+            struct_breakdown = dict(_by)
+    except Exception as _exc:
+        log.warning(f"update_daily_build_notes: could not load accuracy_tracker: {_exc}")
+
     # ── Compute day stats ─────────────────────────────────────────────────────
     total_scanned = len(df_today)
     if total_scanned and "min_tcs_filter" in df_today.columns:
@@ -871,6 +903,17 @@ def update_daily_build_notes() -> bool:
     _avg_tcs_s = f"{avg_tcs}" if avg_tcs is not None else "—"
     scan_row   = f"| {today_str} | {total_scanned} | {len(qual_df)} | {_wr} | {_avg_tcs_s} | {alerted} |"
 
+    # Structure win rate row
+    def _spct(c: int, t: int) -> str:
+        return f"{c/t*100:.1f}% ({c}/{t})" if t else "—"
+    _neu  = struct_breakdown.get("Neutral",      {"t": 0, "c": 0})
+    _ntx  = struct_breakdown.get("Ntrl Extreme", {"t": 0, "c": 0})
+    struct_row = (
+        f"| {today_str} | {_spct(struct_bot_c, struct_bot_n)} | {struct_bot_n} "
+        f"| {_spct(_neu['c'], _neu['t'])} | {_neu['t']} "
+        f"| {_spct(_ntx['c'], _ntx['t'])} | {_ntx['t']} |"
+    )
+
     # ── Section headings and table headers ────────────────────────────────────
     _TRADE_H = "## 📊 BOT PAPER TRADE LOG"
     _PNL_H   = "## 💰 BOT P&L LOG"
@@ -897,6 +940,12 @@ def update_daily_build_notes() -> bool:
         f"{_SCAN_H}\n\n"
         "| Date | Total Scanned | Qualified | Win Rate | Avg TCS | Alerted Tickers |\n"
         "|---|---|---|---|---|---|\n"
+    )
+    _STRUCT_H    = "## 📈 STRUCTURE WIN RATE LOG"
+    _STRUCT_INIT = (
+        f"{_STRUCT_H}\n\n"
+        "| Date | Bot Overall | Bot N | Neutral | Neutral N | Ntrl Extreme | Ntrl Extreme N |\n"
+        "|---|---|---|---|---|---|---|\n"
     )
 
     def _section_slice(text: str, heading: str) -> str:
@@ -990,6 +1039,11 @@ def update_daily_build_notes() -> bool:
         content = _append_rows_to_section(content, _SCAN_H, _SCAN_INIT, [scan_row])
     else:
         log.info(f"Build notes: {_SCAN_H} already has {today_str} entry, skipping")
+
+    if not _already_logged(content, _STRUCT_H):
+        content = _append_rows_to_section(content, _STRUCT_H, _STRUCT_INIT, [struct_row])
+    else:
+        log.info(f"Build notes: {_STRUCT_H} already has {today_str} entry, skipping")
 
     # ── Write back ────────────────────────────────────────────────────────────
     try:
