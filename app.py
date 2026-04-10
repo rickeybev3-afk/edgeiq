@@ -3486,11 +3486,15 @@ with st.sidebar:
         )
     with _br_c2:
         _br_ratio = st.number_input(
-            "A/D Ratio (5/10d)", min_value=0.0, max_value=15.0, step=0.1,
+            "13%/34d A/D Ratio", min_value=0.0, max_value=15.0, step=0.1,
             format="%.1f",
             value=st.session_state.get("breadth_13_34_ratio", 0.0),
             key="breadth_ratio_input",
-            help="5-day or 10-day Advance/Decline ratio. Above 1.0 = more advances.",
+            help=(
+                "Stockbee 13%/34d Advance/Decline ratio. "
+                "Stocks up 13% in the last month vs stocks up 34% in the last two months. "
+                "Above 1.0 = more advances than declines."
+            ),
         )
     _br_c3, _br_c4 = st.columns(2)
     with _br_c3:

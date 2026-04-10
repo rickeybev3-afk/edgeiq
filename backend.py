@@ -7247,14 +7247,22 @@ def classify_macro_regime(
         f"Q: {q_up} up / {q_down} down"
     )
 
-    # ── Strict rule-based classification ────────────────────────────────────
-    # Rules match the Phase 2 task spec exactly:
-    #   hot  = 4%/day ≥ 600  AND  A/D ratio ≥ 2.0   → Home Run mode
-    #   warm = 4%/day ≥ 300  AND  A/D ratio ≥ 1.0   → Singles mode
-    #   cold = everything else                        → Caution mode
-    # Quarterly spread (q_up vs q_down) is stored in description for context
-    # but does NOT alter the primary classification.
-    if four_pct_count >= 600 and ratio_13_34 >= 2.0:
+    # ── Quarterly breadth ratio (Stockbee 25%/quarter flip) ─────────────────
+    # q_ratio > 1.0 = more stocks up 25%+ than down 25%+ (bullish quarterly)
+    # q_ratio < 1.0 = more stocks down 25%+ than up 25%+ (bearish quarterly)
+    # When no quarterly data supplied (both 0), treat as neutral (ratio = 1.0)
+    q_ratio = (q_up / max(q_down, 1)) if (q_up > 0 or q_down > 0) else 1.0
+
+    # ── Strict rule-based classification (three-signal system) ───────────────
+    # All three Stockbee breadth inputs feed the regime:
+    #   Signal 1: daily 4%+ count  (momentum / thrust)
+    #   Signal 2: 13%/34d A/D ratio  (intermediate breadth)
+    #   Signal 3: quarterly 25% flip ratio  (macro tide)
+    #
+    # hot  = strong daily (≥600) AND strong A/D (≥2.0) AND quarterly not bearish (≥1.0)
+    # warm = good daily (≥300) AND positive A/D (≥1.0)  [quarterly neutral or better]
+    # cold = everything else (weak daily, weak A/D, or deeply bearish quarterly)
+    if four_pct_count >= 600 and ratio_13_34 >= 2.0 and q_ratio >= 1.0:
         return {
             "regime_tag":    "hot_tape",
             "label":         "🔥 Hot Tape",
