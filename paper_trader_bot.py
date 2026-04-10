@@ -606,7 +606,7 @@ def morning_scan():
     regime = {}
     effective_min_tcs = MIN_TCS
     try:
-        regime = get_breadth_regime() or {}
+        regime = get_breadth_regime(user_id=USER_ID) or {}
         tcs_adj = regime.get("tcs_floor_adj", 0)
         if tcs_adj:
             effective_min_tcs = max(30, MIN_TCS + tcs_adj)  # never go below 30
@@ -627,23 +627,31 @@ def morning_scan():
     regime_tag = regime.get("regime_tag", "")
     for r in results:
         r["regime_tag"] = regime_tag
+        r["sim_date"]   = str(today)  # ensure sim_date present for dedup
+
+    # Log ALL scan results to paper_trades with regime_tag attached.
+    # min_tcs_filter records the effective threshold for this session;
+    # analytics can use it to distinguish qualified vs below-threshold rows.
+    all_results_logged = log_paper_trades(results, user_id=USER_ID, min_tcs=effective_min_tcs)
+    log.info(
+        f"Session logged: {all_results_logged.get('saved', 0)} new | "
+        f"{all_results_logged.get('skipped', 0)} skipped | regime: {regime_tag or 'none'}"
+    )
 
     qualified = [
-        dict(r, sim_date=str(today))
-        for r in results
+        r for r in results
         if float(r.get("tcs", 0)) >= effective_min_tcs
     ]
     log.info(
-        f"{len(qualified)} setups passed TCS ≥ {effective_min_tcs} "
-        f"(of {len(results)} scanned) | regime: {regime_tag or 'none'}"
+        f"{len(qualified)} setups qualified TCS ≥ {effective_min_tcs} "
+        f"(of {len(results)} scanned)"
     )
 
     # Telegram: summary header
     _alert_morning_summary(qualified, len(results), today, effective_tcs=effective_min_tcs)
 
     if qualified:
-        result = log_paper_trades(qualified, user_id=USER_ID, min_tcs=effective_min_tcs)
-        log.info(f"Logged: {result.get('saved', 0)} new | skipped: {result.get('skipped', 0)} (already exist)")
+        log.info(f"Sending {len(qualified)} Telegram setup alerts...")
         # Telegram: one alert per setup
         for r in qualified:
             log.info(

@@ -7242,66 +7242,35 @@ def classify_macro_regime(
       tcs_floor_adj: int — TCS threshold shift (negative = lower bar on hot tape)
       description:   brief explanation string
     """
-    score = 0
+    _desc = (
+        f"{four_pct_count} stocks up 4%+ · A/D {ratio_13_34:.1f}x · "
+        f"Q: {q_up} up / {q_down} down"
+    )
 
-    # 4%/day count — primary signal (hard gate)
-    if four_pct_count >= 600:
-        score += 3      # Stampede
-    elif four_pct_count >= 300:
-        score += 2      # Strong breadth
-    elif four_pct_count >= 100:
-        score += 1      # Neutral / low
-    # < 100 = 0
-
-    # A/D ratio (hard gate)
-    if ratio_13_34 >= 2.0:
-        score += 2      # Very bullish breadth
-    elif ratio_13_34 >= 1.0:
-        score += 1      # Mild advance
-    # < 1.0 = 0
-
-    # Quarterly breadth (tiebreaker — cannot override primary gates)
-    if q_up > 0 and q_down > 0:
-        spread = q_down - q_up   # positive = more stocks down
-        if spread < -200:        # q_up > q_down by 200+ = full flip
-            score += 2
-        elif spread < 0:         # q_up slightly > q_down
-            score += 1
-        elif spread > 500:       # deeply bearish quarterly
-            score -= 1
-
-    # Hard primary gates: hot_tape requires ≥300 stocks AND ratio ≥1.0
-    # This prevents quarterly bonus alone from driving a classification jump
-    _primary_score = (3 if four_pct_count >= 600 else 2 if four_pct_count >= 300 else
-                      1 if four_pct_count >= 100 else 0)
-    _ratio_score   = (2 if ratio_13_34 >= 2.0 else 1 if ratio_13_34 >= 1.0 else 0)
-    if _primary_score < 2 or _ratio_score < 1:
-        # Insufficient primary breadth — cap at warm regardless of quarterly boost
-        score = min(score, 4)
-
-    if score >= 5:
+    # ── Strict rule-based classification ────────────────────────────────────
+    # Rules match the Phase 2 task spec exactly:
+    #   hot  = 4%/day ≥ 600  AND  A/D ratio ≥ 2.0   → Home Run mode
+    #   warm = 4%/day ≥ 300  AND  A/D ratio ≥ 1.0   → Singles mode
+    #   cold = everything else                        → Caution mode
+    # Quarterly spread (q_up vs q_down) is stored in description for context
+    # but does NOT alter the primary classification.
+    if four_pct_count >= 600 and ratio_13_34 >= 2.0:
         return {
             "regime_tag":    "hot_tape",
             "label":         "🔥 Hot Tape",
             "color":         "#ff6b35",
             "mode":          "home_run",
             "tcs_floor_adj": -10,
-            "description":   (
-                f"{four_pct_count} stocks up 4%+ · A/D {ratio_13_34:.1f}x · "
-                f"Q: {q_up} up / {q_down} down"
-            ),
+            "description":   _desc,
         }
-    elif score >= 2:
+    elif four_pct_count >= 300 and ratio_13_34 >= 1.0:
         return {
             "regime_tag":    "warm",
             "label":         "🟡 Warm Tape",
             "color":         "#ffd700",
             "mode":          "singles",
             "tcs_floor_adj": 0,
-            "description":   (
-                f"{four_pct_count} stocks up 4%+ · A/D {ratio_13_34:.1f}x · "
-                f"Q: {q_up} up / {q_down} down"
-            ),
+            "description":   _desc,
         }
     else:
         return {
@@ -7310,10 +7279,7 @@ def classify_macro_regime(
             "color":         "#5c9bd4",
             "mode":          "caution",
             "tcs_floor_adj": +10,
-            "description":   (
-                f"{four_pct_count} stocks up 4%+ · A/D {ratio_13_34:.1f}x · "
-                f"Q: {q_up} up / {q_down} down"
-            ),
+            "description":   _desc,
         }
 
 
