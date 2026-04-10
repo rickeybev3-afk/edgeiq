@@ -8108,6 +8108,344 @@ def render_sa_tab():
         st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
 
 
+def render_performance_tab():
+    """Live performance dashboard — paper trades, structure win rates, brain weights."""
+    import json as _json
+
+    st.markdown(
+        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:2px; font-weight:700; margin-bottom:4px;">📊 LIVE PERFORMANCE TRACKER</div>'
+        '<div style="font-size:12px; color:#546e7a; margin-bottom:18px;">'
+        'Real-time stats pulled directly from the database. Refreshes every page load.</div>',
+        unsafe_allow_html=True,
+    )
+
+    now_et = datetime.now(EASTERN)
+    st.caption(f"Last loaded: {now_et.strftime('%b %d, %Y  %I:%M:%S %p')} ET")
+
+    # ── Load paper trades ───────────────────────────────────────────────────────
+    _pt_df = load_paper_trades(_AUTH_USER_ID, days=365)
+
+    # ── Load accuracy_tracker (structure predictions) ───────────────────────────
+    _at_df = pd.DataFrame()
+    if supabase:
+        try:
+            _at_raw = (
+                supabase.table("accuracy_tracker")
+                .select("predicted_structure,correct,trade_date")
+                .eq("user_id", _AUTH_USER_ID)
+                .eq("entry_type", "watchlist_pred")
+                .execute()
+                .data
+            )
+            _at_df = pd.DataFrame(_at_raw) if _at_raw else pd.DataFrame()
+        except Exception:
+            _at_df = pd.DataFrame()
+
+    # ── Load brain weights ───────────────────────────────────────────────────────
+    _bw = load_brain_weights(_AUTH_USER_ID)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — KPI STRIP
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### Key Numbers")
+
+    # Paper trade stats
+    _total_trades = 0
+    _wins = 0
+    _losses = 0
+    _net_pnl = 0.0
+    _sim_per_trade = 500.0  # $500/trade simulation
+
+    if not _pt_df.empty and "win_loss" in _pt_df.columns:
+        _wl = _pt_df["win_loss"].dropna()
+        _wins    = int((_wl == "W").sum())
+        _losses  = int((_wl == "L").sum())
+        _total_trades = _wins + _losses
+        # P&L: use follow_thru_pct if available, else flat estimate
+        if "follow_thru_pct" in _pt_df.columns:
+            _ft = _pt_df["follow_thru_pct"].fillna(0).astype(float)
+            _wl_num = _pt_df["win_loss"].map({"W": 1, "L": -1}).fillna(0)
+            _net_pnl = float((_wl_num * _ft / 100 * _sim_per_trade).sum())
+        else:
+            _net_pnl = (_wins - _losses) * _sim_per_trade * 0.06  # rough estimate
+
+    _pt_rate = (_wins / _total_trades * 100) if _total_trades else 0.0
+
+    # Structure prediction stats
+    _struct_total = 0
+    _struct_wins  = 0
+    if not _at_df.empty and "correct" in _at_df.columns:
+        _struct_total = len(_at_df)
+        _struct_wins  = int((_at_df["correct"] == "✅").sum())
+    _struct_rate = (_struct_wins / _struct_total * 100) if _struct_total else 0.0
+
+    # Brain weight — normal (most active signal)
+    _bw_normal = _bw.get("normal", 1.0)
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        _color = "#2e7d32" if _pt_rate >= 60 else ("#ef6c00" if _pt_rate >= 50 else "#c62828")
+        st.markdown(
+            f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Paper W/L</div>'
+            f'<div style="font-size:26px;font-weight:700;color:{_color};">{_wins}W / {_losses}L</div>'
+            f'<div style="font-size:14px;color:#cfd8dc;">{_pt_rate:.1f}% win rate</div>'
+            f'</div>', unsafe_allow_html=True
+        )
+    with k2:
+        _pnl_color = "#2e7d32" if _net_pnl >= 0 else "#c62828"
+        st.markdown(
+            f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Sim P&L ($500/trade)</div>'
+            f'<div style="font-size:26px;font-weight:700;color:{_pnl_color};">{"+" if _net_pnl >= 0 else ""}{_net_pnl:,.0f}</div>'
+            f'<div style="font-size:14px;color:#cfd8dc;">{_total_trades} verified trades</div>'
+            f'</div>', unsafe_allow_html=True
+        )
+    with k3:
+        _sc = "#2e7d32" if _struct_rate >= 65 else ("#ef6c00" if _struct_rate >= 55 else "#c62828")
+        st.markdown(
+            f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Structure Pred Rate</div>'
+            f'<div style="font-size:26px;font-weight:700;color:{_sc};">{_struct_rate:.1f}%</div>'
+            f'<div style="font-size:14px;color:#cfd8dc;">{_struct_wins}/{_struct_total} correct</div>'
+            f'</div>', unsafe_allow_html=True
+        )
+    with k4:
+        _bw_delta = _bw_normal - 1.0
+        _bwc = "#2e7d32" if _bw_delta > 0.05 else "#90a4ae"
+        st.markdown(
+            f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Normal Weight</div>'
+            f'<div style="font-size:26px;font-weight:700;color:{_bwc};">{_bw_normal:.4f}</div>'
+            f'<div style="font-size:14px;color:#cfd8dc;">{"▲" if _bw_delta >= 0 else "▼"}{abs(_bw_delta):.4f} vs baseline</div>'
+            f'</div>', unsafe_allow_html=True
+        )
+    with k5:
+        _active_bw = {k: v for k, v in _bw.items() if isinstance(v, float) and v != 1.0}
+        _most_active = max(_active_bw, key=_active_bw.get) if _active_bw else "baseline"
+        st.markdown(
+            f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Strongest Signal</div>'
+            f'<div style="font-size:22px;font-weight:700;color:#80cbc4;">{_most_active}</div>'
+            f'<div style="font-size:14px;color:#cfd8dc;">{_active_bw.get(_most_active, 1.0):.4f}</div>'
+            f'</div>', unsafe_allow_html=True
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — PAPER TRADE HISTORY + RUNNING P&L CHART
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📄 Paper Trade History")
+
+    if _pt_df.empty or _total_trades == 0:
+        st.info("No verified paper trades yet. Trades are logged and auto-verified by the bot each day.")
+    else:
+        # Only show verified rows (W or L)
+        _verified = _pt_df[_pt_df["win_loss"].isin(["W", "L"])].copy()
+
+        # Running P&L
+        if "follow_thru_pct" in _verified.columns:
+            _verified["_sim_pnl"] = _verified["win_loss"].map({"W": 1, "L": -1}) * \
+                                    _verified["follow_thru_pct"].fillna(0).astype(float) / 100 * _sim_per_trade
+            _verified = _verified.sort_values("trade_date", ascending=True)
+            _verified["_running_pnl"] = _verified["_sim_pnl"].cumsum()
+
+            # Chart
+            _fig_pnl = go.Figure()
+            _fig_pnl.add_trace(go.Scatter(
+                x=_verified["trade_date"].astype(str),
+                y=_verified["_running_pnl"],
+                mode="lines+markers",
+                line=dict(color="#26c6da", width=2),
+                marker=dict(color=_verified["win_loss"].map({"W": "#66bb6a", "L": "#ef5350"}).tolist(),
+                            size=8),
+                name="Running P&L"
+            ))
+            _fig_pnl.add_hline(y=0, line_dash="dash", line_color="#546e7a", line_width=1)
+            _fig_pnl.update_layout(
+                height=220, margin=dict(l=0, r=0, t=10, b=10),
+                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                font=dict(color="#cfd8dc", size=11),
+                xaxis=dict(gridcolor="#1e2a3a", tickfont=dict(size=10)),
+                yaxis=dict(gridcolor="#1e2a3a", tickprefix="$", tickfont=dict(size=10)),
+                showlegend=False,
+            )
+            st.plotly_chart(_fig_pnl, use_container_width=True, config={"displayModeBar": False})
+
+        # Table
+        _display_cols = [c for c in ["trade_date", "ticker", "tcs", "predicted_structure",
+                                      "actual_outcome", "win_loss", "follow_thru_pct",
+                                      "sim_pnl_100sh"] if c in _verified.columns]
+        _show = _verified[_display_cols].rename(columns={
+            "trade_date": "Date", "ticker": "Ticker", "tcs": "TCS",
+            "predicted_structure": "Predicted", "actual_outcome": "Actual",
+            "win_loss": "W/L", "follow_thru_pct": "FT %", "sim_pnl_100sh": "P&L (100sh)"
+        }).reset_index(drop=True)
+
+        def _color_wl(val):
+            if val == "W":   return "color: #66bb6a; font-weight:700"
+            if val == "L":   return "color: #ef5350; font-weight:700"
+            return ""
+
+        st.dataframe(
+            _show.style.applymap(_color_wl, subset=["W/L"]) if "W/L" in _show.columns else _show,
+            use_container_width=True, height=280
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — STRUCTURE WIN RATE BREAKDOWN
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 🧠 Structure Prediction Win Rate")
+
+    if _at_df.empty:
+        st.info("No structure predictions logged yet.")
+    else:
+        _at_df["_correct_bool"] = _at_df["correct"] == "✅"
+        _by_struct = (
+            _at_df.groupby("predicted_structure")
+            .agg(Total=("_correct_bool", "count"), Correct=("_correct_bool", "sum"))
+            .assign(WinRate=lambda d: (d["Correct"] / d["Total"] * 100).round(1))
+            .sort_values("Total", ascending=False)
+            .reset_index()
+        )
+        _by_struct.columns = ["Structure", "Samples", "Correct", "Win Rate %"]
+
+        # Overall row
+        _overall_row = pd.DataFrame([{
+            "Structure": "⭐ ALL",
+            "Samples": _struct_total,
+            "Correct": _struct_wins,
+            "Win Rate %": round(_struct_rate, 1)
+        }])
+        _by_struct_display = pd.concat([_overall_row, _by_struct], ignore_index=True)
+
+        # Bar chart
+        if len(_by_struct) > 0:
+            _bar_fig = go.Figure(go.Bar(
+                x=_by_struct["Structure"],
+                y=_by_struct["Win Rate %"],
+                text=_by_struct.apply(lambda r: f'{r["Win Rate %"]:.0f}%<br>({r["Samples"]})', axis=1),
+                textposition="outside",
+                marker_color=[
+                    "#66bb6a" if v >= 65 else ("#ffa726" if v >= 50 else "#ef5350")
+                    for v in _by_struct["Win Rate %"]
+                ],
+                marker_line_width=0,
+            ))
+            _bar_fig.add_hline(y=50, line_dash="dash", line_color="#546e7a", line_width=1,
+                               annotation_text="50% baseline", annotation_font_size=10)
+            _bar_fig.update_layout(
+                height=280, margin=dict(l=0, r=0, t=30, b=10),
+                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                font=dict(color="#cfd8dc", size=11),
+                xaxis=dict(gridcolor="#1e2a3a"),
+                yaxis=dict(gridcolor="#1e2a3a", range=[0, 110], ticksuffix="%"),
+                showlegend=False,
+            )
+            st.plotly_chart(_bar_fig, use_container_width=True, config={"displayModeBar": False})
+
+        def _color_rate(val):
+            if isinstance(val, (int, float)):
+                if val >= 65:   return "color: #66bb6a; font-weight:700"
+                if val >= 50:   return "color: #ffa726"
+                return "color: #ef5350"
+            return ""
+
+        st.dataframe(
+            _by_struct_display.style.applymap(_color_rate, subset=["Win Rate %"]),
+            use_container_width=True, hide_index=True, height=None
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 4 — BRAIN WEIGHTS
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 🧠 Current Brain Weights")
+
+    _bw_rows = []
+    for _k, _v in _bw.items():
+        if isinstance(_v, (int, float)):
+            _delta = round(_v - 1.0, 4)
+            _bw_rows.append({
+                "Structure": _k,
+                "Weight": round(_v, 4),
+                "Δ Baseline": f"{'+'if _delta >= 0 else ''}{_delta:.4f}",
+                "Signal": "▲ Learning" if _delta > 0.02 else ("▼ Suppressed" if _delta < -0.02 else "— Flat")
+            })
+
+    if _bw_rows:
+        _bw_display = pd.DataFrame(_bw_rows)
+
+        def _color_delta(val):
+            try:
+                v = float(str(val).replace("+", ""))
+                if v > 0.02:   return "color: #66bb6a; font-weight:700"
+                if v < -0.02:  return "color: #ef5350"
+            except Exception:
+                pass
+            return "color: #90a4ae"
+
+        st.dataframe(
+            _bw_display.style.applymap(_color_delta, subset=["Δ Baseline"]),
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("Brain weights not yet loaded.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 5 — DAILY SUMMARY TABLE
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📅 Daily Breakdown")
+
+    if not _pt_df.empty and "win_loss" in _pt_df.columns and "trade_date" in _pt_df.columns:
+        _daily = (
+            _pt_df[_pt_df["win_loss"].isin(["W", "L"])]
+            .groupby("trade_date")
+            .agg(
+                Trades=("win_loss", "count"),
+                Wins=("win_loss", lambda x: (x == "W").sum()),
+                Losses=("win_loss", lambda x: (x == "L").sum()),
+            )
+            .assign(WinRate=lambda d: (d["Wins"] / d["Trades"] * 100).round(1))
+            .sort_index(ascending=False)
+            .reset_index()
+            .rename(columns={"trade_date": "Date", "WinRate": "Win Rate %"})
+        )
+
+        if "follow_thru_pct" in _pt_df.columns:
+            _pnl_by_day = (
+                _pt_df[_pt_df["win_loss"].isin(["W", "L"])].copy()
+                .assign(_pnl=lambda d: d["win_loss"].map({"W": 1, "L": -1}) *
+                                       d["follow_thru_pct"].fillna(0).astype(float) / 100 * _sim_per_trade)
+                .groupby("trade_date")["_pnl"].sum()
+                .round(2)
+                .reset_index()
+                .rename(columns={"trade_date": "Date", "_pnl": "P&L ($500/trade)"})
+            )
+            _daily = _daily.merge(_pnl_by_day, on="Date", how="left")
+
+        def _color_winrate(val):
+            if isinstance(val, (int, float)):
+                if val >= 65: return "color: #66bb6a; font-weight:700"
+                if val >= 50: return "color: #ffa726"
+                return "color: #ef5350"
+            return ""
+
+        st.dataframe(
+            _daily.style.applymap(_color_winrate, subset=["Win Rate %"]),
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("No daily breakdown available yet.")
+
+
 def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     st.markdown(
         '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
@@ -8746,9 +9084,9 @@ if _active_regime and _active_regime.get("regime_tag", "unknown") != "unknown":
         unsafe_allow_html=True,
     )
 
-tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa, tab_paper = st.tabs(
+tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa, tab_paper, tab_perf = st.tabs(
     ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "🔬 Backtest",
-     "📖 Journal", "📊 Analytics", "⚡ Small Account", "📄 Paper Trade"]
+     "📖 Journal", "📊 Analytics", "⚡ Small Account", "📄 Paper Trade", "📊 Performance"]
 )
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
@@ -9934,6 +10272,10 @@ with tab_sa:
 # ── Paper Trade tab ────────────────────────────────────────────────────────────
 with tab_paper:
     render_paper_trade_tab(api_key=api_key, secret_key=secret_key)
+
+# ── Performance tab ─────────────────────────────────────────────────────────────
+with tab_perf:
+    render_performance_tab()
 
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:
