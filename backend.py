@@ -7727,14 +7727,22 @@ def kalshi_kelly_size(
     b = (100 - price_cents) / price_cents
     p = max(0.01, min(0.99, confidence))
     raw_kelly = (p * b - (1 - p)) / b
-    raw_kelly = max(0.0, raw_kelly)  # no negative sizing
+
+    # Negative or zero Kelly means no edge — do NOT force entry
+    if raw_kelly <= 0:
+        return {"kelly_f": round(raw_kelly, 4), "size_f": 0, "contracts": 0,
+                "cost_cents": 0, "max_win_cents": 0}
 
     size_f = raw_kelly * kelly_fraction
     max_size_f = max_pct
     final_f = min(size_f, max_size_f)
 
     budget_cents = int(account_value_cents * final_f)
-    contracts = max(1, budget_cents // price_cents)
+    contracts = budget_cents // price_cents  # no forced minimum — 0 is valid
+    if contracts <= 0:
+        return {"kelly_f": round(raw_kelly, 4), "size_f": round(final_f, 4),
+                "contracts": 0, "cost_cents": 0, "max_win_cents": 0}
+
     cost_cents = contracts * price_cents
     max_win_cents = contracts * (100 - price_cents)
 
@@ -7844,25 +7852,35 @@ def log_kalshi_prediction(
 
 
 def update_kalshi_outcomes(
-    trade_date,
+    trade_date=None,
     token: str = "",
     user_id: str = "",
     live: bool = False,
+    lookback_days: int = 90,
 ) -> dict:
     """Check Kalshi API for settled markets and update outcomes in Supabase.
 
-    For each open prediction logged on trade_date that has no outcome yet,
-    fetches the market result and records win/loss + P&L.
+    Scans ALL unresolved predictions within the last `lookback_days` days —
+    NOT just a single trade_date — because Kalshi macro markets frequently
+    settle on a future date (e.g. monthly Fed decisions, quarterly GDP).
+    Predictions from any prior day remain pending until their market settles.
+
+    `trade_date` is retained for API compatibility but is ignored when
+    querying; use `lookback_days` to control the history window.
+
     Returns {"updated": n, "total": m}.
     """
     if not supabase:
         return {"updated": 0, "total": 0, "error": "Supabase not configured"}
     try:
+        cutoff = str(
+            (datetime.now(EASTERN).date() - timedelta(days=lookback_days))
+        )
         res = (
             supabase.table("kalshi_predictions")
             .select("*")
-            .eq("trade_date", str(trade_date))
             .eq("user_id", user_id or "")
+            .gte("trade_date", cutoff)
             .is_("outcome_result", "null")
             .execute()
         )

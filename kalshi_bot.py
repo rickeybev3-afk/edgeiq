@@ -202,6 +202,121 @@ def _alert_eod_summary(summary: dict, updated: int, trade_date: date) -> None:
     )
 
 
+# ── Live order placement (gated — activates only when KALSHI_LIVE=true) ──────
+
+# Minimum verified paper track record required before live trading activates
+_LIVE_MIN_TRADES   = int(os.getenv("KALSHI_LIVE_MIN_TRADES", "30"))
+_LIVE_MIN_WIN_RATE = float(os.getenv("KALSHI_LIVE_MIN_WIN_RATE", "60.0"))
+
+
+def _maybe_place_live_orders(opportunities: list, token: str) -> None:
+    """Gate live order placement behind verified paper track-record criteria.
+
+    Only places live orders when ALL of the following are true:
+      1. KALSHI_LIVE=true  (must be explicitly opted in via environment)
+      2. Paper track record meets minimum: >= KALSHI_LIVE_MIN_TRADES settled
+         AND win rate >= KALSHI_LIVE_MIN_WIN_RATE %
+
+    This is a one-directional check — KALSHI_LIVE can be set, but the bot
+    will remain in observation mode until the evidence is there. The
+    `KALSHI_LIVE_MIN_TRADES` and `KALSHI_LIVE_MIN_WIN_RATE` thresholds
+    can be configured via env vars; defaults are 30 trades / 60% win rate.
+
+    Order placement via POST /portfolio/orders — resting limit order at
+    the current YES/NO ask price so we don't cross the spread.
+    """
+    if not KALSHI_LIVE:
+        return
+
+    # ── Verify paper track record ────────────────────────────────────────────
+    perf = get_kalshi_performance_summary(user_id=USER_ID)
+    settled = perf.get("won", 0) + perf.get("lost", 0)
+    win_rate = perf.get("win_rate", 0.0)
+
+    if settled < _LIVE_MIN_TRADES:
+        log.info(
+            f"Live trading BLOCKED — paper track record insufficient: "
+            f"{settled}/{_LIVE_MIN_TRADES} settled trades required. "
+            f"Running in observation mode."
+        )
+        tg_send(
+            f"⚠️ <b>Kalshi Live Mode: Observation Only</b>\n"
+            f"Paper track record: {settled} settled trades "
+            f"(need {_LIVE_MIN_TRADES}).\n"
+            f"Win rate: {win_rate:.1f}% (need {_LIVE_MIN_WIN_RATE:.0f}%).\n"
+            f"Bot is logging predictions but NOT placing live orders yet."
+        )
+        return
+
+    if win_rate < _LIVE_MIN_WIN_RATE:
+        log.info(
+            f"Live trading BLOCKED — win rate below threshold: "
+            f"{win_rate:.1f}% < {_LIVE_MIN_WIN_RATE:.0f}% required. "
+            f"Running in observation mode."
+        )
+        tg_send(
+            f"⚠️ <b>Kalshi Live Mode: Observation Only</b>\n"
+            f"Win rate: {win_rate:.1f}% (need {_LIVE_MIN_WIN_RATE:.0f}%).\n"
+            f"Settled trades: {settled}. Not placing live orders yet."
+        )
+        return
+
+    # ── Track record verified — place live orders ────────────────────────────
+    log.info(
+        f"Live trading ACTIVE — track record verified: "
+        f"{settled} trades / {win_rate:.1f}% win rate"
+    )
+    placed = 0
+    for opp in opportunities:
+        contracts = opp.get("_contracts", 0)
+        if contracts <= 0:
+            continue
+        try:
+            import requests as _req
+            from backend import _kalshi_base
+            side = opp["predicted_side"].lower()  # "yes" or "no"
+            ticker = opp["ticker"]
+            price  = opp["price_of_our_side"]
+            payload = {
+                "ticker":    ticker,
+                "client_order_id": f"edgeiq_{ticker}_{date.today().isoformat()}",
+                "type":      "limit",
+                "action":    "buy",
+                "side":      side,
+                "count":     contracts,
+                "yes_price": price if side == "yes" else (100 - price),
+                "no_price":  price if side == "no"  else (100 - price),
+            }
+            resp = _req.post(
+                f"{_kalshi_base(live=True)}/portfolio/orders",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            if resp.status_code in (200, 201):
+                placed += 1
+                log.info(
+                    f"  LIVE ORDER PLACED: {ticker} {side.upper()} "
+                    f"{contracts}x @ {price}¢"
+                )
+            else:
+                log.warning(
+                    f"  Live order failed for {ticker}: "
+                    f"{resp.status_code} {resp.text[:100]}"
+                )
+        except Exception as exc:
+            log.error(f"  Live order exception for {opp.get('ticker','?')}: {exc}")
+
+    if placed:
+        tg_send(
+            f"⚡ <b>Kalshi Live Orders Placed — {date.today()}</b>\n"
+            f"Placed {placed}/{len(opportunities)} live order(s).\n"
+            f"Track record: {settled} trades / {win_rate:.1f}% win rate."
+        )
+    else:
+        log.info("No live orders placed this morning.")
+
+
 # ── Scheduled jobs ────────────────────────────────────────────────────────────
 def morning_signal_scan(trade_date: date) -> None:
     """9:30 AM — fetch markets, map signals, send alerts, log paper positions."""
@@ -261,6 +376,7 @@ def morning_signal_scan(trade_date: date) -> None:
 
     # ── Compute Kelly sizes + log to Supabase ────────────────────────────────
     logged = 0
+    skipped_zero_kelly = 0
     for opp in high_conf:
         sizing = kalshi_kelly_size(
             confidence=opp["confidence"],
@@ -268,6 +384,16 @@ def morning_signal_scan(trade_date: date) -> None:
             account_value_cents=PAPER_ACCOUNT_CENTS,
             kelly_fraction=KELLY_FRACTION,
         )
+        # Skip if Kelly sizing says no edge (contracts = 0)
+        if sizing["contracts"] <= 0:
+            skipped_zero_kelly += 1
+            log.info(
+                f"  {opp['ticker']:30s} | SKIP (Kelly=0) — "
+                f"conf={opp['confidence']:.2f} @ {opp['price_of_our_side']}¢ "
+                f"has no positive edge after fractional Kelly"
+            )
+            continue
+
         opp["_contracts"]  = sizing["contracts"]
         opp["_cost_cents"] = sizing["cost_cents"]
         opp["_max_win_cents"] = sizing["max_win_cents"]
@@ -289,7 +415,14 @@ def morning_signal_scan(trade_date: date) -> None:
         elif result.get("error"):
             log.warning(f"  Failed to log {opp['ticker']}: {result['error']}")
 
-    log.info(f"Logged {logged}/{len(high_conf)} positions to Supabase")
+    log.info(
+        f"Logged {logged}/{len(high_conf)} positions to Supabase "
+        f"({skipped_zero_kelly} skipped: zero Kelly)"
+    )
+
+    # ── Live order placement (gated — PAPER MODE ONLY until track record met) ─
+    if KALSHI_LIVE:
+        _maybe_place_live_orders(high_conf, token)
 
     # ── Telegram alert ───────────────────────────────────────────────────────
     _alert_opportunities(high_conf, regime, trade_date)
