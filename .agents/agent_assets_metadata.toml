@@ -60,3 +60,9 @@ id = "mUY2wRPDboG1QlxJOKfVr"
 uri = "file://edgeiq_20260408_v2.zip"
 type = "unspecified"
 title = "EdgeIQ Source Code — April 8 2026 v2 (final)"
+
+[[outputs]]
+id = "QIj9yko_aUZsESBr6DYH7"
+uri = "file://.local/build_notes.md"
+type = "text"
+title = "EdgeIQ — Full Vision, Roadmap & Build Notes"
