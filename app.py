@@ -37,6 +37,9 @@ from backend import (
     _MACRO_BREADTH_SQL,
     ensure_paper_trades_regime_column,
     _PAPER_TRADES_REGIME_MIGRATION,
+    ensure_kalshi_tables,
+    _KALSHI_PREDICTIONS_SQL,
+    get_kalshi_performance_summary,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -3563,6 +3566,41 @@ with st.sidebar:
             + '</div>',
             unsafe_allow_html=True,
         )
+
+    # ── Kalshi Prediction Bot panel ──────────────────────────────────────────
+    with st.sidebar.expander("📊 Kalshi Prediction Bot", expanded=False):
+        _kalshi_table_ok = ensure_kalshi_tables()
+        if not _kalshi_table_ok:
+            st.caption("One-time setup: run this SQL in your Supabase SQL Editor.")
+            st.code(_KALSHI_PREDICTIONS_SQL, language="sql")
+        else:
+            _kalshi_uid = st.session_state.get("auth_user_id", "")
+            _kalshi_perf = get_kalshi_performance_summary(user_id=_kalshi_uid)
+            _kt = _kalshi_perf["total"]
+            if _kt == 0:
+                st.info(
+                    "No paper predictions yet.\n\n"
+                    "Start the **Kalshi Bot** workflow to begin paper trading "
+                    "macro breadth signals against prediction markets."
+                )
+            else:
+                _kw   = _kalshi_perf["won"]
+                _kl   = _kalshi_perf["lost"]
+                _kp   = _kalshi_perf["pending"]
+                _kwr  = _kalshi_perf["win_rate"]
+                _kpnl = _kalshi_perf["total_pnl_cents"]
+                _kpnl_str = (f"+${_kpnl/100:.2f}" if _kpnl >= 0 else f"-${abs(_kpnl)/100:.2f}")
+                st.markdown(
+                    f'<div style="background:#0d1f2d;border-radius:8px;padding:10px 14px;">'
+                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;">Paper P&L</div>'
+                    f'<div style="font-size:20px;font-weight:800;color:{"#4caf50" if _kpnl >= 0 else "#ef5350"};">'
+                    f'{_kpnl_str}</div>'
+                    f'<div style="font-size:11px;color:#aaa;margin-top:4px;">'
+                    f'✅ {_kw} · ❌ {_kl} · ⏳ {_kp} pending</div>'
+                    f'<div style="font-size:11px;color:#888;">Win rate: {_kwr:.1f}%  ·  {_kt} trades</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
     run_button = start_live = stop_live = scan_button = replay_load = False
     selected_date = date.today()

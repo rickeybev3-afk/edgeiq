@@ -7453,3 +7453,514 @@ def get_breadth_regime_history(days: int = 30, user_id: str = "") -> list:
         return []
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# KALSHI PREDICTION MARKET BOT  (paper trading against macro breadth signals)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Kalshi API helpers ────────────────────────────────────────────────────────
+
+_KALSHI_DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2"
+_KALSHI_LIVE_BASE = "https://trading-api.kalshi.com/trade-api/v2"
+
+_KALSHI_MACRO_KEYWORDS = [
+    "s&p 500", "s&p500", "spx", "spy",
+    "nasdaq", "ndx", "qqq",
+    "dow jones", "djia",
+    "fed", "federal reserve", "interest rate", "fomc",
+    "inflation", "cpi", "pce",
+    "unemployment", "nonfarm", "jobs",
+    "gdp", "recession",
+    "vix",
+    "market",
+]
+
+
+def _kalshi_base(live: bool = False) -> str:
+    return _KALSHI_LIVE_BASE if live else _KALSHI_DEMO_BASE
+
+
+def kalshi_login(email: str, password: str, live: bool = False) -> str:
+    """Authenticate with Kalshi API. Returns bearer token or '' on failure."""
+    try:
+        resp = requests.post(
+            f"{_kalshi_base(live)}/login",
+            json={"email": email, "password": password},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("token", "")
+        print(f"kalshi_login failed: {resp.status_code} {resp.text[:120]}")
+    except Exception as e:
+        print(f"kalshi_login error: {e}")
+    return ""
+
+
+def fetch_kalshi_markets(token: str = "", live: bool = False, limit: int = 200) -> list:
+    """Pull open Kalshi markets. Filters to macro-relevant titles.
+
+    Returns list of dicts with: ticker, title, category, yes_price, no_price,
+    expiration_time, event_ticker.
+    Token is optional — public markets are accessible without auth.
+    """
+    try:
+        params = {"status": "open", "limit": str(min(limit, 200))}
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        resp = requests.get(
+            f"{_kalshi_base(live)}/markets",
+            params=params,
+            headers=headers,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            print(f"fetch_kalshi_markets: {resp.status_code} {resp.text[:120]}")
+            return []
+        raw_markets = resp.json().get("markets", [])
+        macro_markets = []
+        for m in raw_markets:
+            title = (m.get("title") or "").lower()
+            subtitle = (m.get("subtitle") or "").lower()
+            combined = title + " " + subtitle
+            if any(kw in combined for kw in _KALSHI_MACRO_KEYWORDS):
+                macro_markets.append({
+                    "ticker":           m.get("ticker", ""),
+                    "event_ticker":     m.get("event_ticker", ""),
+                    "title":            m.get("title", ""),
+                    "subtitle":         m.get("subtitle", ""),
+                    "category":         m.get("category", ""),
+                    "yes_price":        int(m.get("yes_bid", m.get("yes_ask", 50)) or 50),
+                    "no_price":         int(m.get("no_bid", m.get("no_ask", 50)) or 50),
+                    "expiration_time":  m.get("expiration_time", ""),
+                    "open_interest":    int(m.get("open_interest", 0) or 0),
+                    "volume":           int(m.get("volume", 0) or 0),
+                    "result":           m.get("result"),
+                    "status":           m.get("status", ""),
+                })
+        return macro_markets
+    except Exception as e:
+        print(f"fetch_kalshi_markets error: {e}")
+        return []
+
+
+def fetch_kalshi_market_by_ticker(ticker: str, token: str = "", live: bool = False) -> dict:
+    """Fetch a single Kalshi market by ticker for outcome resolution."""
+    try:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        resp = requests.get(
+            f"{_kalshi_base(live)}/markets/{ticker}",
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("market", {})
+    except Exception as e:
+        print(f"fetch_kalshi_market_by_ticker error: {e}")
+    return {}
+
+
+# ── Signal mapping ────────────────────────────────────────────────────────────
+
+_BULLISH_TERMS = [
+    "above", "higher", "rise", "rally", "up", "bull", "gain",
+    "exceed", "over", "close above", "end above", "finish above",
+    "increase", "positive", "green",
+]
+_BEARISH_TERMS = [
+    "below", "lower", "fall", "drop", "down", "bear", "loss",
+    "under", "close below", "end below", "finish below",
+    "decrease", "negative", "red",
+]
+
+_REGIME_BASE_CONFIDENCE = {
+    "hot_tape": 0.72,
+    "warm":     0.58,
+    "cold":     0.68,
+}
+
+
+def map_regime_to_kalshi(regime: dict, markets: list) -> list:
+    """Map breadth regime state to a scored list of Kalshi market opportunities.
+
+    For each macro-relevant market, computes:
+    - predicted_side: 'YES' or 'NO'
+    - confidence: 0.0–1.0 (base regime confidence × sentiment alignment)
+    - edge_score: confidence adjusted for current market price (how much edge vs 50¢)
+    - reasoning: short text explaining the signal
+
+    Returns list sorted by edge_score descending.
+    Only includes markets with confidence > 0.55.
+    """
+    regime_tag = regime.get("regime_tag", "unknown")
+    if regime_tag == "unknown":
+        return []
+
+    base_conf = _REGIME_BASE_CONFIDENCE.get(regime_tag, 0.55)
+
+    # Directional bias: hot_tape/warm → bullish, cold → bearish
+    macro_bullish = regime_tag in ("hot_tape", "warm")
+
+    results = []
+    for m in markets:
+        title = (m.get("title") or "").lower()
+        subtitle = (m.get("subtitle") or "").lower()
+        combined = title + " " + subtitle
+        yes_price = int(m.get("yes_price", 50) or 50)
+        no_price  = 100 - yes_price
+
+        # ── Market sentiment detection ──────────────────────────────────────
+        bull_count = sum(1 for t in _BULLISH_TERMS if t in combined)
+        bear_count = sum(1 for t in _BEARISH_TERMS if t in combined)
+
+        if bull_count == bear_count == 0:
+            continue  # can't read directionality
+
+        # Sentiment score: +1.0 fully bullish, -1.0 fully bearish
+        total_terms = bull_count + bear_count
+        sentiment = (bull_count - bear_count) / max(total_terms, 1)
+
+        # Fed-specific: hot/warm tape = Fed stays or cuts (YES on "no hike", etc.)
+        fed_market = any(kw in combined for kw in ["fed", "federal reserve", "fomc", "rate", "hike", "cut"])
+        if fed_market:
+            # Rate cut/pause markets are bullish for stocks
+            rate_cut = any(kw in combined for kw in ["cut", "lower", "decrease", "pause", "hold"])
+            rate_hike = any(kw in combined for kw in ["hike", "raise", "increase", "higher"])
+            if rate_cut:
+                sentiment = 1.0 if macro_bullish else -1.0
+            elif rate_hike:
+                sentiment = -1.0 if macro_bullish else 1.0
+
+        # ── Determine our predicted side ────────────────────────────────────
+        if macro_bullish:
+            if sentiment > 0:
+                predicted_side = "YES"
+                price_of_our_side = yes_price
+            elif sentiment < 0:
+                predicted_side = "NO"
+                price_of_our_side = no_price
+            else:
+                continue
+        else:  # cold tape = bearish
+            if sentiment < 0:
+                predicted_side = "YES"
+                price_of_our_side = yes_price
+            elif sentiment > 0:
+                predicted_side = "NO"
+                price_of_our_side = no_price
+            else:
+                continue
+
+        # ── Confidence / edge computation ────────────────────────────────────
+        # Sentiment strength multiplier: strong sentiment → higher confidence
+        sentiment_strength = abs(sentiment)
+        confidence = base_conf * (0.7 + 0.3 * sentiment_strength)
+
+        # Discount if the market already strongly prices in our view
+        # (less edge buying at 85¢ vs 50¢ even if right direction)
+        price_discount = 1.0
+        if price_of_our_side > 75:
+            price_discount = 0.6    # already priced in — less edge
+        elif price_of_our_side > 65:
+            price_discount = 0.8
+        elif price_of_our_side < 30:
+            price_discount = 0.9    # contrarian — slightly discount
+        confidence *= price_discount
+
+        if confidence < 0.55:
+            continue
+
+        # Edge score: confidence premium over random (50% baseline)
+        edge_score = round(confidence - 0.50, 4)
+
+        # Reasoning string
+        regime_label = regime.get("label", regime_tag)
+        direction_word = "bullish" if macro_bullish else "bearish"
+        reason = (
+            f"{regime_label} regime → {direction_word} bias | "
+            f"market sentiment: {'bullish' if sentiment > 0 else 'bearish'} "
+            f"({'YES' if sentiment > 0 else 'NO'} pays {100 - price_of_our_side}¢ on {price_of_our_side}¢ risk)"
+        )
+
+        results.append({
+            "ticker":          m["ticker"],
+            "title":           m.get("title", ""),
+            "category":        m.get("category", ""),
+            "predicted_side":  predicted_side,
+            "yes_price":       yes_price,
+            "no_price":        no_price,
+            "price_of_our_side": price_of_our_side,
+            "confidence":      round(confidence, 4),
+            "edge_score":      edge_score,
+            "reasoning":       reason,
+            "expiration_time": m.get("expiration_time", ""),
+        })
+
+    results.sort(key=lambda x: x["edge_score"], reverse=True)
+    return results
+
+
+# ── Kelly position sizing ─────────────────────────────────────────────────────
+
+def kalshi_kelly_size(
+    confidence: float,
+    price_cents: int,
+    account_value_cents: int = 10_000_00,  # default $10,000 paper account in cents
+    kelly_fraction: float = 0.25,          # fractional Kelly (conservative)
+    max_pct: float = 0.10,                 # max 10% per trade
+) -> dict:
+    """Compute Kelly-optimal position size for a Kalshi prediction market.
+
+    Binary market Kelly formula:
+      b = (100 - price_cents) / price_cents  (net odds if YES pays off)
+      p = confidence (win probability)
+      f* = (p * b - (1 - p)) / b  (Kelly fraction)
+      fractional Kelly = f* × kelly_fraction
+
+    Returns:
+      kelly_f:    raw Kelly fraction
+      size_f:     fractional Kelly fraction (kelly_f × kelly_fraction)
+      contracts:  number of $1 contracts (1 contract = 100 cents cost)
+      cost_cents: total cost in cents
+      max_win_cents: max profit in cents if correct
+    """
+    if price_cents <= 0 or price_cents >= 100:
+        return {"kelly_f": 0, "size_f": 0, "contracts": 0, "cost_cents": 0, "max_win_cents": 0}
+
+    b = (100 - price_cents) / price_cents
+    p = max(0.01, min(0.99, confidence))
+    raw_kelly = (p * b - (1 - p)) / b
+    raw_kelly = max(0.0, raw_kelly)  # no negative sizing
+
+    size_f = raw_kelly * kelly_fraction
+    max_size_f = max_pct
+    final_f = min(size_f, max_size_f)
+
+    budget_cents = int(account_value_cents * final_f)
+    contracts = max(1, budget_cents // price_cents)
+    cost_cents = contracts * price_cents
+    max_win_cents = contracts * (100 - price_cents)
+
+    return {
+        "kelly_f":       round(raw_kelly, 4),
+        "size_f":        round(final_f, 4),
+        "contracts":     contracts,
+        "cost_cents":    cost_cents,
+        "max_win_cents": max_win_cents,
+    }
+
+
+# ── Supabase persistence ──────────────────────────────────────────────────────
+
+_KALSHI_PREDICTIONS_SQL = """
+CREATE TABLE IF NOT EXISTS kalshi_predictions (
+  id                   BIGSERIAL PRIMARY KEY,
+  user_id              TEXT NOT NULL DEFAULT '',
+  trade_date           DATE NOT NULL,
+  market_ticker        TEXT NOT NULL,
+  market_title         TEXT,
+  market_category      TEXT,
+  regime_tag           TEXT NOT NULL,
+  regime_label         TEXT,
+  predicted_side       TEXT NOT NULL,
+  entry_price_cents    INTEGER NOT NULL,
+  confidence           FLOAT,
+  kelly_fraction       FLOAT,
+  paper_contracts      INTEGER DEFAULT 1,
+  paper_cost_cents     INTEGER,
+  paper_max_win_cents  INTEGER,
+  outcome_result       TEXT,
+  settlement_cents     INTEGER,
+  pnl_cents            INTEGER,
+  won                  BOOLEAN,
+  settled_at           TIMESTAMPTZ,
+  reasoning            TEXT,
+  created_at           TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(trade_date, market_ticker, user_id)
+);
+""".strip()
+
+
+def ensure_kalshi_tables() -> bool:
+    """Check if kalshi_predictions table exists. Returns True if ready.
+
+    If missing, prints the required SQL and returns False.
+    Run _KALSHI_PREDICTIONS_SQL in the Supabase SQL Editor to create the table.
+    """
+    if not supabase:
+        return False
+    try:
+        supabase.table("kalshi_predictions").select("id").limit(1).execute()
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if any(k in err for k in ("404", "relation", "does not exist", "not found", "pgrst205")):
+            print(
+                "kalshi_predictions table not found.\n"
+                "Run the following SQL in your Supabase SQL Editor:\n\n"
+                + _KALSHI_PREDICTIONS_SQL
+            )
+            return False
+        print(f"ensure_kalshi_tables error: {e}")
+        return False
+
+
+def log_kalshi_prediction(
+    trade_date,
+    market: dict,
+    regime: dict,
+    sizing: dict,
+    user_id: str = "",
+) -> dict:
+    """Persist a Kalshi paper trade prediction to Supabase.
+
+    Upserts by (trade_date, market_ticker, user_id).
+    Returns {"saved": True} or {"error": str}.
+    """
+    if not supabase:
+        return {"error": "Supabase not configured"}
+    row = {
+        "trade_date":         str(trade_date),
+        "user_id":            user_id or "",
+        "market_ticker":      market.get("ticker", ""),
+        "market_title":       market.get("title", ""),
+        "market_category":    market.get("category", ""),
+        "regime_tag":         regime.get("regime_tag", ""),
+        "regime_label":       regime.get("label", ""),
+        "predicted_side":     market.get("predicted_side", ""),
+        "entry_price_cents":  int(market.get("price_of_our_side", 50)),
+        "confidence":         float(market.get("confidence", 0)),
+        "kelly_fraction":     float(sizing.get("size_f", 0)),
+        "paper_contracts":    int(sizing.get("contracts", 1)),
+        "paper_cost_cents":   int(sizing.get("cost_cents", 0)),
+        "paper_max_win_cents": int(sizing.get("max_win_cents", 0)),
+        "reasoning":          market.get("reasoning", ""),
+    }
+    try:
+        supabase.table("kalshi_predictions").upsert(
+            row, on_conflict="trade_date,market_ticker,user_id"
+        ).execute()
+        return {"saved": True}
+    except Exception as e:
+        print(f"log_kalshi_prediction error: {e}")
+        return {"error": str(e)}
+
+
+def update_kalshi_outcomes(
+    trade_date,
+    token: str = "",
+    user_id: str = "",
+    live: bool = False,
+) -> dict:
+    """Check Kalshi API for settled markets and update outcomes in Supabase.
+
+    For each open prediction logged on trade_date that has no outcome yet,
+    fetches the market result and records win/loss + P&L.
+    Returns {"updated": n, "total": m}.
+    """
+    if not supabase:
+        return {"updated": 0, "total": 0, "error": "Supabase not configured"}
+    try:
+        res = (
+            supabase.table("kalshi_predictions")
+            .select("*")
+            .eq("trade_date", str(trade_date))
+            .eq("user_id", user_id or "")
+            .is_("outcome_result", "null")
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        return {"updated": 0, "total": 0, "error": str(e)}
+
+    updated = 0
+    for row in rows:
+        ticker = row.get("market_ticker", "")
+        if not ticker:
+            continue
+        market_data = fetch_kalshi_market_by_ticker(ticker, token=token, live=live)
+        result = market_data.get("result")
+        if not result:
+            continue  # not settled yet
+
+        predicted_side = row.get("predicted_side", "")
+        contracts      = int(row.get("paper_contracts", 1) or 1)
+        entry_price    = int(row.get("entry_price_cents", 50) or 50)
+
+        # Kalshi results: "yes" or "no"
+        won = (result.lower() == predicted_side.lower())
+        if won:
+            settlement_cents = 100
+            pnl_cents = contracts * (100 - entry_price)
+        else:
+            settlement_cents = 0
+            pnl_cents = -contracts * entry_price
+
+        try:
+            supabase.table("kalshi_predictions").update({
+                "outcome_result":   result.upper(),
+                "settlement_cents": settlement_cents,
+                "pnl_cents":        pnl_cents,
+                "won":              won,
+                "settled_at":       datetime.now(EASTERN).isoformat(),
+            }).eq("id", row["id"]).execute()
+            updated += 1
+        except Exception as e:
+            print(f"update_kalshi_outcomes update error for {ticker}: {e}")
+
+    return {"updated": updated, "total": len(rows)}
+
+
+def get_kalshi_predictions(
+    days: int = 30,
+    user_id: str = "",
+    settled_only: bool = False,
+) -> list:
+    """Retrieve Kalshi prediction history from Supabase.
+
+    Returns list of dicts, newest first.
+    """
+    if not supabase:
+        return []
+    try:
+        from datetime import date as _date, timedelta as _td
+        cutoff = str(_date.today() - _td(days=days))
+        q = (
+            supabase.table("kalshi_predictions")
+            .select("*")
+            .eq("user_id", user_id or "")
+            .gte("trade_date", cutoff)
+            .order("created_at", desc=True)
+        )
+        if settled_only:
+            q = q.not_.is_("outcome_result", "null")
+        res = q.execute()
+        return res.data or []
+    except Exception as e:
+        print(f"get_kalshi_predictions error: {e}")
+        return []
+
+
+def get_kalshi_performance_summary(user_id: str = "") -> dict:
+    """Summarise Kalshi paper trading performance.
+
+    Returns: total, won, lost, pending, win_rate, total_pnl_cents, avg_confidence.
+    """
+    rows = get_kalshi_predictions(days=365, user_id=user_id)
+    if not rows:
+        return {
+            "total": 0, "won": 0, "lost": 0, "pending": 0,
+            "win_rate": 0.0, "total_pnl_cents": 0, "avg_confidence": 0.0,
+        }
+    settled  = [r for r in rows if r.get("outcome_result") is not None]
+    won      = [r for r in settled if r.get("won")]
+    lost     = [r for r in settled if not r.get("won")]
+    pending  = [r for r in rows if r.get("outcome_result") is None]
+    pnl      = sum(int(r.get("pnl_cents", 0) or 0) for r in settled)
+    conf_vals = [float(r["confidence"]) for r in rows if r.get("confidence")]
+    return {
+        "total":           len(rows),
+        "won":             len(won),
+        "lost":            len(lost),
+        "pending":         len(pending),
+        "win_rate":        round(100 * len(won) / max(len(settled), 1), 1),
+        "total_pnl_cents": pnl,
+        "avg_confidence":  round(sum(conf_vals) / max(len(conf_vals), 1), 3),
+    }
