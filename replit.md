@@ -2,11 +2,17 @@
 
 ## What This Is
 
-A Python Streamlit trading terminal (port 8080) for Volume Profile analysis of small-cap stocks. Built around the Alpaca API (SIP feed) + Supabase (multi-user auth + cloud data). Dark-mode, Plotly charts. $79/month SaaS pricing target.
+**EdgeIQ — "Find your edge, then automate it."**
+
+A Python Streamlit trading terminal (port 8080) for Volume Profile / IB structure analysis of small-cap stocks. Built around the Alpaca API (SIP feed) + Supabase (multi-user auth + cloud data). Dark-mode, Plotly charts.
 
 **Core thesis:** IB (Initial Balance — first hour of trading 9:30–10:30 AM) breakouts on high-TCS small-cap setups have asymmetric reward profiles — wins are 7–9× larger than losses in magnitude. The edge is in the SIZE of wins vs losses, not just win rate.
 
-**Autonomous paper trading → calibration → live trading pipeline.**
+**7-phase roadmap:** Personal calibration engine → Pattern discovery → Paper automation → Live autonomous trading → Meta-brain marketplace → Asset class expansion → Institutional data licensing
+
+**Pricing tiers:** $49 / $99 / $199 / $999 / $5K–15K/mo (institutional)
+
+**Autonomous paper trading → calibration → live trading → meta-brain marketplace pipeline.**
 
 ---
 
