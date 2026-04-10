@@ -8413,7 +8413,7 @@ def render_performance_tab():
                 Wins=("win_loss", lambda x: (x == "W").sum()),
                 Losses=("win_loss", lambda x: (x == "L").sum()),
             )
-            .assign(WinRate=lambda d: (d["Wins"] / d["Trades"] * 100).round(1))
+            .assign(WinRate=lambda d: (d["Wins"].astype(float) / d["Trades"].astype(float) * 100).round(1))
             .sort_index(ascending=False)
             .reset_index()
             .rename(columns={"trade_date": "Date", "WinRate": "Win Rate %"})
