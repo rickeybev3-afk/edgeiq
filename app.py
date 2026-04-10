@@ -8126,19 +8126,22 @@ def render_performance_tab():
     # ── Load paper trades ───────────────────────────────────────────────────────
     _pt_df = load_paper_trades(_AUTH_USER_ID, days=365)
 
-    # ── Load accuracy_tracker (structure predictions) ───────────────────────────
+    # ── Load accuracy_tracker (structure predictions only — bot watchlist calls) ──
     _at_df = pd.DataFrame()
     if supabase:
         try:
             _at_raw = (
                 supabase.table("accuracy_tracker")
-                .select("predicted_structure,correct,trade_date")
+                .select("predicted,correct,timestamp")
                 .eq("user_id", _AUTH_USER_ID)
-                .eq("entry_type", "watchlist_pred")
+                .eq("compare_key", "watchlist_pred")
                 .execute()
                 .data
             )
             _at_df = pd.DataFrame(_at_raw) if _at_raw else pd.DataFrame()
+            # Filter out '—' entries — these have no real prediction stored
+            if not _at_df.empty and "predicted" in _at_df.columns:
+                _at_df = _at_df[_at_df["predicted"].notna() & (_at_df["predicted"] != "—")]
         except Exception:
             _at_df = pd.DataFrame()
 
@@ -8306,9 +8309,9 @@ def render_performance_tab():
     else:
         _at_df["_correct_bool"] = _at_df["correct"] == "✅"
         _by_struct = (
-            _at_df.groupby("predicted_structure")
+            _at_df.groupby("predicted")
             .agg(Total=("_correct_bool", "count"), Correct=("_correct_bool", "sum"))
-            .assign(WinRate=lambda d: (d["Correct"] / d["Total"] * 100).round(1))
+            .assign(WinRate=lambda d: (d["Correct"].astype(float) / d["Total"].astype(float) * 100).round(1))
             .sort_values("Total", ascending=False)
             .reset_index()
         )
