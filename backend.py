@@ -7402,13 +7402,19 @@ def get_breadth_regime(trade_date=None, user_id: str = "") -> dict:
         res = q.order("trade_date", desc=True).limit(1).execute()
         if res.data:
             row = res.data[0]
-            result = classify_macro_regime(
-                row.get("four_pct_count", 0),
-                row.get("ratio_13_34", 0.0),
-                row.get("q_up", 0),
-                row.get("q_down", 0),
-            )
-            result["trade_date"] = row.get("trade_date", "")
+            four_pct = row.get("four_pct_count", 0)
+            ratio    = row.get("ratio_13_34",    0.0)
+            q_up_val = row.get("q_up",           0)
+            q_dn_val = row.get("q_down",         0)
+            result = classify_macro_regime(four_pct, ratio, q_up_val, q_dn_val)
+            # Always include the raw breadth inputs so callers like
+            # map_regime_to_kalshi() can compute confidence from the actual values
+            # instead of relying only on the derived regime_tag.
+            result["trade_date"]     = row.get("trade_date", "")
+            result["four_pct_count"] = int(four_pct)
+            result["ratio_13_34"]    = float(ratio)
+            result["q_up"]           = int(q_up_val)
+            result["q_down"]         = int(q_dn_val)
             return result
     except Exception as e:
         print(f"get_breadth_regime error: {e}")

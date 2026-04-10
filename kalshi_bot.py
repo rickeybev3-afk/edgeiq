@@ -423,6 +423,7 @@ def morning_signal_scan(trade_date: date) -> None:
     # ── Compute Kelly sizes + log to Supabase ────────────────────────────────
     logged = 0
     skipped_zero_kelly = 0
+    executed_opps = []   # only entries with contracts > 0 that were actually logged
     for opp in high_conf:
         sizing = kalshi_kelly_size(
             confidence=opp["confidence"],
@@ -440,8 +441,8 @@ def morning_signal_scan(trade_date: date) -> None:
             )
             continue
 
-        opp["_contracts"]  = sizing["contracts"]
-        opp["_cost_cents"] = sizing["cost_cents"]
+        opp["_contracts"]    = sizing["contracts"]
+        opp["_cost_cents"]   = sizing["cost_cents"]
         opp["_max_win_cents"] = sizing["max_win_cents"]
         log.info(
             f"  {opp['ticker']:30s} | {opp['predicted_side']:3s} "
@@ -458,6 +459,7 @@ def morning_signal_scan(trade_date: date) -> None:
         )
         if result.get("saved"):
             logged += 1
+            executed_opps.append(opp)   # track what was actually logged
         elif result.get("error"):
             log.warning(f"  Failed to log {opp['ticker']}: {result['error']}")
 
@@ -468,10 +470,21 @@ def morning_signal_scan(trade_date: date) -> None:
 
     # ── Live order placement (gated — PAPER MODE ONLY until track record met) ─
     if KALSHI_LIVE:
-        _maybe_place_live_orders(high_conf, token)
+        _maybe_place_live_orders(executed_opps, token)
 
-    # ── Telegram alert ───────────────────────────────────────────────────────
-    _alert_opportunities(high_conf, regime, trade_date)
+    # ── Telegram alert — only show positions that were actually logged ─────────
+    if executed_opps:
+        _alert_opportunities(executed_opps, regime, trade_date)
+    elif skipped_zero_kelly > 0:
+        # All candidates had zero Kelly — send informational message
+        tg_send(
+            f"📊 <b>Kalshi Scan — {trade_date}</b> [{_MODE_STR}]\n"
+            f"🌡️ Regime: {regime.get('label', 'Unknown')}\n"
+            f"{len(high_conf)} candidate(s) found but ALL were skipped — "
+            f"fractional Kelly returned 0 contracts (no positive edge at current prices)."
+        )
+    else:
+        _alert_no_signal(regime, trade_date)
 
 
 def eod_outcome_update(trade_date: date) -> None:
