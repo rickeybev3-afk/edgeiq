@@ -370,12 +370,16 @@ def _alert_setup(r: dict, trade_date: date):
     return sent
 
 
-def _alert_morning_summary(qualified: list, total_scanned: int, trade_date: date):
+def _alert_morning_summary(
+    qualified: list, total_scanned: int, trade_date: date, effective_tcs: int = None
+):
     """Send a summary header before individual setup alerts."""
+    tcs_threshold = effective_tcs if effective_tcs is not None else MIN_TCS
+
     # Load macro regime for context line
     _regime_line = ""
     try:
-        _rg = get_breadth_regime()
+        _rg = get_breadth_regime(user_id=USER_ID)
         if _rg and _rg.get("regime_tag", "unknown") != "unknown":
             _mode_map = {"home_run": "🔥 Home Run", "singles": "🟡 Singles", "caution": "❄️ Caution"}
             _mode_str = _mode_map.get(_rg.get("mode", ""), "")
@@ -388,7 +392,7 @@ def _alert_morning_summary(qualified: list, total_scanned: int, trade_date: date
     if not qualified:
         tg_send(
             f"🔍 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
-            f"No setups met TCS ≥ {MIN_TCS} today out of {total_scanned} scanned.\n"
+            f"No setups met TCS ≥ {tcs_threshold} today out of {total_scanned} scanned.\n"
             f"Watching for intraday opportunities..."
             + _regime_line
         )
@@ -396,7 +400,7 @@ def _alert_morning_summary(qualified: list, total_scanned: int, trade_date: date
     tg_send(
         f"🔔 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"✅ <b>{len(qualified)} setup(s)</b> qualified (TCS ≥ {MIN_TCS})\n"
+        f"✅ <b>{len(qualified)} setup(s)</b> qualified (TCS ≥ {tcs_threshold})\n"
         f"📋 Scanned {total_scanned} tickers from your Finviz watchlist"
         + _regime_line
         + "\nSending individual alerts now..."
@@ -635,10 +639,10 @@ def morning_scan():
     )
 
     # Telegram: summary header
-    _alert_morning_summary(qualified, len(results), today)
+    _alert_morning_summary(qualified, len(results), today, effective_tcs=effective_min_tcs)
 
     if qualified:
-        result = log_paper_trades(qualified, user_id=USER_ID, min_tcs=MIN_TCS)
+        result = log_paper_trades(qualified, user_id=USER_ID, min_tcs=effective_min_tcs)
         log.info(f"Logged: {result.get('saved', 0)} new | skipped: {result.get('skipped', 0)} (already exist)")
         # Telegram: one alert per setup
         for r in qualified:

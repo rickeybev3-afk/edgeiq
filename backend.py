@@ -7244,7 +7244,7 @@ def classify_macro_regime(
     """
     score = 0
 
-    # 4%/day count — primary signal
+    # 4%/day count — primary signal (hard gate)
     if four_pct_count >= 600:
         score += 3      # Stampede
     elif four_pct_count >= 300:
@@ -7253,14 +7253,14 @@ def classify_macro_regime(
         score += 1      # Neutral / low
     # < 100 = 0
 
-    # A/D ratio
+    # A/D ratio (hard gate)
     if ratio_13_34 >= 2.0:
         score += 2      # Very bullish breadth
     elif ratio_13_34 >= 1.0:
         score += 1      # Mild advance
     # < 1.0 = 0
 
-    # Quarterly breadth
+    # Quarterly breadth (tiebreaker — cannot override primary gates)
     if q_up > 0 and q_down > 0:
         spread = q_down - q_up   # positive = more stocks down
         if spread < -200:        # q_up > q_down by 200+ = full flip
@@ -7269,6 +7269,15 @@ def classify_macro_regime(
             score += 1
         elif spread > 500:       # deeply bearish quarterly
             score -= 1
+
+    # Hard primary gates: hot_tape requires ≥300 stocks AND ratio ≥1.0
+    # This prevents quarterly bonus alone from driving a classification jump
+    _primary_score = (3 if four_pct_count >= 600 else 2 if four_pct_count >= 300 else
+                      1 if four_pct_count >= 100 else 0)
+    _ratio_score   = (2 if ratio_13_34 >= 2.0 else 1 if ratio_13_34 >= 1.0 else 0)
+    if _primary_score < 2 or _ratio_score < 1:
+        # Insufficient primary breadth — cap at warm regardless of quarterly boost
+        score = min(score, 4)
 
     if score >= 5:
         return {
@@ -7388,11 +7397,12 @@ def save_breadth_regime(
 
 
 def get_breadth_regime(trade_date=None, user_id: str = "") -> dict:
-    """Retrieve the most recent breadth regime from Supabase.
+    """Retrieve the most recent breadth regime from Supabase for a specific user.
 
-    If trade_date is given, looks up that specific date.
-    Otherwise returns the most recent entry.
+    If trade_date is given, looks up that specific date for the user.
+    Otherwise returns the most recent entry for that user.
     Falls back to a neutral 'no data' dict on any error.
+    user_id is required to scope results correctly; global reads are not permitted.
     """
     _neutral = {
         "regime_tag":    "unknown",
@@ -7405,23 +7415,17 @@ def get_breadth_regime(trade_date=None, user_id: str = "") -> dict:
     }
     if not supabase:
         return _neutral
+    # Require user_id to prevent cross-user data leakage
+    uid = user_id or ""
     try:
+        q = (
+            supabase.table("macro_breadth_log")
+            .select("*")
+            .eq("user_id", uid)
+        )
         if trade_date:
-            res = (
-                supabase.table("macro_breadth_log")
-                .select("*")
-                .eq("trade_date", str(trade_date))
-                .limit(1)
-                .execute()
-            )
-        else:
-            res = (
-                supabase.table("macro_breadth_log")
-                .select("*")
-                .order("trade_date", desc=True)
-                .limit(1)
-                .execute()
-            )
+            q = q.eq("trade_date", str(trade_date))
+        res = q.order("trade_date", desc=True).limit(1).execute()
         if res.data:
             row = res.data[0]
             result = classify_macro_regime(
@@ -7438,18 +7442,38 @@ def get_breadth_regime(trade_date=None, user_id: str = "") -> dict:
 
 
 def get_breadth_regime_history(days: int = 30, user_id: str = "") -> list:
-    """Return up to `days` breadth regime entries from Supabase, newest first."""
+    """Return up to `days` breadth regime entries from Supabase for a user, newest first.
+
+    user_id is required to scope results to the authenticated user only.
+    """
     if not supabase:
         return []
+    uid = user_id or ""
     try:
+        from datetime import date as _date, timedelta as _td
+        cutoff = str(_date.today() - _td(days=days))
         res = (
             supabase.table("macro_breadth_log")
             .select("*")
+            .eq("user_id", uid)
+            .gte("trade_date", cutoff)
             .order("trade_date", desc=True)
             .limit(days)
             .execute()
         )
-        return res.data or []
+        raw = res.data or []
+        # Enrich each row with computed regime fields
+        enriched = []
+        for row in raw:
+            entry = classify_macro_regime(
+                row.get("four_pct_count", 0),
+                row.get("ratio_13_34", 0.0),
+                row.get("q_up", 0),
+                row.get("q_down", 0),
+            )
+            entry["trade_date"] = row.get("trade_date", "")
+            enriched.append(entry)
+        return enriched
     except Exception as e:
         print(f"get_breadth_regime_history error: {e}")
         return []

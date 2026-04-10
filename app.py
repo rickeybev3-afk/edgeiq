@@ -146,7 +146,8 @@ if st.session_state.brain_session_total == 0:
 # ── Load macro breadth regime from Supabase on first load ─────────────────────
 if st.session_state.breadth_regime is None:
     try:
-        st.session_state.breadth_regime = get_breadth_regime()
+        _uid_startup = st.session_state.get("auth_user_id", "")
+        st.session_state.breadth_regime = get_breadth_regime(user_id=_uid_startup)
     except Exception:
         pass
 
@@ -6814,7 +6815,8 @@ Nothing here requires any input from you. All numbers update automatically as yo
     st.markdown("## 🌡️ Macro Regime History")
     st.caption("Last 30 days of tape regime — track how breadth conditions have shifted over time.")
     try:
-        _rh = get_breadth_regime_history(days=30)
+        _rh_uid = st.session_state.get("auth_user_id", "")
+        _rh = get_breadth_regime_history(days=30, user_id=_rh_uid)
         if _rh:
             import plotly.graph_objects as _pgo
             _rh_sorted = sorted(_rh, key=lambda x: x.get("trade_date", ""))
