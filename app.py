@@ -8359,8 +8359,8 @@ def render_performance_tab():
             return ""
 
         st.dataframe(
-            _by_struct_display.style.applymap(_color_rate, subset=["Win Rate %"]),
-            use_container_width=True, hide_index=True, height=None
+            _by_struct_display.style.map(_color_rate, subset=["Win Rate %"]),
+            use_container_width=True, hide_index=True
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
