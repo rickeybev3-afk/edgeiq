@@ -5435,9 +5435,37 @@ CREATE TABLE IF NOT EXISTS paper_trades (
   false_break_up  BOOLEAN DEFAULT FALSE,
   false_break_down BOOLEAN DEFAULT FALSE,
   min_tcs_filter  INT DEFAULT 50,
+  regime_tag      TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 """
+
+_PAPER_TRADES_REGIME_MIGRATION = (
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS regime_tag TEXT;"
+)
+
+
+def ensure_paper_trades_regime_column() -> bool:
+    """Check if regime_tag column exists in paper_trades. Returns True if present.
+
+    If missing, prints the migration SQL to run in Supabase SQL Editor.
+    """
+    if not supabase:
+        return False
+    try:
+        supabase.table("paper_trades").select("regime_tag").limit(1).execute()
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if any(k in err for k in ("column", "not exist", "not found", "pgrst")):
+            print(
+                "regime_tag column missing from paper_trades.\n"
+                "Run in Supabase SQL Editor:\n\n"
+                + _PAPER_TRADES_REGIME_MIGRATION
+            )
+            return False
+        print(f"ensure_paper_trades_regime_column error: {e}")
+        return False
 
 
 def ensure_paper_trades_table() -> bool:
@@ -5479,7 +5507,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
             if key in existing_keys:
                 skipped += 1
                 continue
-            records.append({
+            row_record = {
                 "user_id":        user_id or "",
                 "trade_date":     str(r.get("sim_date", r.get("trade_date", ""))),
                 "ticker":         r.get("ticker", ""),
@@ -5497,7 +5525,11 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 "false_break_up":  bool(r.get("false_break_up", False)),
                 "false_break_down": bool(r.get("false_break_down", False)),
                 "min_tcs_filter": min_tcs,
-            })
+            }
+            # Include regime_tag if present and column exists; safe to omit if column missing
+            if r.get("regime_tag"):
+                row_record["regime_tag"] = r["regime_tag"]
+            records.append(row_record)
         if records:
             supabase.table("paper_trades").insert(records).execute()
         return {"saved": len(records), "skipped": skipped}

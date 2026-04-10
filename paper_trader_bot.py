@@ -598,18 +598,41 @@ def morning_scan():
     log.info("MORNING SCAN — logging IB entries + sending Telegram alerts")
     log.info("=" * 60)
 
+    # ── Load macro regime — adjust TCS floor and tag every result ──────────
+    regime = {}
+    effective_min_tcs = MIN_TCS
+    try:
+        regime = get_breadth_regime() or {}
+        tcs_adj = regime.get("tcs_floor_adj", 0)
+        if tcs_adj:
+            effective_min_tcs = max(30, MIN_TCS + tcs_adj)  # never go below 30
+            log.info(
+                f"Regime: {regime.get('label','?')} → TCS floor adjusted "
+                f"{MIN_TCS} + ({tcs_adj:+d}) = {effective_min_tcs}"
+            )
+    except Exception as exc:
+        log.warning(f"Could not load macro regime: {exc}")
+
     results = _run_scan(today, cutoff_h=10, cutoff_m=30)
     if not results:
         log.warning("No results from morning scan.")
         tg_send(f"⚠️ <b>Morning Scan Failed</b> — {today}\nNo bar data returned. Check Alpaca connection.")
         return
 
+    # Tag every result with the current macro regime
+    regime_tag = regime.get("regime_tag", "")
+    for r in results:
+        r["regime_tag"] = regime_tag
+
     qualified = [
         dict(r, sim_date=str(today))
         for r in results
-        if float(r.get("tcs", 0)) >= MIN_TCS
+        if float(r.get("tcs", 0)) >= effective_min_tcs
     ]
-    log.info(f"{len(qualified)} setups passed TCS ≥ {MIN_TCS} (of {len(results)} scanned)")
+    log.info(
+        f"{len(qualified)} setups passed TCS ≥ {effective_min_tcs} "
+        f"(of {len(results)} scanned) | regime: {regime_tag or 'none'}"
+    )
 
     # Telegram: summary header
     _alert_morning_summary(qualified, len(results), today)

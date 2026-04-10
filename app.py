@@ -35,6 +35,8 @@ from backend import (
     get_breadth_regime_history,
     ensure_macro_breadth_log_table,
     _MACRO_BREADTH_SQL,
+    ensure_paper_trades_regime_column,
+    _PAPER_TRADES_REGIME_MIGRATION,
 )
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
@@ -3505,14 +3507,20 @@ with st.sidebar:
             help="Stocks down 25%+ in a quarter (red line on Stockbee chart).",
         )
 
-    _table_ready = ensure_macro_breadth_log_table()
-    if not _table_ready:
+    _table_ready   = ensure_macro_breadth_log_table()
+    _col_ready     = ensure_paper_trades_regime_column()
+    if not _table_ready or not _col_ready:
         with st.expander("⚠️ One-time setup required", expanded=False):
             st.caption(
-                "The `macro_breadth_log` table doesn't exist in Supabase yet. "
-                "Open your [Supabase SQL Editor](https://supabase.com/dashboard) and run:"
+                "Run the SQL below in your "
+                "[Supabase SQL Editor](https://supabase.com/dashboard) to finish setup:"
             )
-            st.code(_MACRO_BREADTH_SQL, language="sql")
+            if not _table_ready:
+                st.markdown("**1. Create macro_breadth_log table:**")
+                st.code(_MACRO_BREADTH_SQL, language="sql")
+            if not _col_ready:
+                st.markdown("**2. Add regime_tag column to paper_trades:**")
+                st.code(_PAPER_TRADES_REGIME_MIGRATION, language="sql")
 
     if st.button("💾 Save Regime", use_container_width=True, key="breadth_save_btn"):
         if _br_4pct > 0 or _br_ratio > 0:
@@ -6800,6 +6808,83 @@ Nothing here requires any input from you. All numbers update automatically as yo
     elif _pat_result and _pat_result.get("scanned", 0) == 0:
         st.warning("Scan ran but found no sessions with bar data. "
                    "Make sure your journal has entries and try switching feeds.")
+
+    # ── Macro Regime History ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("## 🌡️ Macro Regime History")
+    st.caption("Last 30 days of tape regime — track how breadth conditions have shifted over time.")
+    try:
+        _rh = get_breadth_regime_history(days=30)
+        if _rh:
+            import plotly.graph_objects as _pgo
+            _rh_sorted = sorted(_rh, key=lambda x: x.get("trade_date", ""))
+            _rh_dates  = [r.get("trade_date", "") for r in _rh_sorted]
+            _rh_scores = []
+            _rh_labels = []
+            _rh_colors = []
+            _score_map  = {"hot_tape": 3, "warm": 2, "cold": 1, "unknown": 0}
+            _color_map  = {"hot_tape": "#ff6b35", "warm": "#ffd700", "cold": "#5c9bd4", "unknown": "#555555"}
+            for r in _rh_sorted:
+                _tag = r.get("regime_tag", "unknown")
+                _rh_scores.append(_score_map.get(_tag, 0))
+                _rh_labels.append(r.get("label", "?"))
+                _rh_colors.append(_color_map.get(_tag, "#555555"))
+
+            _rh_fig = _pgo.Figure()
+            _rh_fig.add_trace(_pgo.Bar(
+                x=_rh_dates,
+                y=_rh_scores,
+                marker_color=_rh_colors,
+                text=_rh_labels,
+                textposition="inside",
+                hovertemplate="%{x}<br>%{text}<extra></extra>",
+            ))
+            _rh_fig.update_layout(
+                height=200,
+                margin=dict(l=0, r=0, t=20, b=0),
+                paper_bgcolor="#0e1117",
+                plot_bgcolor="#0e1117",
+                font_color="#e0e0e0",
+                xaxis=dict(showgrid=False, tickformat="%b %d"),
+                yaxis=dict(
+                    showticklabels=True,
+                    tickvals=[1, 2, 3],
+                    ticktext=["❄️ Cold", "🟡 Warm", "🔥 Hot"],
+                    gridcolor="#1e2a3a",
+                    range=[0, 3.5],
+                ),
+                showlegend=False,
+            )
+            st.plotly_chart(_rh_fig, use_container_width=True)
+
+            # Mini table
+            _rh_df_data = [
+                {
+                    "Date": r.get("trade_date", ""),
+                    "Regime": r.get("label", "?"),
+                    "Mode": r.get("mode", "").replace("_", " ").title(),
+                    "TCS Adj": (f"{r.get('tcs_floor_adj', 0):+d}" if r.get("tcs_floor_adj", 0) != 0 else "—"),
+                }
+                for r in reversed(_rh_sorted)
+            ]
+            st.dataframe(
+                _rh_df_data,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Date":    st.column_config.TextColumn("Date", width="small"),
+                    "Regime":  st.column_config.TextColumn("Regime", width="medium"),
+                    "Mode":    st.column_config.TextColumn("Mode", width="medium"),
+                    "TCS Adj": st.column_config.TextColumn("TCS Adj", width="small"),
+                },
+            )
+        else:
+            st.info(
+                "No breadth regime history yet. Enter your first reading in the "
+                "🌡️ Macro Regime panel in the sidebar."
+            )
+    except Exception as _rhe:
+        st.caption(f"Could not load regime history: {_rhe}")
 
     # ── Brain Accuracy (formerly Tracker tab) ─────────────────────────────
     st.markdown("---")
