@@ -759,6 +759,189 @@ def nightly_verify():
         log.error(f"Auto-verify failed: {e}")
 
 
+def update_daily_build_notes() -> bool:
+    """Append today's EOD results to .local/build_notes.md.
+    Called after nightly_recalibration() finishes.  Non-fatal — bot continues
+    normally if this function fails for any reason.
+    """
+    import json as _json
+
+    today_str   = datetime.now(EASTERN).strftime("%Y-%m-%d")
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    BUILD_NOTES = os.path.join(_script_dir, ".local", "build_notes.md")
+
+    log.info("=" * 60)
+    log.info(f"BUILD NOTES UPDATE — appending EOD results for {today_str}")
+    log.info("=" * 60)
+
+    # ── Read current file ─────────────────────────────────────────────────────
+    try:
+        with open(BUILD_NOTES, "r", encoding="utf-8") as _f:
+            content = _f.read()
+    except FileNotFoundError:
+        log.warning(f"update_daily_build_notes: {BUILD_NOTES} not found, skipping")
+        return False
+
+    # ── Fetch today's paper trades ─────────────────────────────────────────────
+    import pandas as _pd
+    df_today = _pd.DataFrame()
+    try:
+        from backend import load_paper_trades as _lpt
+        df_all = _lpt(user_id=USER_ID, days=1)
+        if not df_all.empty and "trade_date" in df_all.columns:
+            df_today = df_all[df_all["trade_date"].astype(str).str.startswith(today_str)]
+    except Exception as _exc:
+        log.warning(f"update_daily_build_notes: could not load paper trades: {_exc}")
+
+    # ── Load current brain weights ────────────────────────────────────────────
+    weights: dict = {}
+    try:
+        _bw_path = os.path.join(_script_dir, "brain_weights.json")
+        with open(_bw_path, "r", encoding="utf-8") as _f:
+            weights = _json.load(_f)
+    except Exception as _exc:
+        log.warning(f"update_daily_build_notes: could not load brain_weights.json: {_exc}")
+
+    # ── Compute day stats ─────────────────────────────────────────────────────
+    total_scanned = len(df_today)
+    if total_scanned and "min_tcs_filter" in df_today.columns:
+        _mtf = df_today["min_tcs_filter"].dropna()
+        min_tcs_used = int(_mtf.max()) if not _mtf.empty else MIN_TCS
+    else:
+        min_tcs_used = MIN_TCS
+
+    if total_scanned:
+        qual_df  = df_today[df_today["tcs"].astype(float) >= min_tcs_used]
+        _wl_col  = df_today["win_loss"].astype(str) if "win_loss" in df_today.columns else _pd.Series([""] * total_scanned)
+        res_df   = df_today[_wl_col.isin(["Win", "Loss"])]
+        wins_df  = res_df[res_df["win_loss"] == "Win"]
+        loss_df  = res_df[res_df["win_loss"] == "Loss"]
+        win_n    = len(wins_df)
+        loss_n   = len(loss_df)
+        total_r  = win_n + loss_n
+        win_rate = round(100 * win_n / total_r, 1) if total_r else None
+        avg_tcs  = round(df_today["tcs"].astype(float).mean(), 1)
+        avg_wft  = round(wins_df["follow_thru_pct"].astype(float).mean(), 1) if win_n else None
+        avg_lft  = round(loss_df["follow_thru_pct"].astype(float).mean(), 1) if loss_n else None
+        alerted  = ", ".join(qual_df["ticker"].tolist()) if len(qual_df) else "—"
+    else:
+        qual_df = res_df = wins_df = loss_df = _pd.DataFrame()
+        win_n = loss_n = total_r = 0
+        win_rate = avg_tcs = avg_wft = avg_lft = None
+        alerted = "—"
+
+    # Simulated $ P&L: 100 shares × open_price × (follow_thru_pct / 100)
+    sim_pnl = 0.0
+    if total_scanned and not res_df.empty:
+        for _, _row in res_df.iterrows():
+            try:
+                _ft = float(_row.get("follow_thru_pct") or 0)
+                _op = float(_row.get("open_price") or 0)
+                sim_pnl += (_ft / 100) * _op * 100
+            except Exception:
+                pass
+    sim_pnl = round(sim_pnl, 2)
+
+    # ── Build new row strings ─────────────────────────────────────────────────
+    trade_rows: list = []
+    if not df_today.empty:
+        for _, _row in df_today.iterrows():
+            _tk  = str(_row.get("ticker", "?"))
+            _tcs = f"{float(_row.get('tcs', 0)):.0f}"
+            _pred = str(_row.get("predicted") or "?")
+            _act  = str(_row.get("actual_outcome") or "—")
+            _wl   = str(_row.get("win_loss") or "—")
+            _ft   = _row.get("follow_thru_pct")
+            _fts  = f"{float(_ft):+.1f}%" if _ft is not None and str(_ft) not in ("", "None", "nan") else "—"
+            trade_rows.append(f"| {today_str} | {_tk} | {_tcs} | {_pred} | {_act} | {_wl} | {_fts} |")
+    else:
+        trade_rows.append(f"| {today_str} | — | — | No setups logged | — | — | — |")
+
+    _wr   = f"{win_rate}%" if win_rate is not None else "—"
+    _awf  = f"+{avg_wft}%" if avg_wft is not None else "—"
+    _alf  = f"{avg_lft}%" if avg_lft is not None else "—"
+    _sign = "+" if sim_pnl >= 0 else ""
+    pnl_row = f"| {today_str} | {win_n} | {loss_n} | {_wr} | {_awf} | {_alf} | {_sign}${sim_pnl:.2f} |"
+
+    _W_KEYS = ["trend_bull", "trend_bear", "normal", "neutral", "ntrl_extreme",
+               "nrml_variation", "non_trend", "double_dist"]
+    _bw_vals = " | ".join(f"{weights.get(k, 1.0):.4f}" for k in _W_KEYS)
+    bw_row   = f"| {today_str} | {_bw_vals} |"
+
+    _avg_tcs_s = f"{avg_tcs}" if avg_tcs is not None else "—"
+    scan_row   = f"| {today_str} | {total_scanned} | {len(qual_df)} | {_wr} | {_avg_tcs_s} | {alerted} |"
+
+    # ── Section headings and table headers ────────────────────────────────────
+    _TRADE_H = "## 📊 BOT PAPER TRADE LOG"
+    _PNL_H   = "## 💰 BOT P&L LOG"
+    _BRAIN_H = "## 🧠 BRAIN WEIGHT HISTORY"
+    _SCAN_H  = "## 🔍 DAILY SCAN OBSERVATIONS"
+
+    _TRADE_INIT = (
+        f"{_TRADE_H}\n\n"
+        "| Date | Ticker | TCS | Predicted | Actual | W/L | Follow-thru % |\n"
+        "|---|---|---|---|---|---|---|\n"
+    )
+    _PNL_INIT = (
+        f"{_PNL_H}\n\n"
+        "| Date | Wins | Losses | Win Rate | Avg Win FT% | Avg Loss FT% | Sim P&L (100sh) |\n"
+        "|---|---|---|---|---|---|---|\n"
+    )
+    _BRAIN_INIT = (
+        f"{_BRAIN_H}\n\n"
+        "| Date | trend_bull | trend_bear | normal | neutral |"
+        " ntrl_extreme | nrml_variation | non_trend | double_dist |\n"
+        "|---|---|---|---|---|---|---|---|---|\n"
+    )
+    _SCAN_INIT = (
+        f"{_SCAN_H}\n\n"
+        "| Date | Total Scanned | Qualified | Win Rate | Avg TCS | Alerted Tickers |\n"
+        "|---|---|---|---|---|---|\n"
+    )
+
+    def _append_rows_to_section(text: str, heading: str, init_block: str, new_rows: list) -> str:
+        """Append new_rows inside the section identified by heading.
+        Creates the section at the bottom if it doesn't exist yet.
+        Never deletes or reformats any existing content.
+        """
+        if heading not in text:
+            sep = "\n\n---\n\n"
+            return text.rstrip("\n") + sep + init_block + "\n".join(new_rows) + "\n"
+
+        idx   = text.index(heading)
+        after = text[idx + len(heading):]
+        next_h = after.find("\n## ")
+        if next_h == -1:
+            # Last section in the file — append at end
+            return text.rstrip("\n") + "\n" + "\n".join(new_rows) + "\n"
+        # Insert rows just before the next ## heading
+        insert_at = idx + len(heading) + next_h
+        return (
+            text[:insert_at].rstrip("\n")
+            + "\n" + "\n".join(new_rows)
+            + "\n\n"
+            + text[insert_at:].lstrip("\n")
+        )
+
+    content = _append_rows_to_section(content, _TRADE_H, _TRADE_INIT, trade_rows)
+    content = _append_rows_to_section(content, _PNL_H,   _PNL_INIT,   [pnl_row])
+    content = _append_rows_to_section(content, _BRAIN_H, _BRAIN_INIT, [bw_row])
+    content = _append_rows_to_section(content, _SCAN_H,  _SCAN_INIT,  [scan_row])
+
+    # ── Write back ────────────────────────────────────────────────────────────
+    try:
+        with open(BUILD_NOTES, "w", encoding="utf-8") as _f:
+            _f.write(content)
+        log.info(
+            f"Build notes updated: {len(trade_rows)} trade row(s) | "
+            f"wins={win_n} losses={loss_n} | sim P&L {_sign}${abs(sim_pnl):.2f}"
+        )
+        return True
+    except Exception as _exc:
+        log.error(f"update_daily_build_notes: write failed: {_exc}")
+        return False
+
+
 def nightly_recalibration():
     """4:30 PM ET — read all Supabase outcome data, update brain weights."""
     log.info("=" * 60)
@@ -913,6 +1096,10 @@ def main():
             ):
                 nightly_recalibration()
                 _recalibration_done = True
+                try:
+                    update_daily_build_notes()
+                except Exception as _bne:
+                    log.warning(f"Build notes update failed (non-fatal): {_bne}")
             time.sleep(60)
             continue
 
@@ -974,6 +1161,10 @@ def main():
         ):
             nightly_recalibration()
             _recalibration_done = True
+            try:
+                update_daily_build_notes()
+            except Exception as _bne:
+                log.warning(f"Build notes update failed (non-fatal): {_bne}")
 
         time.sleep(30)
 
