@@ -8293,7 +8293,7 @@ def render_performance_tab():
             return ""
 
         st.dataframe(
-            _show.style.applymap(_color_wl, subset=["W/L"]) if "W/L" in _show.columns else _show,
+            _show.style.map(_color_wl, subset=["W/L"]) if "W/L" in _show.columns else _show,
             use_container_width=True, height=280
         )
 
@@ -8360,7 +8360,7 @@ def render_performance_tab():
 
         st.dataframe(
             _by_struct_display.style.map(_color_rate, subset=["Win Rate %"]),
-            use_container_width=True, hide_index=True
+            use_container_width=True, hide_index=True, height="stretch"
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -8394,8 +8394,8 @@ def render_performance_tab():
             return "color: #90a4ae"
 
         st.dataframe(
-            _bw_display.style.applymap(_color_delta, subset=["Δ Baseline"]),
-            use_container_width=True, hide_index=True
+            _bw_display.style.map(_color_delta, subset=["Δ Baseline"]),
+            use_container_width=True, hide_index=True, height="stretch"
         )
     else:
         st.info("Brain weights not yet loaded.")
@@ -8442,8 +8442,8 @@ def render_performance_tab():
             return ""
 
         st.dataframe(
-            _daily.style.applymap(_color_winrate, subset=["Win Rate %"]),
-            use_container_width=True, hide_index=True
+            _daily.style.map(_color_winrate, subset=["Win Rate %"]),
+            use_container_width=True, hide_index=True, height="stretch"
         )
     else:
         st.info("No daily breakdown available yet.")
