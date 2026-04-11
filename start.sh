@@ -7,11 +7,14 @@
 cd "$(dirname "$0")"
 
 # ── Paper Trader Bot ──────────────────────────────────────────────────────────
-# Start as a background process so the bot runs its full scheduler independently.
-# Note: /tmp is ephemeral on VM restarts; logs are for the current session only.
 nohup python3 paper_trader_bot.py >> /tmp/paper_trader_bot.log 2>&1 &
 BOT_PID=$!
 echo "[start.sh] Paper Trader Bot started (PID: $BOT_PID)"
+
+# ── Kalshi Prediction Bot ─────────────────────────────────────────────────────
+nohup python3 kalshi_bot.py >> /tmp/kalshi_bot.log 2>&1 &
+KALSHI_PID=$!
+echo "[start.sh] Kalshi Bot started (PID: $KALSHI_PID)"
 
 # ── Streamlit Dashboard ───────────────────────────────────────────────────────
 # Run in the foreground — this keeps the VM process alive.

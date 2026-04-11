@@ -1105,19 +1105,6 @@ def main():
 
     if TG_TOKEN and TG_CHAT_ID:
         log.info("Telegram alerts: ENABLED")
-        tg_send(
-            f"✅ <b>EdgeIQ Bot Online</b> — {date.today()}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📋 {len(TICKERS)} tickers loaded\n"
-            f"⚡ TCS threshold: {MIN_TCS}\n"
-            f"📡 Feed: {FEED.upper()}\n"
-            f"🕐 Schedule:\n"
-            f"  9:15 AM  → Finviz watchlist refresh\n"
-            f" 10:47 AM  → Morning scan + alerts\n"
-            f"  2:00 PM  → Intraday scan\n"
-            f"  4:20 PM  → EOD outcomes\n"
-            f"  4:30 PM  → Brain recalibration"
-        )
     else:
         log.warning("Telegram alerts: DISABLED (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set)")
 

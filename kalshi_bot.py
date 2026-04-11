@@ -559,18 +559,7 @@ def main():
         # Don't return — bot can still run, logging will fail gracefully.
 
     if TG_TOKEN and TG_CHAT_ID:
-        tg_send(
-            f"📊 <b>Kalshi Bot Online</b> — {date.today()} [{_MODE_STR}]\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💼 Paper account: ${PAPER_ACCOUNT_CENTS/100:,.0f}\n"
-            f"🧠 Min confidence: {MIN_CONFIDENCE:.0%}\n"
-            f"📐 Kelly fraction: {KELLY_FRACTION:.0%}\n"
-            f"📋 Max markets/day: {MAX_MARKETS_PER_DAY}\n"
-            f"🕐 Schedule:\n"
-            f"   9:30 AM — market scan + signal mapping\n"
-            f"  10:00 AM — log positions + Telegram alerts\n"
-            f"   4:30 PM — settle outcomes + P&L summary"
-        )
+        log.info("Telegram: ENABLED")
     else:
         log.warning("Telegram: DISABLED (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set)")
 
