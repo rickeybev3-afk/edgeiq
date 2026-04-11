@@ -553,6 +553,34 @@ def render_beta_portal(beta_user_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# BUILD NOTES VIEWER  — accessible via /?notes=<USER_ID>
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_build_notes():
+    """Render build notes as a live hosted page. Accessible via /?notes=USER_ID."""
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { display: none !important; }
+    .notes-header { text-align: center; padding: 32px 0 8px 0; }
+    .notes-header h1 { font-size: 28px; font-weight: 800; color: #7986cb; margin: 0; }
+    .notes-header p  { font-size: 12px; color: #666; margin: 4px 0 0 0; }
+    </style>
+    <div class="notes-header">
+      <h1>📋 EdgeIQ Build Notes</h1>
+      <p>Live document — updates automatically</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    notes_path = os.path.join(os.path.dirname(__file__), ".local", "build_notes.md")
+    if os.path.exists(notes_path):
+        with open(notes_path, "r") as f:
+            content = f.read()
+        st.markdown(content)
+    else:
+        st.error("Build notes file not found.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # LIVE STREAM
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3378,6 +3406,13 @@ if not st.session_state.get("auth_user") and not st.session_state.get("_restore_
 _beta_user_id = st.query_params.get("beta", "")
 if _beta_user_id:
     render_beta_portal(_beta_user_id)
+    st.stop()
+
+# ── Build notes intercept — accessible via /?notes=<USER_ID> ─────────────────
+_NOTES_USER_ID = "a5e1fcab-8369-42c4-8550-a8a19734510c"
+_notes_param = st.query_params.get("notes", "")
+if _notes_param == _NOTES_USER_ID:
+    render_build_notes()
     st.stop()
 
 if not st.session_state.get("auth_user"):
