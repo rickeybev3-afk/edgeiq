@@ -9101,6 +9101,39 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _rk_uid = st.session_state.get("auth_user_id", "")
         _rk_col1, _rk_col2 = st.columns([1, 1])
 
+        # ── Draft persistence helpers ────────────────────────────────────────
+        import json as _json, pathlib as _pl
+        def _rk_draft_path(uid, dt):
+            safe = str(dt).replace("-", "")
+            safe_uid = (uid or "anon")[:16].replace("/", "")
+            return _pl.Path(f"/tmp/rk_draft_{safe_uid}_{safe}.json")
+
+        def _save_rk_draft(uid, dt, tickers):
+            try:
+                payload = {
+                    t: {"rank": st.session_state.get(f"rk_sel_{t}", 0),
+                        "notes": st.session_state.get(f"rk_note_{t}", "")}
+                    for t in tickers
+                }
+                _rk_draft_path(uid, dt).write_text(_json.dumps(payload))
+            except Exception:
+                pass
+
+        def _load_rk_draft(uid, dt):
+            try:
+                p = _rk_draft_path(uid, dt)
+                if p.exists():
+                    return _json.loads(p.read_text())
+            except Exception:
+                pass
+            return {}
+
+        def _clear_rk_draft(uid, dt):
+            try:
+                _rk_draft_path(uid, dt).unlink(missing_ok=True)
+            except Exception:
+                pass
+
         with _rk_col1:
             st.markdown("**📝 Log Tonight's Rankings**")
             _rk_date = st.date_input("Rating date", value=datetime.now(EASTERN).date(),
@@ -9119,32 +9152,57 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         _wl_tickers.append(t)
 
             if _wl_tickers:
+                # Restore draft into session state before widgets render
+                _draft = _load_rk_draft(_rk_uid, _rk_date)
+                if _draft:
+                    for _sym, _dv in _draft.items():
+                        if f"rk_sel_{_sym}" not in st.session_state:
+                            st.session_state[f"rk_sel_{_sym}"] = _dv.get("rank", 0)
+                        if f"rk_note_{_sym}" not in st.session_state:
+                            st.session_state[f"rk_note_{_sym}"] = _dv.get("notes", "")
+
                 _rank_labels = {0: "0 – Skip", 1: "1 – Weak", 2: "2 – Low",
                                 3: "3 – OK", 4: "4 – Strong", 5: "5 – Best"}
-                with st.form("nightly_ranking_form"):
-                    _rankings_input = []
-                    _hdr = st.columns([2, 3, 4])
-                    _hdr[0].markdown("**Ticker**")
-                    _hdr[1].markdown("**Rank**")
-                    _hdr[2].markdown("**Notes**")
-                    for _rk_sym in _wl_tickers:
-                        _rc = st.columns([2, 3, 4])
-                        _rc[0].markdown(f"`{_rk_sym}`")
-                        _sel = _rc[1].selectbox("", options=[0,1,2,3,4,5],
-                                                format_func=lambda x: _rank_labels[x],
-                                                key=f"rk_sel_{_rk_sym}", label_visibility="collapsed")
-                        _note = _rc[2].text_input("", placeholder="optional note",
-                                                  key=f"rk_note_{_rk_sym}", label_visibility="collapsed")
-                        _rankings_input.append({"ticker": _rk_sym, "rank": _sel, "notes": _note})
 
-                    _save_rk = st.form_submit_button("💾 Save Rankings", type="primary",
-                                                     use_container_width=True)
-                    if _save_rk:
+                _rankings_input = []
+                _hdr = st.columns([2, 3, 4])
+                _hdr[0].markdown("**Ticker**")
+                _hdr[1].markdown("**Rank**")
+                _hdr[2].markdown("**Notes**")
+                for _rk_sym in _wl_tickers:
+                    _rc = st.columns([2, 3, 4])
+                    _rc[0].markdown(f"`{_rk_sym}`")
+                    _sel = _rc[1].selectbox("", options=[0,1,2,3,4,5],
+                                            format_func=lambda x, _rl=_rank_labels: _rl[x],
+                                            key=f"rk_sel_{_rk_sym}", label_visibility="collapsed")
+                    _note = _rc[2].text_input("", placeholder="optional note",
+                                              key=f"rk_note_{_rk_sym}", label_visibility="collapsed")
+                    _rankings_input.append({"ticker": _rk_sym, "rank": _sel, "notes": _note})
+
+                # Auto-save draft on every rerun
+                _save_rk_draft(_rk_uid, _rk_date, _wl_tickers)
+
+                _draft_path = _rk_draft_path(_rk_uid, _rk_date)
+                if _draft_path.exists():
+                    st.caption("🟡 Draft auto-saved — your ratings are safe even if the app restarts.")
+
+                _btn_c1, _btn_c2 = st.columns([3, 1])
+                with _btn_c1:
+                    if st.button("💾 Save Rankings to Database", type="primary",
+                                 use_container_width=True, key="rk_save_btn"):
                         _rk_res = save_ticker_rankings(_rk_uid, _rk_date, _rankings_input)
                         if _rk_res["saved"] > 0:
+                            _clear_rk_draft(_rk_uid, _rk_date)
                             st.success(f"✅ Saved {_rk_res['saved']} rankings for {_rk_date}")
                         else:
-                            st.error("Failed to save — check Supabase connection.")
+                            st.error("Failed to save — check Supabase connection. Your draft is still preserved.")
+                with _btn_c2:
+                    if st.button("🗑 Clear Draft", use_container_width=True, key="rk_clear_draft_btn"):
+                        _clear_rk_draft(_rk_uid, _rk_date)
+                        for _sym in _wl_tickers:
+                            st.session_state.pop(f"rk_sel_{_sym}", None)
+                            st.session_state.pop(f"rk_note_{_sym}", None)
+                        st.rerun()
             else:
                 st.info("No watchlist tickers loaded. Add tickers above or load your watchlist.")
 
