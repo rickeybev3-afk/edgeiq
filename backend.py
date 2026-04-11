@@ -5617,6 +5617,151 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
     return {"updated": updated}
 
 
+# ── Nightly Ticker Rankings ────────────────────────────────────────────────────
+
+def ensure_ticker_rankings_table() -> bool:
+    """Return True if ticker_rankings table exists/is ready."""
+    if not supabase:
+        return False
+    try:
+        supabase.table("ticker_rankings").select("id").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def save_ticker_rankings(user_id: str, rating_date, rankings: list) -> dict:
+    """Upsert a list of {ticker, rank, notes} dicts for a given night.
+
+    rating_date: date object or YYYY-MM-DD string.
+    Returns {saved: int, errors: int}.
+    """
+    if not supabase or not rankings:
+        return {"saved": 0, "errors": 0}
+    date_str = str(rating_date)
+    saved = errors = 0
+    for r in rankings:
+        ticker = r.get("ticker", "").strip().upper()
+        rank   = int(r.get("rank", 0))
+        notes  = r.get("notes", "")
+        if not ticker:
+            continue
+        try:
+            supabase.table("ticker_rankings").upsert({
+                "user_id":     user_id,
+                "rating_date": date_str,
+                "ticker":      ticker,
+                "rank":        rank,
+                "notes":       notes,
+                "verified":    False,
+            }, on_conflict="user_id,rating_date,ticker").execute()
+            saved += 1
+        except Exception:
+            errors += 1
+    return {"saved": saved, "errors": errors}
+
+
+def load_ticker_rankings(user_id: str, rating_date=None) -> "pd.DataFrame":
+    """Load ticker rankings for a given date (or all if None)."""
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        q = (supabase.table("ticker_rankings")
+             .select("rating_date,ticker,rank,notes,actual_chg_pct,actual_open,actual_close,verified")
+             .eq("user_id", user_id)
+             .order("rating_date", desc=True)
+             .order("rank", desc=True))
+        if rating_date:
+            q = q.eq("rating_date", str(rating_date))
+        res = q.execute()
+        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+def verify_ticker_rankings(api_key: str, secret_key: str, user_id: str, rating_date) -> dict:
+    """Pull next-trading-day price data for all ranked tickers on rating_date
+    and write actual_chg_pct, actual_open, actual_close, verified=True back to Supabase.
+
+    Returns {verified: int, errors: int}.
+    """
+    if not supabase:
+        return {"verified": 0, "errors": 0}
+    import datetime as _dt
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame as TF
+
+    # Load the rankings for this date
+    df = load_ticker_rankings(user_id, rating_date)
+    if df.empty:
+        return {"verified": 0, "errors": 0}
+
+    # Find the next trading day after rating_date
+    r_date = rating_date if isinstance(rating_date, _dt.date) else _dt.date.fromisoformat(str(rating_date))
+    next_day = r_date + _dt.timedelta(days=1)
+    while next_day.weekday() >= 5:  # skip weekends
+        next_day += _dt.timedelta(days=1)
+
+    client = StockHistoricalDataClient(api_key, secret_key)
+    mo = EASTERN.localize(_dt.datetime(next_day.year, next_day.month, next_day.day, 9, 30))
+    mc = EASTERN.localize(_dt.datetime(next_day.year, next_day.month, next_day.day, 16, 0))
+
+    verified = errors = 0
+    for _, row in df.iterrows():
+        ticker = row["ticker"]
+        try:
+            req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TF.Day,
+                                   start=mo, end=mc)
+            bars = client.get_stock_bars(req)
+            bdf  = bars.df
+            if bdf.empty:
+                errors += 1
+                continue
+            if isinstance(bdf.index, pd.MultiIndex):
+                bdf = bdf.xs(ticker, level="symbol")
+            open_p  = round(float(bdf["open"].iloc[0]), 4)
+            close_p = round(float(bdf["close"].iloc[-1]), 4)
+            chg     = round((close_p - open_p) / open_p * 100, 2) if open_p else 0.0
+            supabase.table("ticker_rankings").update({
+                "actual_open":    open_p,
+                "actual_close":   close_p,
+                "actual_chg_pct": chg,
+                "verified":       True,
+            }).eq("user_id", user_id).eq("rating_date", str(rating_date)).eq("ticker", ticker).execute()
+            verified += 1
+        except Exception:
+            errors += 1
+    return {"verified": verified, "errors": errors}
+
+
+def load_ranking_accuracy(user_id: str) -> "pd.DataFrame":
+    """Return accuracy stats grouped by rank tier for verified rankings."""
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        res = (supabase.table("ticker_rankings")
+               .select("rank,actual_chg_pct,verified")
+               .eq("user_id", user_id)
+               .eq("verified", True)
+               .execute())
+        if not res.data:
+            return pd.DataFrame()
+        df = pd.DataFrame(res.data)
+        df["winner"] = df["actual_chg_pct"] > 0
+        acc = (df.groupby("rank")
+               .agg(trades=("actual_chg_pct", "count"),
+                    winners=("winner", "sum"),
+                    avg_chg=("actual_chg_pct", "mean"))
+               .reset_index()
+               .sort_values("rank", ascending=False))
+        acc["win_rate"] = (acc["winners"] / acc["trades"] * 100).round(1)
+        acc["avg_chg"]  = acc["avg_chg"].round(2)
+        return acc
+    except Exception:
+        return pd.DataFrame()
+
+
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────
 def _score_single_ticker(api_key: str, secret_key: str, sym: str,
                          trade_date, feed: str = "iex"):

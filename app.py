@@ -9064,6 +9064,146 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 f"Weights unchanged."
             )
 
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 6 — NIGHTLY TICKER RANKINGS
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown(
+        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:2px; font-weight:700; margin-bottom:4px;">🎯 NIGHTLY TICKER RANKINGS</div>'
+        '<div style="font-size:12px; color:#546e7a; margin-bottom:16px;">'
+        'Rate each watchlist ticker 0–5 every night. Outcomes are verified automatically '
+        'the next day. Over time this builds your personal chart-read accuracy by confidence tier.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _rk_table_ready = ensure_ticker_rankings_table()
+    if not _rk_table_ready:
+        st.warning("Create the ticker_rankings table in Supabase first:", icon="⚠️")
+        st.code(
+            "CREATE TABLE IF NOT EXISTS ticker_rankings (\n"
+            "  id           SERIAL PRIMARY KEY,\n"
+            "  user_id      TEXT NOT NULL,\n"
+            "  rating_date  DATE NOT NULL,\n"
+            "  ticker       TEXT NOT NULL,\n"
+            "  rank         INTEGER NOT NULL CHECK (rank >= 0 AND rank <= 5),\n"
+            "  notes        TEXT DEFAULT '',\n"
+            "  actual_open  FLOAT,\n"
+            "  actual_close FLOAT,\n"
+            "  actual_chg_pct FLOAT,\n"
+            "  verified     BOOLEAN DEFAULT FALSE,\n"
+            "  created_at   TIMESTAMPTZ DEFAULT NOW(),\n"
+            "  UNIQUE(user_id, rating_date, ticker)\n"
+            ");",
+            language="sql",
+        )
+    else:
+        _rk_uid = st.session_state.get("auth_user_id", USER_ID)
+        _rk_col1, _rk_col2 = st.columns([1, 1])
+
+        with _rk_col1:
+            st.markdown("**📝 Log Tonight's Rankings**")
+            _rk_date = st.date_input("Rating date", value=datetime.now(EASTERN).date(),
+                                     key="rk_date_input")
+            _wl_tickers = load_watchlist(_rk_uid)
+            if not _wl_tickers:
+                _wl_tickers = []
+
+            _extra_rk = st.text_input("Add tickers (comma-separated)",
+                                      placeholder="ARAI, SKYQ, CUE",
+                                      key="rk_extra_tickers")
+            if _extra_rk:
+                for t in _extra_rk.upper().split(","):
+                    t = t.strip()
+                    if t and t not in _wl_tickers:
+                        _wl_tickers.append(t)
+
+            if _wl_tickers:
+                _rank_labels = {0: "0 – Skip", 1: "1 – Weak", 2: "2 – Low",
+                                3: "3 – OK", 4: "4 – Strong", 5: "5 – Best"}
+                with st.form("nightly_ranking_form"):
+                    _rankings_input = []
+                    _hdr = st.columns([2, 3, 4])
+                    _hdr[0].markdown("**Ticker**")
+                    _hdr[1].markdown("**Rank**")
+                    _hdr[2].markdown("**Notes**")
+                    for _rk_sym in _wl_tickers:
+                        _rc = st.columns([2, 3, 4])
+                        _rc[0].markdown(f"`{_rk_sym}`")
+                        _sel = _rc[1].selectbox("", options=[0,1,2,3,4,5],
+                                                format_func=lambda x: _rank_labels[x],
+                                                key=f"rk_sel_{_rk_sym}", label_visibility="collapsed")
+                        _note = _rc[2].text_input("", placeholder="optional note",
+                                                  key=f"rk_note_{_rk_sym}", label_visibility="collapsed")
+                        _rankings_input.append({"ticker": _rk_sym, "rank": _sel, "notes": _note})
+
+                    _save_rk = st.form_submit_button("💾 Save Rankings", type="primary",
+                                                     use_container_width=True)
+                    if _save_rk:
+                        _rk_res = save_ticker_rankings(_rk_uid, _rk_date, _rankings_input)
+                        if _rk_res["saved"] > 0:
+                            st.success(f"✅ Saved {_rk_res['saved']} rankings for {_rk_date}")
+                        else:
+                            st.error("Failed to save — check Supabase connection.")
+            else:
+                st.info("No watchlist tickers loaded. Add tickers above or load your watchlist.")
+
+        with _rk_col2:
+            st.markdown("**📊 Accuracy by Rank Tier**")
+
+            _verify_date = st.date_input("Verify rankings from date",
+                                         value=(datetime.now(EASTERN).date() -
+                                                __import__('datetime').timedelta(days=1)),
+                                         key="rk_verify_date")
+            if st.button("🔍 Verify Outcomes", key="rk_verify_btn", use_container_width=True):
+                with st.spinner("Pulling next-day outcomes..."):
+                    _vres = verify_ticker_rankings(api_key, secret_key, _rk_uid, _verify_date)
+                if _vres["verified"] > 0:
+                    st.success(f"✅ Verified {_vres['verified']} tickers")
+                elif _vres["errors"] > 0:
+                    st.warning(f"Verified 0, errors on {_vres['errors']} tickers")
+                else:
+                    st.info("No rankings found for that date.")
+
+            st.markdown("")
+            _acc_df = load_ranking_accuracy(_rk_uid)
+            if not _acc_df.empty:
+                _acc_display = _acc_df[["rank", "trades", "win_rate", "avg_chg"]].copy()
+                _acc_display.columns = ["Rank", "Trades", "Win Rate %", "Avg Chg %"]
+
+                def _color_rank_wr(val):
+                    if isinstance(val, (int, float)):
+                        if val >= 60: return "color: #66bb6a; font-weight:700"
+                        if val >= 45: return "color: #ffa726"
+                        return "color: #ef5350"
+                    return ""
+
+                st.dataframe(
+                    _acc_display.style.map(_color_rank_wr, subset=["Win Rate %"]),
+                    use_container_width=True, hide_index=True
+                )
+                _best = _acc_df[_acc_df["win_rate"] == _acc_df["win_rate"].max()]
+                if not _best.empty:
+                    _br = int(_best.iloc[0]["rank"])
+                    _bwr = _best.iloc[0]["win_rate"]
+                    st.caption(f"Your rank-{_br} picks win {_bwr}% of the time "
+                               f"({int(_best.iloc[0]['trades'])} verified trades)")
+            else:
+                st.info("No verified rankings yet. Save tonight's rankings and hit "
+                        "Verify Outcomes tomorrow after market close.")
+
+            st.markdown("")
+            st.markdown("**📋 Recent Rankings**")
+            _recent_rk = load_ticker_rankings(_rk_uid)
+            if not _recent_rk.empty:
+                _show_cols = [c for c in ["rating_date", "ticker", "rank", "actual_chg_pct", "verified"]
+                              if c in _recent_rk.columns]
+                _recent_rk_disp = _recent_rk[_show_cols].head(30).copy()
+                _recent_rk_disp.columns = [c.replace("_", " ").title() for c in _show_cols]
+                st.dataframe(_recent_rk_disp, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No rankings saved yet.")
+
 
 # ── Macro Regime Banner ─────────────────────────────────────────────────────────
 _active_regime = st.session_state.get("breadth_regime")
