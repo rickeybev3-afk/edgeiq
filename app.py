@@ -7021,7 +7021,7 @@ def render_tracker_tab():
                 st.dataframe(
                     _rdf[["ticker","date","predicted","actual","correct","status"]]
                       .style.apply(_bt_style, axis=1),
-                    use_container_width=True, hide_index=True
+                    use_container_width=True, hide_index=True, height="stretch"
                 )
             except Exception:
                 st.dataframe(
@@ -7093,10 +7093,10 @@ def render_tracker_tab():
         try:
             st.dataframe(
                 _hc_display.style.apply(_hc_row_style, axis=1),
-                use_container_width=True, hide_index=True
+                use_container_width=True, hide_index=True, height="stretch"
             )
         except Exception:
-            st.dataframe(_hc_display, use_container_width=True, hide_index=True)
+            st.dataframe(_hc_display, use_container_width=True, hide_index=True, height="stretch")
 
         c1, c2 = st.columns([3, 1])
         with c2:
@@ -9180,7 +9180,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
                 st.dataframe(
                     _acc_display.style.map(_color_rank_wr, subset=["Win Rate %"]),
-                    use_container_width=True, hide_index=True
+                    use_container_width=True, hide_index=True, height="stretch"
                 )
                 _best = _acc_df[_acc_df["win_rate"] == _acc_df["win_rate"].max()]
                 if not _best.empty:
