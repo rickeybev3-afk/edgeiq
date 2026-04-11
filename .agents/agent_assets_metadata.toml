@@ -66,3 +66,9 @@ id = "QIj9yko_aUZsESBr6DYH7"
 uri = "file://.local/build_notes.md"
 type = "text"
 title = "EdgeIQ Build Notes"
+
+[[outputs]]
+id = "V4B9H8UrNhXrIb32E4mrX"
+uri = "file://EdgeIQ_Build_Notes.txt"
+type = "text"
+title = "EdgeIQ Build Notes (.txt)"
