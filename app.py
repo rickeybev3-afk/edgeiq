@@ -9098,7 +9098,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             language="sql",
         )
     else:
-        _rk_uid = st.session_state.get("auth_user_id", USER_ID)
+        _rk_uid = st.session_state.get("auth_user_id", "")
         _rk_col1, _rk_col2 = st.columns([1, 1])
 
         with _rk_col1:
