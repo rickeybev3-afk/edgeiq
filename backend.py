@@ -5884,34 +5884,74 @@ def ensure_ticker_rankings_table() -> bool:
         return False
 
 
+_TICKER_RANKINGS_CONTEXT_MIGRATION = (
+    "-- Run in Supabase SQL Editor to add ranking context columns:\n"
+    "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS tcs REAL;\n"
+    "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS rvol REAL;\n"
+    "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS edge_score REAL;\n"
+    "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS predicted_structure TEXT;\n"
+    "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;\n"
+)
+
+
 def save_ticker_rankings(user_id: str, rating_date, rankings: list) -> dict:
-    """Upsert a list of {ticker, rank, notes} dicts for a given night.
+    """Upsert a list of {ticker, rank, notes, ...context} dicts for a given night.
 
     rating_date: date object or YYYY-MM-DD string.
+    Context fields (tcs, rvol, edge_score, predicted_structure, confidence_label)
+    are stored when present. Graceful fallback if columns don't exist yet.
     Returns {saved: int, errors: int}.
     """
     if not supabase or not rankings:
         return {"saved": 0, "errors": 0}
     date_str = str(rating_date)
     saved = errors = 0
+    _context_cols = ["tcs", "rvol", "edge_score", "predicted_structure", "confidence_label"]
+    _include_context = True
     for r in rankings:
         ticker = r.get("ticker", "").strip().upper()
         rank   = int(r.get("rank", 0))
         notes  = r.get("notes", "")
         if not ticker:
             continue
+        row = {
+            "user_id":     user_id,
+            "rating_date": date_str,
+            "ticker":      ticker,
+            "rank":        rank,
+            "notes":       notes,
+            "verified":    False,
+        }
+        if _include_context:
+            for col in _context_cols:
+                val = r.get(col)
+                if val is not None:
+                    if col in ("tcs", "rvol", "edge_score"):
+                        row[col] = round(float(val), 2)
+                    else:
+                        row[col] = str(val)
         try:
-            supabase.table("ticker_rankings").upsert({
-                "user_id":     user_id,
-                "rating_date": date_str,
-                "ticker":      ticker,
-                "rank":        rank,
-                "notes":       notes,
-                "verified":    False,
-            }, on_conflict="user_id,rating_date,ticker").execute()
+            supabase.table("ticker_rankings").upsert(
+                row, on_conflict="user_id,rating_date,ticker"
+            ).execute()
             saved += 1
-        except Exception:
-            errors += 1
+        except Exception as _e:
+            _es = str(_e).lower()
+            if _include_context and any(col in _es for col in _context_cols):
+                _include_context = False
+                for col in _context_cols:
+                    row.pop(col, None)
+                try:
+                    supabase.table("ticker_rankings").upsert(
+                        row, on_conflict="user_id,rating_date,ticker"
+                    ).execute()
+                    saved += 1
+                    print("ticker_rankings: context columns missing — saved without them.\n"
+                          "Run in SQL Editor:\n" + _TICKER_RANKINGS_CONTEXT_MIGRATION)
+                except Exception:
+                    errors += 1
+            else:
+                errors += 1
     return {"saved": saved, "errors": errors}
 
 
@@ -5921,7 +5961,7 @@ def load_ticker_rankings(user_id: str, rating_date=None) -> "pd.DataFrame":
         return pd.DataFrame()
     try:
         q = (supabase.table("ticker_rankings")
-             .select("rating_date,ticker,rank,notes,actual_chg_pct,actual_open,actual_close,verified")
+             .select("rating_date,ticker,rank,notes,actual_chg_pct,actual_open,actual_close,verified,tcs,rvol,edge_score,predicted_structure,confidence_label")
              .eq("user_id", user_id)
              .order("rating_date", desc=True)
              .order("rank", desc=True))
@@ -5930,7 +5970,18 @@ def load_ticker_rankings(user_id: str, rating_date=None) -> "pd.DataFrame":
         res = q.execute()
         return pd.DataFrame(res.data) if res.data else pd.DataFrame()
     except Exception:
-        return pd.DataFrame()
+        try:
+            q = (supabase.table("ticker_rankings")
+                 .select("rating_date,ticker,rank,notes,actual_chg_pct,actual_open,actual_close,verified")
+                 .eq("user_id", user_id)
+                 .order("rating_date", desc=True)
+                 .order("rank", desc=True))
+            if rating_date:
+                q = q.eq("rating_date", str(rating_date))
+            res = q.execute()
+            return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+        except Exception:
+            return pd.DataFrame()
 
 
 def verify_ticker_rankings(api_key: str, secret_key: str, user_id: str, rating_date) -> dict:
@@ -5994,23 +6045,41 @@ def load_ranking_accuracy(user_id: str) -> "pd.DataFrame":
     if not supabase:
         return pd.DataFrame()
     try:
-        res = (supabase.table("ticker_rankings")
-               .select("rank,actual_chg_pct,verified")
-               .eq("user_id", user_id)
-               .eq("verified", True)
-               .execute())
+        try:
+            res = (supabase.table("ticker_rankings")
+                   .select("rank,actual_chg_pct,verified,tcs,rvol,edge_score,predicted_structure,confidence_label")
+                   .eq("user_id", user_id)
+                   .eq("verified", True)
+                   .execute())
+        except Exception:
+            res = (supabase.table("ticker_rankings")
+                   .select("rank,actual_chg_pct,verified")
+                   .eq("user_id", user_id)
+                   .eq("verified", True)
+                   .execute())
         if not res.data:
             return pd.DataFrame()
         df = pd.DataFrame(res.data)
         df["winner"] = df["actual_chg_pct"] > 0
+        agg_dict = {
+            "trades": ("actual_chg_pct", "count"),
+            "winners": ("winner", "sum"),
+            "avg_chg": ("actual_chg_pct", "mean"),
+        }
+        if "tcs" in df.columns:
+            agg_dict["avg_tcs"] = ("tcs", "mean")
+        if "rvol" in df.columns:
+            agg_dict["avg_rvol"] = ("rvol", "mean")
         acc = (df.groupby("rank")
-               .agg(trades=("actual_chg_pct", "count"),
-                    winners=("winner", "sum"),
-                    avg_chg=("actual_chg_pct", "mean"))
+               .agg(**agg_dict)
                .reset_index()
                .sort_values("rank", ascending=False))
         acc["win_rate"] = (acc["winners"] / acc["trades"] * 100).round(1)
         acc["avg_chg"]  = acc["avg_chg"].round(2)
+        if "avg_tcs" in acc.columns:
+            acc["avg_tcs"] = acc["avg_tcs"].round(1)
+        if "avg_rvol" in acc.columns:
+            acc["avg_rvol"] = acc["avg_rvol"].round(1)
         return acc
     except Exception:
         return pd.DataFrame()

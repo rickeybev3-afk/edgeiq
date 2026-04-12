@@ -78,7 +78,15 @@ ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_trigger TEXT;
 ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_ib_distance REAL;
 ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS rvol REAL;
 ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS gap_pct REAL;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS tcs REAL;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS rvol REAL;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS edge_score REAL;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS predicted_structure TEXT;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
 ```
+
+### `ticker_rankings` columns
+`id, user_id, rating_date, ticker, rank (0-5), notes, actual_open, actual_close, actual_chg_pct, verified, tcs, rvol, edge_score, predicted_structure, confidence_label`
 
 ### `accuracy_tracker` columns
 Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL for all rows** — win/loss not being stored as True/False, data quality problem to fix in Phase 2.

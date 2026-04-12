@@ -9416,6 +9416,21 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 with _btn_c1:
                     if st.button("💾 Save Rankings to Database", type="primary",
                                  use_container_width=True, key="rk_save_btn"):
+                        _wp_ctx = load_watchlist_predictions(user_id=_rk_uid, pred_date=_rk_date)
+                        _wp_lookup = {}
+                        if not _wp_ctx.empty:
+                            for _, _wp_row in _wp_ctx.iterrows():
+                                _tk = str(_wp_row.get("ticker", "")).upper().strip()
+                                _wp_lookup[_tk] = {
+                                    "tcs": _wp_row.get("tcs"),
+                                    "edge_score": _wp_row.get("edge_score"),
+                                    "predicted_structure": _wp_row.get("predicted_structure"),
+                                    "confidence_label": _wp_row.get("confidence_label"),
+                                    "rvol": _wp_row.get("rvol"),
+                                }
+                        for _ri in _rankings_input:
+                            _ctx = _wp_lookup.get(_ri["ticker"], {})
+                            _ri.update({k: v for k, v in _ctx.items() if v is not None and str(v).strip()})
                         _rk_res = save_ticker_rankings(_rk_uid, _rk_date, _rankings_input)
                         if _rk_res["saved"] > 0:
                             _clear_rk_draft(_rk_uid, _rk_date)
@@ -9452,8 +9467,16 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             st.markdown("")
             _acc_df = load_ranking_accuracy(_rk_uid)
             if not _acc_df.empty:
-                _acc_display = _acc_df[["rank", "trades", "win_rate", "avg_chg"]].copy()
-                _acc_display.columns = ["Rank", "Trades", "Win Rate %", "Avg Chg %"]
+                _acc_cols = ["rank", "trades", "win_rate", "avg_chg"]
+                _acc_rename = {"rank": "Rank", "trades": "Trades", "win_rate": "Win Rate %", "avg_chg": "Avg Chg %"}
+                if "avg_tcs" in _acc_df.columns:
+                    _acc_cols.append("avg_tcs")
+                    _acc_rename["avg_tcs"] = "Avg TCS"
+                if "avg_rvol" in _acc_df.columns:
+                    _acc_cols.append("avg_rvol")
+                    _acc_rename["avg_rvol"] = "Avg RVOL"
+                _acc_display = _acc_df[[c for c in _acc_cols if c in _acc_df.columns]].copy()
+                _acc_display.columns = [_acc_rename.get(c, c) for c in _acc_display.columns]
 
                 def _color_rank_wr(val):
                     if isinstance(val, (int, float)):
@@ -9480,7 +9503,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             st.markdown("**📋 Recent Rankings**")
             _recent_rk = load_ticker_rankings(_rk_uid)
             if not _recent_rk.empty:
-                _show_cols = [c for c in ["rating_date", "ticker", "rank", "actual_chg_pct", "verified"]
+                _show_cols = [c for c in ["rating_date", "ticker", "rank", "tcs", "rvol",
+                                          "predicted_structure", "actual_chg_pct", "verified"]
                               if c in _recent_rk.columns]
                 _recent_rk_disp = _recent_rk[_show_cols].head(30).copy()
                 _recent_rk_disp.columns = [c.replace("_", " ").title() for c in _show_cols]

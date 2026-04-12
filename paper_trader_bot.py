@@ -74,6 +74,8 @@ try:
         fetch_finviz_watchlist,
         recalibrate_from_supabase,
         verify_watchlist_predictions,
+        verify_ticker_rankings,
+        ensure_ticker_rankings_table,
         ensure_telegram_columns,
         save_telegram_trade,
         save_beta_chat_id,
@@ -757,6 +759,18 @@ def nightly_verify():
             )
     except Exception as e:
         log.error(f"Auto-verify failed: {e}")
+
+    try:
+        if ensure_ticker_rankings_table():
+            from datetime import timedelta
+            yesterday = (datetime.now(EASTERN) - timedelta(days=1)).date()
+            _rk_res = verify_ticker_rankings(ALPACA_API_KEY, ALPACA_SECRET_KEY, USER_ID, yesterday)
+            if _rk_res["verified"] > 0:
+                log.info(f"Auto-verified {_rk_res['verified']} ticker rankings from {yesterday}")
+            elif _rk_res["errors"] > 0:
+                log.warning(f"Ticker ranking verify: {_rk_res['errors']} errors for {yesterday}")
+    except Exception as _rk_e:
+        log.warning(f"Ticker ranking auto-verify failed (non-fatal): {_rk_e}")
 
 
 def update_daily_build_notes() -> bool:
