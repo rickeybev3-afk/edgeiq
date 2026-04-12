@@ -89,7 +89,8 @@ ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
 `id, user_id, rating_date, ticker, rank (0-5), notes, actual_open, actual_close, actual_chg_pct, verified, tcs, rvol, edge_score, predicted_structure, confidence_label`
 
 ### `accuracy_tracker` columns
-Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL for all rows** — win/loss not being stored as True/False, data quality problem to fix in Phase 2.
+`id, user_id, symbol, predicted, actual, correct (✅/❌ emoji), entry_price, exit_price, mfe, compare_key, timestamp, created_at`
+287 rows total. `correct` field stores ✅/❌ emojis (not boolean). Recalibration reads these correctly via `"✅" in correct` check. `actual` column has emoji prefixes (e.g., "🔄 Neutral") — `_strip_emoji()` handles matching.
 
 ---
 

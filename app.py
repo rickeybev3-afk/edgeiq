@@ -40,6 +40,9 @@ from backend import (
     ensure_kalshi_tables,
     _KALSHI_PREDICTIONS_SQL,
     get_kalshi_performance_summary,
+    compute_portfolio_metrics,
+    run_pending_migrations,
+    _ALL_PENDING_MIGRATIONS,
 )
 
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
@@ -3708,6 +3711,25 @@ with st.sidebar:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+    with st.sidebar.expander("🔧 Database Migrations", expanded=False):
+        st.caption("Run pending ALTER TABLE migrations on Supabase.")
+        if st.button("🔄 Run Migrations", key="run_migrations_btn"):
+            _mig_res = run_pending_migrations()
+            if _mig_res.get("needs_exec_sql"):
+                st.warning("The `exec_sql` function doesn't exist yet in your Supabase. "
+                           "Copy and run this SQL in Supabase SQL Editor first:")
+                st.code(_ALL_PENDING_MIGRATIONS, language="sql")
+            elif _mig_res["ran"] > 0:
+                st.success(f"✅ Ran {_mig_res['ran']} migration(s) successfully!")
+                if _mig_res["already_exist"] > 0:
+                    st.info(f"{_mig_res['already_exist']} column(s) already existed.")
+            elif _mig_res["already_exist"] > 0:
+                st.info(f"All {_mig_res['already_exist']} column(s) already exist — nothing to do.")
+            else:
+                st.error(f"Migration errors: {_mig_res['errors']}")
+        with st.expander("📋 View SQL", expanded=False):
+            st.code(_ALL_PENDING_MIGRATIONS, language="sql")
 
     run_button = start_live = stop_live = scan_button = replay_load = False
     selected_date = date.today()
@@ -8587,6 +8609,98 @@ def render_performance_tab():
             st.info("No trades with MAE/MFE data yet. Data will populate as paper trades run with full-day bars.")
     else:
         st.info("MAE/MFE columns not yet available. Run the migration SQL and paper trades will start logging execution depth data.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 3C — PORTFOLIO RISK METRICS (Sharpe, Alpha, Drawdown)
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📈 Portfolio Risk Metrics")
+
+    _pt_uid = st.session_state.get("auth_user_id", "")
+    _pt_df = load_paper_trades(user_id=_pt_uid, days=365)
+    _pm = compute_portfolio_metrics(
+        _pt_df,
+        api_key=st.session_state.get("ALPACA_API_KEY", ""),
+        secret_key=st.session_state.get("ALPACA_SECRET_KEY", ""),
+    )
+
+    if _pm["trade_count"] >= 3 and _pm["sharpe"] is not None:
+        _pm_c1, _pm_c2, _pm_c3, _pm_c4 = st.columns(4)
+        with _pm_c1:
+            _sh_color = "#66bb6a" if (_pm["sharpe_annual"] or 0) > 1.0 else "#ef5350" if (_pm["sharpe_annual"] or 0) < 0 else "#ffa726"
+            st.markdown(
+                f"<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                f"<div style='font-size:11px;color:#777'>Sharpe (Annual)</div>"
+                f"<div style='font-size:24px;font-weight:800;color:{_sh_color}'>"
+                f"{_pm['sharpe_annual']:.2f}</div></div>",
+                unsafe_allow_html=True
+            )
+        with _pm_c2:
+            _sh_d = _pm["sharpe"] or 0
+            st.markdown(
+                f"<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                f"<div style='font-size:11px;color:#777'>Sharpe (Daily)</div>"
+                f"<div style='font-size:24px;font-weight:800;color:#7986cb'>"
+                f"{_sh_d:.3f}</div></div>",
+                unsafe_allow_html=True
+            )
+        with _pm_c3:
+            _dd = _pm["max_drawdown_pct"] or 0
+            _dd_color = "#66bb6a" if _dd > -5 else "#ef5350" if _dd < -20 else "#ffa726"
+            st.markdown(
+                f"<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                f"<div style='font-size:11px;color:#777'>Max Drawdown</div>"
+                f"<div style='font-size:24px;font-weight:800;color:{_dd_color}'>"
+                f"{_dd:.1f}%</div></div>",
+                unsafe_allow_html=True
+            )
+        with _pm_c4:
+            if _pm["alpha_vs_spy"] is not None:
+                _al = _pm["alpha_vs_spy"]
+                _al_color = "#66bb6a" if _al > 0 else "#ef5350"
+                st.markdown(
+                    f"<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                    f"<div style='font-size:11px;color:#777'>Alpha vs SPY</div>"
+                    f"<div style='font-size:24px;font-weight:800;color:{_al_color}'>"
+                    f"{'+' if _al > 0 else ''}{_al:.2f}%</div></div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    "<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                    "<div style='font-size:11px;color:#777'>Alpha vs SPY</div>"
+                    "<div style='font-size:16px;color:#555'>Need Alpaca keys</div></div>",
+                    unsafe_allow_html=True
+                )
+
+        if not _pm["rolling_drawdown"].empty:
+            import plotly.graph_objects as _go_pm
+            _dd_fig = _go_pm.Figure()
+            _dd_fig.add_trace(_go_pm.Scatter(
+                x=[str(d) for d in _pm["rolling_drawdown"]["date"]],
+                y=_pm["rolling_drawdown"]["drawdown_pct"],
+                fill="tozeroy",
+                fillcolor="rgba(239,83,80,0.15)",
+                line=dict(color="#ef5350", width=1.5),
+                name="Drawdown %",
+            ))
+            _dd_fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0e0e1a", plot_bgcolor="#0e0e1a",
+                height=220, margin=dict(l=40, r=20, t=30, b=30),
+                title=dict(text="Rolling Drawdown", font=dict(size=13)),
+                yaxis=dict(title="Drawdown %", ticksuffix="%"),
+                xaxis=dict(title=""),
+                showlegend=False,
+            )
+            st.plotly_chart(_dd_fig, use_container_width=True)
+
+        st.caption(f"Based on {_pm['trade_count']} paper trades. "
+                   f"Current drawdown: {_pm['current_drawdown_pct']:.1f}%")
+    else:
+        st.info(f"Need at least 3 trading days with P&L data for risk metrics. "
+                f"Currently have {_pm['trade_count']} paper trade(s).")
 
     st.markdown("<br>", unsafe_allow_html=True)
 

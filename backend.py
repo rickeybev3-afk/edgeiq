@@ -5024,6 +5024,197 @@ def compute_edge_analytics(journal_df: pd.DataFrame,
     }
 
 
+# ── Portfolio Risk Metrics (Sharpe, Alpha, Drawdown) ──────────────────────────
+def compute_portfolio_metrics(paper_df: "pd.DataFrame",
+                              api_key: str = "", secret_key: str = "") -> dict:
+    """Compute Sharpe ratio, alpha vs SPY, and max drawdown from paper trades.
+
+    Parameters
+    ----------
+    paper_df : DataFrame with columns: trade_date, win_loss, follow_thru_pct (or post_alert_move_pct)
+    api_key, secret_key : Alpaca creds for SPY benchmark (optional)
+
+    Returns dict with: sharpe, sharpe_monthly, alpha_vs_spy, max_drawdown_pct,
+                        current_drawdown_pct, daily_returns DataFrame
+    """
+    empty = {
+        "sharpe": None, "sharpe_monthly": None,
+        "alpha_vs_spy": None, "max_drawdown_pct": None,
+        "current_drawdown_pct": None, "daily_returns": pd.DataFrame(),
+        "rolling_drawdown": pd.DataFrame(),
+        "trade_count": 0,
+    }
+    if paper_df is None or paper_df.empty:
+        return empty
+
+    df = paper_df.copy()
+    df["trade_date"] = pd.to_datetime(df.get("trade_date", ""), errors="coerce")
+    df = df.dropna(subset=["trade_date"])
+
+    pnl_col = None
+    for c in ("post_alert_move_pct", "follow_thru_pct"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+            if df[c].notna().sum() > 0:
+                pnl_col = c
+                break
+    if pnl_col is None:
+        wl = df.get("win_loss", pd.Series(dtype=str))
+        wl_clean = wl.astype(str).str.strip().str.lower()
+        df["_synth_ret"] = wl_clean.map({"win": 1.0, "loss": -1.0, "w": 1.0, "l": -1.0}).fillna(0.0)
+        pnl_col = "_synth_ret"
+
+    daily = (df.groupby(df["trade_date"].dt.date)[pnl_col]
+             .mean().reset_index())
+    daily.columns = ["date", "return_pct"]
+    daily = daily.sort_values("date").reset_index(drop=True)
+
+    if len(daily) < 3:
+        empty["trade_count"] = len(df)
+        return empty
+
+    returns = daily["return_pct"]
+    mean_r = returns.mean()
+    std_r = returns.std()
+
+    sharpe = round(mean_r / std_r, 3) if std_r > 0 else None
+    trading_days_per_year = 252
+    sharpe_annual = round(sharpe * (trading_days_per_year ** 0.5), 3) if sharpe is not None else None
+
+    cum_ret = (1 + returns / 100).cumprod()
+    running_max = cum_ret.cummax()
+    drawdown = (cum_ret - running_max) / running_max * 100
+    max_dd = round(float(drawdown.min()), 2)
+    current_dd = round(float(drawdown.iloc[-1]), 2) if len(drawdown) > 0 else 0.0
+
+    rolling_dd = daily[["date"]].copy()
+    rolling_dd["drawdown_pct"] = drawdown.values
+
+    alpha = None
+    if api_key and secret_key:
+        try:
+            import requests as _req
+            _start = str(daily["date"].min())
+            _end = str(daily["date"].max())
+            _hdr = {
+                "APCA-API-KEY-ID": api_key,
+                "APCA-API-SECRET-KEY": secret_key,
+            }
+            _url = (f"https://data.alpaca.markets/v2/stocks/SPY/bars"
+                    f"?timeframe=1Day&start={_start}&end={_end}&limit=500")
+            _r = _req.get(_url, headers=_hdr, timeout=10)
+            if _r.status_code == 200:
+                _bars = _r.json().get("bars", [])
+                if len(_bars) >= 2:
+                    _spy_df = pd.DataFrame(_bars)
+                    _spy_df["date"] = pd.to_datetime(_spy_df["t"]).dt.date
+                    _spy_df["spy_ret"] = _spy_df["c"].pct_change() * 100
+                    _spy_df = _spy_df.dropna(subset=["spy_ret"])
+                    _merged = pd.merge(daily, _spy_df[["date", "spy_ret"]], on="date", how="inner")
+                    if len(_merged) >= 3:
+                        alpha = round(_merged["return_pct"].mean() - _merged["spy_ret"].mean(), 3)
+        except Exception:
+            pass
+
+    return {
+        "sharpe": sharpe,
+        "sharpe_annual": sharpe_annual,
+        "alpha_vs_spy": alpha,
+        "max_drawdown_pct": max_dd,
+        "current_drawdown_pct": current_dd,
+        "daily_returns": daily,
+        "rolling_drawdown": rolling_dd,
+        "trade_count": len(df),
+    }
+
+
+def run_pending_migrations() -> dict:
+    """Attempt to run all pending ALTER TABLE migrations via exec_sql RPC.
+
+    Returns dict with {ran: int, failed: int, already_exist: int, errors: list}.
+    If exec_sql doesn't exist, returns instructions to create it.
+    """
+    if not supabase:
+        return {"ran": 0, "failed": 0, "already_exist": 0,
+                "errors": ["Supabase not connected"]}
+
+    migrations = [
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mae REAL",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mfe REAL",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_time TEXT",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_trigger TEXT",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_ib_distance REAL",
+        "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS tcs REAL",
+        "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS rvol REAL",
+        "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS edge_score REAL",
+        "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS predicted_structure TEXT",
+        "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT",
+    ]
+
+    ran = 0
+    failed = 0
+    already = 0
+    errors = []
+
+    for sql in migrations:
+        try:
+            supabase.rpc("exec_sql", {"query": sql}).execute()
+            ran += 1
+        except Exception as e:
+            es = str(e)
+            if "PGRST202" in es:
+                return {"ran": ran, "failed": len(migrations), "already_exist": 0,
+                        "errors": ["exec_sql function not found — run CREATE FUNCTION in Supabase SQL Editor first"],
+                        "needs_exec_sql": True}
+            elif "already exists" in es.lower() or "42701" in es:
+                already += 1
+            else:
+                failed += 1
+                errors.append(f"{sql}: {es[:100]}")
+
+    return {"ran": ran, "failed": failed, "already_exist": already, "errors": errors}
+
+
+_EXEC_SQL_FUNCTION = """-- Run this ONCE in Supabase SQL Editor to enable automatic migrations:
+CREATE OR REPLACE FUNCTION exec_sql(query text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  EXECUTE query;
+END;
+$$;
+"""
+
+_ALL_PENDING_MIGRATIONS = """-- Run in Supabase SQL Editor (one-time):
+-- 1. Create the exec_sql helper function:
+CREATE OR REPLACE FUNCTION exec_sql(query text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  EXECUTE query;
+END;
+$$;
+
+-- 2. Paper trades MAE/MFE columns:
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mae REAL;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mfe REAL;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_time TEXT;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_trigger TEXT;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_ib_distance REAL;
+
+-- 3. Ticker rankings context columns:
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS tcs REAL;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS rvol REAL;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS edge_score REAL;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS predicted_structure TEXT;
+ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
+"""
+
+
 # ── Live Playbook Screener ──────────────────────────────────────────────────────
 def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
     """Scan Alpaca for today's most-active and top-gaining small-cap stocks ($2–$20).
