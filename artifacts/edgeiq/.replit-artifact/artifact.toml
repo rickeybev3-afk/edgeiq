@@ -1,6 +1,6 @@
 kind = "web"
-previewPath = "/"
-title = "EdgeIQ Dashboard"
+previewPath = "/edgeiq/"
+title = "EdgeIQ Dashboard (dev)"
 version = "1.0.0"
 id = "artifacts/edgeiq"
 router = "path"
@@ -11,7 +11,7 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
+paths = [ "/edgeiq/" ]
 localPort = 23411
 
 [services.development]
@@ -19,4 +19,4 @@ run = "cd /home/runner/workspace && streamlit run app.py --server.port 23411"
 
 [services.env]
 PORT = "23411"
-BASE_PATH = "/"
+BASE_PATH = "/edgeiq/"
