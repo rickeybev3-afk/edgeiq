@@ -17,9 +17,6 @@ localPort = 23411
 [services.development]
 run = "cd /home/runner/workspace && streamlit run app.py --server.port 23411"
 
-[services.production]
-run = "cd /home/runner/workspace && python3 deploy_server.py"
-
 [services.env]
 PORT = "23411"
 BASE_PATH = "/"
