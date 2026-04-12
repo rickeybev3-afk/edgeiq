@@ -3199,7 +3199,8 @@ def backfill_unknown_structures(api_key: str, secret_key: str, user_id: str,
     if not supabase:
         return {"updated": 0, "failed": 0, "skipped": 0, "errors": ["Supabase not connected"]}
 
-    _STALE = {"Unknown", "unknown", "", None}
+    _STALE = {"Unknown", "unknown", "", None,
+              "Trending Up", "Trending Down", "At IB High", "At IB Low", "Inside IB"}
 
     try:
         q = supabase.table("trade_journal").select("*")
@@ -3239,6 +3240,19 @@ def backfill_unknown_structures(api_key: str, secret_key: str, user_id: str,
             if not patch:
                 failed += 1
                 continue
+            _extra_parts = []
+            if ctx.get("gap_pct") is not None:
+                _extra_parts.append(f"Gap: {ctx['gap_pct']:+.1f}%")
+            if ctx.get("poc_price") is not None:
+                _extra_parts.append(f"POC: ${ctx['poc_price']:.4f}")
+            if ctx.get("top_pattern"):
+                _pdir = ctx.get("top_pattern_direction", "")
+                _pscore = ctx.get("top_pattern_score", 0)
+                _extra_parts.append(
+                    f"Pattern: {ctx['top_pattern']} ({_pdir}, {_pscore:.0%})")
+            if _extra_parts:
+                old_notes = row.get("notes", "") or ""
+                patch["notes"] = old_notes + " | " + " | ".join(_extra_parts)
             supabase.table("trade_journal").update(patch).eq("id", row_id).execute()
             updated += 1
         except Exception as exc:
@@ -4187,14 +4201,16 @@ def compute_pretrade_quality(
 
 def enrich_trade_context(api_key: str, secret_key: str, ticker: str,
                          trade_date, feed: str = "iex") -> dict:
-    """Retroactively compute TCS, RVOL, IB levels, and structure for a historical trade.
+    """Retroactively compute full context for a historical trade.
 
     Called automatically during Webull CSV import so every journal entry has the
-    same context fields as a live analysis (TCS, RVOL, IB high/low, structure).
-    Feeds the Analytics calibration engine so win-rate slices by TCS bucket and
-    structure are accurate across all historical trades.
+    same context fields as a live analysis.  Uses the FULL 7-structure classifier
+    (classify_day_structure), computes gap%, detects chart patterns, and returns
+    POC price — matching what the live analysis produces.
 
-    Returns a dict with keys: tcs, rvol, ib_high, ib_low, structure.
+    Returns a dict with keys:
+        tcs, rvol, ib_high, ib_low, structure, gap_pct, poc_price,
+        top_pattern, top_pattern_score, top_pattern_direction
     Returns {} on any failure — safe; caller keeps whatever data it already has.
     """
     try:
@@ -4209,62 +4225,91 @@ def enrich_trade_context(api_key: str, secret_key: str, ticker: str,
         else:
             trade_dt = trade_date
 
-        # ── TCS and IB levels via pretrade quality pipeline ───────────────────
-        quality = compute_pretrade_quality(api_key, secret_key, ticker, trade_dt, feed=feed)
-        if quality.get("error"):
+        df = fetch_bars(api_key, secret_key, ticker, trade_dt, feed=feed)
+        if df is None or df.empty or len(df) < 5:
             return {}
 
-        tcs      = quality.get("tcs")
-        ib_high  = quality.get("ib_high")
-        ib_low   = quality.get("ib_low")
-        ib_pos   = quality.get("ib_position", "")
+        ib_cutoff = df.index[0].replace(hour=10, minute=30, second=0)
+        ib_df = df[df.index <= ib_cutoff]
+        ib_formed = len(ib_df) >= 5
 
-        # ── RVOL — total day volume vs 10-day prior average ───────────────────
+        ib_high, ib_low = compute_initial_balance(ib_df if ib_formed else df)
+        if not ib_high or not ib_low or ib_high == ib_low:
+            return {}
+
+        bin_centers, vap, poc_price = compute_volume_profile(df, num_bins=100)
+
+        tcs = float(compute_tcs(ib_df if ib_formed else df, ib_high, ib_low, poc_price))
+
+        today_vol = float(df["volume"].sum())
         rvol = None
+        avg_daily_vol = None
+        gap_pct = None
+
         try:
-            df_intra = fetch_bars(api_key, secret_key, ticker, trade_dt, feed=feed)
-            today_vol = float(df_intra["volume"].sum()) if not df_intra.empty else None
+            start_window = (trade_dt - timedelta(days=18)).isoformat()
+            end_window   = trade_dt.isoformat()
+            daily_url = (
+                f"https://data.alpaca.markets/v2/stocks/{ticker}/bars"
+                f"?timeframe=1Day&start={start_window}&end={end_window}"
+                f"&feed={feed}&limit=14"
+            )
+            headers = {
+                "APCA-API-KEY-ID":     api_key,
+                "APCA-API-SECRET-KEY": secret_key,
+            }
+            resp = _req.get(daily_url, headers=headers, timeout=8)
+            daily_bars = resp.json().get("bars", [])
 
-            if today_vol:
-                start_window = (trade_dt - timedelta(days=18)).isoformat()
-                end_window   = trade_dt.isoformat()
-                daily_url = (
-                    f"https://data.alpaca.markets/v2/stocks/{ticker}/bars"
-                    f"?timeframe=1Day&start={start_window}&end={end_window}"
-                    f"&feed={feed}&limit=14"
-                )
-                headers = {
-                    "APCA-API-KEY-ID":     api_key,
-                    "APCA-API-SECRET-KEY": secret_key,
-                }
-                resp = _req.get(daily_url, headers=headers, timeout=8)
-                daily_bars = resp.json().get("bars", [])
+            prior_bars = [
+                b for b in daily_bars
+                if b.get("t", "")[:10] != trade_dt.isoformat()
+            ]
+            prior_vols = [b["v"] for b in prior_bars if "v" in b]
 
-                prior_vols = [
-                    b["v"] for b in daily_bars
-                    if b.get("t", "")[:10] != trade_dt.isoformat() and "v" in b
-                ]
-                if prior_vols:
-                    avg_vol = sum(prior_vols) / len(prior_vols)
-                    rvol = round(today_vol / avg_vol, 2) if avg_vol > 0 else None
+            if prior_vols:
+                avg_daily_vol = sum(prior_vols) / len(prior_vols)
+                if today_vol > 0 and avg_daily_vol > 0:
+                    rvol = round(today_vol / avg_daily_vol, 2)
+
+            if prior_bars:
+                prev_close = prior_bars[-1].get("c", 0)
+                open_price = float(df["open"].iloc[0])
+                if prev_close and prev_close > 0:
+                    gap_pct = round((open_price - prev_close) / prev_close * 100, 2)
         except Exception:
-            rvol = None
+            pass
 
-        # ── Structure — derived from IB position (simplified for historical) ──
-        _pos_map = {
-            "Extended Above IB": "Trending Up",
-            "Extended Below IB": "Trending Down",
-            "At IB High":        "At IB High",
-            "At IB Low":         "At IB Low",
-        }
-        structure = _pos_map.get(ib_pos, "Inside IB")
+        label, _color, _detail, _insight = classify_day_structure(
+            df, bin_centers, vap, ib_high, ib_low, poc_price,
+            avg_daily_vol=avg_daily_vol,
+        )
+        structure = label
+
+        top_pattern = None
+        top_pattern_score = None
+        top_pattern_dir = None
+        try:
+            patterns = detect_chart_patterns(df, poc_price=poc_price,
+                                             ib_high=ib_high, ib_low=ib_low)
+            if patterns:
+                top_pattern = patterns[0].get("name", "")
+                top_pattern_score = patterns[0].get("score", 0)
+                top_pattern_dir = patterns[0].get("direction", "")
+        except Exception:
+            pass
 
         return {
-            "tcs":      tcs,
-            "rvol":     rvol,
-            "ib_high":  ib_high,
-            "ib_low":   ib_low,
-            "structure": structure,
+            "tcs":                   round(tcs, 1),
+            "rvol":                  rvol,
+            "ib_high":               round(ib_high, 2),
+            "ib_low":                round(ib_low, 2),
+            "structure":             structure,
+            "poc_price":             round(poc_price, 4),
+            "gap_pct":               gap_pct,
+            "top_pattern":           top_pattern,
+            "top_pattern_score":     round(top_pattern_score, 2) if top_pattern_score else None,
+            "top_pattern_direction": top_pattern_dir,
         }
 
     except Exception:

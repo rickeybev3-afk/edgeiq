@@ -1013,6 +1013,21 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                 for field in ("tcs", "rvol", "ib_high", "ib_low", "structure"):
                                     if ctx.get(field) is not None and not enriched.get(field):
                                         enriched[field] = ctx[field]
+                                _extra_parts = []
+                                if ctx.get("gap_pct") is not None:
+                                    _extra_parts.append(f"Gap: {ctx['gap_pct']:+.1f}%")
+                                if ctx.get("poc_price") is not None:
+                                    _extra_parts.append(f"POC: ${ctx['poc_price']:.4f}")
+                                if ctx.get("top_pattern"):
+                                    _pdir = ctx.get("top_pattern_direction", "")
+                                    _pscore = ctx.get("top_pattern_score", 0)
+                                    _extra_parts.append(
+                                        f"Pattern: {ctx['top_pattern']} ({_pdir}, {_pscore:.0%})"
+                                    )
+                                if _extra_parts:
+                                    enriched["notes"] = (
+                                        enriched.get("notes", "") + " | " + " | ".join(_extra_parts)
+                                    )
                                 return enriched
 
                             from concurrent.futures import ThreadPoolExecutor, as_completed

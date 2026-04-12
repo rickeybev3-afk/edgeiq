@@ -291,16 +291,24 @@ Planned split when Phase 1 is complete and bot is paused for maintenance window:
 - **TCS formula:** Hardcoded 40/30/30 (range/velocity/structure) + sector bonus. Does NOT self-calibrate internally.
 - **TCS in Edge Score:** The Edge Score's TCS WEIGHT auto-calibrates via `compute_adaptive_weights()`. But TCS's own internal split does not.
 - **Targets:** NOT always IB High — uses C2C, 1.5×/2.0× extensions, gap fill, volume profile levels. Dynamic but not learning-based yet.
-- **Pre-market data:** IEX free tier = no PM volume. SIP ($9/mo) required for PM RVOL tracking.
+- **Pre-market data:** IEX free tier = no PM volume. SIP ($99/mo via Alpaca) required for PM RVOL tracking.
 - **Collective brain 84.7%:** Measures structure prediction accuracy, NOT trade P&L. Structure accuracy is foundation but not the whole picture.
 - **Structure classification:** HARD PRESERVATION. Definitions are Market Profile standard. What evolves is everything AROUND them (TCS, RVOL, targets).
 
 ---
 
+## Recent Changes (April 12)
+
+- **Enrichment upgrade:** `enrich_trade_context()` now uses full 7-structure classifier (`classify_day_structure()`) instead of simplified 5-bucket mapping. Also computes gap%, POC price, chart patterns. All embedded in notes field.
+- **Backfill updated:** `backfill_unknown_structures()` catches old simplified labels ("Trending Up", "Trending Down", etc.) as stale for re-enrichment.
+- **API optimization:** Daily bar API calls consolidated from 3 to 1 during enrichment.
+- **SIP pricing corrected:** $99/mo (was incorrectly documented as $9/mo).
+
 ## Known Issues / Pending
 
 - ~~`accuracy_tracker.correct` field is NULL for all 181 rows~~ — **CONFIRMED NOT NULL**: 132 ✅ + 49 ❌ across 181 rows. Old scratchpad note was inaccurate. Data is fine.
 - `alert_price` and `structure_conf` are NULL for current paper_trades rows (not captured at alert time — needs investigation)
+- **ACTION:** Run backfill on existing journal entries with old simplified structure labels to re-enrich with full classifier
 - Inside bar flag at IB close per paper trade row (Phase 2)
 - `gap_pct` per paper trade row (Phase 2 — extra API call for prior close)
 - `rvol_at_ib` per paper trade row (Phase 2 — needs daily volume curve)
