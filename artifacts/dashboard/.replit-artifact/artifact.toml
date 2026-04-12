@@ -1,0 +1,25 @@
+kind = "web"
+previewPath = "/"
+title = "EdgeIQ Dashboard"
+version = "1.0.0"
+id = "artifacts/dashboard"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23183
+
+[services.development]
+run = "cd /home/runner/workspace && streamlit run app.py --server.port 23183"
+
+[services.production]
+run = "cd /home/runner/workspace && PORT=23183 bash artifacts/dashboard/serve.sh"
+
+[services.env]
+PORT = "23183"
+BASE_PATH = "/"
