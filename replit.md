@@ -283,6 +283,20 @@ Planned split when Phase 1 is complete and bot is paused for maintenance window:
 
 ---
 
+## RVOL / TCS / Target Key Facts (April 12 audit)
+
+- **RVOL lookback:** Main chart = 50-day, Playbook screener = 10-day, Gap scanner PM = 10-day
+- **RVOL scanner filter:** Currently NONE — no RVOL minimum on live scanner. Should add ≥2.0 baseline with auto-adjust.
+- **RVOL auto-calibration:** Does NOT exist yet. Lookback, floor, banding all hardcoded. Phase 2 target.
+- **TCS formula:** Hardcoded 40/30/30 (range/velocity/structure) + sector bonus. Does NOT self-calibrate internally.
+- **TCS in Edge Score:** The Edge Score's TCS WEIGHT auto-calibrates via `compute_adaptive_weights()`. But TCS's own internal split does not.
+- **Targets:** NOT always IB High — uses C2C, 1.5×/2.0× extensions, gap fill, volume profile levels. Dynamic but not learning-based yet.
+- **Pre-market data:** IEX free tier = no PM volume. SIP ($9/mo) required for PM RVOL tracking.
+- **Collective brain 84.7%:** Measures structure prediction accuracy, NOT trade P&L. Structure accuracy is foundation but not the whole picture.
+- **Structure classification:** HARD PRESERVATION. Definitions are Market Profile standard. What evolves is everything AROUND them (TCS, RVOL, targets).
+
+---
+
 ## Known Issues / Pending
 
 - ~~`accuracy_tracker.correct` field is NULL for all 181 rows~~ — **CONFIRMED NOT NULL**: 132 ✅ + 49 ❌ across 181 rows. Old scratchpad note was inaccurate. Data is fine.
