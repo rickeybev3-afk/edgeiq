@@ -8452,8 +8452,9 @@ def render_performance_tab():
     # ── Load paper trades ───────────────────────────────────────────────────────
     _pt_df = load_paper_trades(_AUTH_USER_ID, days=365)
 
-    # ── Load accuracy_tracker (structure predictions only — bot watchlist calls) ──
+    # ── Load accuracy_tracker (bot watchlist calls + ALL combined) ──
     _at_df = pd.DataFrame()
+    _at_all_df = pd.DataFrame()
     if supabase:
         try:
             _at_raw = (
@@ -8465,11 +8466,24 @@ def render_performance_tab():
                 .data
             )
             _at_df = pd.DataFrame(_at_raw) if _at_raw else pd.DataFrame()
-            # Filter out '—' entries — these have no real prediction stored
             if not _at_df.empty and "predicted" in _at_df.columns:
                 _at_df = _at_df[_at_df["predicted"].notna() & (_at_df["predicted"] != "—")]
         except Exception:
             _at_df = pd.DataFrame()
+        try:
+            _at_all_raw = (
+                supabase.table("accuracy_tracker")
+                .select("predicted,correct")
+                .eq("user_id", _AUTH_USER_ID)
+                .range(0, 9999)
+                .execute()
+                .data
+            )
+            _at_all_df = pd.DataFrame(_at_all_raw) if _at_all_raw else pd.DataFrame()
+            if not _at_all_df.empty and "predicted" in _at_all_df.columns:
+                _at_all_df = _at_all_df[_at_all_df["predicted"].notna() & (_at_all_df["predicted"] != "—")]
+        except Exception:
+            _at_all_df = pd.DataFrame()
 
     # ── Load brain weights ───────────────────────────────────────────────────────
     _bw = load_brain_weights(_AUTH_USER_ID)
@@ -8501,7 +8515,7 @@ def render_performance_tab():
 
     _pt_rate = (_wins / _total_trades * 100) if _total_trades else 0.0
 
-    # Structure prediction stats
+    # Structure prediction stats (bot-only = watchlist_pred)
     _struct_total = 0
     _struct_wins  = 0
     if not _at_df.empty and "correct" in _at_df.columns:
@@ -8509,10 +8523,18 @@ def render_performance_tab():
         _struct_wins  = int((_at_df["correct"] == "✅").sum())
     _struct_rate = (_struct_wins / _struct_total * 100) if _struct_total else 0.0
 
+    # Combined accuracy (all sources — journal + bot + webull)
+    _all_total = 0
+    _all_wins  = 0
+    if not _at_all_df.empty and "correct" in _at_all_df.columns:
+        _all_total = len(_at_all_df)
+        _all_wins  = int((_at_all_df["correct"] == "✅").sum())
+    _all_rate = (_all_wins / _all_total * 100) if _all_total else 0.0
+
     # Brain weight — normal (most active signal)
     _bw_normal = _bw.get("normal", 1.0)
 
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k3b, k4, k5 = st.columns(6)
     with k1:
         _color = "#2e7d32" if _pt_rate >= 60 else ("#ef6c00" if _pt_rate >= 50 else "#c62828")
         st.markdown(
@@ -8535,9 +8557,20 @@ def render_performance_tab():
         _sc = "#2e7d32" if _struct_rate >= 65 else ("#ef6c00" if _struct_rate >= 55 else "#c62828")
         st.markdown(
             f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Structure Pred Rate</div>'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Bot Pred Rate</div>'
             f'<div style="font-size:26px;font-weight:700;color:{_sc};">{_struct_rate:.1f}%</div>'
             f'<div style="font-size:14px;color:#cfd8dc;">{_struct_wins}/{_struct_total} correct</div>'
+            f'<div style="font-size:10px;color:#607d8b;margin-top:2px;">Bot watchlist calls only</div>'
+            f'</div>', unsafe_allow_html=True
+        )
+    with k3b:
+        _ac = "#2e7d32" if _all_rate >= 65 else ("#ef6c00" if _all_rate >= 55 else "#c62828")
+        st.markdown(
+            f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Overall Pred Rate</div>'
+            f'<div style="font-size:26px;font-weight:700;color:{_ac};">{_all_rate:.1f}%</div>'
+            f'<div style="font-size:14px;color:#cfd8dc;">{_all_wins}/{_all_total} correct</div>'
+            f'<div style="font-size:10px;color:#607d8b;margin-top:2px;">All sources combined</div>'
             f'</div>', unsafe_allow_html=True
         )
     with k4:
