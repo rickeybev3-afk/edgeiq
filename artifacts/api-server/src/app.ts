@@ -1,8 +1,11 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import { createProxyMiddleware } from "http-proxy-middleware";
 import router from "./routes";
 import { logger } from "./lib/logger";
+
+const STREAMLIT_PORT = process.env["STREAMLIT_PORT"] || "8501";
 
 const app: Express = express();
 
@@ -26,9 +29,16 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-app.use("/api", router);
+app.use("/api", express.json(), express.urlencoded({ extended: true }), router);
+
+app.use(
+  "/",
+  createProxyMiddleware({
+    target: `http://127.0.0.1:${STREAMLIT_PORT}`,
+    changeOrigin: true,
+    ws: true,
+  }),
+);
 
 export default app;
