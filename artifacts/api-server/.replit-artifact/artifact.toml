@@ -12,14 +12,14 @@ version = "1.0.0"
 [[services]]
 name = "web"
 paths = [ "/" ]
-localPort = 22729
+localPort = 8080
 
 [services.development]
-run = "cd /home/runner/workspace && streamlit run app.py --server.port 22729"
+run = "cd /home/runner/workspace && streamlit run app.py --server.port 8080"
 
 [services.production]
-run = "python3 -m http.server 22729 --directory /home/runner/workspace/artifacts/api-server/public"
+run = "python3 -m http.server 8080 --directory /home/runner/workspace/artifacts/api-server/public"
 
 [services.env]
-PORT = "22729"
+PORT = "8080"
 BASE_PATH = "/"
