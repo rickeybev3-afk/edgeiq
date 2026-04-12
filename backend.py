@@ -854,6 +854,46 @@ def detect_chart_patterns(df_1m, poc_price=None, ib_high=None, ib_low=None):
                                      "confluence": conf, "description": desc,
                                      "neckline": round(cup_start, 4)})
 
+    # ── Inside Bar (any timeframe) ─────────────────────────────────────────
+    for tf_label, rule in [("5m", "5min"), ("1hr", "60min")]:
+        df_tf = _resample_bars(df_1m, rule)
+        if df_tf is None or len(df_tf) < 3:
+            continue
+        cur_high = float(df_tf["high"].iloc[-1])
+        cur_low  = float(df_tf["low"].iloc[-1])
+        prev_high = float(df_tf["high"].iloc[-2])
+        prev_low  = float(df_tf["low"].iloc[-2])
+        if cur_high <= prev_high and cur_low >= prev_low:
+            ib_range = prev_high - prev_low
+            cur_range = cur_high - cur_low
+            compression = 1.0 - (cur_range / max(ib_range, 0.001))
+            score = 0.60
+            conf = []
+            if compression > 0.50:
+                score += 0.10
+                conf.append(f"Strong compression ({compression*100:.0f}%)")
+            if poc_price and prev_low <= poc_price <= prev_high:
+                score += 0.10
+                conf.append("Inside bar at POC")
+            if ib_high and (abs(prev_high - ib_high) / max(ib_high, 0.001) < 0.015):
+                score += 0.10
+                conf.append("Inside bar at IB High")
+            if ib_low and (abs(prev_low - ib_low) / max(ib_low, 0.001) < 0.015):
+                score += 0.10
+                conf.append("Inside bar at IB Low")
+            cur_close = float(df_tf["close"].iloc[-1])
+            midpoint = (prev_low + prev_high) / 2
+            direction = "Bullish" if cur_close > midpoint else "Bearish"
+            desc = (f"Current bar (H:{cur_high:.2f} L:{cur_low:.2f}) fully inside "
+                    f"prior bar (H:{prev_high:.2f} L:{prev_low:.2f}). "
+                    f"Compression {compression*100:.0f}%. Break above {prev_high:.2f} = bullish, "
+                    f"below {prev_low:.2f} = bearish.")
+            patterns.append({"name": "Inside Bar",
+                             "direction": direction, "timeframe": tf_label,
+                             "score": round(min(score, 1.0), 2),
+                             "confluence": conf, "description": desc,
+                             "neckline": round(prev_high, 4)})
+
     # ── Confluence boost: stacked patterns ────────────────────────────────────
     bull = [p for p in patterns if p["direction"] == "Bullish"]
     bear = [p for p in patterns if p["direction"] == "Bearish"]
@@ -4027,7 +4067,8 @@ def fetch_premarket_vols(api_key, secret_key, ticker, trade_date,
 
 
 def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex",
-                    min_price: float = 1.0, max_price: float = 50.0):
+                    min_price: float = 1.0, max_price: float = 50.0,
+                    min_rvol: float = 0.0):
     """Run the full gap-scanner pipeline and return qualifying tickers by gap/RVOL.
 
     Pipeline:
@@ -4035,7 +4076,13 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex",
       2. Filter to configurable price range (default $1–$50)
       3. Fetch pre-market volumes + 10-day historical average per qualifying ticker
       4. Compute Gap % and Pre-Market RVOL
-      5. Sort by absolute gap %, return all qualifying tickers (no hard cap)
+      5. Filter by min_rvol floor (when PM RVOL is available)
+      6. Sort by absolute gap %, return all qualifying tickers (no hard cap)
+
+    Args:
+      min_rvol: Minimum PM RVOL threshold. Tickers with PM RVOL below this are
+                filtered out. Default 0.0 (no filter). Recommended: 2.0.
+                Only applied when PM data is available (SIP feed).
 
     Returns list of dicts: [{ticker, price, gap_pct, pm_vol, avg_pm_vol, pm_rvol}]
     Raises exceptions so the caller can surface them to the UI.
@@ -4102,17 +4149,26 @@ def run_gap_scanner(api_key, secret_key, watchlist, trade_date, feed="iex",
             "pm_data_available": pm_data_available,
         })
 
-    # Step 5 — sort by absolute gap %, then RVOL as tiebreaker
+    # Step 5 — RVOL floor filter (only when PM data is available)
+    rvol_filtered = []
+    if min_rvol > 0 and pm_data_available:
+        pre_count = len(rows)
+        rows = [r for r in rows
+                if r["pm_rvol"] is None or r["pm_rvol"] >= min_rvol]
+        dropped = pre_count - len(rows)
+        if dropped > 0:
+            rvol_filtered = [f"Filtered {dropped} tickers below RVOL {min_rvol:.1f}x"]
+
+    # Step 6 — sort by absolute gap %, then RVOL as tiebreaker
     rows.sort(key=lambda r: (
         abs(r["gap_pct"]),
         r["pm_rvol"] if r["pm_rvol"] is not None else -1,
     ), reverse=True)
 
-    # Tag each row with whether PM data was available for this scan
     for r in rows:
         r["pm_data_available"] = pm_data_available
 
-    return {"rows": rows, "filtered_out": filtered_out}
+    return {"rows": rows, "filtered_out": filtered_out, "rvol_filtered": rvol_filtered}
 
 
 def compute_pretrade_quality(
@@ -5210,12 +5266,19 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
                 _w  = _aft_r.loc[_fi : _fi + 6]
                 false_break_down = bool((_w["close"] > ib_low).any())
 
+        try:
+            _avg_vol = fetch_avg_daily_volume(api_key, secret_key, sym, trade_date)
+        except Exception:
+            _avg_vol = None
+        _rvol_val = compute_rvol(pm_df, avg_daily_vol=_avg_vol)
+
         return {
             "ticker":           sym,
             "open_price":       round(open_px, 2),
             "ib_high":          round(ib_high, 2),
             "ib_low":           round(ib_low, 2),
             "tcs":              round(tcs, 1),
+            "rvol":             _rvol_val,
             "predicted":        predicted,
             "confidence":       confidence,
             "actual_outcome":   actual_outcome,
@@ -5489,6 +5552,28 @@ _PAPER_TRADES_REGIME_MIGRATION = (
     "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS regime_tag TEXT;"
 )
 
+_RVOL_COLUMNS_MIGRATION = (
+    "-- Run in Supabase SQL Editor to add RVOL persistence columns:\n"
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol REAL;\n"
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS gap_pct REAL;\n"
+    "ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS rvol REAL;\n"
+    "ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS gap_pct REAL;\n"
+)
+
+
+def ensure_rvol_columns() -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("paper_trades").select("rvol").limit(1).execute()
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if any(k in err for k in ("column", "not exist", "not found", "pgrst")):
+            print("rvol/gap_pct columns missing.\nRun in Supabase SQL Editor:\n\n" + _RVOL_COLUMNS_MIGRATION)
+            return False
+        return False
+
 
 def ensure_paper_trades_regime_column() -> bool:
     """Check if regime_tag column exists in paper_trades. Returns True if present.
@@ -5561,9 +5646,9 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 "ib_low":         r.get("ib_low"),
                 "ib_high":        r.get("ib_high"),
                 "open_price":     r.get("open_price"),
-                "alert_price":    r.get("close_price"),      # price at IB close = price when alert fires
-                "alert_time":     datetime.utcnow().isoformat(),  # UTC timestamp when alert was logged
-                "structure_conf": r.get("confidence"),            # brain confidence % in its own prediction
+                "alert_price":    r.get("close_price"),
+                "alert_time":     datetime.utcnow().isoformat(),
+                "structure_conf": r.get("confidence"),
                 "actual_outcome": r.get("actual_outcome", ""),
                 "follow_thru_pct": r.get("aft_move_pct"),
                 "win_loss":       r.get("win_loss", ""),
@@ -5571,12 +5656,27 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 "false_break_down": bool(r.get("false_break_down", False)),
                 "min_tcs_filter": min_tcs,
             }
+            if r.get("rvol") is not None:
+                row_record["rvol"] = round(float(r["rvol"]), 2)
+            if r.get("gap_pct") is not None:
+                row_record["gap_pct"] = round(float(r["gap_pct"]), 2)
             # Include regime_tag if present and column exists; safe to omit if column missing
             if r.get("regime_tag"):
                 row_record["regime_tag"] = r["regime_tag"]
             records.append(row_record)
         if records:
-            supabase.table("paper_trades").insert(records).execute()
+            try:
+                supabase.table("paper_trades").insert(records).execute()
+            except Exception as _ins_err:
+                _err_s = str(_ins_err).lower()
+                if "rvol" in _err_s or "gap_pct" in _err_s:
+                    for rec in records:
+                        rec.pop("rvol", None)
+                        rec.pop("gap_pct", None)
+                    supabase.table("paper_trades").insert(records).execute()
+                    print("log_paper_trades: rvol/gap_pct columns missing — saved without them")
+                else:
+                    raise
         return {"saved": len(records), "skipped": skipped}
     except Exception as e:
         return {"saved": 0, "skipped": 0, "error": str(e)}
@@ -6836,6 +6936,10 @@ def save_watchlist_predictions(predictions: list, user_id: str = "") -> bool:
             row["win_rate_pct"]     = p.get("win_rate_pct")
             row["win_rate_context"] = p.get("win_rate_context") or ""
             row["confidence_label"] = p.get("confidence_label") or "LOW"
+            if p.get("rvol") is not None:
+                row["rvol"] = round(float(p["rvol"]), 2)
+            if p.get("gap_pct") is not None:
+                row["gap_pct"] = round(float(p["gap_pct"]), 2)
         return row
 
     try:

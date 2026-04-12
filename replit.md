@@ -65,7 +65,15 @@ Bot runs 100% autonomously. The user should only use:
 - **User ID:** `a5e1fcab-8369-42c4-8550-a8a19734510c`
 
 ### `paper_trades` columns
-`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf`
+`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf, regime_tag, rvol, gap_pct`
+
+**Migration required for rvol/gap_pct (run in Supabase SQL Editor):**
+```sql
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol REAL;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS gap_pct REAL;
+ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS rvol REAL;
+ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS gap_pct REAL;
+```
 
 ### `accuracy_tracker` columns
 Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL for all rows** — win/loss not being stored as True/False, data quality problem to fix in Phase 2.
@@ -84,13 +92,14 @@ Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL f
 - `neutral` = 1.4999
 - `ntrl_extreme` = 1.4999
 
-**Current weights (as of 2026-04-12 recalibration — post-enrichment upgrade + cleanup):**
-- `neutral` = 1.2194 (↑ — 74% accuracy, Webull imports now use full 7-structure labels)
-- `ntrl_extreme` = 1.0211 (↓ — 68% accuracy)
-- `normal` = 1.3334 (↑ — strong performer)
-- 88 garbage "—" entries deleted from accuracy_tracker (false ✅ watchlist predictions with no real structure)
-- 60 "Unknown" Webull import entries in accuracy_tracker updated with correct structures
-- Overall accuracy: 80.1% (down from 84.8% — the drop is CORRECT because 88 false-positive ✅s were removed)
+**Current weights (as of 2026-04-12 recalibration — post-cleanup):**
+- `neutral` = 1.1316 (↓ from 1.2194 — 52.8% accuracy after data corrections)
+- `ntrl_extreme` = 1.0137 (↓ from 1.0211 — 50.7% accuracy)
+- `normal` = 1.3334 (unchanged — strong performer)
+- `double_dist` = 1.0, `non_trend` = 1.0, `nrml_variation` = 1.0, `trend_*` = 1.0
+- Sources: 175 accuracy_tracker + 7 paper_trades = 182 total
+- Overall accuracy: 67.2% (193 ✅ / 94 ❌). Webull imports: 39.3% (24 ✅ / 37 ❌)
+- 88 garbage "—" entries deleted. 60 "Unknown" entries re-enriched with correct structures
 
 **Recalibration thresholds:**
 - MIN_SAMPLES: <50 rows→3, 50-200→5, 200-500→8, 500+→12
@@ -98,6 +107,24 @@ Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL f
 - Volume-weighted blend replaces fixed 50/50 between journal + bot data sources
 
 ---
+
+## Chart Patterns (detect_chart_patterns)
+
+Built: H&S (regular+reverse), Double Bottom/Top, Bull Flag, Bear Flag, Cup & Handle, **Inside Bar**.
+Not built: P-shape, D-shape.
+All run on both 5m and 1hr timeframes. Confluence boosts for stacked patterns and IB/POC proximity.
+
+## Scanner RVOL Floor
+
+`run_gap_scanner()` now accepts `min_rvol` param (default 0.0). UI slider in Scanner sidebar defaults to 2.0x.
+Only applied when SIP feed provides PM volume data. IEX mode skips the filter gracefully.
+
+## RVOL Persistence
+
+`_backtest_single()` now computes RVOL via `compute_rvol(pm_df)` and includes it in results.
+`log_paper_trades()` saves `rvol` + `gap_pct` to Supabase (with graceful fallback if columns missing).
+`save_watchlist_predictions()` saves `rvol` + `gap_pct` in extended schema path.
+**Requires migration** — see Supabase section above.
 
 ## Slippage
 

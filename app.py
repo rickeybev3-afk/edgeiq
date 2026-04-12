@@ -4011,7 +4011,7 @@ with st.sidebar:
                              help="SIP = full national tape with PM RVOL (recommended). IEX = free tier, regular hours only.")
     if scan_feed == "iex":
         st.info("ℹ️ IEX (free tier): PM Volume will be blank. Switch to SIP for full pre-market data.")
-    _price_cols = st.columns(2)
+    _price_cols = st.columns(3)
     scan_min_price = _price_cols[0].number_input(
         "Min Price ($)", min_value=0.01, max_value=999.0, value=0.10,
         step=0.10, format="%.2f", key="scan_min_price",
@@ -4021,6 +4021,11 @@ with st.sidebar:
         "Max Price ($)", min_value=0.10, max_value=9999.0, value=50.0,
         step=5.0, format="%.2f", key="scan_max_price",
         help="Exclude tickers above this price"
+    )
+    scan_min_rvol = _price_cols[2].number_input(
+        "Min RVOL (x)", min_value=0.0, max_value=50.0, value=2.0,
+        step=0.5, format="%.1f", key="scan_min_rvol",
+        help="Minimum PM RVOL threshold (recommended 2.0x). Only applied with SIP feed."
     )
     scan_button = st.button("🔍 Scan Gap Plays", use_container_width=True)
 
@@ -9415,11 +9420,14 @@ with tab_scan:
                             feed=scan_feed,
                             min_price=scan_min_price,
                             max_price=scan_max_price,
+                            min_rvol=scan_min_rvol,
                         )
                         results = _scan_out["rows"]
                         _filtered_out = _scan_out.get("filtered_out", [])
+                        _rvol_filtered = _scan_out.get("rvol_filtered", [])
                         st.session_state.scanner_results = results
                         st.session_state.scanner_filtered_out = _filtered_out
+                        st.session_state.scanner_rvol_filtered = _rvol_filtered
                         st.session_state.scanner_last_run = datetime.now(EASTERN)
                         # Pre-trade quality + pattern detection — run in parallel for all tickers
                         if results:
@@ -9483,6 +9491,9 @@ with tab_scan:
                 + ", ".join(_scan_filtered_out)
                 + " — adjust Min/Max Price in the scanner settings to include them."
             )
+        _rvol_filt = st.session_state.get("scanner_rvol_filtered", [])
+        if _rvol_filt:
+            st.info("📊 " + " · ".join(_rvol_filt))
 
     if not results:
         st.info("👈 Click **🔍 Scan Gap Plays** in the sidebar to populate this panel.\n\n"
@@ -9872,6 +9883,7 @@ with tab_scan:
                                 "win_rate_pct":     _brief.get("win_rate_pct"),
                                 "win_rate_context": _brief.get("win_rate_context") or "",
                                 "confidence_label": _brief.get("confidence_label") or "LOW",
+                                "rvol":             _brief.get("rvol"),
                             })
                         _wpe_payload.append(_row)
 
