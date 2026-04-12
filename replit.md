@@ -84,10 +84,13 @@ Manual journal entries. 181 rows total. **Known issue: `correct` field is NULL f
 - `neutral` = 1.4999
 - `ntrl_extreme` = 1.4999
 
-**Current weights (as of 2026-04-08 recalibration):**
-- `normal` = 1.2887 (↑ — 100% accuracy over 68 samples — gaining confidence)
-- `ntrl_extreme` = 1.2112 (↓ — 56.6% accuracy over 53 samples — becoming more skeptical)
-- `neutral` = 1.2112 (↓ — 59.1% accuracy over 67 samples — becoming more skeptical)
+**Current weights (as of 2026-04-12 recalibration — post-enrichment upgrade + cleanup):**
+- `neutral` = 1.2194 (↑ — 74% accuracy, Webull imports now use full 7-structure labels)
+- `ntrl_extreme` = 1.0211 (↓ — 68% accuracy)
+- `normal` = 1.3334 (↑ — strong performer)
+- 88 garbage "—" entries deleted from accuracy_tracker (false ✅ watchlist predictions with no real structure)
+- 60 "Unknown" Webull import entries in accuracy_tracker updated with correct structures
+- Overall accuracy: 80.1% (down from 84.8% — the drop is CORRECT because 88 false-positive ✅s were removed)
 
 **Recalibration thresholds:**
 - MIN_SAMPLES: <50 rows→3, 50-200→5, 200-500→8, 500+→12
