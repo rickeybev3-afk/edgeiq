@@ -5,3 +5,6 @@ port = 8080
 enableCORS = false
 enableXsrfProtection = false
 enableStaticServing = true
+
+[browser]
+gatherUsageStats = false

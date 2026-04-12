@@ -10,7 +10,7 @@ name = "Start application"
 paths = ["/"]
 
 [services.development]
-run = "streamlit run app.py --server.port 8080"
+run = "cd /home/runner/workspace && streamlit run app.py --server.port 8080"
 
 [services.production]
 run = "cd /home/runner/workspace && bash start.sh"
