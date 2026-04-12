@@ -11,7 +11,3 @@ paths = ["/api"]
 
 [services.development]
 run = "cd /home/runner/workspace && streamlit run app.py --server.port 8080"
-
-[services.production]
-build = "cd /home/runner/workspace && pnpm --filter @workspace/api-server run build"
-run = "cd /home/runner/workspace && bash artifacts/api-server/serve.sh"
