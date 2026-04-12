@@ -5090,7 +5090,8 @@ def compute_portfolio_metrics(paper_df: "pd.DataFrame",
     rolling_dd = daily[["date"]].copy()
     rolling_dd["drawdown_pct"] = drawdown.values
 
-    alpha = None
+    alpha_spy = None
+    alpha_iwm = None
     if api_key and secret_key:
         try:
             import requests as _req
@@ -5100,26 +5101,35 @@ def compute_portfolio_metrics(paper_df: "pd.DataFrame",
                 "APCA-API-KEY-ID": api_key,
                 "APCA-API-SECRET-KEY": secret_key,
             }
-            _url = (f"https://data.alpaca.markets/v2/stocks/SPY/bars"
-                    f"?timeframe=1Day&start={_start}&end={_end}&limit=500")
-            _r = _req.get(_url, headers=_hdr, timeout=10)
-            if _r.status_code == 200:
-                _bars = _r.json().get("bars", [])
-                if len(_bars) >= 2:
-                    _spy_df = pd.DataFrame(_bars)
-                    _spy_df["date"] = pd.to_datetime(_spy_df["t"]).dt.date
-                    _spy_df["spy_ret"] = _spy_df["c"].pct_change() * 100
-                    _spy_df = _spy_df.dropna(subset=["spy_ret"])
-                    _merged = pd.merge(daily, _spy_df[["date", "spy_ret"]], on="date", how="inner")
-                    if len(_merged) >= 3:
-                        alpha = round(_merged["return_pct"].mean() - _merged["spy_ret"].mean(), 3)
+            for _sym, _key in [("SPY", "spy"), ("IWM", "iwm")]:
+                try:
+                    _url = (f"https://data.alpaca.markets/v2/stocks/{_sym}/bars"
+                            f"?timeframe=1Day&start={_start}&end={_end}&limit=500")
+                    _r = _req.get(_url, headers=_hdr, timeout=10)
+                    if _r.status_code == 200:
+                        _bars = _r.json().get("bars", [])
+                        if len(_bars) >= 2:
+                            _bm_df = pd.DataFrame(_bars)
+                            _bm_df["date"] = pd.to_datetime(_bm_df["t"]).dt.date
+                            _bm_df[f"{_key}_ret"] = _bm_df["c"].pct_change() * 100
+                            _bm_df = _bm_df.dropna(subset=[f"{_key}_ret"])
+                            _merged = pd.merge(daily, _bm_df[["date", f"{_key}_ret"]], on="date", how="inner")
+                            if len(_merged) >= 3:
+                                _a = round(_merged["return_pct"].mean() - _merged[f"{_key}_ret"].mean(), 3)
+                                if _key == "spy":
+                                    alpha_spy = _a
+                                else:
+                                    alpha_iwm = _a
+                except Exception:
+                    pass
         except Exception:
             pass
 
     return {
         "sharpe": sharpe,
         "sharpe_annual": sharpe_annual,
-        "alpha_vs_spy": alpha,
+        "alpha_vs_spy": alpha_spy,
+        "alpha_vs_iwm": alpha_iwm,
         "max_drawdown_pct": max_dd,
         "current_drawdown_pct": current_dd,
         "daily_returns": daily,

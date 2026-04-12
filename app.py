@@ -8626,7 +8626,7 @@ def render_performance_tab():
     )
 
     if _pm["trade_count"] >= 3 and _pm["sharpe"] is not None:
-        _pm_c1, _pm_c2, _pm_c3, _pm_c4 = st.columns(4)
+        _pm_c1, _pm_c2, _pm_c3, _pm_c4, _pm_c5 = st.columns(5)
         with _pm_c1:
             _sh_color = "#66bb6a" if (_pm["sharpe_annual"] or 0) > 1.0 else "#ef5350" if (_pm["sharpe_annual"] or 0) < 0 else "#ffa726"
             st.markdown(
@@ -8637,15 +8637,6 @@ def render_performance_tab():
                 unsafe_allow_html=True
             )
         with _pm_c2:
-            _sh_d = _pm["sharpe"] or 0
-            st.markdown(
-                f"<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
-                f"<div style='font-size:11px;color:#777'>Sharpe (Daily)</div>"
-                f"<div style='font-size:24px;font-weight:800;color:#7986cb'>"
-                f"{_sh_d:.3f}</div></div>",
-                unsafe_allow_html=True
-            )
-        with _pm_c3:
             _dd = _pm["max_drawdown_pct"] or 0
             _dd_color = "#66bb6a" if _dd > -5 else "#ef5350" if _dd < -20 else "#ffa726"
             st.markdown(
@@ -8655,7 +8646,7 @@ def render_performance_tab():
                 f"{_dd:.1f}%</div></div>",
                 unsafe_allow_html=True
             )
-        with _pm_c4:
+        with _pm_c3:
             if _pm["alpha_vs_spy"] is not None:
                 _al = _pm["alpha_vs_spy"]
                 _al_color = "#66bb6a" if _al > 0 else "#ef5350"
@@ -8670,9 +8661,36 @@ def render_performance_tab():
                 st.markdown(
                     "<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
                     "<div style='font-size:11px;color:#777'>Alpha vs SPY</div>"
-                    "<div style='font-size:16px;color:#555'>Need Alpaca keys</div></div>",
+                    "<div style='font-size:16px;color:#555'>Need API keys</div></div>",
                     unsafe_allow_html=True
                 )
+        with _pm_c4:
+            if _pm.get("alpha_vs_iwm") is not None:
+                _al_iwm = _pm["alpha_vs_iwm"]
+                _al_iwm_color = "#66bb6a" if _al_iwm > 0 else "#ef5350"
+                st.markdown(
+                    f"<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                    f"<div style='font-size:11px;color:#777'>Alpha vs IWM</div>"
+                    f"<div style='font-size:24px;font-weight:800;color:{_al_iwm_color}'>"
+                    f"{'+' if _al_iwm > 0 else ''}{_al_iwm:.2f}%</div></div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    "<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                    "<div style='font-size:11px;color:#777'>Alpha vs IWM</div>"
+                    "<div style='font-size:16px;color:#555'>Need API keys</div></div>",
+                    unsafe_allow_html=True
+                )
+        with _pm_c5:
+            _sh_d = _pm["sharpe"] or 0
+            st.markdown(
+                f"<div style='text-align:center;padding:12px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a'>"
+                f"<div style='font-size:11px;color:#777'>Sharpe (Daily)</div>"
+                f"<div style='font-size:24px;font-weight:800;color:#7986cb'>"
+                f"{_sh_d:.3f}</div></div>",
+                unsafe_allow_html=True
+            )
 
         if not _pm["rolling_drawdown"].empty:
             import plotly.graph_objects as _go_pm
