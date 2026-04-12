@@ -3662,11 +3662,12 @@ if _beta_user_id:
     render_beta_portal(_beta_user_id)
     st.stop()
 
-# ── Build notes intercept — accessible via /?notes=<USER_ID> ─────────────────
+# ── Build notes intercept — accessible via /?notes=<USER_ID> or /?notes=<CODE>
 _NOTES_USER_ID = "a5e1fcab-8369-42c4-8550-a8a19734510c"
 _PRIVATE_KEY   = "7c3f9b2a-4e1d-4a8c-b05f-3d8e6f1a9c4b"
+_PUBLIC_NOTES_CODE = "edgeiq"
 _notes_param   = st.query_params.get("notes", "")
-if _notes_param == _NOTES_USER_ID:
+if _notes_param == _NOTES_USER_ID or _notes_param == _PUBLIC_NOTES_CODE:
     render_build_notes()
     st.stop()
 
