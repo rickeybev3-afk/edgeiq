@@ -11,6 +11,13 @@ nohup python3 -m streamlit run app.py \
   --server.address 127.0.0.1 \
   >> /tmp/streamlit.log 2>&1 &
 
-sleep 5
+echo "[serve.sh] Waiting for Streamlit to be ready on port $STREAMLIT_PORT..."
+for i in $(seq 1 60); do
+  if curl -s -o /dev/null -w '' "http://127.0.0.1:$STREAMLIT_PORT/_stcore/health" 2>/dev/null; then
+    echo "[serve.sh] Streamlit is ready after ${i}s"
+    break
+  fi
+  sleep 1
+done
 
 exec node artifacts/api-server/dist/index.mjs
