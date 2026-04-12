@@ -18,7 +18,13 @@ localPort = 22729
 run = "cd /home/runner/workspace && streamlit run app.py --server.port 22729"
 
 [services.production]
-run = "cd /home/runner/workspace && python3 deploy_server.py"
+build = [ "echo", "static-build-ready" ]
+publicDir = "artifacts/api-server/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
 
 [services.env]
 PORT = "22729"
