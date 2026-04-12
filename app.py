@@ -8723,7 +8723,78 @@ def render_performance_tab():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
-    # SECTION 4 — BRAIN WEIGHTS
+    # SECTION 4 — STRUCTURE TCS THRESHOLDS (per-structure priority)
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 🎯 Structure Priority — Adaptive TCS Thresholds")
+    st.caption("Your hit rate per structure determines how aggressively the system should trade it. Higher hit rate → lower TCS required → take it more often.")
+
+    _tcs_data = compute_structure_tcs_thresholds()
+    if _tcs_data:
+        for _t in _tcs_data:
+            _hr = _t["hit_rate"]
+            _rec = _t["recommended_tcs"]
+            _n = _t["sample_count"]
+            _conf = _t["confidence"]
+            _status = _t["status"]
+            _bw_val = _t["brain_weight"]
+
+            if _hr is not None:
+                if _hr >= 70:
+                    _hr_color = "#66bb6a"
+                elif _hr >= 55:
+                    _hr_color = "#ffa726"
+                elif _hr >= 40:
+                    _hr_color = "#ff7043"
+                else:
+                    _hr_color = "#ef5350"
+
+                _tcs_color = "#66bb6a" if _rec <= 55 else "#ffa726" if _rec <= 70 else "#ef5350"
+                _action = "AGGRESSIVE — take with minimal confirmation" if _rec <= 55 else "STANDARD — require normal confluence" if _rec <= 65 else "CAUTIOUS — need strong supporting signals" if _rec <= 75 else "AVOID unless everything aligns"
+
+                st.markdown(
+                    f"<div style='padding:14px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a;margin-bottom:8px'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"
+                    f"<div style='flex:1;min-width:200px'>"
+                    f"<span style='font-size:16px;font-weight:700;color:#e0e0e0'>{_status} {_t['structure']}</span>"
+                    f"<div style='font-size:11px;color:#777;margin-top:2px'>{_n} samples ({_t['journal_n']} journal + {_t['bot_n']} bot) · Confidence: {_conf} · Weight: {_bw_val}</div>"
+                    f"</div>"
+                    f"<div style='display:flex;gap:20px;align-items:center'>"
+                    f"<div style='text-align:center'>"
+                    f"<div style='font-size:11px;color:#777'>Hit Rate</div>"
+                    f"<div style='font-size:22px;font-weight:800;color:{_hr_color}'>{_hr:.1f}%</div>"
+                    f"</div>"
+                    f"<div style='text-align:center'>"
+                    f"<div style='font-size:11px;color:#777'>Min TCS</div>"
+                    f"<div style='font-size:22px;font-weight:800;color:{_tcs_color}'>{_rec}</div>"
+                    f"</div>"
+                    f"</div>"
+                    f"</div>"
+                    f"<div style='font-size:12px;color:#90a4ae;margin-top:6px'>{_action}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f"<div style='padding:14px;background:#1a1a2e;border-radius:8px;border:1px solid #2a2a4a;margin-bottom:8px;opacity:0.5'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    f"<div>"
+                    f"<span style='font-size:16px;font-weight:700;color:#555'>{_status} {_t['structure']}</span>"
+                    f"<div style='font-size:11px;color:#555;margin-top:2px'>No verified predictions yet</div>"
+                    f"</div>"
+                    f"<div style='text-align:center'>"
+                    f"<div style='font-size:11px;color:#555'>Min TCS</div>"
+                    f"<div style='font-size:22px;font-weight:800;color:#555'>{_rec}</div>"
+                    f"</div>"
+                    f"</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+    else:
+        st.info("Connect to Supabase to see per-structure TCS thresholds.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # SECTION 5 — BRAIN WEIGHTS (raw learned values)
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 🧠 Current Brain Weights")
 
@@ -8760,7 +8831,7 @@ def render_performance_tab():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
-    # SECTION 5 — DAILY SUMMARY TABLE
+    # SECTION 6 — DAILY SUMMARY TABLE
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 📅 Daily Breakdown")
 

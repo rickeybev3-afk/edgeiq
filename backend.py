@@ -1509,6 +1509,154 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
     return result
 
 
+def compute_structure_tcs_thresholds() -> list[dict]:
+    """Compute per-structure TCS thresholds based on actual hit rates.
+
+    Logic:
+      - Pulls per-structure accuracy from accuracy_tracker + paper_trades
+      - Higher hit rate → lower TCS threshold (take these trades more aggressively)
+      - Lower hit rate → higher TCS threshold (require more confirmation)
+
+    Threshold formula:
+      base_tcs = 65 (default gate)
+      adjustment = (hit_rate - 60) * 0.5
+      threshold = base_tcs - adjustment
+      Clamped to [45, 85] range
+
+    So a structure with 85% hit rate → threshold ~52 (take it easier)
+       a structure with 40% hit rate → threshold ~75 (need strong confluence)
+
+    Returns list of dicts sorted by recommended threshold (lowest first = strongest edge):
+      [{structure, hit_rate, sample_count, journal_n, bot_n, brain_weight,
+        recommended_tcs, confidence, status}, ...]
+    """
+    if not supabase:
+        return []
+
+    import collections as _col
+
+    journal_data: dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
+    bot_data:     dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
+
+    try:
+        q = supabase.table("accuracy_tracker").select("predicted,correct")
+        resp = q.execute()
+        for row in (resp.data or []):
+            pred = row.get("predicted", "")
+            corr = row.get("correct", "")
+            if not pred:
+                continue
+            wk = _label_to_weight_key(pred)
+            if not wk:
+                continue
+            journal_data[wk]["total"] += 1
+            if "✅" in str(corr):
+                journal_data[wk]["wins"] += 1
+    except Exception:
+        pass
+
+    try:
+        q = supabase.table("paper_trades").select("predicted,win_loss")
+        resp = q.execute()
+        for row in (resp.data or []):
+            pred = row.get("predicted", "")
+            wl   = str(row.get("win_loss", "")).strip().lower()
+            if not pred or wl not in ("win", "loss"):
+                continue
+            wk = _label_to_weight_key(pred)
+            if not wk:
+                continue
+            bot_data[wk]["total"] += 1
+            if wl == "win":
+                bot_data[wk]["wins"] += 1
+    except Exception:
+        pass
+
+    weights = load_brain_weights()
+
+    STRUCTURE_LABELS = {
+        "neutral":      "🔄 Neutral",
+        "ntrl_extreme": "⚡ Neutral Extreme",
+        "normal":       "📊 Normal",
+        "trend":        "🚀 Trend Day",
+        "double_dist":  "📉 Double Distribution",
+        "rotational":   "🔃 Rotational",
+        "other":        "❓ Other",
+    }
+
+    BASE_TCS = 65
+    results = []
+
+    for wk, label in STRUCTURE_LABELS.items():
+        j = journal_data[wk]
+        b = bot_data[wk]
+        j_n = j["total"]
+        b_n = b["total"]
+        total_n = j_n + b_n
+
+        if total_n == 0:
+            results.append({
+                "structure":       label,
+                "hit_rate":        None,
+                "sample_count":    0,
+                "journal_n":       0,
+                "bot_n":           0,
+                "brain_weight":    weights.get(wk, 1.0),
+                "recommended_tcs": BASE_TCS,
+                "confidence":      "No Data",
+                "status":          "⏳",
+            })
+            continue
+
+        j_acc = (j["wins"] / j_n) if j_n > 0 else None
+        b_acc = (b["wins"] / b_n) if b_n > 0 else None
+
+        if j_n > 0 and b_n > 0:
+            hit_rate = (j_n * j_acc + b_n * b_acc) / total_n
+        elif j_n > 0:
+            hit_rate = j_acc
+        else:
+            hit_rate = b_acc
+
+        hit_pct = hit_rate * 100
+
+        adjustment = (hit_pct - 60) * 0.5
+        rec_tcs = round(max(45, min(85, BASE_TCS - adjustment)))
+
+        if total_n >= 30:
+            conf = "High"
+        elif total_n >= 15:
+            conf = "Medium"
+        elif total_n >= 5:
+            conf = "Low"
+        else:
+            conf = "Very Low"
+
+        if hit_pct >= 70:
+            status = "🟢"
+        elif hit_pct >= 55:
+            status = "🟡"
+        elif hit_pct >= 40:
+            status = "🟠"
+        else:
+            status = "🔴"
+
+        results.append({
+            "structure":       label,
+            "hit_rate":        round(hit_pct, 1),
+            "sample_count":    total_n,
+            "journal_n":       j_n,
+            "bot_n":           b_n,
+            "brain_weight":    round(weights.get(wk, 1.0), 4),
+            "recommended_tcs": rec_tcs,
+            "confidence":      conf,
+            "status":          status,
+        })
+
+    results.sort(key=lambda x: x["recommended_tcs"])
+    return results
+
+
 def brain_weights_summary(user_id: str = "") -> list[dict]:
     """Return a list of dicts for displaying the learned weight table."""
     weights  = load_brain_weights(user_id)
