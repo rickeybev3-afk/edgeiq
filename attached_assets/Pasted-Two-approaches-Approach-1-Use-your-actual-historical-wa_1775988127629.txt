@@ -1,0 +1,64 @@
+Two approaches:
+
+Approach 1 — Use your actual historical watchlist
+You've already logged tickers in Supabase through the accuracy tracker. Pull every unique ticker you've ever tracked, then backtest those specific tickers across the full 60-day window. These are tickers you actually cared about — the backtest results are directly relevant to your edge.
+
+Approach 2 — Scan for historical small-cap movers (what you're describing)
+Use Alpaca's API to pull the most active small-cap stocks for each historical day. The filter would mirror your existing scanner:
+
+Market cap under a certain threshold (small-cap)
+RVOL above 2.0x on that day
+Price range that fits your setups (e.g. $1–$20)
+Volume above a minimum floor
+Alpaca gives you historical bars, so for each day in the 60-day window you'd:
+
+Pull bars for a broad universe of small caps (you can use a pre-built list of ~200–300 small-cap tickers)
+Compute RVOL for each one on that day
+Filter to only the ones that had RVOL > 2.0x (the ones that "would have shown up on your scanner")
+Run those through the classifier + TCS + paper trade simulation
+The practical answer: combine both. Start with your actual historical watchlist tickers (you already have them in Supabase), then expand to the broader scan universe. Your watchlist tickers give you the most relevant data. The broader scan gives you volume and diversity.
+
+The hardest part isn't the classifier logic — it's getting the list of "which small caps were active on March 15" without a screener API that does historical lookback. Alpaca bars + RVOL filter solves that. You just need a seed universe of 200–300 small-cap symbols to check each day against.
+
+Want me to add this approach detail to the notes?
+
+yes
+
+3 minutes ago
+Now the public notes:
+
+Done — both files updated with the full ticker selection strategy. The combined approach (start with your actual watchlist history, then expand to the broader scanner universe) is documented with tagging so you can compare accuracy between hand-picked vs. system-found tickers.
+
+Everything from tonight is locked in. Go get some sleep — I'll be here when you're back tomorrow and we can build the backtest script then.
+
+
+Checkpoint made
+3 minutes ago
+
+Worked for 36 seconds
+ok can u pu tthat in my reminder too tho
+
+2 minutes ago
+Done. The top-of-file reminder now has the full expanded backtest plan — ticker strategy, TCS simulation, tagging, everything. It's the first thing you'll see when you open the notes.
+
+Now go sleep. Everything's locked in.
+
+
+Worked for 16 seconds
+i dont see it in the reminder tab that has sunday reminder etc
+
+Just now
+
+1 message & 2 actions
+
+Worked for 14 seconds
+talking about build notes
+
+Just now
+Got it — you're talking about the build notes page in the app. Let me check how the private build notes page renders:
+
+
+Opened pages/build_notes_private.py
+I see — the private build notes page just renders the entire markdown file. The reminders at the top of the file show up when you scroll the page, but there's no separate "Reminders" tab or section in the UI. The Sunday reminder and the backtest action item are both at the very top of the file, so they render at the top of the page.
+
+But if you want them to stand out more — like a dedicated highlighted reminders section that's visually distinct at the top of the build notes page — I can make that happen. Want me to add a styled reminder box at the top of the build notes page that pulls out just the action items so they're impossible to miss?
