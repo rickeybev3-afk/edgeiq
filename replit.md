@@ -65,12 +65,17 @@ Bot runs 100% autonomously. The user should only use:
 - **User ID:** `a5e1fcab-8369-42c4-8550-a8a19734510c`
 
 ### `paper_trades` columns
-`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf, regime_tag, rvol, gap_pct`
+`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf, regime_tag, rvol, gap_pct, mae, mfe, entry_time, exit_trigger, entry_ib_distance`
 
-**Migration required for rvol/gap_pct (run in Supabase SQL Editor):**
+**Migration required (run in Supabase SQL Editor):**
 ```sql
 ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol REAL;
 ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS gap_pct REAL;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mae REAL;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mfe REAL;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_time TEXT;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_trigger TEXT;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_ib_distance REAL;
 ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS rvol REAL;
 ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS gap_pct REAL;
 ```

@@ -8274,16 +8274,16 @@ def render_performance_tab():
 
     if not _pt_df.empty and "win_loss" in _pt_df.columns:
         _wl = _pt_df["win_loss"].dropna()
-        _wins    = int((_wl == "W").sum())
-        _losses  = int((_wl == "L").sum())
+        _wins    = int((_wl == "Win").sum()) + int((_wl == "W").sum())
+        _losses  = int((_wl == "Loss").sum()) + int((_wl == "L").sum())
         _total_trades = _wins + _losses
-        # P&L: use follow_thru_pct if available, else flat estimate
+        _wl_map = {"Win": 1, "W": 1, "Loss": -1, "L": -1}
         if "follow_thru_pct" in _pt_df.columns:
             _ft = _pt_df["follow_thru_pct"].fillna(0).astype(float)
-            _wl_num = _pt_df["win_loss"].map({"W": 1, "L": -1}).fillna(0)
+            _wl_num = _pt_df["win_loss"].map(_wl_map).fillna(0)
             _net_pnl = float((_wl_num * _ft / 100 * _sim_per_trade).sum())
         else:
-            _net_pnl = (_wins - _losses) * _sim_per_trade * 0.06  # rough estimate
+            _net_pnl = (_wins - _losses) * _sim_per_trade * 0.06
 
     _pt_rate = (_wins / _total_trades * 100) if _total_trades else 0.0
 
@@ -8354,15 +8354,14 @@ def render_performance_tab():
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 📄 Paper Trade History")
 
+    _verified = pd.DataFrame()
     if _pt_df.empty or _total_trades == 0:
         st.info("No verified paper trades yet. Trades are logged and auto-verified by the bot each day.")
     else:
-        # Only show verified rows (W or L)
-        _verified = _pt_df[_pt_df["win_loss"].isin(["W", "L"])].copy()
+        _verified = _pt_df[_pt_df["win_loss"].isin(["W", "L", "Win", "Loss"])].copy()
 
-        # Running P&L
         if "follow_thru_pct" in _verified.columns:
-            _verified["_sim_pnl"] = _verified["win_loss"].map({"W": 1, "L": -1}) * \
+            _verified["_sim_pnl"] = _verified["win_loss"].map({"W": 1, "Win": 1, "L": -1, "Loss": -1}) * \
                                     _verified["follow_thru_pct"].fillna(0).astype(float) / 100 * _sim_per_trade
             _verified = _verified.sort_values("trade_date", ascending=True)
             _verified["_running_pnl"] = _verified["_sim_pnl"].cumsum()
@@ -8374,7 +8373,7 @@ def render_performance_tab():
                 y=_verified["_running_pnl"],
                 mode="lines+markers",
                 line=dict(color="#26c6da", width=2),
-                marker=dict(color=_verified["win_loss"].map({"W": "#66bb6a", "L": "#ef5350"}).tolist(),
+                marker=dict(color=_verified["win_loss"].map({"W": "#66bb6a", "Win": "#66bb6a", "L": "#ef5350", "Loss": "#ef5350"}).tolist(),
                             size=8),
                 name="Running P&L"
             ))
@@ -8392,22 +8391,52 @@ def render_performance_tab():
         # Table
         _display_cols = [c for c in ["trade_date", "ticker", "tcs", "predicted_structure",
                                       "actual_outcome", "win_loss", "follow_thru_pct",
+                                      "mae", "mfe",
                                       "sim_pnl_100sh"] if c in _verified.columns]
         _show = _verified[_display_cols].rename(columns={
             "trade_date": "Date", "ticker": "Ticker", "tcs": "TCS",
             "predicted_structure": "Predicted", "actual_outcome": "Actual",
-            "win_loss": "W/L", "follow_thru_pct": "FT %", "sim_pnl_100sh": "P&L (100sh)"
+            "win_loss": "W/L", "follow_thru_pct": "FT %",
+            "mae": "MAE %", "mfe": "MFE %",
+            "sim_pnl_100sh": "P&L (100sh)"
         }).reset_index(drop=True)
 
         def _color_wl(val):
-            if val == "W":   return "color: #66bb6a; font-weight:700"
-            if val == "L":   return "color: #ef5350; font-weight:700"
+            if val in ("W", "Win"):   return "color: #66bb6a; font-weight:700"
+            if val in ("L", "Loss"):  return "color: #ef5350; font-weight:700"
             return ""
 
-        st.dataframe(
-            _show.style.map(_color_wl, subset=["W/L"]) if "W/L" in _show.columns else _show,
-            use_container_width=True, height=280
-        )
+        def _color_mae(val):
+            try:
+                v = float(val)
+                if v > 5:   return "color: #ef5350; font-weight:700"
+                if v > 2:   return "color: #ff9800"
+                return "color: #66bb6a"
+            except (ValueError, TypeError):
+                return ""
+
+        def _color_mfe(val):
+            try:
+                v = float(val)
+                if v > 5:   return "color: #66bb6a; font-weight:700"
+                if v > 2:   return "color: #81c784"
+                return "color: #90a4ae"
+            except (ValueError, TypeError):
+                return ""
+
+        _style_map = {}
+        if "W/L" in _show.columns:
+            _style_map["W/L"] = _color_wl
+        if "MAE %" in _show.columns:
+            _style_map["MAE %"] = _color_mae
+        if "MFE %" in _show.columns:
+            _style_map["MFE %"] = _color_mfe
+
+        _styled = _show.style
+        for _col_name, _fn in _style_map.items():
+            _styled = _styled.map(_fn, subset=[_col_name])
+
+        st.dataframe(_styled, use_container_width=True, height=280)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -8478,6 +8507,87 @@ def render_performance_tab():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 3B — MAE / MFE EXECUTION DEPTH
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📐 MAE / MFE Execution Depth")
+    st.caption("Maximum Adverse Excursion (worst drawdown) vs Maximum Favorable Excursion (best unrealized gain) per trade")
+
+    if not _verified.empty and "mae" in _verified.columns and "mfe" in _verified.columns:
+        _mae_mfe = _verified.dropna(subset=["mae", "mfe"])
+        if len(_mae_mfe) >= 1:
+            _avg_mae = _mae_mfe["mae"].mean()
+            _avg_mfe = _mae_mfe["mfe"].mean()
+            _mfe_mae_ratio = round(_avg_mfe / _avg_mae, 2) if _avg_mae > 0 else 0
+
+            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+            _mc1.metric("Avg MAE", f"{_avg_mae:.1f}%")
+            _mc2.metric("Avg MFE", f"{_avg_mfe:.1f}%")
+            _mc3.metric("MFE:MAE Ratio", f"{_mfe_mae_ratio:.2f}x")
+
+            _actual_ft = _mae_mfe["follow_thru_pct"].abs().mean() if "follow_thru_pct" in _mae_mfe.columns else 0
+            _capture_pct = round(_actual_ft / _avg_mfe * 100, 1) if _avg_mfe > 0 else 0
+            _mc4.metric("Move Captured", f"{_capture_pct}%",
+                        help="How much of the available MFE you actually captured at close")
+
+            _left_on_table = round(_avg_mfe - _actual_ft, 2) if _avg_mfe > _actual_ft else 0
+            if _left_on_table > 0:
+                st.info(f"💡 Avg money left on table: **{_left_on_table:.1f}%** per trade — potential optimization target for exit timing")
+
+            if "predicted_structure" in _mae_mfe.columns and len(_mae_mfe) >= 3:
+                _mae_by_struct = (
+                    _mae_mfe.groupby("predicted_structure")
+                    .agg(
+                        Trades=("mae", "count"),
+                        AvgMAE=("mae", "mean"),
+                        AvgMFE=("mfe", "mean"),
+                    )
+                    .assign(
+                        Ratio=lambda d: (d["AvgMFE"] / d["AvgMAE"].replace(0, float("nan"))).round(2),
+                    )
+                    .sort_values("Trades", ascending=False)
+                    .reset_index()
+                )
+                _mae_by_struct.columns = ["Structure", "Trades", "Avg MAE %", "Avg MFE %", "MFE:MAE"]
+
+                def _color_ratio(val):
+                    try:
+                        v = float(val)
+                        if v >= 2:   return "color: #66bb6a; font-weight:700"
+                        if v >= 1:   return "color: #81c784"
+                        return "color: #ef5350"
+                    except (ValueError, TypeError):
+                        return ""
+
+                st.dataframe(
+                    _mae_by_struct.style.map(_color_ratio, subset=["MFE:MAE"]).format(
+                        {"Avg MAE %": "{:.1f}", "Avg MFE %": "{:.1f}", "MFE:MAE": "{:.2f}"}
+                    ),
+                    use_container_width=True, hide_index=True
+                )
+
+            if "exit_trigger" in _mae_mfe.columns:
+                _exit_counts = _mae_mfe["exit_trigger"].value_counts()
+                if len(_exit_counts) > 0:
+                    _exit_labels = {"target_hit": "🎯 Target Hit", "stop_hit": "🛑 Stop Hit", "time_based": "⏰ Time-Based"}
+                    _exit_rows = []
+                    for _et, _cnt in _exit_counts.items():
+                        _sub = _mae_mfe[_mae_mfe["exit_trigger"] == _et]
+                        _exit_rows.append({
+                            "Exit Type": _exit_labels.get(_et, _et),
+                            "Count": _cnt,
+                            "Avg MAE %": round(_sub["mae"].mean(), 1),
+                            "Avg MFE %": round(_sub["mfe"].mean(), 1),
+                            "Win Rate": f"{_sub['win_loss'].isin(['W', 'Win']).mean() * 100:.0f}%" if "win_loss" in _sub.columns else "—",
+                        })
+                    st.dataframe(pd.DataFrame(_exit_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No trades with MAE/MFE data yet. Data will populate as paper trades run with full-day bars.")
+    else:
+        st.info("MAE/MFE columns not yet available. Run the migration SQL and paper trades will start logging execution depth data.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
     # SECTION 4 — BRAIN WEIGHTS
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 🧠 Current Brain Weights")
@@ -8521,12 +8631,12 @@ def render_performance_tab():
 
     if not _pt_df.empty and "win_loss" in _pt_df.columns and "trade_date" in _pt_df.columns:
         _daily = (
-            _pt_df[_pt_df["win_loss"].isin(["W", "L"])]
+            _pt_df[_pt_df["win_loss"].isin(["W", "L", "Win", "Loss"])]
             .groupby("trade_date")
             .agg(
                 Trades=("win_loss", "count"),
-                Wins=("win_loss", lambda x: (x == "W").sum()),
-                Losses=("win_loss", lambda x: (x == "L").sum()),
+                Wins=("win_loss", lambda x: x.isin(["W", "Win"]).sum()),
+                Losses=("win_loss", lambda x: x.isin(["L", "Loss"]).sum()),
             )
             .assign(WinRate=lambda d: (d["Wins"].astype(float) / d["Trades"].astype(float) * 100).round(1))
             .sort_index(ascending=False)
@@ -8536,8 +8646,8 @@ def render_performance_tab():
 
         if "follow_thru_pct" in _pt_df.columns:
             _pnl_by_day = (
-                _pt_df[_pt_df["win_loss"].isin(["W", "L"])].copy()
-                .assign(_pnl=lambda d: d["win_loss"].map({"W": 1, "L": -1}) *
+                _pt_df[_pt_df["win_loss"].isin(["W", "L", "Win", "Loss"])].copy()
+                .assign(_pnl=lambda d: d["win_loss"].map({"W": 1, "Win": 1, "L": -1, "Loss": -1}) *
                                        d["follow_thru_pct"].fillna(0).astype(float) / 100 * _sim_per_trade)
                 .groupby("trade_date")["_pnl"].sum()
                 .round(2)
@@ -8840,7 +8950,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_daily = (
             _pt_df.groupby("trade_date")
             .apply(lambda g: pd.Series({
-                "Win %":   round((g["win_loss"] == "Win").sum() / len(g) * 100, 1),
+                "Win %":   round(g["win_loss"].isin(["Win", "W"]).sum() / len(g) * 100, 1),
                 "Setups":  len(g),
                 "Avg TCS": round(g["tcs"].mean(), 0) if "tcs" in g.columns else 0,
             }))
@@ -8908,6 +9018,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_log_cols = [
             c for c in ["trade_date", "ticker", "tcs", "predicted",
                          "actual_outcome", "follow_thru_pct", "win_loss",
+                         "mae", "mfe", "entry_time", "exit_trigger",
                          "false_break_up", "false_break_down", "min_tcs_filter"]
             if c in _pt_df.columns
         ]

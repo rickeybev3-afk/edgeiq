@@ -5272,6 +5272,53 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             _avg_vol = None
         _rvol_val = compute_rvol(pm_df, avg_daily_vol=_avg_vol)
 
+        _mae_val = None
+        _mfe_val = None
+        _entry_time_val = None
+        _exit_trigger_val = None
+        _entry_ib_dist_val = None
+
+        _alert_px = float(pm_df["close"].iloc[-1])
+        if _alert_px and _alert_px > 0:
+            _entry_time_val = pm_df.index[-1].strftime("%H:%M") if hasattr(pm_df.index[-1], 'strftime') else None
+            _ib_mid = (ib_high + ib_low) / 2
+            _nearest_ib = min(abs(_alert_px - ib_high), abs(_alert_px - ib_low))
+            _entry_ib_dist_val = round(_nearest_ib / _alert_px * 100, 2) if _alert_px > 0 else None
+
+        if not morning_only and _alert_px and _alert_px > 0 and not aft_df.empty:
+            _aft_highest = float(aft_df["high"].max())
+            _aft_lowest = float(aft_df["low"].min())
+            _is_bearish_pred = any(k in predicted for k in ("Trend Day Down", "Bearish"))
+            if _is_bearish_pred:
+                _mfe_val = round((_alert_px - _aft_lowest) / _alert_px * 100, 2)
+                _mae_val = round((_aft_highest - _alert_px) / _alert_px * 100, 2)
+            else:
+                _mfe_val = round((_aft_highest - _alert_px) / _alert_px * 100, 2)
+                _mae_val = round((_alert_px - _aft_lowest) / _alert_px * 100, 2)
+
+            if _is_bearish_pred:
+                if close_px <= _alert_px:
+                    if _aft_lowest <= ib_low * 0.995:
+                        _exit_trigger_val = "target_hit"
+                    else:
+                        _exit_trigger_val = "time_based"
+                else:
+                    if _aft_highest >= ib_high * 1.005:
+                        _exit_trigger_val = "stop_hit"
+                    else:
+                        _exit_trigger_val = "time_based"
+            else:
+                if close_px >= _alert_px:
+                    if _aft_highest >= ib_high * 1.005:
+                        _exit_trigger_val = "target_hit"
+                    else:
+                        _exit_trigger_val = "time_based"
+                else:
+                    if _aft_lowest <= ib_low * 0.995:
+                        _exit_trigger_val = "stop_hit"
+                    else:
+                        _exit_trigger_val = "time_based"
+
         return {
             "ticker":           sym,
             "open_price":       round(open_px, 2),
@@ -5288,6 +5335,11 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             "win_loss":         "Pending" if win is None else ("Win" if win else "Loss"),
             "false_break_up":   false_break_up,
             "false_break_down": false_break_down,
+            "mae":              _mae_val,
+            "mfe":              _mfe_val,
+            "entry_time":       _entry_time_val,
+            "exit_trigger":     _exit_trigger_val,
+            "entry_ib_distance": _entry_ib_dist_val,
         }
     except Exception:
         return None
@@ -5560,6 +5612,15 @@ _RVOL_COLUMNS_MIGRATION = (
     "ALTER TABLE watchlist_predictions ADD COLUMN IF NOT EXISTS gap_pct REAL;\n"
 )
 
+_MAE_MFE_COLUMNS_MIGRATION = (
+    "-- Run in Supabase SQL Editor to add MAE/MFE execution depth columns:\n"
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mae REAL;\n"
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mfe REAL;\n"
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_time TEXT;\n"
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_trigger TEXT;\n"
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_ib_distance REAL;\n"
+)
+
 
 def ensure_rvol_columns() -> bool:
     if not supabase:
@@ -5595,6 +5656,20 @@ def ensure_paper_trades_regime_column() -> bool:
             )
             return False
         print(f"ensure_paper_trades_regime_column error: {e}")
+        return False
+
+
+def ensure_mae_mfe_columns() -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("paper_trades").select("mae").limit(1).execute()
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if any(k in err for k in ("column", "not exist", "not found", "pgrst")):
+            print("mae/mfe columns missing.\nRun in Supabase SQL Editor:\n\n" + _MAE_MFE_COLUMNS_MIGRATION)
+            return False
         return False
 
 
@@ -5660,7 +5735,16 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["rvol"] = round(float(r["rvol"]), 2)
             if r.get("gap_pct") is not None:
                 row_record["gap_pct"] = round(float(r["gap_pct"]), 2)
-            # Include regime_tag if present and column exists; safe to omit if column missing
+            if r.get("mae") is not None:
+                row_record["mae"] = round(float(r["mae"]), 2)
+            if r.get("mfe") is not None:
+                row_record["mfe"] = round(float(r["mfe"]), 2)
+            if r.get("entry_time"):
+                row_record["entry_time"] = r["entry_time"]
+            if r.get("exit_trigger"):
+                row_record["exit_trigger"] = r["exit_trigger"]
+            if r.get("entry_ib_distance") is not None:
+                row_record["entry_ib_distance"] = round(float(r["entry_ib_distance"]), 2)
             if r.get("regime_tag"):
                 row_record["regime_tag"] = r["regime_tag"]
             records.append(row_record)
@@ -5669,12 +5753,14 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 supabase.table("paper_trades").insert(records).execute()
             except Exception as _ins_err:
                 _err_s = str(_ins_err).lower()
-                if "rvol" in _err_s or "gap_pct" in _err_s:
+                _optional_cols = ["rvol", "gap_pct", "mae", "mfe", "entry_time",
+                                  "exit_trigger", "entry_ib_distance"]
+                if any(col in _err_s for col in _optional_cols):
                     for rec in records:
-                        rec.pop("rvol", None)
-                        rec.pop("gap_pct", None)
+                        for col in _optional_cols:
+                            rec.pop(col, None)
                     supabase.table("paper_trades").insert(records).execute()
-                    print("log_paper_trades: rvol/gap_pct columns missing — saved without them")
+                    print("log_paper_trades: optional columns missing — saved without them")
                 else:
                     raise
         return {"saved": len(records), "skipped": skipped}
@@ -5748,14 +5834,38 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                 "false_break_down":    bool(r.get("false_break_down", False)),
                 "post_alert_move_pct": post_alert,
             }
-            (
-                supabase.table("paper_trades")
-                .update(patch)
-                .eq("user_id", user_id)
-                .eq("trade_date", str(trade_date))
-                .eq("ticker", ticker)
-                .execute()
-            )
+            if r.get("mae") is not None:
+                patch["mae"] = round(float(r["mae"]), 2)
+            if r.get("mfe") is not None:
+                patch["mfe"] = round(float(r["mfe"]), 2)
+            if r.get("exit_trigger"):
+                patch["exit_trigger"] = r["exit_trigger"]
+            try:
+                (
+                    supabase.table("paper_trades")
+                    .update(patch)
+                    .eq("user_id", user_id)
+                    .eq("trade_date", str(trade_date))
+                    .eq("ticker", ticker)
+                    .execute()
+                )
+            except Exception as _upd_err:
+                _upd_s = str(_upd_err).lower()
+                _opt_update_cols = ["mae", "mfe", "exit_trigger", "entry_ib_distance", "entry_time"]
+                if any(col in _upd_s for col in _opt_update_cols):
+                    for col in _opt_update_cols:
+                        patch.pop(col, None)
+                    (
+                        supabase.table("paper_trades")
+                        .update(patch)
+                        .eq("user_id", user_id)
+                        .eq("trade_date", str(trade_date))
+                        .eq("ticker", ticker)
+                        .execute()
+                    )
+                    print(f"Paper trade update ({ticker}): optional columns missing — saved without them")
+                else:
+                    raise
             updated += 1
         except Exception as e:
             print(f"Paper trade update error ({r.get('ticker')}): {e}")
