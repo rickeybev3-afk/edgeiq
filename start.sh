@@ -19,5 +19,6 @@ echo "[start.sh] Kalshi Bot started (PID: $KALSHI_PID)"
 # ── Streamlit Dashboard ───────────────────────────────────────────────────────
 # Run in the foreground — this keeps the VM process alive.
 # The deployment health-check pings port 8080; Streamlit must bind here.
-echo "[start.sh] Starting Streamlit dashboard on port 8080..."
-exec python3 -m streamlit run app.py --server.port 8080
+SERVE_PORT="${PORT:-8080}"
+echo "[start.sh] Starting Streamlit dashboard on port $SERVE_PORT..."
+exec python3 -m streamlit run app.py --server.port "$SERVE_PORT"
