@@ -1,16 +1,19 @@
 kind = "api"
-previewPath = "/api"
-title = "Volume Profile Dashboard"
+previewPath = "/"
+title = "EdgeIQ Dashboard"
 version = "1.0.0"
 id = "3B4_FFSkEVBkAeYMFRJ2e"
 
 [[services]]
-localPort = 3001
+localPort = 8080
 name = "Start application"
-paths = ["/api"]
+paths = ["/"]
 
 [services.development]
-run = "cd /home/runner/workspace && node artifacts/api-server/dist/index.mjs"
+run = "cd /home/runner/workspace && streamlit run app.py --server.port 8080"
+
+[services.production]
+run = "cd /home/runner/workspace && PORT=8080 python3 deploy_server.py"
 
 [services.env]
-PORT = "3001"
+PORT = "8080"
