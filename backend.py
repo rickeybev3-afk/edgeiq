@@ -1539,7 +1539,7 @@ def compute_structure_tcs_thresholds() -> list[dict]:
     bot_data:     dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
 
     try:
-        q = supabase.table("accuracy_tracker").select("predicted,correct")
+        q = supabase.table("accuracy_tracker").select("predicted,correct").range(0, 9999)
         resp = q.execute()
         for row in (resp.data or []):
             pred = row.get("predicted", "")
@@ -1556,7 +1556,7 @@ def compute_structure_tcs_thresholds() -> list[dict]:
         pass
 
     try:
-        q = supabase.table("paper_trades").select("predicted,win_loss")
+        q = supabase.table("paper_trades").select("predicted,win_loss").range(0, 9999)
         resp = q.execute()
         for row in (resp.data or []):
             pred = row.get("predicted", "")

@@ -640,6 +640,185 @@ def render_build_notes():
         st.error("Build notes file not found.")
 
 
+def render_private_build_notes():
+    """Render private build notes. Accessible via /?private=<KEY>."""
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { display: none !important; }
+    .pnotes-header { text-align: center; padding: 32px 0 8px 0; }
+    .pnotes-header h1 { font-size: 28px; font-weight: 800; color: #ef5350; margin: 0; }
+    .pnotes-header p  { font-size: 12px; color: #666; margin: 4px 0 0 0; }
+    </style>
+    <div class="pnotes-header">
+      <h1>🔒 EdgeIQ Private Notes</h1>
+      <p>Internal only — strategy, architecture, roadmap</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    notes_path = os.path.join(os.path.dirname(__file__), ".local", "build_notes_private.md")
+    if os.path.exists(notes_path):
+        with open(notes_path, "r") as f:
+            content = f.read()
+        st.markdown(content)
+    else:
+        st.error("Private build notes file not found.")
+
+
+def render_trade_journal_page():
+    """Trade Journal Logger page — accessible via /?journal=<USER_ID>.
+    Single-user trade journal for quick logging outside the main app tabs."""
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { display: none !important; }
+    .tj-header { text-align: center; padding: 32px 0 8px 0; }
+    .tj-header h1 { font-size: 28px; font-weight: 800; color: #66bb6a; margin: 0; }
+    .tj-header p  { font-size: 12px; color: #5c6bc0; text-transform: uppercase;
+                    letter-spacing: 1.5px; margin: 4px 0 0 0; }
+    .tj-section { background: #12122288; border: 1px solid #2a2a4a;
+                  border-radius: 12px; padding: 24px 28px; margin-bottom: 20px; }
+    .tj-section-title { font-size: 13px; font-weight: 700; color: #7986cb;
+                        text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px; }
+    .tj-stat { text-align: center; padding: 12px; background: #1a1a2e;
+               border-radius: 8px; border: 1px solid #2a2a4a; }
+    </style>
+    <div class="tj-header">
+      <h1>📓 EdgeIQ Trade Journal</h1>
+      <p>Quick-Log Your Trades</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _tj_uid = "a5e1fcab-8369-42c4-8550-a8a19734510c"
+
+    _, col, _ = st.columns([1, 4, 1])
+    with col:
+
+        _tj_journal = load_journal(user_id=_tj_uid)
+        _tj_count = len(_tj_journal) if not _tj_journal.empty else 0
+
+        _tj_acc_rows = []
+        try:
+            if supabase:
+                _tj_acc = supabase.table("accuracy_tracker").select("predicted,correct").range(0, 9999).execute()
+                _tj_acc_rows = _tj_acc.data or []
+        except Exception:
+            pass
+        _tj_total_preds = len(_tj_acc_rows)
+        _tj_correct = sum(1 for r in _tj_acc_rows if "✅" in str(r.get("correct", "")))
+        _tj_acc_pct = round(_tj_correct / _tj_total_preds * 100, 1) if _tj_total_preds > 0 else 0
+
+        _tj_pt_rows = []
+        try:
+            if supabase:
+                _tj_pt = supabase.table("paper_trades").select("win_loss").execute()
+                _tj_pt_rows = _tj_pt.data or []
+        except Exception:
+            pass
+        _tj_pt_total = len(_tj_pt_rows)
+        _tj_pt_wins = sum(1 for r in _tj_pt_rows if str(r.get("win_loss", "")).strip().lower() == "win")
+
+        st.markdown('<div class="tj-section"><div class="tj-section-title">Your Stats</div>', unsafe_allow_html=True)
+        _s1, _s2, _s3, _s4 = st.columns(4)
+        with _s1:
+            st.markdown(f"<div class='tj-stat'><div style='font-size:11px;color:#777'>Journal Entries</div>"
+                        f"<div style='font-size:22px;font-weight:800;color:#90caf9'>{_tj_count}</div></div>",
+                        unsafe_allow_html=True)
+        with _s2:
+            st.markdown(f"<div class='tj-stat'><div style='font-size:11px;color:#777'>Predictions</div>"
+                        f"<div style='font-size:22px;font-weight:800;color:#ce93d8'>{_tj_total_preds}</div></div>",
+                        unsafe_allow_html=True)
+        with _s3:
+            _acc_color = "#66bb6a" if _tj_acc_pct >= 65 else "#ffa726" if _tj_acc_pct >= 50 else "#ef5350"
+            st.markdown(f"<div class='tj-stat'><div style='font-size:11px;color:#777'>Prediction Acc</div>"
+                        f"<div style='font-size:22px;font-weight:800;color:{_acc_color}'>{_tj_acc_pct}%</div></div>",
+                        unsafe_allow_html=True)
+        with _s4:
+            _pt_wr = round(_tj_pt_wins / _tj_pt_total * 100, 1) if _tj_pt_total > 0 else 0
+            _pt_color = "#66bb6a" if _pt_wr >= 65 else "#ffa726" if _pt_wr >= 50 else "#ef5350"
+            st.markdown(f"<div class='tj-stat'><div style='font-size:11px;color:#777'>Paper Win Rate</div>"
+                        f"<div style='font-size:22px;font-weight:800;color:{_pt_color}'>{_pt_wr}% ({_tj_pt_total})</div></div>",
+                        unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="tj-section"><div class="tj-section-title">Quick Log — CSV Import</div>', unsafe_allow_html=True)
+        st.caption("Export your Webull order history as CSV and drop it here.")
+
+        _tj_file = st.file_uploader("Drop Webull CSV", type=["csv"], key="tj_csv_uploader", label_visibility="collapsed")
+
+        if _tj_file is not None:
+            try:
+                _tj_df = pd.read_csv(_tj_file)
+                _tj_trades = parse_webull_csv(_tj_df)
+                if not _tj_trades:
+                    st.warning("No closed trades found. Make sure you exported Order History.")
+                else:
+                    _tj_existing = load_journal(user_id=_tj_uid)
+                    _tj_existing_keys: set = set()
+                    if not _tj_existing.empty:
+                        for _, _r in _tj_existing.iterrows():
+                            _k = f"{_r.get('ticker', '')}_{str(_r.get('timestamp', ''))[:10]}"
+                            _tj_existing_keys.add(_k)
+
+                    _tj_new, _tj_skipped = [], 0
+                    for _t in _tj_trades:
+                        _k = f"{_t.get('ticker', '')}_{str(_t.get('timestamp', ''))[:10]}"
+                        if _k in _tj_existing_keys:
+                            _tj_skipped += 1
+                        else:
+                            _tj_new.append(_t)
+
+                    if _tj_new:
+                        for _t in _tj_new:
+                            _t["user_id"] = _tj_uid
+                            save_journal_entry(_t)
+                        st.success(f"Logged {len(_tj_new)} new trades! ({_tj_skipped} duplicates skipped)")
+                    else:
+                        st.info(f"All {_tj_skipped} trades already logged — nothing new to add.")
+            except Exception as e:
+                st.error(f"Error parsing CSV: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="tj-section"><div class="tj-section-title">Per-Structure TCS Thresholds</div>', unsafe_allow_html=True)
+        st.caption("Based on your live accuracy — updated every time you open this page.")
+        _tj_tcs = compute_structure_tcs_thresholds()
+        if _tj_tcs:
+            for _t in _tj_tcs:
+                _hr = _t["hit_rate"]
+                if _hr is not None:
+                    _hr_c = "#66bb6a" if _hr >= 70 else "#ffa726" if _hr >= 55 else "#ff7043" if _hr >= 40 else "#ef5350"
+                    _tcs_c = "#66bb6a" if _t["recommended_tcs"] <= 55 else "#ffa726" if _t["recommended_tcs"] <= 70 else "#ef5350"
+                    st.markdown(
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 12px;"
+                        f"background:#1a1a2e;border-radius:6px;margin-bottom:4px;border:1px solid #2a2a4a'>"
+                        f"<span style='color:#e0e0e0;font-weight:600'>{_t['status']} {_t['structure']}</span>"
+                        f"<span style='display:flex;gap:16px'>"
+                        f"<span style='color:{_hr_c};font-weight:700'>{_hr:.1f}%</span>"
+                        f"<span style='color:{_tcs_c};font-weight:700'>TCS ≥ {_t['recommended_tcs']}</span>"
+                        f"<span style='color:#777;font-size:11px'>{_t['sample_count']}n</span>"
+                        f"</span></div>",
+                        unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 12px;"
+                        f"background:#1a1a2e;border-radius:6px;margin-bottom:4px;border:1px solid #2a2a4a;opacity:0.4'>"
+                        f"<span style='color:#555'>{_t['status']} {_t['structure']}</span>"
+                        f"<span style='color:#555'>No data</span></div>",
+                        unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if not _tj_journal.empty:
+            st.markdown('<div class="tj-section"><div class="tj-section-title">Recent Journal Entries</div>', unsafe_allow_html=True)
+            _display_cols = [c for c in ["timestamp", "ticker", "side", "price", "quantity", "pnl", "pnl_pct", "notes"] if c in _tj_journal.columns]
+            if _display_cols:
+                _tj_show = _tj_journal[_display_cols].head(20)
+                st.dataframe(_tj_show, use_container_width=True, hide_index=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown(
+            '<div style="text-align:center;font-size:10px;color:#333;margin-top:24px">'
+            'EdgeIQ Trade Journal · Single-user mode · Data stored in Supabase'
+            '</div>', unsafe_allow_html=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE STREAM
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3485,9 +3664,22 @@ if _beta_user_id:
 
 # ── Build notes intercept — accessible via /?notes=<USER_ID> ─────────────────
 _NOTES_USER_ID = "a5e1fcab-8369-42c4-8550-a8a19734510c"
-_notes_param = st.query_params.get("notes", "")
+_PRIVATE_KEY   = "7c3f9b2a-4e1d-4a8c-b05f-3d8e6f1a9c4b"
+_notes_param   = st.query_params.get("notes", "")
 if _notes_param == _NOTES_USER_ID:
     render_build_notes()
+    st.stop()
+
+# ── Private build notes — accessible via /?private=<KEY> ─────────────────────
+_private_param = st.query_params.get("private", "")
+if _private_param == _PRIVATE_KEY:
+    render_private_build_notes()
+    st.stop()
+
+# ── Trade Journal Logger — accessible via /?journal=<USER_ID> ────────────────
+_journal_param = st.query_params.get("journal", "")
+if _journal_param == _NOTES_USER_ID:
+    render_trade_journal_page()
     st.stop()
 
 if not st.session_state.get("auth_user"):

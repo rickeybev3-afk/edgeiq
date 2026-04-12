@@ -36,11 +36,21 @@ Bot runs 100% autonomously. The user should only use:
 | `backend.py` | All math/logic — IB engine, TCS, probabilities, backtest |
 | `paper_trader_bot.py` | Autonomous daily bot — scheduler, alerts, EOD, recalibration |
 | `brain_weights.json` | Adaptive brain multipliers — DO NOT MODIFY DIRECTLY |
-| `.local/build_notes.md` | Session build notes |
+| `.local/build_notes.md` | Public build notes |
+| `.local/build_notes_private.md` | Private build notes (strategy, architecture, roadmap) |
 | `.local/rls_setup.sql` | Supabase RLS policies |
 | `.streamlit/config.toml` | enableCORS=false, enableXsrfProtection=false, port 8080 |
 
 **Architecture rule:** Math/logic → `backend.py` only. UI/rendering → `app.py` only.
+
+### Standalone Pages (no login required — URL param gated)
+
+| URL Param | Access Key | Purpose |
+|---|---|---|
+| `/?notes=<USER_ID>` | User ID | Public build notes viewer |
+| `/?private=<PRIVATE_KEY>` | `7c3f9b2a-4e1d-4a8c-b05f-3d8e6f1a9c4b` | Private build notes (strategy/roadmap) |
+| `/?journal=<USER_ID>` | User ID | Trade Journal Logger (stats + CSV import + TCS thresholds) |
+| `/?beta=<BETA_USER_ID>` | Beta user's ID | Beta tester portal (CSV upload + Telegram instructions) |
 
 ---
 
