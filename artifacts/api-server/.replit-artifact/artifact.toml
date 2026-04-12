@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "EdgeIQ Dashboard"
+title = "EdgeIQ Notes"
 version = "1.0.0"
 id = "artifacts/api-server"
 router = "path"
@@ -21,10 +21,6 @@ run = "cd /home/runner/workspace && streamlit run app.py --server.port 22729"
 build = [ "echo", "static-build-ready" ]
 publicDir = "artifacts/api-server/dist/public"
 serve = "static"
-
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
 
 [services.env]
 PORT = "22729"
