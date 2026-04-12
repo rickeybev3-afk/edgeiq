@@ -13,4 +13,4 @@ paths = ["/"]
 run = "streamlit run app.py --server.port 8080"
 
 [services.production]
-run = "bash start.sh"
+run = "cd /home/runner/workspace && bash start.sh"
