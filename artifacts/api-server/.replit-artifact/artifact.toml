@@ -5,9 +5,12 @@ version = "1.0.0"
 id = "3B4_FFSkEVBkAeYMFRJ2e"
 
 [[services]]
-localPort = 8080
+localPort = 3001
 name = "Start application"
 paths = ["/api"]
 
 [services.development]
-run = "cd /home/runner/workspace && streamlit run app.py --server.port 8080"
+run = "cd /home/runner/workspace && node artifacts/api-server/dist/index.mjs"
+
+[services.env]
+PORT = "3001"
