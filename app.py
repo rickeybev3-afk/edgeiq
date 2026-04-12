@@ -618,6 +618,8 @@ def render_beta_portal(beta_user_id: str):
 
 def render_build_notes():
     """Render build notes as a live hosted page. Accessible via /?notes=USER_ID."""
+    _NOTES_PASSCODE = "121672"
+
     st.markdown("""
     <style>
     [data-testid="stSidebar"] { display: none !important; }
@@ -625,6 +627,27 @@ def render_build_notes():
     .notes-header h1 { font-size: 28px; font-weight: 800; color: #7986cb; margin: 0; }
     .notes-header p  { font-size: 12px; color: #666; margin: 4px 0 0 0; }
     </style>
+    """, unsafe_allow_html=True)
+
+    if not st.session_state.get("notes_unlocked"):
+        st.markdown("""
+        <div class="notes-header">
+          <h1>🔒 EdgeIQ Build Notes</h1>
+          <p>Enter passcode to view</p>
+        </div>
+        """, unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            code_input = st.text_input("Passcode", type="password", placeholder="Enter passcode")
+            if st.button("Unlock", use_container_width=True):
+                if code_input == _NOTES_PASSCODE:
+                    st.session_state["notes_unlocked"] = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect passcode.")
+        return
+
+    st.markdown("""
     <div class="notes-header">
       <h1>📋 EdgeIQ Build Notes</h1>
       <p>Live document — updates automatically</p>
