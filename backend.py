@@ -5281,7 +5281,6 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         _alert_px = float(pm_df["close"].iloc[-1])
         if _alert_px and _alert_px > 0:
             _entry_time_val = pm_df.index[-1].strftime("%H:%M") if hasattr(pm_df.index[-1], 'strftime') else None
-            _ib_mid = (ib_high + ib_low) / 2
             _nearest_ib = min(abs(_alert_px - ib_high), abs(_alert_px - ib_low))
             _entry_ib_dist_val = round(_nearest_ib / _alert_px * 100, 2) if _alert_px > 0 else None
 

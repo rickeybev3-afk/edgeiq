@@ -8519,9 +8519,12 @@ def render_performance_tab():
             _avg_mfe = _mae_mfe["mfe"].mean()
             _mfe_mae_ratio = round(_avg_mfe / _avg_mae, 2) if _avg_mae > 0 else 0
 
+            _med_mae = _mae_mfe["mae"].median()
+            _med_mfe = _mae_mfe["mfe"].median()
+
             _mc1, _mc2, _mc3, _mc4 = st.columns(4)
-            _mc1.metric("Avg MAE", f"{_avg_mae:.1f}%")
-            _mc2.metric("Avg MFE", f"{_avg_mfe:.1f}%")
+            _mc1.metric("Avg MAE", f"{_avg_mae:.1f}%", delta=f"med {_med_mae:.1f}%", delta_color="off")
+            _mc2.metric("Avg MFE", f"{_avg_mfe:.1f}%", delta=f"med {_med_mfe:.1f}%", delta_color="off")
             _mc3.metric("MFE:MAE Ratio", f"{_mfe_mae_ratio:.2f}x")
 
             _actual_ft = _mae_mfe["follow_thru_pct"].abs().mean() if "follow_thru_pct" in _mae_mfe.columns else 0
