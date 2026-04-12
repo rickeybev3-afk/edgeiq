@@ -20,6 +20,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+is_deployed = os.environ.get("REPL_DEPLOYMENT", "") == "1" or os.environ.get("REPLIT_DEPLOYMENT", "") == "1"
+
+if is_deployed:
+    st.error("🔒 This page is not available on the public site.")
+    st.stop()
+
 st.markdown("# 🔒 EdgeIQ Build Notes — Full Private")
 st.caption("Everything. Keep this URL to yourself.")
 st.divider()
