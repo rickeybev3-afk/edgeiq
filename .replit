@@ -77,12 +77,12 @@ outputType = "console"
 name = "Batch Backtest (60 days)"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python batch_backtest.py --days 60"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python batch_backtest.py --days 252"
 
 [agent]
 stack = "PNPM_WORKSPACE"
