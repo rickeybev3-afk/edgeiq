@@ -9827,8 +9827,6 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             _wl_tickers = load_watchlist(_rk_uid)
             if not _wl_tickers:
                 _wl_tickers = list(_DEFAULT_RANKING_TICKERS)
-                if _rk_uid:
-                    save_watchlist(_wl_tickers, user_id=_rk_uid)
 
             _extra_rk = st.text_input("Add tickers (comma-separated)",
                                       placeholder="ARAI, SKYQ, CUE",
