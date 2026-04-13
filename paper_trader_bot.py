@@ -739,28 +739,43 @@ def _send_rankings_summary(rows: list, rating_date) -> None:
     for r in rows:
         tier_rows[r["rank"]].append(r)
 
+    # Rank 5/4/3 = bullish (win = positive chg)
+    # Rank 2/1   = bearish/fade (win = negative chg)
+    # Rank 0     = watch only (no directional call)
+    def _is_win(rank, chg):
+        if rank >= 3:
+            return chg > 0
+        elif rank in (1, 2):
+            return chg < 0
+        return None  # rank 0 = no call
+
+    correct = sum(1 for r in rows if _is_win(r["rank"], r["chg"]) is True)
+    called  = sum(1 for r in rows if _is_win(r["rank"], r["chg"]) is not None)
+
     lines = [f"📊 <b>Nightly Rankings — {rating_date}</b>", ""]
-    total_up = sum(1 for r in rows if r["chg"] > 0)
-    lines.append(f"Overall: {total_up}/{len(rows)} positive  "
-                 f"({100*total_up/len(rows):.0f}% hit rate)")
+    lines.append(f"Accuracy: {correct}/{called} = {100*correct/called:.0f}%  "
+                 f"(R1/R2=bearish wins if red; R3-5=bullish wins if green)")
     lines.append("")
 
-    for tier in sorted(tier_rows.keys()):
+    for tier in sorted(tier_rows.keys(), reverse=True):
         tier_data = tier_rows[tier]
-        up = sum(1 for r in tier_data if r["chg"] > 0)
-        avg = sum(r["chg"] for r in tier_data) / len(tier_data)
-        label = "★" * min(tier, 5) if tier > 0 else "⬜ Watch"
-        lines.append(f"<b>Rank {tier}</b> {label} — {up}/{len(tier_data)} up | avg {avg:+.1f}%")
-        for r in sorted(tier_data, key=lambda x: -x["chg"]):
-            arrow = "🟢" if r["chg"] > 0 else "🔴"
+        wins = sum(1 for r in tier_data if _is_win(r["rank"], r["chg"]) is True)
+        avg  = sum(r["chg"] for r in tier_data) / len(tier_data)
+        bearish = tier in (1, 2)
+        label   = "★" * min(tier, 5) if tier > 0 else "⬜ Watch"
+        bias    = " (bearish)" if bearish else (" (neutral)" if tier == 3 else "")
+        lines.append(f"<b>Rank {tier}</b> {label}{bias} — {wins}/{len(tier_data)} wins | avg {avg:+.1f}%")
+        sort_key = (lambda x: x["chg"]) if bearish else (lambda x: -x["chg"])
+        for r in sorted(tier_data, key=sort_key):
+            won   = _is_win(r["rank"], r["chg"])
+            arrow = "🟢" if won else ("🔴" if won is False else "⬜")
             note  = r.get("notes", "").strip()
             note_line = f" <i>{note[:80]}{'…' if len(note) > 80 else ''}</i>" if note else ""
             lines.append(f"  {arrow} <b>{r['ticker']}</b> {r['chg']:+.1f}%{note_line}")
         lines.append("")
 
     tg_send("\n".join(lines))
-    log.info(f"Rankings summary sent to Telegram — {len(rows)} tickers, "
-             f"{total_up}/{len(rows)} positive")
+    log.info(f"Rankings summary sent — {correct}/{called} correct")
 
 
 def nightly_verify():
