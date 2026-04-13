@@ -6224,16 +6224,35 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
 
 
 def patch_exit_obs(ticker: str, trade_date, exit_obs: str, user_id: str = "") -> bool:
-    """Save a manual exit observation note to an existing paper trade row."""
+    """Save a manual exit observation note to an existing paper trade row.
+
+    If trade_date is None, targets the most recent trade for that ticker.
+    """
     if not supabase or not ticker or not exit_obs:
         return False
     try:
-        supabase.table("paper_trades") \
-            .update({"exit_obs": exit_obs.strip()}) \
-            .eq("user_id", user_id) \
-            .eq("ticker", ticker.upper()) \
-            .eq("trade_date", str(trade_date)) \
-            .execute()
+        q = (supabase.table("paper_trades")
+             .update({"exit_obs": exit_obs.strip()})
+             .eq("user_id", user_id)
+             .eq("ticker", ticker.upper()))
+        if trade_date is not None:
+            q = q.eq("trade_date", str(trade_date))
+        else:
+            # Find the most recent trade for this ticker and update that row
+            recent = (supabase.table("paper_trades")
+                      .select("id,trade_date")
+                      .eq("user_id", user_id)
+                      .eq("ticker", ticker.upper())
+                      .order("trade_date", desc=True)
+                      .limit(1)
+                      .execute())
+            if not recent.data:
+                return False
+            row_id = recent.data[0]["id"]
+            q = (supabase.table("paper_trades")
+                 .update({"exit_obs": exit_obs.strip()})
+                 .eq("id", row_id))
+        q.execute()
         return True
     except Exception as e:
         print(f"patch_exit_obs error ({ticker}): {e}")

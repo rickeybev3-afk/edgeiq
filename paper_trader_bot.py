@@ -127,6 +127,25 @@ def tg_reply(chat_id, text: str) -> None:
         log.warning(f"tg_reply error: {exc}")
 
 
+def _parse_exitobs_command(text: str):
+    """Parse /exitobs TICKER observation text...
+
+    Returns (ticker, obs) or None on failure.
+    Example: /exitobs SIDU exited at .47 when volume dried up under .50
+    """
+    parts = text.strip().split(maxsplit=2)
+    if len(parts) < 3:
+        return None
+    cmd = parts[0].lower()
+    if cmd not in ("/exitobs", "/exitobs@edgeiqbot"):
+        return None
+    ticker = parts[1].upper()
+    obs    = parts[2].strip()
+    if not obs:
+        return None
+    return ticker, obs
+
+
 def _parse_log_command(text: str):
     """Parse /log TICKER win|loss entry exit [optional note...]
 
@@ -187,7 +206,9 @@ def telegram_listener() -> None:
                 if not text or not chat_id:
                     continue
 
-                if not text.startswith("/log") and not text.startswith("/start"):
+                if (not text.startswith("/log")
+                        and not text.startswith("/start")
+                        and not text.startswith("/exitobs")):
                     continue
 
                 # ── /start USER_ID — beta tester connection via deep link ──
@@ -220,6 +241,29 @@ def telegram_listener() -> None:
                         tg_reply(chat_id,
                             "👋 <b>EdgeIQ Scanner</b>\n\n"
                             "Open your personal portal link to connect your account for alerts.")
+                    continue
+
+                # ── /exitobs TICKER observation... ──
+                if text.startswith("/exitobs"):
+                    obs_parsed = _parse_exitobs_command(text)
+                    if obs_parsed is None:
+                        tg_reply(chat_id,
+                            "⚠️ Bad format. Use:\n"
+                            "<code>/exitobs TICKER your observation here</code>\n"
+                            "Example: <code>/exitobs SIDU exited at .47, volume dried up under .50</code>")
+                        continue
+                    obs_ticker, obs_text = obs_parsed
+                    from backend import patch_exit_obs
+                    ok = patch_exit_obs(obs_ticker, None, obs_text, user_id=USER_ID)
+                    if ok:
+                        tg_reply(chat_id,
+                            f"✅ <b>Exit note saved</b> — {obs_ticker}\n"
+                            f"💬 {obs_text}")
+                        log.info(f"exitobs saved: {obs_ticker} | {obs_text}")
+                    else:
+                        tg_reply(chat_id,
+                            f"❌ Couldn't save note for {obs_ticker}. "
+                            "Check that the trade exists in your journal and the DB migration has been run.")
                     continue
 
                 parsed = _parse_log_command(text)
