@@ -9949,6 +9949,40 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             "Only TCS-filtered qualifying setups are stored here"
         )
 
+    # ── Exit Observation Logger ──────────────────────────────────────────────
+    with st.expander("✍️ Log Exit Observation", expanded=False):
+        st.caption(
+            "What were you seeing when you exited? Volume drying, wick rejection, "
+            "VWAP stall, structure broke, emotional? This feeds exit strategy automation."
+        )
+        _recent_trades = _pt_df[["trade_date", "ticker"]].dropna().drop_duplicates()
+        _trade_options = [
+            f"{row['ticker']} — {row['trade_date']}"
+            for _, row in _recent_trades.sort_values("trade_date", ascending=False).iterrows()
+        ]
+        if _trade_options:
+            _obs_sel = st.selectbox("Select trade", options=_trade_options, key="exit_obs_sel")
+            _obs_text = st.text_area(
+                "What did you see at exit?",
+                placeholder="e.g. volume dried at VWAP, wick through IB high with no follow, "
+                            "L2 thinned out, held past target — got greedy, cut early on red candle...",
+                height=100,
+                key="exit_obs_text",
+            )
+            if st.button("💾 Save Exit Note", key="exit_obs_save"):
+                if _obs_text.strip():
+                    _obs_ticker = _obs_sel.split(" — ")[0].strip()
+                    _obs_date   = _obs_sel.split(" — ")[1].strip()
+                    _ok = patch_exit_obs(_obs_ticker, _obs_date, _obs_text, user_id=_AUTH_USER_ID)
+                    if _ok:
+                        st.success(f"✅ Exit note saved for {_obs_ticker} on {_obs_date}")
+                    else:
+                        st.error("Save failed — run the DB migration first (exit_obs column).")
+                else:
+                    st.warning("Write something first.")
+        else:
+            st.info("No paper trades loaded yet.")
+
     st.markdown("---")
 
     # ── Section 3: Manual EOD Outcome Update ────────────────────────────────

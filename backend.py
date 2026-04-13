@@ -5301,6 +5301,7 @@ def run_pending_migrations() -> dict:
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS mfe REAL",
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_time TEXT",
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_trigger TEXT",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_obs TEXT",
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_ib_distance REAL",
         "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS tcs REAL",
         "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS rvol REAL",
@@ -6091,6 +6092,8 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["entry_time"] = r["entry_time"]
             if r.get("exit_trigger"):
                 row_record["exit_trigger"] = r["exit_trigger"]
+            if r.get("exit_obs"):
+                row_record["exit_obs"] = r["exit_obs"]
             if r.get("entry_ib_distance") is not None:
                 row_record["entry_ib_distance"] = round(float(r["entry_ib_distance"]), 2)
             if r.get("regime_tag"):
@@ -6218,6 +6221,23 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
         except Exception as e:
             print(f"Paper trade update error ({r.get('ticker')}): {e}")
     return {"updated": updated}
+
+
+def patch_exit_obs(ticker: str, trade_date, exit_obs: str, user_id: str = "") -> bool:
+    """Save a manual exit observation note to an existing paper trade row."""
+    if not supabase or not ticker or not exit_obs:
+        return False
+    try:
+        supabase.table("paper_trades") \
+            .update({"exit_obs": exit_obs.strip()}) \
+            .eq("user_id", user_id) \
+            .eq("ticker", ticker.upper()) \
+            .eq("trade_date", str(trade_date)) \
+            .execute()
+        return True
+    except Exception as e:
+        print(f"patch_exit_obs error ({ticker}): {e}")
+        return False
 
 
 # ── Nightly Ticker Rankings ────────────────────────────────────────────────────
