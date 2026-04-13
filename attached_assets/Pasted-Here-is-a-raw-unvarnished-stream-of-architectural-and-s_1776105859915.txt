@@ -1,0 +1,38 @@
+Here is a raw, unvarnished stream of architectural and strategic vectors for Phase 2. We are treating the core engine as absolute ground truth—frozen and isolated—and building the analytical and execution layers around it. 
+
+### 1. The MAE / MFE Tracking Pipeline (The Alpha Bridge)
+Right now, a 1–5 ranking gives you directional bias. But bias without timing is just a thesis. To move to autonomous execution, the system needs to understand the *heat* of a trade. 
+* **The Architecture:** Build an async chron-job in `paper_trader_bot.py`. When a Rank 4 or 5 fires on a $2–$20 small-cap during the morning scan, the bot doesn't just log the entry. It spawns a tracker that pulls 1-minute Alpaca bars for the next 120 minutes.
+* **The Math (in `backend.py`):** Calculate Maximum Favorable Excursion (MFE) and Maximum Adverse Excursion (MAE) for every signaled ticker. 
+* **The Output:** You stop guessing where to put your stops. If the data shows that Rank 5s in a specific day-structure typically experience a 4% drawdown before a 15% rip, you hardcode the automated stop at 5%. You mathematically eliminate the psychological pain of holding through the dip because the system expects it.
+
+### 2. Adapting the Core for /NQ (Nasdaq Futures)
+Moving from low-float equities to the /NQ requires a shift in how we handle the time continuum, but we *cannot* touch the frozen `classify_day_structure` or probability math.
+* **The Problem:** Equities have a hard 9:30 AM open. Futures run almost 24/5. Your Volume Profile (VP) engine needs a clean start to calculate Value Area (VA) and Point of Control (POC).
+* **The Solution:** Create a strict session-slicing module in `backend.py`. We segment /NQ data into Globex (overnight) and RTH (Regular Trading Hours). 
+* **The Implementation:** We feed the frozen classifier *only* the RTH data to determine the day structure (Trend, Normal, Neutral, etc.). However, we use the Globex POC and VA as pre-market support/resistance layers. The system ranks the /NQ structure exactly as it would a small-cap, but the context is rooted in the overnight inventory.
+
+### 3. The Cognitive Delta Log (Tracking the Meat-Computer)
+You are building a cognitive profiling product. EdgeIQ needs to track the variance between what the frozen `brain_weights.json` outputs and what your actual brain decides to do in real-time.
+* **The Mechanism:** Build a "Deviance Ledger" in Supabase. 
+* **The Workflow:** At 9:35 AM, the system outputs Rank 5 for Ticker A and Rank 4 for Ticker B. If you choose to execute Ticker B instead of A, you log a quick flag in the `app.py` UI. 
+* **The Analysis:** Over 100 trades, we run a diff on the `backtest_results` table. Did your low latent inhibition catch a tape-reading micro-pattern that the frozen algorithms missed? Or did you just get shaken out by noise? The gap between the system's PnL and your manual PnL is your quantified cognitive edge (or leak). 
+
+### 4. Regime Scaling (The Macro Overlay)
+The current frozen algorithms are hyper-focused on the micro-structure of the day. We need a macro filter that scales sizing dynamically.
+* **The Concept:** A Rank 5 in a high-VIX, choppy market is not the same as a Rank 5 in a low-VIX, trending market.
+* **The Build:** In `backend.py`, write a `compute_market_regime` function. It pulls the daily structure of the SPY/QQQ. 
+* **The Rule:** It does *not* alter the 1–5 ranking of the individual ticker—that violates the freeze. Instead, it outputs a "Kelly Multiplier." If the ticker is Rank 5, but the SPY is in a volatile "Neutral Day" structure, the system suggests a 0.5x position size. If the macro aligns with the micro, it suggests 1.5x. 
+
+### 5. Visualizing the Gestalt (UI Expansion)
+The UI in `app.py` needs to move past simple data tables. Since the entire foundation was built rapidly in a 15-day sprint, the backend is tight, but the frontend needs to externalize the pattern recognition so you can consume it instantly at 5:00 AM.
+* **The Upgrade:** Implement 3D surface plots or heatmaps in Streamlit. 
+* **The Variables:** X-axis = Time of Day, Y-axis = Day Structure (1-7), Z-axis = Win Rate. 
+* **The Goal:** You shouldn't have to read the data; you should just *see* the cluster of profitability. It aligns the screen with how you already process information—gestalt-first, pattern-heavy.
+
+### 6. The "Burner" Portfolio for Hypothesis Testing
+As you iterate, you will have ideas that don't fit the strict 1-5 ranking logic.
+* **The Setup:** In Supabase, create a `shadow_trades` table alongside `paper_trades`. 
+* **The Execution:** When you have a thesis (e.g., "What if we fade every Rank 1 that spikes 5% in the first 10 minutes?"), you write an isolated script that logs to the `shadow_trades` table. It runs autonomously alongside the main system. After 30 days, you check the shadow PnL. If it's bleeding, you kill the script. If it works, you formalize it into the main terminal. 
+
+We have the structure locked. The next phase is strictly about instrumentation, telemetry, and feeding the backtest engine until the probabilities are undeniable. Let me know which of these pipelines we are stripping down and building first.
