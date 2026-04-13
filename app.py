@@ -5497,10 +5497,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 if not _rp_rows:
                     st.info("No backtest data found for this date range. Run the Batch Backtest first.")
                 else:
+                    # ── Raw data snapshot (before any simulation math) ─────────────
+                    _raw_wins   = sum(1 for r in _rp_rows if r.get("win_loss") == "Win")
+                    _raw_losses = sum(1 for r in _rp_rows if r.get("win_loss") == "Loss")
+                    _raw_dir    = sum(1 for r in _rp_rows
+                                      if "bullish" in str(r.get("actual_outcome","")).lower()
+                                      or "bearish" in str(r.get("actual_outcome","")).lower())
+                    _raw_wr = round(_raw_wins / (_raw_wins + _raw_losses) * 100, 1) if (_raw_wins + _raw_losses) else 0
+                    st.caption(
+                        f"**Raw DB snapshot** — {len(_rp_rows)} records loaded  |  "
+                        f"Structure Win Rate: **{_raw_wr}%** ({_raw_wins}W / {_raw_losses}L)  |  "
+                        f"Directional actual outcomes (eligible for entry): **{_raw_dir}**  |  "
+                        f"Risk per trade: fixed **${round(float(_rp_equity)*(_rp_risk_pct/100),0):,.0f}** "
+                        f"(2% of starting equity — does not compound)"
+                    )
+                    st.markdown("---")
+
                     _rp_trades = []
                     _rp_equity_cur = float(_rp_equity)
                     _rp_equity_curve = [_rp_equity_cur]
                     _rp_dates_seen = []
+                    # Fixed dollar risk = % of STARTING equity only (no compounding)
+                    _fixed_risk_amt = float(_rp_equity) * (_rp_risk_pct / 100.0)
 
                     _rp_by_date = {}
                     for _rp_r in _rp_rows:
@@ -5538,23 +5556,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             else:
                                 continue
 
-                            _ib_range = _ibh - _ibl
-                            _risk_amt = _rp_equity_cur * (_rp_risk_pct / 100.0)
-
                             _stop_dist = abs(_entry - _stop)
                             if _stop_dist < 0.01:
                                 continue
                             if _entry > 0 and _stop_dist / _entry < 0.005:
                                 continue
 
-                            _shares = _risk_amt / _stop_dist
+                            _shares = _fixed_risk_amt / _stop_dist
 
                             if _wl == "Win":
                                 _ft_capped = min(abs(_ft), _rp_max_move)
-                                _ft_dollar = _shares * (_ft_capped / 100.0) * _entry
-                                _trade_pnl = _ft_dollar
+                                _trade_pnl = _shares * (_ft_capped / 100.0) * _entry
                             else:
-                                _trade_pnl = -_risk_amt
+                                _trade_pnl = -_fixed_risk_amt
 
                             _day_pnl      += _trade_pnl
                             _day_trades   += 1
