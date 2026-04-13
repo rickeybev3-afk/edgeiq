@@ -618,7 +618,7 @@ def render_beta_portal(beta_user_id: str):
 
 def render_build_notes():
     """Render build notes as a live hosted page. Accessible via /?notes=USER_ID."""
-    _NOTES_PASSCODE = "121672"
+    _NOTES_PASSCODE = os.environ.get("NOTES_PASSCODE", "")
 
     st.markdown("""
     <style>

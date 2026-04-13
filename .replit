@@ -99,3 +99,4 @@ packages = ["glibcLocales"]
 [userenv]
 
 [userenv.shared]
+NOTES_PASSCODE = "121672"
