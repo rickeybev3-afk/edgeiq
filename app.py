@@ -5566,6 +5566,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _raw_wr = round(_raw_wins / (_raw_wins + _raw_losses) * 100, 1) if (_raw_wins + _raw_losses) else 0
 
                     # Load per-structure TCS thresholds for bot mode
+                    # Default = 50, matching live bot's MIN_TCS env var.
+                    # compute_structure_tcs_thresholds() uses 65 as its no-data
+                    # fallback, but that's based on zero accuracy data — 50 is the
+                    # correct operational baseline until each structure has data.
+                    _BOT_TCS_DEFAULT = 50
                     _struct_tcs_map: dict = {}
                     if _rp_bot_mode:
                         try:
@@ -5582,8 +5587,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             }
                             _label_to_rec: dict = {}
                             for _td in _thresh_list:
-                                _sl = _td.get("structure", "").lower()
-                                _rt = int(_td.get("recommended_tcs") or 65)
+                                _sl  = _td.get("structure", "").lower()
+                                # If no accuracy data yet, honour bot baseline (50)
+                                _has_data = (_td.get("sample_count") or 0) > 0
+                                _rt  = int(_td.get("recommended_tcs") or _BOT_TCS_DEFAULT) if _has_data else _BOT_TCS_DEFAULT
                                 if "extreme" in _sl:
                                     _label_to_rec["ntrl_extreme"] = _rt
                                 elif "neutral" in _sl:
@@ -5597,7 +5604,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 elif "normal" in _sl:
                                     _label_to_rec["normal"] = _rt
                             for _wk, _sk in _WKEY_TO_SKEY.items():
-                                _struct_tcs_map[_wk] = _label_to_rec.get(_sk, 65)
+                                _struct_tcs_map[_wk] = _label_to_rec.get(_sk, _BOT_TCS_DEFAULT)
                         except Exception:
                             pass
 
@@ -5605,7 +5612,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _raw_tcs_filtered = sum(
                             1 for r in _rp_rows
                             if float(r.get("tcs") or 0) >= _struct_tcs_map.get(
-                                _label_to_weight_key(str(r.get("predicted") or "")), 65
+                                _label_to_weight_key(str(r.get("predicted") or "")), _BOT_TCS_DEFAULT
                             )
                         )
                         _sizing_note = f"${_rp_pos_size:,} position, per-structure TCS threshold"
@@ -5651,7 +5658,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             # TCS filter — per-structure threshold in bot mode, flat slider otherwise
                             if _rp_bot_mode:
                                 _pred_wk  = _label_to_weight_key(str(_rp_r.get("predicted") or ""))
-                                _rec_tcs  = _struct_tcs_map.get(_pred_wk, 65)
+                                _rec_tcs  = _struct_tcs_map.get(_pred_wk, _BOT_TCS_DEFAULT)
                                 if _tcs < _rec_tcs:
                                     continue
                             else:
