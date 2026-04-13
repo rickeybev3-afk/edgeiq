@@ -5605,7 +5605,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _raw_tcs_filtered = sum(
                             1 for r in _rp_rows
                             if float(r.get("tcs") or 0) >= _struct_tcs_map.get(
-                                backend._label_to_weight_key(str(r.get("predicted") or "")), 65
+                                _label_to_weight_key(str(r.get("predicted") or "")), 65
                             )
                         )
                         _sizing_note = f"${_rp_pos_size:,} position, per-structure TCS threshold"
@@ -5650,7 +5650,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                             # TCS filter — per-structure threshold in bot mode, flat slider otherwise
                             if _rp_bot_mode:
-                                _pred_wk  = backend._label_to_weight_key(str(_rp_r.get("predicted") or ""))
+                                _pred_wk  = _label_to_weight_key(str(_rp_r.get("predicted") or ""))
                                 _rec_tcs  = _struct_tcs_map.get(_pred_wk, 65)
                                 if _tcs < _rec_tcs:
                                     continue
