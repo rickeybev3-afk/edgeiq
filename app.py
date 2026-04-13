@@ -5432,7 +5432,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _rp_min_tcs = 0
         _rp_struct_thresholds = {}
 
-        _rp_date_col1, _rp_date_col2 = st.columns(2)
+        _rp_snap_col, _rp_date_col1, _rp_date_col2 = st.columns([1, 1, 1])
+        with _rp_snap_col:
+            _rp_snap = st.selectbox(
+                "Snapshot",
+                options=["Morning (10:47 AM)", "Intraday (2:00 PM)", "EOD (4:00 PM)", "All"],
+                index=0,
+                key="rp_scan_type",
+                help=(
+                    "Morning = entry decision snapshot (IB just formed, 10:47 AM). "
+                    "Intraday = 2 PM position-management check. "
+                    "EOD = full-day TCS (matches what paper_trades records). "
+                    "All = no filter."
+                ),
+            )
+            _rp_scan_type_map = {
+                "Morning (10:47 AM)": "morning",
+                "Intraday (2:00 PM)": "intraday",
+                "EOD (4:00 PM)":      "eod",
+                "All":                None,
+            }
+            _rp_scan_type_val = _rp_scan_type_map[_rp_snap]
         with _rp_date_col1:
             _rp_start = st.date_input("From", value=datetime.now(EASTERN).date() - timedelta(days=60),
                                       key="rp_start_date")
@@ -5449,15 +5469,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
             else:
                 with st.spinner("Loading historical trades…"):
                     try:
-                        _rp_resp = (
+                        _rp_q = (
                             supabase.table("backtest_sim_runs")
-                            .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct")
+                            .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type")
                             .eq("user_id", _rp_uid)
                             .gte("sim_date", str(_rp_start))
                             .lte("sim_date", str(_rp_end))
                             .range(0, 9999)
-                            .execute()
                         )
+                        if _rp_scan_type_val is not None:
+                            _rp_q = _rp_q.eq("scan_type", _rp_scan_type_val)
+                        _rp_resp = _rp_q.execute()
                         _rp_rows = _rp_resp.data or []
                     except Exception as _rp_e:
                         _rp_rows = []
@@ -5527,18 +5549,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _rp_equity_cur += _trade_pnl
 
                             _rp_trades.append({
-                                "Date":    _rp_date_str,
-                                "Ticker":  _tkr,
-                                "TCS":     int(_tcs),
+                                "Date":      _rp_date_str,
+                                "Snapshot":  str(_rp_r.get("scan_type") or "morning").capitalize(),
+                                "Ticker":    _tkr,
+                                "TCS":       int(_tcs),
                                 "Structure": _pred,
                                 "Direction": "Long" if "bullish" in _actual.lower() else "Short",
-                                "Entry":   round(_entry, 2),
-                                "Stop":    round(_stop, 2),
-                                "Shares":  int(_shares),
-                                "W/L":     _wl,
-                                "Move %":  round(_ft, 2),
-                                "P&L ($)": round(_trade_pnl, 2),
-                                "Equity":  round(_rp_equity_cur, 2),
+                                "Entry":     round(_entry, 2),
+                                "Stop":      round(_stop, 2),
+                                "Shares":    int(_shares),
+                                "W/L":       _wl,
+                                "Move %":    round(_ft, 2),
+                                "P&L ($)":   round(_trade_pnl, 2),
+                                "Equity":    round(_rp_equity_cur, 2),
                             })
 
                         if _day_trades > 0:

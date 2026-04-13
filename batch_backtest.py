@@ -8,18 +8,29 @@ filters against a static small-cap universe pulled from Finviz today), runs the
 full IB/Volume Profile backtest engine on each qualifying ticker, and saves
 results to Supabase.
 
-The Finviz float filter is today's snapshot (static approximation — acceptable
-over a 60-90 day lookback window since small-float status rarely changes fast).
+Each ticker is snapshotted at up to 3 times per day (matching the live bot):
+  morning  → 10:47 AM  (IB just formed — entry decision point)
+  intraday → 14:00 PM  (position management check)
+  eod      → 16:00 PM  (full-day TCS — matches what paper_trades records)
+
+Bars are fetched ONCE per ticker per day and reused across all 3 snapshots.
 
 Usage:
-  python batch_backtest.py                          # last 60 trading days
-  python batch_backtest.py --days 30               # last 30 trading days
-  python batch_backtest.py --start 2026-02-01      # from specific date
+  python batch_backtest.py                                 # last 60 days, all snapshots
+  python batch_backtest.py --days 252                     # last year, all snapshots
+  python batch_backtest.py --scan-type morning            # morning snapshots only
+  python batch_backtest.py --scan-type intraday           # intraday only
+  python batch_backtest.py --scan-type eod                # EOD only
+  python batch_backtest.py --start 2026-02-01             # from specific date
   python batch_backtest.py --start 2026-02-01 --end 2026-03-15
-  python batch_backtest.py --feed sip              # use SIP feed (paid)
-  python batch_backtest.py --dry-run               # skip Supabase save
-  python batch_backtest.py --gap 5.0               # 5% gap minimum
-  python batch_backtest.py --user-id <supabase_id> # scope to specific user
+  python batch_backtest.py --feed sip                     # use SIP feed (paid)
+  python batch_backtest.py --dry-run                      # skip Supabase save
+  python batch_backtest.py --gap 5.0                      # 5% gap minimum
+  python batch_backtest.py --user-id <supabase_id>        # scope to specific user
+
+SQL required in Supabase (run once):
+  ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS scan_type TEXT DEFAULT 'morning';
+  UPDATE backtest_sim_runs SET scan_type = 'morning' WHERE scan_type IS NULL;
 """
 
 import os
@@ -27,6 +38,7 @@ import sys
 import time
 import argparse
 import logging
+import pandas as pd
 from datetime import date, datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -34,6 +46,17 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s  %(message)s")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Snapshot configuration — mirrors live bot schedule (ET)
+# ─────────────────────────────────────────────────────────────────────────────
+
+SCAN_CONFIGS = {
+    "morning":  {"cutoff_h": 10, "cutoff_m": 47, "label": "MORN"},
+    "intraday": {"cutoff_h": 14, "cutoff_m":  0, "label": "INTR"},
+    "eod":      {"cutoff_h": 16, "cutoff_m":  0, "label": " EOD"},
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,7 +80,6 @@ def _is_trading_day(d: date) -> bool:
 
 
 def get_trading_days(start: date, end: date) -> list:
-    """Return all trading days in [start, end) — never includes today."""
     today = date.today()
     days, cur = [], start
     while cur <= end:
@@ -68,7 +90,6 @@ def get_trading_days(start: date, end: date) -> list:
 
 
 def walk_back_trading_days(from_date: date, n: int) -> date:
-    """Return the start date that gives n trading days ending at from_date."""
     count, cur = 0, from_date
     while count < n:
         if _is_trading_day(cur):
@@ -78,7 +99,7 @@ def walk_back_trading_days(from_date: date, n: int) -> date:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 1 — Finviz small-cap universe (no gap%/RVOL filters)
+# Step 1 — Finviz small-cap universe
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_smallcap_universe(
@@ -87,20 +108,7 @@ def fetch_smallcap_universe(
     price_max:   float = 20.0,
     max_tickers: int   = 3000,
 ) -> list:
-    """Scrape Finviz for all small-float US stocks without gap%/RVOL day-filters.
-
-    NOTE: We intentionally do NOT call `backend.fetch_finviz_watchlist()` here.
-    That function always bakes in a `ta_change_uX` (daily change%) and `sh_relvol_o1`
-    (relative volume ≥ 1x) filter — both of which are day-specific and would give us
-    only TODAY's movers instead of the full static small-cap pool.  Since we cannot
-    modify backend.py (architecture rule), this local function drops those two filters
-    and returns the full universe that COULD appear on any given scan day.
-    The gap% and RVOL filters are re-applied per-day using Alpaca historical data.
-
-    Keeps only:  geo_usa | float ≤ float_max_m M | avg_vol ≥ 1M | price $1–$20
-    Returns a deduplicated list of uppercase tickers, up to max_tickers.
-    Returns [] on error (script will exit with a clear message).
-    """
+    """Scrape Finviz for all small-float US stocks without gap%/RVOL day-filters."""
     import re
     import requests
     from bs4 import BeautifulSoup
@@ -161,11 +169,10 @@ def fetch_smallcap_universe(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2 — Alpaca daily bars (batched multi-ticker request)
+# Step 2 — Alpaca daily bars (batched multi-ticker)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _to_date(ts) -> date:
-    """Safely extract a date from a Timestamp, tz-aware or not."""
     try:
         if hasattr(ts, "date"):
             return ts.date()
@@ -183,16 +190,7 @@ def fetch_daily_bars_batch(
     lookback_extra: int = 50,
     feed:           str = "iex",
 ) -> dict:
-    """Fetch daily OHLCV for a batch of tickers over the full period + lookback.
-
-    `feed` defaults to "iex" regardless of the --feed CLI flag because daily bars
-    are used only for universe filtering (gap%, price, RVOL) — not for the actual
-    backtest.  IEX daily data is free, complete, and has no SIP recency restriction.
-    The --feed CLI arg is passed through to _backtest_single() for intraday bars only.
-
-    Returns {ticker: pd.DataFrame(index=date, columns=[open,high,low,close,volume])}.
-    """
-    import pandas as pd
+    """Fetch daily OHLCV for a batch of tickers. Returns {ticker: DataFrame}."""
     import pytz
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
@@ -228,8 +226,6 @@ def fetch_daily_bars_batch(
         return {}
 
     result = {}
-    import pandas as pd  # re-import inside function scope for safety
-
     if isinstance(raw.index, pd.MultiIndex):
         for sym in tickers:
             try:
@@ -252,7 +248,7 @@ def fetch_daily_bars_batch(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 3 — Reconstruct daily watchlist from daily bars
+# Step 3 — Reconstruct daily watchlist
 # ─────────────────────────────────────────────────────────────────────────────
 
 def reconstruct_daily_watchlist(
@@ -264,13 +260,6 @@ def reconstruct_daily_watchlist(
     rvol_min:      float = 1.0,
     avg_vol_days:  int   = 30,
 ) -> list:
-    """Return tickers that would have appeared on the Finviz scan for scan_date.
-
-    Applies:  gap% ≥ gap_min_pct  |  price $price_min–$price_max  |  RVOL ≥ rvol_min
-
-    RVOL note: we use EOD total volume (not 10:30 AM cutoff volume) because
-    we only have daily bars.  This is a good proxy and still filters out flat days.
-    """
     qualifying = []
     for sym, df in daily_bars.items():
         if scan_date not in df.index:
@@ -309,19 +298,18 @@ def reconstruct_daily_watchlist(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4 — Load existing records for deduplication
+# Step 4 — Deduplication (ticker, date, scan_type)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_existing_pairs(user_id: str = "") -> set:
-    """Return set of (ticker, sim_date_str) already in backtest_sim_runs.
+def load_existing_triples(user_id: str = "") -> set:
+    """Return set of (ticker, sim_date_str, scan_type) already in Supabase.
 
-    Paginates in 1000-row chunks directly against Supabase (avoids the
-    backend helper's 5000-row cap so dedup is always complete regardless
-    of how many runs are stored).
+    Falls back to (ticker, date) matching with scan_type='morning' for legacy
+    records that pre-date the scan_type column.
     """
     if not backend.supabase:
         return set()
-    pairs: set = set()
+    triples: set = set()
     chunk_size = 1000
     offset = 0
     while True:
@@ -329,7 +317,7 @@ def load_existing_pairs(user_id: str = "") -> set:
             q = (
                 backend.supabase
                 .table("backtest_sim_runs")
-                .select("ticker, sim_date")
+                .select("ticker, sim_date, scan_type")
                 .range(offset, offset + chunk_size - 1)
             )
             if user_id:
@@ -338,14 +326,257 @@ def load_existing_pairs(user_id: str = "") -> set:
             if not rows:
                 break
             for r in rows:
-                pairs.add((str(r.get("ticker", "")), str(r.get("sim_date", ""))))
+                st = str(r.get("scan_type") or "morning")
+                triples.add((
+                    str(r.get("ticker", "")),
+                    str(r.get("sim_date", "")),
+                    st,
+                ))
             if len(rows) < chunk_size:
                 break
             offset += chunk_size
         except Exception as e:
             print(f"  [WARN] Dedup query error at offset {offset}: {e}")
             break
-    return pairs
+    return triples
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Core — analyze pre-fetched bars at a specific cutoff time
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _analyze_at_cutoff(
+    full_df,
+    sym:         str,
+    trade_date,
+    scan_type:   str,
+    cutoff_h:    int,
+    cutoff_m:    int,
+    price_min:   float,
+    price_max:   float,
+    slippage_pct: float = 0.0,
+):
+    """Run IB/volume structure analysis on pre-fetched intraday bars at the given cutoff.
+
+    Returns a result dict (same shape as _backtest_single) or None.
+    Uses bars fetched by backend.fetch_bars() — no additional API calls.
+    """
+    try:
+        if full_df is None or full_df.empty or len(full_df) < 10:
+            return None
+
+        open_px = float(full_df["open"].iloc[0])
+        if not (price_min <= open_px <= price_max):
+            return None
+
+        ib_cutoff = full_df.index[0].replace(
+            hour=cutoff_h, minute=cutoff_m, second=0, microsecond=0
+        )
+        pm_df  = full_df[full_df.index <= ib_cutoff]
+        aft_df = full_df[full_df.index > ib_cutoff]
+
+        if len(pm_df) < 5:
+            return None
+
+        morning_only = len(aft_df) < 5
+
+        ib_high, ib_low = backend.compute_initial_balance(pm_df)
+        if not ib_high or not ib_low:
+            return None
+
+        bin_centers, vap, poc_price = backend.compute_volume_profile(pm_df, num_bins=30)
+        tcs   = float(backend.compute_tcs(pm_df, ib_high, ib_low, poc_price))
+        probs = backend.compute_structure_probabilities(
+            pm_df, bin_centers, vap, ib_high, ib_low, poc_price
+        )
+        predicted  = max(probs, key=probs.get) if probs else "—"
+        confidence = round(probs.get(predicted, 0.0), 1)
+
+        if morning_only:
+            aft_high       = ib_high
+            aft_low        = ib_low
+            close_px       = float(pm_df["close"].iloc[-1])
+            actual_outcome = "Pending"
+            actual_icon    = "…"
+            broke_up       = False
+            broke_down     = False
+        else:
+            aft_high   = float(aft_df["high"].max())
+            aft_low    = float(aft_df["low"].min())
+            close_px   = float(aft_df["close"].iloc[-1])
+            broke_up   = aft_high > ib_high
+            broke_down = aft_low  < ib_low
+
+        if not morning_only:
+            if broke_up and broke_down:
+                actual_outcome = "Both Sides"
+                actual_icon    = "↕"
+            elif broke_up:
+                actual_outcome = "Bullish Break"
+                actual_icon    = "↑"
+            elif broke_down:
+                actual_outcome = "Bearish Break"
+                actual_icon    = "↓"
+            else:
+                actual_outcome = "Range-Bound"
+                actual_icon    = "—"
+
+        if morning_only:
+            win      = None
+            aft_move = 0.0
+        else:
+            is_dir      = any(k in predicted for k in backend._BACKTEST_DIRECTIONAL)
+            is_range    = any(k in predicted for k in backend._BACKTEST_RANGE)
+            is_neut_ext = any(k in predicted for k in backend._BACKTEST_NEUTRAL_EXT)
+            is_balanced = (not is_neut_ext and
+                           any(k in predicted for k in backend._BACKTEST_BALANCED))
+            is_bimodal  = any(k in predicted for k in backend._BACKTEST_BIMODAL)
+            is_normal   = (not is_dir and not is_range and not is_neut_ext
+                           and not is_balanced and not is_bimodal
+                           and "Normal" in predicted)
+
+            if is_dir:
+                win = actual_outcome in ("Bullish Break", "Bearish Break")
+            elif is_neut_ext:
+                win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+            elif is_range or is_normal:
+                win = actual_outcome == "Range-Bound"
+            elif is_balanced:
+                win = actual_outcome in ("Both Sides", "Bullish Break", "Bearish Break")
+            elif is_bimodal:
+                win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+            else:
+                win = False
+
+            if broke_up and broke_down:
+                _ft_up   = (aft_high - ib_high) / ib_high * 100
+                _ft_down = (ib_low   - aft_low)  / ib_low  * 100
+                aft_move = _ft_up if _ft_up >= _ft_down else -_ft_down
+            elif broke_up:
+                aft_move = (aft_high - ib_high) / ib_high * 100
+            elif broke_down:
+                aft_move = -((ib_low - aft_low) / ib_low * 100)
+            else:
+                aft_move = 0.0
+
+            _slip_drag = slippage_pct * 2.0
+            if aft_move > 0:
+                aft_move = max(0.0, aft_move - _slip_drag)
+            elif aft_move < 0:
+                aft_move = min(0.0, aft_move + _slip_drag)
+
+        _aft_r = aft_df.reset_index()
+        false_break_up   = False
+        false_break_down = False
+        if broke_up:
+            _up_bars = _aft_r[_aft_r["high"] > ib_high]
+            if not _up_bars.empty:
+                _fi = _up_bars.index[0]
+                _w  = _aft_r.loc[_fi : _fi + 6]
+                false_break_up = bool((_w["close"] < ib_high).any())
+        if broke_down:
+            _dn_bars = _aft_r[_aft_r["low"] < ib_low]
+            if not _dn_bars.empty:
+                _fi = _dn_bars.index[0]
+                _w  = _aft_r.loc[_fi : _fi + 6]
+                false_break_down = bool((_w["close"] > ib_low).any())
+
+        return {
+            "ticker":         sym,
+            "open_price":     round(open_px, 4),
+            "close_price":    round(close_px, 4),
+            "ib_low":         round(ib_low, 4),
+            "ib_high":        round(ib_high, 4),
+            "tcs":            round(tcs, 1),
+            "predicted":      predicted,
+            "confidence":     confidence,
+            "actual_outcome": actual_outcome,
+            "actual_icon":    actual_icon,
+            "win_loss":       ("Win" if win else "Loss") if win is not None else None,
+            "aft_move_pct":   round(aft_move, 3),
+            "false_break_up":   false_break_up,
+            "false_break_down": false_break_down,
+            "scan_type":      scan_type,
+        }
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Worker — fetch bars once, run all requested snapshots
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _worker_multi_snapshot(
+    api_key:     str,
+    secret_key:  str,
+    sym:         str,
+    trade_date,
+    feed:        str,
+    price_min:   float,
+    price_max:   float,
+    scan_types:  list,
+) -> list:
+    """Fetch intraday bars once, run analysis at each requested cutoff.
+    Returns a list of result dicts (one per scan_type that yields data).
+    """
+    try:
+        full_df = backend.fetch_bars(api_key, secret_key, sym, trade_date, feed=feed)
+    except Exception:
+        return []
+
+    if full_df is None or full_df.empty or len(full_df) < 10:
+        return []
+
+    results = []
+    for st in scan_types:
+        cfg = SCAN_CONFIGS[st]
+        r = _analyze_at_cutoff(
+            full_df, sym, trade_date,
+            scan_type=st,
+            cutoff_h=cfg["cutoff_h"],
+            cutoff_m=cfg["cutoff_m"],
+            price_min=price_min,
+            price_max=price_max,
+        )
+        if r is not None:
+            results.append(r)
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Save — includes scan_type field
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_rows_with_scan_type(rows: list, user_id: str = ""):
+    """Insert backtest rows to Supabase, including scan_type."""
+    if not backend.supabase or not rows:
+        return
+    try:
+        records = [
+            {
+                "user_id":          user_id or "",
+                "sim_date":         str(r.get("sim_date", "")),
+                "ticker":           r.get("ticker", ""),
+                "open_price":       r.get("open_price"),
+                "ib_low":           r.get("ib_low"),
+                "ib_high":          r.get("ib_high"),
+                "tcs":              r.get("tcs"),
+                "predicted":        r.get("predicted", ""),
+                "actual_outcome":   r.get("actual_outcome", ""),
+                "win_loss":         r.get("win_loss", ""),
+                "follow_thru_pct":  r.get("aft_move_pct"),
+                "false_break_up":   bool(r.get("false_break_up", False)),
+                "false_break_down": bool(r.get("false_break_down", False)),
+                "scan_type":        r.get("scan_type", "morning"),
+            }
+            for r in rows
+        ]
+        chunk = 500
+        for i in range(0, len(records), chunk):
+            backend.supabase.table("backtest_sim_runs").insert(records[i:i+chunk]).execute()
+    except Exception as e:
+        print(f"Backtest save error: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -354,32 +585,36 @@ def load_existing_pairs(user_id: str = "") -> set:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Batch backtest — historical Finviz watchlist reconstruction",
+        description="Batch backtest — 3-snapshot historical reconstruction",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("--start",     type=str,   help="Start date YYYY-MM-DD")
-    parser.add_argument("--end",       type=str,   help="End date YYYY-MM-DD (default: yesterday)")
-    parser.add_argument("--days",      type=int,   default=60,   help="Lookback in trading days if --start omitted (default: 60)")
-    parser.add_argument("--feed",      type=str,   default="iex", choices=["iex", "sip"],
+    parser.add_argument("--start",      type=str,   help="Start date YYYY-MM-DD")
+    parser.add_argument("--end",        type=str,   help="End date YYYY-MM-DD (default: yesterday)")
+    parser.add_argument("--days",       type=int,   default=60,   help="Lookback trading days if --start omitted (default: 60)")
+    parser.add_argument("--scan-type",  type=str,   default="all",
+                        choices=["morning", "intraday", "eod", "all"],
+                        help="Which snapshot(s) to run (default: all)")
+    parser.add_argument("--feed",       type=str,   default="iex", choices=["iex", "sip"],
                         help="Alpaca data feed for intraday bars (default: iex)")
-    parser.add_argument("--gap",       type=float, default=3.0,  help="Min gap%% to qualify (default: 3.0)")
-    parser.add_argument("--price-min", type=float, default=1.0,  help="Min open price (default: 1.0)")
-    parser.add_argument("--price-max", type=float, default=20.0, help="Max open price (default: 20.0)")
-    parser.add_argument("--rvol-min",  type=float, default=1.0,  help="Min relative volume (default: 1.0)")
-    parser.add_argument("--float-max", type=float, default=100.0, help="Max float in millions (default: 100)")
-    parser.add_argument("--workers",   type=int,   default=8,    help="Parallel backtest workers per day (default: 8)")
-    parser.add_argument("--batch",     type=int,   default=50,   help="Ticker batch size for Alpaca daily bars (default: 50)")
-    parser.add_argument("--dry-run",   action="store_true",      help="Skip Supabase save (test mode)")
-    parser.add_argument("--user-id",   type=str,   default="",   help="Supabase user_id for data scoping")
+    parser.add_argument("--gap",        type=float, default=3.0,  help="Min gap%% (default: 3.0)")
+    parser.add_argument("--price-min",  type=float, default=1.0,  help="Min open price (default: 1.0)")
+    parser.add_argument("--price-max",  type=float, default=20.0, help="Max open price (default: 20.0)")
+    parser.add_argument("--rvol-min",   type=float, default=1.0,  help="Min relative volume (default: 1.0)")
+    parser.add_argument("--float-max",  type=float, default=100.0, help="Max float in millions (default: 100)")
+    parser.add_argument("--workers",    type=int,   default=8,    help="Parallel workers per day (default: 8)")
+    parser.add_argument("--batch",      type=int,   default=50,   help="Ticker batch size for daily bars (default: 50)")
+    parser.add_argument("--dry-run",    action="store_true",      help="Skip Supabase save (test mode)")
+    parser.add_argument("--user-id",    type=str,   default="",   help="Supabase user_id for data scoping")
     args = parser.parse_args()
 
     api_key    = os.environ.get("ALPACA_API_KEY", "")
     secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
     if not api_key or not secret_key:
-        print("ERROR: ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment.")
+        print("ERROR: ALPACA_API_KEY and ALPACA_SECRET_KEY must be set.")
         sys.exit(1)
 
-    # ── Date range ─────────────────────────────────────────────────────────
+    scan_types = list(SCAN_CONFIGS.keys()) if args.scan_type == "all" else [args.scan_type]
+
     today    = date.today()
     end_date = date.fromisoformat(args.end) if args.end else today - timedelta(days=1)
     if args.start:
@@ -389,16 +624,17 @@ def main():
 
     trading_days = get_trading_days(start_date, end_date)
     if not trading_days:
-        print("No trading days found in the specified range. Check your dates.")
+        print("No trading days in range. Check your dates.")
         sys.exit(0)
 
-    bar  = "=" * 62
-    dash = "-" * 62
+    bar  = "=" * 66
+    dash = "-" * 66
     print(f"\n{bar}")
-    print(f"  EdgeIQ  |  Batch Historical Backtest")
+    print(f"  EdgeIQ  |  Batch Historical Backtest  (3-Snapshot)")
     print(f"{bar}")
     print(f"  Date range  : {start_date}  →  {end_date}")
     print(f"  Trade days  : {len(trading_days)}")
+    print(f"  Snapshots   : {', '.join(scan_types)}")
     print(f"  Feed        : {args.feed.upper()}")
     print(f"  Filters     : gap ≥ {args.gap}%  |  ${args.price_min}–${args.price_max}  "
           f"|  RVOL ≥ {args.rvol_min}x  |  float ≤ {args.float_max}M")
@@ -406,9 +642,7 @@ def main():
     print(f"  Dry run     : {'YES — Supabase save disabled' if args.dry_run else 'No'}")
     print(f"{bar}\n")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # STEP 1 — Finviz small-cap universe
-    # ─────────────────────────────────────────────────────────────────────
+    # ── Step 1: Finviz universe ────────────────────────────────────────────
     print("[ 1/4 ]  Fetching Finviz small-cap universe...", flush=True)
     universe = fetch_smallcap_universe(
         float_max_m=args.float_max,
@@ -417,13 +651,11 @@ def main():
         max_tickers=3000,
     )
     if not universe:
-        print("\nERROR: Finviz returned 0 tickers. Check your network or Finviz status.")
+        print("\nERROR: Finviz returned 0 tickers.")
         sys.exit(1)
     print(f"       → {len(universe)} tickers in universe\n")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # STEP 2 — Alpaca daily bars (batched)
-    # ─────────────────────────────────────────────────────────────────────
+    # ── Step 2: Alpaca daily bars ──────────────────────────────────────────
     print(f"[ 2/4 ]  Fetching Alpaca daily bars (batches of {args.batch})...", flush=True)
     all_daily_bars: dict = {}
     batches = [universe[i : i + args.batch] for i in range(0, len(universe), args.batch)]
@@ -439,17 +671,13 @@ def main():
             time.sleep(0.35)
     print(f"\n       → Daily bars for {len(all_daily_bars)} tickers total\n")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # STEP 3 — Load existing pairs for deduplication
-    # ─────────────────────────────────────────────────────────────────────
-    print("[ 3/4 ]  Loading existing backtest records for dedup...", flush=True)
-    existing_pairs = load_existing_pairs(user_id=args.user_id)
-    print(f"       → {len(existing_pairs)} (ticker, date) pairs already in Supabase\n")
+    # ── Step 3: Dedup ─────────────────────────────────────────────────────
+    print("[ 3/4 ]  Loading existing records for dedup...", flush=True)
+    existing_triples = load_existing_triples(user_id=args.user_id)
+    print(f"       → {len(existing_triples)} (ticker, date, scan_type) triples already in Supabase\n")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # STEP 4 — Per-day backtest
-    # ─────────────────────────────────────────────────────────────────────
-    print(f"[ 4/4 ]  Running per-day backtest ({len(trading_days)} days)...")
+    # ── Step 4: Per-day backtest ───────────────────────────────────────────
+    print(f"[ 4/4 ]  Running per-day backtest ({len(trading_days)} days × {len(scan_types)} snapshots)...")
     print(dash)
 
     split_idx  = max(1, int(len(trading_days) * 0.70))
@@ -472,26 +700,34 @@ def main():
         )
         total_qualified += len(watchlist)
 
-        new_tickers = [t for t in watchlist if (t, day_str) not in existing_pairs]
+        # Find tickers that need at least one snapshot type
+        new_tickers = [
+            t for t in watchlist
+            if any((t, day_str, st) not in existing_triples for st in scan_types)
+        ]
         if not new_tickers:
             print(f"  {day_str} [{split_tag}]  {len(watchlist):3d} qualified  "
-                  f"all already in DB — skipped")
+                  f"all snapshots already in DB — skipped")
             continue
 
-        # Run backtest concurrently
+        # Per-ticker: determine which scan_types are still needed
+        def _needed_scan_types(sym):
+            return [st for st in scan_types if (sym, day_str, st) not in existing_triples]
+
         day_results: list = []
         with ThreadPoolExecutor(max_workers=min(args.workers, len(new_tickers))) as ex:
             futures = {
                 ex.submit(
-                    backend._backtest_single,
+                    _worker_multi_snapshot,
                     api_key, secret_key, sym,
                     day, args.feed, args.price_min, args.price_max,
+                    _needed_scan_types(sym),
                 ): sym
                 for sym in new_tickers
             }
             for fut in as_completed(futures):
-                r = fut.result()
-                if r is not None:
+                rows = fut.result()
+                for r in rows:
                     r["sim_date"] = day_str
                     r["split"]    = "train" if day_str in train_days else "test"
                     day_results.append(r)
@@ -499,73 +735,81 @@ def main():
         total_run += len(new_tickers)
         all_new_rows.extend(day_results)
 
-        day_wins = sum(1 for r in day_results if r.get("win_loss") == "Win")
-        day_wr   = f"{round(day_wins / len(day_results) * 100, 1):.1f}%" if day_results else "  n/a"
+        morning_results = [r for r in day_results if r.get("scan_type") == "morning"]
+        day_wins = sum(1 for r in morning_results if r.get("win_loss") == "Win")
+        day_wr   = (f"{round(day_wins / len(morning_results) * 100, 1):.1f}%"
+                    if morning_results else "  n/a")
+        snap_counts = {st: sum(1 for r in day_results if r.get("scan_type") == st)
+                       for st in scan_types}
+        snap_str = "  ".join(f"{SCAN_CONFIGS[st]['label']}:{snap_counts[st]}" for st in scan_types)
         print(
             f"  {day_str} [{split_tag}]  "
             f"{len(watchlist):3d} qualified  "
             f"{len(new_tickers):3d} new  "
-            f"{len(day_results):3d} results  "
-            f"WR: {day_wr}"
+            f"[{snap_str}]  "
+            f"WR(morn): {day_wr}"
         )
 
     print(dash + "\n")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Save to Supabase
-    # ─────────────────────────────────────────────────────────────────────
+    # ── Save ──────────────────────────────────────────────────────────────
     if all_new_rows:
         if args.dry_run:
-            print(f"[DRY RUN] Would save {len(all_new_rows)} rows — Supabase write skipped.\n")
+            print(f"[DRY RUN] Would save {len(all_new_rows)} rows — skipped.\n")
         else:
             print(f"Saving {len(all_new_rows)} new rows to Supabase...", flush=True)
-            backend.save_backtest_sim_runs(all_new_rows, user_id=args.user_id)
+            save_rows_with_scan_type(all_new_rows, user_id=args.user_id)
             print("  → Saved.\n")
     else:
-        print("No new rows to save (all dates already in Supabase).\n")
+        print("No new rows to save (all snapshots already in Supabase).\n")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Final summary
-    # ─────────────────────────────────────────────────────────────────────
+    # ── Summary ───────────────────────────────────────────────────────────
     print(bar)
     print("  SUMMARY")
     print(bar)
     print(f"  Universe size       : {len(universe):,} tickers")
     print(f"  Tickers with data   : {len(all_daily_bars):,} tickers")
     print(f"  Trading days        : {len(trading_days)}")
+    print(f"  Snapshots run       : {', '.join(scan_types)}")
     print(f"  Total qualified     : {total_qualified:,}  (gap/price/RVOL filter)")
     print(f"  New runs attempted  : {total_run:,}")
-    print(f"  New results saved   : {len(all_new_rows):,}")
+    print(f"  New rows saved      : {len(all_new_rows):,}")
 
     if all_new_rows:
-        wins_all = sum(1 for r in all_new_rows if r.get("win_loss") == "Win")
-        wr_all   = round(wins_all / len(all_new_rows) * 100, 1)
-        tr_rows  = [r for r in all_new_rows if r.get("split") == "train"]
-        te_rows  = [r for r in all_new_rows if r.get("split") == "test"]
+        morning_all = [r for r in all_new_rows if r.get("scan_type") == "morning"]
+        if morning_all:
+            wins = sum(1 for r in morning_all if r.get("win_loss") == "Win")
+            print(f"\n  Structure Win Rate (morning snapshots):")
+            print(f"    ALL    : {round(wins/len(morning_all)*100,1):.1f}%  ({wins}/{len(morning_all)})")
+            tr = [r for r in morning_all if r.get("split") == "train"]
+            te = [r for r in morning_all if r.get("split") == "test"]
+            if tr:
+                tw = sum(1 for r in tr if r.get("win_loss") == "Win")
+                print(f"    TRAIN  : {round(tw/len(tr)*100,1):.1f}%  ({tw}/{len(tr)})")
+            if te:
+                tw = sum(1 for r in te if r.get("win_loss") == "Win")
+                print(f"    TEST   : {round(tw/len(te)*100,1):.1f}%  ({tw}/{len(te)})")
 
-        print(f"\n  Win rate  (ALL)     : {wr_all:.1f}%  ({wins_all} / {len(all_new_rows)})")
-        if tr_rows:
-            tw = sum(1 for r in tr_rows if r.get("win_loss") == "Win")
-            print(f"  Win rate  (TRAIN)   : {round(tw/len(tr_rows)*100,1):.1f}%  "
-                  f"({tw} / {len(tr_rows)})")
-        if te_rows:
-            tw = sum(1 for r in te_rows if r.get("win_loss") == "Win")
-            print(f"  Win rate  (TEST)    : {round(tw/len(te_rows)*100,1):.1f}%  "
-                  f"({tw} / {len(te_rows)})")
+        eod_all = [r for r in all_new_rows if r.get("scan_type") == "eod"]
+        if eod_all:
+            tcs_vals = [r["tcs"] for r in eod_all if r.get("tcs", 0) > 0]
+            if tcs_vals:
+                print(f"\n  EOD TCS stats (full-day, matches paper_trades):")
+                print(f"    Avg TCS : {round(sum(tcs_vals)/len(tcs_vals),1)}")
+                print(f"    Median  : {sorted(tcs_vals)[len(tcs_vals)//2]}")
 
+        print(f"\n  Actual outcome breakdown (morning):")
         struct_counts: dict = {}
-        for r in all_new_rows:
+        for r in morning_all:
             s = r.get("actual_outcome", "?")
             struct_counts[s] = struct_counts.get(s, 0) + 1
-
-        print(f"\n  Actual outcome breakdown:")
         for label, cnt in sorted(struct_counts.items(), key=lambda x: -x[1]):
-            pct = round(cnt / len(all_new_rows) * 100, 1)
+            pct = round(cnt / len(morning_all) * 100, 1) if morning_all else 0
             print(f"    {label:<22}  {cnt:5,}  ({pct:.1f}%)")
 
     print(bar)
     if not args.dry_run and all_new_rows:
-        print("\n  Open the Backtest tab in EdgeIQ to see the uploaded results.\n")
+        print("\n  Open the Backtest tab → Paper Trade Replay to see results.\n")
     print()
 
 

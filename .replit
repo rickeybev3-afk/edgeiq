@@ -82,7 +82,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python batch_backtest.py --days 252"
+args = "python batch_backtest.py --days 252 --scan-type all --user-id a5e1fcab-8369-42c4-8550-a8a19734510c"
 
 [agent]
 stack = "PNPM_WORKSPACE"
