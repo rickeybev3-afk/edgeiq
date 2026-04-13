@@ -72,3 +72,9 @@ id = "V4B9H8UrNhXrIb32E4mrX"
 uri = "file://EdgeIQ_Build_Notes.txt"
 type = "text"
 title = "EdgeIQ Build Notes (.txt)"
+
+[[outputs]]
+id = "zbGhNVy5BB3ucTrE5ILbu"
+uri = "file://edgeiq_context_for_gemini.md"
+type = "text"
+title = "EdgeIQ — Full Context for Gemini"
