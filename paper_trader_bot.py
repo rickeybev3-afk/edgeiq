@@ -81,6 +81,8 @@ try:
         save_beta_chat_id,
         get_beta_chat_ids,
         get_breadth_regime,
+        ensure_cognitive_delta_table,
+        verify_cognitive_delta,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -880,6 +882,14 @@ def nightly_verify():
     except Exception as _rk_e:
         log.warning(f"Ticker ranking auto-verify failed (non-fatal): {_rk_e}")
 
+    # Cognitive delta — fill in actual changes for today's logged decisions
+    try:
+        _cd_updated = verify_cognitive_delta(ALPACA_API_KEY, ALPACA_SECRET_KEY, USER_ID, today)
+        if _cd_updated > 0:
+            log.info(f"Cognitive delta: verified {_cd_updated} entries for {today}")
+    except Exception as _cd_e:
+        log.warning(f"Cognitive delta verify failed (non-fatal): {_cd_e}")
+
 
 def update_daily_build_notes() -> bool:
     """Append today's EOD results to .local/build_notes.md.
@@ -1262,6 +1272,9 @@ def main():
 
     # Ensure trade_journal has Telegram-logging columns
     ensure_telegram_columns()
+
+    # Ensure cognitive delta log table exists
+    ensure_cognitive_delta_table()
 
     # Start Telegram listener in background daemon thread
     import threading as _threading

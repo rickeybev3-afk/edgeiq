@@ -10472,6 +10472,121 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             else:
                 st.caption("No rankings saved yet.")
 
+    # ── Section 7: Cognitive Delta Log ──────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🧠 Cognitive Delta Log")
+    st.caption(
+        "Track when you deviate from the system's calls. "
+        "Over time, this reveals whether your intuition adds edge or costs you."
+    )
+    _cd_table_ready = ensure_cognitive_delta_table()
+    if not _cd_table_ready:
+        st.warning("Run this in Supabase SQL Editor to enable the Cognitive Delta Log:")
+        st.code(_COGNITIVE_DELTA_SQL, language="sql")
+    else:
+        _cd_uid       = _AUTH_USER_ID
+        _cd_date      = date.today()
+        _cd_preds     = load_watchlist_predictions(user_id=_cd_uid, pred_date=_cd_date)
+        _cd_today     = load_cognitive_delta_today(_cd_uid, _cd_date)
+        _cd_logged    = set(_cd_today["ticker"].tolist()) if not _cd_today.empty else set()
+
+        with st.expander("📋 Log Today's Decisions", expanded=False):
+            if _cd_preds.empty:
+                st.info("No system alerts found for today. The bot fires alerts at 10:47 AM ET — check back after the morning scan.")
+            else:
+                st.markdown("**System fired these alerts today. Mark each one:**")
+                _cd_entries = []
+                _sys_tickers = _cd_preds["ticker"].tolist() if "ticker" in _cd_preds.columns else []
+                for _cd_sym in _sys_tickers:
+                    _pred_row  = _cd_preds[_cd_preds["ticker"] == _cd_sym].iloc[0]
+                    _cd_tcs    = float(_pred_row.get("tcs", 0) or 0)
+                    _cd_struct = str(_pred_row.get("predicted_structure", "") or "")
+                    _cd_rank   = int(_pred_row.get("rank", 0) or 0) if "rank" in _pred_row else None
+                    _prev_action = _cd_today[_cd_today["ticker"] == _cd_sym]["user_action"].values[0] \
+                                   if _cd_sym in _cd_logged else "followed"
+                    _action_idx = {"followed": 0, "skipped": 1}.get(_prev_action, 0)
+                    c1, c2, c3 = st.columns([2, 2, 3])
+                    with c1:
+                        st.markdown(f"**{_cd_sym}** · TCS {_cd_tcs:.0f}")
+                        if _cd_struct:
+                            st.caption(_cd_struct)
+                    with c2:
+                        _cd_action = st.radio(
+                            f"action_{_cd_sym}",
+                            ["followed", "skipped"],
+                            index=_action_idx,
+                            horizontal=True,
+                            label_visibility="collapsed",
+                            key=f"cd_action_{_cd_sym}",
+                        )
+                    with c3:
+                        _cd_note = st.text_input(
+                            f"note_{_cd_sym}",
+                            placeholder="Why? (optional)",
+                            label_visibility="collapsed",
+                            key=f"cd_note_{_cd_sym}",
+                        )
+                    _cd_entries.append({
+                        "ticker": _cd_sym,
+                        "system_rank": _cd_rank,
+                        "system_tcs": _cd_tcs,
+                        "system_structure": _cd_struct,
+                        "user_action": _cd_action,
+                        "notes": _cd_note,
+                    })
+
+                st.markdown("**Overrides — tickers you traded that weren't on the system list:**")
+                _cd_override_raw = st.text_input(
+                    "Override tickers (comma-separated)",
+                    placeholder="e.g. SIDU, CREG",
+                    key="cd_override_tickers",
+                )
+                for _ov_sym in [t.strip().upper() for t in _cd_override_raw.split(",") if t.strip()]:
+                    if _ov_sym not in _sys_tickers:
+                        _cd_entries.append({
+                            "ticker": _ov_sym,
+                            "system_rank": None,
+                            "system_tcs": None,
+                            "system_structure": None,
+                            "user_action": "override",
+                            "notes": "Not on system list",
+                        })
+
+                if st.button("💾 Save Delta Log", key="cd_save_btn"):
+                    _cd_res = save_cognitive_delta_entries(_cd_uid, _cd_date, _cd_entries)
+                    if _cd_res["saved"] > 0:
+                        st.success(f"✅ Logged {_cd_res['saved']} decisions for {_cd_date}")
+                    if _cd_res["errors"]:
+                        st.warning(f"Some errors: {_cd_res['errors']}")
+
+        with st.expander("📊 Deviance Analysis", expanded=False):
+            _cd_analysis = load_cognitive_delta_analysis(_cd_uid)
+            if _cd_analysis.empty or len(_cd_analysis) < 5:
+                st.info(f"Need at least 5 verified entries to show analysis. "
+                        f"Currently have {len(_cd_analysis)} verified.")
+            else:
+                _n_followed = _cd_analysis[_cd_analysis["user_action"] == "followed"]
+                _n_skipped  = _cd_analysis[_cd_analysis["user_action"] == "skipped"]
+                _n_override = _cd_analysis[_cd_analysis["user_action"] == "override"]
+                _c1, _c2, _c3 = st.columns(3)
+                with _c1:
+                    _f_wr = (_n_followed["user_won"].sum() / len(_n_followed) * 100) if len(_n_followed) > 0 else 0
+                    st.metric("Followed System", f"{_f_wr:.0f}%",
+                              help=f"Win rate when you traded what the system flagged ({len(_n_followed)} trades)")
+                with _c2:
+                    _s_wr = (_n_skipped["user_won"].sum() / len(_n_skipped) * 100) if len(_n_skipped) > 0 else 0
+                    st.metric("Skipped System", f"{_s_wr:.0f}%",
+                              help=f"% of skipped calls that would have won ({len(_n_skipped)} skips) — if high, your skip instinct costs you")
+                with _c3:
+                    _o_wr = (_n_override["user_won"].sum() / len(_n_override) * 100) if len(_n_override) > 0 else 0
+                    st.metric("Override (Off-List)", f"{_o_wr:.0f}%",
+                              help=f"Win rate on tickers you traded that weren't on the system list ({len(_n_override)} trades)")
+                st.caption(
+                    f"**Reading this:** Followed > Skipped = system adds edge. "
+                    f"Override > Followed = your tape-reading exceeds the algo. "
+                    f"Skipped > Followed = your skip instinct is costing you."
+                )
+
 
 # ── Macro Regime Banner ─────────────────────────────────────────────────────────
 _active_regime = st.session_state.get("breadth_regime")

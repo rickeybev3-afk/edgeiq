@@ -6498,6 +6498,162 @@ def load_ranking_accuracy(user_id: str) -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+# ── Cognitive Delta Log ────────────────────────────────────────────────────────
+_COGNITIVE_DELTA_SQL = """
+CREATE TABLE IF NOT EXISTS cognitive_delta_log (
+  id           SERIAL PRIMARY KEY,
+  user_id      TEXT NOT NULL DEFAULT '',
+  trade_date   DATE NOT NULL,
+  ticker       TEXT NOT NULL,
+  system_rank  INT,
+  system_tcs   FLOAT,
+  system_structure TEXT,
+  user_action  TEXT NOT NULL,
+  actual_chg   FLOAT,
+  system_correct BOOLEAN,
+  notes        TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, trade_date, ticker, user_action)
+);
+""".strip()
+
+
+def ensure_cognitive_delta_table() -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("cognitive_delta_log").select("id").limit(1).execute()
+        return True
+    except Exception:
+        try:
+            supabase.rpc("exec_sql", {"sql": _COGNITIVE_DELTA_SQL}).execute()
+            return True
+        except Exception as e:
+            print(f"ensure_cognitive_delta_table error: {e}")
+            return False
+
+
+def save_cognitive_delta_entries(user_id: str, trade_date, entries: list) -> dict:
+    """Save a list of cognitive delta entries for a given day.
+
+    Each entry dict: {ticker, system_rank, system_tcs, system_structure, user_action, notes}
+    user_action: 'followed' | 'skipped' | 'override'
+    """
+    if not supabase or not entries:
+        return {"saved": 0, "errors": []}
+    saved, errors = 0, []
+    for e in entries:
+        try:
+            row = {
+                "user_id":           user_id,
+                "trade_date":        str(trade_date),
+                "ticker":            e["ticker"].upper(),
+                "system_rank":       e.get("system_rank"),
+                "system_tcs":        e.get("system_tcs"),
+                "system_structure":  e.get("system_structure"),
+                "user_action":       e.get("user_action", "followed"),
+                "notes":             e.get("notes", ""),
+            }
+            supabase.table("cognitive_delta_log").upsert(row, on_conflict="user_id,trade_date,ticker,user_action").execute()
+            saved += 1
+        except Exception as ex:
+            errors.append(f"{e.get('ticker','?')}: {ex}")
+    return {"saved": saved, "errors": errors}
+
+
+def load_cognitive_delta_today(user_id: str, trade_date=None) -> "pd.DataFrame":
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        d = str(trade_date or date.today())
+        res = (supabase.table("cognitive_delta_log")
+               .select("*")
+               .eq("user_id", user_id)
+               .eq("trade_date", d)
+               .execute())
+        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except Exception as e:
+        print(f"load_cognitive_delta_today error: {e}")
+        return pd.DataFrame()
+
+
+def verify_cognitive_delta(api_key: str, secret_key: str, user_id: str, trade_date=None) -> int:
+    """Fill in actual_chg + system_correct for all unverified delta entries on trade_date."""
+    if not supabase:
+        return 0
+    try:
+        d = trade_date or date.today()
+        res = (supabase.table("cognitive_delta_log")
+               .select("id,ticker,system_rank,user_action")
+               .eq("user_id", user_id)
+               .eq("trade_date", str(d))
+               .is_("actual_chg", "null")
+               .execute())
+        if not res.data:
+            return 0
+        tickers = list({r["ticker"] for r in res.data})
+        try:
+            import alpaca_trade_api as tradeapi
+            _a = tradeapi.REST(api_key, secret_key, base_url="https://data.alpaca.markets")
+            snaps = _a.get_snapshots(tickers, feed="iex")
+            prices = {}
+            for sym, snap in snaps.items():
+                try:
+                    prices[sym] = (snap.daily_bar.close - snap.daily_bar.open) / snap.daily_bar.open * 100
+                except Exception:
+                    pass
+        except Exception:
+            prices = {}
+        updated = 0
+        for r in res.data:
+            chg = prices.get(r["ticker"])
+            if chg is None:
+                continue
+            rank = r.get("system_rank")
+            if rank in (4, 5):
+                correct = chg > 0
+            elif rank in (1, 2):
+                correct = chg < 0
+            else:
+                correct = None
+            try:
+                supabase.table("cognitive_delta_log").update({
+                    "actual_chg": round(chg, 2),
+                    "system_correct": correct,
+                }).eq("id", r["id"]).execute()
+                updated += 1
+            except Exception:
+                pass
+        return updated
+    except Exception as e:
+        print(f"verify_cognitive_delta error: {e}")
+        return 0
+
+
+def load_cognitive_delta_analysis(user_id: str) -> "pd.DataFrame":
+    """Aggregate the cognitive delta log: system vs. user deviance accuracy."""
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        res = (supabase.table("cognitive_delta_log")
+               .select("*")
+               .eq("user_id", user_id)
+               .not_.is_("actual_chg", "null")
+               .execute())
+        if not res.data:
+            return pd.DataFrame()
+        df = pd.DataFrame(res.data)
+        df["actual_chg"] = pd.to_numeric(df["actual_chg"], errors="coerce")
+        df["user_won"] = df.apply(lambda r: (
+            r["actual_chg"] > 0 if r["user_action"] in ("followed", "override")
+            else (r["actual_chg"] < 0 if r["user_action"] == "skipped" else None)
+        ), axis=1)
+        return df
+    except Exception as e:
+        print(f"load_cognitive_delta_analysis error: {e}")
+        return pd.DataFrame()
+
+
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────
 def _score_single_ticker(api_key: str, secret_key: str, sym: str,
                          trade_date, feed: str = "iex"):
