@@ -5422,47 +5422,50 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
-            _rp_equity = st.number_input(
-                "Starting Equity ($)", min_value=1000, max_value=500000,
-                value=10000, step=500, key="rp_equity",
-                disabled=_rp_bot_mode,
-                help="Not used in Bot mode — sizing is always 100 shares flat.",
-            )
+            if _rp_bot_mode:
+                _rp_pos_size = st.number_input(
+                    "Position Size ($)", min_value=100, max_value=50000,
+                    value=500, step=100, key="rp_pos_size",
+                    help="Fixed dollar amount invested per trade. P&L = position × follow-through%.",
+                )
+                _rp_equity = 10000
+                _rp_risk_pct = 2.0
+            else:
+                _rp_pos_size = 500
+                _rp_equity = st.number_input(
+                    "Starting Equity ($)", min_value=1000, max_value=500000,
+                    value=10000, step=500, key="rp_equity",
+                )
         with _rp_col2:
-            _rp_risk_pct = st.number_input(
-                "Risk per Trade (%)", min_value=0.5, max_value=10.0,
-                value=2.0, step=0.5, key="rp_risk_pct",
-                disabled=_rp_bot_mode,
-                help="Not used in Bot mode.",
-            )
+            if _rp_bot_mode:
+                st.caption("**TCS Filter**\nPer-structure thresholds\n(loaded from your accuracy data)")
+                _rp_min_tcs = 0
+            else:
+                _rp_risk_pct = st.number_input(
+                    "Risk per Trade (%)", min_value=0.5, max_value=10.0,
+                    value=2.0, step=0.5, key="rp_risk_pct",
+                )
+                _rp_min_tcs = st.slider(
+                    "Min TCS", min_value=0, max_value=100,
+                    value=0, step=5, key="rp_min_tcs_slider",
+                    help="Flat TCS minimum — set 0 for no filter.",
+                )
         with _rp_col3:
-            _rp_min_tcs = st.slider(
-                "Min TCS", min_value=0, max_value=100,
-                value=50 if _rp_bot_mode else 0, step=5, key="rp_min_tcs_slider",
-                help=(
-                    "Bot mode defaults to 50 (live bot's MIN_TCS). "
-                    "Set to 0 to include all setups regardless of TCS."
-                ),
-            )
-        with _rp_col4:
             _rp_min_ft = st.slider(
                 "Min Follow-Through %", min_value=0.0, max_value=10.0,
                 value=0.0, step=0.5, key="rp_min_ft",
                 help="Only include trades where the stock moved at least this % past the IB.",
             )
-
-        if not _rp_bot_mode:
-            _rp_max_move = st.slider(
-                "Max Move Cap %", min_value=10.0, max_value=200.0,
-                value=50.0, step=5.0, key="rp_max_move",
-                help=(
-                    "Caps the follow-through % used in P&L. "
-                    "Prevents a single 3000% outlier from inflating the simulation. "
-                    "Not used in Bot mode (bot records actual move)."
-                ),
-            )
-        else:
-            _rp_max_move = 9999.0
+        with _rp_col4:
+            if not _rp_bot_mode:
+                _rp_max_move = st.slider(
+                    "Max Move Cap %", min_value=10.0, max_value=200.0,
+                    value=50.0, step=5.0, key="rp_max_move",
+                    help="Caps follow-through % used in P&L to prevent outlier inflation.",
+                )
+            else:
+                _rp_max_move = 9999.0
+                st.caption("**Max Move**\nUncapped in Bot mode\n(uses actual recorded move)")
 
         _rp_snap_col, _rp_date_col1, _rp_date_col2 = st.columns([1, 1, 1])
         with _rp_snap_col:
@@ -5526,17 +5529,61 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _raw_dir    = sum(1 for r in _rp_rows
                                       if "bullish" in str(r.get("actual_outcome","")).lower()
                                       or "bearish" in str(r.get("actual_outcome","")).lower())
-                    _raw_tcs_filtered = sum(1 for r in _rp_rows if float(r.get("tcs") or 0) >= _rp_min_tcs)
                     _raw_wr = round(_raw_wins / (_raw_wins + _raw_losses) * 100, 1) if (_raw_wins + _raw_losses) else 0
+
+                    # Load per-structure TCS thresholds for bot mode
+                    _struct_tcs_map: dict = {}
                     if _rp_bot_mode:
-                        _sizing_note = "100 shares flat (matches live bot)"
+                        try:
+                            _thresh_list = backend.compute_structure_tcs_thresholds()
+                            _WKEY_TO_SKEY = {
+                                "trend_bull":     "trend",
+                                "trend_bear":     "trend",
+                                "nrml_variation": "normal",
+                                "non_trend":      "neutral",
+                                "ntrl_extreme":   "ntrl_extreme",
+                                "neutral":        "neutral",
+                                "double_dist":    "double_dist",
+                                "normal":         "normal",
+                            }
+                            _label_to_rec: dict = {}
+                            for _td in _thresh_list:
+                                _sl = _td.get("structure", "").lower()
+                                _rt = int(_td.get("recommended_tcs") or 65)
+                                if "extreme" in _sl:
+                                    _label_to_rec["ntrl_extreme"] = _rt
+                                elif "neutral" in _sl:
+                                    _label_to_rec["neutral"] = _rt
+                                elif "trend" in _sl:
+                                    _label_to_rec["trend"] = _rt
+                                elif "double" in _sl:
+                                    _label_to_rec["double_dist"] = _rt
+                                elif "rotation" in _sl:
+                                    _label_to_rec["rotational"] = _rt
+                                elif "normal" in _sl:
+                                    _label_to_rec["normal"] = _rt
+                            for _wk, _sk in _WKEY_TO_SKEY.items():
+                                _struct_tcs_map[_wk] = _label_to_rec.get(_sk, 65)
+                        except Exception:
+                            pass
+
+                    if _rp_bot_mode:
+                        _raw_tcs_filtered = sum(
+                            1 for r in _rp_rows
+                            if float(r.get("tcs") or 0) >= _struct_tcs_map.get(
+                                backend._label_to_weight_key(str(r.get("predicted") or "")), 65
+                            )
+                        )
+                        _sizing_note = f"${_rp_pos_size:,} position, per-structure TCS threshold"
                     else:
+                        _raw_tcs_filtered = sum(1 for r in _rp_rows if float(r.get("tcs") or 0) >= _rp_min_tcs)
                         _sizing_note = f"fixed ${round(float(_rp_equity)*(_rp_risk_pct/100),0):,.0f} risk (no compounding)"
+
                     st.caption(
                         f"**Raw DB snapshot** — {len(_rp_rows)} records loaded  |  "
                         f"Structure Win Rate: **{_raw_wr}%** ({_raw_wins}W / {_raw_losses}L)  |  "
                         f"Directional outcomes: **{_raw_dir}**  |  "
-                        f"TCS ≥ {_rp_min_tcs}: **{_raw_tcs_filtered}** pass filter  |  "
+                        f"Passing TCS filter: **{_raw_tcs_filtered}**  |  "
                         f"Sizing: {_sizing_note}"
                     )
                     st.markdown("---")
@@ -5567,8 +5614,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _pred     = str(_rp_r.get("predicted") or "")
                             _tkr      = str(_rp_r.get("ticker") or "")
 
-                            if _tcs < _rp_min_tcs:
-                                continue
+                            # TCS filter — per-structure threshold in bot mode, flat slider otherwise
+                            if _rp_bot_mode:
+                                _pred_wk  = backend._label_to_weight_key(str(_rp_r.get("predicted") or ""))
+                                _rec_tcs  = _struct_tcs_map.get(_pred_wk, 65)
+                                if _tcs < _rec_tcs:
+                                    continue
+                            else:
+                                if _tcs < _rp_min_tcs:
+                                    continue
+
                             if abs(_ft) < _rp_min_ft:
                                 continue
                             if _wl not in ("Win", "Loss"):
@@ -5593,9 +5648,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 continue
 
                             if _rp_bot_mode:
-                                # 100 shares flat — matches live bot's sim_pnl formula exactly
-                                _shares = 100
-                                _trade_pnl = (_ft / 100.0) * _entry * 100
+                                # $500 position: P&L = position_size × follow_thru%
+                                _shares    = _rp_pos_size / max(_entry, 0.01)
+                                _trade_pnl = _rp_pos_size * (_ft / 100.0)
                             else:
                                 _shares = _fixed_risk_amt / _stop_dist
                                 if _wl == "Win":
