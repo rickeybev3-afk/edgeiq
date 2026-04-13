@@ -5438,9 +5438,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
         with _rp_col2:
             if _rp_bot_mode:
-                st.caption("**TCS Filter**\nPer-structure thresholds\n(loaded from your accuracy data)")
+                _rp_tcs_offset = st.slider(
+                    "TCS Adjustment", min_value=-20, max_value=20,
+                    value=0, step=5, key="rp_tcs_offset",
+                    help=(
+                        "Shifts all per-structure TCS thresholds up or down. "
+                        "−10 = lower every structure's bar by 10 (more trades). "
+                        "+10 = raise every bar by 10 (fewer, higher-quality trades). "
+                        "0 = use each structure's calculated threshold as-is."
+                    ),
+                )
                 _rp_min_tcs = 0
             else:
+                _rp_tcs_offset = 0
                 _rp_risk_pct = st.number_input(
                     "Risk per Trade (%)", min_value=0.5, max_value=10.0,
                     value=2.0, step=0.5, key="rp_risk_pct",
@@ -5604,18 +5614,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 elif "normal" in _sl:
                                     _label_to_rec["normal"] = _rt
                             for _wk, _sk in _WKEY_TO_SKEY.items():
-                                _struct_tcs_map[_wk] = _label_to_rec.get(_sk, _BOT_TCS_DEFAULT)
+                                _base = _label_to_rec.get(_sk, _BOT_TCS_DEFAULT)
+                                _struct_tcs_map[_wk] = max(0, min(100, _base + _rp_tcs_offset))
                         except Exception:
                             pass
+
+                    # Effective fallback for structures not in the map (offset applied)
+                    _bot_tcs_fallback = max(0, min(100, _BOT_TCS_DEFAULT + (_rp_tcs_offset if _rp_bot_mode else 0)))
 
                     if _rp_bot_mode:
                         _raw_tcs_filtered = sum(
                             1 for r in _rp_rows
                             if float(r.get("tcs") or 0) >= _struct_tcs_map.get(
-                                _label_to_weight_key(str(r.get("predicted") or "")), _BOT_TCS_DEFAULT
+                                _label_to_weight_key(str(r.get("predicted") or "")), _bot_tcs_fallback
                             )
                         )
-                        _sizing_note = f"${_rp_pos_size:,} position, per-structure TCS threshold"
+                        _offset_str = (f" (adj {_rp_tcs_offset:+d})" if _rp_tcs_offset != 0 else "")
+                        _sizing_note = f"${_rp_pos_size:,} position, per-structure TCS thresholds{_offset_str}"
                     else:
                         _raw_tcs_filtered = sum(1 for r in _rp_rows if float(r.get("tcs") or 0) >= _rp_min_tcs)
                         _sizing_note = f"fixed ${round(float(_rp_equity)*(_rp_risk_pct/100),0):,.0f} risk (no compounding)"
@@ -5658,7 +5673,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             # TCS filter — per-structure threshold in bot mode, flat slider otherwise
                             if _rp_bot_mode:
                                 _pred_wk  = _label_to_weight_key(str(_rp_r.get("predicted") or ""))
-                                _rec_tcs  = _struct_tcs_map.get(_pred_wk, _BOT_TCS_DEFAULT)
+                                _rec_tcs  = _struct_tcs_map.get(_pred_wk, _bot_tcs_fallback)
                                 if _tcs < _rec_tcs:
                                     continue
                             else:
