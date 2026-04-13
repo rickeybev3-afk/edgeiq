@@ -5406,7 +5406,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
 
         _rp_uid = st.session_state.get("auth_user_id", "")
-        _rp_col1, _rp_col2, _rp_col3 = st.columns([1, 1, 1])
+        _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
             _rp_equity = st.number_input(
                 "Starting Equity ($)", min_value=1000, max_value=500000,
@@ -5423,9 +5423,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 value=0.0, step=0.5, key="rp_min_ft",
                 help=(
                     "Only include trades where the stock moved at least this % past the IB. "
-                    "0% = include all wins and losses. "
-                    "Note: TCS is not used as a filter here — backtest TCS is measured at 10:30 AM "
-                    "when the day range equals the IB, making it artificially low for all stocks."
+                    "0% = include all wins and losses."
+                ),
+            )
+        with _rp_col4:
+            _rp_max_move = st.slider(
+                "Max Move Cap %", min_value=10.0, max_value=200.0,
+                value=50.0, step=5.0, key="rp_max_move",
+                help=(
+                    "Caps the follow-through % used to calculate P&L. "
+                    "Prevents a single 3000% small-cap outlier from inflating the whole simulation. "
+                    "50% = any move beyond 50% past the IB is counted as 50% for P&L purposes. "
+                    "Realistic intraday cap for IB breakout trading."
                 ),
             )
         _rp_use_struct_tcs = False
@@ -5535,11 +5544,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _stop_dist = abs(_entry - _stop)
                             if _stop_dist < 0.01:
                                 continue
+                            if _entry > 0 and _stop_dist / _entry < 0.005:
+                                continue
 
                             _shares = _risk_amt / _stop_dist
 
                             if _wl == "Win":
-                                _ft_dollar = _shares * (abs(_ft) / 100.0) * _entry
+                                _ft_capped = min(abs(_ft), _rp_max_move)
+                                _ft_dollar = _shares * (_ft_capped / 100.0) * _entry
                                 _trade_pnl = _ft_dollar
                             else:
                                 _trade_pnl = -_risk_amt
