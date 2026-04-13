@@ -3936,6 +3936,17 @@ with st.sidebar:
                     unsafe_allow_html=True,
                 )
 
+    _ctx_path = os.path.join(os.path.dirname(__file__), "edgeiq_context_for_gemini.md")
+    if os.path.exists(_ctx_path):
+        with open(_ctx_path, "rb") as _ctx_f:
+            st.sidebar.download_button(
+                label="⬇️ Download Gemini Context File",
+                data=_ctx_f.read(),
+                file_name="edgeiq_context_for_gemini.md",
+                mime="text/markdown",
+                key="dl_gemini_ctx",
+            )
+
     with st.sidebar.expander("🔧 Database Migrations", expanded=False):
         st.caption("Run pending ALTER TABLE migrations on Supabase.")
         if st.button("🔄 Run Migrations", key="run_migrations_btn"):
