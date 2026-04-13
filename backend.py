@@ -3194,7 +3194,7 @@ def build_live_df():
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df.index = pd.to_datetime(df["timestamp"])
+    df.index = pd.to_datetime(df["timestamp"], utc=True)
     if df.index.tz is None:
         df.index = df.index.tz_localize("UTC")
     df.index = df.index.tz_convert(EASTERN)
