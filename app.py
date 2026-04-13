@@ -3654,9 +3654,11 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 # ══════════════════════════════════════════════════════════════════════════════
 
 _DEFAULT_WATCHLIST = (
-    "MSTR,COIN,SOFI,LCID,SIRI,SPCE,FFIE,WKHS,NKLA,MVIS,"
-    "CLOV,BB,MMAT,SNDL,TLRY,AFRM,UPST,DKNG,BYND,PLTR,"
-    "RIVN,CHPT,BLNK,ASTS,ACHR,JOBY,HOOD,OPEN,PSFE,NRDS"
+    "HCAI,MGN,HUBC,TDIC,SILO,CETX,IPST,LNAI,ZSPC,CUE,"
+    "SKYQ,SIDU,CUPR,LXEH,KPRX,MEHA,JEM,AXTI,ADVB,TPET,"
+    "WGRX,AAOI,MAXN,IRIX,PROP,AGPU,BFRG,MIGI,PPCB,CAR,"
+    "AMZE,UK,TBH,AIB,ITP,ARTL,NCL,PSIG,RBNE,CYCU,"
+    "LPCN,FCHL,RENX,MOVE,TURB"
 )
 
 
@@ -9818,7 +9820,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                                      key="rk_date_input")
             _wl_tickers = load_watchlist(_rk_uid)
             if not _wl_tickers:
-                _wl_tickers = []
+                _sess_wl = st.session_state.get("_watchlist_tickers", _DEFAULT_WATCHLIST)
+                _wl_tickers = [t.strip().upper() for t in _sess_wl.split(",") if t.strip()]
 
             _extra_rk = st.text_input("Add tickers (comma-separated)",
                                       placeholder="ARAI, SKYQ, CUE",
