@@ -89,10 +89,15 @@ def fetch_smallcap_universe(
 ) -> list:
     """Scrape Finviz for all small-float US stocks without gap%/RVOL day-filters.
 
-    Keeps only:  geo_usa | float ≤ float_max_m M | avg_vol ≥ 1M | price $1–$20
-    The change% and relative-volume filters are intentionally omitted so we get
-    the full static pool — those daily filters are re-applied later using Alpaca.
+    NOTE: We intentionally do NOT call `backend.fetch_finviz_watchlist()` here.
+    That function always bakes in a `ta_change_uX` (daily change%) and `sh_relvol_o1`
+    (relative volume ≥ 1x) filter — both of which are day-specific and would give us
+    only TODAY's movers instead of the full static small-cap pool.  Since we cannot
+    modify backend.py (architecture rule), this local function drops those two filters
+    and returns the full universe that COULD appear on any given scan day.
+    The gap% and RVOL filters are re-applied per-day using Alpaca historical data.
 
+    Keeps only:  geo_usa | float ≤ float_max_m M | avg_vol ≥ 1M | price $1–$20
     Returns a deduplicated list of uppercase tickers, up to max_tickers.
     Returns [] on error (script will exit with a clear message).
     """
@@ -170,14 +175,20 @@ def _to_date(ts) -> date:
 
 
 def fetch_daily_bars_batch(
-    api_key:     str,
-    secret_key:  str,
-    tickers:     list,
-    start_date:  date,
-    end_date:    date,
+    api_key:        str,
+    secret_key:     str,
+    tickers:        list,
+    start_date:     date,
+    end_date:       date,
     lookback_extra: int = 50,
+    feed:           str = "iex",
 ) -> dict:
     """Fetch daily OHLCV for a batch of tickers over the full period + lookback.
+
+    `feed` defaults to "iex" regardless of the --feed CLI flag because daily bars
+    are used only for universe filtering (gap%, price, RVOL) — not for the actual
+    backtest.  IEX daily data is free, complete, and has no SIP recency restriction.
+    The --feed CLI arg is passed through to _backtest_single() for intraday bars only.
 
     Returns {ticker: pd.DataFrame(index=date, columns=[open,high,low,close,volume])}.
     """
@@ -204,7 +215,7 @@ def fetch_daily_bars_batch(
         timeframe=TimeFrame.Day,
         start=fetch_from,
         end=fetch_to,
-        feed="iex",
+        feed=feed,
     )
     try:
         bars = client.get_stock_bars(req)
@@ -302,11 +313,39 @@ def reconstruct_daily_watchlist(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_existing_pairs(user_id: str = "") -> set:
-    """Return set of (ticker, sim_date_str) already in backtest_sim_runs."""
-    df = backend.load_backtest_sim_history(user_id=user_id)
-    if df.empty or "ticker" not in df.columns or "sim_date" not in df.columns:
+    """Return set of (ticker, sim_date_str) already in backtest_sim_runs.
+
+    Paginates in 1000-row chunks directly against Supabase (avoids the
+    backend helper's 5000-row cap so dedup is always complete regardless
+    of how many runs are stored).
+    """
+    if not backend.supabase:
         return set()
-    return set(zip(df["ticker"].astype(str), df["sim_date"].astype(str)))
+    pairs: set = set()
+    chunk_size = 1000
+    offset = 0
+    while True:
+        try:
+            q = (
+                backend.supabase
+                .table("backtest_sim_runs")
+                .select("ticker, sim_date")
+                .range(offset, offset + chunk_size - 1)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            rows = q.execute().data
+            if not rows:
+                break
+            for r in rows:
+                pairs.add((str(r.get("ticker", "")), str(r.get("sim_date", ""))))
+            if len(rows) < chunk_size:
+                break
+            offset += chunk_size
+        except Exception as e:
+            print(f"  [WARN] Dedup query error at offset {offset}: {e}")
+            break
+    return pairs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
