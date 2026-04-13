@@ -753,7 +753,9 @@ def _send_rankings_summary(rows: list, rating_date) -> None:
         lines.append(f"<b>Rank {tier}</b> {label} — {up}/{len(tier_data)} up | avg {avg:+.1f}%")
         for r in sorted(tier_data, key=lambda x: -x["chg"]):
             arrow = "🟢" if r["chg"] > 0 else "🔴"
-            lines.append(f"  {arrow} {r['ticker']:6s} {r['chg']:+.1f}%")
+            note  = r.get("notes", "").strip()
+            note_line = f" <i>{note[:80]}{'…' if len(note) > 80 else ''}</i>" if note else ""
+            lines.append(f"  {arrow} <b>{r['ticker']}</b> {r['chg']:+.1f}%{note_line}")
         lines.append("")
 
     tg_send("\n".join(lines))

@@ -6414,7 +6414,8 @@ def verify_ticker_rankings(api_key: str, secret_key: str, user_id: str, rating_d
             }).eq("user_id", user_id).eq("rating_date", str(rating_date)).eq("ticker", ticker).execute()
             verified += 1
             rows.append({"ticker": ticker, "rank": rank, "chg": chg,
-                         "open": open_p, "close": close_p})
+                         "open": open_p, "close": close_p,
+                         "notes": str(row.get("notes") or "")})
         except Exception:
             errors += 1
     return {"verified": verified, "errors": errors, "rows": rows}
