@@ -5398,6 +5398,184 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
     st.markdown("---")
 
+    # ── Historical Paper Trade Replay ───────────────────────────────────────────
+    with st.expander("📈 Historical Paper Trade Replay", expanded=False):
+        st.caption(
+            "Simulates your paper trader's entry/exit logic on historical backtest data. "
+            "Uses IB breakout entries with fixed risk per trade to show real dollar P&L over time."
+        )
+
+        _rp_uid = st.session_state.get("auth_user_id", "")
+        _rp_col1, _rp_col2, _rp_col3 = st.columns([1, 1, 1])
+        with _rp_col1:
+            _rp_equity = st.number_input(
+                "Starting Equity ($)", min_value=1000, max_value=500000,
+                value=10000, step=500, key="rp_equity"
+            )
+        with _rp_col2:
+            _rp_risk_pct = st.number_input(
+                "Risk per Trade (%)", min_value=0.5, max_value=10.0,
+                value=2.0, step=0.5, key="rp_risk_pct"
+            )
+        with _rp_col3:
+            _rp_min_tcs = st.slider(
+                "Min TCS Filter", min_value=0, max_value=90,
+                value=50, step=5, key="rp_min_tcs",
+                help="Only replay trades where the model had this confidence or higher."
+            )
+
+        _rp_date_col1, _rp_date_col2 = st.columns(2)
+        with _rp_date_col1:
+            _rp_start = st.date_input("From", value=datetime.now(EASTERN).date() - timedelta(days=60),
+                                      key="rp_start_date")
+        with _rp_date_col2:
+            _rp_end = st.date_input("To", value=datetime.now(EASTERN).date(),
+                                    key="rp_end_date")
+
+        _rp_run = st.button("▶ Run Replay", use_container_width=True, key="rp_run_btn",
+                            type="primary")
+
+        if _rp_run:
+            if not supabase or not _rp_uid:
+                st.warning("Log in and connect Supabase to use this feature.")
+            else:
+                with st.spinner("Loading historical trades…"):
+                    try:
+                        _rp_resp = (
+                            supabase.table("backtest_sim_runs")
+                            .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct")
+                            .eq("user_id", _rp_uid)
+                            .gte("sim_date", str(_rp_start))
+                            .lte("sim_date", str(_rp_end))
+                            .range(0, 9999)
+                            .execute()
+                        )
+                        _rp_rows = _rp_resp.data or []
+                    except Exception as _rp_e:
+                        _rp_rows = []
+                        st.error(f"Failed to load data: {_rp_e}")
+
+                if not _rp_rows:
+                    st.info("No backtest data found for this date range. Run the Batch Backtest first.")
+                else:
+                    _rp_trades = []
+                    _rp_equity_cur = float(_rp_equity)
+                    _rp_equity_curve = [_rp_equity_cur]
+                    _rp_dates_seen = []
+
+                    _rp_by_date = {}
+                    for _rp_r in _rp_rows:
+                        _d = str(_rp_r.get("sim_date", ""))
+                        _rp_by_date.setdefault(_d, []).append(_rp_r)
+
+                    for _rp_date_str in sorted(_rp_by_date.keys()):
+                        _day_rows = _rp_by_date[_rp_date_str]
+                        _day_pnl = 0.0
+                        _day_trades = 0
+
+                        for _rp_r in _day_rows:
+                            _tcs      = float(_rp_r.get("tcs") or 0)
+                            _wl       = str(_rp_r.get("win_loss") or "")
+                            _ibl      = float(_rp_r.get("ib_low") or 0)
+                            _ibh      = float(_rp_r.get("ib_high") or 0)
+                            _ft       = float(_rp_r.get("follow_thru_pct") or 0)
+                            _pred     = str(_rp_r.get("predicted") or "")
+                            _tkr      = str(_rp_r.get("ticker") or "")
+
+                            if _tcs < _rp_min_tcs:
+                                continue
+                            if _wl not in ("Win", "Loss"):
+                                continue
+                            if _ibh <= _ibl or _ibl <= 0:
+                                continue
+
+                            _ib_range = _ibh - _ibl
+                            _risk_amt = _rp_equity_cur * (_rp_risk_pct / 100.0)
+
+                            if "bull" in _pred.lower():
+                                _entry = _ibh
+                                _stop  = _ibl
+                            elif "bear" in _pred.lower():
+                                _entry = _ibl
+                                _stop  = _ibh
+                            else:
+                                continue
+
+                            _stop_dist = abs(_entry - _stop)
+                            if _stop_dist < 0.01:
+                                continue
+
+                            _shares = _risk_amt / _stop_dist
+
+                            if _wl == "Win":
+                                _ft_dollar = _shares * (abs(_ft) / 100.0) * _entry
+                                _trade_pnl = _ft_dollar
+                            else:
+                                _trade_pnl = -_risk_amt
+
+                            _day_pnl      += _trade_pnl
+                            _day_trades   += 1
+                            _rp_equity_cur += _trade_pnl
+
+                            _rp_trades.append({
+                                "Date":    _rp_date_str,
+                                "Ticker":  _tkr,
+                                "TCS":     int(_tcs),
+                                "Direction": "Long" if "bull" in _pred.lower() else "Short",
+                                "Entry":   round(_entry, 2),
+                                "Stop":    round(_stop, 2),
+                                "Shares":  int(_shares),
+                                "W/L":     _wl,
+                                "Move %":  round(_ft, 2),
+                                "P&L ($)": round(_trade_pnl, 2),
+                                "Equity":  round(_rp_equity_cur, 2),
+                            })
+
+                        if _day_trades > 0:
+                            _rp_equity_curve.append(_rp_equity_cur)
+                            _rp_dates_seen.append(_rp_date_str)
+
+                    if not _rp_trades:
+                        st.warning("No qualifying trades found. Try lowering the Min TCS filter or expanding the date range.")
+                    else:
+                        _rp_df = pd.DataFrame(_rp_trades)
+                        _total_trades = len(_rp_df)
+                        _total_wins   = (_rp_df["W/L"] == "Win").sum()
+                        _total_pnl    = _rp_df["P&L ($)"].sum()
+                        _win_rate     = round(_total_wins / _total_trades * 100, 1) if _total_trades else 0
+                        _net_return   = round((_rp_equity_cur - _rp_equity) / _rp_equity * 100, 2)
+                        _avg_win      = _rp_df[_rp_df["W/L"] == "Win"]["P&L ($)"].mean() if _total_wins else 0
+                        _avg_loss     = _rp_df[_rp_df["W/L"] == "Loss"]["P&L ($)"].mean() if (_total_trades - _total_wins) else 0
+                        _profit_factor = abs(_avg_win / _avg_loss) if _avg_loss != 0 else 0
+
+                        _sm1, _sm2, _sm3, _sm4, _sm5 = st.columns(5)
+                        _sm1.metric("Net P&L", f"${_total_pnl:,.0f}", f"{_net_return:+.1f}%")
+                        _sm2.metric("Win Rate", f"{_win_rate}%")
+                        _sm3.metric("Total Trades", _total_trades)
+                        _sm4.metric("Avg Win", f"${_avg_win:,.0f}")
+                        _sm5.metric("Profit Factor", f"{_profit_factor:.2f}x")
+
+                        _eq_df = pd.DataFrame({
+                            "Day": list(range(len(_rp_equity_curve))),
+                            "Equity ($)": _rp_equity_curve,
+                        })
+                        st.line_chart(_eq_df.set_index("Day"), height=220, use_container_width=True)
+
+                        st.markdown("**Trade-by-Trade Log**")
+                        _rp_styled = _rp_df.copy()
+                        st.dataframe(
+                            _rp_styled,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "P&L ($)": st.column_config.NumberColumn(format="$%.2f"),
+                                "Equity":  st.column_config.NumberColumn(format="$%.2f"),
+                                "Move %":  st.column_config.NumberColumn(format="%.2f%%"),
+                            }
+                        )
+
+    st.markdown("---")
+
     # ── Run simulation ──────────────────────────────────────────────────────────
     _bt_cache = "bt_results_cache"
 
