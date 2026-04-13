@@ -5406,40 +5406,63 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
 
         _rp_uid = st.session_state.get("auth_user_id", "")
+        _rp_mode = st.radio(
+            "Sizing Mode",
+            options=["📊 % Risk (custom)", "🤖 Match Live Bot (100 shares flat)"],
+            index=1,
+            key="rp_sizing_mode",
+            horizontal=True,
+            help=(
+                "Match Live Bot = flat 100 shares per trade, TCS ≥ 50 — "
+                "exactly how paper_trader_bot.py calculates its simulated P&L. "
+                "% Risk = fixed dollar risk per trade based on starting equity."
+            ),
+        )
+        _rp_bot_mode = "bot" in _rp_mode.lower()
+
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
             _rp_equity = st.number_input(
                 "Starting Equity ($)", min_value=1000, max_value=500000,
-                value=10000, step=500, key="rp_equity"
+                value=10000, step=500, key="rp_equity",
+                disabled=_rp_bot_mode,
+                help="Not used in Bot mode — sizing is always 100 shares flat.",
             )
         with _rp_col2:
             _rp_risk_pct = st.number_input(
                 "Risk per Trade (%)", min_value=0.5, max_value=10.0,
-                value=2.0, step=0.5, key="rp_risk_pct"
+                value=2.0, step=0.5, key="rp_risk_pct",
+                disabled=_rp_bot_mode,
+                help="Not used in Bot mode.",
             )
         with _rp_col3:
-            _rp_min_ft = st.slider(
-                "Min Follow-Through %", min_value=0.0, max_value=10.0,
-                value=0.0, step=0.5, key="rp_min_ft",
+            _rp_min_tcs = st.slider(
+                "Min TCS", min_value=0, max_value=100,
+                value=50 if _rp_bot_mode else 0, step=5, key="rp_min_tcs_slider",
                 help=(
-                    "Only include trades where the stock moved at least this % past the IB. "
-                    "0% = include all wins and losses."
+                    "Bot mode defaults to 50 (live bot's MIN_TCS). "
+                    "Set to 0 to include all setups regardless of TCS."
                 ),
             )
         with _rp_col4:
+            _rp_min_ft = st.slider(
+                "Min Follow-Through %", min_value=0.0, max_value=10.0,
+                value=0.0, step=0.5, key="rp_min_ft",
+                help="Only include trades where the stock moved at least this % past the IB.",
+            )
+
+        if not _rp_bot_mode:
             _rp_max_move = st.slider(
                 "Max Move Cap %", min_value=10.0, max_value=200.0,
                 value=50.0, step=5.0, key="rp_max_move",
                 help=(
-                    "Caps the follow-through % used to calculate P&L. "
-                    "Prevents a single 3000% small-cap outlier from inflating the whole simulation. "
-                    "50% = any move beyond 50% past the IB is counted as 50% for P&L purposes. "
-                    "Realistic intraday cap for IB breakout trading."
+                    "Caps the follow-through % used in P&L. "
+                    "Prevents a single 3000% outlier from inflating the simulation. "
+                    "Not used in Bot mode (bot records actual move)."
                 ),
             )
-        _rp_use_struct_tcs = False
-        _rp_min_tcs = 0
-        _rp_struct_thresholds = {}
+        else:
+            _rp_max_move = 9999.0
 
         _rp_snap_col, _rp_date_col1, _rp_date_col2 = st.columns([1, 1, 1])
         with _rp_snap_col:
@@ -5503,13 +5526,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _raw_dir    = sum(1 for r in _rp_rows
                                       if "bullish" in str(r.get("actual_outcome","")).lower()
                                       or "bearish" in str(r.get("actual_outcome","")).lower())
+                    _raw_tcs_filtered = sum(1 for r in _rp_rows if float(r.get("tcs") or 0) >= _rp_min_tcs)
                     _raw_wr = round(_raw_wins / (_raw_wins + _raw_losses) * 100, 1) if (_raw_wins + _raw_losses) else 0
+                    if _rp_bot_mode:
+                        _sizing_note = "100 shares flat (matches live bot)"
+                    else:
+                        _sizing_note = f"fixed ${round(float(_rp_equity)*(_rp_risk_pct/100),0):,.0f} risk (no compounding)"
                     st.caption(
                         f"**Raw DB snapshot** — {len(_rp_rows)} records loaded  |  "
                         f"Structure Win Rate: **{_raw_wr}%** ({_raw_wins}W / {_raw_losses}L)  |  "
-                        f"Directional actual outcomes (eligible for entry): **{_raw_dir}**  |  "
-                        f"Risk per trade: fixed **${round(float(_rp_equity)*(_rp_risk_pct/100),0):,.0f}** "
-                        f"(2% of starting equity — does not compound)"
+                        f"Directional outcomes: **{_raw_dir}**  |  "
+                        f"TCS ≥ {_rp_min_tcs}: **{_raw_tcs_filtered}** pass filter  |  "
+                        f"Sizing: {_sizing_note}"
                     )
                     st.markdown("---")
 
@@ -5539,6 +5567,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _pred     = str(_rp_r.get("predicted") or "")
                             _tkr      = str(_rp_r.get("ticker") or "")
 
+                            if _tcs < _rp_min_tcs:
+                                continue
                             if abs(_ft) < _rp_min_ft:
                                 continue
                             if _wl not in ("Win", "Loss"):
@@ -5562,13 +5592,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _entry > 0 and _stop_dist / _entry < 0.005:
                                 continue
 
-                            _shares = _fixed_risk_amt / _stop_dist
-
-                            if _wl == "Win":
-                                _ft_capped = min(abs(_ft), _rp_max_move)
-                                _trade_pnl = _shares * (_ft_capped / 100.0) * _entry
+                            if _rp_bot_mode:
+                                # 100 shares flat — matches live bot's sim_pnl formula exactly
+                                _shares = 100
+                                _trade_pnl = (_ft / 100.0) * _entry * 100
                             else:
-                                _trade_pnl = -_fixed_risk_amt
+                                _shares = _fixed_risk_amt / _stop_dist
+                                if _wl == "Win":
+                                    _ft_capped = min(abs(_ft), _rp_max_move)
+                                    _trade_pnl = _shares * (_ft_capped / 100.0) * _entry
+                                else:
+                                    _trade_pnl = -_fixed_risk_amt
 
                             _day_pnl      += _trade_pnl
                             _day_trades   += 1
