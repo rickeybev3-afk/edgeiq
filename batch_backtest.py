@@ -292,7 +292,7 @@ def reconstruct_daily_watchlist(
         if rvol < rvol_min:
             continue
 
-        qualifying.append(sym)
+        qualifying.append({"ticker": sym, "gap_pct": round(gap_pct, 3), "prev_close": round(prev_close, 4)})
 
     return qualifying
 
@@ -515,6 +515,7 @@ def _worker_multi_snapshot(
     price_min:   float,
     price_max:   float,
     scan_types:  list,
+    gap_pct:     float = 0.0,
 ) -> list:
     """Fetch intraday bars once, run analysis at each requested cutoff.
     Returns a list of result dicts (one per scan_type that yields data).
@@ -539,6 +540,16 @@ def _worker_multi_snapshot(
             price_max=price_max,
         )
         if r is not None:
+            r["gap_pct"] = round(gap_pct, 3)
+            # gap vs IB range — how many IB-widths wide was the gap?
+            _ib_h = r.get("ib_high") or 0
+            _ib_l = r.get("ib_low") or 0
+            _op   = r.get("open_price") or 0
+            if _ib_h > _ib_l and _op > 0:
+                _ib_range_pct = (_ib_h - _ib_l) / _op * 100.0
+                r["gap_vs_ib_pct"] = round(gap_pct / _ib_range_pct, 3) if _ib_range_pct > 0 else None
+            else:
+                r["gap_vs_ib_pct"] = None
             results.append(r)
 
     return results
@@ -549,34 +560,59 @@ def _worker_multi_snapshot(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def save_rows_with_scan_type(rows: list, user_id: str = ""):
-    """Insert backtest rows to Supabase, including scan_type."""
+    """Insert backtest rows to Supabase, including scan_type and gap columns."""
     if not backend.supabase or not rows:
         return
-    try:
-        records = [
-            {
-                "user_id":          user_id or "",
-                "sim_date":         str(r.get("sim_date", "")),
-                "ticker":           r.get("ticker", ""),
-                "open_price":       r.get("open_price"),
-                "ib_low":           r.get("ib_low"),
-                "ib_high":          r.get("ib_high"),
-                "tcs":              r.get("tcs"),
-                "predicted":        r.get("predicted", ""),
-                "actual_outcome":   r.get("actual_outcome", ""),
-                "win_loss":         r.get("win_loss", ""),
-                "follow_thru_pct":  r.get("aft_move_pct"),
-                "false_break_up":   bool(r.get("false_break_up", False)),
-                "false_break_down": bool(r.get("false_break_down", False)),
-                "scan_type":        r.get("scan_type", "morning"),
-            }
-            for r in rows
-        ]
-        chunk = 500
-        for i in range(0, len(records), chunk):
-            backend.supabase.table("backtest_sim_runs").insert(records[i:i+chunk]).execute()
-    except Exception as e:
-        print(f"Backtest save error: {e}")
+
+    def _build_record(r, include_gap: bool) -> dict:
+        rec = {
+            "user_id":          user_id or "",
+            "sim_date":         str(r.get("sim_date", "")),
+            "ticker":           r.get("ticker", ""),
+            "open_price":       r.get("open_price"),
+            "ib_low":           r.get("ib_low"),
+            "ib_high":          r.get("ib_high"),
+            "tcs":              r.get("tcs"),
+            "predicted":        r.get("predicted", ""),
+            "actual_outcome":   r.get("actual_outcome", ""),
+            "win_loss":         r.get("win_loss", ""),
+            "follow_thru_pct":  r.get("aft_move_pct"),
+            "false_break_up":   bool(r.get("false_break_up", False)),
+            "false_break_down": bool(r.get("false_break_down", False)),
+            "scan_type":        r.get("scan_type", "morning"),
+        }
+        if include_gap:
+            rec["gap_pct"]       = r.get("gap_pct")
+            rec["gap_vs_ib_pct"] = r.get("gap_vs_ib_pct")
+        return rec
+
+    chunk = 500
+    include_gap = True  # assume columns exist; fall back to False if not
+
+    for i in range(0, len(rows), chunk):
+        batch = rows[i : i + chunk]
+        records = [_build_record(r, include_gap) for r in batch]
+        try:
+            backend.supabase.table("backtest_sim_runs").insert(records).execute()
+        except Exception as e:
+            err_str = str(e)
+            if include_gap and ("gap_pct" in err_str or "gap_vs_ib" in err_str or "column" in err_str.lower()):
+                # Gap columns not yet migrated — save without them and warn once
+                print(
+                    "\n⚠️  gap_pct / gap_vs_ib_pct columns missing in Supabase.\n"
+                    "   Run this SQL in your Supabase dashboard to add them:\n"
+                    "   ALTER TABLE backtest_sim_runs\n"
+                    "     ADD COLUMN IF NOT EXISTS gap_pct FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS gap_vs_ib_pct FLOAT;\n"
+                )
+                include_gap = False
+                records = [_build_record(r, False) for r in batch]
+                try:
+                    backend.supabase.table("backtest_sim_runs").insert(records).execute()
+                except Exception as e2:
+                    print(f"Backtest save error (fallback): {e2}")
+            else:
+                print(f"Backtest save error: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -700,10 +736,13 @@ def main():
         )
         total_qualified += len(watchlist)
 
+        # Build gap lookup: ticker → gap_pct
+        gap_lookup = {item["ticker"]: item["gap_pct"] for item in watchlist}
+
         # Find tickers that need at least one snapshot type
         new_tickers = [
-            t for t in watchlist
-            if any((t, day_str, st) not in existing_triples for st in scan_types)
+            item for item in watchlist
+            if any((item["ticker"], day_str, st) not in existing_triples for st in scan_types)
         ]
         if not new_tickers:
             print(f"  {day_str} [{split_tag}]  {len(watchlist):3d} qualified  "
@@ -719,11 +758,12 @@ def main():
             futures = {
                 ex.submit(
                     _worker_multi_snapshot,
-                    api_key, secret_key, sym,
+                    api_key, secret_key, item["ticker"],
                     day, args.feed, args.price_min, args.price_max,
-                    _needed_scan_types(sym),
-                ): sym
-                for sym in new_tickers
+                    _needed_scan_types(item["ticker"]),
+                    item["gap_pct"],
+                ): item["ticker"]
+                for item in new_tickers
             }
             for fut in as_completed(futures):
                 rows = fut.result()

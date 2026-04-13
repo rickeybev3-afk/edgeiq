@@ -5495,6 +5495,40 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _rp_end = st.date_input("To", value=datetime.now(EASTERN).date(),
                                     key="rp_end_date")
 
+        _rp_gap_col1, _rp_gap_col2, _rp_gap_col3 = st.columns([1, 1, 2])
+        with _rp_gap_col1:
+            _rp_min_gap = st.number_input(
+                "Min Gap % (open vs prev close)",
+                min_value=0.0, max_value=50.0, value=0.0, step=0.5,
+                key="rp_min_gap",
+                help=(
+                    "Only include setups where the stock gapped up ≥ this % at open. "
+                    "0 = no filter. Requires the new batch run (gap_pct column). "
+                    "Records from before the migration will show gap_pct = 0 and will still appear."
+                ),
+            )
+        with _rp_gap_col2:
+            _rp_min_gap_vs_ib = st.number_input(
+                "Min Gap vs IB (×)",
+                min_value=0.0, max_value=10.0, value=0.0, step=0.25,
+                key="rp_min_gap_vs_ib",
+                help=(
+                    "Gap size expressed as a multiple of the IB range. "
+                    "1.0 = gap was exactly as wide as the IB. "
+                    "2.0 = gap was twice the IB width — strong directional conviction. "
+                    "0 = no filter."
+                ),
+            )
+        with _rp_gap_col3:
+            if _rp_min_gap > 0 or _rp_min_gap_vs_ib > 0:
+                st.caption(
+                    f"Gap filter active: gap ≥ **{_rp_min_gap}%** "
+                    + (f"& gap/IB ≥ **{_rp_min_gap_vs_ib}×**" if _rp_min_gap_vs_ib > 0 else "")
+                    + "\n\nNote: records before the latest backtest run have no gap data and will be excluded when this filter is active."
+                )
+            else:
+                st.caption("Gap filters off — all setups included regardless of gap size.")
+
         _rp_run = st.button("▶ Run Replay", use_container_width=True, key="rp_run_btn",
                             type="primary")
 
@@ -5626,6 +5660,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                             if abs(_ft) < _rp_min_ft:
                                 continue
+
+                            # Gap filters (0 = off; records missing gap_pct treated as 0)
+                            _gap     = float(_rp_r.get("gap_pct") or 0)
+                            _gap_ib  = float(_rp_r.get("gap_vs_ib_pct") or 0)
+                            if _rp_min_gap > 0 and _gap < _rp_min_gap:
+                                continue
+                            if _rp_min_gap_vs_ib > 0 and _gap_ib < _rp_min_gap_vs_ib:
+                                continue
+
                             if _wl not in ("Win", "Loss"):
                                 continue
                             if _ibh <= _ibl or _ibl <= 0:
