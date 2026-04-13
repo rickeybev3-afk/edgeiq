@@ -35,6 +35,10 @@ args = "Paper Trader Bot"
 task = "workflow.run"
 args = "Kalshi Prediction Bot"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Batch Backtest (60 days)"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -65,6 +69,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python kalshi_bot.py"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Batch Backtest (60 days)"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python batch_backtest.py --days 60"
 
 [workflows.workflow.metadata]
 outputType = "console"
