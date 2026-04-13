@@ -6441,7 +6441,19 @@ def load_ranking_accuracy(user_id: str) -> "pd.DataFrame":
         if not res.data:
             return pd.DataFrame()
         df = pd.DataFrame(res.data)
-        df["winner"] = df["actual_chg_pct"] > 0
+        # Rank 4/5 = bullish (win = positive chg)
+        # Rank 0/1/2 = bearish/fade (win = negative chg)
+        # Rank 3 = neutral (not scored)
+        def _ranking_win(row):
+            chg = row["actual_chg_pct"]
+            if chg is None:
+                return False
+            if row["rank"] in (4, 5):
+                return chg > 0
+            elif row["rank"] in (0, 1, 2):
+                return chg < 0
+            return False  # rank 3 neutral
+        df["winner"] = df.apply(_ranking_win, axis=1)
         agg_dict = {
             "trades": ("actual_chg_pct", "count"),
             "winners": ("winner", "sum"),
