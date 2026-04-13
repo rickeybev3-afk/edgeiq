@@ -5511,7 +5511,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                             if _rp_use_struct_tcs and _rp_struct_thresholds:
                                 _pred_kw = _pred.lower()
-                                _struct_min = 65
+                                _struct_min = 45
                                 for _kw, _thresh in _rp_struct_thresholds.items():
                                     if _kw in _pred_kw:
                                         _struct_min = _thresh
@@ -5525,17 +5525,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _ibh <= _ibl or _ibl <= 0:
                                 continue
 
-                            _ib_range = _ibh - _ibl
-                            _risk_amt = _rp_equity_cur * (_rp_risk_pct / 100.0)
-
-                            if "bull" in _pred.lower():
+                            _actual = str(_rp_r.get("actual_outcome") or "")
+                            if "bullish" in _actual.lower():
                                 _entry = _ibh
                                 _stop  = _ibl
-                            elif "bear" in _pred.lower():
+                            elif "bearish" in _actual.lower():
                                 _entry = _ibl
                                 _stop  = _ibh
                             else:
                                 continue
+
+                            _ib_range = _ibh - _ibl
+                            _risk_amt = _rp_equity_cur * (_rp_risk_pct / 100.0)
 
                             _stop_dist = abs(_entry - _stop)
                             if _stop_dist < 0.01:
@@ -5557,7 +5558,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Date":    _rp_date_str,
                                 "Ticker":  _tkr,
                                 "TCS":     int(_tcs),
-                                "Direction": "Long" if "bull" in _pred.lower() else "Short",
+                                "Structure": _pred,
+                                "Direction": "Long" if "bullish" in _actual.lower() else "Short",
                                 "Entry":   round(_entry, 2),
                                 "Stop":    round(_stop, 2),
                                 "Shares":  int(_shares),
