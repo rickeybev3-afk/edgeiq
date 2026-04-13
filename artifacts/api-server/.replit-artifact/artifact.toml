@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "EdgeIQ Notes"
+title = "EdgeIQ Dashboard"
 version = "1.0.0"
 id = "artifacts/api-server"
 router = "path"
