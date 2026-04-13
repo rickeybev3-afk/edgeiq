@@ -5698,9 +5698,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 continue
 
                             if _rp_bot_mode:
-                                # $500 position: P&L = position_size × follow_thru%
+                                # $500 position. _ft is SIGNED (neg = bearish break).
+                                # Use abs(_ft) so shorts show correct profit direction,
+                                # then apply win/loss sign: Win → +, Loss → −
                                 _shares    = _rp_pos_size / max(_entry, 0.01)
-                                _trade_pnl = _rp_pos_size * (_ft / 100.0)
+                                _ft_abs    = abs(_ft)
+                                _trade_pnl = _rp_pos_size * (_ft_abs / 100.0) * (1 if _wl == "Win" else -1)
                             else:
                                 _shares = _fixed_risk_amt / _stop_dist
                                 if _wl == "Win":
@@ -5737,21 +5740,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.warning("No qualifying trades found. Try lowering the Min TCS filter or expanding the date range.")
                     else:
                         _rp_df = pd.DataFrame(_rp_trades)
-                        _total_trades = len(_rp_df)
-                        _total_wins   = (_rp_df["W/L"] == "Win").sum()
-                        _total_pnl    = _rp_df["P&L ($)"].sum()
-                        _win_rate     = round(_total_wins / _total_trades * 100, 1) if _total_trades else 0
-                        _net_return   = round((_rp_equity_cur - _rp_equity) / _rp_equity * 100, 2)
-                        _avg_win      = _rp_df[_rp_df["W/L"] == "Win"]["P&L ($)"].mean() if _total_wins else 0
-                        _avg_loss     = _rp_df[_rp_df["W/L"] == "Loss"]["P&L ($)"].mean() if (_total_trades - _total_wins) else 0
-                        _profit_factor = abs(_avg_win / _avg_loss) if _avg_loss != 0 else 0
+                        _total_trades  = len(_rp_df)
+                        _total_pnl     = _rp_df["P&L ($)"].sum()
+                        _net_return    = round((_rp_equity_cur - float(_rp_equity)) / float(_rp_equity) * 100, 2)
+
+                        # Win/loss based on P&L sign (correct for both long and short)
+                        _pnl_wins      = (_rp_df["P&L ($)"] > 0).sum()
+                        _pnl_losses    = (_rp_df["P&L ($)"] <= 0).sum()
+                        _win_rate      = round(_pnl_wins / _total_trades * 100, 1) if _total_trades else 0
+                        _avg_win       = _rp_df[_rp_df["P&L ($)"] > 0]["P&L ($)"].mean() if _pnl_wins else 0
+                        _avg_loss      = _rp_df[_rp_df["P&L ($)"] <= 0]["P&L ($)"].mean() if _pnl_losses else 0
+                        _gross_wins    = _rp_df[_rp_df["P&L ($)"] > 0]["P&L ($)"].sum()
+                        _gross_losses  = abs(_rp_df[_rp_df["P&L ($)"] <= 0]["P&L ($)"].sum())
+                        _profit_factor = (_gross_wins / _gross_losses) if _gross_losses > 0 else float("inf")
+                        _pf_str        = f"{_profit_factor:.2f}x" if _profit_factor != float("inf") else "∞"
 
                         _sm1, _sm2, _sm3, _sm4, _sm5 = st.columns(5)
                         _sm1.metric("Net P&L", f"${_total_pnl:,.0f}", f"{_net_return:+.1f}%")
-                        _sm2.metric("Win Rate", f"{_win_rate}%")
+                        _sm2.metric("Win Rate", f"{_win_rate}%",
+                                    help="% of trades with positive P&L (not DB structure accuracy)")
                         _sm3.metric("Total Trades", _total_trades)
                         _sm4.metric("Avg Win", f"${_avg_win:,.0f}")
-                        _sm5.metric("Profit Factor", f"{_profit_factor:.2f}x")
+                        _sm5.metric("Profit Factor", _pf_str)
 
                         _eq_df = pd.DataFrame({
                             "Day": list(range(len(_rp_equity_curve))),
