@@ -739,16 +739,16 @@ def _send_rankings_summary(rows: list, rating_date) -> None:
     for r in rows:
         tier_rows[r["rank"]].append(r)
 
-    # Rank 5/4   = bullish (win = positive chg)
-    # Rank 3     = neutral (no directional call)
-    # Rank 2/1/0 = bearish/fade (win = negative chg)
-    # Not listed = don't trade (not in results, so no score)
+    # Rank 5/4 = bullish (win = positive chg)
+    # Rank 3   = neutral (not scored)
+    # Rank 2/1 = bearish/fade (win = negative chg)
+    # Rank 0   = don't take the trade (excluded from scoring)
     def _is_win(rank, chg):
         if rank in (4, 5):
             return chg > 0
-        elif rank in (0, 1, 2):
+        elif rank in (1, 2):
             return chg < 0
-        return None  # rank 3 = neutral, no call
+        return None  # rank 3 = neutral, rank 0 = skip
 
     correct = sum(1 for r in rows if _is_win(r["rank"], r["chg"]) is True)
     called  = sum(1 for r in rows if _is_win(r["rank"], r["chg"]) is not None)
@@ -762,9 +762,10 @@ def _send_rankings_summary(rows: list, rating_date) -> None:
         tier_data = tier_rows[tier]
         wins = sum(1 for r in tier_data if _is_win(r["rank"], r["chg"]) is True)
         avg  = sum(r["chg"] for r in tier_data) / len(tier_data)
-        bearish = tier in (0, 1, 2)
-        label   = "★" * min(tier, 5) if tier > 0 else "🔻 Worst"
-        bias    = " (bearish)" if bearish else (" (neutral)" if tier == 3 else "")
+        bearish = tier in (1, 2)
+        skip    = tier == 0
+        label   = "★" * tier if tier > 0 else "⏭ Skip"
+        bias    = " (bearish)" if bearish else (" (neutral)" if tier == 3 else "") if not skip else " (no trade)"
         lines.append(f"<b>Rank {tier}</b> {label}{bias} — {wins}/{len(tier_data)} wins | avg {avg:+.1f}%")
         sort_key = (lambda x: x["chg"]) if bearish else (lambda x: -x["chg"])
         for r in sorted(tier_data, key=sort_key):
