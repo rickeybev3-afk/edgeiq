@@ -5418,38 +5418,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 value=2.0, step=0.5, key="rp_risk_pct"
             )
         with _rp_col3:
-            _rp_use_struct_tcs = st.checkbox(
-                "Structure-aware TCS thresholds",
-                value=True,
-                key="rp_use_struct_tcs",
+            _rp_min_ft = st.slider(
+                "Min Follow-Through %", min_value=0.0, max_value=10.0,
+                value=0.0, step=0.5, key="rp_min_ft",
                 help=(
-                    "Each structure has its own minimum TCS based on its actual hit rate. "
-                    "High win-rate structures (e.g. Trend Day 85%) get a lower threshold (~52). "
-                    "Low win-rate structures get a higher threshold (~75). "
-                    "Uncheck to use a single manual TCS floor instead."
+                    "Only include trades where the stock moved at least this % past the IB. "
+                    "0% = include all wins and losses. "
+                    "Note: TCS is not used as a filter here — backtest TCS is measured at 10:30 AM "
+                    "when the day range equals the IB, making it artificially low for all stocks."
                 ),
             )
-            if not _rp_use_struct_tcs:
-                _rp_min_tcs = st.slider(
-                    "Manual Min TCS", min_value=0, max_value=90,
-                    value=50, step=5, key="rp_min_tcs",
-                    help="Applied equally to all structures."
-                )
-            else:
-                _rp_min_tcs = 0
-
+        _rp_use_struct_tcs = False
+        _rp_min_tcs = 0
         _rp_struct_thresholds = {}
-        if _rp_use_struct_tcs:
-            try:
-                _rp_thresh_rows = compute_structure_tcs_thresholds()
-                for _rp_tr in _rp_thresh_rows:
-                    _label = str(_rp_tr.get("structure", "")).lower()
-                    _rec   = int(_rp_tr.get("recommended_tcs") or 65)
-                    for _kw in ("trend", "neutral", "normal", "rotational", "double", "other", "extreme"):
-                        if _kw in _label:
-                            _rp_struct_thresholds[_kw] = _rec
-            except Exception:
-                pass
 
         _rp_date_col1, _rp_date_col2 = st.columns(2)
         with _rp_date_col1:
@@ -5509,16 +5490,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _pred     = str(_rp_r.get("predicted") or "")
                             _tkr      = str(_rp_r.get("ticker") or "")
 
-                            if _rp_use_struct_tcs and _rp_struct_thresholds:
-                                _pred_kw = _pred.lower()
-                                _struct_min = 45
-                                for _kw, _thresh in _rp_struct_thresholds.items():
-                                    if _kw in _pred_kw:
-                                        _struct_min = _thresh
-                                        break
-                                if _tcs < _struct_min:
-                                    continue
-                            elif _tcs < _rp_min_tcs:
+                            if abs(_ft) < _rp_min_ft:
                                 continue
                             if _wl not in ("Win", "Loss"):
                                 continue
