@@ -1,6 +1,6 @@
 kind = "web"
-previewPath = "/"
-title = "EdgeIQ Notes"
+previewPath = "/notes-static/"
+title = "EdgeIQ Notes (static)"
 version = "1.0.0"
 id = "artifacts/api-server"
 router = "path"
@@ -11,7 +11,7 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
+paths = [ "/notes-static/" ]
 localPort = 1104
 
 [services.development]
