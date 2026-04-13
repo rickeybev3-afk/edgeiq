@@ -730,6 +730,37 @@ def eod_update():
     _broadcast_eod_to_subscribers(results, today)
 
 
+def _send_rankings_summary(rows: list, rating_date) -> None:
+    """Send a Telegram message summarising nightly ranking performance by rank tier."""
+    if not rows:
+        return
+    from collections import defaultdict
+    tier_rows = defaultdict(list)
+    for r in rows:
+        tier_rows[r["rank"]].append(r)
+
+    lines = [f"📊 <b>Nightly Rankings — {rating_date}</b>", ""]
+    total_up = sum(1 for r in rows if r["chg"] > 0)
+    lines.append(f"Overall: {total_up}/{len(rows)} positive  "
+                 f"({100*total_up/len(rows):.0f}% hit rate)")
+    lines.append("")
+
+    for tier in sorted(tier_rows.keys()):
+        tier_data = tier_rows[tier]
+        up = sum(1 for r in tier_data if r["chg"] > 0)
+        avg = sum(r["chg"] for r in tier_data) / len(tier_data)
+        label = "★" * min(tier, 5) if tier > 0 else "⬜ Watch"
+        lines.append(f"<b>Rank {tier}</b> {label} — {up}/{len(tier_data)} up | avg {avg:+.1f}%")
+        for r in sorted(tier_data, key=lambda x: -x["chg"]):
+            arrow = "🟢" if r["chg"] > 0 else "🔴"
+            lines.append(f"  {arrow} {r['ticker']:6s} {r['chg']:+.1f}%")
+        lines.append("")
+
+    tg_send("\n".join(lines))
+    log.info(f"Rankings summary sent to Telegram — {len(rows)} tickers, "
+             f"{total_up}/{len(rows)} positive")
+
+
 def nightly_verify():
     """4:25 PM ET — auto-run Verify Date for today so brain gets fresh signal
     without requiring manual button press in the UI."""
@@ -763,12 +794,26 @@ def nightly_verify():
     try:
         if ensure_ticker_rankings_table():
             from datetime import timedelta
+            today     = datetime.now(EASTERN).date()
             yesterday = (datetime.now(EASTERN) - timedelta(days=1)).date()
-            _rk_res = verify_ticker_rankings(ALPACA_API_KEY, ALPACA_SECRET_KEY, USER_ID, yesterday)
-            if _rk_res["verified"] > 0:
-                log.info(f"Auto-verified {_rk_res['verified']} ticker rankings from {yesterday}")
-            elif _rk_res["errors"] > 0:
-                log.warning(f"Ticker ranking verify: {_rk_res['errors']} errors for {yesterday}")
+
+            # Verify yesterday's ratings using today's data (standard next-day logic)
+            _rk_yes = verify_ticker_rankings(ALPACA_API_KEY, ALPACA_SECRET_KEY, USER_ID, yesterday)
+            if _rk_yes["verified"] > 0:
+                log.info(f"Auto-verified {_rk_yes['verified']} ticker rankings from {yesterday}")
+            elif _rk_yes["errors"] > 0:
+                log.warning(f"Ticker ranking verify ({yesterday}): {_rk_yes['errors']} errors")
+
+            # Verify today's ratings using today's data (same-day — for ratings made
+            # during the night/early morning of the same trading session)
+            _rk_today = verify_ticker_rankings(
+                ALPACA_API_KEY, ALPACA_SECRET_KEY, USER_ID, today, same_day=True
+            )
+            if _rk_today["verified"] > 0:
+                log.info(f"Same-day verified {_rk_today['verified']} ticker rankings for {today}")
+                _send_rankings_summary(_rk_today["rows"], today)
+            elif _rk_today["errors"] > 0:
+                log.warning(f"Ticker ranking verify ({today} same-day): {_rk_today['errors']} errors")
     except Exception as _rk_e:
         log.warning(f"Ticker ranking auto-verify failed (non-fatal): {_rk_e}")
 

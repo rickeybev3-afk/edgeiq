@@ -6353,37 +6353,46 @@ def load_ticker_rankings(user_id: str, rating_date=None) -> "pd.DataFrame":
             return pd.DataFrame()
 
 
-def verify_ticker_rankings(api_key: str, secret_key: str, user_id: str, rating_date) -> dict:
-    """Pull next-trading-day price data for all ranked tickers on rating_date
-    and write actual_chg_pct, actual_open, actual_close, verified=True back to Supabase.
+def verify_ticker_rankings(api_key: str, secret_key: str, user_id: str, rating_date,
+                           same_day: bool = False) -> dict:
+    """Pull price data for all ranked tickers on rating_date and write
+    actual_chg_pct, actual_open, actual_close, verified=True back to Supabase.
 
-    Returns {verified: int, errors: int}.
+    same_day=False (default): uses next trading day's data (for ratings made the
+      night before a session — verify after that session closes).
+    same_day=True: uses the rating_date itself as the trading day (for ratings
+      made early morning of a session — verify same evening after close).
+
+    Returns {verified: int, errors: int, rows: list[dict]}.
     """
     if not supabase:
-        return {"verified": 0, "errors": 0}
+        return {"verified": 0, "errors": 0, "rows": []}
     import datetime as _dt
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame as TF
 
-    # Load the rankings for this date
     df = load_ticker_rankings(user_id, rating_date)
     if df.empty:
-        return {"verified": 0, "errors": 0}
+        return {"verified": 0, "errors": 0, "rows": []}
 
-    # Find the next trading day after rating_date
     r_date = rating_date if isinstance(rating_date, _dt.date) else _dt.date.fromisoformat(str(rating_date))
-    next_day = r_date + _dt.timedelta(days=1)
-    while next_day.weekday() >= 5:  # skip weekends
-        next_day += _dt.timedelta(days=1)
+    if same_day:
+        trading_day = r_date
+    else:
+        trading_day = r_date + _dt.timedelta(days=1)
+        while trading_day.weekday() >= 5:
+            trading_day += _dt.timedelta(days=1)
 
     client = StockHistoricalDataClient(api_key, secret_key)
-    mo = EASTERN.localize(_dt.datetime(next_day.year, next_day.month, next_day.day, 9, 30))
-    mc = EASTERN.localize(_dt.datetime(next_day.year, next_day.month, next_day.day, 16, 0))
+    mo = EASTERN.localize(_dt.datetime(trading_day.year, trading_day.month, trading_day.day, 9, 30))
+    mc = EASTERN.localize(_dt.datetime(trading_day.year, trading_day.month, trading_day.day, 16, 0))
 
     verified = errors = 0
+    rows = []
     for _, row in df.iterrows():
         ticker = row["ticker"]
+        rank   = int(row.get("rank", 0)) if row.get("rank") is not None else 0
         try:
             req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TF.Day,
                                    start=mo, end=mc)
@@ -6404,9 +6413,11 @@ def verify_ticker_rankings(api_key: str, secret_key: str, user_id: str, rating_d
                 "verified":       True,
             }).eq("user_id", user_id).eq("rating_date", str(rating_date)).eq("ticker", ticker).execute()
             verified += 1
+            rows.append({"ticker": ticker, "rank": rank, "chg": chg,
+                         "open": open_p, "close": close_p})
         except Exception:
             errors += 1
-    return {"verified": verified, "errors": errors}
+    return {"verified": verified, "errors": errors, "rows": rows}
 
 
 def load_ranking_accuracy(user_id: str) -> "pd.DataFrame":
