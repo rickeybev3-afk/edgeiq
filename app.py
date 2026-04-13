@@ -5539,6 +5539,51 @@ Measures how accurately the 7-structure framework classified those days in hinds
             else:
                 st.caption("Gap filters off — all setups included regardless of gap size.")
 
+        # ── Per-structure TCS cutoff guide (bot mode only) ──────────────────────
+        if _rp_bot_mode and supabase and _rp_uid:
+            with st.expander("📋 View per-structure TCS cutoffs (based on your accuracy data)", expanded=False):
+                try:
+                    _guide_rows = compute_structure_tcs_thresholds(supabase, _rp_uid)
+                    if _guide_rows:
+                        # Map weight keys back to display labels
+                        _WKEY_DISP = {
+                            "trending":  "Trend Day",
+                            "neutral":   "Neutral",
+                            "neutral_extreme": "Ntrl Extreme",
+                            "rotational": "Rotational",
+                            "normal":    "Normal",
+                        }
+                        _guide_lines = []
+                        for _gd in _guide_rows:
+                            _lbl = _gd.get("label", "")
+                            _sl  = _lbl.lower()
+                            _disp = (
+                                "Trend Day"     if "trend" in _sl else
+                                "Ntrl Extreme"  if "extreme" in _sl else
+                                "Neutral"       if "neutral" in _sl else
+                                "Rotational"    if "rotation" in _sl else
+                                "Normal"        if "normal" in _sl else _lbl
+                            )
+                            _base_tcs = int(_gd.get("recommended_tcs") or 50) if _gd.get("sample_size", 0) >= 5 else 50
+                            _eff_tcs  = max(0, min(100, _base_tcs + _rp_tcs_offset))
+                            _note = "★ offset applied" if _rp_tcs_offset != 0 else "from accuracy data"
+                            _src  = f"(sample: {int(_gd.get('sample_size',0))})" if _gd.get("sample_size", 0) >= 5 else "(insufficient data → defaulted to 50)"
+                            _guide_lines.append(f"**{_disp}**: base {_base_tcs} → **effective {_eff_tcs}** {_src}")
+                        # Unknown / fallback line
+                        _fb = max(0, min(100, 50 + _rp_tcs_offset))
+                        _guide_lines.append(f"**Other / unmapped**: base 50 → **effective {_fb}** (default fallback)")
+                        for _gl in _guide_lines:
+                            st.markdown("- " + _gl)
+                        if _rp_tcs_offset != 0:
+                            st.caption(
+                                f"TCS Adjustment is set to **{_rp_tcs_offset:+d}** — every structure's threshold has been shifted by this amount. "
+                                "Negative = looser (more trades), Positive = stricter (fewer, higher-quality trades)."
+                            )
+                    else:
+                        st.caption("No accuracy data found yet. All structures default to TCS ≥ 50.")
+                except Exception:
+                    st.caption("Could not load threshold data. All structures default to TCS ≥ 50.")
+
         _rp_run = st.button("▶ Run Replay", use_container_width=True, key="rp_run_btn",
                             type="primary")
 
@@ -5548,18 +5593,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
             else:
                 with st.spinner("Loading historical trades…"):
                     try:
-                        _rp_q = (
-                            supabase.table("backtest_sim_runs")
-                            .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type")
-                            .eq("user_id", _rp_uid)
-                            .gte("sim_date", str(_rp_start))
-                            .lte("sim_date", str(_rp_end))
-                            .range(0, 9999)
-                        )
-                        if _rp_scan_type_val is not None:
-                            _rp_q = _rp_q.eq("scan_type", _rp_scan_type_val)
-                        _rp_resp = _rp_q.execute()
-                        _rp_rows = _rp_resp.data or []
+                        # Paginate — Supabase caps at 1000 rows per request
+                        _rp_rows: list = []
+                        _rp_page_size = 1000
+                        _rp_offset = 0
+                        while True:
+                            _rp_q = (
+                                supabase.table("backtest_sim_runs")
+                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct")
+                                .eq("user_id", _rp_uid)
+                                .gte("sim_date", str(_rp_start))
+                                .lte("sim_date", str(_rp_end))
+                                .range(_rp_offset, _rp_offset + _rp_page_size - 1)
+                            )
+                            if _rp_scan_type_val is not None:
+                                _rp_q = _rp_q.eq("scan_type", _rp_scan_type_val)
+                            _rp_resp = _rp_q.execute()
+                            _rp_page = _rp_resp.data or []
+                            _rp_rows.extend(_rp_page)
+                            if len(_rp_page) < _rp_page_size:
+                                break  # last page
+                            _rp_offset += _rp_page_size
                     except Exception as _rp_e:
                         _rp_rows = []
                         st.error(f"Failed to load data: {_rp_e}")
