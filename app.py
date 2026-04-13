@@ -8716,12 +8716,12 @@ def render_performance_tab():
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 🧠 Structure Prediction Win Rate")
 
-    if _at_df.empty:
+    if _at_all_df.empty:
         st.info("No structure predictions logged yet.")
     else:
-        _at_df["_correct_bool"] = _at_df["correct"] == "✅"
+        _at_all_df["_correct_bool"] = _at_all_df["correct"] == "✅"
         _by_struct = (
-            _at_df.groupby("predicted")
+            _at_all_df.groupby("predicted")
             .agg(Total=("_correct_bool", "count"), Correct=("_correct_bool", "sum"))
             .assign(WinRate=lambda d: (d["Correct"].astype(float) / d["Total"].astype(float) * 100).round(1))
             .sort_values("Total", ascending=False)
@@ -8732,9 +8732,9 @@ def render_performance_tab():
         # Overall row
         _overall_row = pd.DataFrame([{
             "Structure": "⭐ ALL",
-            "Samples": _struct_total,
-            "Correct": _struct_wins,
-            "Win Rate %": round(_struct_rate, 1)
+            "Samples": _all_total,
+            "Correct": _all_wins,
+            "Win Rate %": round(_all_rate, 1)
         }])
         _by_struct_display = pd.concat([_overall_row, _by_struct], ignore_index=True)
 
