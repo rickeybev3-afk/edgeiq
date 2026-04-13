@@ -1,6 +1,6 @@
 kind = "web"
-previewPath = "/notes-static/"
-title = "EdgeIQ Notes (static)"
+previewPath = "/"
+title = "EdgeIQ Notes"
 version = "1.0.0"
 id = "artifacts/api-server"
 router = "path"
@@ -11,15 +11,15 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/notes-static/" ]
-localPort = 1104
+paths = [ "/" ]
+localPort = 22729
 
 [services.development]
-run = "python3 -m http.server 1104 --directory /home/runner/workspace/artifacts/api-server/public"
+run = "cd /home/runner/workspace && streamlit run app.py --server.port 22729"
 
 [services.production]
-run = "python3 -m http.server 1104 --directory /home/runner/workspace/artifacts/api-server/public"
+run = "python3 -m http.server 22729 --directory /home/runner/workspace/artifacts/api-server/public"
 
 [services.env]
-PORT = "1104"
+PORT = "22729"
 BASE_PATH = "/"
