@@ -671,11 +671,12 @@ def morning_scan():
         tg_send(f"⚠️ <b>Morning Scan Failed</b> — {today}\nNo bar data returned. Check Alpaca connection.")
         return
 
-    # Tag every result with the current macro regime
+    # Tag every result with the current macro regime + scan type
     regime_tag = regime.get("regime_tag", "")
     for r in results:
         r["regime_tag"] = regime_tag
         r["sim_date"]   = str(today)  # ensure sim_date present for dedup
+        r["scan_type"]  = "morning"
 
     # Log ALL scan results to paper_trades with regime_tag attached.
     # min_tcs_filter records the effective threshold for this session;
@@ -728,6 +729,9 @@ def intraday_scan():
         log.info("No intraday results.")
         return
 
+    for r in results:
+        r["scan_type"] = "intraday"
+
     qualified = [r for r in results if float(r.get("tcs", 0)) >= MIN_TCS]
     log.info(f"{len(qualified)} intraday setups at TCS ≥ {MIN_TCS} (of {len(results)} scanned)")
 
@@ -756,6 +760,9 @@ def eod_update():
         log.warning("No results from EOD scan — cannot update outcomes.")
         tg_send(f"⚠️ <b>EOD Update Failed</b> — {today}\nNo bar data returned.")
         return
+
+    for r in results:
+        r.setdefault("scan_type", "eod")  # only set if not already tagged (morning record keeps its tag)
 
     upd = update_paper_trade_outcomes(str(today), results, user_id=USER_ID)
     updated_count = upd.get("updated", 0)

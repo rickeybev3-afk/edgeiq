@@ -6098,6 +6098,8 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["entry_ib_distance"] = round(float(r["entry_ib_distance"]), 2)
             if r.get("regime_tag"):
                 row_record["regime_tag"] = r["regime_tag"]
+            if r.get("scan_type"):
+                row_record["scan_type"] = r["scan_type"]
             records.append(row_record)
         if records:
             try:
@@ -6105,7 +6107,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
             except Exception as _ins_err:
                 _err_s = str(_ins_err).lower()
                 _optional_cols = ["rvol", "gap_pct", "mae", "mfe", "entry_time",
-                                  "exit_trigger", "entry_ib_distance"]
+                                  "exit_trigger", "entry_ib_distance", "scan_type"]
                 if any(col in _err_s for col in _optional_cols):
                     for rec in records:
                         for col in _optional_cols:
@@ -6242,6 +6244,7 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     "ib_low":              r.get("ib_low"),
                     "ib_high":             r.get("ib_high"),
                     "min_tcs_filter":      r.get("min_tcs_filter", 50),
+                    "scan_type":           r.get("scan_type", "eod"),
                 }
                 if r.get("mae") is not None:
                     insert_row["mae"] = round(float(r["mae"]), 2)
