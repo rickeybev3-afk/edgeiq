@@ -396,9 +396,14 @@ def _alert_setup(r: dict, trade_date: date):
     else:
         entry_hint = f"🎯 Watch IB range ${ib_low:.2f}–${ib_high:.2f} for directional break"
 
+    priority_line = ""
+    if r.get("_priority_tier"):
+        priority_line = f"<b>{r['_priority_tier']}</b>\n"
+
     msg = (
         f"{emoji} <b>EdgeIQ Setup — {ticker}</b>\n"
         f"⏰ {scan_time}  ·  📅 {trade_date}\n"
+        f"{priority_line}"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"💰 Price at IB close: <b>${cur_px:.2f}</b>  "
         f"({chg_arrow}{abs(chg_pct):.1f}% from open ${open_px:.2f})\n"
@@ -703,8 +708,15 @@ def morning_scan():
         log.info(f"Sending {len(qualified)} Telegram setup alerts...")
         # Telegram: one alert per setup
         for r in qualified:
+            tcs_val = float(r.get("tcs", 0))
+            if tcs_val >= 70:
+                r["_priority_tier"] = "🟡 P3 — Morning 70+ (high R)"
+            elif tcs_val >= 50:
+                r["_priority_tier"] = "🟢 P4 — Morning 50+ (core system)"
+            else:
+                r["_priority_tier"] = "⚪ Watch Only"
             log.info(
-                f"  {r['ticker']:6s} | TCS {r.get('tcs', 0):5.0f} | "
+                f"  {r['ticker']:6s} | TCS {tcs_val:5.0f} | "
                 f"predicted: {r.get('predicted', '—'):20s} | "
                 f"IB {r.get('ib_low', 0):.2f}–{r.get('ib_high', 0):.2f}"
             )
@@ -724,16 +736,38 @@ def intraday_scan():
     log.info("INTRADAY SCAN — checking for midday setups")
     log.info("=" * 60)
 
+    # ── Load macro regime (same as morning scan) ──────────────────────────────
+    regime = {}
+    effective_min_tcs = MIN_TCS
+    try:
+        regime = get_breadth_regime(user_id=USER_ID) or {}
+        tcs_adj = regime.get("tcs_floor_adj", 0)
+        if tcs_adj:
+            effective_min_tcs = max(30, MIN_TCS + tcs_adj)
+            log.info(
+                f"Regime: {regime.get('label','?')} → TCS floor adjusted "
+                f"{MIN_TCS} + ({tcs_adj:+d}) = {effective_min_tcs}"
+            )
+    except Exception as exc:
+        log.warning(f"Could not load macro regime: {exc}")
+
     results = _run_scan(today, cutoff_h=13, cutoff_m=30)
     if not results:
         log.info("No intraday results.")
         return
 
+    regime_tag = regime.get("regime_tag", "")
     for r in results:
-        r["scan_type"] = "intraday"
+        r["scan_type"]  = "intraday"
+        r["regime_tag"] = regime_tag
+        r["sim_date"]   = str(today)
 
-    qualified = [r for r in results if float(r.get("tcs", 0)) >= MIN_TCS]
-    log.info(f"{len(qualified)} intraday setups at TCS ≥ {MIN_TCS} (of {len(results)} scanned)")
+    # ── Log ALL intraday results to paper_trades (dedup by ticker+date+scan_type)
+    logged = log_paper_trades(results, user_id=USER_ID, min_tcs=effective_min_tcs)
+    log.info(f"Intraday paper trades logged: {logged.get('saved',0)} new, {logged.get('skipped',0)} already existed")
+
+    qualified = [r for r in results if float(r.get("tcs", 0)) >= effective_min_tcs]
+    log.info(f"{len(qualified)} intraday setups at TCS ≥ {effective_min_tcs} (of {len(results)} scanned)")
 
     if qualified:
         tg_send(
@@ -742,6 +776,14 @@ def intraday_scan():
             f"<b>{len(qualified)} setup(s)</b> still active/developing:"
         )
         for r in qualified:
+            tcs_val = float(r.get("tcs", 0))
+            if tcs_val >= 70:
+                tier = "🔴 P1 — ACT ON THIS"
+            elif tcs_val >= 50:
+                tier = "🟡 P2 — Core Setup"
+            else:
+                tier = "⚪ Watch Only"
+            r["_priority_tier"] = tier
             _alert_setup(r, today)
             time.sleep(0.3)
     else:

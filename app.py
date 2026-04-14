@@ -9343,6 +9343,240 @@ ALTER TABLE backtest_sim_runs
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 1c — 5-YEAR BACKTEST INTELLIGENCE GRID (Scan Type × TCS)
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 🗺️ 5-Year Edge Map — Time of Day × Confidence Score")
+    st.caption(
+        "True expectancy per setup = P(breakout) × Avg R earned on breaks. "
+        "Excludes Pending records. Only Bullish/Bearish Breaks counted as entries. "
+        "All other outcomes (Range-Bound, Neutral, etc.) reduce P(breakout). "
+        "5 years of data · morning and intraday scans."
+    )
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _load_backtest_grid(uid):
+        RESOLVED = [
+            "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
+            "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
+        ]
+        grid = []
+        for st_name in ["morning", "intraday"]:
+            for lo, hi in [(0, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 101)]:
+                try:
+                    rows, offset = [], 0
+                    while True:
+                        batch = (
+                            supabase.table("backtest_sim_runs")
+                            .select("actual_outcome,pnl_r_sim")
+                            .eq("user_id", uid)
+                            .eq("scan_type", st_name)
+                            .gte("tcs", lo)
+                            .lt("tcs", min(hi, 100) if hi < 101 else 200)
+                            .in_("actual_outcome", RESOLVED)
+                            .range(offset, offset + 999)
+                            .execute()
+                            .data or []
+                        )
+                        if not batch:
+                            break
+                        rows += batch
+                        if len(batch) < 1000:
+                            break
+                        offset += 1000
+                    if not rows:
+                        continue
+                    breaks = [
+                        r for r in rows
+                        if r.get("actual_outcome") in ("Bullish Break", "Bearish Break")
+                        and r.get("pnl_r_sim") is not None
+                    ]
+                    p_break = len(breaks) / len(rows) if rows else 0
+                    avg_r   = sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks) if breaks else 0
+                    true_e  = p_break * avg_r
+                    label   = f"{lo}–{min(hi-1,99)}+" if hi > 99 else f"{lo}–{hi-1}"
+                    grid.append({
+                        "scan_type":   st_name,
+                        "tcs_label":   label,
+                        "tcs_lo":      lo,
+                        "tcs_hi":      hi,
+                        "setups":      len(rows),
+                        "breaks":      len(breaks),
+                        "p_break_pct": round(p_break * 100, 1),
+                        "avg_r":       round(avg_r, 3),
+                        "true_exp":    round(true_e, 3),
+                    })
+                except Exception:
+                    continue
+        return grid
+
+    _bt_grid = _load_backtest_grid(USER_ID)
+
+    if not _bt_grid:
+        st.info("Backtest grid data unavailable — batch backtest may still be running.")
+    else:
+        # ── Priority tier assignment ─────────────────────────────────────────
+        def _get_tier(row):
+            st_name = row["scan_type"]
+            lo      = row["tcs_lo"]
+            if st_name == "intraday" and lo >= 70:
+                return "🔴 P1", "#c62828", "Intraday 70+ — act on every one"
+            if st_name == "intraday" and lo >= 50:
+                return "🟠 P2", "#ef6c00", "Intraday 50+ — core bread & butter"
+            if st_name == "morning" and lo >= 70:
+                return "🟡 P3", "#f9a825", "Morning 70+ — high R, small sample"
+            if st_name == "morning" and lo >= 50:
+                return "🟢 P4", "#2e7d32", "Morning 50+ — solid, current system"
+            return "⚪ Low", "#546e7a", "Below threshold — skip"
+
+        # ── Best combos summary ──────────────────────────────────────────────
+        _ranked = sorted(
+            [r for r in _bt_grid if r["setups"] >= 50],
+            key=lambda x: x["true_exp"], reverse=True
+        )
+
+        st.markdown("**Priority Tiers — ranked by true expectancy per setup (5-yr backtest)**")
+        _tier_cols = st.columns(4)
+        _tier_defs = [
+            ("🔴 P1", "Intraday TCS 70+", "#c62828",
+             next((r for r in _ranked if r["scan_type"] == "intraday" and r["tcs_lo"] == 70), None)),
+            ("🟠 P2", "Intraday TCS 50–69", "#ef6c00",
+             next((r for r in _bt_grid if r["scan_type"] == "intraday" and r["tcs_lo"] == 50), None)),
+            ("🟡 P3", "Morning TCS 70+", "#f9a825",
+             next((r for r in _bt_grid if r["scan_type"] == "morning" and r["tcs_lo"] == 70), None)),
+            ("🟢 P4", "Morning TCS 50–69", "#2e7d32",
+             next((r for r in _bt_grid if r["scan_type"] == "morning" and r["tcs_lo"] == 50), None)),
+        ]
+        for _col, (_badge, _label, _color, _rd) in zip(_tier_cols, _tier_defs):
+            if _rd:
+                with _col:
+                    st.markdown(
+                        f'<div style="background:#1e2a3a;border-radius:10px;padding:14px 12px;">'
+                        f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_badge} {_label}</div>'
+                        f'<div style="font-size:24px;font-weight:700;color:{_color};margin:6px 0;">+{_rd["true_exp"]:.2f}R</div>'
+                        f'<div style="font-size:12px;color:#cfd8dc;">per setup</div>'
+                        f'<div style="font-size:11px;color:#90a4ae;margin-top:4px;">'
+                        f'{_rd["p_break_pct"]}% break rate · +{_rd["avg_r"]:.2f}R avg · {_rd["setups"]:,} setups</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Full grid tables side by side ────────────────────────────────────
+        _gc_morning, _gc_intraday = st.columns(2)
+
+        for _gcol, _stype, _stitle in [
+            (_gc_morning, "morning", "🌅 Morning Scan (10:47 AM)"),
+            (_gc_intraday, "intraday", "🔄 Intraday Scan (2:00 PM)"),
+        ]:
+            with _gcol:
+                st.markdown(f"**{_stitle}**")
+                _rows = [r for r in _bt_grid if r["scan_type"] == _stype]
+                _rows_sorted = sorted(_rows, key=lambda x: x["tcs_lo"])
+
+                _tbl_rows = []
+                for _r in _rows_sorted:
+                    _tier_badge, _tier_color, _ = _get_tier(_r)
+                    _bar_len = min(int(_r["true_exp"] * 4), 20)
+                    _bar_fill = "█" * _bar_len
+                    _tbl_rows.append({
+                        "TCS": _r["tcs_label"],
+                        "Setups": f"{_r['setups']:,}",
+                        "Breakout %": f"{_r['p_break_pct']}%",
+                        "Avg R": f"+{_r['avg_r']:.2f}R",
+                        "True Exp": f"+{_r['true_exp']:.3f}R",
+                        "Tier": _tier_badge,
+                    })
+                _grid_df = pd.DataFrame(_tbl_rows)
+
+                def _color_tier(val):
+                    if "P1" in str(val):
+                        return "color:#c62828;font-weight:700"
+                    if "P2" in str(val):
+                        return "color:#ef6c00;font-weight:700"
+                    if "P3" in str(val):
+                        return "color:#f9a825;font-weight:700"
+                    if "P4" in str(val):
+                        return "color:#2e7d32;font-weight:700"
+                    return "color:#546e7a"
+
+                def _color_exp(val):
+                    try:
+                        v = float(str(val).replace("+", "").replace("R", ""))
+                        if v >= 2.0:
+                            return "color:#c62828;font-weight:700"
+                        if v >= 1.0:
+                            return "color:#ef6c00;font-weight:600"
+                        if v >= 0.5:
+                            return "color:#2e7d32"
+                        return "color:#546e7a"
+                    except Exception:
+                        return ""
+
+                st.dataframe(
+                    _grid_df.style
+                    .applymap(_color_tier, subset=["Tier"])
+                    .applymap(_color_exp, subset=["True Exp"]),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=310,
+                )
+
+        # ── Live paper trade breakdown (small sample warning) ─────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("**Your Live Paper Trades — Win Rate by Scan & TCS** *(small sample)*")
+
+        _live_resolved = _pt_df[_pt_df["win_loss"].isin(["W", "L", "Win", "Loss"])].copy() if not _pt_df.empty else pd.DataFrame()
+        if _live_resolved.empty:
+            st.info("No resolved live paper trades yet.")
+        else:
+            if "scan_type" not in _live_resolved.columns:
+                _live_resolved["scan_type"] = "morning"
+            _live_resolved["scan_type"] = _live_resolved["scan_type"].fillna("morning")
+            if "tcs" not in _live_resolved.columns:
+                _live_resolved["tcs"] = 0
+            _live_resolved["tcs"] = pd.to_numeric(_live_resolved["tcs"], errors="coerce").fillna(0)
+            _live_resolved["is_win"] = _live_resolved["win_loss"].isin(["W", "Win"])
+
+            _live_rows = []
+            for _st in ["morning", "intraday"]:
+                for _lo, _hi, _lbl in [(0, 50, "<50"), (50, 60, "50–59"), (60, 70, "60–69"), (70, 101, "70+")]:
+                    _sub = _live_resolved[
+                        (_live_resolved["scan_type"] == _st) &
+                        (_live_resolved["tcs"] >= _lo) &
+                        (_live_resolved["tcs"] < _hi)
+                    ]
+                    if _sub.empty:
+                        continue
+                    _w = _sub["is_win"].sum()
+                    _n = len(_sub)
+                    _wr = _w / _n * 100
+                    _tier_badge, _, _ = _get_tier({"scan_type": _st, "tcs_lo": _lo})
+                    _live_rows.append({
+                        "Scan": _st.capitalize(),
+                        "TCS": _lbl,
+                        "W": int(_w),
+                        "L": int(_n - _w),
+                        "Win Rate": f"{_wr:.0f}%",
+                        "Tier": _tier_badge,
+                        "Sample": f"n={_n}",
+                    })
+
+            if _live_rows:
+                _live_tbl = pd.DataFrame(_live_rows)
+                st.caption(
+                    f"⚠️  Live data is {len(_live_resolved)} trades — use 5-year backtest above for decision-making."
+                )
+                st.dataframe(
+                    _live_tbl.style.applymap(_color_tier, subset=["Tier"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No resolved live paper trades to break down.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
     # SECTION 2 — PAPER TRADE HISTORY + RUNNING P&L CHART
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 📄 Paper Trade History")

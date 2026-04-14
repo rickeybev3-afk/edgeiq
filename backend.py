@@ -6148,22 +6148,27 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
 
 def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
     """Save paper trade scan results to paper_trades table.
-    Deduplicates by (user_id, trade_date, ticker) — won't double-log same day.
+    Deduplicates by (user_id, trade_date, ticker, scan_type) — allows morning
+    AND intraday entries for the same ticker on the same day.
     Returns dict with saved count and skipped count."""
     if not supabase or not rows:
         return {"saved": 0, "skipped": 0, "error": "No data"}
     try:
         existing = (
             supabase.table("paper_trades")
-            .select("ticker, trade_date")
+            .select("ticker, trade_date, scan_type")
             .eq("user_id", user_id)
             .execute()
             .data or []
         )
-        existing_keys = {(r["ticker"], str(r["trade_date"])) for r in existing}
+        existing_keys = {
+            (r["ticker"], str(r["trade_date"]), r.get("scan_type") or "morning")
+            for r in existing
+        }
         records, skipped = [], 0
         for r in rows:
-            key = (r.get("ticker", ""), str(r.get("sim_date", r.get("trade_date", ""))))
+            scan_type = r.get("scan_type") or "morning"
+            key = (r.get("ticker", ""), str(r.get("sim_date", r.get("trade_date", ""))), scan_type)
             if key in existing_keys:
                 skipped += 1
                 continue
