@@ -564,7 +564,7 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
     if not backend.supabase or not rows:
         return
 
-    def _build_record(r, include_gap: bool) -> dict:
+    def _build_record(r, include_gap: bool, include_sim: bool) -> dict:
         rec = {
             "user_id":          user_id or "",
             "sim_date":         str(r.get("sim_date", "")),
@@ -584,33 +584,64 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
         if include_gap:
             rec["gap_pct"]       = r.get("gap_pct")
             rec["gap_vs_ib_pct"] = r.get("gap_vs_ib_pct")
+        if include_sim:
+            sim = backend.compute_trade_sim(r)
+            if sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                rec["sim_outcome"]      = sim["sim_outcome"]
+                rec["pnl_r_sim"]        = sim.get("pnl_r_sim")
+                rec["pnl_pct_sim"]      = sim.get("pnl_pct_sim")
+                rec["entry_price_sim"]  = sim.get("entry_price_sim")
+                rec["stop_price_sim"]   = sim.get("stop_price_sim")
+                rec["stop_dist_pct"]    = sim.get("stop_dist_pct")
+                rec["target_price_sim"] = sim.get("target_price_sim")
         return rec
 
     chunk = 500
-    include_gap = True  # assume columns exist; fall back to False if not
+    include_gap = True   # fall back to False if columns missing
+    include_sim = True   # fall back to False if sim columns missing
 
     for i in range(0, len(rows), chunk):
         batch = rows[i : i + chunk]
-        records = [_build_record(r, include_gap) for r in batch]
+        records = [_build_record(r, include_gap, include_sim) for r in batch]
         try:
             backend.supabase.table("backtest_sim_runs").insert(records).execute()
         except Exception as e:
-            err_str = str(e)
-            if include_gap and ("gap_pct" in err_str or "gap_vs_ib" in err_str or "column" in err_str.lower()):
-                # Gap columns not yet migrated — save without them and warn once
+            err_str = str(e).lower()
+            sim_cols  = ["sim_outcome", "pnl_r_sim", "pnl_pct_sim", "entry_price_sim",
+                         "stop_price_sim", "stop_dist_pct", "target_price_sim"]
+            gap_cols  = ["gap_pct", "gap_vs_ib_pct"]
+
+            if include_sim and any(c in err_str for c in sim_cols):
+                print(
+                    "\n⚠️  Sim columns missing in backtest_sim_runs — run SQL below, then re-run backtest:\n"
+                    "   ALTER TABLE backtest_sim_runs\n"
+                    "     ADD COLUMN IF NOT EXISTS sim_outcome TEXT,\n"
+                    "     ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS pnl_pct_sim FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS entry_price_sim FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS stop_price_sim FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS stop_dist_pct FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS target_price_sim FLOAT;\n"
+                )
+                include_sim = False
+                records = [_build_record(r, include_gap, False) for r in batch]
+                try:
+                    backend.supabase.table("backtest_sim_runs").insert(records).execute()
+                except Exception as e2:
+                    print(f"Backtest save error (no-sim fallback): {e2}")
+            elif include_gap and any(c in err_str for c in gap_cols):
                 print(
                     "\n⚠️  gap_pct / gap_vs_ib_pct columns missing in Supabase.\n"
-                    "   Run this SQL in your Supabase dashboard to add them:\n"
                     "   ALTER TABLE backtest_sim_runs\n"
                     "     ADD COLUMN IF NOT EXISTS gap_pct FLOAT,\n"
                     "     ADD COLUMN IF NOT EXISTS gap_vs_ib_pct FLOAT;\n"
                 )
                 include_gap = False
-                records = [_build_record(r, False) for r in batch]
+                records = [_build_record(r, False, include_sim) for r in batch]
                 try:
                     backend.supabase.table("backtest_sim_runs").insert(records).execute()
                 except Exception as e2:
-                    print(f"Backtest save error (fallback): {e2}")
+                    print(f"Backtest save error (no-gap fallback): {e2}")
             else:
                 print(f"Backtest save error: {e}")
 

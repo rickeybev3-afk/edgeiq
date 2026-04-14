@@ -6040,6 +6040,101 @@ def ensure_paper_trades_table() -> bool:
         return False
 
 
+def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
+    """Simulate an IB-breakout paper trade from an EdgeIQ structure setup.
+
+    Rules:
+      Bullish Break → long entry at IB high, stop at IB low, target = entry + target_r × IB range
+      Bearish Break → short entry at IB low, stop at IB high, target = entry − target_r × IB range
+      Neutral / Ntrl Extreme → no_trade (not directional enough to simulate)
+
+    Uses follow_thru_pct (% move from IB break level to EOD close) for P&L.
+    false_break_up / false_break_down used to detect stop-outs before recovery.
+
+    Returns dict with sim fields. pnl_r_sim is capped at −1.0 (stop) on the downside;
+    upside is uncapped (reflects actual EOD close, not a hard profit target).
+    """
+    predicted = (r.get("predicted") or "").strip()
+    actual    = (r.get("actual_outcome") or "").strip()
+    ib_low    = r.get("ib_low")
+    ib_high   = r.get("ib_high")
+    ft_pct    = r.get("follow_thru_pct")
+    false_up  = bool(r.get("false_break_up", False))
+    false_dn  = bool(r.get("false_break_down", False))
+
+    NO_TRADE = {"sim_outcome": "no_trade",  "pnl_r_sim": None, "pnl_pct_sim": None,
+                "entry_price_sim": None, "stop_price_sim": None,
+                "stop_dist_pct": None, "target_price_sim": None}
+
+    if predicted not in ("Bullish Break", "Bearish Break"):
+        return NO_TRADE
+    if ib_low is None or ib_high is None or ft_pct is None:
+        return {**NO_TRADE, "sim_outcome": "missing_data"}
+
+    ib_low, ib_high, ft_pct = float(ib_low), float(ib_high), float(ft_pct)
+    ib_range = ib_high - ib_low
+    if ib_range <= 0:
+        return {**NO_TRADE, "sim_outcome": "invalid_ib"}
+
+    if predicted == "Bullish Break":
+        entry         = ib_high
+        stop          = ib_low
+        target        = entry + target_r * ib_range
+        stop_dist_pct = ib_range / entry * 100
+        # false break up: price crossed IB high then reversed below stop → stopped out
+        if false_up and ft_pct < 0:
+            return {
+                "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                "stop_dist_pct":   round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                "pnl_pct_sim":     round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                "sim_outcome":     "stopped_out",
+            }
+        pnl_pct = ft_pct          # positive = good for long
+
+    else:  # Bearish Break
+        entry         = ib_low
+        stop          = ib_high
+        target        = entry - target_r * ib_range
+        stop_dist_pct = ib_range / entry * 100
+        # false break down: price crossed IB low then recovered above stop → stopped out
+        if false_dn and ft_pct > 0:
+            return {
+                "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                "stop_dist_pct":   round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                "pnl_pct_sim":     round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                "sim_outcome":     "stopped_out",
+            }
+        pnl_pct = -ft_pct         # negative price move = profit for short
+
+    pnl_r = pnl_pct / stop_dist_pct if stop_dist_pct else 0.0
+
+    # Cap loss at −1R (stop distance); win is uncapped (EOD close-based)
+    if pnl_r < -1.0:
+        pnl_r   = -1.0
+        pnl_pct = -stop_dist_pct
+
+    if pnl_r >= target_r:
+        sim_outcome = "hit_target"
+    elif pnl_r >= 1.0:
+        sim_outcome = "partial_win"
+    elif pnl_r >= 0.0:
+        sim_outcome = "breakeven"
+    elif pnl_r >= -1.0:
+        sim_outcome = "partial_loss"
+    else:
+        sim_outcome = "stopped_out"
+
+    return {
+        "entry_price_sim":  round(entry, 4),
+        "stop_price_sim":   round(stop, 4),
+        "stop_dist_pct":    round(stop_dist_pct, 2),
+        "target_price_sim": round(target, 4),
+        "pnl_pct_sim":      round(pnl_pct, 2),
+        "pnl_r_sim":        round(pnl_r, 3),
+        "sim_outcome":      sim_outcome,
+    }
+
+
 def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
     """Save paper trade scan results to paper_trades table.
     Deduplicates by (user_id, trade_date, ticker) — won't double-log same day.
@@ -6182,6 +6277,9 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
             else:
                 post_alert = None
 
+            # ── Compute simulation P&L (IB breakout rules) ───────────────────
+            sim = compute_trade_sim({**r, "follow_thru_pct": r.get("aft_move_pct")})
+
             if ticker in existing_tickers:
                 # ── UPDATE existing record ────────────────────────────────────
                 patch = {
@@ -6192,6 +6290,15 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     "false_break_down":    bool(r.get("false_break_down", False)),
                     "post_alert_move_pct": post_alert,
                 }
+                # Add sim fields if meaningful
+                if sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                    patch["sim_outcome"]      = sim["sim_outcome"]
+                    patch["pnl_r_sim"]        = sim.get("pnl_r_sim")
+                    patch["pnl_pct_sim"]      = sim.get("pnl_pct_sim")
+                    patch["entry_price_sim"]  = sim.get("entry_price_sim")
+                    patch["stop_price_sim"]   = sim.get("stop_price_sim")
+                    patch["stop_dist_pct"]    = sim.get("stop_dist_pct")
+                    patch["target_price_sim"] = sim.get("target_price_sim")
                 if r.get("mae") is not None:
                     patch["mae"] = round(float(r["mae"]), 2)
                 if r.get("mfe") is not None:
@@ -6246,6 +6353,14 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     "min_tcs_filter":      r.get("min_tcs_filter", 50),
                     "scan_type":           r.get("scan_type", "eod"),
                 }
+                if sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                    insert_row["sim_outcome"]      = sim["sim_outcome"]
+                    insert_row["pnl_r_sim"]        = sim.get("pnl_r_sim")
+                    insert_row["pnl_pct_sim"]      = sim.get("pnl_pct_sim")
+                    insert_row["entry_price_sim"]  = sim.get("entry_price_sim")
+                    insert_row["stop_price_sim"]   = sim.get("stop_price_sim")
+                    insert_row["stop_dist_pct"]    = sim.get("stop_dist_pct")
+                    insert_row["target_price_sim"] = sim.get("target_price_sim")
                 if r.get("mae") is not None:
                     insert_row["mae"] = round(float(r["mae"]), 2)
                 if r.get("mfe") is not None:
