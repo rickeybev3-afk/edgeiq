@@ -6162,11 +6162,14 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
             .execute()
             .data or []
         )
-        alert_prices = {row["ticker"]: row.get("alert_price") for row in existing}
+        alert_prices    = {row["ticker"]: row.get("alert_price") for row in existing}
+        existing_tickers = {row["ticker"] for row in existing}
     except Exception:
-        alert_prices = {}
+        alert_prices     = {}
+        existing_tickers = set()
 
     updated = 0
+    inserted = 0
     for r in results:
         try:
             ticker    = r.get("ticker", "")
@@ -6177,35 +6180,23 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
             else:
                 post_alert = None
 
-            patch = {
-                "actual_outcome":      r.get("actual_outcome", ""),
-                "follow_thru_pct":     r.get("aft_move_pct"),
-                "win_loss":            r.get("win_loss", ""),
-                "false_break_up":      bool(r.get("false_break_up", False)),
-                "false_break_down":    bool(r.get("false_break_down", False)),
-                "post_alert_move_pct": post_alert,
-            }
-            if r.get("mae") is not None:
-                patch["mae"] = round(float(r["mae"]), 2)
-            if r.get("mfe") is not None:
-                patch["mfe"] = round(float(r["mfe"]), 2)
-            if r.get("exit_trigger"):
-                patch["exit_trigger"] = r["exit_trigger"]
-            try:
-                (
-                    supabase.table("paper_trades")
-                    .update(patch)
-                    .eq("user_id", user_id)
-                    .eq("trade_date", str(trade_date))
-                    .eq("ticker", ticker)
-                    .execute()
-                )
-            except Exception as _upd_err:
-                _upd_s = str(_upd_err).lower()
-                _opt_update_cols = ["mae", "mfe", "exit_trigger", "entry_ib_distance", "entry_time"]
-                if any(col in _upd_s for col in _opt_update_cols):
-                    for col in _opt_update_cols:
-                        patch.pop(col, None)
+            if ticker in existing_tickers:
+                # ── UPDATE existing record ────────────────────────────────────
+                patch = {
+                    "actual_outcome":      r.get("actual_outcome", ""),
+                    "follow_thru_pct":     r.get("aft_move_pct"),
+                    "win_loss":            r.get("win_loss", ""),
+                    "false_break_up":      bool(r.get("false_break_up", False)),
+                    "false_break_down":    bool(r.get("false_break_down", False)),
+                    "post_alert_move_pct": post_alert,
+                }
+                if r.get("mae") is not None:
+                    patch["mae"] = round(float(r["mae"]), 2)
+                if r.get("mfe") is not None:
+                    patch["mfe"] = round(float(r["mfe"]), 2)
+                if r.get("exit_trigger"):
+                    patch["exit_trigger"] = r["exit_trigger"]
+                try:
                     (
                         supabase.table("paper_trades")
                         .update(patch)
@@ -6214,13 +6205,64 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                         .eq("ticker", ticker)
                         .execute()
                     )
-                    print(f"Paper trade update ({ticker}): optional columns missing — saved without them")
-                else:
-                    raise
-            updated += 1
+                except Exception as _upd_err:
+                    _upd_s = str(_upd_err).lower()
+                    _opt_update_cols = ["mae", "mfe", "exit_trigger", "entry_ib_distance", "entry_time"]
+                    if any(col in _upd_s for col in _opt_update_cols):
+                        for col in _opt_update_cols:
+                            patch.pop(col, None)
+                        (
+                            supabase.table("paper_trades")
+                            .update(patch)
+                            .eq("user_id", user_id)
+                            .eq("trade_date", str(trade_date))
+                            .eq("ticker", ticker)
+                            .execute()
+                        )
+                        print(f"Paper trade update ({ticker}): optional columns missing — saved without them")
+                    else:
+                        raise
+                updated += 1
+
+            else:
+                # ── INSERT new record for EOD-only tickers ────────────────────
+                insert_row = {
+                    "user_id":             user_id,
+                    "trade_date":          str(trade_date),
+                    "ticker":              ticker,
+                    "tcs":                 r.get("tcs"),
+                    "predicted":           r.get("predicted", ""),
+                    "actual_outcome":      r.get("actual_outcome", ""),
+                    "follow_thru_pct":     r.get("aft_move_pct"),
+                    "win_loss":            r.get("win_loss", ""),
+                    "false_break_up":      bool(r.get("false_break_up", False)),
+                    "false_break_down":    bool(r.get("false_break_down", False)),
+                    "post_alert_move_pct": post_alert,
+                    "open_price":          r.get("open_price"),
+                    "ib_low":              r.get("ib_low"),
+                    "ib_high":             r.get("ib_high"),
+                    "min_tcs_filter":      r.get("min_tcs_filter", 50),
+                }
+                if r.get("mae") is not None:
+                    insert_row["mae"] = round(float(r["mae"]), 2)
+                if r.get("mfe") is not None:
+                    insert_row["mfe"] = round(float(r["mfe"]), 2)
+                # Remove None values to let DB defaults apply
+                insert_row = {k: v for k, v in insert_row.items() if v is not None}
+                (
+                    supabase.table("paper_trades")
+                    .insert(insert_row)
+                    .execute()
+                )
+                inserted += 1
+                print(f"Paper trade inserted (EOD-only): {ticker} {r.get('win_loss','?')} — {r.get('actual_outcome','?')}")
+
         except Exception as e:
             print(f"Paper trade update error ({r.get('ticker')}): {e}")
-    return {"updated": updated}
+
+    if inserted:
+        print(f"Paper trade EOD: {updated} updated + {inserted} newly inserted")
+    return {"updated": updated + inserted}
 
 
 def patch_exit_obs(ticker: str, trade_date, exit_obs: str, user_id: str = "") -> bool:
