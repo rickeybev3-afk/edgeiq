@@ -9409,7 +9409,7 @@ ALTER TABLE backtest_sim_runs
                     continue
         return grid
 
-    _bt_grid = _load_backtest_grid(USER_ID)
+    _bt_grid = _load_backtest_grid(st.session_state.get("auth_user_id", ""))
 
     if not _bt_grid:
         st.info("Backtest grid data unavailable — batch backtest may still be running.")
