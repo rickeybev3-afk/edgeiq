@@ -6043,16 +6043,22 @@ def ensure_paper_trades_table() -> bool:
 def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     """Simulate an IB-breakout paper trade from an EdgeIQ structure setup.
 
+    Trade direction signal priority:
+      1. Use `predicted` if it is "Bullish Break" or "Bearish Break"
+         (directional paper trade predictions)
+      2. Otherwise fall back to `actual_outcome` — simulates taking every real
+         IB breakout that occurred (Range-Bound / Both Sides = no_trade)
+
     Rules:
-      Bullish Break → long entry at IB high, stop at IB low, target = entry + target_r × IB range
-      Bearish Break → short entry at IB low, stop at IB high, target = entry − target_r × IB range
-      Neutral / Ntrl Extreme → no_trade (not directional enough to simulate)
+      Bullish Break → long entry at IB high, stop at IB low
+      Bearish Break → short entry at IB low, stop at IB high
+      target = entry ± target_r × IB range
 
     Uses follow_thru_pct (% move from IB break level to EOD close) for P&L.
     false_break_up / false_break_down used to detect stop-outs before recovery.
 
-    Returns dict with sim fields. pnl_r_sim is capped at −1.0 (stop) on the downside;
-    upside is uncapped (reflects actual EOD close, not a hard profit target).
+    Returns dict with sim fields. pnl_r_sim is capped at −1.0 (stop) on the
+    downside; upside is uncapped (reflects actual EOD close).
     """
     predicted = (r.get("predicted") or "").strip()
     actual    = (r.get("actual_outcome") or "").strip()
@@ -6066,7 +6072,12 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                 "entry_price_sim": None, "stop_price_sim": None,
                 "stop_dist_pct": None, "target_price_sim": None}
 
-    if predicted not in ("Bullish Break", "Bearish Break"):
+    # Determine trade direction — use predicted if directional, else actual_outcome
+    if predicted in ("Bullish Break", "Bearish Break"):
+        direction = predicted
+    elif actual in ("Bullish Break", "Bearish Break"):
+        direction = actual
+    else:
         return NO_TRADE
     if ib_low is None or ib_high is None or ft_pct is None:
         return {**NO_TRADE, "sim_outcome": "missing_data"}
@@ -6076,7 +6087,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     if ib_range <= 0:
         return {**NO_TRADE, "sim_outcome": "invalid_ib"}
 
-    if predicted == "Bullish Break":
+    if direction == "Bullish Break":
         entry         = ib_high
         stop          = ib_low
         target        = entry + target_r * ib_range
