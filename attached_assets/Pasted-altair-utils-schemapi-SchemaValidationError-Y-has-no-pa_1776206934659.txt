@@ -1,0 +1,36 @@
+altair.utils.schemapi.SchemaValidationError: `Y` has no parameter named 'zero' Existing parameter names are: shorthand bin scale timeUnit aggregate field sort title axis impute stack type bandPosition See the help for `Y` to read the full description of these parameters
+Traceback:
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 129, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 687, in code_to_exec
+    _mpa_v1(self._main_script_path)
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 166, in _mpa_v1
+    page.run()
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/navigation/page.py", line 380, in run
+    exec(code, module.__dict__)  # noqa: S102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/app.py", line 12293, in <module>
+    render_performance_tab()
+File "/home/runner/workspace/app.py", line 9244, in render_performance_tab
+    st.altair_chart(_eq_chart, use_container_width=True)
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/metrics_util.py", line 532, in wrapped_func
+    result = non_optional_func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/elements/vega_charts.py", line 2009, in altair_chart
+    return self._altair_chart(
+           ^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/elements/vega_charts.py", line 2308, in _altair_chart
+    vega_lite_spec = _convert_altair_to_vega_lite_spec(altair_chart)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/elements/vega_charts.py", line 480, in _convert_altair_to_vega_lite_spec
+    chart_dict = altair_chart.to_dict()
+                 ^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/altair/vegalite/v6/api.py", line 4173, in to_dict
+    return super().to_dict(**kwds)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/altair/vegalite/v6/api.py", line 2121, in to_dict
+    vegalite_spec: Any = _top_schema_base(super(TopLevelMixin, copy)).to_dict(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/altair/utils/schemapi.py", line 1238, in to_dict
+    raise SchemaValidationError(self, err) from None

@@ -9228,7 +9228,7 @@ ALTER TABLE backtest_sim_runs
                 .mark_line(point=True, strokeWidth=2, color="#4fc3f7")
                 .encode(
                     x=_alt.X("trade_date:T", title="Date", axis=_alt.Axis(format="%b %d")),
-                    y=_alt.Y("cum_r:Q", title="Cumulative R", zero=False),
+                    y=_alt.Y("cum_r:Q", title="Cumulative R", scale=_alt.Scale(zero=False)),
                     tooltip=[
                         _alt.Tooltip("trade_date:T",  title="Date"),
                         _alt.Tooltip("cum_r:Q",       title="Cum R",     format=".2f"),
