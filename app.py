@@ -3947,6 +3947,11 @@ with st.sidebar:
                 key="dl_gemini_ctx",
             )
 
+    st.sidebar.markdown(
+        '<a href="/app/static/trade_secret.html" target="_blank" style="display:block;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;padding:8px 14px;color:#ef5350;font-size:13px;font-weight:700;text-decoration:none;margin:4px 0;text-align:center;">🔒 Trade Secret & NDA Document</a>',
+        unsafe_allow_html=True,
+    )
+
     with st.sidebar.expander("🔧 Database Migrations", expanded=False):
         st.caption("Run pending ALTER TABLE migrations on Supabase.")
         if st.button("🔄 Run Migrations", key="run_migrations_btn"):
