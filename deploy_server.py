@@ -15,6 +15,7 @@ import base64
 PROXY_PORT = int(os.environ.get("PORT", "8080"))
 STREAMLIT_PORT = 8501
 streamlit_ready = False
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 LOADING_PAGE = b"""<html><head><title>EdgeIQ</title></head>
 <body style="background:#0e1117;color:#fafafa;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif">
@@ -48,8 +49,37 @@ def pipe_sockets(s1, s2):
             pass
 
 
+MIME_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css":  "text/css; charset=utf-8",
+    ".js":   "application/javascript; charset=utf-8",
+    ".json": "application/json",
+    ".png":  "image/png",
+    ".jpg":  "image/jpeg",
+    ".svg":  "image/svg+xml",
+    ".ico":  "image/x-icon",
+}
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
+        path = self.path.split("?")[0]
+        if path.startswith("/app/static/") or path.startswith("/static/"):
+            rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
+            file_path = os.path.join(STATIC_DIR, rel)
+            if os.path.isfile(file_path):
+                ext = os.path.splitext(file_path)[1].lower()
+                mime = MIME_TYPES.get(ext, "application/octet-stream")
+                with open(file_path, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+
         ws_key = self.headers.get("Sec-WebSocket-Key")
         if ws_key and self.headers.get("Upgrade", "").lower() == "websocket":
             self._handle_websocket()
