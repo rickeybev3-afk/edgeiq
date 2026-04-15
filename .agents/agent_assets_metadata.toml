@@ -90,3 +90,9 @@ id = "WLBtgkzy0g_qjEbjjwh1R"
 uri = "file://.local/ip_documentation.zip"
 type = "unspecified"
 title = "EdgeIQ IP Documentation (HTML + MD)"
+
+[[outputs]]
+id = "cQgMI2wlTEr0r3huGVi97"
+uri = "file://.local/EdgeIQ_IP_Documentation.pdf"
+type = "pdf"
+title = "EdgeIQ IP Documentation (Confidential)"
