@@ -95,19 +95,19 @@ title = "EdgeIQ IP Documentation (HTML + MD)"
 id = "cQgMI2wlTEr0r3huGVi97"
 uri = "file://.local/EdgeIQ_IP_Documentation.pdf"
 type = "pdf"
-title = "1. IP Documentation (Confidential)"
+title = "1. IP Documentation (6 pages, fixed)"
 
 [[outputs]]
 id = "covWU7_iQx2KJYbHQpFn9"
 uri = "file://.local/EdgeIQ_Public_Build_Notes.pdf"
 type = "pdf"
-title = "2. Public Build Notes (96 pages)"
+title = "2. Public Build Notes (77 pages)"
 
 [[outputs]]
 id = "rKGIW5dJMyoZAbydd-ysb"
 uri = "file://.local/EdgeIQ_Private_Build_Notes.pdf"
 type = "pdf"
-title = "3. Private Build Notes (138 pages)"
+title = "3. Private Build Notes (113 pages)"
 
 [[outputs]]
 id = "xZLom9m2rZGCnTHxnir9o"
@@ -126,3 +126,9 @@ id = "Q-uXmHxKfPziZSiik0-mf"
 uri = "file://.local/EdgeIQ_System_Documentation.pdf"
 type = "pdf"
 title = "6. System Architecture Documentation"
+
+[[outputs]]
+id = "ZVQNhrJD_k3_MRcIuxRPt"
+uri = "file://.local/EdgeIQ_App_Source.pdf"
+type = "pdf"
+title = "7. App PDF (app.py + replit.md, 215 pages)"
