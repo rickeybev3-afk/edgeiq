@@ -391,6 +391,29 @@ def _analyze_at_cutoff(
 
         bin_centers, vap, poc_price = backend.compute_volume_profile(pm_df, num_bins=30)
         tcs   = float(backend.compute_tcs(pm_df, ib_high, ib_low, poc_price))
+
+        # ── Pattern discovery fields (zero extra API calls) ──────────────────
+        ib_range_pct = round((ib_high - ib_low) / open_px * 100.0, 4) if open_px else None
+
+        _pm_vol = pm_df["volume"].sum() if "volume" in pm_df.columns else 0
+        volume_ib = int(_pm_vol)
+
+        _vwap_num = (pm_df["close"] * pm_df["volume"]).sum() if "volume" in pm_df.columns else 0
+        _vwap_den = _pm_vol
+        vwap_at_ib = round(float(_vwap_num / _vwap_den), 4) if _vwap_den > 0 else None
+
+        open_vs_poc_pct = (
+            round((open_px - poc_price) / open_px * 100.0, 4)
+            if poc_price and open_px else None
+        )
+        ib_mid = (ib_high + ib_low) / 2.0
+        ib_midpoint_vs_poc_pct = (
+            round((ib_mid - poc_price) / open_px * 100.0, 4)
+            if poc_price and open_px else None
+        )
+        day_of_week = trade_date.weekday()   # 0=Mon … 4=Fri
+        # ─────────────────────────────────────────────────────────────────────
+
         probs = backend.compute_structure_probabilities(
             pm_df, bin_centers, vap, ib_high, ib_low, poc_price
         )
@@ -470,6 +493,24 @@ def _analyze_at_cutoff(
             elif aft_move < 0:
                 aft_move = min(0.0, aft_move + _slip_drag)
 
+        # ── After-IB pattern fields ───────────────────────────────────────────
+        if not morning_only and "volume" in aft_df.columns:
+            aft_volume = int(aft_df["volume"].sum())
+            _aft_vwap_num = (aft_df["close"] * aft_df["volume"]).sum()
+            _aft_vwap_den = aft_df["volume"].sum()
+            _full_vwap = (
+                round(float(_aft_vwap_num / _aft_vwap_den), 4)
+                if _aft_vwap_den > 0 else vwap_at_ib
+            )
+            close_vs_vwap_pct = (
+                round((close_px - _full_vwap) / _full_vwap * 100.0, 4)
+                if _full_vwap else None
+            )
+        else:
+            aft_volume        = 0
+            close_vs_vwap_pct = None
+        # ─────────────────────────────────────────────────────────────────────
+
         _aft_r = aft_df.reset_index()
         false_break_up   = False
         false_break_down = False
@@ -503,6 +544,15 @@ def _analyze_at_cutoff(
             "false_break_up":   false_break_up,
             "false_break_down": false_break_down,
             "scan_type":      scan_type,
+            # ── Pattern discovery fields ──────────────────────────────────
+            "ib_range_pct":          ib_range_pct,
+            "volume_ib":             volume_ib,
+            "vwap_at_ib":            vwap_at_ib,
+            "open_vs_poc_pct":       open_vs_poc_pct,
+            "ib_midpoint_vs_poc_pct": ib_midpoint_vs_poc_pct,
+            "day_of_week":           day_of_week,
+            "aft_volume":            aft_volume,
+            "close_vs_vwap_pct":     close_vs_vwap_pct,
         }
     except Exception:
         return None
@@ -594,10 +644,16 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             "scan_type":        _scan,
             "entry_hour":       _entry_hour_map.get(_scan, 10),
         }
-        if r.get("rvol") is not None:
-            rec["rvol"] = r.get("rvol")
-        if r.get("poc_price") is not None:
-            rec["poc_price"] = r.get("poc_price")
+        # Optional columns — skip gracefully if DB column missing
+        _optional = [
+            "rvol", "poc_price",
+            "ib_range_pct", "volume_ib", "vwap_at_ib",
+            "open_vs_poc_pct", "ib_midpoint_vs_poc_pct",
+            "day_of_week", "aft_volume", "close_vs_vwap_pct",
+        ]
+        for _f in _optional:
+            if r.get(_f) is not None:
+                rec[_f] = r.get(_f)
         if include_gap:
             rec["gap_pct"]       = r.get("gap_pct")
             rec["gap_vs_ib_pct"] = r.get("gap_vs_ib_pct")
