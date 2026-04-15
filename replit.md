@@ -325,6 +325,18 @@ ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
 
 ---
 
+## Future Sizing Upgrades (Phase 3+)
+
+Once 3–6 months of live data confirms the flat 1% baseline, upgrade `_compute_risk_dollars()` to factor in:
+- **TCS-based sizing** — TCS 70+ → 1.5%, TCS 50–60 → 0.75% (conviction scaling)
+- **Tier weighting** — P1/P3 historically higher R, could warrant larger allocation
+- **RVOL multiplier** — elevated RVOL confirms setup quality, unlock size boost
+- **Regime scaling** — size down in choppy/bearish IWM regimes (breadth score already tracked)
+
+All input data already collected on every trade. Add after clean flat-sizing baseline is established.
+
+---
+
 ## Known Issues / Pending
 
 - `alert_price` and `structure_conf` are NULL for current paper_trades rows (not captured at alert time)
