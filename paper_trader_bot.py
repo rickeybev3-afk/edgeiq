@@ -609,7 +609,7 @@ def _alert_eod_summary(results: list, updated: int, trade_date: date):
         )
     if wins or losses:
         wr = round(100 * len(wins) / max(1, len(wins) + len(losses)), 1)
-        lines.append(f"📊 Today's win rate: <b>{wr}%</b>")
+        lines.append(f"📊 Today's structure win rate: <b>{wr}%</b>")
     tg_send("\n".join(lines))
 
 
@@ -994,6 +994,18 @@ def eod_update():
     log.info("=" * 60)
     log.info("EOD UPDATE — resolving outcomes with full-day bar data")
     log.info("=" * 60)
+
+    # Guard: check DB to see if EOD already ran today (prevents duplicate on restart)
+    try:
+        from backend import supabase as _sb
+        existing = _sb.table("paper_trades").select("actual_outcome").eq(
+            "user_id", USER_ID).eq("trade_date", str(today)).neq(
+            "actual_outcome", "Pending").limit(1).execute()
+        if existing.data:
+            log.info(f"EOD already resolved for {today} — skipping to prevent duplicate.")
+            return
+    except Exception as _ge:
+        log.warning(f"EOD guard check failed (proceeding anyway): {_ge}")
 
     # ── Step 1: Cancel any unfilled Alpaca orders before market closes ────────
     if LIVE_ORDERS_ENABLED:
