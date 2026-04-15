@@ -123,6 +123,34 @@ def _compute_risk_dollars() -> float:
     return RISK_PER_TRADE
 
 
+# ── P1–P4 tier priority ordering ───────────────────────────────────────────────
+# Expected R per tier (from 5-year backtest, April 2026):
+#   P3: Morning TCS 70+   → avg +7.58R  (fires ~2×/month — NEVER miss these)
+#   P1: Intraday TCS 70+  → avg +4.44R
+#   P2: Intraday TCS 50-69 → avg +2.15R
+#   P4: Morning TCS 50-69  → avg +1.90R
+_TIER_EXPECTED_R = {
+    "P3": 7.58,
+    "P1": 4.44,
+    "P2": 2.15,
+    "P4": 1.90,
+}
+
+def _tier_priority_key(r: dict) -> tuple:
+    """Return sort key (priority_int, -tcs) so highest-R tier comes first.
+    P3 (Morning 70+) → P1 (Intraday 70+) → P2 (Intraday 50-69) → P4 (Morning 50-69).
+    Within each tier, higher TCS sorts first.
+    """
+    tcs      = float(r.get("tcs", 0))
+    scan     = r.get("scan_type", "morning")
+    is_morn  = scan == "morning"
+    is_intra = scan == "intraday"
+    if is_morn  and tcs >= 70: return (0, -tcs)   # P3 — highest R
+    if is_intra and tcs >= 70: return (1, -tcs)   # P1
+    if is_intra and tcs >= 50: return (2, -tcs)   # P2
+    return (3, -tcs)                               # P4 — or unclassified
+
+
 # ── Order placement ────────────────────────────────────────────────────────────
 def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
@@ -807,14 +835,15 @@ def morning_scan():
     _alert_morning_summary(qualified, len(results), today, effective_tcs=effective_min_tcs)
 
     if qualified:
-        log.info(f"Sending {len(qualified)} Telegram setup alerts...")
-        # Telegram: one alert per setup
+        # Sort by tier priority: P3 first → P4.  Within tier: higher TCS first.
+        qualified = sorted(qualified, key=_tier_priority_key)
+        log.info(f"Sending {len(qualified)} Telegram setup alerts (P3 first, then P4)...")
         for r in qualified:
             tcs_val = float(r.get("tcs", 0))
             if tcs_val >= 70:
-                r["_priority_tier"] = "🟡 P3 — Morning 70+ (high R)"
+                r["_priority_tier"] = "🟡 P3 — Morning 70+  (avg +7.58R — HIGHEST PRIORITY)"
             elif tcs_val >= 50:
-                r["_priority_tier"] = "🟢 P4 — Morning 50+ (core system)"
+                r["_priority_tier"] = "🟢 P4 — Morning 50+  (avg +1.90R — core system)"
             else:
                 r["_priority_tier"] = "⚪ Watch Only"
             log.info(
@@ -879,6 +908,8 @@ def intraday_scan():
     log.info(f"{len(qualified)} intraday setups at TCS ≥ {effective_min_tcs} (of {len(results)} scanned)")
 
     if qualified:
+        # Sort by tier priority: P1 (Intraday 70+) first → P2 (Intraday 50-69).
+        qualified = sorted(qualified, key=_tier_priority_key)
         tg_send(
             f"🔄 <b>Intraday Scan — {today} (2 PM)</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -887,9 +918,9 @@ def intraday_scan():
         for r in qualified:
             tcs_val = float(r.get("tcs", 0))
             if tcs_val >= 70:
-                tier = "🔴 P1 — ACT ON THIS"
+                tier = "🔴 P1 — Intraday 70+  (avg +4.44R — ACT ON THIS)"
             elif tcs_val >= 50:
-                tier = "🟡 P2 — Core Setup"
+                tier = "🟠 P2 — Intraday 50-69  (avg +2.15R — core setup)"
             else:
                 tier = "⚪ Watch Only"
             r["_priority_tier"] = tier

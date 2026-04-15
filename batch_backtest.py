@@ -565,6 +565,10 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
         return
 
     def _build_record(r, include_gap: bool, include_sim: bool) -> dict:
+        _scan = r.get("scan_type", "morning")
+        # entry_hour: approximate hour of day the setup triggered.
+        # morning IB closes at 10:30 → 10.  intraday scan runs at 1:30 PM → 13.
+        _entry_hour_map = {"morning": 10, "intraday": 13, "eod": 16}
         rec = {
             "user_id":          user_id or "",
             "sim_date":         str(r.get("sim_date", "")),
@@ -579,7 +583,8 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             "follow_thru_pct":  r.get("aft_move_pct"),
             "false_break_up":   bool(r.get("false_break_up", False)),
             "false_break_down": bool(r.get("false_break_down", False)),
-            "scan_type":        r.get("scan_type", "morning"),
+            "scan_type":        _scan,
+            "entry_hour":       _entry_hour_map.get(_scan, 10),
         }
         if include_gap:
             rec["gap_pct"]       = r.get("gap_pct")
