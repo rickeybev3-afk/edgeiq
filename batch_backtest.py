@@ -292,7 +292,12 @@ def reconstruct_daily_watchlist(
         if rvol < rvol_min:
             continue
 
-        qualifying.append({"ticker": sym, "gap_pct": round(gap_pct, 3), "prev_close": round(prev_close, 4)})
+        qualifying.append({
+            "ticker":     sym,
+            "gap_pct":    round(gap_pct, 3),
+            "prev_close": round(prev_close, 4),
+            "rvol":       round(rvol, 2),
+        })
 
     return qualifying
 
@@ -488,6 +493,7 @@ def _analyze_at_cutoff(
             "ib_low":         round(ib_low, 4),
             "ib_high":        round(ib_high, 4),
             "tcs":            round(tcs, 1),
+            "poc_price":      round(poc_price, 4) if poc_price else None,
             "predicted":      predicted,
             "confidence":     confidence,
             "actual_outcome": actual_outcome,
@@ -516,6 +522,7 @@ def _worker_multi_snapshot(
     price_max:   float,
     scan_types:  list,
     gap_pct:     float = 0.0,
+    rvol:        float = 0.0,
 ) -> list:
     """Fetch intraday bars once, run analysis at each requested cutoff.
     Returns a list of result dicts (one per scan_type that yields data).
@@ -541,6 +548,7 @@ def _worker_multi_snapshot(
         )
         if r is not None:
             r["gap_pct"] = round(gap_pct, 3)
+            r["rvol"]    = round(rvol, 2)
             # gap vs IB range — how many IB-widths wide was the gap?
             _ib_h = r.get("ib_high") or 0
             _ib_l = r.get("ib_low") or 0
@@ -586,6 +594,10 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             "scan_type":        _scan,
             "entry_hour":       _entry_hour_map.get(_scan, 10),
         }
+        if r.get("rvol") is not None:
+            rec["rvol"] = r.get("rvol")
+        if r.get("poc_price") is not None:
+            rec["poc_price"] = r.get("poc_price")
         if include_gap:
             rec["gap_pct"]       = r.get("gap_pct")
             rec["gap_vs_ib_pct"] = r.get("gap_vs_ib_pct")
@@ -772,8 +784,9 @@ def main():
         )
         total_qualified += len(watchlist)
 
-        # Build gap lookup: ticker → gap_pct
-        gap_lookup = {item["ticker"]: item["gap_pct"] for item in watchlist}
+        # Build lookups: ticker → gap_pct, ticker → rvol
+        gap_lookup  = {item["ticker"]: item["gap_pct"] for item in watchlist}
+        rvol_lookup = {item["ticker"]: item.get("rvol", 0.0) for item in watchlist}
 
         # Find tickers that need at least one snapshot type
         new_tickers = [
@@ -798,6 +811,7 @@ def main():
                     day, args.feed, args.price_min, args.price_max,
                     _needed_scan_types(item["ticker"]),
                     item["gap_pct"],
+                    rvol_lookup.get(item["ticker"], 0.0),
                 ): item["ticker"]
                 for item in new_tickers
             }
