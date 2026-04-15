@@ -21,7 +21,7 @@ Bot runs 100% autonomously. Logs every setup to Supabase. EOD resolves outcomes.
 Structure predictions, TCS scoring, and brain recalibration all running live.
 **43 paper trades logged. 20 resolved. 10 with sim data.**
 
-### Phase 1.5 — Paper Execution 🟡 BUILT — READY TO ACTIVATE
+### Phase 1.5 — Paper Execution ✅ BUILT — activation pending 2 user actions
 Alpaca bracket orders wired into bot. Flip `LIVE_ORDERS_ENABLED=true` to activate.
 Orders fire on Alpaca paper account (`paper-api.alpaca.markets`) — zero real risk.
 Validates: order fill pipeline, order ID tracking, EOD reconciliation, bracket legs.
@@ -29,10 +29,11 @@ Validates: order fill pipeline, order ID tracking, EOD reconciliation, bracket l
 - Intraday scan (2:00 PM): places bracket order for fresh midday setups
 - EOD (4:20 PM): cancels unfilled orders, reconciles fills to paper_trades
 
-**To activate:**
+**To activate (2 required steps):**
 1. Run SQL below to add tracking columns
 2. Set `LIVE_ORDERS_ENABLED=true` in Replit Secrets
-3. Confirm Alpaca paper account has sufficient buying power
+
+*(Optional: confirm Alpaca paper account has sufficient buying power before step 2)*
 
 **New SQL — run once in Supabase:**
 ```sql
