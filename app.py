@@ -1287,6 +1287,77 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             except Exception as _wb_err:
                 st.error(f"Could not parse CSV: {_wb_err}. Make sure you uploaded an unmodified Webull export.")
 
+    # ── Voice Memo Logger ──────────────────────────────────────────────────────
+    with st.expander("🎙️ Log a Voice Memo / Trade Note", expanded=False):
+        st.markdown(
+            '<div style="font-size:12px; color:#546e7a; margin-bottom:12px;">'
+            'Paste the transcript of your voice memo below. The system will automatically '
+            'extract behavioral tags (FOMO, thesis drift, volume conviction, etc.) '
+            'and log it to your cognitive profile.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        _vm_c1, _vm_c2 = st.columns([2, 1])
+        with _vm_c1:
+            _vm_ticker = st.text_input(
+                "Ticker", placeholder="e.g. SOPA",
+                key="vm_ticker",
+            ).strip().upper()
+            _vm_date = st.date_input(
+                "Trade Date", value=date.today(), key="vm_date",
+            )
+        with _vm_c2:
+            _vm_entry  = st.number_input("Entry Price ($)", min_value=0.0, step=0.01, format="%.4f", key="vm_entry")
+            _vm_exit   = st.number_input("Exit Price ($)",  min_value=0.0, step=0.01, format="%.4f", key="vm_exit")
+            _vm_pnl    = st.number_input("P&L (%)",         step=0.01,                format="%.2f", key="vm_pnl")
+            _vm_wl     = st.selectbox("Outcome", ["Win", "Loss", "Breakeven"], key="vm_wl")
+
+        _vm_transcript = st.text_area(
+            "Paste transcript here",
+            height=180,
+            placeholder="OK it is April 15 at 12:38 PM east. I'm looking at SOPA...",
+            key="vm_transcript",
+            label_visibility="collapsed",
+        )
+        _vm_btn = st.button("🧠 Analyze & Log", type="primary", use_container_width=True, key="vm_log_btn")
+
+        if _vm_btn:
+            if not _vm_ticker:
+                st.error("Enter a ticker.")
+            elif not _vm_transcript.strip():
+                st.error("Paste the transcript first.")
+            elif _vm_entry <= 0 or _vm_exit <= 0:
+                st.error("Enter entry and exit prices.")
+            else:
+                _vm_uid = st.session_state.get("auth_user_id", "")
+                with st.spinner("Extracting behavioral tags…"):
+                    _vm_result = log_voice_memo(
+                        transcript=_vm_transcript.strip(),
+                        ticker=_vm_ticker,
+                        trade_date=str(_vm_date),
+                        entry_price=_vm_entry,
+                        exit_price=_vm_exit,
+                        pnl_pct=_vm_pnl,
+                        win_loss=_vm_wl,
+                        user_id=_vm_uid,
+                    )
+                if _vm_result.get("saved"):
+                    st.success(f"✅ Logged {_vm_ticker} — {len(_vm_result['tags'].get('flags', []))} behavioral tags detected")
+                    _vm_tags = _vm_result["tags"].get("flags", [])
+                    if _vm_tags:
+                        _tag_cols = st.columns(min(len(_vm_tags), 4))
+                        for _i, _tag in enumerate(_vm_tags):
+                            _tag_cols[_i % 4].markdown(
+                                f'<span style="background:#1e3a2f;color:#4caf50;padding:3px 8px;'
+                                f'border-radius:4px;font-size:11px;">{_tag.replace("_"," ")}</span>',
+                                unsafe_allow_html=True,
+                            )
+                    st.caption(_vm_result.get("behavioral_summary", ""))
+                elif "Duplicate" in str(_vm_result.get("error", "")):
+                    st.warning("Already logged — this ticker/date combo is already in your journal.")
+                else:
+                    st.error(f"Error: {_vm_result.get('error')}")
+
     st.markdown("---")
 
     if df.empty:

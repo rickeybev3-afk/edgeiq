@@ -3234,7 +3234,8 @@ def load_journal(user_id: str = "") -> "pd.DataFrame":
         for col in _JOURNAL_COLS:
             if col not in df.columns:
                 df[col] = ""
-        return df[_JOURNAL_COLS]
+        # Return all columns so cognitive/voice memo fields are preserved
+        return df
     except Exception as e:
         print(f"Database read error (journal): {e}")
         return pd.DataFrame(columns=_JOURNAL_COLS)
@@ -3279,6 +3280,186 @@ def ensure_telegram_columns() -> bool:
         except Exception as e:
             print(f"ensure_telegram_columns warning: {e}")
             return False
+
+
+def ensure_cognitive_columns() -> bool:
+    """Add cognitive profiling columns to trade_journal if they don't exist.
+    Safe to call on startup — uses IF NOT EXISTS."""
+    if not supabase:
+        return False
+    cols = [
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS transcript TEXT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS cognitive_tags JSONB",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS entry_quality TEXT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS behavioral_summary TEXT",
+    ]
+    try:
+        for sql in cols:
+            supabase.rpc("exec_sql", {"query": sql}).execute()
+        return True
+    except Exception:
+        return False
+
+
+def extract_cognitive_tags(transcript: str) -> dict:
+    """Rule-based cognitive tag extraction from a voice memo transcript.
+
+    Returns a dict of boolean flags and string labels capturing the
+    trader's behavioral patterns during the trade.
+    """
+    t = transcript.lower()
+
+    fomo_keywords    = ["fomo", "chased", "bad entry", "jumped in", "chasing", "i fomo"]
+    hold_keywords    = ["held", "still in", "conviction", "trust it", "i trust", "full confidence", "good faith"]
+    drift_keywords   = ["now i think", "actually", "changed my", "but actually", "pivot", "different plan"]
+    scale_keywords   = ["50%", "take some", "partial", "scale", "half", "took off"]
+    volume_keywords  = ["volume", "rvol", "relative vol", "volume picking up", "volume not div"]
+    research_keywords= ["didn't research", "no research", "didn't screen", "no screening",
+                        "didn't do any screen", "didn't even", "didn't look"]
+    stress_keywords  = ["holy shit", "shit", "scared", "nervous", "oh shit", "not good",
+                        "this is bad", "uh oh", "panic"]
+    level_keywords   = ["support", "resistance", "zone", "level", "ib high", "ib low", "poc",
+                        "vwap", "key level", "orange line", "trend line"]
+
+    def _hit(keywords): return any(k in t for k in keywords)
+
+    fomo_entry          = _hit(fomo_keywords)
+    held_under_pressure = _hit(hold_keywords) and ("down" in t or "loss" in t or "losing" in t)
+    thesis_drift        = _hit(drift_keywords)
+    scaled_exits        = _hit(scale_keywords)
+    volume_conviction   = _hit(volume_keywords)
+    no_premarket_research = _hit(research_keywords)
+    high_stress         = _hit(stress_keywords)
+    used_key_levels     = _hit(level_keywords)
+
+    if fomo_entry:
+        entry_quality = "fomo"
+    elif "planned" in t or "waited" in t or "i was waiting" in t:
+        entry_quality = "planned"
+    else:
+        entry_quality = "reactive"
+
+    flags = []
+    if fomo_entry:            flags.append("fomo_entry")
+    if held_under_pressure:   flags.append("held_under_pressure")
+    if thesis_drift:          flags.append("thesis_drift")
+    if scaled_exits:          flags.append("scaled_exits")
+    if volume_conviction:     flags.append("volume_conviction")
+    if no_premarket_research: flags.append("no_premarket_research")
+    if high_stress:           flags.append("high_stress_language")
+    if used_key_levels:       flags.append("used_key_levels")
+
+    return {
+        "fomo_entry":             fomo_entry,
+        "held_under_pressure":    held_under_pressure,
+        "thesis_drift":           thesis_drift,
+        "scaled_exits":           scaled_exits,
+        "volume_conviction":      volume_conviction,
+        "no_premarket_research":  no_premarket_research,
+        "high_stress":            high_stress,
+        "used_key_levels":        used_key_levels,
+        "entry_quality":          entry_quality,
+        "flags":                  flags,
+    }
+
+
+def _build_behavioral_summary(tags: dict, ticker: str, win_loss: str) -> str:
+    """Build a plain-English one-paragraph behavioral summary from extracted tags."""
+    lines = []
+
+    eq = tags.get("entry_quality", "reactive")
+    if eq == "fomo":
+        lines.append(f"FOMO entry on {ticker} — entered without waiting for the planned level.")
+    elif eq == "planned":
+        lines.append(f"Planned entry on {ticker} — waited for the setup before committing.")
+    else:
+        lines.append(f"Reactive entry on {ticker} — entered based on real-time read.")
+
+    if tags.get("held_under_pressure"):
+        lines.append("Held through drawdown with conviction — did not panic-exit.")
+    if tags.get("volume_conviction"):
+        lines.append("Volume was the primary hold thesis — not capitulated when price dipped.")
+    if tags.get("thesis_drift"):
+        lines.append("Thesis shifted mid-trade — original plan evolved as new data came in.")
+    if tags.get("scaled_exits"):
+        lines.append("Scaled out of the position — did not exit all at once.")
+    if tags.get("no_premarket_research"):
+        lines.append("No pre-market research done — trade was identified and executed same session.")
+    if tags.get("high_stress"):
+        lines.append("High emotional language detected — stress or excitement peaked during the trade.")
+    if tags.get("used_key_levels"):
+        lines.append("Referenced specific price levels and zones throughout the trade.")
+
+    outcome = "Win" if win_loss and win_loss.lower() in ("win", "w", "profit") else win_loss or "Unknown"
+    lines.append(f"Outcome: {outcome}.")
+
+    return " ".join(lines)
+
+
+def log_voice_memo(
+    transcript:   str,
+    ticker:       str,
+    trade_date:   str,
+    entry_price:  float,
+    exit_price:   float,
+    pnl_pct:      float,
+    win_loss:     str  = "Win",
+    user_id:      str  = "",
+    notes_extra:  str  = "",
+) -> dict:
+    """Full pipeline: extract cognitive tags from transcript → save to trade_journal.
+
+    Returns: {saved: bool, tags: dict, behavioral_summary: str, error: str|None}
+    """
+    if not supabase:
+        return {"saved": False, "tags": {}, "behavioral_summary": "", "error": "No Supabase"}
+
+    try:
+        ensure_cognitive_columns()
+
+        tags     = extract_cognitive_tags(transcript)
+        summary  = _build_behavioral_summary(tags, ticker, win_loss)
+
+        import json as _json
+        from datetime import datetime as _dt
+
+        notes = f"[Voice Memo] {notes_extra}" if notes_extra else "[Voice Memo]"
+
+        row = {
+            "user_id":            user_id,
+            "ticker":             ticker.upper(),
+            "timestamp":          f"{trade_date}T00:00:00",
+            "source":             "voice_memo",
+            "entry_price":        round(float(entry_price), 4),
+            "exit_price":         round(float(exit_price), 4),
+            "win_loss":           win_loss,
+            "pnl_pct":            round(float(pnl_pct), 4),
+            "notes":              notes,
+            "transcript":         transcript,
+            "cognitive_tags":     _json.dumps(tags),
+            "entry_quality":      tags.get("entry_quality", "reactive"),
+            "behavioral_summary": summary,
+            "grade":              "A" if win_loss == "Win" else "F",
+            "grade_reason":       f"Voice memo — P&L: {pnl_pct:+.2f}%",
+            "dedup_key":          f"voice_{ticker.upper()}_{trade_date}",
+        }
+
+        existing = (
+            supabase.table("trade_journal")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("dedup_key", row["dedup_key"])
+            .execute()
+        )
+        if existing.data:
+            return {"saved": False, "tags": tags, "behavioral_summary": summary,
+                    "error": "Duplicate — already logged"}
+
+        supabase.table("trade_journal").insert(row).execute()
+        return {"saved": True, "tags": tags, "behavioral_summary": summary, "error": None}
+
+    except Exception as e:
+        return {"saved": False, "tags": {}, "behavioral_summary": "", "error": str(e)}
 
 
 def save_telegram_trade(ticker: str, win_loss: str, entry_price: float,
