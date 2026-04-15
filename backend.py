@@ -291,21 +291,13 @@ def fetch_bars(api_key, secret_key, ticker, trade_date, feed="sip"):
     mc = EASTERN.localize(datetime(trade_date.year, trade_date.month, trade_date.day, 16, 0))
     # When fetching today's intraday data cap end to now so the API doesn't
     # get a future end time. If we're before market open, nothing to fetch yet.
-    # For SIP feed: Alpaca free tier requires end to be >15 min old — cap to
-    # now-16min so today's scans work without a paid subscription.
-    # NOTE: the SIP recency restriction applies even AFTER market close, so
-    # we always apply the cap for today's date regardless of market hours.
+    # Paid SIP subscription — real-time data, no delay cap needed.
     now_et = datetime.now(EASTERN)
     if trade_date >= now_et.date():
         if now_et <= mo:
             return pd.DataFrame()   # pre-market — no bars yet
-        if feed == "sip":
-            sip_cap = now_et - timedelta(minutes=16)   # free-tier: must be >15 min old
-            mc = min(mc, sip_cap)
-            if mc <= mo:
-                return pd.DataFrame()             # not enough SIP data yet
-        elif now_et < mc:
-            mc = now_et             # non-SIP mid-session — cap end to current time
+        if now_et < mc:
+            mc = now_et             # mid-session — cap end to current time
     req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute,
                            start=mo, end=mc, feed=feed)
     bars = client.get_stock_bars(req)

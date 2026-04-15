@@ -214,7 +214,7 @@ Historical backfill (15,545 records): **90.3% sim win rate, +0.804R expectancy.*
 | 4:25 PM | Auto-verify watchlist predictions | Data only |
 | 4:30 PM | Nightly brain recalibration | Weights update |
 
-**SIP free-tier rule:** Alpaca free SIP blocks queries for data <15 min old. `fetch_bars` always caps to `now - 16min` for today's data.
+**SIP:** Paid real-time subscription active. `fetch_bars` uses live data with no delay cap. Historical bars always available regardless of tier.
 
 ---
 
