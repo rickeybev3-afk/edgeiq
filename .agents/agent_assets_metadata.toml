@@ -78,3 +78,9 @@ id = "zbGhNVy5BB3ucTrE5ILbu"
 uri = "file://edgeiq_context_for_gemini.md"
 type = "text"
 title = "EdgeIQ — Full Context for Gemini"
+
+[[outputs]]
+id = "43ZVy5qbMWmFrwrbS53hB"
+uri = "file://.local/ip_documentation.md"
+type = "text"
+title = "EdgeIQ IP Documentation — Confidential"
