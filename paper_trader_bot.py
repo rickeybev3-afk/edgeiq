@@ -672,7 +672,7 @@ def _market_is_open(now_et: datetime) -> bool:
 
 # ── Scheduled jobs ────────────────────────────────────────────────────────────
 def watchlist_refresh():
-    """9:15 AM ET — pull today's movers from Finviz, save to Supabase."""
+    """9:35 AM ET — pull today's movers from Finviz, save to Supabase."""
     global TICKERS
     log.info("=" * 60)
     log.info("WATCHLIST REFRESH — fetching from Finviz")
@@ -1463,7 +1463,7 @@ def main():
     log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
     log.info(f"User: {USER_ID}")
     log.info(
-        "Schedule: 9:15 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
+        "Schedule: 9:35 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
         "11:45 AM ET → midday watchlist refresh | 2:00 PM ET → intraday scan | "
         "4:20 PM ET → EOD update | 4:25 PM ET → auto-verify | 4:30 PM ET → recalibration"
     )
@@ -1562,11 +1562,11 @@ def main():
             time.sleep(60)
             continue
 
-        # 9:15 AM — Finviz watchlist refresh
+        # 9:35 AM — Finviz watchlist refresh (post-open so volume filters work)
         if (
             not _watchlist_done
             and now_et.hour == 9
-            and now_et.minute >= 15
+            and now_et.minute >= 35
         ):
             watchlist_refresh()
             _watchlist_done = True
