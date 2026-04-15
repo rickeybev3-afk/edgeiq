@@ -3891,6 +3891,191 @@ def fetch_alpaca_fills(api_key: str, secret_key: str,
         return [], str(exc)
 
 
+def place_alpaca_bracket_order(
+    ticker: str,
+    ib_high: float,
+    ib_low: float,
+    direction: str,
+    risk_dollars: float = 500.0,
+    target_r: float = 2.0,
+    is_paper: bool = True,
+    api_key: str = "",
+    secret_key: str = "",
+) -> dict:
+    """Place an IB-breakout bracket order on Alpaca.
+
+    Bullish Break → buy stop at IB high | stop-loss at IB low | take-profit at IB high + 2×range
+    Bearish Break → sell stop at IB low | stop-loss at IB high | take-profit at IB low − 2×range
+
+    Risk is fixed at risk_dollars regardless of price — qty is computed so that
+    one full stop-out = exactly risk_dollars lost.
+
+    Returns dict with keys: ok (bool), order_id, qty, entry, stop, target, error.
+    """
+    ak = api_key  or os.environ.get("ALPACA_API_KEY", "")
+    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    if not ak or not sk:
+        return {"ok": False, "error": "Missing Alpaca credentials"}
+
+    ib_range = round(ib_high - ib_low, 4)
+    if ib_range <= 0:
+        return {"ok": False, "error": f"Invalid IB range ({ib_range})"}
+
+    if direction == "Bullish Break":
+        entry  = round(ib_high, 4)
+        stop   = round(ib_low,  4)
+        target = round(entry + target_r * ib_range, 4)
+        side   = "buy"
+    elif direction == "Bearish Break":
+        entry  = round(ib_low,  4)
+        stop   = round(ib_high, 4)
+        target = round(entry - target_r * ib_range, 4)
+        side   = "sell"
+    else:
+        return {"ok": False, "error": f"Unsupported direction: {direction}"}
+
+    qty = max(1, int(risk_dollars / ib_range))
+
+    base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ak,
+        "APCA-API-SECRET-KEY": sk,
+        "Content-Type":        "application/json",
+    }
+    payload = {
+        "symbol":        ticker.upper(),
+        "qty":           str(qty),
+        "side":          side,
+        "type":          "stop",
+        "time_in_force": "day",
+        "stop_price":    str(entry),
+        "order_class":   "bracket",
+        "stop_loss":     {"stop_price": str(stop)},
+        "take_profit":   {"limit_price": str(target)},
+    }
+
+    try:
+        resp = requests.post(
+            f"{base}/v2/orders",
+            headers=headers,
+            json=payload,
+            timeout=10,
+        )
+        data = resp.json() if resp.content else {}
+        if resp.status_code in (200, 201):
+            return {
+                "ok":       True,
+                "order_id": data.get("id", ""),
+                "qty":      qty,
+                "entry":    entry,
+                "stop":     stop,
+                "target":   target,
+                "side":     side,
+                "raw":      data,
+            }
+        msg = data.get("message") or data.get("error") or resp.text[:200]
+        return {"ok": False, "error": f"HTTP {resp.status_code}: {msg}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def cancel_alpaca_day_orders(
+    is_paper: bool = True,
+    api_key: str = "",
+    secret_key: str = "",
+) -> dict:
+    """Cancel all open (unfilled) orders for today on Alpaca.
+
+    Returns dict: cancelled (int), errors (int).
+    """
+    ak = api_key  or os.environ.get("ALPACA_API_KEY", "")
+    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    if not ak or not sk:
+        return {"cancelled": 0, "errors": 0, "error": "Missing Alpaca credentials"}
+
+    base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
+    headers = {"APCA-API-KEY-ID": ak, "APCA-API-SECRET-KEY": sk}
+
+    try:
+        resp = requests.delete(f"{base}/v2/orders", headers=headers, timeout=10)
+        if resp.status_code == 207:
+            results   = resp.json() if resp.content else []
+            cancelled = sum(1 for r in results if r.get("status") == 200)
+            errors    = sum(1 for r in results if r.get("status") != 200)
+            return {"cancelled": cancelled, "errors": errors}
+        if resp.status_code == 200:
+            return {"cancelled": 0, "errors": 0}
+        return {"cancelled": 0, "errors": 1, "error": resp.text[:200]}
+    except Exception as exc:
+        return {"cancelled": 0, "errors": 1, "error": str(exc)}
+
+
+def get_alpaca_open_positions(
+    is_paper: bool = True,
+    api_key: str = "",
+    secret_key: str = "",
+) -> list:
+    """Return all open positions from Alpaca as a list of dicts."""
+    ak = api_key  or os.environ.get("ALPACA_API_KEY", "")
+    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    if not ak or not sk:
+        return []
+    base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
+    headers = {"APCA-API-KEY-ID": ak, "APCA-API-SECRET-KEY": sk}
+    try:
+        resp = requests.get(f"{base}/v2/positions", headers=headers, timeout=10)
+        return resp.json() if resp.status_code == 200 and resp.content else []
+    except Exception:
+        return []
+
+
+def reconcile_alpaca_fills(
+    trade_date: str,
+    user_id: str,
+    is_paper: bool = True,
+    api_key: str = "",
+    secret_key: str = "",
+) -> dict:
+    """Fetch today's filled orders from Alpaca and patch alpaca_fill_price
+    on matching paper_trades rows (matched by ticker + trade_date + alpaca_order_id).
+
+    Returns dict: matched (int), unmatched (int), errors (int).
+    """
+    if not supabase:
+        return {"matched": 0, "unmatched": 0, "errors": 0}
+
+    fills, err = fetch_alpaca_fills(
+        api_key=api_key or os.environ.get("ALPACA_API_KEY", ""),
+        secret_key=secret_key or os.environ.get("ALPACA_SECRET_KEY", ""),
+        is_paper=is_paper,
+        trade_date=trade_date,
+    )
+    if err:
+        return {"matched": 0, "unmatched": 0, "errors": 1, "error": err}
+
+    matched = unmatched = errors = 0
+    for fill in fills:
+        sym        = (fill.get("symbol") or "").upper()
+        order_id   = fill.get("id", "")
+        fill_price = float(fill.get("filled_avg_price") or 0)
+        if not sym or fill_price <= 0:
+            continue
+        try:
+            (
+                supabase.table("paper_trades")
+                .update({"alpaca_fill_price": fill_price})
+                .eq("user_id", user_id)
+                .eq("trade_date", trade_date)
+                .eq("ticker", sym)
+                .execute()
+            )
+            matched += 1
+        except Exception:
+            errors += 1
+
+    return {"matched": matched, "unmatched": unmatched, "errors": errors}
+
+
 def match_fills_to_roundtrips(fills: list) -> list:
     """Match Alpaca buy+sell fills into round-trip trades.
 

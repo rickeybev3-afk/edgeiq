@@ -55,6 +55,14 @@ FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
 PRICE_MIN         = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
 PRICE_MAX         = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
 
+# ── Alpaca live execution config ───────────────────────────────────────────────
+# Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
+# IS_PAPER_ALPACA=true  → paper-api.alpaca.markets  (safe, simulated fills)
+# IS_PAPER_ALPACA=false → api.alpaca.markets        (real money — flip when ready)
+LIVE_ORDERS_ENABLED = os.getenv("LIVE_ORDERS_ENABLED", "false").lower() == "true"
+IS_PAPER_ALPACA     = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
+RISK_PER_TRADE      = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
+
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -83,6 +91,10 @@ try:
         get_breadth_regime,
         ensure_cognitive_delta_table,
         verify_cognitive_delta,
+        place_alpaca_bracket_order,
+        cancel_alpaca_day_orders,
+        reconcile_alpaca_fills,
+        supabase as _supabase_client,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -90,6 +102,71 @@ except ImportError as e:
 
 
 # ── Telegram helpers ──────────────────────────────────────────────────────────
+def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
+    """Place a bracket order on Alpaca for a qualified setup and log the order ID.
+
+    Only runs when LIVE_ORDERS_ENABLED=true.  Skips non-directional predictions.
+    Patches the paper_trades row with alpaca_order_id, alpaca_qty, order_placed_at.
+    """
+    if not LIVE_ORDERS_ENABLED:
+        return
+
+    direction = r.get("predicted", "")
+    if direction not in ("Bullish Break", "Bearish Break"):
+        log.info(f"  [{r.get('ticker')}] skip order — prediction is '{direction}' (not directional)")
+        return
+
+    ib_high = float(r.get("ib_high") or 0)
+    ib_low  = float(r.get("ib_low")  or 0)
+    if ib_high <= 0 or ib_low <= 0 or ib_high <= ib_low:
+        log.warning(f"  [{r.get('ticker')}] skip order — invalid IB ({ib_low}–{ib_high})")
+        return
+
+    ticker = r.get("ticker", "").upper()
+    result = place_alpaca_bracket_order(
+        ticker       = ticker,
+        ib_high      = ib_high,
+        ib_low       = ib_low,
+        direction    = direction,
+        risk_dollars = RISK_PER_TRADE,
+        target_r     = 2.0,
+        is_paper     = IS_PAPER_ALPACA,
+        api_key      = ALPACA_API_KEY,
+        secret_key   = ALPACA_SECRET_KEY,
+    )
+
+    acct_type = "PAPER" if IS_PAPER_ALPACA else "LIVE"
+    if result.get("ok"):
+        order_id = result["order_id"]
+        qty      = result["qty"]
+        log.info(
+            f"  ✅ [{ticker}] {acct_type} bracket order placed | "
+            f"qty={qty} | entry=${result['entry']} | stop=${result['stop']} | "
+            f"target=${result['target']} | id={order_id}"
+        )
+        tg_send(
+            f"📋 <b>{acct_type} Order Placed — {ticker}</b>\n"
+            f"{'🟡' if direction == 'Bullish Break' else '🔴'} {direction}\n"
+            f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
+            f"Target: ${result['target']}\n"
+            f"Qty: {qty} shares | Risk: ${RISK_PER_TRADE:.0f} (1R)\n"
+            f"<code>{order_id[:8]}…</code>"
+        )
+        # Patch Supabase paper_trades row with order metadata
+        if _supabase_client:
+            try:
+                _supabase_client.table("paper_trades").update({
+                    "alpaca_order_id":  order_id,
+                    "alpaca_qty":       qty,
+                    "order_placed_at":  datetime.utcnow().isoformat(),
+                }).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date", ""))).eq("ticker", ticker).execute()
+            except Exception as _patch_err:
+                log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")
+    else:
+        log.warning(f"  ❌ [{ticker}] Order failed: {result.get('error')}")
+        tg_send(f"⚠️ <b>{acct_type} Order Failed — {ticker}</b>\n{result.get('error','unknown error')}")
+
+
 def tg_send(message: str) -> bool:
     """Send a Telegram message. Returns True on success, False on failure.
     Silently skips if credentials are not configured.
@@ -721,9 +798,16 @@ def morning_scan():
                 f"IB {r.get('ib_low', 0):.2f}–{r.get('ib_high', 0):.2f}"
             )
             _alert_setup(r, today)
+            _place_order_for_setup(r, "morning")
             time.sleep(0.3)  # Telegram rate limit buffer
     else:
         log.info("No setups met TCS threshold today.")
+
+    if LIVE_ORDERS_ENABLED:
+        acct = "PAPER" if IS_PAPER_ALPACA else "LIVE"
+        log.info(f"Order placement complete ({acct} account, ${RISK_PER_TRADE:.0f}/trade risk)")
+    else:
+        log.info("Order placement disabled (LIVE_ORDERS_ENABLED=false) — set to true to activate")
 
     # ── Beta subscriber broadcast (clean — no TCS/brain language) ─────────
     _broadcast_morning_to_subscribers(results, today)
@@ -785,6 +869,7 @@ def intraday_scan():
                 tier = "⚪ Watch Only"
             r["_priority_tier"] = tier
             _alert_setup(r, today)
+            _place_order_for_setup(r, "intraday")
             time.sleep(0.3)
     else:
         log.info("No intraday setups above threshold.")
@@ -796,6 +881,20 @@ def eod_update():
     log.info("=" * 60)
     log.info("EOD UPDATE — resolving outcomes with full-day bar data")
     log.info("=" * 60)
+
+    # ── Step 1: Cancel any unfilled Alpaca orders before market closes ────────
+    if LIVE_ORDERS_ENABLED:
+        acct = "PAPER" if IS_PAPER_ALPACA else "LIVE"
+        log.info(f"Cancelling unfilled {acct} orders for {today}...")
+        cancel_result = cancel_alpaca_day_orders(
+            is_paper   = IS_PAPER_ALPACA,
+            api_key    = ALPACA_API_KEY,
+            secret_key = ALPACA_SECRET_KEY,
+        )
+        log.info(
+            f"  Orders cancelled: {cancel_result.get('cancelled', 0)} | "
+            f"errors: {cancel_result.get('errors', 0)}"
+        )
 
     results = _run_scan(today, cutoff_h=15, cutoff_m=55)
     if not results:
@@ -815,6 +914,22 @@ def eod_update():
             f"  {r['ticker']:6s} | {r.get('win_loss', '?'):4s} | "
             f"actual: {r.get('actual_outcome', '—'):18s} | "
             f"FT {r.get('aft_move_pct', 0):+.1f}%"
+        )
+
+    # ── Step 2: Reconcile Alpaca fills → patch paper_trades with fill prices ──
+    if LIVE_ORDERS_ENABLED:
+        log.info("Reconciling Alpaca fills with paper_trades...")
+        rec = reconcile_alpaca_fills(
+            trade_date = str(today),
+            user_id    = USER_ID,
+            is_paper   = IS_PAPER_ALPACA,
+            api_key    = ALPACA_API_KEY,
+            secret_key = ALPACA_SECRET_KEY,
+        )
+        log.info(
+            f"  Fills matched: {rec.get('matched', 0)} | "
+            f"unmatched: {rec.get('unmatched', 0)} | "
+            f"errors: {rec.get('errors', 0)}"
         )
 
     # Telegram EOD summary
