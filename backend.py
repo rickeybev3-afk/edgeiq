@@ -3971,6 +3971,33 @@ def place_alpaca_bracket_order(
         return {"ok": False, "error": str(exc)}
 
 
+def get_alpaca_account_equity(
+    is_paper: bool = True,
+    api_key: str = "",
+    secret_key: str = "",
+) -> float | None:
+    """Return total portfolio equity from Alpaca account.
+
+    Returns float (dollars) or None if the request fails.
+    Used by the bot to compute dynamic 1% risk per trade.
+    """
+    ak = api_key   or os.environ.get("ALPACA_API_KEY", "")
+    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    if not ak or not sk:
+        return None
+    base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
+    headers = {"APCA-API-KEY-ID": ak, "APCA-API-SECRET-KEY": sk}
+    try:
+        resp = requests.get(f"{base}/v2/account", headers=headers, timeout=10)
+        if resp.status_code == 200 and resp.content:
+            data   = resp.json()
+            equity = data.get("equity") or data.get("portfolio_value")
+            return float(equity) if equity else None
+        return None
+    except Exception:
+        return None
+
+
 def cancel_alpaca_day_orders(
     is_paper: bool = True,
     api_key: str = "",

@@ -166,7 +166,7 @@ Historical backfill (15,545 records): **90.3% sim win rate, +0.804R expectancy.*
 |-----|---------|---------|
 | `LIVE_ORDERS_ENABLED` | `true` ✅ | Master switch — set `true` to place real orders |
 | `IS_PAPER_ALPACA` | `true` | `true` = paper endpoint, `false` = live endpoint |
-| `RISK_PER_TRADE` | `500` | Dollars risked per trade (1R). Qty auto-calculated. |
+| `RISK_PER_TRADE` | `500` | Fallback risk if account fetch fails. Live sizing = 1% of equity, capped $250–$2,000. |
 
 ---
 

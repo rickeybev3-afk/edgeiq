@@ -94,6 +94,7 @@ try:
         place_alpaca_bracket_order,
         cancel_alpaca_day_orders,
         reconcile_alpaca_fills,
+        get_alpaca_account_equity,
         supabase as _supabase_client,
     )
 except ImportError as e:
@@ -101,11 +102,33 @@ except ImportError as e:
     raise
 
 
-# ── Telegram helpers ──────────────────────────────────────────────────────────
+# ── Dynamic position sizing ────────────────────────────────────────────────────
+def _compute_risk_dollars() -> float:
+    """Return 1% of current Alpaca account equity, capped at $2,000.
+
+    Falls back to RISK_PER_TRADE env var if account fetch fails.
+    Floor is $250 so tiny accounts still place a meaningful order.
+    """
+    equity = get_alpaca_account_equity(
+        is_paper   = IS_PAPER_ALPACA,
+        api_key    = ALPACA_API_KEY,
+        secret_key = ALPACA_SECRET_KEY,
+    )
+    if equity and equity > 0:
+        dynamic = equity * 0.01          # 1% of account
+        risk    = max(250.0, min(dynamic, 2000.0))   # floor $250, cap $2,000
+        log.info(f"  Account equity: ${equity:,.0f} → 1% = ${dynamic:,.0f} → risk/trade: ${risk:,.0f}")
+        return risk
+    log.warning(f"  Could not fetch account equity — using fallback ${RISK_PER_TRADE:.0f}/trade")
+    return RISK_PER_TRADE
+
+
+# ── Order placement ────────────────────────────────────────────────────────────
 def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
 
     Only runs when LIVE_ORDERS_ENABLED=true.  Skips non-directional predictions.
+    Sizes at 1% of current account equity (capped $250–$2,000).
     Patches the paper_trades row with alpaca_order_id, alpaca_qty, order_placed_at.
     """
     if not LIVE_ORDERS_ENABLED:
@@ -122,13 +145,15 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         log.warning(f"  [{r.get('ticker')}] skip order — invalid IB ({ib_low}–{ib_high})")
         return
 
-    ticker = r.get("ticker", "").upper()
+    ticker       = r.get("ticker", "").upper()
+    risk_dollars = _compute_risk_dollars()
+
     result = place_alpaca_bracket_order(
         ticker       = ticker,
         ib_high      = ib_high,
         ib_low       = ib_low,
         direction    = direction,
-        risk_dollars = RISK_PER_TRADE,
+        risk_dollars = risk_dollars,
         target_r     = 2.0,
         is_paper     = IS_PAPER_ALPACA,
         api_key      = ALPACA_API_KEY,
@@ -149,7 +174,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"{'🟡' if direction == 'Bullish Break' else '🔴'} {direction}\n"
             f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
             f"Target: ${result['target']}\n"
-            f"Qty: {qty} shares | Risk: ${RISK_PER_TRADE:.0f} (1R)\n"
+            f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} (1% of account = 1R)\n"
             f"<code>{order_id[:8]}…</code>"
         )
         # Patch Supabase paper_trades row with order metadata
@@ -805,7 +830,7 @@ def morning_scan():
 
     if LIVE_ORDERS_ENABLED:
         acct = "PAPER" if IS_PAPER_ALPACA else "LIVE"
-        log.info(f"Order placement complete ({acct} account, ${RISK_PER_TRADE:.0f}/trade risk)")
+        log.info(f"Order placement complete ({acct} account, 1% account equity / trade, cap $2,000)")
     else:
         log.info("Order placement disabled (LIVE_ORDERS_ENABLED=false) — set to true to activate")
 
