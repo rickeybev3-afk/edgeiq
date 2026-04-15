@@ -527,6 +527,29 @@ def _analyze_at_cutoff(
                 _w  = _aft_r.loc[_fi : _fi + 6]
                 false_break_down = bool((_w["close"] > ib_low).any())
 
+        # ── Time of day fields (all EST from Alpaca index) ────────────────────
+        ib_open_time_est  = pm_df.index[0].strftime("%H:%M")   # 09:30 typically
+        ib_close_time_est = pm_df.index[-1].strftime("%H:%M")  # last IB bar
+
+        breakout_time_est = None
+        if not morning_only and not aft_df.empty:
+            _aft_ts = aft_df.reset_index()
+            _ts_col = _aft_ts.columns[0]   # 'timestamp' or 'index'
+            if broke_up:
+                _bo = _aft_ts[_aft_ts["high"] > ib_high]
+                if not _bo.empty:
+                    breakout_time_est = _bo[_ts_col].iloc[0].strftime("%H:%M")
+            elif broke_down:
+                _bo = _aft_ts[_aft_ts["low"] < ib_low]
+                if not _bo.empty:
+                    breakout_time_est = _bo[_ts_col].iloc[0].strftime("%H:%M")
+
+        exit_time_est = (
+            aft_df.index[-1].strftime("%H:%M")
+            if not morning_only and not aft_df.empty else None
+        )
+        # ─────────────────────────────────────────────────────────────────────
+
         return {
             "ticker":         sym,
             "open_price":     round(open_px, 4),
@@ -545,14 +568,19 @@ def _analyze_at_cutoff(
             "false_break_down": false_break_down,
             "scan_type":      scan_type,
             # ── Pattern discovery fields ──────────────────────────────────
-            "ib_range_pct":          ib_range_pct,
-            "volume_ib":             volume_ib,
-            "vwap_at_ib":            vwap_at_ib,
-            "open_vs_poc_pct":       open_vs_poc_pct,
+            "ib_range_pct":           ib_range_pct,
+            "volume_ib":              volume_ib,
+            "vwap_at_ib":             vwap_at_ib,
+            "open_vs_poc_pct":        open_vs_poc_pct,
             "ib_midpoint_vs_poc_pct": ib_midpoint_vs_poc_pct,
-            "day_of_week":           day_of_week,
-            "aft_volume":            aft_volume,
-            "close_vs_vwap_pct":     close_vs_vwap_pct,
+            "day_of_week":            day_of_week,
+            "aft_volume":             aft_volume,
+            "close_vs_vwap_pct":      close_vs_vwap_pct,
+            # ── Time of day fields (EST) ──────────────────────────────────
+            "ib_open_time_est":       ib_open_time_est,
+            "ib_close_time_est":      ib_close_time_est,
+            "breakout_time_est":      breakout_time_est,
+            "exit_time_est":          exit_time_est,
         }
     except Exception:
         return None
@@ -650,6 +678,8 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             "ib_range_pct", "volume_ib", "vwap_at_ib",
             "open_vs_poc_pct", "ib_midpoint_vs_poc_pct",
             "day_of_week", "aft_volume", "close_vs_vwap_pct",
+            "ib_open_time_est", "ib_close_time_est",
+            "breakout_time_est", "exit_time_est",
         ]
         for _f in _optional:
             if r.get(_f) is not None:
