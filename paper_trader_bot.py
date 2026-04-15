@@ -1465,7 +1465,8 @@ def main():
     log.info(
         "Schedule: 9:35 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
         "11:45 AM ET → midday watchlist refresh | 2:00 PM ET → intraday scan | "
-        "4:20 PM ET → EOD update | 4:25 PM ET → auto-verify | 4:30 PM ET → recalibration"
+        "4:20 PM ET → EOD update | 4:25 PM ET → auto-verify | 4:30 PM ET → recalibration | "
+        "11:59 PM ET → PDF documentation export"
     )
 
     _table_ok = ensure_paper_trades_table()
@@ -1509,6 +1510,7 @@ def main():
     _eod_done              = False
     _verify_done           = False
     _recalibration_done    = False
+    _pdf_export_done       = False
 
     while True:
         now_et = datetime.now(EASTERN)
@@ -1523,6 +1525,7 @@ def main():
             _eod_done              = False
             _verify_done           = False
             _recalibration_done    = False
+            _pdf_export_done       = False
 
         if not _market_is_open(now_et):
             # EOD outcome update — 4:20 PM ET (SIP free tier needs data >16 min old;
@@ -1559,6 +1562,23 @@ def main():
                     update_daily_build_notes()
                 except Exception as _bne:
                     log.warning(f"Build notes update failed (non-fatal): {_bne}")
+
+            # 11:59 PM — regenerate PDF exports from markdown docs (every day)
+            if (
+                not _pdf_export_done
+                and now_et.hour == 23
+                and now_et.minute >= 59
+            ):
+                log.info("11:59 PM — Regenerating PDF documentation exports...")
+                try:
+                    from generate_pdfs import generate_all_pdfs
+                    results = generate_all_pdfs()
+                    for r in results:
+                        log.info(f"[PDF] {r}")
+                except Exception as _pdfe:
+                    log.warning(f"PDF export failed (non-fatal): {_pdfe}")
+                _pdf_export_done = True
+
             time.sleep(60)
             continue
 
