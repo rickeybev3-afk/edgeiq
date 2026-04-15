@@ -116,7 +116,7 @@ def _compute_risk_dollars() -> float:
     )
     if equity and equity > 0:
         dynamic = equity * 0.01          # 1% of account
-        risk    = max(250.0, min(dynamic, 2000.0))   # floor $250, cap $2,000
+        risk    = min(dynamic, 2000.0)   # cap $2,000 — no floor, true 1% always
         log.info(f"  Account equity: ${equity:,.0f} → 1% = ${dynamic:,.0f} → risk/trade: ${risk:,.0f}")
         return risk
     log.warning(f"  Could not fetch account equity — using fallback ${RISK_PER_TRADE:.0f}/trade")
