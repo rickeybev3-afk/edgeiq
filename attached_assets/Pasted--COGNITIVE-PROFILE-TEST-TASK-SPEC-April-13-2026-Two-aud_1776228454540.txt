@@ -1,0 +1,86 @@
+🧪 COGNITIVE PROFILE TEST — TASK SPEC (April 13, 2026)
+Two audiences: employers (standalone profile tool) + EdgeIQ (user metadata layer for collective brain). Together but architecturally separate — same underlying test, different output destinations.
+
+Design principle: Task-based, not questionnaire-based. Questionnaires measure self-perception. Tasks measure actual cognitive behavior. These are not the same thing.
+
+Task 1 — Noisy Pattern Detection (measures: latent inhibition + pattern recognition speed)
+
+Show a price chart with intentional noise overlaid (random wicks, fake volume spikes, irrelevant horizontal lines)
+Embed one real IB structure pattern — ask them to identify it
+Measure: time to correct identification + confidence level
+Low LI traders find it faster because they process more raw signal before filtering
+High noise tolerance = high LI = suited for tape reading and signal-dense environments
+Task 2 — Multi-Constraint Problem with Open Loops (measures: systematic completeness)
+
+Give a trading scenario with 6 variables: entry, stop, target, regime, TCS, size
+Ask them to construct a trade plan — let them stop whenever they feel done
+Measure: how many variables they address without prompting, whether they close every branch
+Systematic completeness = addresses all 6 + asks about edge cases
+Low systematic completeness = addresses 3–4 + moves on
+Task 3 — Think-Aloud Problem Solving (measures: metacognition)
+
+Give them a setup they've never seen (unfamiliar structure + unfamiliar ticker)
+Ask them to talk through their analysis while doing it
+Measure: do they observe their own reasoning? Do they correct course mid-analysis?
+High metacognition = "I'm making an assumption here that X, let me check if that's right"
+Low metacognition = produces output without examining the reasoning process
+Task 4 — Dual-Task Bandwidth (measures: parallel domain processing)
+
+Two simultaneous tasks: categorize a structure AND calculate position size given specific inputs
+Tasks are deliberately designed to inform each other (structure type affects sizing)
+Measure: does performance on one task improve or degrade the other?
+Parallel processors = tasks feed each other. Sequential processors = one degrades the other.
+Task 5 — Interest Threshold Detection (measures: hyperfocus trigger)
+
+Present three problem types: rote (repetitive calculation), moderately interesting (pattern optimization), genuinely novel (new framework to discover)
+Measure: time-on-task, depth of engagement, whether they exceed the stated time limit on novel problems
+ADHD hyperfocus = significantly exceeds time on novel problems, finishes rote tasks quickly or abandons them
+Task 6 — Unstructured Signal Filtering (measures: latent inhibition — secondary test)
+
+Give 10 pieces of "market information" — some relevant, some noise (earnings from irrelevant sector, unrelated macro news, social sentiment from low-volume stock)
+Ask them to rank by relevance to a specific IB structure trade
+Measure: signal-to-noise separation accuracy + time
+Low LI traders include more signals initially but self-correct faster. High LI traders filter immediately but may miss edge-case relevant signals.
+Output profile — 6 dimensions:
+
+Dimension	Low	High	EdgeIQ implication
+Latent Inhibition	Filters heavily	Processes raw signal	Low LI → higher tape reading weight
+Pattern Recognition Speed	Systematic	Gestalt-first	Fast → higher TCS on first-read setups
+Systematic Completeness	Partial closure	Full closure	High → better at multi-variable setups
+Metacognition	Output-only	Self-observing	High → better calibration over time
+Parallel Processing	Sequential	Simultaneous	Parallel → more regime variables integrated
+Hyperfocus Threshold	Broad activation	Narrow/novel only	Narrow → bot should handle rote tasks
+Three data destinations:
+
+1. Employer profiling (standalone): "This candidate has high pattern recognition speed, low latent inhibition, and systematic completeness — suited for roles requiring signal-dense analysis and complete framework building."
+
+2. EdgeIQ collective brain metadata: Score stored per user. Collective brain uses it to weight contributions. "Traders with LI score < 40 + pattern speed > 85th percentile show 8% higher accuracy on Trend Day Up — weight their collective signal accordingly."
+
+3. EdgeIQ personal brain personalization: Profile feeds initial recommendations. "Based on your high systematic completeness, your brain will calibrate fastest on setup types with multiple confirmable conditions (IB extension + volume confirmation + regime alignment). We'll prioritize those setups in your early data collection."
+
+🔲 BEHAVIORAL QUESTIONS VS COGNITIVE PROFILE — THE DISTINCTION (April 13, 2026)
+Together but separate. Same user, different data streams, different collection timing, different purposes.
+
+Cognitive Profile Test	Beta User Behavioral Questions
+What it measures	Innate cognitive traits (stable)	Self-reported trading habits (variable)
+When collected	One-time (or annual re-test)	Onboarding + periodic survey
+Question type	Task-based (do this)	Survey-based (tell me about yourself)
+Example	"Find the pattern in this chart"	"What's your typical hold time?"
+Changes over time?	Rarely — these are trait-level	Yes — habits improve with training
+EdgeIQ use	Collective brain metadata weight	Initial brain calibration + tier recommendation
+Employer use	Full profile report	N/A
+Beta user behavioral questions (onboarding survey spec):
+
+How long have you been actively trading? (< 6 months / 6–18 months / 2–5 years / 5+ years)
+What's your typical hold time? (Scalp < 15 min / Intraday 15 min–2 hrs / Swing overnight+)
+Do you use hard stops? (Always / Sometimes / Rarely / Never)
+What's your biggest trading weakness? (FOMO entries / Cutting winners too early / Holding losers / Overtrading / Position sizing)
+How do you currently decide when to exit? (Target price / Time-based / Feel / Trailing stop / Combination)
+Do you trade premarket? (Yes regularly / Sometimes / Rarely / No)
+What matters most to you right now? (Understand my win rate / Automate my strategy / Learn structure trading / Find my edge / Track P&L)
+How both feed EdgeIQ:
+
+Cognitive profile → collective brain weight (who to trust more on which setup types)
+Behavioral questions → initial brain calibration starting point + tier recommendation + onboarding flow personalization
+In-app behavioral tracking → ongoing (already built) — WHY they enter each trade, discipline score, grade
+All three together = the most complete user model in any trading platform
