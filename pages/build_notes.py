@@ -1,7 +1,9 @@
 import streamlit as st
 import os
 
-NOTES_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".local", "build_notes.md")
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NOTES_PATH         = os.path.join(_ROOT, ".local", "build_notes.md")
+NOTES_FALLBACK     = os.path.join(_ROOT, "replit.md")
 
 st.set_page_config(
     page_title="EdgeIQ Build Notes",
@@ -24,9 +26,13 @@ st.markdown("# 📋 EdgeIQ Build Notes")
 st.caption("Live document — always current")
 st.divider()
 
-try:
+if os.path.exists(NOTES_PATH):
     with open(NOTES_PATH, "r") as f:
         content = f.read()
     st.markdown(content, unsafe_allow_html=True)
-except FileNotFoundError:
+elif os.path.exists(NOTES_FALLBACK):
+    with open(NOTES_FALLBACK, "r") as f:
+        content = f.read()
+    st.markdown(content, unsafe_allow_html=True)
+else:
     st.error("Build notes file not found.")
