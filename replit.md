@@ -325,6 +325,23 @@ ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
 
 ---
 
+## Personal Account 5-Year Projection ($7k start, May 6 2026, 1% compounding, $2k cap at $200k)
+
+| Date | Conservative (0.5R/trade) | Expected (0.804R/trade) |
+|---|---|---|
+| Dec 2026 | $25,800 | $51,400 |
+| Dec 2027 | $241,800 | $675,200 |
+| Dec 2028 | $733,800 | $1,466,400 |
+| Dec 2029 | $1,225,800 | $2,257,500 |
+| Dec 2030 | $1,717,800 | $3,048,700 |
+| May 2031 (5yr) | $1,922,800 | $3,378,300 |
+
+Key milestones: $100k → Nov 2027 (conservative) / Mar 2027 (expected) | $200k cap → Nov 2027 / May 2027 | $1M → Jul 2029 / May 2028
+Cap at $200k = $2,000/trade max — scale via distribution (more simultaneous positions) after that.
+Dad capital injection (pending month-1 verification): would shift all milestones significantly earlier.
+
+---
+
 ## Future Sizing Upgrades (Phase 3+)
 
 Once 3–6 months of live data confirms the flat 1% baseline, upgrade `_compute_risk_dollars()` to factor in:
