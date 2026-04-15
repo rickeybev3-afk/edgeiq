@@ -21,19 +21,15 @@ Bot runs 100% autonomously. Logs every setup to Supabase. EOD resolves outcomes.
 Structure predictions, TCS scoring, and brain recalibration all running live.
 **43 paper trades logged. 20 resolved. 10 with sim data.**
 
-### Phase 1.5 — Paper Execution ✅ BUILT — activation pending 2 user actions
-Alpaca bracket orders wired into bot. Flip `LIVE_ORDERS_ENABLED=true` to activate.
-Orders fire on Alpaca paper account (`paper-api.alpaca.markets`) — zero real risk.
-Validates: order fill pipeline, order ID tracking, EOD reconciliation, bracket legs.
+### Phase 1.5 — Paper Execution ✅ ACTIVE (April 15, 2026)
+Alpaca bracket orders live on paper account (`paper-api.alpaca.markets`) — zero real risk.
+`LIVE_ORDERS_ENABLED=true` set in Replit Secrets. Bot placing real bracket orders each scan.
 - Morning scan (10:47 AM): places bracket order per qualifying setup
 - Intraday scan (2:00 PM): places bracket order for fresh midday setups
 - EOD (4:20 PM): cancels unfilled orders, reconciles fills to paper_trades
 
-**To activate (2 required steps):**
-1. Run SQL below to add tracking columns
-2. Set `LIVE_ORDERS_ENABLED=true` in Replit Secrets
-
-*(Optional: confirm Alpaca paper account has sufficient buying power before step 2)*
+**Paid SIP activated April 15** — real-time data, 16-min delay cap removed from `fetch_bars`.
+Confirm fills for ~3 weeks, then flip `IS_PAPER_ALPACA=false` for live money (~May 6 target).
 
 **New SQL — run once in Supabase:**
 ```sql
@@ -168,7 +164,7 @@ Historical backfill (15,545 records): **90.3% sim win rate, +0.804R expectancy.*
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `LIVE_ORDERS_ENABLED` | `false` | Master switch — set `true` to place real orders |
+| `LIVE_ORDERS_ENABLED` | `true` ✅ | Master switch — set `true` to place real orders |
 | `IS_PAPER_ALPACA` | `true` | `true` = paper endpoint, `false` = live endpoint |
 | `RISK_PER_TRADE` | `500` | Dollars risked per trade (1R). Qty auto-calculated. |
 
@@ -346,7 +342,7 @@ ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
 
 - **Plotly/HTML:** 6-digit hex or `rgba()` only. No HTML comments in f-strings. No backslashes in f-string expressions (Python 3.11).
 - **`_go` variable:** Reserved as `plotly.graph_objects` alias — never reuse as local var.
-- **SIP free-tier:** `fetch_bars` caps SIP end to `now - 16min` for today's data, always.
+- **SIP:** Paid real-time subscription active — no delay cap on `fetch_bars`. Historical bars always available.
 - **`app.py` USER_ID:** Must use `st.session_state.get("auth_user_id", "")` inside render functions — NOT global `USER_ID`.
 
 ---
