@@ -9342,6 +9342,80 @@ ALTER TABLE backtest_sim_runs
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── P1–P4 Priority Tier Breakdown ────────────────────────────────────────
+    st.markdown(
+        '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+        'text-transform:uppercase;margin-bottom:8px;">Priority Tier Breakdown — P1 / P2 / P3 / P4</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
+        "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+    )
+
+    _tier_defs = [
+        ("P1", "🔴", "intraday", 70, 999, "#c62828",  "Intraday 70+"),
+        ("P2", "🟠", "intraday", 50,  69, "#ef6c00",  "Intraday 50–69"),
+        ("P3", "🟡", "morning",  70, 999, "#f9a825",  "Morning 70+"),
+        ("P4", "🟢", "morning",  50,  69, "#2e7d32",  "Morning 50–69"),
+    ]
+
+    _has_tcs = "tcs" in _sim_df.columns and _sim_df["tcs"].notna().any()
+    _tier_cols = st.columns(4)
+
+    for _ti, (_tlabel, _temoji, _tst, _tcs_lo, _tcs_hi, _tcolor, _tdesc) in enumerate(_tier_defs):
+        with _tier_cols[_ti]:
+            if not _has_tcs:
+                st.markdown(
+                    f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                    f'<div style="font-size:13px;font-weight:700;color:{_tcolor};">{_temoji} {_tlabel}</div>'
+                    f'<div style="font-size:11px;color:#546e7a;margin-top:6px;">TCS data unavailable</div>'
+                    f'</div>', unsafe_allow_html=True
+                )
+            else:
+                _tdf = _sim_df[
+                    (_sim_df["scan_type"].fillna("morning") == _tst) &
+                    (_sim_df["tcs"].fillna(0) >= _tcs_lo) &
+                    (_sim_df["tcs"].fillna(0) <= _tcs_hi)
+                ]
+                if _tdf.empty:
+                    st.markdown(
+                        f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                        f'<div style="font-size:13px;font-weight:700;color:{_tcolor};">{_temoji} {_tlabel}</div>'
+                        f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_tdesc}</div>'
+                        f'<div style="font-size:12px;color:#546e7a;margin-top:6px;">No sim trades yet</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+                else:
+                    _tw  = len(_tdf[_tdf["pnl_r_sim"] > 0])
+                    _tl  = len(_tdf[_tdf["pnl_r_sim"] <= 0])
+                    _twr = _tw / len(_tdf) * 100
+                    _tavg_w = _tdf[_tdf["pnl_r_sim"] > 0]["pnl_r_sim"].mean() if _tw else 0
+                    _texp = _tdf["pnl_r_sim"].mean()
+                    _ttot = _tdf["pnl_r_sim"].sum()
+                    _pct_trades = len(_tdf) / _s_total * 100 if _s_total else 0
+                    _pct_r      = _ttot / _s_total_r * 100 if _s_total_r else 0
+                    st.markdown(
+                        f'<div style="background:#1e2a3a;border-left:3px solid {_tcolor};'
+                        f'border-radius:8px;padding:12px;text-align:center;">'
+                        f'<div style="font-size:13px;font-weight:700;color:{_tcolor};">{_temoji} {_tlabel}</div>'
+                        f'<div style="font-size:10px;color:#90a4ae;margin-bottom:6px;">{_tdesc}</div>'
+                        f'<div style="font-size:22px;font-weight:700;color:{"#2e7d32" if _twr >= 55 else "#ef6c00"};">'
+                        f'{_twr:.1f}%</div>'
+                        f'<div style="font-size:11px;color:#cfd8dc;">{_tw}W / {_tl}L</div>'
+                        f'<div style="font-size:11px;color:#cfd8dc;margin-top:4px;">'
+                        f'Avg Win: <b>+{_tavg_w:.2f}R</b></div>'
+                        f'<div style="font-size:11px;color:#cfd8dc;">'
+                        f'Exp: <b>{"+" if _texp >= 0 else ""}{_texp:.3f}R</b></div>'
+                        f'<div style="font-size:11px;color:#90a4ae;margin-top:4px;">'
+                        f'Total: {"+" if _ttot >= 0 else ""}{_ttot:.1f}R · {len(_tdf)} trades</div>'
+                        f'<div style="font-size:10px;color:#546e7a;margin-top:3px;">'
+                        f'{_pct_trades:.1f}% of trades · {_pct_r:.1f}% of R</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     # ════════════════════════════════════════════════════════════════════════════
     # SECTION 1c — 5-YEAR BACKTEST INTELLIGENCE GRID (Scan Type × TCS)
     # ════════════════════════════════════════════════════════════════════════════
