@@ -95,4 +95,34 @@ title = "EdgeIQ IP Documentation (HTML + MD)"
 id = "cQgMI2wlTEr0r3huGVi97"
 uri = "file://.local/EdgeIQ_IP_Documentation.pdf"
 type = "pdf"
-title = "EdgeIQ IP Documentation (Confidential)"
+title = "1. IP Documentation (Confidential)"
+
+[[outputs]]
+id = "covWU7_iQx2KJYbHQpFn9"
+uri = "file://.local/EdgeIQ_Public_Build_Notes.pdf"
+type = "pdf"
+title = "2. Public Build Notes (96 pages)"
+
+[[outputs]]
+id = "rKGIW5dJMyoZAbydd-ysb"
+uri = "file://.local/EdgeIQ_Private_Build_Notes.pdf"
+type = "pdf"
+title = "3. Private Build Notes (138 pages)"
+
+[[outputs]]
+id = "xZLom9m2rZGCnTHxnir9o"
+uri = "file://.local/EdgeIQ_Beta_Tester_Screening.pdf"
+type = "pdf"
+title = "4. Beta Tester Screening & Onboarding"
+
+[[outputs]]
+id = "PCFRNAkSSLZicw47ayAvW"
+uri = "file://.local/EdgeIQ_NDA_Template.pdf"
+type = "pdf"
+title = "5. NDA Template (ATTORNEY REVIEW REQUIRED)"
+
+[[outputs]]
+id = "Q-uXmHxKfPziZSiik0-mf"
+uri = "file://.local/EdgeIQ_System_Documentation.pdf"
+type = "pdf"
+title = "6. System Architecture Documentation"
