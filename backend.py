@@ -7758,6 +7758,81 @@ def fetch_finviz_watchlist(
     return tickers[:max_tickers]
 
 
+def fetch_premarket_gappers(
+    api_key:      str,
+    secret_key:   str,
+    min_gap_pct:  float = 15.0,
+    price_min:    float = 1.0,
+    price_max:    float = 50.0,
+    min_pm_vol:   int   = 100_000,
+    top:          int   = 100,
+) -> tuple[list, str]:
+    """Scan Alpaca SIP data for pre-market gappers (runs ~9:10 AM ET).
+
+    Unlike the Finviz watchlist this has NO historical avg-vol requirement,
+    catching dormant stocks that suddenly have a catalyst (e.g. BIRD +149%).
+    Uses the /v1beta1/screener endpoints which return live pre-market data
+    when called before 9:30 AM on the SIP feed.
+
+    Filters:
+      - Price $1–$50 (wider than Finviz's $20 cap — catches large gappers)
+      - Gap % ≥ min_gap_pct (default 15%)
+      - Pre-market volume ≥ min_pm_vol (default 100K — rules out noise)
+      - US-listed common stocks only (Alpaca screener already filters this)
+
+    Returns (list of result dicts sorted by |gap_pct| desc, error_str).
+    Each dict: {ticker, price, gap_pct, pm_vol, source}
+    """
+    import requests as _req
+    headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret_key}
+    base    = "https://data.alpaca.markets/v1beta1/screener/stocks"
+    pool    = {}
+    errors  = []
+
+    endpoints = [
+        (f"{base}/most-actives", {"by": "volume", "top": top}, "most_actives"),
+        (f"{base}/movers",       {"market_type": "stocks", "top": top}, "gainers"),
+    ]
+
+    for url, params, key in endpoints:
+        try:
+            r = _req.get(url, params=params, headers=headers, timeout=10)
+            if r.status_code == 200:
+                for item in r.json().get(key, []):
+                    sym        = str(item.get("symbol", "")).upper()
+                    price      = float(item.get("price", 0) or 0)
+                    change_pct = float(item.get("percent_change", 0) or 0)
+                    volume     = int(item.get("volume", 0) or 0)
+
+                    if not sym:
+                        continue
+                    if not (price_min <= price <= price_max):
+                        continue
+                    if abs(change_pct) < min_gap_pct:
+                        continue
+                    if volume < min_pm_vol:
+                        continue
+
+                    if sym in pool:
+                        pool[sym]["source"] = "Active+Gainer"
+                        pool[sym]["pm_vol"] = max(pool[sym]["pm_vol"], volume)
+                    else:
+                        pool[sym] = {
+                            "ticker":   sym,
+                            "price":    round(price, 2),
+                            "gap_pct":  round(change_pct, 2),
+                            "pm_vol":   volume,
+                            "source":   "PreMarket",
+                        }
+            elif r.status_code not in (400, 422):
+                errors.append(f"{key} HTTP {r.status_code}")
+        except Exception as exc:
+            errors.append(f"{key}: {exc}")
+
+    results = sorted(pool.values(), key=lambda x: abs(x["gap_pct"]), reverse=True)
+    return results, "; ".join(errors) if errors else ""
+
+
 # ── Watchlist Persistence ─────────────────────────────────────────────────────
 def save_watchlist(tickers: list, user_id: str = "") -> bool:
     """Upsert a user's custom watchlist to Supabase (table: user_watchlist).

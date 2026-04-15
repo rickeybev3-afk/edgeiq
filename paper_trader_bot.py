@@ -80,6 +80,7 @@ try:
         load_watchlist,
         save_watchlist,
         fetch_finviz_watchlist,
+        fetch_premarket_gappers,
         recalibrate_from_supabase,
         verify_watchlist_predictions,
         verify_ticker_rankings,
@@ -671,6 +672,62 @@ def _market_is_open(now_et: datetime) -> bool:
 
 
 # ── Scheduled jobs ────────────────────────────────────────────────────────────
+def premarket_scan():
+    """9:10 AM ET — scan Alpaca SIP for large pre-market gappers.
+
+    Catches dormant stocks with sudden catalysts that Finviz misses
+    (no historical avg-vol requirement, price range up to $50).
+    Results are MERGED into the watchlist — the 9:35 AM Finviz refresh
+    then adds its own tickers on top.
+    """
+    global TICKERS
+    log.info("=" * 60)
+    log.info("PRE-MARKET SCAN — fetching large gappers via SIP")
+    log.info("=" * 60)
+    try:
+        gappers, err = fetch_premarket_gappers(
+            api_key     = ALPACA_API_KEY,
+            secret_key  = ALPACA_SECRET_KEY,
+            min_gap_pct = 15.0,
+            price_min   = 1.0,
+            price_max   = 50.0,
+            min_pm_vol  = 100_000,
+            top         = 100,
+        )
+        if err:
+            log.warning(f"Pre-market scan warning: {err}")
+
+        if not gappers:
+            log.info("Pre-market scan: no large gappers found (market may not be open yet or no big movers today)")
+            return
+
+        new_tickers = [g["ticker"] for g in gappers]
+        log.info(f"Pre-market gappers found: {len(new_tickers)} — {', '.join(new_tickers)}")
+        for g in gappers:
+            log.info(f"  {g['ticker']:6s}  ${g['price']:.2f}  {g['gap_pct']:+.1f}%  vol:{g['pm_vol']:,}")
+
+        # Merge into current watchlist (deduplicated)
+        existing = list(TICKERS)
+        merged   = existing + [t for t in new_tickers if t not in existing]
+        saved    = save_watchlist(merged, user_id=USER_ID)
+        if saved:
+            TICKERS = merged
+            log.info(f"Watchlist updated: {len(merged)} total tickers (added {len(new_tickers)} pre-market gappers)")
+
+        # Telegram alert
+        lines = [f"<b>Pre-Market Gappers — {date.today()}</b>"]
+        lines.append(f"SIP scan: {len(gappers)} stocks gapping ≥15% with PM vol ≥100K\n")
+        for g in gappers[:8]:
+            lines.append(f"  <b>{g['ticker']}</b>  ${g['price']:.2f}  {g['gap_pct']:+.1f}%  vol:{g['pm_vol']:,}")
+        if len(gappers) > 8:
+            lines.append(f"  ...and {len(gappers)-8} more")
+        lines.append("\nWatchlist refresh at 9:35 AM ET...")
+        tg_send("\n".join(lines))
+
+    except Exception as exc:
+        log.warning(f"Pre-market scan failed (non-fatal): {exc}")
+
+
 def watchlist_refresh():
     """9:35 AM ET — pull today's movers from Finviz, save to Supabase."""
     global TICKERS
@@ -1463,9 +1520,10 @@ def main():
     log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
     log.info(f"User: {USER_ID}")
     log.info(
-        "Schedule: 9:35 AM ET → watchlist refresh | 10:47 AM ET → morning scan | "
-        "11:45 AM ET → midday watchlist refresh | 2:00 PM ET → intraday scan | "
-        "4:20 PM ET → EOD update | 4:25 PM ET → auto-verify | 4:30 PM ET → recalibration | "
+        "Schedule: 9:10 AM ET → pre-market gap scan (SIP) | 9:35 AM ET → watchlist refresh | "
+        "10:47 AM ET → morning scan | 11:45 AM ET → midday watchlist refresh | "
+        "2:00 PM ET → intraday scan | 4:20 PM ET → EOD update | "
+        "4:25 PM ET → auto-verify | 4:30 PM ET → recalibration | "
         "11:59 PM ET → PDF documentation export"
     )
 
@@ -1503,6 +1561,7 @@ def main():
     _tg_thread.start()
     log.info("Telegram listener thread started — send /log commands to the bot to log trades")
 
+    _premarket_done        = False
     _watchlist_done        = False
     _midday_watchlist_done = False
     _morning_done          = False
@@ -1518,6 +1577,7 @@ def main():
 
         # Reset flags at midnight
         if now_et.hour == 0 and now_et.minute == 0:
+            _premarket_done        = False
             _watchlist_done        = False
             _midday_watchlist_done = False
             _morning_done          = False
@@ -1562,6 +1622,17 @@ def main():
                     update_daily_build_notes()
                 except Exception as _bne:
                     log.warning(f"Build notes update failed (non-fatal): {_bne}")
+
+            # 9:10 AM — pre-market gap scanner (SIP, before Finviz refresh)
+            if (
+                not _premarket_done
+                and now_et.weekday() < 5
+                and now_et.hour == 9
+                and now_et.minute >= 10
+                and now_et.minute < 30
+            ):
+                premarket_scan()
+                _premarket_done = True
 
             # 11:59 PM — regenerate PDF exports from markdown docs (every day)
             if (
