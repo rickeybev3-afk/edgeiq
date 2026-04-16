@@ -86,7 +86,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python batch_backtest.py --days 1260 --scan-type all --screener both --user-id a5e1fcab-8369-42c4-8550-a8a19734510c"
+args = "python backfill_close_prices.py && python run_sim_backfill.py"
 
 [[workflows.workflow]]
 name = "Backtest: Trend 90-Day (Preview)"
