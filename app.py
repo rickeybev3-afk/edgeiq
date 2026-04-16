@@ -5788,6 +5788,154 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _rp_run = st.button("▶ Run Replay", use_container_width=True, key="rp_run_btn",
                             type="primary")
 
+        # ── 🎯 TCS + Scan Type Optimizer ─────────────────────────────────────────
+        with st.expander("🎯 Find Optimal Filter Combo — maximize +R", expanded=False):
+            st.caption(
+                "Scans every combination of **Scan Type × TCS floor** across your selected date range "
+                "and ranks them by expectancy per trade. Set your date range above first, then click Run."
+            )
+            _opt_min_col, _opt_btn_col = st.columns([1, 2])
+            with _opt_min_col:
+                _opt_min_trades = st.number_input(
+                    "Min trades per combo", min_value=5, max_value=500, value=20, step=5,
+                    key="rp_opt_min_trades",
+                    help="Combos with fewer trades than this are hidden — avoids statistically meaningless results.",
+                )
+            with _opt_btn_col:
+                _opt_run_btn = st.button("🔍 Run Optimizer", key="rp_opt_run_btn", use_container_width=True)
+
+            if _opt_run_btn and supabase and _rp_uid:
+                with st.spinner("Fetching all setups across date range…"):
+                    try:
+                        _opt_all: list = []
+                        _opt_off = 0
+                        _opt_ps  = 1000
+                        while True:
+                            _opt_resp = (
+                                supabase.table("backtest_sim_runs")
+                                .select("scan_type,tcs,actual_outcome,follow_thru_pct,false_break_up,false_break_down,stop_dist_pct")
+                                .eq("user_id", _rp_uid)
+                                .gte("sim_date", str(_rp_start))
+                                .lte("sim_date", str(_rp_end))
+                                .range(_opt_off, _opt_off + _opt_ps - 1)
+                                .execute()
+                            )
+                            _opt_pg = _opt_resp.data or []
+                            _opt_all.extend(_opt_pg)
+                            if len(_opt_pg) < _opt_ps:
+                                break
+                            _opt_off += _opt_ps
+                        st.session_state["_rp_opt_rows"]  = _opt_all
+                        st.session_state["_rp_opt_range"] = f"{_rp_start} → {_rp_end}"
+                    except Exception as _opt_e:
+                        st.error(f"Optimizer fetch failed: {_opt_e}")
+
+            _opt_rows     = st.session_state.get("_rp_opt_rows", [])
+            _opt_range_lbl = st.session_state.get("_rp_opt_range", "")
+
+            if _opt_rows:
+                st.caption(f"Dataset: **{len(_opt_rows):,}** total setups  |  {_opt_range_lbl}")
+
+                _OPT_TCS_FLOORS   = [0, 40, 50, 55, 60, 65, 70, 75, 80]
+                _OPT_SCAN_BUCKETS = [
+                    ("All Scan Types", None),
+                    ("Morning only",   "morning"),
+                    ("Intraday only",  "intraday"),
+                    ("EOD only",       "eod"),
+                ]
+
+                _opt_table_rows = []
+                for _os_lbl, _os_val in _OPT_SCAN_BUCKETS:
+                    for _ofloor in _OPT_TCS_FLOORS:
+                        _combo_pnls: list = []
+                        for _or in _opt_rows:
+                            if _os_val and _or.get("scan_type") != _os_val:
+                                continue
+                            _ao = _or.get("actual_outcome", "")
+                            if _ao not in ("Bullish Break", "Bearish Break"):
+                                continue
+                            if float(_or.get("tcs") or 0) < _ofloor:
+                                continue
+                            _fb_up  = bool(_or.get("false_break_up"))
+                            _fb_dn  = bool(_or.get("false_break_down"))
+                            _ft_pct = float(_or.get("follow_thru_pct") or 0)
+                            _sd_pct = float(_or.get("stop_dist_pct") or 0)
+                            if _fb_up or _fb_dn:
+                                _opnl = -1.0
+                            elif _sd_pct > 0:
+                                _opnl = min(abs(_ft_pct) / _sd_pct, 20.0)
+                            else:
+                                continue
+                            _combo_pnls.append(_opnl)
+
+                        _on = len(_combo_pnls)
+                        if _on < int(_opt_min_trades):
+                            continue
+                        _owins   = sum(1 for v in _combo_pnls if v > 0)
+                        _olosses = _on - _owins
+                        _owr     = _owins / _on * 100
+                        _oavgw   = sum(v for v in _combo_pnls if v > 0) / _owins if _owins else 0
+                        _oavgl   = sum(v for v in _combo_pnls if v < 0) / _olosses if _olosses else 0
+                        _oexp    = sum(_combo_pnls) / _on
+                        _ototr   = sum(_combo_pnls)
+                        _opt_table_rows.append({
+                            "Scan Type":    _os_lbl,
+                            "Min TCS":      _ofloor if _ofloor > 0 else "Any",
+                            "Trades":       _on,
+                            "Win Rate %":   round(_owr, 1),
+                            "Avg Win (R)":  round(_oavgw, 3),
+                            "Avg Loss (R)": round(_oavgl, 3),
+                            "Expectancy":   round(_oexp, 3),
+                            "Total R":      round(_ototr, 1),
+                        })
+
+                if not _opt_table_rows:
+                    st.warning(
+                        f"No combinations had ≥ {int(_opt_min_trades)} trades. "
+                        "Lower the minimum or expand your date range."
+                    )
+                else:
+                    _opt_df = pd.DataFrame(_opt_table_rows).sort_values("Expectancy", ascending=False).reset_index(drop=True)
+                    _opt_best = _opt_df.iloc[0]
+
+                    st.markdown(
+                        f'<div style="background:#0a2a0a;border-left:3px solid #00e676;padding:8px 14px;'
+                        f'border-radius:4px;margin-bottom:10px;">'
+                        f'<span style="color:#00e676;font-weight:700;">🏆 Best combo: '
+                        f'{_opt_best["Scan Type"]} · TCS ≥ {_opt_best["Min TCS"]} — '
+                        f'{_opt_best["Expectancy"]:+.3f}R expectancy · '
+                        f'{_opt_best["Win Rate %"]}% WR · {int(_opt_best["Trades"])} trades</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    def _opt_style(row):
+                        if row.name == 0:
+                            return ["background-color:#0d2a1a;color:#00e676;font-weight:700;"] * len(row)
+                        return [""] * len(row)
+
+                    st.dataframe(
+                        _opt_df.style.apply(_opt_style, axis=1),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    _opt_snap_map = {
+                        "All Scan Types": "All",
+                        "Morning only":   "Morning (10:47 AM)",
+                        "Intraday only":  "Intraday (2:00 PM)",
+                        "EOD only":       "EOD (4:00 PM)",
+                    }
+                    if st.button(
+                        f"✅ Apply best combo to replay filters",
+                        key="rp_opt_apply_best",
+                        use_container_width=True,
+                    ):
+                        st.session_state["rp_scan_type"] = _opt_snap_map.get(_opt_best["Scan Type"], "All")
+                        _opt_tcs_val = int(_opt_best["Min TCS"]) if str(_opt_best["Min TCS"]).lstrip("-").isdigit() else 0
+                        st.session_state["rp_min_tcs_slider"] = _opt_tcs_val
+                        st.rerun()
+
         if _rp_run:
             if not supabase or not _rp_uid:
                 st.warning("Log in and connect Supabase to use this feature.")
