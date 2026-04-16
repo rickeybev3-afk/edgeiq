@@ -5597,11 +5597,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Risk per Trade (%)", min_value=0.5, max_value=10.0,
                     value=2.0, step=0.5, key="rp_risk_pct",
                 )
-                _rp_min_tcs = st.slider(
-                    "Min TCS", min_value=0, max_value=100,
-                    value=0, step=5, key="rp_min_tcs_slider",
-                    help="Flat TCS minimum — set 0 for no filter.",
+                _TCS_OPTS   = [0, 40, 50, 60, 65, 70, 75, 80, 90]
+                _TCS_LABELS = ["Any", "≥ 40", "≥ 50", "≥ 60", "≥ 65", "≥ 70", "≥ 75", "≥ 80", "≥ 90"]
+                # Snap stored value (e.g. from Best TCS button) to nearest valid option
+                _stored_tcs = st.session_state.get("rp_min_tcs_slider", 0)
+                if _stored_tcs not in _TCS_OPTS:
+                    _stored_tcs = max((v for v in _TCS_OPTS if v <= _stored_tcs), default=0)
+                    st.session_state["rp_min_tcs_slider"] = _stored_tcs
+                _tcs_sel_idx = _TCS_OPTS.index(_stored_tcs)
+                _tcs_label = st.selectbox(
+                    "Min TCS",
+                    options=_TCS_LABELS,
+                    index=_tcs_sel_idx,
+                    key="rp_min_tcs_label",
+                    help="Only include setups where TCS meets this threshold. 'Any' = no filter.",
                 )
+                _rp_min_tcs = _TCS_OPTS[_TCS_LABELS.index(_tcs_label)]
+                st.session_state["rp_min_tcs_slider"] = _rp_min_tcs
                 _rp_best_tcs_src = st.session_state.get("rp_best_tcs_source")
                 if _rp_best_tcs_src and _rp_min_tcs == _rp_best_tcs_src["floor"]:
                     st.caption(
