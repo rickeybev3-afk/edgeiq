@@ -7492,6 +7492,34 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _best_pnl = _suff["Net P&L ($)"].max()
                     return (0, -_best_pnl, _name)
 
+                # ── Restore CSV column preference from localStorage (cross-session) ──
+                import streamlit.components.v1 as _cmp_csv_pref
+                _cmp_csv_pref.html("""
+<script>
+(function() {
+    var _LS_KEY = 'csv_cols_pref';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('csv_cols')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('csv_cols', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+                _CSV_PREF_DEFAULTS = [
+                    "Date", "TCS", "Prediction",
+                    "EOD Reality", "Follow-Thru %", "Result",
+                ]
+                if "_csv_cols_pref" not in st.session_state:
+                    _qp_csv = st.query_params.get("csv_cols", "")
+                    if _qp_csv:
+                        _csv_pref_list = [c.strip() for c in _qp_csv.split(",") if c.strip()]
+                        st.session_state["_csv_cols_pref"] = _csv_pref_list if _csv_pref_list else _CSV_PREF_DEFAULTS
+                    else:
+                        st.session_state["_csv_cols_pref"] = _CSV_PREF_DEFAULTS
+
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
@@ -7830,12 +7858,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 or c in ["Ticker", "Open Price", "IB High",
                                          "IB Low", "False Break Up", "False Break Down"]
                             ]
+                            _csv_ms_key = f"csv_cols_{_tk_name}_{_tk_drill_floor}"
+                            if _csv_ms_key not in st.session_state:
+                                _saved_pref = st.session_state.get("_csv_cols_pref", _csv_default_cols)
+                                _restored = [c for c in _saved_pref if c in _csv_all_cols]
+                                st.session_state[_csv_ms_key] = _restored if _restored else _csv_default_cols
                             _csv_sel_cols = st.multiselect(
                                 "Columns to include in CSV export",
                                 options=_csv_all_cols,
                                 default=_csv_default_cols,
-                                key=f"csv_cols_{_tk_name}_{_tk_drill_floor}",
+                                key=_csv_ms_key,
                                 help="Choose which columns appear in the downloaded CSV file.",
+                            )
+                            st.session_state["_csv_cols_pref"] = _csv_sel_cols
+                            _csv_cols_joined = ",".join(_csv_sel_cols)
+                            if st.query_params.get("csv_cols") != _csv_cols_joined:
+                                st.query_params["csv_cols"] = _csv_cols_joined
+                            import streamlit.components.v1 as _cmp_csv_write
+                            _cmp_csv_write.html(
+                                f"<script>localStorage.setItem('csv_cols_pref',"
+                                f" {repr(_csv_cols_joined)});</script>",
+                                height=0,
                             )
                             if not _csv_sel_cols:
                                 st.warning("Select at least one column to enable the download.", icon="⚠️")
