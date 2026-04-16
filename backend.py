@@ -6925,11 +6925,15 @@ def compute_trade_sim_tiered(
     if aft_df is None or len(aft_df) == 0:
         return {"eod_pnl_r": eod_pnl_r, "tiered_pnl_r": None, "hit_1r": False, "hit_2r": False}
 
+    # Same-bar ordering convention: stop is evaluated before targets on every bar,
+    # including the entry bar. This is the conservative "stop-priority" assumption:
+    # if a single bar touches both stop and target, the stop is taken (worst-case).
     stop_level = stop_initial
     hit_1r     = False
     hit_2r     = False
     locked_r   = 0.0
-    remaining  = 1.0  # fraction of position still open
+    remaining  = 1.0   # fraction of position still open
+    entered    = False  # True once price first crosses the entry level
 
     for _, bar in aft_df.iterrows():
         try:
@@ -6938,9 +6942,19 @@ def compute_trade_sim_tiered(
         except (TypeError, ValueError):
             continue  # skip malformed bar; don't abort the whole sim
 
+        # Gate: skip bars where price hasn't yet crossed the breakout entry level.
+        # This prevents mismatch when aft_df starts before the actual breakout.
+        if not entered:
+            if direction == "Bullish Break" and bar_high >= entry:
+                entered = True
+            elif direction == "Bearish Break" and bar_low <= entry:
+                entered = True
+            else:
+                continue  # not yet in a position — skip stop/target logic
+
         if direction == "Bullish Break":
             if not hit_1r:
-                if bar_low <= stop_level:
+                if bar_low <= stop_level:         # stop checked first (stop-priority)
                     locked_r += remaining * (-1.0)
                     remaining = 0.0
                     break
@@ -6948,9 +6962,9 @@ def compute_trade_sim_tiered(
                     hit_1r     = True
                     locked_r  += 0.50 * 1.0
                     remaining -= 0.50
-                    stop_level = entry      # stop → breakeven
+                    stop_level = entry            # stop → breakeven
             elif not hit_2r:
-                if bar_low <= entry:        # breakeven stop hit
+                if bar_low <= entry:              # breakeven stop hit
                     locked_r += remaining * 0.0
                     remaining = 0.0
                     break
@@ -6962,7 +6976,7 @@ def compute_trade_sim_tiered(
 
         else:  # Bearish Break
             if not hit_1r:
-                if bar_high >= stop_level:
+                if bar_high >= stop_level:        # stop checked first (stop-priority)
                     locked_r += remaining * (-1.0)
                     remaining = 0.0
                     break
@@ -6972,7 +6986,7 @@ def compute_trade_sim_tiered(
                     remaining -= 0.50
                     stop_level = entry
             elif not hit_2r:
-                if bar_high >= entry:       # breakeven stop hit
+                if bar_high >= entry:             # breakeven stop hit
                     locked_r += remaining * 0.0
                     remaining = 0.0
                     break
@@ -6981,13 +6995,19 @@ def compute_trade_sim_tiered(
                     locked_r  += 0.25 * 2.0
                     remaining -= 0.25
 
-    # Exit remaining position at EOD close
+    # If price never crossed the entry level in aft_df, no tiered position was opened.
+    # eod_pnl_r (hold-to-close) is still valid — tiered_pnl_r is not.
+    if not entered:
+        return {"eod_pnl_r": eod_pnl_r, "tiered_pnl_r": None, "hit_1r": False, "hit_2r": False}
+
+    # Exit remaining open position at EOD close (runner portion for tiered sim)
     if remaining > 0:
         if direction == "Bullish Break":
             eod_partial_r = (close_px - entry) / ib_range
         else:
             eod_partial_r = (entry - close_px) / ib_range
-        # Floor: if stop never moved, cap at -1R; if at BE, floor is 0R
+        # Runner floor: stop-to-BE prevents runner losing more than 0R after 1R hit;
+        # initial stop prevents full position losing more than -1R before 1R hit.
         eod_partial_r = max(eod_partial_r, 0.0 if hit_1r else -1.0)
         locked_r += remaining * eod_partial_r
 

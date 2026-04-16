@@ -746,7 +746,9 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
                     "     ADD COLUMN IF NOT EXISTS entry_price_sim FLOAT,\n"
                     "     ADD COLUMN IF NOT EXISTS stop_price_sim FLOAT,\n"
                     "     ADD COLUMN IF NOT EXISTS stop_dist_pct FLOAT,\n"
-                    "     ADD COLUMN IF NOT EXISTS target_price_sim FLOAT;\n"
+                    "     ADD COLUMN IF NOT EXISTS target_price_sim FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS eod_pnl_r FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS tiered_pnl_r FLOAT;\n"
                 )
                 include_sim = False
                 records = [_build_record(r, include_gap, False) for r in batch]
