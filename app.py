@@ -6533,6 +6533,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             expanded=True,
         ):
             _tkr_rows = []
+            _tkr_sweep_data = {}
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
             for _tk, _tgrp in _bt_df.groupby("ticker"):
                 _tw   = (_tgrp["win_loss"] == "Win").sum()
@@ -6556,6 +6557,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # ── Per-ticker TCS Optimizer sweep ────────────────────────────
                 _best_tcs_label = "—"
                 _best_tcs_pnl_val = None
+                _tk_sweep_rows = []
                 if "tcs" in _tgrp.columns and "win_loss" in _tgrp.columns:
                     for _sw_tcs in range(40, 85, 5):
                         try:
@@ -6581,6 +6583,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _sw_sub["win_loss"]
                                 )
                             )
+                            _sw_exp_n = _sw_pnl_n / len(_sw_sub)
+                            _tk_sweep_rows.append({
+                                "TCS Floor":      _sw_tcs,
+                                "Trades":         len(_sw_sub),
+                                "Win Rate":       round(_sw_wr_n, 1),
+                                "Net P&L ($)":    round(_sw_pnl_n, 0),
+                                "Expectancy ($)": round(_sw_exp_n, 2),
+                            })
                             if _best_tcs_pnl_val is None or _sw_pnl_n > _best_tcs_pnl_val:
                                 _best_tcs_pnl_val   = _sw_pnl_n
                                 _best_tcs_floor     = _sw_tcs
@@ -6588,6 +6598,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _best_tcs_wr_final  = _sw_wr_n
                         except (ValueError, TypeError, AttributeError):
                             continue
+                if _tk_sweep_rows:
+                    _tkr_sweep_data[_tk] = _tk_sweep_rows
                 if _best_tcs_pnl_val is not None:
                     _pnl_sign = "+" if _best_tcs_pnl_val >= 0 else ""
                     _best_tcs_label = (
@@ -6635,6 +6647,92 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "Best TCS = the TCS cutoff that produced the highest net P&L for that ticker "
                 "(hover the column header for details)"
             )
+
+            # ── Per-Ticker TCS Sweep Charts ───────────────────────────────────
+            if _tkr_sweep_data:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:13px;font-weight:700;color:#90caf9;'
+                    'letter-spacing:0.5px;margin-bottom:6px;">📈 TCS Sweep Charts — P&L curve per ticker</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Each chart sweeps TCS 40 → 80 for that ticker only. "
+                    "Bold row = highest net P&L. Expand a ticker to see the full profit curve."
+                )
+                import altair as _alt_tk
+                for _tk_name in sorted(_tkr_sweep_data.keys()):
+                    _tk_rows = _tkr_sweep_data[_tk_name]
+                    _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
+                    _tk_best_pnl = _tk_sw_df["Net P&L ($)"].max()
+                    _tk_best_row = _tk_sw_df[_tk_sw_df["Net P&L ($)"] == _tk_best_pnl].iloc[0]
+                    with st.expander(
+                        f"📊 {_tk_name} — Best: TCS ≥ {int(_tk_best_row['TCS Floor'])} "
+                        f"· {int(_tk_best_row['Trades'])} trades "
+                        f"· {_tk_best_row['Win Rate']:.0f}% WR "
+                        f"· ${_tk_best_pnl:,.0f} net P&L",
+                        expanded=False,
+                    ):
+                        st.markdown(
+                            f'<div style="background:#1e3a2a;border-radius:8px;padding:8px 14px;'
+                            f'margin-bottom:10px;font-size:13px;color:#a5d6a7;">'
+                            f'📈 <b>Optimal for Max Profit:</b> TCS ≥ {int(_tk_best_row["TCS Floor"])} '
+                            f'→ {int(_tk_best_row["Trades"])} trades · {_tk_best_row["Win Rate"]:.1f}% WR · '
+                            f'${_tk_best_pnl:,.0f} net P&L</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                        _tk_chart_df = _tk_sw_df.copy()
+                        _tk_chart_df["_is_best"] = _tk_chart_df["Net P&L ($)"] == _tk_best_pnl
+                        _tk_chart_df["Color"] = _tk_chart_df.apply(
+                            lambda r: "#4caf50" if r["_is_best"] else ("#ef5350" if r["Net P&L ($)"] < 0 else "#42a5f5"),
+                            axis=1,
+                        )
+                        _tk_chart_df["TCS Floor Label"] = _tk_chart_df["TCS Floor"].astype(str)
+
+                        _tk_bar = (
+                            _alt_tk.Chart(_tk_chart_df)
+                            .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                            .encode(
+                                x=_alt_tk.X(
+                                    "TCS Floor Label:O",
+                                    axis=_alt_tk.Axis(title="TCS Floor", labelColor="#b0bec5", titleColor="#90caf9"),
+                                    sort=[str(v) for v in range(40, 85, 5)],
+                                ),
+                                y=_alt_tk.Y(
+                                    "Net P&L ($):Q",
+                                    axis=_alt_tk.Axis(title="Net P&L ($)", labelColor="#b0bec5", titleColor="#90caf9", format="$,.0f"),
+                                ),
+                                color=_alt_tk.Color("Color:N", scale=None, legend=None),
+                                tooltip=[
+                                    _alt_tk.Tooltip("TCS Floor:Q", title="TCS Floor"),
+                                    _alt_tk.Tooltip("Trades:Q", title="Trades"),
+                                    _alt_tk.Tooltip("Win Rate:Q", title="Win Rate", format=".1f"),
+                                    _alt_tk.Tooltip("Net P&L ($):Q", title="Net P&L ($)", format="$,.0f"),
+                                    _alt_tk.Tooltip("Expectancy ($):Q", title="Expectancy ($)", format="$,.2f"),
+                                ],
+                            )
+                            .properties(height=220)
+                            .configure_view(strokeWidth=0, fill="#0e1117")
+                            .configure_axis(gridColor="#2a2a3a", domainColor="#444")
+                        )
+                        st.altair_chart(_tk_bar, use_container_width=True)
+
+                        def _tk_sw_style(row):
+                            if row["Net P&L ($)"] == _tk_best_pnl:
+                                return ["background:#1e3a2a;font-weight:bold"] * len(row)
+                            return [""] * len(row)
+
+                        st.dataframe(
+                            _tk_sw_df.style.apply(_tk_sw_style, axis=1),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Net P&L ($)":    st.column_config.NumberColumn(format="$%.0f"),
+                                "Expectancy ($)": st.column_config.NumberColumn(format="$%.2f"),
+                                "Win Rate":       st.column_config.NumberColumn(format="%.1f%%"),
+                            },
+                        )
 
     st.markdown("---")
     st.markdown(
