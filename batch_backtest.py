@@ -660,6 +660,7 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             "sim_date":         str(r.get("sim_date", "")),
             "ticker":           r.get("ticker", ""),
             "open_price":       r.get("open_price"),
+            "close_price":      r.get("close_price"),   # EOD close — needed for realistic sim P&L
             "ib_low":           r.get("ib_low"),
             "ib_high":          r.get("ib_high"),
             "tcs":              r.get("tcs"),

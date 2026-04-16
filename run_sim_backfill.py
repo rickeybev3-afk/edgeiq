@@ -56,31 +56,51 @@ def backfill_table(table: str, id_col: str):
         dir_errors  = 0
 
         while True:
-            # Fetch a page of directional rows that haven't been sim'd yet
+            # Fetch all confirmed breakout rows (actual_outcome = direction).
+            # Recompute everything to correct any stale MFE-based sim values.
+            # Includes close_price if the column exists — falls back gracefully.
             try:
                 resp = (
                     backend.supabase.table(table)
-                    .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,follow_thru_pct,false_break_up,false_break_down")
+                    .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,follow_thru_pct,false_break_up,false_break_down,close_price")
                     .eq("user_id", USER_ID)
                     .eq("actual_outcome", direction)
-                    .is_("sim_outcome", "null")
                     .range(offset, offset + PAGE_SZ - 1)
                     .execute()
                 )
             except Exception as e:
-                print(f"  Fetch error: {e}")
-                break
+                err = str(e)
+                if "close_price" in err or "column" in err.lower():
+                    # close_price column not yet added — run SQL migration first
+                    print(f"  ⚠  close_price column missing — falling back to select without it")
+                    try:
+                        resp = (
+                            backend.supabase.table(table)
+                            .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,follow_thru_pct,false_break_up,false_break_down")
+                            .eq("user_id", USER_ID)
+                            .eq("actual_outcome", direction)
+                            .range(offset, offset + PAGE_SZ - 1)
+                            .execute()
+                        )
+                    except Exception as e2:
+                        print(f"  Fetch error: {e2}")
+                        break
+                else:
+                    print(f"  Fetch error: {e}")
+                    break
 
             rows = resp.data or []
             if not rows:
                 break
 
-            # Build list of (id, patch) for non-null sims
+            # Build list of (id, patch) for rows with a valid sim result
             updates = []
             for row in rows:
                 patch = _sim_patch(row)
                 if patch:
                     updates.append((row[id_col], patch))
+
+            skipped = len(rows) - len(updates)
 
             # Run updates concurrently
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
@@ -102,9 +122,8 @@ def backfill_table(table: str, id_col: str):
                                 print("  → Columns missing — run the SQL migrations first.")
                                 return 0
 
-            pct_done = len(rows) - len(updates)
             print(f"  [{direction:15s}] +{offset:5d} | {len(rows):4d} rows | "
-                  f"{len(updates)} updated | {pct_done} skipped (no signal)")
+                  f"{len(updates)} updated | {skipped} skipped (no IB data)")
 
             offset += PAGE_SZ
             if len(rows) < PAGE_SZ:

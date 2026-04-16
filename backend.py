@@ -6736,29 +6736,32 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     Returns dict with sim fields. pnl_r_sim is capped at −1.0 (stop) on the
     downside; upside is uncapped (reflects actual EOD close).
     """
-    predicted = (r.get("predicted") or "").strip()
-    actual    = (r.get("actual_outcome") or "").strip()
-    ib_low    = r.get("ib_low")
-    ib_high   = r.get("ib_high")
-    ft_pct    = r.get("follow_thru_pct")
-    false_up  = bool(r.get("false_break_up", False))
-    false_dn  = bool(r.get("false_break_down", False))
+    predicted   = (r.get("predicted") or "").strip()
+    actual      = (r.get("actual_outcome") or "").strip()
+    ib_low      = r.get("ib_low")
+    ib_high     = r.get("ib_high")
+    ft_pct      = r.get("follow_thru_pct")
+    close_price = r.get("close_price")
+    false_up    = bool(r.get("false_break_up", False))
+    false_dn    = bool(r.get("false_break_down", False))
 
     NO_TRADE = {"sim_outcome": "no_trade",  "pnl_r_sim": None, "pnl_pct_sim": None,
                 "entry_price_sim": None, "stop_price_sim": None,
                 "stop_dist_pct": None, "target_price_sim": None}
 
-    # Determine trade direction — use predicted if directional, else actual_outcome
-    if predicted in ("Bullish Break", "Bearish Break"):
-        direction = predicted
-    elif actual in ("Bullish Break", "Bearish Break"):
+    # Determine trade direction — use actual_outcome (confirmed market move)
+    # actual_outcome = "Bullish Break" / "Bearish Break" → market broke that direction
+    # predicted = structure type ("Neutral", "Ntrl Extreme") — NOT directional
+    if actual in ("Bullish Break", "Bearish Break"):
         direction = actual
+    elif predicted in ("Bullish Break", "Bearish Break"):
+        direction = predicted
     else:
         return NO_TRADE
-    if ib_low is None or ib_high is None or ft_pct is None:
+    if ib_low is None or ib_high is None:
         return {**NO_TRADE, "sim_outcome": "missing_data"}
 
-    ib_low, ib_high, ft_pct = float(ib_low), float(ib_high), float(ft_pct)
+    ib_low, ib_high = float(ib_low), float(ib_high)
     ib_range = ib_high - ib_low
     if ib_range <= 0:
         return {**NO_TRADE, "sim_outcome": "invalid_ib"}
@@ -6768,34 +6771,68 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
         stop          = ib_low
         target        = entry + target_r * ib_range
         stop_dist_pct = ib_range / entry * 100
-        # false break up: price crossed IB high then reversed below stop → stopped out
-        if false_up and ft_pct < 0:
-            return {
-                "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
-                "stop_dist_pct":   round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                "pnl_pct_sim":     round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
-                "sim_outcome":     "stopped_out",
-            }
-        pnl_pct = ft_pct          # positive = good for long
+
+        # ── Prefer EOD close for realistic P&L ───────────────────────────────
+        if close_price is not None:
+            close_price = float(close_price)
+            if close_price <= ib_low:
+                # EOD close below stop → full stop out
+                pnl_r, pnl_pct, sim_outcome = -1.0, -stop_dist_pct, "stopped_out"
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(pnl_pct, 2), "pnl_r_sim": pnl_r,
+                    "sim_outcome": sim_outcome,
+                }
+            pnl_pct = (close_price - ib_high) / ib_high * 100
+        elif ft_pct is not None:
+            # Fallback: max intraday excursion (MFE) — always positive for bull break
+            # False break: price reversed below stop within 6 bars of breakout
+            if false_up and float(ft_pct) < 0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out",
+                }
+            pnl_pct = float(ft_pct)
+        else:
+            return {**NO_TRADE, "sim_outcome": "missing_data"}
 
     else:  # Bearish Break
         entry         = ib_low
         stop          = ib_high
         target        = entry - target_r * ib_range
         stop_dist_pct = ib_range / entry * 100
-        # false break down: price crossed IB low then recovered above stop → stopped out
-        if false_dn and ft_pct > 0:
-            return {
-                "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
-                "stop_dist_pct":   round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                "pnl_pct_sim":     round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
-                "sim_outcome":     "stopped_out",
-            }
-        pnl_pct = -ft_pct         # negative price move = profit for short
+
+        # ── Prefer EOD close for realistic P&L ───────────────────────────────
+        if close_price is not None:
+            close_price = float(close_price)
+            if close_price >= ib_high:
+                # EOD close above stop → full stop out
+                pnl_r, pnl_pct, sim_outcome = -1.0, -stop_dist_pct, "stopped_out"
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(pnl_pct, 2), "pnl_r_sim": pnl_r,
+                    "sim_outcome": sim_outcome,
+                }
+            pnl_pct = (ib_low - close_price) / ib_low * 100   # positive when price fell
+        elif ft_pct is not None:
+            if false_dn and float(ft_pct) > 0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out",
+                }
+            pnl_pct = -float(ft_pct)   # negative ft_pct = price fell = profit for short
+        else:
+            return {**NO_TRADE, "sim_outcome": "missing_data"}
 
     pnl_r = pnl_pct / stop_dist_pct if stop_dist_pct else 0.0
 
-    # Cap loss at −1R (stop distance); win is uncapped (EOD close-based)
+    # Cap loss at −1R (full stop); upside uncapped
     if pnl_r < -1.0:
         pnl_r   = -1.0
         pnl_pct = -stop_dist_pct
@@ -6983,7 +7020,11 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                 post_alert = None
 
             # ── Compute simulation P&L (IB breakout rules) ───────────────────
-            sim = compute_trade_sim({**r, "follow_thru_pct": r.get("aft_move_pct")})
+            sim = compute_trade_sim({
+                **r,
+                "follow_thru_pct": r.get("aft_move_pct"),
+                "close_price":     r.get("close_price"),   # EOD close for realistic P&L
+            })
 
             if ticker in existing_tickers:
                 # ── UPDATE existing record ────────────────────────────────────
@@ -6995,6 +7036,8 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     "false_break_down":    bool(r.get("false_break_down", False)),
                     "post_alert_move_pct": post_alert,
                 }
+                if r.get("close_price") is not None:
+                    patch["close_price"] = round(float(r["close_price"]), 4)
                 # Add sim fields if meaningful
                 if sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
                     patch["sim_outcome"]      = sim["sim_outcome"]
