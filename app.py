@@ -6358,8 +6358,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm8.metric("Avg Loss (R)",   f"{_avg_loss_r}R")
                         _sm9.metric("Expectancy",     f"{_expectancy_r:+.3f}R / trade",
                                     help="Average R gained per trade — the raw edge, independent of position size")
-                        _sm10.metric("Max Drawdown (R)", f"{_max_dd_r}R",
-                                     help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim")
+                        _sm10.metric("Max Drawdown (R)", f"{abs(_max_dd_r)}R",
+                                     help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim (shown as a positive magnitude)")
 
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
 
@@ -6409,7 +6409,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _stat_row("Avg Win (R)",     f"+{_avg_win_r}R"),
                             _stat_row("Avg Loss (R)",    f"{_avg_loss_r}R"),
                             _stat_row("Expectancy",      f"{_expectancy_r:+.3f}R/trade"),
-                            _stat_row("Max Drawdown (R)",f"{_max_dd_r}R"),
+                            _stat_row("Max Drawdown (R)",f"{abs(_max_dd_r)}R"),
                         ]
                         _rp_csv_export = pd.concat(
                             [_rp_csv_df,
