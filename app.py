@@ -10811,10 +10811,14 @@ ALTER TABLE backtest_sim_runs
         _do_recal = st.button("🔄 Recalibrate Both Brains Now", use_container_width=True,
                               help="Runs live recalibration (journal + bot) AND historical calibration (11k+ backtest rows)")
     if _do_recal:
+        from paper_trader_bot import _alert_tcs_threshold_changes as _alert_tcs
+        _old_tcs = load_tcs_thresholds()
         with st.spinner("Recalibrating live brain from journal + paper trades…"):
             _live_cal = recalibrate_from_supabase(user_id=_uid)
         with st.spinner("Calibrating historical brain from backtest data…"):
             _hist_cal = recalibrate_from_history(user_id=_uid)
+        _new_tcs = load_tcs_thresholds()
+        _alert_tcs(_old_tcs, _new_tcs)
 
         _live_src = _live_cal.get("sources", {})
         _hist_src = _hist_cal.get("sources", {})
