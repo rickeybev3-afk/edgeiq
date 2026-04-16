@@ -5903,6 +5903,39 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _day_pnl = 0.0
                         _day_trades = 0
 
+                        # ── Pre-pass: count qualifying trades for this day ─────────────────────
+                        # Position is SPLIT across all qualifying trades so total daily exposure
+                        # = position × compound_factor, not position × compound_factor × N_tickers.
+                        # This matches live-bot behaviour: capital is allocated across concurrent
+                        # positions, not multiplied per ticker.
+                        def _qualifies(r) -> bool:
+                            _t = float(r.get("tcs") or 0)
+                            _w = str(r.get("win_loss") or "")
+                            _il = float(r.get("ib_low") or 0)
+                            _ih = float(r.get("ib_high") or 0)
+                            _f  = float(r.get("follow_thru_pct") or 0)
+                            if _rp_bot_mode:
+                                _pk = _label_to_weight_key(str(r.get("predicted") or ""))
+                                if _t < _struct_tcs_map.get(_pk, _bot_tcs_fallback):
+                                    return False
+                            elif _t < _rp_min_tcs:
+                                return False
+                            if abs(_f) < _rp_min_ft:
+                                return False
+                            _g   = float(r.get("gap_pct") or 0)
+                            _gib = float(r.get("gap_vs_ib_pct") or 0)
+                            if _rp_min_gap > 0 and _g < _rp_min_gap:
+                                return False
+                            if _rp_min_gap_vs_ib > 0 and _gib < _rp_min_gap_vs_ib:
+                                return False
+                            if _w not in ("Win", "Loss"):
+                                return False
+                            if _ih <= _il or _il <= 0:
+                                return False
+                            _ao = str(r.get("actual_outcome") or "").strip()
+                            return _ao in ("Bullish Break", "Bearish Break")
+                        _n_qualifying = max(1, sum(1 for r in _day_rows if _qualifies(r)))
+
                         for _rp_r in _day_rows:
                             _tcs      = float(_rp_r.get("tcs") or 0)
                             _wl       = str(_rp_r.get("win_loss") or "")
@@ -5963,19 +5996,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 continue
 
                             # ── Position sizing ───────────────────────────────────────────────
+                            # _n_qualifying = number of valid trades this day (pre-computed above).
+                            # Position is DIVIDED by _n_qualifying so total daily exposure stays
+                            # at one position's worth of capital — not multiplied per ticker.
                             if _rp_bot_mode:
                                 if _rp_compound:
                                     # Cap compound factor at 20× to prevent runaway exponential growth.
-                                    # Without this cap, 1000+ winning trades turn $10K into $480M.
                                     _compound_factor = min(_rp_equity_cur / float(_rp_equity), 20.0)
-                                    _eff_pos = _rp_pos_size * _compound_factor
+                                    _eff_pos = (_rp_pos_size * _compound_factor) / _n_qualifying
                                 else:
-                                    _eff_pos = _rp_pos_size
+                                    _eff_pos = _rp_pos_size / _n_qualifying
                                 _shares  = _eff_pos / max(_entry, 0.01)
                                 _risk_1r = _eff_pos * (_stop_dist / max(_entry, 0.01))
                             else:
-                                _shares  = _fixed_risk_amt / _stop_dist
-                                _risk_1r = _fixed_risk_amt
+                                _shares  = (_fixed_risk_amt / _n_qualifying) / _stop_dist
+                                _risk_1r = _fixed_risk_amt / _n_qualifying
 
                             # ── P&L: false_break detection + MFE R-multiple ───────────────────
                             # DO NOT use stored pnl_r_sim — it was computed from MFE fallback
