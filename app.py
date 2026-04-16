@@ -6361,18 +6361,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm10.metric("Max Drawdown (R)", f"{_max_dd_r}R",
                                      help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim")
 
-                        _eq_df = pd.DataFrame({
-                            "Day": list(range(len(_rp_equity_curve))),
-                            "Equity ($)": _rp_equity_curve,
-                        })
-                        st.caption("**Equity Curve** — dollar P&L with position sizing applied")
-                        st.line_chart(_eq_df.set_index("Day"), height=200, use_container_width=True)
-
-                        # ── Cumulative R chart (raw edge, no position sizing) ──────────────
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
-                        _cum_r_df = pd.DataFrame({"Trade #": range(len(_cum_r)), "Cumulative R": _cum_r})
-                        st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade, no position sizing or compounding")
-                        st.line_chart(_cum_r_df.set_index("Trade #"), height=160, use_container_width=True)
+
+                        _chart_view = st.radio(
+                            "Chart view",
+                            options=["Equity ($)", "Cumulative R"],
+                            horizontal=True,
+                            key="rp_chart_view",
+                            label_visibility="collapsed",
+                        )
+
+                        if _chart_view == "Equity ($)":
+                            _eq_df = pd.DataFrame({
+                                "Day": list(range(len(_rp_equity_curve))),
+                                "Equity ($)": _rp_equity_curve,
+                            })
+                            st.caption("**Equity Curve** — dollar P&L with position sizing applied")
+                            st.line_chart(_eq_df.set_index("Day"), height=220, use_container_width=True)
+                        else:
+                            _cum_r_df = pd.DataFrame({"Trade #": range(len(_cum_r)), "Cumulative R": _cum_r})
+                            st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade, no position sizing or compounding")
+                            st.line_chart(_cum_r_df.set_index("Trade #"), height=220, use_container_width=True)
 
                         # ── Replay CSV download ────────────────────────────────────────────
                         _rp_csv_df = _rp_df.copy()
