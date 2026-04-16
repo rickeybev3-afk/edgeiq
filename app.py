@@ -5681,10 +5681,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _prev_sig = st.session_state["_rp_prev_sig"]
                 if _prev_sig[0] != _rp_cur_start or _prev_sig[1] != _rp_cur_end:
                     st.session_state["rp_min_tcs_slider"] = 0
-                    # Reflect the slider reset in the signature so the stored
-                    # value matches actual session state and does not trigger a
+                    st.session_state["rp_min_ft"] = 0.0
+                    st.session_state["rp_min_gap"] = 0.0
+                    st.session_state["rp_min_gap_vs_ib"] = 0.0
+                    # Reflect all resets in the signature so the stored value
+                    # matches actual session state and does not trigger a
                     # spurious extra clear on the very next rerun.
-                    _rp_sig = _rp_sig[:7] + (0,) + _rp_sig[8:]
+                    _rp_sig = (
+                        _rp_sig[0], _rp_sig[1], _rp_sig[2],
+                        0.0, 0.0,
+                        _rp_sig[5], _rp_sig[6],
+                        0, _rp_sig[8],
+                        0.0,
+                    )
             for _k in list(st.session_state.keys()):
                 if _k.startswith("_drill_tcs_persist_"):
                     del st.session_state[_k]
