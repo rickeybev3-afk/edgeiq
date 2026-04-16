@@ -1856,6 +1856,9 @@ def _load_tcs_alert_structures() -> set | None:
     return None
 
 
+_tcs_alert_cache: dict = {}   # {structure_YYYY-MM-DD: True}
+
+
 def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
     """Send a Telegram alert for any TCS structure whose threshold moved by ≥5 points.
 
@@ -1867,9 +1870,14 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
     ``alert_structures`` key) every structure is eligible — preserving the
     original behaviour.  Set ``alert_structures`` to a subset of structure
     keys to receive alerts only for those; an empty list silences all alerts.
+
+    Duplicate alerts for the same structure on the same UTC day are suppressed
+    via ``_tcs_alert_cache`` so that re-runs of recalibration do not spam
+    traders with identical notifications.
     """
     import os as _os
     import requests as _req
+    import datetime as _dt
 
     _token   = _os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     _chat_id = _os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -1878,8 +1886,11 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
 
     opted_in = _load_tcs_alert_structures()
 
+    _today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+
     _THRESHOLD = 5
     lines = []
+    alerted_keys = []
     all_keys = set(list(previous.keys()) + list(current.keys()))
     for wk in sorted(all_keys):
         if opted_in is not None and wk not in opted_in:
@@ -1891,15 +1902,18 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
         delta = new_val - old_val
         if abs(delta) < _THRESHOLD:
             continue
+        _cache_key = f"{wk}_{_today}"
+        if _cache_key in _tcs_alert_cache:
+            continue
         arrow   = "↑" if delta > 0 else "↓"
         label   = "stricter" if delta > 0 else "looser"
         display = wk.replace("_", " ").title()
         lines.append(f"  • {display}: {old_val} → {new_val} {arrow} ({label})")
+        alerted_keys.append(_cache_key)
 
     if not lines:
         return
 
-    import datetime as _dt
     _date_str = _dt.datetime.utcnow().strftime("%b %d, %Y %H:%M UTC")
     shifts    = "\n".join(lines)
     msg = (
@@ -1934,6 +1948,13 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
 
     # Always notify the main admin chat
     _send_one(_chat_id)
+
+    # Mark alerted structures as sent for today so that any re-run of
+    # recalibration within the same UTC day does not fire duplicate alerts.
+    for _k in alerted_keys:
+        _tcs_alert_cache[_k] = True
+    for _k in [k for k in list(_tcs_alert_cache) if not k.endswith(_today)]:
+        _tcs_alert_cache.pop(_k, None)
 
     # Also broadcast to all beta subscribers, excluding the owner (who already
     # received the message via the main TELEGRAM_CHAT_ID above).
