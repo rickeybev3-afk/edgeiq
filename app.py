@@ -11846,16 +11846,42 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                                         "target_price_sim": "Target",
                                     })
                                     _col_order = [c for c in ["Ticker", "Outcome", "P&L (R)", "Entry", "Stop", "Target"] if c in _sim_df.columns]
+
+                                    def _sim_row_color(row):
+                                        import math as _math
+                                        pnl = row.get("P&L (R)")
+                                        try:
+                                            pnl_f = float(pnl)
+                                            if _math.isnan(pnl_f):
+                                                pnl_f = None
+                                        except (TypeError, ValueError):
+                                            pnl_f = None
+                                        if pnl_f is None or pnl_f == 0:
+                                            bg = "background-color: rgba(158,158,158,0.12)"
+                                            fg_key = "color: #9e9e9e; font-weight:600"
+                                        elif pnl_f > 0:
+                                            bg = "background-color: rgba(102,187,106,0.12)"
+                                            fg_key = "color: #66bb6a; font-weight:600"
+                                        else:
+                                            bg = "background-color: rgba(239,83,80,0.12)"
+                                            fg_key = "color: #ef5350; font-weight:600"
+                                        return [
+                                            fg_key if col in ("Outcome", "P&L (R)") else bg
+                                            for col in row.index
+                                        ]
+
                                     st.dataframe(
-                                        _sim_df[_col_order].style.format(
-                                            {
-                                                "P&L (R)": lambda v: f"{v:+.2f}R" if pd.notna(v) else "—",
-                                                "Entry":   lambda v: f"${v:.2f}" if pd.notna(v) else "—",
-                                                "Stop":    lambda v: f"${v:.2f}" if pd.notna(v) else "—",
-                                                "Target":  lambda v: f"${v:.2f}" if pd.notna(v) else "—",
-                                                "Outcome": lambda v: v if v else "—",
-                                            }
-                                        ),
+                                        _sim_df[_col_order].style
+                                            .format(
+                                                {
+                                                    "P&L (R)": lambda v: f"{v:+.2f}R" if pd.notna(v) else "—",
+                                                    "Entry":   lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                    "Stop":    lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                    "Target":  lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                    "Outcome": lambda v: v if v else "—",
+                                                }
+                                            )
+                                            .apply(_sim_row_color, axis=1),
                                         use_container_width=True,
                                         hide_index=True,
                                     )
