@@ -4,6 +4,16 @@ run_tiered_pnl_backfill.py
 Backfills tiered_pnl_r (50/25/25 ladder P&L) and eod_pnl_r on existing
 paper_trades rows that were logged before the tiered-exit bot was deployed.
 
+Results of the 2026-04-16 initial run (verified via null-count queries post-run):
+  paper_trades     : 74 breakout rows total; 0 qualifying rows found.
+                     All 74 rows lack close_price and/or ib_high/ib_low —
+                     these are historical trades logged before price fields
+                     were captured.  0 rows were updated; backfill complete
+                     (no further action possible without the raw price data).
+  Verification     : PASS — 0 qualifying NULL rows remain after the run.
+  Note             : The 50/25/25 Ladder tab will be populated going forward
+                     as new paper trades are logged with close_price stored.
+
 Target rows
 ───────────
   paper_trades WHERE
