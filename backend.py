@@ -6902,7 +6902,10 @@ def compute_trade_sim_tiered(
     except (TypeError, ValueError):
         return NO_RESULT
 
-    # ── EOD Hold P&L (full position held to close, capped at -1R) ────────────
+    # ── EOD Hold P&L (full position held to close — no stops, raw outcome) ─────
+    # Intentionally uncapped: if price crashed through the stop level and never
+    # recovered, EOD Hold reflects the full realized loss (can exceed -1R).
+    # This is the "no risk management" baseline, not a tradeable strategy.
     if direction == "Bullish Break":
         entry        = ib_high
         stop_initial = ib_low
@@ -6916,7 +6919,7 @@ def compute_trade_sim_tiered(
         target_2r    = entry - 2.0 * ib_range
         eod_raw_r    = (entry - close_px) / ib_range  # positive when price falls
 
-    eod_pnl_r = round(max(eod_raw_r, -1.0), 4)
+    eod_pnl_r = round(eod_raw_r, 4)  # uncapped — raw hold-to-close R
 
     # ── Tiered exit: bar-by-bar replay ───────────────────────────────────────
     if aft_df is None or len(aft_df) == 0:
