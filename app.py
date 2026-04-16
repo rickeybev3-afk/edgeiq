@@ -7148,8 +7148,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if _tkr_sweep_data:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown(
-                    '<div style="font-size:13px;font-weight:700;color:#90caf9;'
-                    'letter-spacing:0.5px;margin-bottom:6px;">📈 TCS Sweep Charts — P&L curve per ticker</div>',
+                    f'<div style="font-size:13px;font-weight:700;color:#90caf9;'
+                    f'letter-spacing:0.5px;margin-bottom:6px;">📈 TCS Sweep Charts — P&L curve per ticker'
+                    f' (min {_MIN_TCS_TRADES} trades per floor)</div>',
                     unsafe_allow_html=True,
                 )
                 import altair as _alt_tk
@@ -7252,6 +7253,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _tk_best_row = _tk_sw_suff[_tk_sw_suff["Net P&L ($)"] == _tk_best_pnl].iloc[0]
                         _tk_expander_label = (
                             f"📊 {_tk_name} — Best: TCS ≥ {int(_tk_best_row['TCS Floor'])} "
+                            f"(≥{_MIN_TCS_TRADES} trades) "
                             f"· {int(_tk_best_row['Trades'])} trades "
                             f"· {_tk_best_row['Win Rate']:.0f}% WR "
                             f"· ${_tk_best_pnl:,.0f} net P&L"
