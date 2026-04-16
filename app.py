@@ -16,6 +16,7 @@ from backend import (
     _label_to_weight_key, _save_brain_weights, _stream_worker, _GRADE_COLORS, _GRADE_SCORE,
     _compress_image_b64,
     _edge_band, _rvol_band,
+    WK_DISPLAY,
     save_signal_conditions, log_signal_outcome, get_predictive_context,
     compute_win_rates, monte_carlo_equity_curves,
     compute_order_flow_signals,
@@ -104,6 +105,22 @@ if(p.get('key')===KEY){{document.getElementById('gate').style.display='none';doc
 _regenerate_notes_html()
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
+
+# ── Startup / configuration error banner ──────────────────────────────────────
+# _startup_errors is populated at import time in backend.py and surfaced here
+# so operators see misconfigured secrets immediately instead of silent failures.
+if _startup_errors:                                                              # type: ignore[name-defined]
+    _err_lines = "\n".join(f"• {_msg}" for _, _msg in _startup_errors)
+    st.error(
+        f"**⚠️ Configuration problem detected — {len(_startup_errors)} secret(s) need attention:**\n\n"
+        f"{_err_lines}\n\n"
+        "Fix these in your environment secrets, then restart the app."
+    )
+    if any(_name in ("SUPABASE_URL", "SUPABASE_KEY") for _name, _ in _startup_errors):
+        st.warning(
+            "Database credentials are missing. Most features will show empty data until "
+            "SUPABASE_URL and SUPABASE_KEY are correctly set."
+        )
 
 # ── Session state ──────────────────────────────────────────────────────────────
 _DEFAULTS = {
@@ -11674,16 +11691,6 @@ ALTER TABLE backtest_sim_runs
         )
 
         # ── TCS threshold diff ────────────────────────────────────────────────────
-        _WK_DISPLAY_LOCAL = {
-            "trend_bull":     "Trend Bull",
-            "trend_bear":     "Trend Bear",
-            "double_dist":    "Double Dist",
-            "non_trend":      "Non-Trend",
-            "normal":         "Normal",
-            "neutral":        "Neutral",
-            "ntrl_extreme":   "Ntrl Extreme",
-            "nrml_variation": "Nrml Variation",
-        }
         _tcs_rows = []
         for _k, _nv in _new_tcs.items():
             _ov = _old_tcs.get(_k)
@@ -11696,7 +11703,7 @@ ALTER TABLE backtest_sim_runs
             _diff = _nv_i - _ov_i
             if abs(_diff) >= 3:
                 _tcs_rows.append({
-                    "Structure": _WK_DISPLAY_LOCAL.get(_k, _k),
+                    "Structure": WK_DISPLAY.get(_k, _k),
                     "Before":    _ov_i,
                     "After":     _nv_i,
                     "Change":    f"{'+'if _diff>0 else ''}{_diff}",
@@ -11769,6 +11776,53 @@ ALTER TABLE backtest_sim_runs
             st.info("No structures had enough data to update weights.")
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── TCS Threshold History (collapsible) ───────────────────────────────────
+    _bw_tcs_hist = load_tcs_threshold_history(days=30)
+    if _bw_tcs_hist:
+        with st.expander(f"📈 TCS Threshold Shift History — last {len(_bw_tcs_hist)} recalibrations (30 days)", expanded=False):
+            st.caption("Each row = one nightly recalibration where at least one structure's threshold moved by ≥ 3 pts.")
+            _bw_hist_rows = []
+            for _bhr in _bw_tcs_hist:
+                _bh_ts    = _bhr.get("timestamp", "")[:16].replace("T", " ")
+                _bh_old   = _bhr.get("previous", {})
+                _bh_new   = _bhr.get("thresholds", {})
+                _bh_changes = []
+                for _bh_k, _bh_nv in _bh_new.items():
+                    _bh_ov = _bh_old.get(_bh_k)
+                    if _bh_ov is None:
+                        continue
+                    try:
+                        _bh_d = int(_bh_nv) - int(_bh_ov)
+                    except (TypeError, ValueError):
+                        continue
+                    if abs(_bh_d) >= 3:
+                        _bh_changes.append({
+                            "Date (UTC)": _bh_ts,
+                            "Structure":  WK_DISPLAY.get(_bh_k, _bh_k),
+                            "Before":     int(_bh_ov),
+                            "After":      int(_bh_nv),
+                            "Δ":          f"{'+'if _bh_d>0 else ''}{_bh_d}",
+                        })
+                _bw_hist_rows.extend(_bh_changes)
+            if _bw_hist_rows:
+                _bw_hist_df = pd.DataFrame(_bw_hist_rows[::-1])
+
+                def _bw_color_delta(val):
+                    try:
+                        v = int(str(val).replace("+", ""))
+                        if v > 0:  return "color:#ef5350;font-weight:700"
+                        if v < 0:  return "color:#66bb6a;font-weight:700"
+                    except Exception:
+                        pass
+                    return ""
+
+                st.dataframe(
+                    _bw_hist_df.style.map(_bw_color_delta, subset=["Δ"]),
+                    use_container_width=True, hide_index=True,
+                )
+            else:
+                st.info("No threshold shifts ≥ 3 pts recorded in the last 30 days.")
 
     _bw_rows = []
     for _k, _v in _bw.items():

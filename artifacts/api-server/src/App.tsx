@@ -109,7 +109,11 @@ function App() {
       }
     };
     check();
-    return () => { cancelled = true; };
+    const interval = setInterval(check, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   if (!health.checked) {

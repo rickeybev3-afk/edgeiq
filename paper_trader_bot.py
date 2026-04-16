@@ -100,6 +100,7 @@ try:
         supabase as _supabase_client,
         load_tcs_thresholds,
         label_to_weight_key,
+        WK_DISPLAY,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -687,16 +688,7 @@ def _alert_eod_summary(
     tg_send("\n".join(lines))
 
 
-_WK_DISPLAY = {
-    "trend_bull":     "Trend Bull",
-    "trend_bear":     "Trend Bear",
-    "double_dist":    "Double Dist",
-    "non_trend":      "Non-Trend",
-    "normal":         "Normal",
-    "neutral":        "Neutral",
-    "ntrl_extreme":   "Ntrl Extreme",
-    "nrml_variation": "Nrml Variation",
-}
+_WK_DISPLAY = WK_DISPLAY
 
 
 def _alert_tcs_threshold_changes(old: dict, new: dict, min_delta: int = 3) -> None:

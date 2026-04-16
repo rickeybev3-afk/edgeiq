@@ -113,6 +113,61 @@ try:
 except Exception as _he:
     logging.warning("[STARTUP] Could not write startup health file: %s", _he)
 
+# ── Alpaca paper/live account type validation (non-blocking) ─────────────────
+# Checks whether the configured Alpaca keys belong to a paper account or a live
+# account, so the operator is warned if they accidentally mix up key types.
+if ALPACA_API_KEY and ALPACA_SECRET_KEY:
+    def _check_alpaca_account_type() -> None:
+        import threading as _threading
+        def _run() -> None:
+            try:
+                import requests as _req
+                _hdrs = {
+                    "APCA-API-KEY-ID":     ALPACA_API_KEY,
+                    "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+                }
+                # Try paper endpoint first — paper keys only work here
+                _resp_paper = _req.get(
+                    "https://paper-api.alpaca.markets/v2/account",
+                    headers=_hdrs, timeout=8
+                )
+                if _resp_paper.status_code == 200:
+                    _is_paper = _resp_paper.json().get("is_paper_account", True)
+                    if not _is_paper:
+                        # Keys authenticated on paper endpoint but account says live —
+                        # unusual / unsupported combination, warn the operator.
+                        logging.warning(
+                            "[STARTUP] Alpaca keys authenticated on the paper endpoint "
+                            "but account reports is_paper_account=False. "
+                            "Verify your key type matches your intended trading mode."
+                        )
+                    else:
+                        logging.info("[STARTUP] Alpaca keys confirmed: paper account ✓")
+                elif _resp_paper.status_code in (401, 403):
+                    # Paper endpoint rejected the keys — they are likely live keys.
+                    # Check the live endpoint to confirm.
+                    _resp_live = _req.get(
+                        "https://api.alpaca.markets/v2/account",
+                        headers=_hdrs, timeout=8
+                    )
+                    if _resp_live.status_code == 200:
+                        logging.warning(
+                            "[STARTUP] ⚠️  Alpaca keys belong to a LIVE brokerage account "
+                            "(paper endpoint returned 401). If the app is running in paper "
+                            "mode, orders will fail. Confirm IS_PAPER_ALPACA matches your "
+                            "actual key type."
+                        )
+                    else:
+                        logging.warning(
+                            "[STARTUP] Alpaca account type check inconclusive "
+                            "(paper=%s live=%s). Verify your keys manually.",
+                            _resp_paper.status_code, _resp_live.status_code,
+                        )
+            except Exception as _ae:
+                logging.debug("[STARTUP] Alpaca account-type check skipped: %s", _ae)
+        _threading.Thread(target=_run, daemon=True, name="alpaca-account-check").start()
+    _check_alpaca_account_type()
+
 # Supabase client creation is gated only on Supabase-specific secrets so that
 # missing Alpaca credentials do not prevent data/analysis features from working.
 if SUPABASE_URL and SUPABASE_KEY and not _supabase_errors:
@@ -278,6 +333,19 @@ WEIGHTS_FILE      = "brain_weights.json"            # ⛔ READ-ONLY — live per
 HIST_WEIGHTS_FILE    = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
 TCS_THRESHOLDS_FILE  = "tcs_thresholds.json"          # per-structure TCS cutoffs saved after nightly recalibration
 TCS_THRESHOLD_HISTORY_FILE = "tcs_threshold_history.jsonl"  # append-only history log (one JSON record per line)
+
+# Canonical display-label mapping for TCS structure weight keys.
+# Single source of truth — imported by app.py and paper_trader_bot.py.
+WK_DISPLAY: dict[str, str] = {
+    "trend_bull":     "Trend Bull",
+    "trend_bear":     "Trend Bear",
+    "double_dist":    "Double Dist",
+    "non_trend":      "Non-Trend",
+    "normal":         "Normal",
+    "neutral":        "Neutral",
+    "ntrl_extreme":   "Ntrl Extreme",
+    "nrml_variation": "Nrml Variation",
+}
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
 SA_JOURNAL_FILE  = "sa_journal.csv"
