@@ -10204,7 +10204,11 @@ def render_performance_tab():
     _pt_df = load_paper_trades(_AUTH_USER_ID, days=365)
 
     # ── Load backtest sim history (backtest_sim_runs) ────────────────────────
-    _bt_sim_df = load_backtest_sim_history(user_id=_AUTH_USER_ID)
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _load_bt_sim_history(uid):
+        return load_backtest_sim_history(user_id=uid)
+
+    _bt_sim_df = _load_bt_sim_history(uid=_AUTH_USER_ID)
 
     # ── Load accuracy_tracker (bot watchlist calls + ALL combined) ──
     _at_df = pd.DataFrame()
