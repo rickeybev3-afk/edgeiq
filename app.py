@@ -5730,7 +5730,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         while True:
                             _rp_q = (
                                 supabase.table("backtest_sim_runs")
-                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct")
+                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down")
                                 .eq("user_id", _rp_uid)
                                 .gte("sim_date", str(_rp_start))
                                 .lte("sim_date", str(_rp_end))
@@ -5748,15 +5748,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _rp_rows = []
                         st.error(f"Failed to load data: {_rp_e}")
 
-                # ── Best (Most Profit Combined) — pick highest follow_thru_pct per ticker+date ──
+                # ── Best (Most Profit Combined) — pick highest pnl_r_sim per ticker+date ──
+                # Uses pnl_r_sim (pre-computed MFE R-multiple incl. false-break losses) so the
+                # de-dup picks genuinely best expected value, not just biggest raw move.
+                # Falls back to follow_thru_pct for rows that pre-date the sim backfill.
                 if _rp_rows and _rp_best_mode:
-                    _best_seen: dict = {}  # key=(ticker,sim_date) → row with highest follow_thru_pct
+                    _best_seen: dict = {}
                     for _brow in _rp_rows:
-                        _bkey = (_brow.get("ticker",""), _brow.get("sim_date",""))
-                        _bpct = float(_brow.get("follow_thru_pct") or 0)
-                        if _bkey not in _best_seen or _bpct > float(_best_seen[_bkey].get("follow_thru_pct") or 0):
-                            _best_seen[_bkey] = _brow
-                    _rp_rows = list(_best_seen.values())
+                        _bkey  = (_brow.get("ticker",""), _brow.get("sim_date",""))
+                        _br    = _brow.get("pnl_r_sim")
+                        _bscore = float(_br) if _br is not None else float(_brow.get("follow_thru_pct") or 0)
+                        if _bkey not in _best_seen:
+                            _best_seen[_bkey] = (_bscore, _brow)
+                        elif _bscore > _best_seen[_bkey][0]:
+                            _best_seen[_bkey] = (_bscore, _brow)
+                    _rp_rows = [v for _, v in _best_seen.values()]
                     # Label each row so Snapshot column in trade log shows "best (morning)" etc.
                     for _brow in _rp_rows:
                         _brow["scan_type"] = f"best ({_brow.get('scan_type','?')})"
@@ -5924,32 +5930,36 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _entry > 0 and _stop_dist / _entry < 0.005:
                                 continue
 
+                            # ── Position sizing ───────────────────────────────────────────────
                             if _rp_bot_mode:
-                                # Position size: flat OR compounded with equity growth
                                 if _rp_compound:
                                     _compound_factor = _rp_equity_cur / float(_rp_equity)
                                     _eff_pos = _rp_pos_size * _compound_factor
                                 else:
                                     _eff_pos = _rp_pos_size
-                                _shares = _eff_pos / max(_entry, 0.01)
-                                # Win/Loss based on structure prediction accuracy (win_loss),
-                                # NOT actual_outcome × follow_thru — that gives 100% WR because
-                                # follow_thru_pct is MFE (always positive in the breakout direction).
-                                # win_loss = "Win" means the structure prediction was correct.
-                                # Cap at 50% per trade to prevent explosive compounding on outlier moves.
-                                if _wl == "Win":
-                                    _ft_capped = min(abs(_ft), 50.0)
-                                    _trade_pnl = _eff_pos * (_ft_capped / 100.0)
-                                else:
-                                    # -1R: lose the stop distance as % of position
-                                    _trade_pnl = -(_eff_pos * (_stop_dist / max(_entry, 0.01)))
+                                _shares      = _eff_pos / max(_entry, 0.01)
+                                _risk_1r     = _eff_pos * (_stop_dist / max(_entry, 0.01))
                             else:
-                                _shares = _fixed_risk_amt / _stop_dist
+                                _shares      = _fixed_risk_amt / _stop_dist
+                                _risk_1r     = _fixed_risk_amt
+
+                            # ── P&L: prefer pnl_r_sim (pre-computed, includes false-break -1R losses)
+                            # Falls back to win_loss + follow_thru for rows that pre-date the backfill.
+                            # NEVER use follow_thru_pct × direction: follow_thru_pct is MFE (always
+                            # positive in the breakout direction) → gives fake 100% win rate.
+                            _pnl_r_stored = _rp_r.get("pnl_r_sim")
+                            if _pnl_r_stored is not None:
+                                _pnl_r     = float(_pnl_r_stored)
+                                # Cap extreme winners to avoid explosive compounding on outlier moves
+                                _pnl_r     = max(-1.0, min(_pnl_r, 10.0))
+                                _trade_pnl = _pnl_r * _risk_1r
+                            else:
+                                # Fallback: win_loss + follow_thru (pre-backfill rows)
                                 if _wl == "Win":
-                                    _ft_capped = min(abs(_ft), _rp_max_move)
-                                    _trade_pnl = _shares * (_ft_capped / 100.0) * _entry
+                                    _ft_capped = min(abs(_ft), _rp_max_move if not _rp_bot_mode else 50.0)
+                                    _trade_pnl = (_shares * (_ft_capped / 100.0) * _entry) if not _rp_bot_mode else (_eff_pos * (_ft_capped / 100.0))
                                 else:
-                                    _trade_pnl = -_fixed_risk_amt
+                                    _trade_pnl = -_risk_1r
 
                             _day_pnl      += _trade_pnl
                             _day_trades   += 1
