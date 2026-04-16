@@ -7267,19 +7267,37 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.session_state[_pkey] = st.session_state[_widget_key]
                             return _on_change
 
-                        _tk_drill_floor = st.selectbox(
-                            "Show trades with TCS ≥",
-                            options=_tk_drill_floors,
-                            index=_tk_drill_default_idx,
-                            key=f"drill_tcs_{_tk_name}",
-                            on_change=_make_drill_tcs_on_change(
-                                f"drill_tcs_{_tk_name}", _tk_persist_key
-                            ),
-                            help=(
-                                "Select a TCS floor to view all individual trades for this "
-                                "ticker where TCS is at or above that cutoff."
-                            ),
-                        )
+                        _drill_sel_col, _drill_btn_col = st.columns([3, 1])
+                        with _drill_sel_col:
+                            _tk_drill_floor = st.selectbox(
+                                "Show trades with TCS ≥",
+                                options=_tk_drill_floors,
+                                index=_tk_drill_default_idx,
+                                key=f"drill_tcs_{_tk_name}",
+                                on_change=_make_drill_tcs_on_change(
+                                    f"drill_tcs_{_tk_name}", _tk_persist_key
+                                ),
+                                help=(
+                                    "Select a TCS floor to view all individual trades for this "
+                                    "ticker where TCS is at or above that cutoff."
+                                ),
+                            )
+                        if _tk_has_best and _tk_drill_floor != _tk_drill_default:
+                            with _drill_btn_col:
+                                st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+                                _reset_key = f"_reset_best_tcs_{_tk_name}"
+                                if st.button(
+                                    "↩ Reset to best",
+                                    key=_reset_key,
+                                    use_container_width=True,
+                                    help=f"Restore the recommended floor (TCS ≥ {_tk_drill_default}) for {_tk_name}.",
+                                ):
+                                    if _tk_persist_key in st.session_state:
+                                        del st.session_state[_tk_persist_key]
+                                    _drill_widget_key = f"drill_tcs_{_tk_name}"
+                                    if _drill_widget_key in st.session_state:
+                                        del st.session_state[_drill_widget_key]
+                                    st.rerun()
                         _tk_drill_mask = (
                             (_bt_df["ticker"] == _tk_name)
                             & (_bt_df["tcs"].astype(float) >= _tk_drill_floor)
