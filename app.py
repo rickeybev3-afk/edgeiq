@@ -5974,7 +5974,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         while True:
                             _rp_q = (
                                 supabase.table("backtest_sim_runs")
-                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down")
+                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down,eod_pnl_r,tiered_pnl_r")
                                 .eq("user_id", _rp_uid)
                                 .gte("sim_date", str(_rp_start))
                                 .lte("sim_date", str(_rp_end))
@@ -6225,6 +6225,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _rp_priority = "P1 🔴" if _tcs >= 70 else "P2 🟠"
                             else:
                                 _rp_priority = "P3 🟡" if _tcs >= 70 else "P4 🟢"
+                            _rp_eod_r    = _rp_r.get("eod_pnl_r")
+                            _rp_tiered_r = _rp_r.get("tiered_pnl_r")
                             _rp_trades.append({
                                 "Priority":    _rp_priority,
                                 "Date":        _rp_date_str,
@@ -6238,7 +6240,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Shares":      int(_shares),
                                 "W/L":         "Win" if _trade_pnl > 0 else "Loss",
                                 "False Break": _false_break,
-                                "R":           round(_pnl_r, 2),
+                                "R (MFE)":     round(_pnl_r, 2),
+                                "R (EOD)":     round(float(_rp_eod_r), 2) if _rp_eod_r is not None else None,
+                                "R (Tiered)":  round(float(_rp_tiered_r), 2) if _rp_tiered_r is not None else None,
                                 "Move %":      round(_ft, 2),
                                 "P&L ($)":     round(_trade_pnl, 2),
                                 "Equity":      round(_rp_equity_cur, 2),
@@ -6284,7 +6288,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm5.metric("Profit Factor", _pf_str)
 
                         # ── R-based stats row ─────────────────────────────────────────────
-                        _r_ser          = _rp_df["R"]
+                        _r_ser          = _rp_df["R (MFE)"]
                         _false_brk_n    = _rp_df["False Break"].sum()
                         _false_brk_rate = round(_false_brk_n / _total_trades * 100, 1) if _total_trades else 0
                         _avg_win_r      = round(_r_ser[_r_ser > 0].mean(), 2) if (_r_ser > 0).any() else 0
@@ -6319,10 +6323,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         # ── Replay CSV download ────────────────────────────────────────────
                         _rp_csv_df = _rp_df.copy()
                         _rp_csv_df.insert(
-                            _rp_csv_df.columns.get_loc("R") + 1,
+                            _rp_csv_df.columns.get_loc("R (MFE)") + 1,
                             "Cumulative R",
                             _cum_r.values,
-                        ) if "R" in _rp_csv_df.columns else None
+                        ) if "R (MFE)" in _rp_csv_df.columns else None
                         st.download_button(
                             label="⬇ Download Replay CSV",
                             data=_rp_csv_df.to_csv(index=False).encode("utf-8"),
@@ -6461,15 +6465,33 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     )
 
                         st.markdown("**Trade-by-Trade Log**")
-                        _rp_styled = _rp_df.copy()
+
+                        def _rp_row_style(row):
+                            wl = str(row.get("W/L", "")).strip()
+                            if wl == "Win":
+                                base = "background-color:rgba(76,175,80,0.08)"
+                                hi   = "background-color:rgba(76,175,80,0.18);color:#66bb6a;font-weight:700"
+                            elif wl == "Loss":
+                                base = "background-color:rgba(239,83,80,0.08)"
+                                hi   = "background-color:rgba(239,83,80,0.18);color:#ef5350;font-weight:700"
+                            else:
+                                return [""] * len(row)
+                            return [hi if col == "W/L" else base for col in row.index]
+
+                        _rp_styled_df = _rp_df.style.apply(_rp_row_style, axis=1)
                         st.dataframe(
-                            _rp_styled,
+                            _rp_styled_df,
                             use_container_width=True,
                             hide_index=True,
                             column_config={
-                                "P&L ($)": st.column_config.NumberColumn(format="$%.2f"),
-                                "Equity":  st.column_config.NumberColumn(format="$%.2f"),
-                                "Move %":  st.column_config.NumberColumn(format="%.2f%%"),
+                                "P&L ($)":    st.column_config.NumberColumn(format="$%.2f"),
+                                "Equity":     st.column_config.NumberColumn(format="$%.2f"),
+                                "Move %":     st.column_config.NumberColumn(format="%.2f%%"),
+                                "R (MFE)":    st.column_config.NumberColumn(format="%.2fR"),
+                                "R (EOD)":    st.column_config.NumberColumn(format="%.2fR",
+                                              help="EOD hold P&L: full position held to close, no stops"),
+                                "R (Tiered)": st.column_config.NumberColumn(format="%.2fR",
+                                              help="50% at 1R → BE stop → 25% at 2R → 25% runner to close"),
                             }
                         )
 
@@ -7284,7 +7306,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _tk_best_pnl = None
                         _tk_best_row = None
                         _tk_max_trades = int(_tk_sw_df["Trades"].max()) if not _tk_sw_df.empty else 0
-                        _tk_expander_label = f"📊 {_tk_name} — insufficient data (<{_MIN_TCS_TRADES} trades per floor)"
+                        _tk_expander_label = (
+                            f"📊 {_tk_name} — ⚠️ {_tk_max_trades}/{_MIN_TCS_TRADES} trades "
+                            f"(need {_MIN_TCS_TRADES - _tk_max_trades} more)"
+                        )
                         _tk_has_best = False
                     with st.expander(_tk_expander_label, expanded=False):
                         if _tk_has_best:
@@ -7346,6 +7371,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             .configure_axis(gridColor="#2a2a3a", domainColor="#444")
                         )
                         st.altair_chart(_tk_bar, use_container_width=True)
+
+                        st.markdown(
+                            '<div style="display:flex;gap:18px;flex-wrap:wrap;margin:-6px 0 10px 0;font-size:11px;color:#90a4ae;">'
+                            '<span><span style="display:inline-block;width:10px;height:10px;background:#4caf50;border-radius:2px;margin-right:4px;"></span>Best floor</span>'
+                            '<span><span style="display:inline-block;width:10px;height:10px;background:#42a5f5;border-radius:2px;margin-right:4px;"></span>Profitable</span>'
+                            '<span><span style="display:inline-block;width:10px;height:10px;background:#ef5350;border-radius:2px;margin-right:4px;"></span>Unprofitable</span>'
+                            '<span><span style="display:inline-block;width:10px;height:10px;background:#555555;border-radius:2px;margin-right:4px;"></span>Insufficient data</span>'
+                            '</div>',
+                            unsafe_allow_html=True,
+                        )
 
                         def _tk_sw_style(row):
                             if _tk_has_best and row["Net P&L ($)"] == _tk_best_pnl and row["Sufficient"] == "✓":
@@ -10446,6 +10481,19 @@ ALTER TABLE backtest_sim_runs
         if "scan_type" not in _sim_df.columns:
             _sim_df["scan_type"] = "morning"
         _sim_df["scan_type"] = _sim_df["scan_type"].fillna("morning")
+
+        # ── Task #83: tickers with trades logged but no sim data yet ─────────
+        _missing_sim_tickers = (
+            _pt_df[_pt_df["pnl_r_sim"].isna()]["ticker"].dropna().unique().tolist()
+            if "ticker" in _pt_df.columns else []
+        )
+        if _missing_sim_tickers:
+            st.warning(
+                f"⚠️ **{len(_missing_sim_tickers)} ticker(s) have trades logged but no sim P&L yet:** "
+                f"{', '.join(sorted(_missing_sim_tickers))}  \n"
+                "Run `python run_sim_backfill.py` to populate them, or wait for the bot to fill them in during the next EOD update.",
+                icon="🕐",
+            )
 
         import altair as _alt
 
