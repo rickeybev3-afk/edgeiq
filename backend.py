@@ -7258,21 +7258,36 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
     if not supabase or not results:
         return {"updated": 0}
 
-    # Batch-fetch stored alert_price values for this date so we can compute
-    # post_alert_move_pct = (eod_close − alert_price) / alert_price × 100
+    # Parse trade_date for Alpaca bar fetching (needed for tiered P&L)
+    try:
+        from datetime import date as _date_cls
+        _td_parts = str(trade_date).split("-")
+        _trade_date_obj = _date_cls(int(_td_parts[0]), int(_td_parts[1]), int(_td_parts[2]))
+    except Exception:
+        _trade_date_obj = None
+
+    _alpaca_key = os.environ.get("ALPACA_API_KEY", "")
+    _alpaca_sec = os.environ.get("ALPACA_SECRET_KEY", "")
+
+    # Batch-fetch stored alert_price, ib_high, ib_low values for this date so we can
+    # compute post_alert_move_pct and use stored IB levels as fallback for tiered P&L
     try:
         existing = (
             supabase.table("paper_trades")
-            .select("ticker, alert_price")
+            .select("ticker, alert_price, ib_high, ib_low")
             .eq("user_id", user_id)
             .eq("trade_date", str(trade_date))
             .execute()
             .data or []
         )
-        alert_prices    = {row["ticker"]: row.get("alert_price") for row in existing}
+        alert_prices     = {row["ticker"]: row.get("alert_price") for row in existing}
+        stored_ib_high   = {row["ticker"]: row.get("ib_high")    for row in existing}
+        stored_ib_low    = {row["ticker"]: row.get("ib_low")     for row in existing}
         existing_tickers = {row["ticker"] for row in existing}
     except Exception:
         alert_prices     = {}
+        stored_ib_high   = {}
+        stored_ib_low    = {}
         existing_tickers = set()
 
     updated = 0
@@ -7293,6 +7308,53 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                 "follow_thru_pct": r.get("aft_move_pct"),
                 "close_price":     r.get("close_price"),   # EOD close for realistic P&L
             })
+
+            # ── Tiered exit P&L (50/25/25 ladder) — requires afternoon bars ──
+            # Only compute for confirmed breakout directions; gracefully skip on
+            # any Alpaca error so the rest of the EOD update is not affected.
+            _tiered_result = {"eod_pnl_r": None, "tiered_pnl_r": None}
+            _actual_outcome = r.get("actual_outcome", "")
+            if (
+                _actual_outcome in ("Bullish Break", "Bearish Break")
+                and _trade_date_obj is not None
+                and _alpaca_key
+                and _alpaca_sec
+            ):
+                try:
+                    # Use IB levels from the result dict; fall back to stored DB values
+                    _ib_high = r.get("ib_high") or stored_ib_high.get(ticker)
+                    _ib_low  = r.get("ib_low")  or stored_ib_low.get(ticker)
+                    _eod_cls = r.get("close_price")
+                    if _ib_high is not None and _ib_low is not None and _eod_cls is not None:
+                        # Fetch intraday bars; build aft_df from bars after 10:30 AM.
+                        # compute_trade_sim_tiered can still return eod_pnl_r even
+                        # when aft_df is None (bars unavailable), so always call it.
+                        _full_bars = fetch_bars(_alpaca_key, _alpaca_sec, ticker, _trade_date_obj)
+                        _aft_df = None
+                        if not _full_bars.empty:
+                            _ib_cutoff = pd.Timestamp(
+                                year=_trade_date_obj.year,
+                                month=_trade_date_obj.month,
+                                day=_trade_date_obj.day,
+                                hour=10, minute=30, second=59,
+                                tz=_full_bars.index.tz,
+                            )
+                            _sliced = _full_bars[_full_bars.index > _ib_cutoff]
+                            _aft_df = _sliced if not _sliced.empty else None
+                        _tiered_result = compute_trade_sim_tiered(
+                            aft_df    = _aft_df,
+                            ib_high   = float(_ib_high),
+                            ib_low    = float(_ib_low),
+                            direction = _actual_outcome,
+                            close_px  = float(_eod_cls),
+                        )
+                        print(
+                            f"Paper trade tiered P&L ({ticker}): "
+                            f"eod_pnl_r={_tiered_result.get('eod_pnl_r')} "
+                            f"tiered_pnl_r={_tiered_result.get('tiered_pnl_r')}"
+                        )
+                except Exception as _tiered_err:
+                    print(f"Paper trade tiered P&L error ({ticker}): {_tiered_err}")
 
             if ticker in existing_tickers:
                 # ── UPDATE existing record ────────────────────────────────────
@@ -7321,6 +7383,11 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     patch["mfe"] = round(float(r["mfe"]), 2)
                 if r.get("exit_trigger"):
                     patch["exit_trigger"] = r["exit_trigger"]
+                # Add tiered exit P&L fields if computed
+                if _tiered_result.get("tiered_pnl_r") is not None:
+                    patch["tiered_pnl_r"] = _tiered_result["tiered_pnl_r"]
+                if _tiered_result.get("eod_pnl_r") is not None:
+                    patch["eod_pnl_r"] = _tiered_result["eod_pnl_r"]
                 try:
                     (
                         supabase.table("paper_trades")
@@ -7332,7 +7399,10 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     )
                 except Exception as _upd_err:
                     _upd_s = str(_upd_err).lower()
-                    _opt_update_cols = ["mae", "mfe", "exit_trigger", "entry_ib_distance", "entry_time"]
+                    _opt_update_cols = [
+                        "mae", "mfe", "exit_trigger", "entry_ib_distance", "entry_time",
+                        "tiered_pnl_r", "eod_pnl_r",
+                    ]
                     if any(col in _upd_s for col in _opt_update_cols):
                         for col in _opt_update_cols:
                             patch.pop(col, None)
@@ -7381,6 +7451,11 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     insert_row["mae"] = round(float(r["mae"]), 2)
                 if r.get("mfe") is not None:
                     insert_row["mfe"] = round(float(r["mfe"]), 2)
+                # Add tiered exit P&L fields if computed
+                if _tiered_result.get("tiered_pnl_r") is not None:
+                    insert_row["tiered_pnl_r"] = _tiered_result["tiered_pnl_r"]
+                if _tiered_result.get("eod_pnl_r") is not None:
+                    insert_row["eod_pnl_r"] = _tiered_result["eod_pnl_r"]
                 # Remove None values to let DB defaults apply
                 insert_row = {k: v for k, v in insert_row.items() if v is not None}
                 (
