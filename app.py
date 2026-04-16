@@ -5589,10 +5589,38 @@ Measures how accurately the 7-structure framework classified those days in hinds
             except Exception:
                 return []
 
+        _RP_SIZING_OPTIONS = ["📊 % Risk (custom)", "🤖 Match Live Bot (100 shares flat)"]
+
+        # ── Restore sizing mode from localStorage (cross-session) ──────────────
+        import streamlit.components.v1 as _cmp_sizing
+        _cmp_sizing.html("""
+<script>
+(function() {
+    var _LS_KEY = 'rp_sizing_mode';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('rp_sizing')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('rp_sizing', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+        if "rp_sizing_mode" not in st.session_state:
+            _qp_sizing = st.query_params.get("rp_sizing", "🤖 Match Live Bot (100 shares flat)")
+            st.session_state["rp_sizing_mode"] = (
+                _qp_sizing if _qp_sizing in _RP_SIZING_OPTIONS else "🤖 Match Live Bot (100 shares flat)"
+            )
+
         _rp_mode = st.radio(
             "Sizing Mode",
-            options=["📊 % Risk (custom)", "🤖 Match Live Bot (100 shares flat)"],
-            index=1,
+            options=_RP_SIZING_OPTIONS,
+            index=_RP_SIZING_OPTIONS.index(
+                st.session_state.get("rp_sizing_mode", "🤖 Match Live Bot (100 shares flat)")
+                if st.session_state.get("rp_sizing_mode", "🤖 Match Live Bot (100 shares flat)") in _RP_SIZING_OPTIONS
+                else "🤖 Match Live Bot (100 shares flat)"
+            ),
             key="rp_sizing_mode",
             horizontal=True,
             help=(
@@ -5601,6 +5629,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "% Risk = fixed dollar risk per trade based on starting equity."
             ),
         )
+
+        _qp_sizing_cur = st.query_params.get("rp_sizing")
+        if _qp_sizing_cur != _rp_mode:
+            st.query_params["rp_sizing"] = _rp_mode
+        _cmp_sizing.html(
+            f"<script>localStorage.setItem('rp_sizing_mode', {repr(_rp_mode)});</script>",
+            height=0,
+        )
+
         _rp_bot_mode = "bot" in _rp_mode.lower()
 
         # Initialise date defaults before any widget renders so values are
@@ -5743,12 +5780,40 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rp_max_move = 9999.0
                 st.caption("**Max Move**\nUncapped in Bot mode\n(uses actual recorded move)")
 
+        _RP_SNAP_OPTIONS = ["Morning (10:47 AM)", "Intraday (2:00 PM)", "EOD (4:00 PM)", "All", "🏆 Best (Most Profit Combined)"]
+
+        # ── Restore snapshot preference from localStorage (cross-session) ───────
+        import streamlit.components.v1 as _cmp_snap
+        _cmp_snap.html("""
+<script>
+(function() {
+    var _LS_KEY = 'rp_scan_type';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('rp_snap')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('rp_snap', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+        if "rp_scan_type" not in st.session_state:
+            _qp_snap = st.query_params.get("rp_snap", "Morning (10:47 AM)")
+            st.session_state["rp_scan_type"] = (
+                _qp_snap if _qp_snap in _RP_SNAP_OPTIONS else "Morning (10:47 AM)"
+            )
+
         _rp_snap_col, _rp_date_col1, _rp_date_col2 = st.columns([1, 1, 1])
         with _rp_snap_col:
             _rp_snap = st.selectbox(
                 "Snapshot",
-                options=["Morning (10:47 AM)", "Intraday (2:00 PM)", "EOD (4:00 PM)", "All", "🏆 Best (Most Profit Combined)"],
-                index=0,
+                options=_RP_SNAP_OPTIONS,
+                index=_RP_SNAP_OPTIONS.index(
+                    st.session_state.get("rp_scan_type", "Morning (10:47 AM)")
+                    if st.session_state.get("rp_scan_type", "Morning (10:47 AM)") in _RP_SNAP_OPTIONS
+                    else "Morning (10:47 AM)"
+                ),
                 key="rp_scan_type",
                 help=(
                     "Morning = entry decision snapshot (IB just formed, 10:47 AM). "
@@ -5759,6 +5824,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "highest follow-through % for each ticker+date — shows the theoretical "
                     "ceiling if you always timed your entry perfectly."
                 ),
+            )
+            _qp_snap_cur = st.query_params.get("rp_snap")
+            if _qp_snap_cur != _rp_snap:
+                st.query_params["rp_snap"] = _rp_snap
+            _cmp_snap.html(
+                f"<script>localStorage.setItem('rp_scan_type', {repr(_rp_snap)});</script>",
+                height=0,
             )
             _rp_scan_type_map = {
                 "Morning (10:47 AM)":           "morning",
@@ -6363,12 +6435,49 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
 
+                        _RP_CHART_OPTIONS = ["Equity ($)", "Cumulative R"]
+
+                        # ── Restore chart view from localStorage (cross-session) ────────
+                        import streamlit.components.v1 as _cmp_chart_view
+                        _cmp_chart_view.html("""
+<script>
+(function() {
+    var _LS_KEY = 'rp_chart_view';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('rp_chart_view')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('rp_chart_view', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+                        if "rp_chart_view" not in st.session_state:
+                            _qp_chart = st.query_params.get("rp_chart_view", "Equity ($)")
+                            st.session_state["rp_chart_view"] = (
+                                _qp_chart if _qp_chart in _RP_CHART_OPTIONS else "Equity ($)"
+                            )
+
                         _chart_view = st.radio(
                             "Chart view",
-                            options=["Equity ($)", "Cumulative R"],
+                            options=_RP_CHART_OPTIONS,
+                            index=_RP_CHART_OPTIONS.index(
+                                st.session_state.get("rp_chart_view", "Equity ($)")
+                                if st.session_state.get("rp_chart_view", "Equity ($)") in _RP_CHART_OPTIONS
+                                else "Equity ($)"
+                            ),
                             horizontal=True,
                             key="rp_chart_view",
                             label_visibility="collapsed",
+                        )
+
+                        _qp_chart_cur = st.query_params.get("rp_chart_view")
+                        if _qp_chart_cur != _chart_view:
+                            st.query_params["rp_chart_view"] = _chart_view
+                        _cmp_chart_view.html(
+                            f"<script>localStorage.setItem('rp_chart_view', {repr(_chart_view)});</script>",
+                            height=0,
                         )
 
                         if _chart_view == "Equity ($)":
