@@ -7914,6 +7914,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file",
                                 )
 
+                # ── Export All Tickers Sweep CSV ──────────────────────────────────
+                _all_sweep_frames = []
+                for _exp_tk, _exp_rows in _tkr_sweep_data.items():
+                    _exp_df = _pd_bt.DataFrame(_exp_rows)
+                    _exp_df.insert(0, "Ticker", _exp_tk)
+                    _all_sweep_frames.append(_exp_df)
+                if _all_sweep_frames:
+                    _all_sweep_df = _pd_bt.concat(_all_sweep_frames, ignore_index=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.download_button(
+                        label="⬇️ Download All Tickers Sweep CSV",
+                        data=_all_sweep_df.to_csv(index=False),
+                        file_name="sweep_summary_all.csv",
+                        mime="text/csv",
+                        key="_dl_sweep_all_tickers",
+                        help=(
+                            "Download a single combined CSV with every ticker's TCS sweep results. "
+                            "Includes a leading 'Ticker' column so you can sort and filter by ticker offline."
+                        ),
+                    )
+
     st.markdown("---")
     st.markdown(
         '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
