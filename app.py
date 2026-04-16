@@ -6686,8 +6686,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
                 })
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values("Win %", ascending=False)
+            _insuff_mask = _tkr_summary_df["Best TCS"].str.contains("insufficient", na=False)
+            _insuff_count = int(_insuff_mask.sum())
+            if _insuff_count > 0:
+                st.warning(
+                    f"⚠️ **{_insuff_count} ticker{'s' if _insuff_count != 1 else ''} "
+                    f"{'have' if _insuff_count != 1 else 'has'} insufficient data for Best TCS optimization** — "
+                    f"fewer than {_MIN_TCS_TRADES} trades exist at any single TCS floor. "
+                    f"These rows are highlighted in grey below. Collect more trade data or broaden the replay date range."
+                )
+            def _style_insufficient_rows(row):
+                if "insufficient" in str(row["Best TCS"]):
+                    return ["background-color: #e8e8e8; color: #666666"] * len(row)
+                return [""] * len(row)
+            _styled_summary = _tkr_summary_df.style.apply(_style_insufficient_rows, axis=1)
             st.dataframe(
-                _tkr_summary_df,
+                _styled_summary,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
