@@ -16,8 +16,10 @@ Each ticker is snapshotted at up to 3 times per day (matching the live bot):
 Bars are fetched ONCE per ticker per day and reused across all 3 snapshots.
 
 Usage:
-  python batch_backtest.py                                 # last 60 days, all snapshots
-  python batch_backtest.py --days 252                     # last year, all snapshots
+  python batch_backtest.py                                 # last 60 days, gap screener, all snapshots
+  python batch_backtest.py --screener trend                # trend-continuation screener only
+  python batch_backtest.py --screener both                 # gap + trend (dual screener, matches live bot)
+  python batch_backtest.py --days 252                     # last year
   python batch_backtest.py --scan-type morning            # morning snapshots only
   python batch_backtest.py --scan-type intraday           # intraday only
   python batch_backtest.py --scan-type eod                # EOD only
@@ -53,9 +55,19 @@ import backend
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCAN_CONFIGS = {
-    "morning":  {"cutoff_h": 10, "cutoff_m": 47, "label": "MORN"},
-    "intraday": {"cutoff_h": 14, "cutoff_m":  0, "label": "INTR"},
-    "eod":      {"cutoff_h": 16, "cutoff_m":  0, "label": " EOD"},
+    "morning":        {"cutoff_h": 10, "cutoff_m": 47, "label": "MORN"},
+    "intraday":       {"cutoff_h": 14, "cutoff_m":  0, "label": "INTR"},
+    "eod":            {"cutoff_h": 16, "cutoff_m":  0, "label": " EOD"},
+    "trend_morning":  {"cutoff_h": 10, "cutoff_m": 47, "label": "TMRN"},
+    "trend_intraday": {"cutoff_h": 14, "cutoff_m":  0, "label": "TITR"},
+    "trend_eod":      {"cutoff_h": 16, "cutoff_m":  0, "label": "TEOD"},
+}
+
+# Base scan_type → trend variant mapping (same cutoff, different screener tag)
+_TREND_SCAN_MAP = {
+    "morning":  "trend_morning",
+    "intraday": "trend_intraday",
+    "eod":      "trend_eod",
 }
 
 
@@ -103,24 +115,29 @@ def walk_back_trading_days(from_date: date, n: int) -> date:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_smallcap_universe(
-    float_max_m: float = 100.0,
-    price_min:   float = 1.0,
-    price_max:   float = 20.0,
-    max_tickers: int   = 3000,
+    float_max_m:   float = 100.0,
+    price_min:     float = 1.0,
+    price_max:     float = 20.0,
+    avg_vol_min_k: int   = 1000,
+    max_tickers:   int   = 3000,
 ) -> list:
-    """Scrape Finviz for all small-float US stocks without gap%/RVOL day-filters."""
+    """Scrape Finviz for US stocks without gap%/RVOL day-filters.
+
+    avg_vol_min_k: minimum average daily volume in thousands (default 1000 = 1M shares).
+    """
     import re
     import requests
     from bs4 import BeautifulSoup
 
-    float_filter = f"sh_float_u{int(float_max_m)}"
-    price_lo     = f"sh_price_o{int(price_min)}"
-    price_hi     = f"sh_price_u{int(price_max)}"
+    float_filter  = f"sh_float_u{int(float_max_m)}"
+    price_lo      = f"sh_price_o{int(price_min)}"
+    price_hi      = f"sh_price_u{int(price_max)}"
+    avgvol_filter = f"sh_avgvol_o{int(avg_vol_min_k)}"
 
     filters = ",".join([
         "geo_usa",
         float_filter,
-        "sh_avgvol_o1000",
+        avgvol_filter,
         price_lo,
         price_hi,
     ])
@@ -295,6 +312,76 @@ def reconstruct_daily_watchlist(
         qualifying.append({
             "ticker":     sym,
             "gap_pct":    round(gap_pct, 3),
+            "prev_close": round(prev_close, 4),
+            "rvol":       round(rvol, 2),
+        })
+
+    return qualifying
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3b — Reconstruct trend-continuation watchlist (mirrors live bot pass 2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def reconstruct_trend_watchlist(
+    daily_bars:     dict,
+    scan_date:      date,
+    change_min_pct: float = 1.0,
+    price_min:      float = 5.0,
+    price_max:      float = 50.0,
+    avg_vol_min_k:  float = 2000.0,
+    avg_vol_days:   int   = 30,
+    sma_short:      int   = 20,
+    sma_long:       int   = 50,
+) -> list:
+    """Reconstruct what trend-continuation tickers would have qualified on scan_date.
+
+    Mirrors the live bot's second Finviz pass:
+      - ≥1% change from prev close to today open
+      - Price $5–$50
+      - 30-day avg vol ≥ 2M shares
+      - Prev close above 20-day SMA AND 50-day SMA (established uptrend)
+    """
+    qualifying = []
+    for sym, df in daily_bars.items():
+        if scan_date not in df.index:
+            continue
+        dates_before = [d for d in df.index if d < scan_date]
+        if len(dates_before) < sma_long:
+            continue
+
+        prev_date  = max(dates_before)
+        prev_close = float(df.loc[prev_date, "close"])
+        today_open = float(df.loc[scan_date, "open"])
+        today_vol  = float(df.loc[scan_date, "volume"])
+
+        if prev_close <= 0 or today_open <= 0:
+            continue
+
+        change_pct = (today_open - prev_close) / prev_close * 100.0
+        if change_pct < change_min_pct:
+            continue
+        if not (price_min <= today_open <= price_max):
+            continue
+
+        lookback_idx = [d for d in df.index if d < scan_date][-avg_vol_days:]
+        avg_vol = float(df.loc[lookback_idx, "volume"].mean()) if lookback_idx else 0.0
+        if avg_vol < avg_vol_min_k * 1_000:
+            continue
+
+        sma_short_dates = dates_before[-sma_short:]
+        sma_long_dates  = dates_before[-sma_long:]
+        if len(sma_short_dates) < sma_short or len(sma_long_dates) < sma_long:
+            continue
+        sma20 = float(df.loc[sma_short_dates, "close"].mean())
+        sma50 = float(df.loc[sma_long_dates,  "close"].mean())
+        if prev_close < sma20 or prev_close < sma50:
+            continue
+
+        rvol = today_vol / avg_vol if avg_vol > 0 else 0.0
+        qualifying.append({
+            "ticker":     sym,
+            "gap_pct":    round(change_pct, 3),
             "prev_close": round(prev_close, 4),
             "rvol":       round(rvol, 2),
         })
@@ -669,7 +756,10 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
         _scan = r.get("scan_type", "morning")
         # entry_hour: approximate hour of day the setup triggered.
         # morning IB closes at 10:30 → 10.  intraday scan runs at 1:30 PM → 13.
-        _entry_hour_map = {"morning": 10, "intraday": 13, "eod": 16}
+        _entry_hour_map = {
+            "morning": 10, "intraday": 13, "eod": 16,
+            "trend_morning": 10, "trend_intraday": 13, "trend_eod": 16,
+        }
         rec = {
             "user_id":          user_id or "",
             "sim_date":         str(r.get("sim_date", "")),
@@ -786,8 +876,12 @@ def main():
     parser.add_argument("--end",        type=str,   help="End date YYYY-MM-DD (default: yesterday)")
     parser.add_argument("--days",       type=int,   default=60,   help="Lookback trading days if --start omitted (default: 60)")
     parser.add_argument("--scan-type",  type=str,   default="all",
-                        choices=["morning", "intraday", "eod", "all"],
+                        choices=["morning", "intraday", "eod", "all",
+                                 "trend_morning", "trend_intraday", "trend_eod"],
                         help="Which snapshot(s) to run (default: all)")
+    parser.add_argument("--screener",   type=str,   default="gap",
+                        choices=["gap", "trend", "both"],
+                        help="Watchlist screener strategy: gap (default), trend, or both")
     parser.add_argument("--feed",       type=str,   default="iex", choices=["iex", "sip"],
                         help="Alpaca data feed for intraday bars (default: iex)")
     parser.add_argument("--gap",        type=float, default=3.0,  help="Min gap%% (default: 3.0)")
@@ -807,7 +901,16 @@ def main():
         print("ERROR: ALPACA_API_KEY and ALPACA_SECRET_KEY must be set.")
         sys.exit(1)
 
-    scan_types = list(SCAN_CONFIGS.keys()) if args.scan_type == "all" else [args.scan_type]
+    # Determine which scan_types to run based on --screener and --scan-type
+    _base_types  = ["morning", "intraday", "eod"]
+    _trend_types = ["trend_morning", "trend_intraday", "trend_eod"]
+    if args.scan_type == "all":
+        gap_scan_types   = _base_types   if args.screener in ("gap",   "both") else []
+        trend_scan_types = _trend_types  if args.screener in ("trend", "both") else []
+    else:
+        gap_scan_types   = [args.scan_type] if args.scan_type in _base_types  else []
+        trend_scan_types = [args.scan_type] if args.scan_type in _trend_types else []
+    scan_types = gap_scan_types + trend_scan_types  # for dedup/display
 
     today    = date.today()
     end_date = date.fromisoformat(args.end) if args.end else today - timedelta(days=1)
@@ -828,7 +931,7 @@ def main():
     print(f"{bar}")
     print(f"  Date range  : {start_date}  →  {end_date}")
     print(f"  Trade days  : {len(trading_days)}")
-    print(f"  Snapshots   : {', '.join(scan_types)}")
+    print(f"  Screener    : {args.screener.upper()}  |  Snapshots: {', '.join(scan_types)}")
     print(f"  Feed        : {args.feed.upper()}")
     print(f"  Filters     : gap ≥ {args.gap}%  |  ${args.price_min}–${args.price_max}  "
           f"|  RVOL ≥ {args.rvol_min}x  |  float ≤ {args.float_max}M")
@@ -836,18 +939,38 @@ def main():
     print(f"  Dry run     : {'YES — Supabase save disabled' if args.dry_run else 'No'}")
     print(f"{bar}\n")
 
-    # ── Step 1: Finviz universe ────────────────────────────────────────────
-    print("[ 1/4 ]  Fetching Finviz small-cap universe...", flush=True)
-    universe = fetch_smallcap_universe(
-        float_max_m=args.float_max,
-        price_min=args.price_min,
-        price_max=args.price_max,
-        max_tickers=3000,
-    )
+    # ── Step 1: Finviz universe(s) ─────────────────────────────────────────
+    print("[ 1/4 ]  Fetching Finviz universe(s)...", flush=True)
+    gap_universe   = []
+    trend_universe = []
+
+    if gap_scan_types:
+        print("         Gap pass: float ≤100M, $1–$20, avgvol ≥1M...", flush=True)
+        gap_universe = fetch_smallcap_universe(
+            float_max_m=args.float_max,
+            price_min=args.price_min,
+            price_max=args.price_max,
+            avg_vol_min_k=1000,
+            max_tickers=3000,
+        )
+        print(f"         → {len(gap_universe)} gap-screener tickers")
+
+    if trend_scan_types:
+        print("         Trend pass: float ≤500M, $5–$50, avgvol ≥2M...", flush=True)
+        trend_universe = fetch_smallcap_universe(
+            float_max_m=500.0,
+            price_min=5.0,
+            price_max=50.0,
+            avg_vol_min_k=2000,
+            max_tickers=3000,
+        )
+        print(f"         → {len(trend_universe)} trend-screener tickers")
+
+    universe = list(dict.fromkeys(gap_universe + trend_universe))
     if not universe:
         print("\nERROR: Finviz returned 0 tickers.")
         sys.exit(1)
-    print(f"       → {len(universe)} tickers in universe\n")
+    print(f"       → {len(universe)} combined unique tickers in universe\n")
 
     # ── Step 2: Alpaca daily bars ──────────────────────────────────────────
     print(f"[ 2/4 ]  Fetching Alpaca daily bars (batches of {args.batch})...", flush=True)
@@ -885,45 +1008,70 @@ def main():
         day_str   = str(day)
         split_tag = "TRAIN" if day_str in train_days else " TEST"
 
-        watchlist = reconstruct_daily_watchlist(
-            all_daily_bars, day,
-            gap_min_pct=args.gap,
-            price_min=args.price_min,
-            price_max=args.price_max,
-            rvol_min=args.rvol_min,
-        )
-        total_qualified += len(watchlist)
+        # ── Build combined item list: {ticker, gap_pct, rvol, _scan_types} ──
+        # ticker_items is keyed by ticker so the same ticker in both screeners
+        # gets all applicable scan_types merged (avoids duplicate intraday fetches)
+        ticker_items: dict = {}
 
-        # Build lookups: ticker → gap_pct, ticker → rvol
-        gap_lookup  = {item["ticker"]: item["gap_pct"] for item in watchlist}
-        rvol_lookup = {item["ticker"]: item.get("rvol", 0.0) for item in watchlist}
+        if gap_scan_types:
+            gap_wl = reconstruct_daily_watchlist(
+                all_daily_bars, day,
+                gap_min_pct=args.gap,
+                price_min=args.price_min,
+                price_max=args.price_max,
+                rvol_min=args.rvol_min,
+            )
+            for item in gap_wl:
+                t = item["ticker"]
+                ticker_items[t] = {**item, "_scan_types": list(gap_scan_types)}
 
-        # Find tickers that need at least one snapshot type
-        new_tickers = [
-            item for item in watchlist
-            if any((item["ticker"], day_str, st) not in existing_triples for st in scan_types)
+        if trend_scan_types:
+            trend_wl = reconstruct_trend_watchlist(all_daily_bars, day)
+            for item in trend_wl:
+                t = item["ticker"]
+                if t in ticker_items:
+                    # Already in gap list — add trend scan_types to avoid dual fetch
+                    ticker_items[t]["_scan_types"] = (
+                        ticker_items[t]["_scan_types"] + trend_scan_types
+                    )
+                else:
+                    ticker_items[t] = {**item, "_scan_types": list(trend_scan_types)}
+
+        all_day_items = list(ticker_items.values())
+        total_qualified += len(all_day_items)
+
+        # Find items that still need at least one snapshot
+        new_items = [
+            item for item in all_day_items
+            if any(
+                (item["ticker"], day_str, st) not in existing_triples
+                for st in item["_scan_types"]
+            )
         ]
-        if not new_tickers:
-            print(f"  {day_str} [{split_tag}]  {len(watchlist):3d} qualified  "
+        if not new_items:
+            print(f"  {day_str} [{split_tag}]  {len(all_day_items):3d} qualified  "
                   f"all snapshots already in DB — skipped")
             continue
 
         # Per-ticker: determine which scan_types are still needed
-        def _needed_scan_types(sym):
-            return [st for st in scan_types if (sym, day_str, st) not in existing_triples]
+        def _needed_for_item(item, _day_str=day_str):
+            return [
+                st for st in item["_scan_types"]
+                if (item["ticker"], _day_str, st) not in existing_triples
+            ]
 
         day_results: list = []
-        with ThreadPoolExecutor(max_workers=min(args.workers, len(new_tickers))) as ex:
+        with ThreadPoolExecutor(max_workers=min(args.workers, len(new_items))) as ex:
             futures = {
                 ex.submit(
                     _worker_multi_snapshot,
                     api_key, secret_key, item["ticker"],
                     day, args.feed, args.price_min, args.price_max,
-                    _needed_scan_types(item["ticker"]),
+                    _needed_for_item(item),
                     item["gap_pct"],
-                    rvol_lookup.get(item["ticker"], 0.0),
+                    item.get("rvol", 0.0),
                 ): item["ticker"]
-                for item in new_tickers
+                for item in new_items
             }
             for fut in as_completed(futures):
                 rows = fut.result()
@@ -932,20 +1080,21 @@ def main():
                     r["split"]    = "train" if day_str in train_days else "test"
                     day_results.append(r)
 
-        total_run += len(new_tickers)
+        total_run += len(new_items)
         all_new_rows.extend(day_results)
 
-        morning_results = [r for r in day_results if r.get("scan_type") == "morning"]
-        day_wins = sum(1 for r in morning_results if r.get("win_loss") == "Win")
-        day_wr   = (f"{round(day_wins / len(morning_results) * 100, 1):.1f}%"
-                    if morning_results else "  n/a")
+        # Win rate across all "morning-equivalent" snapshots for display
+        morn_results = [r for r in day_results if r.get("scan_type") in ("morning", "trend_morning")]
+        day_wins = sum(1 for r in morn_results if r.get("win_loss") == "Win")
+        day_wr   = (f"{round(day_wins / len(morn_results) * 100, 1):.1f}%"
+                    if morn_results else "  n/a")
         snap_counts = {st: sum(1 for r in day_results if r.get("scan_type") == st)
                        for st in scan_types}
         snap_str = "  ".join(f"{SCAN_CONFIGS[st]['label']}:{snap_counts[st]}" for st in scan_types)
         print(
             f"  {day_str} [{split_tag}]  "
-            f"{len(watchlist):3d} qualified  "
-            f"{len(new_tickers):3d} new  "
+            f"{len(all_day_items):3d} qualified  "
+            f"{len(new_items):3d} new  "
             f"[{snap_str}]  "
             f"WR(morn): {day_wr}"
         )
@@ -976,36 +1125,43 @@ def main():
     print(f"  New rows saved      : {len(all_new_rows):,}")
 
     if all_new_rows:
-        morning_all = [r for r in all_new_rows if r.get("scan_type") == "morning"]
-        if morning_all:
-            wins = sum(1 for r in morning_all if r.get("win_loss") == "Win")
-            print(f"\n  Structure Win Rate (morning snapshots):")
-            print(f"    ALL    : {round(wins/len(morning_all)*100,1):.1f}%  ({wins}/{len(morning_all)})")
-            tr = [r for r in morning_all if r.get("split") == "train"]
-            te = [r for r in morning_all if r.get("split") == "test"]
+        def _wr_block(label: str, rows: list):
+            if not rows:
+                return
+            wins = sum(1 for r in rows if r.get("win_loss") == "Win")
+            print(f"\n  Structure Win Rate ({label}):")
+            print(f"    ALL    : {round(wins/len(rows)*100,1):.1f}%  ({wins}/{len(rows)})")
+            tr = [r for r in rows if r.get("split") == "train"]
+            te = [r for r in rows if r.get("split") == "test"]
             if tr:
                 tw = sum(1 for r in tr if r.get("win_loss") == "Win")
                 print(f"    TRAIN  : {round(tw/len(tr)*100,1):.1f}%  ({tw}/{len(tr)})")
             if te:
                 tw = sum(1 for r in te if r.get("win_loss") == "Win")
                 print(f"    TEST   : {round(tw/len(te)*100,1):.1f}%  ({tw}/{len(te)})")
+            struct_counts: dict = {}
+            for r in rows:
+                s = r.get("actual_outcome", "?")
+                struct_counts[s] = struct_counts.get(s, 0) + 1
+            print(f"  Outcome breakdown:")
+            for lbl, cnt in sorted(struct_counts.items(), key=lambda x: -x[1]):
+                pct = round(cnt / len(rows) * 100, 1)
+                print(f"    {lbl:<22}  {cnt:5,}  ({pct:.1f}%)")
 
-        eod_all = [r for r in all_new_rows if r.get("scan_type") == "eod"]
+        morning_all       = [r for r in all_new_rows if r.get("scan_type") == "morning"]
+        trend_morning_all = [r for r in all_new_rows if r.get("scan_type") == "trend_morning"]
+
+        _wr_block("gap morning snapshots",   morning_all)
+        _wr_block("trend morning snapshots", trend_morning_all)
+
+        eod_scans = ("eod", "trend_eod")
+        eod_all = [r for r in all_new_rows if r.get("scan_type") in eod_scans]
         if eod_all:
             tcs_vals = [r["tcs"] for r in eod_all if r.get("tcs", 0) > 0]
             if tcs_vals:
                 print(f"\n  EOD TCS stats (full-day, matches paper_trades):")
                 print(f"    Avg TCS : {round(sum(tcs_vals)/len(tcs_vals),1)}")
                 print(f"    Median  : {sorted(tcs_vals)[len(tcs_vals)//2]}")
-
-        print(f"\n  Actual outcome breakdown (morning):")
-        struct_counts: dict = {}
-        for r in morning_all:
-            s = r.get("actual_outcome", "?")
-            struct_counts[s] = struct_counts.get(s, 0) + 1
-        for label, cnt in sorted(struct_counts.items(), key=lambda x: -x[1]):
-            pct = round(cnt / len(morning_all) * 100, 1) if morning_all else 0
-            print(f"    {label:<22}  {cnt:5,}  ({pct:.1f}%)")
 
     print(bar)
     if not args.dry_run and all_new_rows:
