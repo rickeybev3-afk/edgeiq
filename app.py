@@ -6381,13 +6381,39 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Cumulative R",
                             _cum_r.values,
                         ) if "R (MFE)" in _rp_csv_df.columns else None
+
+                        # Append a blank separator then a per-stat summary block
+                        _csv_cols   = list(_rp_csv_df.columns)
+                        _label_col  = _csv_cols[0]
+                        _val_col    = _csv_cols[1] if len(_csv_cols) > 1 else _csv_cols[0]
+
+                        def _stat_row(label, value):
+                            r = {c: "" for c in _csv_cols}
+                            r[_label_col] = label
+                            r[_val_col]   = value
+                            return r
+
+                        _summary_rows = [
+                            {c: "" for c in _csv_cols},
+                            _stat_row("--- R-STATS SUMMARY ---", ""),
+                            _stat_row("Stop-Out Rate",   f"{_false_brk_rate}%"),
+                            _stat_row("Avg Win (R)",     f"+{_avg_win_r}R"),
+                            _stat_row("Avg Loss (R)",    f"{_avg_loss_r}R"),
+                            _stat_row("Expectancy",      f"{_expectancy_r:+.3f}R/trade"),
+                            _stat_row("Max Drawdown (R)",f"{_max_dd_r}R"),
+                        ]
+                        _rp_csv_export = pd.concat(
+                            [_rp_csv_df,
+                             pd.DataFrame(_summary_rows)],
+                            ignore_index=True,
+                        )
                         st.download_button(
                             label="⬇ Download Replay CSV",
-                            data=_rp_csv_df.to_csv(index=False).encode("utf-8"),
+                            data=_rp_csv_export.to_csv(index=False).encode("utf-8"),
                             file_name="replay_trades.csv",
                             mime="text/csv",
                             key="rp_dl_csv",
-                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R for spreadsheet analysis",
+                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes R-stats summary row at the bottom",
                         )
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
