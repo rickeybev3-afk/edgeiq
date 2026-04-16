@@ -7164,6 +7164,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f'</table></div>',
                                 unsafe_allow_html=True,
                             )
+                            _tk_csv_bytes = _tk_drill_display[
+                                ["Date", "TCS", "Prediction", "EOD Reality", "Follow-Thru %", "Result"]
+                            ].to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="⬇ Download CSV",
+                                data=_tk_csv_bytes,
+                                file_name=f"{_tk_name}_TCS{_tk_drill_floor}_trades.csv",
+                                mime="text/csv",
+                                key=f"dl_csv_{_tk_name}_{_tk_drill_floor}",
+                                help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file",
+                            )
 
     st.markdown("---")
     st.markdown(
