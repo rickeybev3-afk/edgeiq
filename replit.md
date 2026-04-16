@@ -98,8 +98,8 @@ Bot is started via `deploy_server.py` which spawns all scheduled jobs.
 
 **TCS threshold file:** `tcs_thresholds.json` = per-structure TCS cutoffs. Written nightly after recalibration and after batch backtest runs.
 
-**Current live weights (as of April 12, 2026 recalibration):**
-- `neutral` = 1.1316, `ntrl_extreme` = 1.0137, `normal` = 1.3334
+**Current live weights (as of April 16, 2026 recalibration):**
+- `neutral` = 1.0013, `ntrl_extreme` = 0.9932, `normal` = 1.3334
 - All others = 1.0 (baseline)
 
 ---
@@ -171,7 +171,7 @@ Built in `compute_trade_sim()` and `compute_trade_sim_tiered()` in backend.py.
 | `backend.py` | All math/logic — IB engine, TCS, probabilities, backtest, order placement |
 | `paper_trader_bot.py` | Autonomous daily bot — scheduler, alerts, EOD, order placement, recalibration |
 | `batch_backtest.py` | Historical backtest runner (currently configured: 1,260 days / all scan types) |
-| `run_sim_backfill.py` | Backfills eod_pnl_r on existing records (run once after SQL migrations) |
+| `run_sim_backfill.py` | Recomputes pnl_r_sim (MFE-based) on all existing breakout rows — safe to re-run if compute_trade_sim() logic changes |
 | `deploy_server.py` | Starts all bots on deployment |
 | `brain_weights.json` | Live adaptive brain multipliers — DO NOT MODIFY DIRECTLY |
 | `brain_weights_historical.json` | Historical prior weights — DO NOT MODIFY |
@@ -199,48 +199,14 @@ Built in `compute_trade_sim()` and `compute_trade_sim_tiered()` in backend.py.
 ### `backtest_sim_runs` columns
 `id, user_id, sim_date, ticker, tcs, predicted, actual_outcome, ib_low, ib_high, follow_thru_pct, false_break_up, false_break_down, scan_type, sim_outcome, pnl_r_sim, pnl_pct_sim, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, close_price, eod_pnl_r, tiered_pnl_r, open_price, rvol, poc_price, ib_range_pct, gap_pct, gap_vs_ib_pct, day_of_week, entry_hour`
 
-**36,058+ total records. 15,545+ have sim data. 90.3% sim win rate.**
+**Live counts (as of April 16, 2026):**
+- `backtest_sim_runs`: 29,625 total rows | 13,575 with pnl_r_sim computed
+- `paper_trades`: 67 total rows | 22 with pnl_r_sim computed (breakout setups only)
+- Historical sim win rate (live compute, TCS ≥ 50): **87.3% WR, +2.929R expectancy**
+- Paper trade sim win rate (corrected, MFE-based): **86.4% WR, +0.347R expectancy**
 
-### All Pending SQL Migrations (run in Supabase SQL Editor)
-```sql
--- Three-scenario sim columns (Task #45)
-ALTER TABLE paper_trades
-  ADD COLUMN IF NOT EXISTS eod_pnl_r FLOAT,
-  ADD COLUMN IF NOT EXISTS tiered_pnl_r FLOAT;
-
-ALTER TABLE backtest_sim_runs
-  ADD COLUMN IF NOT EXISTS eod_pnl_r FLOAT,
-  ADD COLUMN IF NOT EXISTS tiered_pnl_r FLOAT;
-
--- After running SQL above: python run_sim_backfill.py (backfills eod_pnl_r from stored close_price)
-
--- Alpaca execution tracking (if not yet run)
-ALTER TABLE paper_trades
-  ADD COLUMN IF NOT EXISTS alpaca_order_id   TEXT,
-  ADD COLUMN IF NOT EXISTS alpaca_qty        INTEGER,
-  ADD COLUMN IF NOT EXISTS order_placed_at   TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS alpaca_fill_price FLOAT;
-
--- Sim columns (if not yet run)
-ALTER TABLE paper_trades
-  ADD COLUMN IF NOT EXISTS scan_type TEXT DEFAULT 'morning',
-  ADD COLUMN IF NOT EXISTS sim_outcome TEXT,
-  ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS pnl_pct_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS entry_price_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS stop_price_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS stop_dist_pct FLOAT,
-  ADD COLUMN IF NOT EXISTS target_price_sim FLOAT;
-
-ALTER TABLE backtest_sim_runs
-  ADD COLUMN IF NOT EXISTS sim_outcome TEXT,
-  ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS pnl_pct_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS entry_price_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS stop_price_sim FLOAT,
-  ADD COLUMN IF NOT EXISTS stop_dist_pct FLOAT,
-  ADD COLUMN IF NOT EXISTS target_price_sim FLOAT;
-```
+### SQL Migrations — ALL COMPLETED ✅
+All columns listed below are confirmed present in both tables. No pending migrations.
 
 ---
 
@@ -276,15 +242,22 @@ Bearish Break = mirror image (sell short at IB low, stop at IB high, target = IB
 
 ## Known Issues / Pending Work
 
+### Active / Near-term
 - `alert_price` and `structure_conf` are NULL for current paper_trades rows (not captured at alert time)
-- `tiered_pnl_r` for paper trades never populates (EOD bot doesn't fetch intraday bars — Task #48)
-- Three-scenario display not yet in Backtest tab (only in Paper Trade tab — Task #49)
-- Inside bar flag at IB close per paper trade row (Phase 2)
-- `iwm_day_type` per paper_trade row (Phase 2)
-- Pattern discovery engine (Phase 2, ~500 rows needed)
-- Collective brain layer (Phase 3)
-- backend.py split → brain.py / data.py / trades.py / auth.py (Phase 2 maintenance window)
-- Alpaca fill reconciliation currently matches on ticker+date only — add order_id matching once fills confirm
+- `tiered_pnl_r` for paper trades never populates — EOD bot doesn't replay intraday bars (needs bar fetch at 4:20 PM)
+- Replay Min TCS selectbox options (Any/≥40/≥50/≥60/≥65/≥70/≥75/≥80/≥90) — Best TCS buttons snap to nearest; fine for now
+- Alpaca fill reconciliation matches on ticker+date only — add order_id matching once fills confirmed live
+
+### Phase 2 (after 30-trade gate)
+- Adaptive exit layer: detect volume decay, zone confluence failure, RVOL fade → exit early to capture more of MFE ceiling
+- Pattern discovery engine (~500 rows needed for statistical significance)
+- `iwm_day_type` per paper_trade row (market regime context)
+- Inside bar flag at IB close per paper trade row
+
+### Phase 3+
+- Collective brain layer (multi-user anonymized outcomes → baseline signal)
+- backend.py split → brain.py / data.py / trades.py / auth.py (maintenance window)
+- Multi-timeframe IB detection (morning/midday/EOD evolving structure)
 
 ---
 
