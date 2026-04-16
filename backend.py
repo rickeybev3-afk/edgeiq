@@ -21,10 +21,13 @@ except (ImportError, Exception):
 
 from supabase import create_client, Client
 
-import re as _re
-_raw_supabase_url = os.environ.get("SUPABASE_URL", "")
-_url_match = _re.search(r'https://[a-z0-9]+\.supabase\.co', _raw_supabase_url)
-SUPABASE_URL = _url_match.group(0) if _url_match else _raw_supabase_url
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+if SUPABASE_URL and (not SUPABASE_URL.startswith("https://") or ".supabase.co" not in SUPABASE_URL):
+    logging.warning(
+        "SUPABASE_URL does not look like a valid Supabase API URL "
+        "(expected https://<ref>.supabase.co). Current value: %s",
+        SUPABASE_URL,
+    )
 SUPABASE_KEY = (
     os.environ.get("SUPABASE_KEY") or
     os.environ.get("SUPABASE_ANON_KEY") or
