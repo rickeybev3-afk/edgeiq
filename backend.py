@@ -6859,6 +6859,143 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     }
 
 
+def compute_trade_sim_tiered(
+    aft_df,
+    ib_high:   float,
+    ib_low:    float,
+    direction: str,
+    close_px=None,
+) -> dict:
+    """Bar-by-bar tiered exit simulation for an IB breakout trade.
+
+    Implements the statistical exit ladder derived from the historical R distribution
+    (analysed over 1,000 trades):
+      - 66.9 % of trades peak below 1R  →  1R is the most important harvest level
+      - 41 % of 1R+ trades continue to 2R+  →  keep half alive after 1R
+      - 57 % of 2R+ trades continue to 3R+  →  runner has statistical backing
+
+    Exit ladder:
+      1. 50 % of position exits at 1R (1× IB range from entry)
+      2. Stop moves to breakeven after 1R exit (locks 0.5R floor)
+      3. 25 % exits at 2R
+      4. Remaining 25 % exits at EOD close price (the runner)
+
+    Also computes eod_pnl_r: full-position P&L held to EOD close (no tiered exits).
+
+    Returns dict:  eod_pnl_r, tiered_pnl_r, hit_1r (bool), hit_2r (bool).
+    Returns None values when bars are unavailable or direction is not actionable.
+    """
+    NO_RESULT = {"eod_pnl_r": None, "tiered_pnl_r": None, "hit_1r": False, "hit_2r": False}
+
+    if direction not in ("Bullish Break", "Bearish Break"):
+        return NO_RESULT
+    if close_px is None:
+        return NO_RESULT
+
+    try:
+        ib_high  = float(ib_high)
+        ib_low   = float(ib_low)
+        close_px = float(close_px)
+        ib_range = ib_high - ib_low
+        if ib_range <= 0:
+            return NO_RESULT
+    except (TypeError, ValueError):
+        return NO_RESULT
+
+    # ── EOD Hold P&L (full position held to close, capped at -1R) ────────────
+    if direction == "Bullish Break":
+        entry        = ib_high
+        stop_initial = ib_low
+        target_1r    = entry + ib_range
+        target_2r    = entry + 2.0 * ib_range
+        eod_raw_r    = (close_px - entry) / ib_range
+    else:  # Bearish Break
+        entry        = ib_low
+        stop_initial = ib_high
+        target_1r    = entry - ib_range
+        target_2r    = entry - 2.0 * ib_range
+        eod_raw_r    = (entry - close_px) / ib_range  # positive when price falls
+
+    eod_pnl_r = round(max(eod_raw_r, -1.0), 4)
+
+    # ── Tiered exit: bar-by-bar replay ───────────────────────────────────────
+    if aft_df is None or len(aft_df) == 0:
+        return {"eod_pnl_r": eod_pnl_r, "tiered_pnl_r": None, "hit_1r": False, "hit_2r": False}
+
+    stop_level = stop_initial
+    hit_1r     = False
+    hit_2r     = False
+    locked_r   = 0.0
+    remaining  = 1.0  # fraction of position still open
+
+    try:
+        for _, bar in aft_df.iterrows():
+            bar_high = float(bar.get("high", 0) or 0)
+            bar_low  = float(bar.get("low",  0) or 0)
+
+            if direction == "Bullish Break":
+                if not hit_1r:
+                    if bar_low <= stop_level:
+                        locked_r += remaining * (-1.0)
+                        remaining = 0.0
+                        break
+                    if bar_high >= target_1r:
+                        hit_1r     = True
+                        locked_r  += 0.50 * 1.0
+                        remaining -= 0.50
+                        stop_level = entry      # stop → breakeven
+                elif not hit_2r:
+                    if bar_low <= entry:        # breakeven stop hit
+                        locked_r += remaining * 0.0
+                        remaining = 0.0
+                        break
+                    if bar_high >= target_2r:
+                        hit_2r     = True
+                        locked_r  += 0.25 * 2.0
+                        remaining -= 0.25
+                # runner still open — keep scanning
+
+            else:  # Bearish Break
+                if not hit_1r:
+                    if bar_high >= stop_level:
+                        locked_r += remaining * (-1.0)
+                        remaining = 0.0
+                        break
+                    if bar_low <= target_1r:
+                        hit_1r     = True
+                        locked_r  += 0.50 * 1.0
+                        remaining -= 0.50
+                        stop_level = entry
+                elif not hit_2r:
+                    if bar_high >= entry:       # breakeven stop hit
+                        locked_r += remaining * 0.0
+                        remaining = 0.0
+                        break
+                    if bar_low <= target_2r:
+                        hit_2r     = True
+                        locked_r  += 0.25 * 2.0
+                        remaining -= 0.25
+    except Exception:
+        pass
+
+    # Exit remaining position at EOD close
+    if remaining > 0:
+        if direction == "Bullish Break":
+            eod_partial_r = (close_px - entry) / ib_range
+        else:
+            eod_partial_r = (entry - close_px) / ib_range
+        # Floor: if stop never moved, cap at -1R; if at BE, floor is 0R
+        eod_partial_r = max(eod_partial_r, 0.0 if hit_1r else -1.0)
+        locked_r += remaining * eod_partial_r
+
+    return {
+        "eod_pnl_r":    eod_pnl_r,
+        "tiered_pnl_r": round(locked_r, 4),
+        "hit_1r":       hit_1r,
+        "hit_2r":       hit_2r,
+    }
+
+
 def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
     """Save paper trade scan results to paper_trades table.
     Deduplicates by (user_id, trade_date, ticker, scan_type) — allows morning

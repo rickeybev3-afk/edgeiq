@@ -22,7 +22,7 @@ def _sim_patch(r: dict) -> dict | None:
     sim = backend.compute_trade_sim(r)
     if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
         return None
-    return {
+    patch = {
         "sim_outcome":      sim["sim_outcome"],
         "pnl_r_sim":        sim.get("pnl_r_sim"),
         "pnl_pct_sim":      sim.get("pnl_pct_sim"),
@@ -31,6 +31,25 @@ def _sim_patch(r: dict) -> dict | None:
         "stop_dist_pct":    sim.get("stop_dist_pct"),
         "target_price_sim": sim.get("target_price_sim"),
     }
+    # EOD Hold P&L from stored close_price (no bars needed — computable from DB data).
+    # Tiered P&L cannot be backfilled (requires intraday bars that aren't stored).
+    # New batch backtest runs will populate tiered_pnl_r going forward.
+    close_price    = r.get("close_price")
+    ib_high        = r.get("ib_high")
+    ib_low         = r.get("ib_low")
+    actual_outcome = (r.get("actual_outcome") or "").strip()
+    if (close_price is not None and ib_high is not None and ib_low is not None
+            and actual_outcome in ("Bullish Break", "Bearish Break")):
+        tiered = backend.compute_trade_sim_tiered(
+            aft_df    = None,
+            ib_high   = ib_high,
+            ib_low    = ib_low,
+            direction = actual_outcome,
+            close_px  = close_price,
+        )
+        if tiered.get("eod_pnl_r") is not None:
+            patch["eod_pnl_r"] = tiered["eod_pnl_r"]
+    return patch
 
 
 def _update_one(table: str, id_col: str, row_id, patch: dict):

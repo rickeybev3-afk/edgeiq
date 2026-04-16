@@ -550,6 +550,18 @@ def _analyze_at_cutoff(
         )
         # ─────────────────────────────────────────────────────────────────────
 
+        # ── Tiered exit simulation (bar-by-bar, requires afternoon bars) ─────
+        _tiered = backend.compute_trade_sim_tiered(
+            aft_df    = aft_df if not morning_only else None,
+            ib_high   = ib_high,
+            ib_low    = ib_low,
+            direction = actual_outcome,
+            close_px  = close_px,
+        )
+        _eod_pnl_r    = _tiered.get("eod_pnl_r")
+        _tiered_pnl_r = _tiered.get("tiered_pnl_r")
+        # ─────────────────────────────────────────────────────────────────────
+
         return {
             "ticker":         sym,
             "open_price":     round(open_px, 4),
@@ -581,6 +593,9 @@ def _analyze_at_cutoff(
             "ib_close_time_est":      ib_close_time_est,
             "breakout_time_est":      breakout_time_est,
             "exit_time_est":          exit_time_est,
+            # ── Tiered exit P&L scenarios (requires afternoon bars) ───────
+            "eod_pnl_r":              _eod_pnl_r,
+            "tiered_pnl_r":          _tiered_pnl_r,
         }
     except Exception:
         return None
@@ -698,6 +713,11 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
                 rec["stop_price_sim"]   = sim.get("stop_price_sim")
                 rec["stop_dist_pct"]    = sim.get("stop_dist_pct")
                 rec["target_price_sim"] = sim.get("target_price_sim")
+            # Tiered exit P&L — pre-computed in _analyze_at_cutoff, just pass through
+            if r.get("eod_pnl_r") is not None:
+                rec["eod_pnl_r"] = r["eod_pnl_r"]
+            if r.get("tiered_pnl_r") is not None:
+                rec["tiered_pnl_r"] = r["tiered_pnl_r"]
         return rec
 
     chunk = 500
@@ -712,7 +732,8 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
         except Exception as e:
             err_str = str(e).lower()
             sim_cols  = ["sim_outcome", "pnl_r_sim", "pnl_pct_sim", "entry_price_sim",
-                         "stop_price_sim", "stop_dist_pct", "target_price_sim"]
+                         "stop_price_sim", "stop_dist_pct", "target_price_sim",
+                         "eod_pnl_r", "tiered_pnl_r"]
             gap_cols  = ["gap_pct", "gap_vs_ib_pct"]
 
             if include_sim and any(c in err_str for c in sim_cols):
