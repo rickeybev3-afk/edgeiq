@@ -11258,6 +11258,47 @@ ALTER TABLE backtest_sim_runs
         if "trade_date" not in _bts_df.columns:
             _bts_df["trade_date"] = pd.NaT  # safe fallback; equity curve will skip gracefully
 
+        # ── Date-range filter ────────────────────────────────────────────────
+        _bts_td_col = pd.to_datetime(_bts_df["trade_date"], errors="coerce")
+        _bts_valid_dates = _bts_td_col.dropna()
+        _bts_min_date = _bts_valid_dates.min().date() if not _bts_valid_dates.empty else None
+        _bts_max_date = _bts_valid_dates.max().date() if not _bts_valid_dates.empty else None
+
+        _bts_dr_cols = st.columns([1, 1, 4])
+        with _bts_dr_cols[0]:
+            _bts_start = st.date_input(
+                "From",
+                value=None,
+                min_value=_bts_min_date,
+                max_value=_bts_max_date,
+                key="bts_dr_start",
+                help="Show backtest runs from this date (inclusive). Leave blank for all time.",
+            )
+        with _bts_dr_cols[1]:
+            _bts_end = st.date_input(
+                "To",
+                value=None,
+                min_value=_bts_min_date,
+                max_value=_bts_max_date,
+                key="bts_dr_end",
+                help="Show backtest runs up to this date (inclusive). Leave blank for all time.",
+            )
+
+        _bts_date_filter_active = bool(_bts_start or _bts_end)
+
+        if _bts_start and _bts_end and _bts_start > _bts_end:
+            st.error("'From' date must be on or before the 'To' date — no results shown.")
+            _bts_df = _bts_df.iloc[0:0].copy()  # empty but preserve columns
+        elif _bts_date_filter_active:
+            _bts_td_mask = pd.to_datetime(_bts_df["trade_date"], errors="coerce")
+            if _bts_start:
+                _bts_df = _bts_df[_bts_td_mask >= pd.Timestamp(_bts_start)]
+            if _bts_end:
+                _bts_df = _bts_df[_bts_td_mask <= pd.Timestamp(_bts_end)]
+            _bts_df = _bts_df.reset_index(drop=True)
+            if _bts_df.empty:
+                st.warning("No backtest runs found in the selected date range — try widening the filter.")
+
         import altair as _alt_bt
 
         _bts_scen_defs = [
@@ -11285,13 +11326,18 @@ ALTER TABLE backtest_sim_runs
                 )
                 _bts_has_scen = _bscol in _bts_df.columns and _bts_df[_bscol].notna().any()
                 if not _bts_has_scen:
-                    _bts_hint = {
-                        "eod_pnl_r":    "Run the SQL migration then re-run backtests.",
-                        "tiered_pnl_r": "Populates automatically as new batch backtests run.",
-                    }.get(_bscol, "Run a batch backtest to populate this scenario.")
+                    if _bts_date_filter_active:
+                        _bts_hint = "No trades in the selected date range — try widening the filter."
+                        _bts_empty_label = "No data in range"
+                    else:
+                        _bts_hint = {
+                            "eod_pnl_r":    "Run the SQL migration then re-run backtests.",
+                            "tiered_pnl_r": "Populates automatically as new batch backtests run.",
+                        }.get(_bscol, "Run a batch backtest to populate this scenario.")
+                        _bts_empty_label = "No data yet"
                     st.markdown(
                         f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                        f'<div style="font-size:12px;color:#546e7a;">No data yet</div>'
+                        f'<div style="font-size:12px;color:#546e7a;">{_bts_empty_label}</div>'
                         f'<div style="font-size:11px;color:#455a64;margin-top:4px;">{_bts_hint}</div>'
                         f'</div>', unsafe_allow_html=True
                     )
