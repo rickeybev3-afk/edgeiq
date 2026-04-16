@@ -7589,7 +7589,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.session_state[_pkey] = st.session_state[_widget_key]
                             return _on_change
 
-                        _drill_sel_col, _drill_btn_col = st.columns([3, 1])
+                        _show_reset_btn = (
+                            _tk_has_best
+                            and _tk_persisted_val is not None
+                            and _tk_persisted_val in _tk_drill_floors
+                            and _tk_persisted_val != _tk_drill_default
+                        )
+                        if _show_reset_btn:
+                            _drill_sel_col, _drill_btn_col = st.columns([3, 1])
+                        else:
+                            _drill_sel_col = st.container()
+                            _drill_btn_col = None
                         with _drill_sel_col:
                             _tk_drill_floor = st.selectbox(
                                 "Show trades with TCS ≥",
@@ -7604,7 +7614,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "ticker where TCS is at or above that cutoff."
                                 ),
                             )
-                        if _tk_has_best and _tk_drill_floor != _tk_drill_default:
+                        if _drill_btn_col is not None and _tk_drill_floor != _tk_drill_default:
                             with _drill_btn_col:
                                 st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
                                 _reset_key = f"_reset_best_tcs_{_tk_name}"
