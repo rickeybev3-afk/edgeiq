@@ -6825,6 +6825,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if _best_tcs_options:
                 if _rp_bot_mode:
                     st.markdown("**🎯 Apply Best TCS to replay filter (Bot mode — adjusts TCS offset):**")
+                    _clamp_warn = st.session_state.pop("_tcs_clamp_warning", None)
+                    if _clamp_warn:
+                        _cw_eff = 50 + _clamp_warn["applied"]
+                        _cw_raw_sign = "+" if _clamp_warn["raw"] >= 0 else ""
+                        _cw_off_sign = "+" if _clamp_warn["applied"] >= 0 else ""
+                        st.warning(
+                            f"⚠️ Best floor TCS {_clamp_warn['floor']} for **{_clamp_warn['ticker']}** "
+                            f"requires offset {_cw_raw_sign}{_clamp_warn['raw']}, which is outside the "
+                            f"slider range (−20 to +20). "
+                            f"Applied offset {_cw_off_sign}{_clamp_warn['applied']} instead "
+                            f"(≈ effective TCS {_cw_eff}). "
+                            f"The replay is filtered at TCS ≥ {_cw_eff}, "
+                            f"not the ideal TCS ≥ {_clamp_warn['floor']}."
+                        )
                 else:
                     st.markdown("**🎯 Apply Best TCS to replay filter:**")
                 _btn_cols = st.columns(min(len(_best_tcs_options), 6))
@@ -6851,12 +6865,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 key=f"use_best_tcs_{_btkr}",
                                 help=_help_txt,
                             ):
+                                if _clamped:
+                                    st.session_state["_tcs_clamp_warning"] = {
+                                        "ticker": _btkr,
+                                        "floor": _bfloor,
+                                        "raw": _raw_offset,
+                                        "applied": _bot_offset,
+                                    }
                                 st.session_state["rp_tcs_offset"] = _bot_offset
                                 st.rerun()
-                            if _clamped:
-                                st.caption(
-                                    f"⚠ Clamped: ideal {_raw_sign}{_raw_offset} → applied {_off_sign}{_bot_offset}"
-                                )
                         else:
                             if st.button(
                                 f"{_btkr}: TCS {_bfloor}",
