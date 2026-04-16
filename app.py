@@ -3830,6 +3830,12 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
         st.session_state["_pref_alpaca_key"]    = _prefs["alpaca_key"]
     if _prefs.get("alpaca_secret"):
         st.session_state["_pref_alpaca_secret"] = _prefs["alpaca_secret"]
+    if "min_tcs_trades" in _prefs:
+        try:
+            st.session_state["min_tcs_trades"] = int(_prefs["min_tcs_trades"])
+        except (ValueError, TypeError):
+            pass
+    st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
 if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
@@ -4440,7 +4446,9 @@ with st.sidebar:
             for _k in ("auth_user", "auth_user_id", "auth_email",
                        "_watchlist_loaded", "_watchlist_tickers",
                        "_prefs_loaded", "_restore_tried",
-                       "watchlist_raw", "watchlist_textarea"):
+                       "watchlist_raw", "watchlist_textarea",
+                       "_cached_prefs", "_pref_alpaca_key", "_pref_alpaca_secret",
+                       "min_tcs_trades"):
                 st.session_state.pop(_k, None)
             st.rerun()
     else:
@@ -6715,6 +6723,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "higher values require more trades before trusting a floor."
                     ),
                 )
+
+            # Persist slider value to user prefs whenever it changes
+            if _AUTH_USER_ID:
+                _mtcs_cached = st.session_state.get("_cached_prefs", {})
+                if _mtcs_cached.get("min_tcs_trades") != _MIN_TCS_TRADES:
+                    _mtcs_new_prefs = {**_mtcs_cached, "min_tcs_trades": _MIN_TCS_TRADES}
+                    save_user_prefs(_AUTH_USER_ID, _mtcs_new_prefs)
+                    st.session_state["_cached_prefs"] = _mtcs_new_prefs
 
             for _tk, _tgrp in _bt_df.groupby("ticker"):
                 _tw   = (_tgrp["win_loss"] == "Win").sum()
