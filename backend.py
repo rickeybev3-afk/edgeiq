@@ -6067,6 +6067,9 @@ def run_pending_migrations() -> dict:
         "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS edge_score REAL",
         "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS predicted_structure TEXT",
         "ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT",
+        # EOD close price — required for eod_pnl_r computation in compute_trade_sim_tiered()
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS close_price NUMERIC",
+        "ALTER TABLE paper_trades       ADD COLUMN IF NOT EXISTS close_price NUMERIC",
     ]
 
     ran = 0
@@ -6130,6 +6133,10 @@ ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS rvol REAL;
 ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS edge_score REAL;
 ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS predicted_structure TEXT;
 ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
+
+-- 4. EOD close price for eod_pnl_r computation:
+ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS close_price NUMERIC;
+ALTER TABLE paper_trades       ADD COLUMN IF NOT EXISTS close_price NUMERIC;
 """
 
 
@@ -6653,6 +6660,7 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 "sim_date":       str(r.get("sim_date", "")),
                 "ticker":         r.get("ticker", ""),
                 "open_price":     r.get("open_price"),
+                "close_price":    r.get("close_price"),
                 "ib_low":         r.get("ib_low"),
                 "ib_high":        r.get("ib_high"),
                 "tcs":            r.get("tcs"),
@@ -6673,6 +6681,20 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 rec["stop_price_sim"]   = _sim.get("stop_price_sim")
                 rec["stop_dist_pct"]    = _sim.get("stop_dist_pct")
                 rec["target_price_sim"] = _sim.get("target_price_sim")
+                # Compute eod_pnl_r when close_price is available
+                _close = r.get("close_price")
+                if (_close is not None and rec.get("ib_high") is not None
+                        and rec.get("ib_low") is not None
+                        and rec.get("actual_outcome") in ("Bullish Break", "Bearish Break")):
+                    _tiered = compute_trade_sim_tiered(
+                        aft_df    = None,
+                        ib_high   = rec["ib_high"],
+                        ib_low    = rec["ib_low"],
+                        direction = rec["actual_outcome"],
+                        close_px  = _close,
+                    )
+                    if _tiered.get("eod_pnl_r") is not None:
+                        rec["eod_pnl_r"] = _tiered["eod_pnl_r"]
             records.append(rec)
         supabase.table("backtest_sim_runs").insert(records).execute()
     except Exception as e:

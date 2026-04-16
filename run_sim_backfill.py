@@ -1,7 +1,7 @@
 """
 run_sim_backfill.py
 ───────────────────
-ONE-TIME HISTORICAL BACKFILL SCRIPT — already executed on 2026-04-16.
+HISTORICAL BACKFILL SCRIPT — executed on 2026-04-16 (initial run).
 
 Backfills sim P&L fields on existing backtest_sim_runs and paper_trades.
 New rows inserted after that date get sim computed automatically on insert,
@@ -11,11 +11,20 @@ If new compute_trade_sim() logic is deployed (e.g. a formula change) and a
 full recompute is needed, it is safe to re-run — it overwrites all rows whose
 actual_outcome is "Bullish Break" or "Bearish Break".
 
+Re-run required after the close_price migration (2026-04-16):
+  The close_price column was absent from backtest_sim_runs and paper_trades
+  during the initial run, so eod_pnl_r could not be computed for pre-existing
+  rows.  After running the SQL migration (migrations/add_close_price_column.sql
+  or via the /api/run-migrations endpoint), re-run this script to back-fill
+  eod_pnl_r on all historical rows that have a stored close_price.
+
 Results of the 2026-04-16 run (verified via null-count queries post-run):
   backtest_sim_runs: 13 575 / 13 798 breakout rows filled (98.4%)
                      223 rows remain null — all return invalid_ib (IB range
                      is degenerate, e.g. ib_high <= ib_low); unfillable by design.
   paper_trades     :     22 /     22 breakout rows filled (100%)
+  eod_pnl_r        : skipped for all rows (close_price column was missing).
+                     Re-run after migration to populate.
 
 Uses concurrent threads to run Supabase updates in parallel — much faster
 than sequential updates.
