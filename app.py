@@ -5452,12 +5452,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
         unsafe_allow_html=True,
     )
     # ── Load Saved Results ──────────────────────────────────────────────────────
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _load_ls_bt_sim_history(uid):
+        return load_backtest_sim_history(user_id=uid)
+
     with st.expander("📂 Load Saved Simulation Results", expanded=False):
         st.caption("Load any previous simulation run from your history without re-fetching Alpaca data.")
         _ls_col1, _ls_col2 = st.columns([1, 1])
         with _ls_col1:
             if st.button("🔄 Fetch My Saved Dates", use_container_width=True, key="bt_ls_fetch"):
-                _ls_hist = load_backtest_sim_history(user_id=_AUTH_USER_ID)
+                _ls_hist = _load_ls_bt_sim_history(uid=_AUTH_USER_ID)
                 if _ls_hist.empty or "sim_date" not in _ls_hist.columns:
                     st.session_state["_bt_ls_dates"]   = []
                     st.session_state["_bt_ls_hist_all"] = pd.DataFrame()
@@ -8320,7 +8324,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
         "Shows whether the model was warning you on days you lost."
     )
 
-    @st.cache_data(ttl=1800, show_spinner=False)
+    @st.cache_data(ttl=300, show_spinner=False)
     def _load_xref_bt_hist(uid):
         return load_backtest_sim_history(user_id=uid)
 
