@@ -12565,7 +12565,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 base = "background-color: rgba(239,83,80,0.08)"
                 hi   = "background-color: rgba(239,83,80,0.18); color:#ef5350; font-weight:700"
             else:
-                return [""] * len(row)
+                grey = "background-color: rgba(144,164,174,0.08); color:#90a4ae"
+                return [grey] * len(row)
             return [
                 hi if col == "win_loss" else base
                 for col in row.index
