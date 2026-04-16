@@ -7088,6 +7088,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 import altair as _alt_tk
 
                 _SWEEP_SORT_OPTIONS = ["P&L (default)", "Win Rate", "Trade Count", "Alphabetical"]
+
+                # ── Restore sort preference from localStorage (cross-session) ──
+                import streamlit.components.v1 as _cmp_sort
+                _cmp_sort.html("""
+<script>
+(function() {
+    var _LS_KEY = 'sweep_chart_sort';
+    var url = new URL(window.parent.location.href);
+    // Only restore from localStorage when no explicit sweep_sort param is in the
+    // URL — this preserves deep-link / shared-URL intent over personal preference.
+    if (url.searchParams.has('sweep_sort')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('sweep_sort', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+                # Seed session state from URL query param (survives browser refresh)
+                if "sweep_chart_sort" not in st.session_state:
+                    _qp_sweep = st.query_params.get("sweep_sort", "P&L (default)")
+                    st.session_state["sweep_chart_sort"] = (
+                        _qp_sweep if _qp_sweep in _SWEEP_SORT_OPTIONS else "P&L (default)"
+                    )
+
                 _sweep_sort_sel = st.selectbox(
                     "Sort sweep charts by:",
                     options=_SWEEP_SORT_OPTIONS,
@@ -7103,6 +7129,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "Trade Count — most trades at the best sufficient floor first · "
                         "Alphabetical — A → Z by ticker"
                     ),
+                )
+
+                # Persist the selected value — URL query param (survives refresh) +
+                # localStorage (survives new sessions via the JS restore above)
+                _qp_current = st.query_params.get("sweep_sort")
+                if _qp_current != _sweep_sort_sel:
+                    st.query_params["sweep_sort"] = _sweep_sort_sel
+                _cmp_sort.html(
+                    f"<script>localStorage.setItem('sweep_chart_sort',"
+                    f" {repr(_sweep_sort_sel)});</script>",
+                    height=0,
                 )
                 _sort_desc = {
                     "P&L (default)": "sorted by highest net P&L at the best TCS floor — highest first",
