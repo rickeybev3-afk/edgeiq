@@ -8663,13 +8663,19 @@ def fetch_finviz_watchlist(
     price_min:      float = 1.0,
     price_max:      float = 20.0,
     max_tickers:    int   = 100,
+    avg_vol_min_k:  int   = 1000,
+    extra_filters:  list  = None,
 ) -> list:
     """Scrape Finviz screener for the daily watchlist.
 
-    Filters match Webull settings exactly:
+    Default filters (gap-of-day mode):
       % Change ≥ 3%  |  Float ≤ 100M  |  Avg Vol ≥ 1M
       Relative Vol ≥ 1×  |  Price $1–$20  |  US only
       Sorted by volume descending
+
+    Pass extra_filters (list of raw Finviz filter codes) to add additional
+    criteria, e.g. ['ta_sma20_pa', 'ta_sma50_pa'] for above-SMA filters.
+    avg_vol_min_k controls the minimum average volume in thousands (default 1000 = 1M).
 
     Note: Finviz Elite uses Google OAuth — programmatic login is not possible.
     The screener URL still returns data (Finviz redirects elite.finviz.com to
@@ -8691,15 +8697,18 @@ def fetch_finviz_watchlist(
     _price_lo     = f"sh_price_o{int(price_min)}"
     _price_hi     = f"sh_price_u{int(price_max)}"
 
-    _filters = ",".join([
+    _base_filters = [
         "geo_usa",
         _change_filter,
         _float_filter,
-        "sh_avgvol_o1000",
+        f"sh_avgvol_o{int(avg_vol_min_k)}",
         "sh_relvol_o1",
         _price_lo,
         _price_hi,
-    ])
+    ]
+    if extra_filters:
+        _base_filters.extend(extra_filters)
+    _filters = ",".join(_base_filters)
 
     _sess = _req.Session()
     _sess.headers.update({

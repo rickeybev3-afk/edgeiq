@@ -821,34 +821,78 @@ def premarket_scan():
 
 
 def watchlist_refresh():
-    """9:35 AM ET — pull today's movers from Finviz, save to Supabase."""
+    """9:35 AM ET — pull today's movers from Finviz, save to Supabase.
+
+    Runs TWO screener passes and merges them:
+      Pass 1 — Gap-of-day plays: ≥3% change · Float ≤100M · $1–$20
+               Catches high-momentum small-float catalysts.
+      Pass 2 — Trend continuation plays: ≥1% change · Float ≤500M · $5–$50
+               Above 20-day AND 50-day SMA · Avg vol ≥2M
+               Catches institutional-quality stocks extending multi-week trends.
+               These produce cleaner Bullish/Bearish Break IB structure vs
+               gap-and-stall small-floats that tend to read as Neutral/Ntrl Extreme.
+
+    Gap plays take priority (listed first). Trend plays fill behind them.
+    Combined list is capped at 100 tickers.
+    """
     global TICKERS
     log.info("=" * 60)
-    log.info("WATCHLIST REFRESH — fetching from Finviz")
+    log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend passes)")
     log.info("=" * 60)
     try:
-        tickers = fetch_finviz_watchlist(
+        # ── Pass 1: gap-of-day (existing behaviour) ───────────────────────────
+        gap_tickers = fetch_finviz_watchlist(
             change_min_pct=3.0,
             float_max_m=100.0,
             price_min=PRICE_MIN,
             price_max=PRICE_MAX,
-            max_tickers=100,
+            avg_vol_min_k=1000,
+            max_tickers=60,
         )
-        if tickers:
-            saved = save_watchlist(tickers, user_id=USER_ID)
+        log.info(f"Gap-of-day screener: {len(gap_tickers)} tickers")
+
+        # ── Pass 2: trend continuation (new) ─────────────────────────────────
+        # Stocks in established uptrends on elevated volume → cleaner IB structure
+        # and more Bullish Break / Bearish Break outcomes vs gap-and-stall noise.
+        trend_tickers = fetch_finviz_watchlist(
+            change_min_pct=1.0,
+            float_max_m=500.0,
+            price_min=5.0,
+            price_max=50.0,
+            avg_vol_min_k=2000,
+            max_tickers=60,
+            extra_filters=["ta_sma20_pa", "ta_sma50_pa"],
+        )
+        log.info(f"Trend-continuation screener: {len(trend_tickers)} tickers")
+
+        # ── Merge: gap plays first, trend plays fill behind (deduped) ─────────
+        merged: list[str] = list(gap_tickers)
+        for t in trend_tickers:
+            if t not in merged:
+                merged.append(t)
+        merged = merged[:100]
+
+        if merged:
+            saved = save_watchlist(merged, user_id=USER_ID)
             if saved:
-                TICKERS = tickers
-                log.info(f"Watchlist updated: {len(tickers)} tickers → {', '.join(tickers)}")
+                TICKERS = merged
+                log.info(
+                    f"Watchlist updated: {len(merged)} total tickers "
+                    f"({len(gap_tickers)} gap · {len(trend_tickers)} trend) → "
+                    f"{', '.join(merged)}"
+                )
                 tg_send(
                     f"📋 <b>Watchlist Refreshed — {date.today()}</b>\n"
-                    f"Fetched <b>{len(tickers)} tickers</b> from Finviz "
-                    f"(% Change ≥3% · Float ≤100M · Vol ≥1M · US)\n"
+                    f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
+                    f"{len(trend_tickers)} trend continuation)\n"
+                    f"Gap: ≥3% chg · Float ≤100M · $1–$20\n"
+                    f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA · Vol ≥2M\n"
                     f"Morning scan at 10:47 AM ET..."
                 )
             else:
                 log.warning("Finviz returned tickers but Supabase save failed — keeping existing watchlist")
         else:
-            log.warning("Finviz returned 0 tickers — keeping existing watchlist")
+            log.warning("Both Finviz screeners returned 0 tickers — keeping existing watchlist")
     except Exception as exc:
         log.warning(f"Watchlist refresh failed: {exc} — keeping existing watchlist")
 
