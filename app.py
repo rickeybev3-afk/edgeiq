@@ -7017,20 +7017,56 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if _best_tcs_options:
                 if _rp_bot_mode:
                     st.markdown("**🎯 Apply Best TCS to replay filter (Bot mode — adjusts TCS offset):**")
-                    _clamp_warn = st.session_state.pop("_tcs_clamp_warning", None)
-                    if _clamp_warn:
-                        _cw_eff = 50 + _clamp_warn["applied"]
-                        _cw_raw_sign = "+" if _clamp_warn["raw"] >= 0 else ""
-                        _cw_off_sign = "+" if _clamp_warn["applied"] >= 0 else ""
+
+                    # Pre-compute which tickers are clamped (ideal offset outside −20..+20)
+                    _all_clamped = []
+                    for _ckr, _cfloor in _best_tcs_options:
+                        _cr_off = _cfloor - 50
+                        _ca_off = max(-20, min(20, _cr_off))
+                        if _cr_off != _ca_off:
+                            _all_clamped.append({
+                                "ticker": _ckr,
+                                "floor": _cfloor,
+                                "raw": _cr_off,
+                                "applied": _ca_off,
+                                "effective": 50 + _ca_off,
+                            })
+
+                    if len(_all_clamped) >= 2:
+                        # Consolidated warning: list all affected tickers in one banner
+                        _cw_lines = []
+                        for _cw in _all_clamped:
+                            _cw_rs = "+" if _cw["raw"] >= 0 else ""
+                            _cw_as = "+" if _cw["applied"] >= 0 else ""
+                            _cw_lines.append(
+                                f"• **{_cw['ticker']}**: ideal floor TCS {_cw['floor']} "
+                                f"(offset {_cw_rs}{_cw['raw']}) → clamped to {_cw_as}{_cw['applied']} "
+                                f"≈ effective TCS {_cw['effective']}"
+                            )
                         st.warning(
-                            f"⚠️ Best floor TCS {_clamp_warn['floor']} for **{_clamp_warn['ticker']}** "
-                            f"requires offset {_cw_raw_sign}{_clamp_warn['raw']}, which is outside the "
-                            f"slider range (−20 to +20). "
-                            f"Applied offset {_cw_off_sign}{_clamp_warn['applied']} instead "
-                            f"(≈ effective TCS {_cw_eff}). "
-                            f"The replay is filtered at TCS ≥ {_cw_eff}, "
-                            f"not the ideal TCS ≥ {_clamp_warn['floor']}."
+                            f"⚠️ **{len(_all_clamped)} tickers have ideal TCS floors outside the "
+                            f"slider range (−20 to +20).** Their offsets have been clamped — "
+                            f"the replay will filter at the effective TCS shown, not the ideal floor.\n\n"
+                            + "\n\n".join(_cw_lines)
                         )
+                        # Discard any stale single-ticker warning since the consolidated one covers it
+                        st.session_state.pop("_tcs_clamp_warning", None)
+                    else:
+                        # 0 or 1 clamped ticker — keep the existing per-click session state warning
+                        _clamp_warn = st.session_state.pop("_tcs_clamp_warning", None)
+                        if _clamp_warn:
+                            _cw_eff = 50 + _clamp_warn["applied"]
+                            _cw_raw_sign = "+" if _clamp_warn["raw"] >= 0 else ""
+                            _cw_off_sign = "+" if _clamp_warn["applied"] >= 0 else ""
+                            st.warning(
+                                f"⚠️ Best floor TCS {_clamp_warn['floor']} for **{_clamp_warn['ticker']}** "
+                                f"requires offset {_cw_raw_sign}{_clamp_warn['raw']}, which is outside the "
+                                f"slider range (−20 to +20). "
+                                f"Applied offset {_cw_off_sign}{_clamp_warn['applied']} instead "
+                                f"(≈ effective TCS {_cw_eff}). "
+                                f"The replay is filtered at TCS ≥ {_cw_eff}, "
+                                f"not the ideal TCS ≥ {_clamp_warn['floor']}."
+                            )
                 else:
                     st.markdown("**🎯 Apply Best TCS to replay filter:**")
                 _btn_cols = st.columns(min(len(_best_tcs_options), 6))
@@ -7058,7 +7094,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 key=f"use_best_tcs_{_btkr}",
                                 help=_help_txt,
                             ):
-                                if _clamped:
+                                if _clamped and len(_all_clamped) < 2:
+                                    # Only store the per-click warning when there's no consolidated banner
                                     st.session_state["_tcs_clamp_warning"] = {
                                         "ticker": _btkr,
                                         "floor": _bfloor,
