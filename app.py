@@ -6669,6 +6669,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _best_tcs_options = []
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
+            _rp_date_sig = (str(_rp_start), str(_rp_end))
+            if st.session_state.get("_drill_tcs_last_date_sig") != _rp_date_sig:
+                for _k in list(st.session_state.keys()):
+                    if _k.startswith("_drill_tcs_persist_"):
+                        del st.session_state[_k]
+                st.session_state["_drill_tcs_last_date_sig"] = _rp_date_sig
+
             # ── Min-trade-count slider ─────────────────────────────────────────
             _min_tcs_col, _ = st.columns([1, 3])
             with _min_tcs_col:
@@ -7012,16 +7019,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _tk_has_best and _tk_best_row is not None
                             else _tk_drill_floors[0]
                         )
-                        _tk_drill_default_idx = (
-                            _tk_drill_floors.index(_tk_drill_default)
-                            if _tk_drill_default in _tk_drill_floors
-                            else 0
-                        )
+                        _tk_persist_key = f"_drill_tcs_persist_{_tk_name}"
+                        _tk_persisted_val = st.session_state.get(_tk_persist_key)
+                        if _tk_persisted_val is not None and _tk_persisted_val in _tk_drill_floors:
+                            _tk_drill_default_idx = _tk_drill_floors.index(_tk_persisted_val)
+                        else:
+                            _tk_drill_default_idx = (
+                                _tk_drill_floors.index(_tk_drill_default)
+                                if _tk_drill_default in _tk_drill_floors
+                                else 0
+                            )
+
+                        def _make_drill_tcs_on_change(_widget_key, _pkey):
+                            def _on_change():
+                                st.session_state[_pkey] = st.session_state[_widget_key]
+                            return _on_change
+
                         _tk_drill_floor = st.selectbox(
                             "Show trades with TCS ≥",
                             options=_tk_drill_floors,
                             index=_tk_drill_default_idx,
                             key=f"drill_tcs_{_tk_name}",
+                            on_change=_make_drill_tcs_on_change(
+                                f"drill_tcs_{_tk_name}", _tk_persist_key
+                            ),
                             help=(
                                 "Select a TCS floor to view all individual trades for this "
                                 "ticker where TCS is at or above that cutoff."
