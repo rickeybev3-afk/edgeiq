@@ -1676,6 +1676,71 @@ def save_tcs_thresholds(thresholds: list) -> None:
                 _hf.write(_json.dumps(record) + "\n")
         except Exception:
             pass
+        _notify_tcs_threshold_shift(previous, out)
+
+
+def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
+    """Send a Telegram alert for any TCS structure whose threshold moved by ≥5 points.
+
+    Only fires when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are configured.
+    Silently skips if nothing changed significantly or credentials are absent.
+    """
+    import os as _os
+    import requests as _req
+
+    _token   = _os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    _chat_id = _os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not _token or not _chat_id:
+        return
+
+    _THRESHOLD = 5
+    lines = []
+    all_keys = set(list(previous.keys()) + list(current.keys()))
+    for wk in sorted(all_keys):
+        old_val = previous.get(wk)
+        new_val = current.get(wk)
+        if old_val is None or new_val is None:
+            continue
+        delta = new_val - old_val
+        if abs(delta) < _THRESHOLD:
+            continue
+        arrow   = "↑" if delta > 0 else "↓"
+        label   = "stricter" if delta > 0 else "looser"
+        display = wk.replace("_", " ").title()
+        lines.append(f"  • {display}: {old_val} → {new_val} {arrow} ({label})")
+
+    if not lines:
+        return
+
+    import datetime as _dt
+    _date_str = _dt.datetime.utcnow().strftime("%b %d, %Y %H:%M UTC")
+    shifts    = "\n".join(lines)
+    msg = (
+        f"⚙️ <b>TCS Threshold Shift Detected</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{shifts}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📅 {_date_str}\n"
+        f"Recalibrated automatically — review before market open."
+    )
+    try:
+        _resp = _req.post(
+            f"https://api.telegram.org/bot{_token}/sendMessage",
+            json={"chat_id": _chat_id, "text": msg, "parse_mode": "HTML"},
+            timeout=8,
+        )
+        if _resp.status_code != 200:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "TCS threshold shift Telegram alert failed: %s %s",
+                _resp.status_code,
+                _resp.text[:120],
+            )
+    except Exception as _exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "TCS threshold shift Telegram alert error: %s", _exc
+        )
 
 
 def load_tcs_threshold_history(days: int = 14) -> list:
