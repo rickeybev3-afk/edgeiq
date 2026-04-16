@@ -6533,6 +6533,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             expanded=True,
         ):
             _tkr_rows = []
+            _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
             for _tk, _tgrp in _bt_df.groupby("ticker"):
                 _tw   = (_tgrp["win_loss"] == "Win").sum()
                 _tl   = (_tgrp["win_loss"] == "Loss").sum()
@@ -6551,24 +6552,88 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 ) if "false_break_up" in _tgrp else 0
                 _fb_rate = round(_fb_count / len(_tgrp) * 100) if len(_tgrp) > 0 else 0
                 _dates = sorted(_tgrp["sim_date"].astype(str).unique()) if "sim_date" in _tgrp else []
+
+                # ── Per-ticker TCS Optimizer sweep ────────────────────────────
+                _best_tcs_label = "—"
+                _best_tcs_pnl_val = None
+                if "tcs" in _tgrp.columns and "win_loss" in _tgrp.columns:
+                    for _sw_tcs in range(40, 85, 5):
+                        try:
+                            _sw_mask = (
+                                _tgrp["actual_outcome"].str.lower().str.contains("bullish|bearish", na=False)
+                                & _tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                                & (_tgrp["tcs"].astype(float) >= _sw_tcs)
+                            ) if "actual_outcome" in _tgrp.columns else (
+                                _tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                                & (_tgrp["tcs"].astype(float) >= _sw_tcs)
+                            )
+                            _sw_sub = _tgrp[_sw_mask]
+                            if len(_sw_sub) == 0:
+                                continue
+                            _sw_wins_n = (_sw_sub["win_loss"] == "Win").sum()
+                            _sw_wr_n   = _sw_wins_n / len(_sw_sub) * 100
+                            _ft_col    = "follow_thru_pct" if "follow_thru_pct" in _sw_sub.columns else "aft_move_pct"
+                            _sw_pnl_n  = sum(
+                                _tk_pos_size * abs(float(ft) if ft == ft else 0) / 100
+                                * (1 if wl == "Win" else -1)
+                                for ft, wl in zip(
+                                    _sw_sub[_ft_col].fillna(0) if _ft_col in _sw_sub.columns else [0] * len(_sw_sub),
+                                    _sw_sub["win_loss"]
+                                )
+                            )
+                            if _best_tcs_pnl_val is None or _sw_pnl_n > _best_tcs_pnl_val:
+                                _best_tcs_pnl_val   = _sw_pnl_n
+                                _best_tcs_floor     = _sw_tcs
+                                _best_tcs_cnt       = len(_sw_sub)
+                                _best_tcs_wr_final  = _sw_wr_n
+                        except (ValueError, TypeError, AttributeError):
+                            continue
+                if _best_tcs_pnl_val is not None:
+                    _pnl_sign = "+" if _best_tcs_pnl_val >= 0 else ""
+                    _best_tcs_label = (
+                        f"TCS {_best_tcs_floor} "
+                        f"({_best_tcs_cnt} trades, "
+                        f"{_best_tcs_wr_final:.0f}% WR, "
+                        f"{_pnl_sign}${_best_tcs_pnl_val:,.0f})"
+                    )
+
                 _tkr_rows.append({
                     "Ticker":         _tk,
                     "Setups":         len(_tgrp),
                     "Win %":          f"{'🟢' if _twr >= 60 else '🟡' if _twr >= 45 else '🔴'} {_twr}%",
                     "W/L":            f"{_tw}/{_tl}",
                     "Avg TCS":        int(_tavg_tcs),
+                    "Best TCS":       _best_tcs_label,
                     "Top Structure":  _top_struct,
                     "Avg Follow-Thru": f"{'+' if _tft >= 0 else ''}{_tft}%",
                     "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
                 })
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values("Win %", ascending=False)
-            st.dataframe(_tkr_summary_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                _tkr_summary_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Best TCS": st.column_config.TextColumn(
+                        "Best TCS",
+                        help=(
+                            "The TCS cutoff (40–80) that produced the highest net P&L "
+                            "for this specific ticker across all trades in the replay. "
+                            "Format: TCS floor · trade count · win rate · net P&L "
+                            "(using the same position size as the replay above). "
+                            "Different tickers may thrive at different TCS levels."
+                        ),
+                    ),
+                },
+            )
             st.caption(
                 "🟢 Win % ≥ 60% — model reads this ticker well  · "
                 "🟡 45–60% — mixed signal, paper trade first  · "
                 "🔴 < 45% — IB framework doesn't fit this ticker · "
-                "False Brk % = how often IB breakouts reversed within 30 min"
+                "False Brk % = how often IB breakouts reversed within 30 min  · "
+                "Best TCS = the TCS cutoff that produced the highest net P&L for that ticker "
+                "(hover the column header for details)"
             )
 
     st.markdown("---")
