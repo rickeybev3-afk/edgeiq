@@ -228,6 +228,7 @@ TRACKER_FILE = "accuracy_tracker.csv"
 WEIGHTS_FILE      = "brain_weights.json"            # ⛔ READ-ONLY — live personal brain (paper trades + journal)
 HIST_WEIGHTS_FILE    = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
 TCS_THRESHOLDS_FILE  = "tcs_thresholds.json"          # per-structure TCS cutoffs saved after nightly recalibration
+TCS_THRESHOLD_HISTORY_FILE = "tcs_threshold_history.jsonl"  # append-only history log (one JSON record per line)
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
 SA_JOURNAL_FILE  = "sa_journal.csv"
@@ -1583,6 +1584,9 @@ def save_tcs_thresholds(thresholds: list) -> None:
     Called after nightly recalibration so the bot can load at scan time
     without hitting Supabase for 11k rows mid-morning.
 
+    Also appends a record to tcs_threshold_history.jsonl so traders can see
+    how thresholds have drifted over time.
+
     Format: {"neutral": 59, "ntrl_extreme": 49, "double_dist": 49, ...}
     """
     import json as _json
@@ -1592,11 +1596,72 @@ def save_tcs_thresholds(thresholds: list) -> None:
         tcs = t.get("recommended_tcs", 50)
         if wk:
             out[wk] = int(tcs)
+
+    # Read previous values before overwriting so we can record the diff
+    previous: dict = {}
+    if os.path.exists(TCS_THRESHOLDS_FILE):
+        try:
+            with open(TCS_THRESHOLDS_FILE) as _f:
+                previous = _json.load(_f)
+        except Exception:
+            pass
+
+    _write_ok = False
     try:
         with open(TCS_THRESHOLDS_FILE, "w") as f:
             _json.dump(out, f, indent=2)
+        _write_ok = True
     except Exception:
         pass
+
+    # Append a history record only when the primary write succeeded
+    if _write_ok:
+        try:
+            import datetime as _dt
+            record = {
+                "timestamp": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "thresholds": out,
+                "previous": previous,
+            }
+            with open(TCS_THRESHOLD_HISTORY_FILE, "a") as _hf:
+                _hf.write(_json.dumps(record) + "\n")
+        except Exception:
+            pass
+
+
+def load_tcs_threshold_history(days: int = 14) -> list:
+    """Load recent TCS threshold history from tcs_threshold_history.jsonl.
+
+    Returns a list of records (dicts) from the last *days* calendar days,
+    oldest first.  Each record has keys:
+      timestamp (str ISO-8601), thresholds (dict), previous (dict)
+
+    Returns an empty list if the file doesn't exist or can't be read.
+    """
+    import json as _json
+    import datetime as _dt
+    if not os.path.exists(TCS_THRESHOLD_HISTORY_FILE):
+        return []
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+    records: list = []
+    try:
+        with open(TCS_THRESHOLD_HISTORY_FILE) as _hf:
+            for line in _hf:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = _json.loads(line)
+                    ts_str = rec.get("timestamp", "")
+                    # Normalize Z-suffix so fromisoformat accepts it (Python <3.11)
+                    ts = _dt.datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                    if ts >= cutoff:
+                        records.append(rec)
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return records
 
 
 def load_tcs_thresholds(default: int = 50) -> dict:

@@ -828,6 +828,38 @@ def render_trade_journal_page():
                         unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # ── TCS Threshold History (last 14 days) ───────────────────────────────
+        _tcs_hist = load_tcs_threshold_history(days=14)
+        if _tcs_hist:
+            import pandas as _pd
+            st.markdown(
+                '<div class="tj-section"><div class="tj-section-title">TCS Threshold History (last 14 days)</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption("Each row is one nightly recalibration — shows how thresholds have drifted per structure.")
+
+            # Build a wide DataFrame: rows = timestamps, cols = structure keys
+            _hist_rows = []
+            for _rec in _tcs_hist:
+                _ts = _rec.get("timestamp", "")
+                _row = {"Date": _ts[:10], "Time (UTC)": _ts[11:16]}
+                _row.update(_rec.get("thresholds", {}))
+                _hist_rows.append(_row)
+            _hist_df = _pd.DataFrame(_hist_rows)
+
+            # Show the table (most recent first)
+            st.dataframe(_hist_df.iloc[::-1].reset_index(drop=True), use_container_width=True, hide_index=True)
+
+            # Sparklines per structure using st.line_chart (if ≥ 2 data points)
+            _struct_cols = [c for c in _hist_df.columns if c not in ("Date", "Time (UTC)", "Timestamp")]
+            if len(_hist_df) >= 2 and _struct_cols:
+                _chart_df = _hist_df[_struct_cols].copy()
+                _chart_df.index = _hist_df["Date"] + " " + _hist_df["Time (UTC)"]
+                st.caption("Sparklines — higher = stricter bar, lower = more trades allowed")
+                st.line_chart(_chart_df, use_container_width=True, height=200)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
         if not _tj_journal.empty:
             st.markdown('<div class="tj-section"><div class="tj-section-title">Recent Journal Entries</div>', unsafe_allow_html=True)
             _display_cols = [c for c in ["timestamp", "ticker", "side", "price", "quantity", "pnl", "pnl_pct", "notes"] if c in _tj_journal.columns]
