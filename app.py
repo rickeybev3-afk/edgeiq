@@ -5515,14 +5515,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     value=500, step=100, key="rp_pos_size",
                     help="Fixed dollar amount invested per trade. P&L = position × follow-through%.",
                 )
-                _rp_equity = 10000
                 _rp_risk_pct = 2.0
             else:
                 _rp_pos_size = 500
-                _rp_equity = st.number_input(
-                    "Starting Equity ($)", min_value=1000, max_value=500000,
-                    value=10000, step=500, key="rp_equity",
-                )
+            _rp_equity = st.number_input(
+                "Starting Equity ($)", min_value=1000, max_value=500000,
+                value=10000, step=500, key="rp_equity",
+                help="Starting account size for the equity curve. Doesn't affect trade sizing — only the cumulative P&L chart.",
+            )
         with _rp_col2:
             if _rp_bot_mode:
                 _rp_tcs_offset = st.slider(
