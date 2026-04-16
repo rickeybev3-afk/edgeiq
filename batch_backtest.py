@@ -986,6 +986,25 @@ def main():
     print(bar)
     if not args.dry_run and all_new_rows:
         print("\n  Open the Backtest tab → Paper Trade Replay to see results.\n")
+
+        # ── Auto-recalibrate both brains after new data is saved ──────────────
+        # New backtest rows shift per-structure accuracy → thresholds must update.
+        # recalibrate_from_history() saves brain_weights_historical.json AND
+        # tcs_thresholds.json so the bot uses fresh cutoffs at next scan.
+        print("  Recalibrating historical brain + TCS thresholds from new data...")
+        try:
+            result = backend.recalibrate_from_history(user_id=args.user_id)
+            deltas = result.get("deltas", [])
+            if deltas:
+                top = sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)[:3]
+                for d in top:
+                    print(f"    {d['key']:20s}  {d['old']:.4f} → {d['new']:.4f}  (Δ{d['delta']:+.4f})")
+            else:
+                print("    No weight changes (thresholds stable).")
+            print("  ✓ tcs_thresholds.json updated — bot will use fresh cutoffs.\n")
+        except Exception as _rc_err:
+            print(f"  ⚠ Recalibration failed (non-fatal): {_rc_err}\n")
+
     print()
 
 
