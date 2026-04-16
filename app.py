@@ -6250,6 +6250,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _tkr      = str(_rp_r.get("ticker") or "")
 
                             # TCS filter — per-structure threshold in bot mode, flat slider otherwise
+                            _rec_tcs = None
                             if _rp_bot_mode:
                                 _pred_wk  = _label_to_weight_key(str(_rp_r.get("predicted") or ""))
                                 _rec_tcs  = _struct_tcs_map.get(_pred_wk, _bot_tcs_fallback)
@@ -6359,6 +6360,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Snapshot":    _rp_scan_str.capitalize(),
                                 "Ticker":      _tkr,
                                 "TCS":         int(_tcs),
+                                "TCS Floor":   _rec_tcs,
                                 "Structure":   _pred,
                                 "Direction":   "Long" if _dir == 1 else "Short",
                                 "Entry":       round(_entry, 2),
@@ -6382,6 +6384,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.warning("No qualifying trades found. Try lowering the Min TCS filter or expanding the date range.")
                     else:
                         _rp_df = pd.DataFrame(_rp_trades)
+                        if not _rp_bot_mode and "TCS Floor" in _rp_df.columns:
+                            _rp_df = _rp_df.drop(columns=["TCS Floor"])
                         _total_trades  = len(_rp_df)
                         _total_pnl     = _rp_df["P&L ($)"].sum()
                         _net_return    = round((_rp_equity_cur - float(_rp_equity)) / float(_rp_equity) * 100, 2)
@@ -6697,6 +6701,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                               help="EOD hold P&L: full position held to close, no stops"),
                                 "R (Tiered)": st.column_config.NumberColumn(format="%.2fR",
                                               help="50% at 1R → BE stop → 25% at 2R → 25% runner to close"),
+                                "TCS Floor":  st.column_config.NumberColumn(
+                                              format="%d",
+                                              help="Per-structure TCS threshold applied to this trade (base 50 + offset). Trade passed because TCS ≥ this value."),
                             }
                         )
 
