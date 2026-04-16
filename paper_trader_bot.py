@@ -98,10 +98,28 @@ try:
         reconcile_alpaca_fills,
         get_alpaca_account_equity,
         supabase as _supabase_client,
+        load_tcs_thresholds,
+        label_to_weight_key,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
     raise
+
+
+# ── Per-structure TCS thresholds (calibrated nightly) ─────────────────────────
+def _struct_tcs_floor(r: dict, tcs_thresholds: dict, regime_floor: int) -> int:
+    """Return the effective TCS floor for a scan result.
+
+    Uses the calibrated per-structure threshold from tcs_thresholds.json
+    (written nightly by the recalibration), then applies the macro regime
+    adjustment on top.  Falls back to MIN_TCS if no match.
+    """
+    predicted = str(r.get("predicted") or "").strip()
+    wk        = label_to_weight_key(predicted) if predicted else ""
+    cal_tcs   = tcs_thresholds.get(wk, MIN_TCS) if wk else MIN_TCS
+    # regime_floor already incorporates tcs_adj; combine with calibrated threshold
+    # take the higher of the two so macro fear never lets a weak structure through
+    return max(cal_tcs, regime_floor)
 
 
 # ── Dynamic position sizing ────────────────────────────────────────────────────
@@ -880,13 +898,17 @@ def morning_scan():
         f"{all_results_logged.get('skipped', 0)} skipped | regime: {regime_tag or 'none'}"
     )
 
+    # Load per-structure calibrated TCS thresholds (from nightly recalibration)
+    _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
     qualified = [
         r for r in results
-        if float(r.get("tcs", 0)) >= effective_min_tcs
+        if float(r.get("tcs", 0)) >= _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
     ]
+    for r in qualified:
+        r["_struct_tcs_floor"] = _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
     log.info(
-        f"{len(qualified)} setups qualified TCS ≥ {effective_min_tcs} "
-        f"(of {len(results)} scanned)"
+        f"{len(qualified)} setups qualified (per-structure TCS, regime floor={effective_min_tcs}) "
+        f"of {len(results)} scanned"
     )
 
     # Telegram: summary header
@@ -962,8 +984,15 @@ def intraday_scan():
     logged = log_paper_trades(results, user_id=USER_ID, min_tcs=effective_min_tcs)
     log.info(f"Intraday paper trades logged: {logged.get('saved',0)} new, {logged.get('skipped',0)} already existed")
 
-    qualified = [r for r in results if float(r.get("tcs", 0)) >= effective_min_tcs]
-    log.info(f"{len(qualified)} intraday setups at TCS ≥ {effective_min_tcs} (of {len(results)} scanned)")
+    _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
+    qualified = [
+        r for r in results
+        if float(r.get("tcs", 0)) >= _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
+    ]
+    log.info(
+        f"{len(qualified)} intraday setups qualified (per-structure TCS, regime floor={effective_min_tcs}) "
+        f"of {len(results)} scanned"
+    )
 
     if qualified:
         # Sort by tier priority: P1 (Intraday 70+) first → P2 (Intraday 50-69).

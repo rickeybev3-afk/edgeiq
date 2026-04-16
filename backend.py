@@ -191,7 +191,8 @@ from engine_v2 import (
 STATE_FILE   = "trade_state.json"
 TRACKER_FILE = "accuracy_tracker.csv"
 WEIGHTS_FILE      = "brain_weights.json"            # ⛔ READ-ONLY — live personal brain (paper trades + journal)
-HIST_WEIGHTS_FILE = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
+HIST_WEIGHTS_FILE    = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
+TCS_THRESHOLDS_FILE  = "tcs_thresholds.json"          # per-structure TCS cutoffs saved after nightly recalibration
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
 SA_JOURNAL_FILE  = "sa_journal.csv"
@@ -1233,6 +1234,9 @@ def _label_to_weight_key(label: str) -> str:
     if "normal" in s or "balance" in s:      return "normal"
     return "normal"   # safe default
 
+# Public alias — used by paper_trader_bot for per-structure TCS lookup
+label_to_weight_key = _label_to_weight_key
+
 
 def load_brain_weights(user_id: str = "") -> dict:
     """Load adaptive calibration weights — per-user from Supabase prefs, then local file.
@@ -1498,6 +1502,13 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
         _save_brain_weights(weights, user_id)
         result["calibrated"] = True
 
+    # After live-brain calibration, persist the latest per-structure TCS thresholds
+    # so the bot can load them at scan time without hitting Supabase mid-morning.
+    try:
+        save_tcs_thresholds(compute_structure_tcs_thresholds())
+    except Exception:
+        pass
+
     result["weights"] = weights
     result["deltas"]  = sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)
     return result
@@ -1529,6 +1540,46 @@ def _save_historical_brain_weights(weights: dict) -> None:
             _json.dump(clean, f, indent=2)
     except Exception:
         pass
+
+
+def save_tcs_thresholds(thresholds: list) -> None:
+    """Save per-structure TCS thresholds keyed by weight_key to tcs_thresholds.json.
+
+    Called after nightly recalibration so the bot can load at scan time
+    without hitting Supabase for 11k rows mid-morning.
+
+    Format: {"neutral": 59, "ntrl_extreme": 49, "double_dist": 49, ...}
+    """
+    import json as _json
+    out: dict = {}
+    for t in thresholds:
+        wk  = t.get("wk", "")
+        tcs = t.get("recommended_tcs", 50)
+        if wk:
+            out[wk] = int(tcs)
+    try:
+        with open(TCS_THRESHOLDS_FILE, "w") as f:
+            _json.dump(out, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_tcs_thresholds(default: int = 50) -> dict:
+    """Load per-structure TCS thresholds from tcs_thresholds.json.
+
+    Returns dict keyed by weight_key with int TCS values.
+    Falls back to default (50) for any missing key or if file doesn't exist.
+    """
+    import json as _json
+    defaults = {k: default for k in _BRAIN_WEIGHT_KEYS}
+    if not os.path.exists(TCS_THRESHOLDS_FILE):
+        return defaults
+    try:
+        with open(TCS_THRESHOLDS_FILE) as f:
+            stored = _json.load(f)
+        return {k: int(stored.get(k, default)) for k in _BRAIN_WEIGHT_KEYS}
+    except Exception:
+        return defaults
 
 
 def recalibrate_from_history(user_id: str = "") -> dict:
@@ -1632,6 +1683,13 @@ def recalibrate_from_history(user_id: str = "") -> dict:
     if deltas:
         _save_historical_brain_weights(weights)
         result["calibrated"] = True
+
+    # After historical-brain calibration, persist fresh TCS thresholds
+    # so the bot can use per-structure cutoffs at scan time.
+    try:
+        save_tcs_thresholds(compute_structure_tcs_thresholds())
+    except Exception:
+        pass
 
     result["weights"] = weights
     result["deltas"]  = sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)
@@ -1794,6 +1852,7 @@ def compute_structure_tcs_thresholds() -> list[dict]:
 
         if total_n == 0:
             results.append({
+                "wk":              wk,
                 "structure":       label,
                 "hit_rate":        None,
                 "sample_count":    0,
@@ -1847,6 +1906,7 @@ def compute_structure_tcs_thresholds() -> list[dict]:
         else:               status = "🔴"
 
         results.append({
+            "wk":              wk,
             "structure":       label,
             "hit_rate":        round(hit_pct, 1),
             "sample_count":    total_n,

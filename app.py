@@ -5737,6 +5737,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _rp_rows = []
                         st.error(f"Failed to load data: {_rp_e}")
 
+                # Cache raw rows for TCS Optimizer (needs unfiltered dataset)
+                if _rp_rows:
+                    st.session_state["_bt_replay_rows"] = _rp_rows
+
                 if not _rp_rows:
                     st.info("No backtest data found for this date range. Run the Batch Backtest first.")
                 else:
@@ -5908,9 +5912,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _day_trades   += 1
                             _rp_equity_cur += _trade_pnl
 
+                            _rp_scan_str = str(_rp_r.get("scan_type") or "morning").lower()
+                            if _rp_scan_str == "intraday":
+                                _rp_priority = "P1 🔴" if _tcs >= 70 else "P2 🟠"
+                            else:
+                                _rp_priority = "P3 🟡" if _tcs >= 70 else "P4 🟢"
                             _rp_trades.append({
+                                "Priority":  _rp_priority,
                                 "Date":      _rp_date_str,
-                                "Snapshot":  str(_rp_r.get("scan_type") or "morning").capitalize(),
+                                "Snapshot":  _rp_scan_str.capitalize(),
                                 "Ticker":    _tkr,
                                 "TCS":       int(_tcs),
                                 "Structure": _pred,
@@ -5960,6 +5970,134 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Equity ($)": _rp_equity_curve,
                         })
                         st.line_chart(_eq_df.set_index("Day"), height=220, use_container_width=True)
+
+                        # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.markdown(
+                            '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                            'text-transform:uppercase;margin-bottom:8px;">'
+                            'Priority Tier Breakdown — P1 / P2 / P3 / P4</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.caption(
+                            "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
+                            "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+                        )
+                        _bt_tier_defs = [
+                            ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
+                            ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
+                            ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                            ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
+                        ]
+                        _bt_tier_cols = st.columns(4)
+                        for _bti, (_btl, _bte, _btst, _btlo, _bthi, _btc, _btd) in enumerate(_bt_tier_defs):
+                            _bt_tier_mask = (
+                                (_rp_df["Snapshot"].str.lower() == _btst) &
+                                (_rp_df["TCS"] >= _btlo) &
+                                (_rp_df["TCS"] <= _bthi)
+                            )
+                            _bt_td = _rp_df[_bt_tier_mask]
+                            with _bt_tier_cols[_bti]:
+                                if _bt_td.empty:
+                                    st.markdown(
+                                        f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                        f'<div style="font-size:13px;font-weight:700;color:{_btc};">{_bte} {_btl}</div>'
+                                        f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_btd}</div>'
+                                        f'<div style="font-size:12px;color:#546e7a;margin-top:6px;">No trades</div>'
+                                        f'</div>', unsafe_allow_html=True
+                                    )
+                                else:
+                                    _btw  = (_bt_td["P&L ($)"] > 0).sum()
+                                    _btl2 = (_bt_td["P&L ($)"] <= 0).sum()
+                                    _btwr = _btw / len(_bt_td) * 100
+                                    _bte2 = _bt_td["P&L ($)"].mean()
+                                    _bttot = _bt_td["P&L ($)"].sum()
+                                    _btc2 = "#2e7d32" if _btwr >= 60 else ("#ef6c00" if _btwr >= 50 else "#c62828")
+                                    st.markdown(
+                                        f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                        f'<div style="font-size:13px;font-weight:700;color:{_btc};">{_bte} {_btl}</div>'
+                                        f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_btd}</div>'
+                                        f'<div style="font-size:22px;font-weight:700;color:{_btc2};margin-top:4px;">{_btwr:.1f}%</div>'
+                                        f'<div style="font-size:12px;color:#cfd8dc;">{_btw}W / {_btl2}L</div>'
+                                        f'<div style="font-size:12px;color:#90a4ae;">'
+                                        f'Exp: {"+" if _bte2 >= 0 else ""}${_bte2:,.0f}  ·  '
+                                        f'Total: {"+" if _bttot >= 0 else ""}${_bttot:,.0f}  ·  '
+                                        f'{len(_bt_td)} trades</div>'
+                                        f'</div>', unsafe_allow_html=True
+                                    )
+
+                        # ── TCS Optimizer ──────────────────────────────────────────
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        with st.expander("🔍 TCS Optimizer — Find the optimal TCS cutoff for max profit", expanded=False):
+                            st.caption(
+                                "Sweeps TCS 40 → 80 using the same dataset (regardless of your current TCS filter). "
+                                "Shows what each cutoff produces: trade count, win rate, net P&L, and expectancy. "
+                                "Bold row = highest net P&L."
+                            )
+                            _opt_raw = st.session_state.get("_bt_replay_rows", [])
+                            if not _opt_raw:
+                                st.info("Run the replay above first to load data.")
+                            else:
+                                _opt_pos = float(_rp_pos_size)   # same position size as replay
+                                _sweep_rows = []
+                                for _sw_tcs in range(40, 85, 5):
+                                    _sw_dir = [
+                                        r for r in _opt_raw
+                                        if ("bullish" in str(r.get("actual_outcome","")).lower()
+                                            or "bearish" in str(r.get("actual_outcome","")).lower())
+                                        and str(r.get("win_loss","")).strip() in ("Win","Loss")
+                                        and float(r.get("tcs") or 0) >= _sw_tcs
+                                    ]
+                                    if not _sw_dir:
+                                        continue
+                                    _sw_wins = [r for r in _sw_dir if r.get("win_loss") == "Win"]
+                                    _sw_loss = [r for r in _sw_dir if r.get("win_loss") == "Loss"]
+                                    _sw_wr   = len(_sw_wins) / len(_sw_dir) * 100
+                                    # Simple flat P&L: pos_size × |ft%| / 100 × sign
+                                    _sw_pnl  = sum(
+                                        _opt_pos * abs(float(r.get("follow_thru_pct") or 0)) / 100
+                                        * (1 if r.get("win_loss") == "Win" else -1)
+                                        for r in _sw_dir
+                                    )
+                                    _sw_exp  = _sw_pnl / len(_sw_dir)
+                                    _sweep_rows.append({
+                                        "TCS Floor":    _sw_tcs,
+                                        "Trades":       len(_sw_dir),
+                                        "Win Rate":     round(_sw_wr, 1),
+                                        "Net P&L ($)":  round(_sw_pnl, 0),
+                                        "Expectancy ($)": round(_sw_exp, 2),
+                                    })
+
+                                if _sweep_rows:
+                                    _sw_df   = pd.DataFrame(_sweep_rows)
+                                    _best_pnl = _sw_df["Net P&L ($)"].max()
+                                    _best_wr  = _sw_df[_sw_df["Win Rate"] == _sw_df["Win Rate"].max()].iloc[0]["TCS Floor"]
+                                    _best_row = _sw_df[_sw_df["Net P&L ($)"] == _best_pnl].iloc[0]
+
+                                    st.markdown(
+                                        f'<div style="background:#1e3a2a;border-radius:8px;padding:10px 14px;'
+                                        f'margin-bottom:10px;font-size:13px;color:#a5d6a7;">'
+                                        f'📈 <b>Optimal for Max Profit:</b> TCS ≥ {int(_best_row["TCS Floor"])} '
+                                        f'→ {int(_best_row["Trades"])} trades · {_best_row["Win Rate"]:.1f}% WR · '
+                                        f'${_best_pnl:,.0f} net P&L</div>',
+                                        unsafe_allow_html=True,
+                                    )
+
+                                    def _sw_style(row):
+                                        if row["Net P&L ($)"] == _best_pnl:
+                                            return ["background:#1e3a2a;font-weight:bold"] * len(row)
+                                        return [""] * len(row)
+
+                                    st.dataframe(
+                                        _sw_df.style.apply(_sw_style, axis=1),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config={
+                                            "Net P&L ($)":    st.column_config.NumberColumn(format="$%.0f"),
+                                            "Expectancy ($)": st.column_config.NumberColumn(format="$%.2f"),
+                                            "Win Rate":       st.column_config.NumberColumn(format="%.1f%%"),
+                                        }
+                                    )
 
                         st.markdown("**Trade-by-Trade Log**")
                         _rp_styled = _rp_df.copy()
