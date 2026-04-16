@@ -5781,9 +5781,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _rp_rows = []
                         st.error(f"Failed to load data: {_rp_e}")
 
-                # ── Best (Most Profit Combined) — pick highest abs(follow_thru_pct) per ticker+date ──
-                # Picks the scan with the biggest move for each ticker each day.
-                # TCS is already applied later; here we only de-dup across scan types.
+                # ── Best (Most Profit Combined) — pick scan with largest absolute move per ticker+date ──
+                # De-dup across scan types (morning vs intraday) by |follow_thru_pct| (MFE).
+                # pnl_r_sim is NOT used here: stored values are corrupted (NULL close_price backfill
+                # gave all-positive pnl_r_sim regardless of false breaks). Using |ft_pct| correctly
+                # picks the scan that saw the biggest raw market move, which is what "Best" means.
+                # P&L (including false-break losses) is computed separately per-trade below.
                 if _rp_rows and _rp_best_mode:
                     _best_scores: dict = {}
                     _best_seen: dict   = {}
