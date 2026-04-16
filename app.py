@@ -7262,6 +7262,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     else:
                         _tk_best_pnl = None
                         _tk_best_row = None
+                        _tk_max_trades = int(_tk_sw_df["Trades"].max()) if not _tk_sw_df.empty else 0
                         _tk_expander_label = f"📊 {_tk_name} — insufficient data (<{_MIN_TCS_TRADES} trades per floor)"
                         _tk_has_best = False
                     with st.expander(_tk_expander_label, expanded=False):
@@ -7278,8 +7279,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             st.markdown(
                                 f'<div style="background:#3a2a0a;border-left:4px solid #f9a825;border-radius:8px;'
                                 f'padding:8px 14px;margin-bottom:10px;font-size:13px;color:#ffe082;">'
-                                f'⚠️ <b>Insufficient data for Best TCS</b> — no TCS floor has '
-                                f'{_MIN_TCS_TRADES}+ trades yet. Collect more data or broaden the replay date range.</div>',
+                                f'⚠️ <b>Insufficient data for Best TCS</b> — best floor: {_tk_max_trades} trade{"s" if _tk_max_trades != 1 else ""} '
+                                f'— need {_MIN_TCS_TRADES}. Collect more data or broaden the replay date range.</div>',
                                 unsafe_allow_html=True,
                             )
 
