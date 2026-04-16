@@ -6552,6 +6552,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         ):
             _tkr_rows = []
             _tkr_sweep_data = {}
+            _best_tcs_options = []
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
             for _tk, _tgrp in _bt_df.groupby("ticker"):
                 _tw   = (_tgrp["win_loss"] == "Win").sum()
@@ -6626,6 +6627,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f"{_best_tcs_wr_final:.0f}% WR, "
                         f"{_pnl_sign}${_best_tcs_pnl_val:,.0f})"
                     )
+                    _best_tcs_options.append((_tk, int(_best_tcs_floor)))
 
                 _tkr_rows.append({
                     "Ticker":         _tk,
@@ -6665,6 +6667,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "Best TCS = the TCS cutoff that produced the highest net P&L for that ticker "
                 "(hover the column header for details)"
             )
+            if _best_tcs_options:
+                st.markdown("**🎯 Apply Best TCS to replay filter:**")
+                _btn_cols = st.columns(min(len(_best_tcs_options), 6))
+                for _bi, (_btkr, _bfloor) in enumerate(_best_tcs_options):
+                    with _btn_cols[_bi % 6]:
+                        if st.button(
+                            f"{_btkr}: TCS {_bfloor}",
+                            key=f"use_best_tcs_{_btkr}",
+                            help=f"Set Min TCS filter to {_bfloor} (best floor for {_btkr}) and re-run replay",
+                        ):
+                            st.session_state["rp_min_tcs_slider"] = _bfloor
+                            st.rerun()
 
             # ── Per-Ticker TCS Sweep Charts ───────────────────────────────────
             if _tkr_sweep_data:
