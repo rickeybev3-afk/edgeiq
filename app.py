@@ -6875,25 +6875,58 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     'letter-spacing:0.5px;margin-bottom:6px;">📈 TCS Sweep Charts — P&L curve per ticker</div>',
                     unsafe_allow_html=True,
                 )
+                import altair as _alt_tk
+
+                _SWEEP_SORT_OPTIONS = ["P&L (default)", "Win Rate", "Trade Count", "Alphabetical"]
+                _sweep_sort_sel = st.selectbox(
+                    "Sort sweep charts by:",
+                    options=_SWEEP_SORT_OPTIONS,
+                    index=_SWEEP_SORT_OPTIONS.index(
+                        st.session_state.get("sweep_chart_sort", "P&L (default)")
+                        if st.session_state.get("sweep_chart_sort", "P&L (default)") in _SWEEP_SORT_OPTIONS
+                        else "P&L (default)"
+                    ),
+                    key="sweep_chart_sort",
+                    help=(
+                        "P&L — highest net P&L (at the best sufficient TCS floor) first · "
+                        "Win Rate — highest win rate (at the best sufficient floor) first · "
+                        "Trade Count — most trades at the best sufficient floor first · "
+                        "Alphabetical — A → Z by ticker"
+                    ),
+                )
+                _sort_desc = {
+                    "P&L (default)": "sorted by highest net P&L at the best TCS floor — highest first",
+                    "Win Rate":      "sorted by highest win rate at the best TCS floor — highest first",
+                    "Trade Count":   "sorted by most trades at the best TCS floor — highest first",
+                    "Alphabetical":  "sorted A → Z by ticker",
+                }
                 st.caption(
-                    "Sorted by Best TCS net P&L — highest first. "
-                    "Tickers with insufficient data (fewer than the minimum trades per floor) fall to the bottom. "
+                    f"Currently {_sort_desc.get(_sweep_sort_sel, '')}. "
+                    "Tickers with insufficient data fall to the bottom (except in Alphabetical mode). "
                     "Each chart sweeps TCS 40 → 80 for that ticker only. "
                     f"Bold row = highest net P&L among floors with ≥{_MIN_TCS_TRADES} trades. "
                     "Floors marked ✗ have too few trades and are excluded from the Best TCS pick. "
                     "Expand a ticker to see the full profit curve."
                 )
-                import altair as _alt_tk
 
                 def _tk_sort_key(_name):
                     _rows = _tkr_sweep_data[_name]
                     _df = _pd_bt.DataFrame(_rows)
                     _suff = _df[_df["Sufficient"] == "✓"]
+                    if _sweep_sort_sel == "Alphabetical":
+                        return (0, _name)
                     if _suff.empty:
-                        return (1, 0, 0, _name)
+                        if _sweep_sort_sel == "Trade Count":
+                            return (1, -_df["Trades"].max(), _name)
+                        return (1, 0, _name)
+                    if _sweep_sort_sel == "Win Rate":
+                        _best_wr = _suff["Win Rate"].max()
+                        return (0, -_best_wr, _name)
+                    if _sweep_sort_sel == "Trade Count":
+                        _best_cnt = _suff["Trades"].max()
+                        return (0, -_best_cnt, _name)
                     _best_pnl = _suff["Net P&L ($)"].max()
-                    _best_wr = _suff[_suff["Net P&L ($)"] == _best_pnl]["Win Rate"].iloc[0]
-                    return (0, -_best_pnl, -_best_wr, _name)
+                    return (0, -_best_pnl, _name)
 
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
