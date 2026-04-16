@@ -1,8 +1,8 @@
 """
 run_tiered_pnl_backfill.py
 ───────────────────────────
-Backfills tiered_pnl_r (50/25/25 ladder P&L) and eod_pnl_r on existing
-paper_trades rows that were logged before the tiered-exit bot was deployed.
+Backfills tiered_pnl_r (50/25/25 ladder P&L) and eod_pnl_r on existing rows
+that were logged before the tiered-exit bot was deployed.
 
 Results of the 2026-04-16 initial run (verified via null-count queries post-run):
   paper_trades     : 74 breakout rows total; 0 qualifying rows found.
@@ -14,8 +14,13 @@ Results of the 2026-04-16 initial run (verified via null-count queries post-run)
   Note             : The 50/25/25 Ladder tab will be populated going forward
                      as new paper trades are logged with close_price stored.
 
-Target rows
-───────────
+Supported tables
+────────────────
+  paper_trades       — one user at a time, partitioned by user_id
+  backtest_sim_runs  — all rows processed in one pass (no user partitioning)
+
+Target rows (paper_trades)
+──────────────────────────
   paper_trades WHERE
       actual_outcome IN ('Bullish Break', 'Bearish Break')
       AND tiered_pnl_r IS NULL
@@ -23,8 +28,17 @@ Target rows
       AND ib_high       IS NOT NULL
       AND ib_low        IS NOT NULL
 
+Target rows (backtest_sim_runs)
+───────────────────────────────
+  backtest_sim_runs WHERE
+      actual_outcome IN ('Bullish Break', 'Bearish Break')
+      AND tiered_pnl_r IS NULL
+      AND close_price   IS NOT NULL
+      AND ib_high       IS NOT NULL
+      AND ib_low        IS NOT NULL
+
 For each qualifying row the script:
-  1. Fetches 1-minute bars from Alpaca for the trade_date / ticker.
+  1. Fetches 1-minute bars from Alpaca for the trade/sim_date / ticker.
   2. Slices to post-IB bars (> 10:30:59 ET) — same window as the live bot.
   3. Calls compute_trade_sim_tiered() with the post-IB bars + close_price.
   4. Writes tiered_pnl_r (and eod_pnl_r if still NULL) back to the DB.
@@ -47,10 +61,12 @@ on paid Alpaca subscriptions).
 
 Usage
 ─────
-  python run_tiered_pnl_backfill.py                          # all users
-  python run_tiered_pnl_backfill.py <uid1> [uid2] ...        # specific users
+  python run_tiered_pnl_backfill.py                          # all users + backtest
+  python run_tiered_pnl_backfill.py <uid1> [uid2] ...        # specific users only
   python run_tiered_pnl_backfill.py --no-ratelimit           # skip sleep
   python run_tiered_pnl_backfill.py --dry-run                # preview only
+  python run_tiered_pnl_backfill.py --skip-backtest          # paper_trades only
+  python run_tiered_pnl_backfill.py --backtest-only          # backtest_sim_runs only
 """
 
 import sys
@@ -159,7 +175,7 @@ def _post_ib_bars(full_df, trade_date: date):
         return full_df if len(full_df) > 0 else None
 
 
-# ── Core backfill ──────────────────────────────────────────────────────────────
+# ── Core backfill — paper_trades ───────────────────────────────────────────────
 
 def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
     """Backfill tiered_pnl_r for all qualifying paper_trades rows for one user.
@@ -185,7 +201,7 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
         print("  ERROR: ALPACA_API_KEY / ALPACA_SECRET_KEY not set — cannot fetch bars.")
         return stats
 
-    skipped_ids: list = []          # IDs we've tried but cannot process (no bars etc.)
+    skipped_ids: list = []
     consecutive_errors = 0
     iteration = 0
 
@@ -203,7 +219,6 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
                 .not_.is_("ib_high", "null")
                 .not_.is_("ib_low", "null")
             )
-            # Exclude IDs we've already tried and couldn't handle
             if skipped_ids:
                 q = q.not_.in_("id", skipped_ids)
             resp = q.limit(PAGE_SZ).execute()
@@ -214,7 +229,7 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
 
         rows = resp.data or []
         if not rows:
-            break  # no more qualifying rows — done
+            break
 
         stats["fetched"] += len(rows)
         print(f"\n  Iteration {iteration}: {len(rows)} qualifying rows")
@@ -229,7 +244,6 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
             close_price    = row.get("close_price")
             existing_eod   = row.get("eod_pnl_r")
 
-            # ── Parse trade_date ──────────────────────────────────────────────
             try:
                 if isinstance(trade_date_raw, str):
                     trade_date = date.fromisoformat(trade_date_raw[:10])
@@ -245,7 +259,6 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
 
             print(f"    [{ticker}] {trade_date} {direction}  ", end="", flush=True)
 
-            # ── Fetch Alpaca bars ─────────────────────────────────────────────
             full_df = _fetch_bars_safe(ticker, trade_date)
             if rate_limit:
                 time.sleep(ALPACA_SLEEP_S)
@@ -257,9 +270,6 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
                     print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
                     print("  Stopping this user — check Alpaca credentials and retry.")
                     return stats
-                # Still write eod_pnl_r if it's NULL (bars-free formula).
-                # tiered_pnl_r stays NULL (honest: no bar data for the ladder sim).
-                # Row is added to skipped_ids so the loop doesn't revisit it.
                 eod_only = backend.compute_trade_sim_tiered(
                     aft_df    = None,
                     ib_high   = ib_high,
@@ -275,15 +285,13 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
                     except Exception as e:
                         print(f"\n    eod_pnl_r update error: {e}")
                 stats["skipped_no_bars"] += 1
-                skipped_ids.append(row_id)  # don't revisit — tiered stays NULL
+                skipped_ids.append(row_id)
                 continue
 
             consecutive_errors = 0
 
-            # ── Slice to post-IB bars (> 10:30:59 ET) ────────────────────────
             aft_df = _post_ib_bars(full_df, trade_date)
 
-            # ── Compute tiered P&L ────────────────────────────────────────────
             result = backend.compute_trade_sim_tiered(
                 aft_df    = aft_df,
                 ib_high   = ib_high,
@@ -296,11 +304,6 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
             eod_pnl_r    = result.get("eod_pnl_r")
 
             if tiered_pnl_r is None:
-                # Price never crossed the entry level in the post-IB window.
-                # The live write-path also leaves tiered_pnl_r NULL in this
-                # case — we match that behaviour to avoid inconsistency.
-                # eod_pnl_r is still valid; write it if missing, then add this
-                # row to skipped_ids so the outer loop doesn't revisit it.
                 print("no entry cross — tiered stays NULL (matches live path)")
                 stats["skipped_no_tiered"] += 1
                 if not dry_run and existing_eod is None and eod_pnl_r is not None:
@@ -331,8 +334,180 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
             else:
                 stats["updated"] += 1
 
-        # In dry-run mode rows are never updated, so the loop would be infinite.
-        # Stop after the first page so the user sees a representative preview.
+        if dry_run:
+            print("\n  [dry-run] stopping after one page to avoid infinite loop.")
+            break
+
+    return stats
+
+
+# ── Core backfill — backtest_sim_runs ──────────────────────────────────────────
+
+def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
+    """Backfill tiered_pnl_r for all qualifying backtest_sim_runs rows.
+
+    Unlike paper_trades this table has no meaningful user partitioning that
+    would reduce work, so we process all NULL rows in a single pass.
+
+    Pagination: always queries from offset=0 with tiered_pnl_r IS NULL.  Updated
+    rows drop out of subsequent fetches naturally.  Rows that cannot be processed
+    (no Alpaca bars, bad date) are added to skipped_ids and excluded via a NOT IN
+    filter so the outer loop always terminates.
+
+    Note: the date column is named sim_date (not trade_date) in this table.
+    """
+    stats = {
+        "fetched": 0,
+        "updated": 0,
+        "skipped_no_bars": 0,
+        "skipped_no_tiered": 0,
+        "errors": 0,
+    }
+
+    if not backend.supabase:
+        print("  No Supabase connection.")
+        return stats
+
+    if not backend.ALPACA_API_KEY or not backend.ALPACA_SECRET_KEY:
+        print("  ERROR: ALPACA_API_KEY / ALPACA_SECRET_KEY not set — cannot fetch bars.")
+        return stats
+
+    skipped_ids: list = []
+    consecutive_errors = 0
+    iteration = 0
+
+    while True:
+        iteration += 1
+
+        try:
+            q = (
+                backend.supabase.table("backtest_sim_runs")
+                .select("id,ticker,sim_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r")
+                .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+                .is_("tiered_pnl_r", "null")
+                .not_.is_("close_price", "null")
+                .not_.is_("ib_high", "null")
+                .not_.is_("ib_low", "null")
+            )
+            if skipped_ids:
+                q = q.not_.in_("id", skipped_ids)
+            resp = q.limit(PAGE_SZ).execute()
+        except Exception as e:
+            print(f"  Fetch error (iteration {iteration}): {e}")
+            stats["errors"] += 1
+            break
+
+        rows = resp.data or []
+        if not rows:
+            break
+
+        stats["fetched"] += len(rows)
+        print(f"\n  Iteration {iteration}: {len(rows)} qualifying rows")
+
+        for row in rows:
+            row_id       = row["id"]
+            ticker       = row.get("ticker", "")
+            sim_date_raw = row.get("sim_date")
+            direction    = row.get("actual_outcome", "")
+            ib_high      = row.get("ib_high")
+            ib_low       = row.get("ib_low")
+            close_price  = row.get("close_price")
+            existing_eod = row.get("eod_pnl_r")
+
+            # ── Parse sim_date ────────────────────────────────────────────────
+            try:
+                if isinstance(sim_date_raw, str):
+                    sim_date = date.fromisoformat(sim_date_raw[:10])
+                elif isinstance(sim_date_raw, date):
+                    sim_date = sim_date_raw
+                else:
+                    raise ValueError(f"unexpected type {type(sim_date_raw)}")
+            except Exception:
+                print(f"    [{ticker}] bad sim_date={sim_date_raw!r} — skipping permanently")
+                stats["errors"] += 1
+                skipped_ids.append(row_id)
+                continue
+
+            print(f"    [{ticker}] {sim_date} {direction}  ", end="", flush=True)
+
+            # ── Fetch Alpaca bars ─────────────────────────────────────────────
+            full_df = _fetch_bars_safe(ticker, sim_date)
+            if rate_limit:
+                time.sleep(ALPACA_SLEEP_S)
+
+            if full_df is None:
+                print("no bars — eod_pnl_r only, row deferred")
+                consecutive_errors += 1
+                if consecutive_errors >= MAX_ERRORS:
+                    print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
+                    print("  Stopping — check Alpaca credentials and retry.")
+                    return stats
+                eod_only = backend.compute_trade_sim_tiered(
+                    aft_df    = None,
+                    ib_high   = ib_high,
+                    ib_low    = ib_low,
+                    direction = direction,
+                    close_px  = close_price,
+                )
+                if not dry_run and existing_eod is None and eod_only.get("eod_pnl_r") is not None:
+                    try:
+                        backend.supabase.table("backtest_sim_runs").update(
+                            {"eod_pnl_r": eod_only["eod_pnl_r"]}
+                        ).eq("id", row_id).execute()
+                    except Exception as e:
+                        print(f"\n    eod_pnl_r update error: {e}")
+                stats["skipped_no_bars"] += 1
+                skipped_ids.append(row_id)
+                continue
+
+            consecutive_errors = 0
+
+            # ── Slice to post-IB bars (> 10:30:59 ET) ────────────────────────
+            aft_df = _post_ib_bars(full_df, sim_date)
+
+            # ── Compute tiered P&L ────────────────────────────────────────────
+            result = backend.compute_trade_sim_tiered(
+                aft_df    = aft_df,
+                ib_high   = ib_high,
+                ib_low    = ib_low,
+                direction = direction,
+                close_px  = close_price,
+            )
+
+            tiered_pnl_r = result.get("tiered_pnl_r")
+            eod_pnl_r    = result.get("eod_pnl_r")
+
+            if tiered_pnl_r is None:
+                print("no entry cross — tiered stays NULL (matches live path)")
+                stats["skipped_no_tiered"] += 1
+                if not dry_run and existing_eod is None and eod_pnl_r is not None:
+                    try:
+                        backend.supabase.table("backtest_sim_runs").update(
+                            {"eod_pnl_r": eod_pnl_r}
+                        ).eq("id", row_id).execute()
+                    except Exception as e:
+                        print(f"\n    eod_pnl_r update error: {e}")
+                skipped_ids.append(row_id)
+                continue
+            else:
+                print(f"tiered={tiered_pnl_r:+.4f}R  eod={eod_pnl_r:+.4f}R"
+                      + (" [DRY RUN]" if dry_run else ""))
+                patch = {"tiered_pnl_r": tiered_pnl_r}
+
+            if existing_eod is None and eod_pnl_r is not None:
+                patch["eod_pnl_r"] = eod_pnl_r
+
+            if not dry_run:
+                try:
+                    backend.supabase.table("backtest_sim_runs").update(patch).eq("id", row_id).execute()
+                    stats["updated"] += 1
+                except Exception as e:
+                    print(f"\n    DB update error for id={row_id}: {e}")
+                    stats["errors"] += 1
+                    skipped_ids.append(row_id)
+            else:
+                stats["updated"] += 1
+
         if dry_run:
             print("\n  [dry-run] stopping after one page to avoid infinite loop.")
             break
@@ -368,17 +543,38 @@ def verify_residual_nulls(user_id: str) -> int:
         return -1
 
 
+def verify_residual_nulls_backtest() -> int:
+    """Count backtest_sim_runs rows that still have tiered_pnl_r IS NULL after the run."""
+    if not backend.supabase:
+        return -1
+    try:
+        resp = (
+            backend.supabase.table("backtest_sim_runs")
+            .select("id", count="exact")
+            .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+            .is_("tiered_pnl_r", "null")
+            .not_.is_("close_price", "null")
+            .not_.is_("ib_high", "null")
+            .not_.is_("ib_low", "null")
+            .execute()
+        )
+        return resp.count if resp.count is not None else len(resp.data or [])
+    except Exception as e:
+        print(f"  Verification query error: {e}")
+        return -1
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Backfill 50/25/25 ladder tiered_pnl_r on historical paper_trades"
+        description="Backfill 50/25/25 ladder tiered_pnl_r on historical paper_trades and backtest_sim_runs"
     )
     parser.add_argument(
         "user_ids",
         nargs="*",
         metavar="UID",
-        help="Optional user IDs to process (default: auto-discover all).",
+        help="Optional user IDs to process for paper_trades (default: auto-discover all).",
     )
     parser.add_argument(
         "--dry-run",
@@ -390,10 +586,22 @@ def main():
         action="store_true",
         help="Skip the inter-request sleep (safe on paid Alpaca data plans).",
     )
+    parser.add_argument(
+        "--skip-backtest",
+        action="store_true",
+        help="Skip the backtest_sim_runs backfill (paper_trades only).",
+    )
+    parser.add_argument(
+        "--backtest-only",
+        action="store_true",
+        help="Only backfill backtest_sim_runs; skip paper_trades entirely.",
+    )
     args = parser.parse_args()
 
-    dry_run    = args.dry_run
-    rate_limit = not args.no_ratelimit
+    dry_run         = args.dry_run
+    rate_limit      = not args.no_ratelimit
+    skip_backtest   = args.skip_backtest
+    backtest_only   = args.backtest_only
 
     print("EdgeIQ — Tiered P&L Backfill (50/25/25 ladder)")
     print("=" * 60)
@@ -401,44 +609,90 @@ def main():
         print("  *** DRY RUN — no database writes ***")
     if not rate_limit:
         print("  Rate limiting disabled.")
+    if backtest_only:
+        print("  Mode: backtest_sim_runs only (paper_trades skipped).")
+    elif skip_backtest:
+        print("  Mode: paper_trades only (backtest_sim_runs skipped).")
     print()
 
-    if args.user_ids:
-        user_ids = list(dict.fromkeys(args.user_ids))
-        print(f"Using {len(user_ids)} user ID(s) from command-line arguments.")
-    else:
-        print("No user IDs specified — querying database for qualifying users…")
-        user_ids = discover_user_ids()
-        if not user_ids:
-            print("No qualifying rows found (tiered_pnl_r already populated or no data).")
-            sys.exit(0)
-        print(f"Found {len(user_ids)} user(s) with NULL tiered_pnl_r rows: {user_ids}")
-
     t0 = time.time()
-    grand = {"fetched": 0, "updated": 0, "skipped_no_bars": 0, "skipped_no_tiered": 0, "errors": 0}
 
-    for uid in user_ids:
+    # ── paper_trades phase ────────────────────────────────────────────────────
+    if not backtest_only:
+        if args.user_ids:
+            user_ids = list(dict.fromkeys(args.user_ids))
+            print(f"Using {len(user_ids)} user ID(s) from command-line arguments.")
+        else:
+            print("No user IDs specified — querying database for qualifying users…")
+            user_ids = discover_user_ids()
+            if not user_ids:
+                print("No qualifying paper_trades rows found (tiered_pnl_r already populated or no data).")
+            else:
+                print(f"Found {len(user_ids)} user(s) with NULL tiered_pnl_r rows: {user_ids}")
+
+        grand_pt = {"fetched": 0, "updated": 0, "skipped_no_bars": 0, "skipped_no_tiered": 0, "errors": 0}
+
+        for uid in user_ids:
+            print(f"\n{'#'*60}")
+            print(f"  paper_trades — User: {uid}")
+            print(f"{'#'*60}")
+            stats = backfill_user(uid, dry_run=dry_run, rate_limit=rate_limit)
+            for k in grand_pt:
+                grand_pt[k] += stats[k]
+
+            print(f"\n  --- User {uid} summary ---")
+            print(f"  Rows processed          : {stats['fetched']}")
+            print(f"  Rows updated            : {stats['updated']}"
+                  + (" (dry run)" if dry_run else ""))
+            print(f"  Skipped (no Alpaca bars): {stats['skipped_no_bars']}"
+                  + "  [tiered_pnl_r stays NULL — bars unavailable for these dates]"
+                  if stats["skipped_no_bars"] else f"  Skipped (no Alpaca bars): {stats['skipped_no_bars']}")
+            print(f"  Flat (no entry cross)   : {stats['skipped_no_tiered']}"
+                  + "  [tiered_pnl_r=0.0 — price never broke entry in post-IB window]"
+                  if stats["skipped_no_tiered"] else f"  Flat (no entry cross)   : {stats['skipped_no_tiered']}")
+            print(f"  Errors                  : {stats['errors']}")
+
+            if not dry_run:
+                residual = verify_residual_nulls(uid)
+                if residual < 0:
+                    print("  Verification           : unable to query (check manually)")
+                elif residual == 0:
+                    print("  Verification           : PASS — 0 qualifying NULL rows remain")
+                else:
+                    print(f"  Verification           : {residual} NULL rows remain (no Alpaca bars)")
+                    print("  These rows cannot be backfilled — bars are unavailable for those dates.")
+
+        if user_ids:
+            print(f"\n{'='*60}")
+            print(f"  paper_trades TOTAL across {len(user_ids)} user(s)")
+            print(f"  Rows processed          : {grand_pt['fetched']}")
+            print(f"  Rows updated            : {grand_pt['updated']}"
+                  + (" (dry run)" if dry_run else ""))
+            print(f"  Skipped (no Alpaca bars): {grand_pt['skipped_no_bars']}")
+            print(f"  Flat (no entry cross)   : {grand_pt['skipped_no_tiered']}")
+            print(f"  Errors                  : {grand_pt['errors']}")
+
+    # ── backtest_sim_runs phase ───────────────────────────────────────────────
+    if not skip_backtest:
         print(f"\n{'#'*60}")
-        print(f"  User: {uid}")
+        print(f"  backtest_sim_runs — all rows")
         print(f"{'#'*60}")
-        stats = backfill_user(uid, dry_run=dry_run, rate_limit=rate_limit)
-        for k in grand:
-            grand[k] += stats[k]
+        bstats = backfill_backtest_sim_runs(dry_run=dry_run, rate_limit=rate_limit)
 
-        print(f"\n  --- User {uid} summary ---")
-        print(f"  Rows processed          : {stats['fetched']}")
-        print(f"  Rows updated            : {stats['updated']}"
+        print(f"\n  --- backtest_sim_runs summary ---")
+        print(f"  Rows processed          : {bstats['fetched']}")
+        print(f"  Rows updated            : {bstats['updated']}"
               + (" (dry run)" if dry_run else ""))
-        print(f"  Skipped (no Alpaca bars): {stats['skipped_no_bars']}"
+        print(f"  Skipped (no Alpaca bars): {bstats['skipped_no_bars']}"
               + "  [tiered_pnl_r stays NULL — bars unavailable for these dates]"
-              if stats["skipped_no_bars"] else f"  Skipped (no Alpaca bars): {stats['skipped_no_bars']}")
-        print(f"  Flat (no entry cross)   : {stats['skipped_no_tiered']}"
+              if bstats["skipped_no_bars"] else f"  Skipped (no Alpaca bars): {bstats['skipped_no_bars']}")
+        print(f"  Flat (no entry cross)   : {bstats['skipped_no_tiered']}"
               + "  [tiered_pnl_r=0.0 — price never broke entry in post-IB window]"
-              if stats["skipped_no_tiered"] else f"  Flat (no entry cross)   : {stats['skipped_no_tiered']}")
-        print(f"  Errors                  : {stats['errors']}")
+              if bstats["skipped_no_tiered"] else f"  Flat (no entry cross)   : {bstats['skipped_no_tiered']}")
+        print(f"  Errors                  : {bstats['errors']}")
 
         if not dry_run:
-            residual = verify_residual_nulls(uid)
+            residual = verify_residual_nulls_backtest()
             if residual < 0:
                 print("  Verification           : unable to query (check manually)")
             elif residual == 0:
@@ -449,14 +703,7 @@ def main():
 
     elapsed = time.time() - t0
     print(f"\n{'='*60}")
-    print(f"  GRAND TOTAL across {len(user_ids)} user(s)")
-    print(f"  Rows processed          : {grand['fetched']}")
-    print(f"  Rows updated            : {grand['updated']}"
-          + (" (dry run)" if dry_run else ""))
-    print(f"  Skipped (no Alpaca bars): {grand['skipped_no_bars']}")
-    print(f"  Flat (no entry cross)   : {grand['skipped_no_tiered']}")
-    print(f"  Errors                  : {grand['errors']}")
-    print(f"  Elapsed                 : {elapsed:.0f}s")
+    print(f"  Elapsed: {elapsed:.0f}s")
     if dry_run:
         print("\n  *** DRY RUN complete — re-run without --dry-run to write to DB ***")
     else:

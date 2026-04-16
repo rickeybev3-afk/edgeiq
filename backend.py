@@ -6421,6 +6421,9 @@ def run_pending_migrations() -> dict:
         # EOD close price — required for eod_pnl_r computation in compute_trade_sim_tiered()
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS close_price NUMERIC",
         "ALTER TABLE paper_trades       ADD COLUMN IF NOT EXISTS close_price NUMERIC",
+        # Tiered P&L columns for backtest_sim_runs (50/25/25 ladder backfill)
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS tiered_pnl_r NUMERIC",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS eod_pnl_r NUMERIC",
     ]
 
     ran = 0
@@ -6488,6 +6491,10 @@ ALTER TABLE ticker_rankings ADD COLUMN IF NOT EXISTS confidence_label TEXT;
 -- 4. EOD close price for eod_pnl_r computation:
 ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS close_price NUMERIC;
 ALTER TABLE paper_trades       ADD COLUMN IF NOT EXISTS close_price NUMERIC;
+
+-- 5. Tiered P&L columns for backtest_sim_runs (50/25/25 ladder backfill):
+ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS tiered_pnl_r NUMERIC;
+ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS eod_pnl_r NUMERIC;
 """
 
 
