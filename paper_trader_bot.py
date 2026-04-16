@@ -1751,6 +1751,49 @@ def main():
     _recalibration_done    = False
     _pdf_export_done       = False
 
+    # ── Startup catch-up: recover scans missed due to mid-day restart ─────────
+    # Task merges / workflow restarts can happen during market hours.
+    # Run any scheduled job that should have already fired today.
+    _su = datetime.now(EASTERN)
+    _su_hm = _su.hour * 60 + _su.minute          # minutes since midnight ET
+    _su_weekday = _su.weekday() < 5
+    if _su_weekday:
+        if _su_hm >= 9 * 60 + 10:
+            _premarket_done = True
+            log.info("[Catch-up] Started after 9:10 AM — pre-market gap scan skipped (data stale)")
+        if _su_hm >= 9 * 60 + 35 and not _watchlist_done:
+            log.info("[Catch-up] Started after 9:35 AM — running watchlist refresh now...")
+            try:
+                watchlist_refresh()
+            except Exception as _cue:
+                log.warning(f"[Catch-up] Watchlist refresh failed: {_cue}")
+            _watchlist_done = True
+        if 10 * 60 + 47 <= _su_hm < 14 * 60 and not _morning_done:
+            log.info("[Catch-up] Started after 10:47 AM — running morning scan now...")
+            try:
+                morning_scan()
+            except Exception as _cue:
+                log.warning(f"[Catch-up] Morning scan failed: {_cue}")
+            _morning_done = True
+        if _su_hm >= 11 * 60 + 45:
+            _midday_watchlist_done = True
+        if 14 * 60 <= _su_hm < 16 * 60 and not _intraday_done:
+            log.info("[Catch-up] Started after 2:00 PM — running intraday scan now...")
+            try:
+                intraday_scan()
+            except Exception as _cue:
+                log.warning(f"[Catch-up] Intraday scan failed: {_cue}")
+            _intraday_done = True
+        if _su_hm >= 16 * 60 + 20:
+            _eod_done = True
+        if _su_hm >= 16 * 60 + 25:
+            _verify_done = True
+        if _su_hm >= 16 * 60 + 30:
+            _recalibration_done = True
+        log.info(f"[Catch-up] Done — premarket={_premarket_done} watchlist={_watchlist_done} "
+                 f"morning={_morning_done} intraday={_intraday_done} eod={_eod_done}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     while True:
         now_et = datetime.now(EASTERN)
         today  = now_et.date()
