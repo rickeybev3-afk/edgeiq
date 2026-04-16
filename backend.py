@@ -6546,8 +6546,9 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
     if not supabase or not rows:
         return
     try:
-        records = [
-            {
+        records = []
+        for r in rows:
+            rec = {
                 "user_id":        user_id or "",
                 "sim_date":       str(r.get("sim_date", "")),
                 "ticker":         r.get("ticker", ""),
@@ -6562,8 +6563,17 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 "false_break_up":   bool(r.get("false_break_up", False)),
                 "false_break_down": bool(r.get("false_break_down", False)),
             }
-            for r in rows
-        ]
+            # Auto-compute sim P&L on insert so backfill script is never needed
+            _sim = compute_trade_sim(rec)
+            if _sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                rec["sim_outcome"]      = _sim["sim_outcome"]
+                rec["pnl_r_sim"]        = _sim.get("pnl_r_sim")
+                rec["pnl_pct_sim"]      = _sim.get("pnl_pct_sim")
+                rec["entry_price_sim"]  = _sim.get("entry_price_sim")
+                rec["stop_price_sim"]   = _sim.get("stop_price_sim")
+                rec["stop_dist_pct"]    = _sim.get("stop_dist_pct")
+                rec["target_price_sim"] = _sim.get("target_price_sim")
+            records.append(rec)
         supabase.table("backtest_sim_runs").insert(records).execute()
     except Exception as e:
         print(f"Backtest save error: {e}")
@@ -6870,6 +6880,16 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["regime_tag"] = r["regime_tag"]
             if r.get("scan_type"):
                 row_record["scan_type"] = r["scan_type"]
+            # Auto-compute sim P&L on insert so backfill script is never needed
+            _sim = compute_trade_sim(row_record)
+            if _sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                row_record["sim_outcome"]      = _sim["sim_outcome"]
+                row_record["pnl_r_sim"]        = _sim.get("pnl_r_sim")
+                row_record["pnl_pct_sim"]      = _sim.get("pnl_pct_sim")
+                row_record["entry_price_sim"]  = _sim.get("entry_price_sim")
+                row_record["stop_price_sim"]   = _sim.get("stop_price_sim")
+                row_record["stop_dist_pct"]    = _sim.get("stop_dist_pct")
+                row_record["target_price_sim"] = _sim.get("target_price_sim")
             records.append(row_record)
         if records:
             try:
@@ -6877,7 +6897,10 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
             except Exception as _ins_err:
                 _err_s = str(_ins_err).lower()
                 _optional_cols = ["rvol", "gap_pct", "mae", "mfe", "entry_time",
-                                  "exit_trigger", "entry_ib_distance", "scan_type"]
+                                  "exit_trigger", "entry_ib_distance", "scan_type",
+                                  "sim_outcome", "pnl_r_sim", "pnl_pct_sim",
+                                  "entry_price_sim", "stop_price_sim",
+                                  "stop_dist_pct", "target_price_sim"]
                 if any(col in _err_s for col in _optional_cols):
                     for rec in records:
                         for col in _optional_cols:
