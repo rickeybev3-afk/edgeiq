@@ -5585,12 +5585,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "All":                None,
             }
             _rp_scan_type_val = _rp_scan_type_map[_rp_snap]
+        if "rp_start_date" not in st.session_state:
+            st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
+        if "rp_end_date" not in st.session_state:
+            st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
         with _rp_date_col1:
-            _rp_start = st.date_input("From", value=datetime.now(EASTERN).date() - timedelta(days=60),
-                                      key="rp_start_date")
+            _rp_start = st.date_input("From", key="rp_start_date",
+                                      min_value=date(2018, 1, 1))
         with _rp_date_col2:
-            _rp_end = st.date_input("To", value=datetime.now(EASTERN).date(),
-                                    key="rp_end_date")
+            _rp_end = st.date_input("To", key="rp_end_date",
+                                    min_value=date(2018, 1, 1))
 
         _rp_gap_col1, _rp_gap_col2, _rp_gap_col3 = st.columns([1, 1, 2])
         with _rp_gap_col1:
