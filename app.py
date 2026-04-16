@@ -9892,6 +9892,9 @@ def render_performance_tab():
     # ── Load paper trades ───────────────────────────────────────────────────────
     _pt_df = load_paper_trades(_AUTH_USER_ID, days=365)
 
+    # ── Load backtest sim history (backtest_sim_runs) ────────────────────────
+    _bt_sim_df = load_backtest_sim_history(user_id=_AUTH_USER_ID)
+
     # ── Load accuracy_tracker (bot watchlist calls + ALL combined) ──
     _at_df = pd.DataFrame()
     _at_all_df = pd.DataFrame()
@@ -10387,6 +10390,165 @@ ALTER TABLE backtest_sim_runs
                         f'{_pct_trades:.1f}% of trades · {_pct_r:.1f}% of R</div>'
                         f'</div>', unsafe_allow_html=True
                     )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 1b2 — BACKTEST SIM P&L (from backtest_sim_runs)
+    # Shows the same three-scenario layout as SECTION 1b (paper trades) but
+    # sourced from historical batch-backtest data.
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📊 Backtest Sim P&L — Historical")
+    st.caption(
+        "P&L scenarios across all saved batch-backtest runs (backtest_sim_runs). "
+        "Use this for large-sample edge validation — thousands of historical setups."
+    )
+
+    _bt_sim_has_data = (
+        not _bt_sim_df.empty
+        and "pnl_r_sim" in _bt_sim_df.columns
+        and _bt_sim_df["pnl_r_sim"].notna().any()
+    )
+
+    if not _bt_sim_has_data:
+        st.info(
+            "No backtest simulation data yet.  \n"
+            "Run the Batch Backtest in the Backtest tab to populate this section."
+        )
+    else:
+        _bts_df = _bt_sim_df[_bt_sim_df["pnl_r_sim"].notna()].copy()
+        _bts_df["pnl_r_sim"] = _bts_df["pnl_r_sim"].astype(float)
+        if "scan_type" not in _bts_df.columns:
+            _bts_df["scan_type"] = "morning"
+        _bts_df["scan_type"] = _bts_df["scan_type"].fillna("morning")
+        # Normalise date column — backtest uses sim_date
+        if "sim_date" in _bts_df.columns and "trade_date" not in _bts_df.columns:
+            _bts_df = _bts_df.rename(columns={"sim_date": "trade_date"})
+        if "trade_date" not in _bts_df.columns:
+            _bts_df["trade_date"] = pd.NaT  # safe fallback; equity curve will skip gracefully
+
+        import altair as _alt_bt
+
+        _bts_scen_defs = [
+            ("pnl_r_sim",    "#4fc3f7", "📈 Best Possible (MFE)",
+             "Max intraday excursion — theoretical ceiling, assumes perfect exit timing."),
+            ("eod_pnl_r",    "#81c784", "📅 Held to Close (EOD)",
+             "Full position held to EOD close — no partial exits, raw hold-to-close P&L."),
+            ("tiered_pnl_r", "#ffb74d", "🪜 50 / 25 / 25 Ladder",
+             "50% off at 1R → stop to BE → 25% at 2R → 25% runner to close. "
+             "Populates as new backtest runs."),
+        ]
+
+        # ── Row 1 — Three scenario stat cards side by side ───────────────────
+        _bts_stat_cols = st.columns(3)
+        _bts_cache = {}
+
+        for _bci, (_bscol, _bsclr, _bslabel, _bsdesc) in enumerate(_bts_scen_defs):
+            with _bts_stat_cols[_bci]:
+                st.markdown(
+                    f'<div style="border-left:3px solid {_bsclr};padding-left:8px;margin-bottom:6px;">'
+                    f'<span style="font-size:13px;font-weight:700;color:{_bsclr};">{_bslabel}</span><br>'
+                    f'<span style="font-size:11px;color:#78909c;">{_bsdesc}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                _bts_has_scen = _bscol in _bts_df.columns and _bts_df[_bscol].notna().any()
+                if not _bts_has_scen:
+                    _bts_hint = {
+                        "eod_pnl_r":    "Run the SQL migration then re-run backtests.",
+                        "tiered_pnl_r": "Populates automatically as new batch backtests run.",
+                    }.get(_bscol, "Run a batch backtest to populate this scenario.")
+                    st.markdown(
+                        f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+                        f'<div style="font-size:12px;color:#546e7a;">No data yet</div>'
+                        f'<div style="font-size:11px;color:#455a64;margin-top:4px;">{_bts_hint}</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+                    continue
+
+                _bsc_df  = _bts_df[_bts_df[_bscol].notna()].copy()
+                _bsc_df[_bscol] = _bsc_df[_bscol].astype(float)
+                _bsc_wins   = _bsc_df[_bsc_df[_bscol] > 0]
+                _bsc_losses = _bsc_df[_bsc_df[_bscol] <= 0]
+                _bsc_total  = len(_bsc_df)
+                _bsc_wr     = len(_bsc_wins) / _bsc_total * 100 if _bsc_total else 0.0
+                _bsc_avg_w  = _bsc_wins[_bscol].mean()   if len(_bsc_wins)   else 0.0
+                _bsc_avg_l  = _bsc_losses[_bscol].mean() if len(_bsc_losses) else 0.0
+                _bsc_exp    = _bsc_df[_bscol].mean() if _bsc_total else 0.0
+                _bsc_total_r = _bsc_df[_bscol].sum()
+
+                _bsc_wr_c  = "#2e7d32" if _bsc_wr >= 60 else ("#ef6c00" if _bsc_wr >= 50 else "#c62828")
+                _bsc_ex_c  = "#2e7d32" if _bsc_exp > 0 else "#c62828"
+                _bsc_tr_c  = "#2e7d32" if _bsc_total_r > 0 else "#c62828"
+
+                st.markdown(
+                    f'<div style="background:#1e2a3a;border-radius:8px;padding:12px 10px;">'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;text-transform:uppercase;">Win Rate</span>'
+                    f'  <span style="font-size:18px;font-weight:700;color:{_bsc_wr_c};">{_bsc_wr:.1f}%</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Avg Winner</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:#2e7d32;">+{_bsc_avg_w:.2f}R</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Avg Loser</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:#c62828;">{_bsc_avg_l:.2f}R</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Expectancy</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:{_bsc_ex_c};">{"+" if _bsc_exp >= 0 else ""}{_bsc_exp:.3f}R</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Total R</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:{_bsc_tr_c};">{"+" if _bsc_total_r >= 0 else ""}{_bsc_total_r:.1f}R</span>'
+                    f'</div>'
+                    f'<div style="font-size:10px;color:#546e7a;text-align:right;margin-top:4px;">{_bsc_total} trades · {len(_bsc_wins)}W / {len(_bsc_losses)}L</div>'
+                    f'</div>', unsafe_allow_html=True
+                )
+                _bts_cache[_bscol] = (_bsc_df, _bsclr, _bslabel.split(" ", 1)[-1].strip())
+
+        # ── Row 2 — Overlay equity curve ─────────────────────────────────────
+        if _bts_cache:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                'text-transform:uppercase;margin-bottom:6px;">Cumulative R Equity Curves — All Scenarios (Backtest)</div>',
+                unsafe_allow_html=True,
+            )
+            _bts_overlay = []
+            for _boc, (_bodf, _boclr, _bolabel) in _bts_cache.items():
+                _bodf2 = _bodf.sort_values("trade_date", ascending=True).copy()
+                _bodf2["cum_r"]     = _bodf2[_boc].cumsum()
+                _bodf2["trade_date"] = pd.to_datetime(_bodf2["trade_date"])
+                _bodf2["Scenario"]  = _bolabel
+                _bts_overlay.append(_bodf2[["trade_date", "cum_r", "Scenario"]].copy())
+            if _bts_overlay:
+                _bov_df = pd.concat(_bts_overlay, ignore_index=True)
+                _bov_domain = [_bts_cache[k][2] for k in _bts_cache]
+                _bov_range  = [_bts_cache[k][1] for k in _bts_cache]
+                _bov_chart = (
+                    _alt_bt.Chart(_bov_df)
+                    .mark_line(point=True, strokeWidth=2)
+                    .encode(
+                        x=_alt_bt.X("trade_date:T", title="Date", axis=_alt_bt.Axis(format="%b %d")),
+                        y=_alt_bt.Y("cum_r:Q", title="Cumulative R", scale=_alt_bt.Scale(zero=False)),
+                        color=_alt_bt.Color(
+                            "Scenario:N",
+                            scale=_alt_bt.Scale(domain=_bov_domain, range=_bov_range),
+                            legend=_alt_bt.Legend(orient="top", labelColor="#cfd8dc", titleColor="#cfd8dc"),
+                        ),
+                        tooltip=[
+                            _alt_bt.Tooltip("trade_date:T", title="Date"),
+                            _alt_bt.Tooltip("Scenario:N",   title="Scenario"),
+                            _alt_bt.Tooltip("cum_r:Q",      title="Cum R", format=".2f"),
+                        ],
+                    )
+                    .properties(height=240)
+                    .configure_view(fill="#141e2e", stroke=None)
+                    .configure_axis(labelColor="#90a4ae", titleColor="#90a4ae", gridColor="#263248")
+                )
+                st.altair_chart(_bov_chart, use_container_width=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
