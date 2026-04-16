@@ -5903,39 +5903,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _day_pnl = 0.0
                         _day_trades = 0
 
-                        # ── Pre-pass: count qualifying trades for this day ─────────────────────
-                        # Position is SPLIT across all qualifying trades so total daily exposure
-                        # = position × compound_factor, not position × compound_factor × N_tickers.
-                        # This matches live-bot behaviour: capital is allocated across concurrent
-                        # positions, not multiplied per ticker.
-                        def _qualifies(r) -> bool:
-                            _t = float(r.get("tcs") or 0)
-                            _w = str(r.get("win_loss") or "")
-                            _il = float(r.get("ib_low") or 0)
-                            _ih = float(r.get("ib_high") or 0)
-                            _f  = float(r.get("follow_thru_pct") or 0)
-                            if _rp_bot_mode:
-                                _pk = _label_to_weight_key(str(r.get("predicted") or ""))
-                                if _t < _struct_tcs_map.get(_pk, _bot_tcs_fallback):
-                                    return False
-                            elif _t < _rp_min_tcs:
-                                return False
-                            if abs(_f) < _rp_min_ft:
-                                return False
-                            _g   = float(r.get("gap_pct") or 0)
-                            _gib = float(r.get("gap_vs_ib_pct") or 0)
-                            if _rp_min_gap > 0 and _g < _rp_min_gap:
-                                return False
-                            if _rp_min_gap_vs_ib > 0 and _gib < _rp_min_gap_vs_ib:
-                                return False
-                            if _w not in ("Win", "Loss"):
-                                return False
-                            if _ih <= _il or _il <= 0:
-                                return False
-                            _ao = str(r.get("actual_outcome") or "").strip()
-                            return _ao in ("Bullish Break", "Bearish Break")
-                        _n_qualifying = max(1, sum(1 for r in _day_rows if _qualifies(r)))
-
                         for _rp_r in _day_rows:
                             _tcs      = float(_rp_r.get("tcs") or 0)
                             _wl       = str(_rp_r.get("win_loss") or "")
@@ -5996,21 +5963,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 continue
 
                             # ── Position sizing ───────────────────────────────────────────────
-                            # _n_qualifying = number of valid trades this day (pre-computed above).
-                            # Position is DIVIDED by _n_qualifying so total daily exposure stays
-                            # at one position's worth of capital — not multiplied per ticker.
+                            # Each ticker gets its own independent position — same as the live bot
+                            # which places each trade with its own fixed risk allocation.
+                            # The 20× compound cap prevents runaway growth if equity balloons.
                             if _rp_bot_mode:
                                 if _rp_compound:
-                                    # Cap compound factor at 20× to prevent runaway exponential growth.
                                     _compound_factor = min(_rp_equity_cur / float(_rp_equity), 20.0)
-                                    _eff_pos = (_rp_pos_size * _compound_factor) / _n_qualifying
+                                    _eff_pos = _rp_pos_size * _compound_factor
                                 else:
-                                    _eff_pos = _rp_pos_size / _n_qualifying
+                                    _eff_pos = _rp_pos_size
                                 _shares  = _eff_pos / max(_entry, 0.01)
                                 _risk_1r = _eff_pos * (_stop_dist / max(_entry, 0.01))
                             else:
-                                _shares  = (_fixed_risk_amt / _n_qualifying) / _stop_dist
-                                _risk_1r = _fixed_risk_amt / _n_qualifying
+                                _shares  = _fixed_risk_amt / _stop_dist
+                                _risk_1r = _fixed_risk_amt
 
                             # ── P&L: false_break detection + MFE R-multiple ───────────────────
                             # DO NOT use stored pnl_r_sim — it was computed from MFE fallback
@@ -6097,11 +6063,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm4.metric("Avg Win", f"${_avg_win:,.0f}")
                         _sm5.metric("Profit Factor", _pf_str)
 
+                        # ── R-based stats row ─────────────────────────────────────────────
+                        _r_ser          = _rp_df["R"]
+                        _false_brk_n    = (_r_ser == -1.0).sum()
+                        _false_brk_rate = round(_false_brk_n / _total_trades * 100, 1) if _total_trades else 0
+                        _avg_win_r      = round(_r_ser[_r_ser > 0].mean(), 2) if (_r_ser > 0).any() else 0
+                        _avg_loss_r     = round(_r_ser[_r_ser < 0].mean(), 2) if (_r_ser < 0).any() else 0
+                        _expectancy_r   = round(_r_ser.mean(), 3) if _total_trades else 0
+                        _sm6, _sm7, _sm8, _sm9 = st.columns(4)
+                        _sm6.metric("Stop-Out Rate",  f"{_false_brk_rate}%",
+                                    help="% of trades where false_break triggered a -1R stop-out")
+                        _sm7.metric("Avg Win (R)",    f"+{_avg_win_r}R")
+                        _sm8.metric("Avg Loss (R)",   f"{_avg_loss_r}R")
+                        _sm9.metric("Expectancy",     f"{_expectancy_r:+.3f}R / trade",
+                                    help="Average R gained per trade — the raw edge, independent of position size")
+
                         _eq_df = pd.DataFrame({
                             "Day": list(range(len(_rp_equity_curve))),
                             "Equity ($)": _rp_equity_curve,
                         })
-                        st.line_chart(_eq_df.set_index("Day"), height=220, use_container_width=True)
+                        st.line_chart(_eq_df.set_index("Day"), height=200, use_container_width=True)
+
+                        # ── Cumulative R chart (raw edge, no position sizing) ──────────────
+                        _cum_r = _r_ser.cumsum().reset_index(drop=True)
+                        _cum_r_df = pd.DataFrame({"Trade #": range(len(_cum_r)), "Cumulative R": _cum_r})
+                        st.caption("**Cumulative R** — raw edge independent of position size or compounding")
+                        st.line_chart(_cum_r_df.set_index("Trade #"), height=160, use_container_width=True)
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
                         st.markdown("<br>", unsafe_allow_html=True)
