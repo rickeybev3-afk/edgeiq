@@ -11794,6 +11794,10 @@ ALTER TABLE backtest_sim_runs
             _hist_cal = recalibrate_from_history(user_id=_uid)
         _new_tcs = load_tcs_thresholds()
         _alert_tcs(_old_tcs, _new_tcs)
+        # Persist one clean history event using the true before/after snapshots
+        # (individual save_tcs_thresholds calls do not record history so that
+        # only a single, accurate entry is stored per full recalibration run).
+        append_tcs_threshold_history(_old_tcs, _new_tcs)
 
         _live_src = _live_cal.get("sources", {})
         _hist_src = _hist_cal.get("sources", {})

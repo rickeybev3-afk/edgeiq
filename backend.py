@@ -1738,13 +1738,15 @@ def _save_historical_brain_weights(weights: dict) -> None:
 def save_tcs_thresholds(thresholds: list) -> None:
     """Save per-structure TCS thresholds keyed by weight_key to tcs_thresholds.json.
 
-    Called after nightly recalibration so the bot can load at scan time
-    without hitting Supabase for 11k rows mid-morning.
-
-    Also appends a record to tcs_threshold_history.jsonl so traders can see
-    how thresholds have drifted over time.
+    Called after each brain calibration so the bot can load at scan time
+    without hitting Supabase mid-morning.
 
     Format: {"neutral": 59, "ntrl_extreme": 49, "double_dist": 49, ...}
+
+    History recording is intentionally NOT done here — callers are responsible
+    for calling append_tcs_threshold_history(old, new) once after the full
+    recalibration sequence completes so that a single, clean event is stored
+    using the true before/after snapshots.
     """
     import json as _json
     out: dict = {}
@@ -1754,60 +1756,75 @@ def save_tcs_thresholds(thresholds: list) -> None:
         if wk:
             out[wk] = int(tcs)
 
-    # Read previous values before overwriting so we can record the diff
-    previous: dict = {}
-    if os.path.exists(TCS_THRESHOLDS_FILE):
-        try:
-            with open(TCS_THRESHOLDS_FILE) as _f:
-                previous = _json.load(_f)
-        except Exception:
-            pass
-
-    _write_ok = False
     try:
         with open(TCS_THRESHOLDS_FILE, "w") as f:
             _json.dump(out, f, indent=2)
-        _write_ok = True
     except Exception:
         pass
 
-    # Append a history record only when the primary write succeeded
-    if _write_ok:
-        try:
-            import datetime as _dt
-            record = {
-                "timestamp": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "thresholds": out,
-                "previous": previous,
-            }
-            with open(TCS_THRESHOLD_HISTORY_FILE, "a") as _hf:
-                _hf.write(_json.dumps(record) + "\n")
 
-            # Trim entries older than 90 days so the file doesn't grow indefinitely
-            cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=90)
-            try:
-                with open(TCS_THRESHOLD_HISTORY_FILE) as _hf:
-                    raw_lines = _hf.readlines()
-                kept = []
-                for line in raw_lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = _json.loads(line)
-                        ts_str = entry.get("timestamp", "")
-                        ts = _dt.datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
-                        if ts >= cutoff:
-                            kept.append(line)
-                    except Exception:
+def append_tcs_threshold_history(previous: dict, current: dict, min_delta: int = 3) -> None:
+    """Persist a TCS threshold-shift event to tcs_threshold_history.jsonl.
+
+    Appends one record when at least one structure's threshold moved by
+    *min_delta* or more points.  Call this ONCE after a complete
+    recalibration cycle (both brains) using the snapshots taken before and
+    after the full run — not inside the individual save_tcs_thresholds calls.
+
+    Args:
+        previous: dict of {weight_key: int} captured before recalibration.
+        current:  dict of {weight_key: int} captured after recalibration.
+        min_delta: minimum absolute point change that triggers a record (default 3).
+    """
+    import json as _json
+    import datetime as _dt
+
+    if not current:
+        return
+
+    has_shift = any(
+        abs(int(current.get(k, 0)) - int(previous.get(k, 0))) >= min_delta
+        for k in set(current) | set(previous)
+        if isinstance(current.get(k), (int, float)) and isinstance(previous.get(k), (int, float))
+    )
+    if not has_shift and previous:
+        return
+
+    try:
+        record = {
+            "timestamp": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "thresholds": {k: int(v) for k, v in current.items()},
+            "previous":   {k: int(v) for k, v in previous.items()},
+        }
+        with open(TCS_THRESHOLD_HISTORY_FILE, "a") as _hf:
+            _hf.write(_json.dumps(record) + "\n")
+
+        # Trim entries older than 90 days so the file doesn't grow indefinitely
+        cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=90)
+        try:
+            with open(TCS_THRESHOLD_HISTORY_FILE) as _hf:
+                raw_lines = _hf.readlines()
+            kept = []
+            for line in raw_lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _json.loads(line)
+                    ts_str = entry.get("timestamp", "")
+                    ts = _dt.datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
+                    if ts >= cutoff:
                         kept.append(line)
-                with open(TCS_THRESHOLD_HISTORY_FILE, "w") as _hf:
-                    _hf.write("\n".join(kept) + ("\n" if kept else ""))
-            except Exception:
-                pass
+                except Exception:
+                    kept.append(line)
+            with open(TCS_THRESHOLD_HISTORY_FILE, "w") as _hf:
+                _hf.write("\n".join(kept) + ("\n" if kept else ""))
         except Exception:
             pass
-        _notify_tcs_threshold_shift(previous, out)
+    except Exception:
+        pass
+
+    _notify_tcs_threshold_shift(previous, current)
 
 
 def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:

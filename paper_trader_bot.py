@@ -99,6 +99,7 @@ try:
         get_alpaca_account_equity,
         supabase as _supabase_client,
         load_tcs_thresholds,
+        append_tcs_threshold_history,
         label_to_weight_key,
         WK_DISPLAY,
     )
@@ -1709,12 +1710,15 @@ def nightly_recalibration():
     except Exception as exc:
         log.error(f"Historical brain calibration failed: {exc}")
 
-    # ── TCS threshold change alert ─────────────────────────────────────────────
+    # ── TCS threshold change alert + persistent history ────────────────────────
     try:
         new_tcs = load_tcs_thresholds(default=MIN_TCS)
         _alert_tcs_threshold_changes(old_tcs, new_tcs)
+        # Persist exactly one history event per nightly recalibration cycle using
+        # the true before/after snapshots captured around both brain updates.
+        append_tcs_threshold_history(old_tcs, new_tcs)
     except Exception as exc:
-        log.warning(f"TCS threshold change alert failed: {exc}")
+        log.warning(f"TCS threshold change alert/history failed: {exc}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
