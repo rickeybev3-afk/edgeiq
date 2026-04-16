@@ -687,6 +687,32 @@ def _alert_eod_summary(
     tg_send("\n".join(lines))
 
 
+_WK_DISPLAY = {
+    "trend_bull":     "Trend Bull",
+    "trend_bear":     "Trend Bear",
+    "double_dist":    "Double Dist",
+    "non_trend":      "Non-Trend",
+    "normal":         "Normal",
+    "neutral":        "Neutral",
+    "ntrl_extreme":   "Ntrl Extreme",
+    "nrml_variation": "Nrml Variation",
+}
+
+
+def _alert_tcs_threshold_changes(old: dict, new: dict, min_delta: int = 3) -> None:
+    """Fire a Telegram alert if any structure's TCS threshold shifted by ≥ min_delta pts."""
+    changes = []
+    for k, new_val in new.items():
+        old_val = old.get(k)
+        if old_val is None:
+            continue
+        if abs(new_val - old_val) >= min_delta:
+            label = _WK_DISPLAY.get(k, k)
+            changes.append(f"{label} {old_val}→{new_val}")
+    if changes:
+        tg_send("🔧 <b>Threshold update:</b> " + " · ".join(changes))
+
+
 def _alert_recalibration(cal: dict):
     """Send brain recalibration summary."""
     deltas = cal.get("deltas", [])
@@ -1596,6 +1622,8 @@ def nightly_recalibration():
     log.info("NIGHTLY RECALIBRATION — live brain + historical brain")
     log.info("=" * 60)
 
+    old_tcs = load_tcs_thresholds(default=MIN_TCS)
+
     # ── Live personal brain (accuracy_tracker + paper_trades) ─────────────────
     try:
         cal = recalibrate_from_supabase(user_id=USER_ID)
@@ -1644,6 +1672,13 @@ def nightly_recalibration():
                 )
     except Exception as exc:
         log.error(f"Historical brain calibration failed: {exc}")
+
+    # ── TCS threshold change alert ─────────────────────────────────────────────
+    try:
+        new_tcs = load_tcs_thresholds(default=MIN_TCS)
+        _alert_tcs_threshold_changes(old_tcs, new_tcs)
+    except Exception as exc:
+        log.warning(f"TCS threshold change alert failed: {exc}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
