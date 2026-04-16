@@ -26,6 +26,15 @@ Results of the 2026-04-16 run (verified via null-count queries post-run):
   eod_pnl_r        : skipped for all rows (close_price column was missing).
                      Re-run after migration to populate.
 
+Results of the 2026-04-16 close_price migration + re-run:
+  Migration applied : ADD COLUMN close_price NUMERIC to both tables (IF NOT EXISTS).
+  backtest_sim_runs : 105 breakout rows with close_price → 105 eod_pnl_r filled (100%).
+                      139 rows have close_price but no eod_pnl_r — all are non-breakout
+                      (Pending / Both Sides / Range-Bound); unfillable by design.
+  paper_trades      :   0 rows with close_price → 0 eod_pnl_r (no historical close data).
+  Verified          : 0 rows have close_price IS NOT NULL AND eod_pnl_r IS NULL for
+                      any Bullish Break / Bearish Break row. Backfill complete.
+
 Uses concurrent threads to run Supabase updates in parallel — much faster
 than sequential updates.
 
