@@ -5566,6 +5566,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     value=0, step=5, key="rp_min_tcs_slider",
                     help="Flat TCS minimum — set 0 for no filter.",
                 )
+                _rp_best_tcs_src = st.session_state.get("rp_best_tcs_source")
+                if _rp_best_tcs_src and _rp_min_tcs == _rp_best_tcs_src["floor"]:
+                    st.caption(
+                        f"📌 Using {_rp_best_tcs_src['ticker']}'s Best TCS"
+                        f" ({_rp_best_tcs_src['floor']})"
+                    )
         with _rp_col3:
             _rp_min_ft = st.slider(
                 "Min Follow-Through %", min_value=0.0, max_value=10.0,
@@ -6733,6 +6739,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 help=f"Set Min TCS filter to {_bfloor} (best floor for {_btkr}) and re-run replay",
                             ):
                                 st.session_state["rp_min_tcs_slider"] = _bfloor
+                                st.session_state["rp_best_tcs_source"] = {"ticker": _btkr, "floor": _bfloor}
                                 st.rerun()
 
             # ── Per-Ticker TCS Sweep Charts ───────────────────────────────────
