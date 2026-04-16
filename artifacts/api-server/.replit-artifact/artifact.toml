@@ -1,5 +1,5 @@
 kind = "web"
-previewPath = "/"
+previewPath = "/api-server/"
 title = "EdgeIQ Dashboard"
 version = "1.0.0"
 id = "artifacts/api-server"
@@ -11,7 +11,7 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
+paths = [ "/api-server/" ]
 localPort = 22729
 
 [services.development]
@@ -22,4 +22,4 @@ run = "bash /home/runner/workspace/start.sh"
 
 [services.env]
 PORT = "22729"
-BASE_PATH = "/"
+BASE_PATH = "/api-server/"
