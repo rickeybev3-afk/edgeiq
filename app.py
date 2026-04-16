@@ -5646,20 +5646,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         }
                         _guide_lines = []
                         for _gd in _guide_rows:
-                            _lbl = _gd.get("label", "")
-                            _sl  = _lbl.lower()
-                            _disp = (
-                                "Trend Day"     if "trend" in _sl else
-                                "Ntrl Extreme"  if "extreme" in _sl else
-                                "Neutral"       if "neutral" in _sl else
-                                "Rotational"    if "rotation" in _sl else
-                                "Normal"        if "normal" in _sl else _lbl
-                            )
-                            _base_tcs = int(_gd.get("recommended_tcs") or 50) if _gd.get("sample_size", 0) >= 5 else 50
+                            _disp     = _gd.get("structure", "Unknown")
+                            _n        = int(_gd.get("sample_count") or 0)
+                            _base_tcs = int(_gd.get("recommended_tcs") or 50) if _n >= 5 else 50
                             _eff_tcs  = max(0, min(100, _base_tcs + _rp_tcs_offset))
-                            _note = "★ offset applied" if _rp_tcs_offset != 0 else "from accuracy data"
-                            _src  = f"(sample: {int(_gd.get('sample_size',0))})" if _gd.get("sample_size", 0) >= 5 else "(insufficient data → defaulted to 50)"
-                            _guide_lines.append(f"**{_disp}**: base {_base_tcs} → **effective {_eff_tcs}** {_src}")
+                            _conf     = _gd.get("confidence", "")
+                            _status   = _gd.get("status", "")
+                            _src      = f"n={_n}, {_conf}" if _n >= 5 else "insufficient data → default 50"
+                            _guide_lines.append(f"{_status} **{_disp}**: TCS {_base_tcs} → **effective {_eff_tcs}** ({_src})")
                         # Unknown / fallback line
                         _fb = max(0, min(100, 50 + _rp_tcs_offset))
                         _guide_lines.append(f"**Other / unmapped**: base 50 → **effective {_fb}** (default fallback)")
