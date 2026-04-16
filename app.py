@@ -6814,6 +6814,123 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             },
                         )
 
+                        # ── Drill-down: trades at a selected TCS cutoff ──────────
+                        st.markdown(
+                            '<div style="border-top:1px solid #1e2a3a;margin:16px 0 10px 0;"></div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            '<div style="font-size:12px;font-weight:700;color:#90caf9;'
+                            'margin-bottom:6px;">🔍 Drill into trades at a TCS cutoff</div>',
+                            unsafe_allow_html=True,
+                        )
+                        _tk_drill_floors = sorted(
+                            _tk_sw_df["TCS Floor"].astype(int).unique().tolist()
+                        )
+                        _tk_drill_default = (
+                            int(_tk_best_row["TCS Floor"])
+                            if _tk_has_best and _tk_best_row is not None
+                            else _tk_drill_floors[0]
+                        )
+                        _tk_drill_default_idx = (
+                            _tk_drill_floors.index(_tk_drill_default)
+                            if _tk_drill_default in _tk_drill_floors
+                            else 0
+                        )
+                        _tk_drill_floor = st.selectbox(
+                            "Show trades with TCS ≥",
+                            options=_tk_drill_floors,
+                            index=_tk_drill_default_idx,
+                            key=f"drill_tcs_{_tk_name}",
+                            help=(
+                                "Select a TCS floor to view all individual trades for this "
+                                "ticker where TCS is at or above that cutoff."
+                            ),
+                        )
+                        _tk_drill_mask = (
+                            (_bt_df["ticker"] == _tk_name)
+                            & (_bt_df["tcs"].astype(float) >= _tk_drill_floor)
+                        )
+                        if "actual_outcome" in _bt_df.columns:
+                            _tk_drill_mask = (
+                                _tk_drill_mask
+                                & _bt_df["actual_outcome"].str.lower().str.contains(
+                                    "bullish|bearish", na=False
+                                )
+                                & _bt_df["win_loss"].str.strip().isin(["Win", "Loss"])
+                            )
+                        _tk_drill_df = _bt_df[_tk_drill_mask].copy()
+                        if _tk_drill_df.empty:
+                            st.info(
+                                f"No trades found for {_tk_name} with TCS ≥ {_tk_drill_floor}.",
+                                icon="ℹ️",
+                            )
+                        else:
+                            _tk_d_wins  = (_tk_drill_df["win_loss"] == "Win").sum()
+                            _tk_d_total = len(_tk_drill_df)
+                            _tk_d_wr    = _tk_d_wins / _tk_d_total * 100
+                            _tk_d_ft_col = (
+                                "follow_thru_pct"
+                                if "follow_thru_pct" in _tk_drill_df.columns
+                                else "aft_move_pct"
+                            )
+                            _tk_d_pnl = sum(
+                                _tk_pos_size
+                                * abs(float(ft) if ft == ft else 0)
+                                / 100
+                                * (1 if wl == "Win" else -1)
+                                for ft, wl in zip(
+                                    _tk_drill_df[_tk_d_ft_col].fillna(0),
+                                    _tk_drill_df["win_loss"],
+                                )
+                            )
+                            _tk_d_sign = "+" if _tk_d_pnl >= 0 else ""
+                            st.caption(
+                                f"**{_tk_d_total}** trades · "
+                                f"**{_tk_d_wins}W / {_tk_d_total - _tk_d_wins}L** · "
+                                f"**{_tk_d_wr:.1f}% WR** · "
+                                f"Net P&L: **{_tk_d_sign}${_tk_d_pnl:,.0f}**"
+                            )
+                            _tk_date_col = (
+                                "sim_date"
+                                if "sim_date" in _tk_drill_df.columns
+                                else "trade_date"
+                            )
+                            _tk_drill_display = _tk_drill_df[
+                                [_tk_date_col, "tcs", "predicted", "actual_outcome",
+                                 _tk_d_ft_col, "win_loss"]
+                            ].copy()
+                            _tk_drill_display.columns = [
+                                "Date", "TCS", "Prediction", "EOD Reality",
+                                "Follow-Thru %", "Result",
+                            ]
+                            _tk_drill_display["Date"] = (
+                                _tk_drill_display["Date"].astype(str).str[:10]
+                            )
+                            _tk_drill_display["TCS"] = (
+                                _tk_drill_display["TCS"].astype(float).astype(int)
+                            )
+                            _tk_drill_display["Prediction"] = (
+                                _tk_drill_display["Prediction"].apply(_clean_structure_label)
+                            )
+                            _tk_drill_display = _tk_drill_display.sort_values(
+                                "Date", ascending=False
+                            )
+                            st.dataframe(
+                                _tk_drill_display,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "TCS": st.column_config.NumberColumn(
+                                        "TCS", format="%d"
+                                    ),
+                                    "Follow-Thru %": st.column_config.NumberColumn(
+                                        "Follow-Thru %", format="%.1f%%"
+                                    ),
+                                    "Result": st.column_config.TextColumn("Result"),
+                                },
+                            )
+
     st.markdown("---")
     st.markdown(
         '<div style="font-size:10px; color:#1565c0; text-transform:uppercase; '
