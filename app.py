@@ -7310,7 +7310,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             (_tk_chart_df["Net P&L ($)"] == _tk_best_pnl) & _tk_has_best
                         )
                         _tk_chart_df["Color"] = _tk_chart_df.apply(
-                            lambda r: "#4caf50" if r["_is_best"] else ("#ef5350" if r["Net P&L ($)"] < 0 else "#42a5f5"),
+                            lambda r: "#555555" if r["Sufficient"] != "✓" else (
+                                "#4caf50" if r["_is_best"] else (
+                                    "#ef5350" if r["Net P&L ($)"] < 0 else "#42a5f5"
+                                )
+                            ),
                             axis=1,
                         )
                         _tk_chart_df["TCS Floor Label"] = _tk_chart_df["TCS Floor"].astype(str)
