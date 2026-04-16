@@ -6,6 +6,7 @@ from datetime import datetime, date, timedelta, time as dtime
 import time
 import pytz
 import os
+import html as _html
 
 from backend import *
 from backend import (
@@ -7049,19 +7050,52 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _tk_drill_display = _tk_drill_display.sort_values(
                                 "Date", ascending=False
                             )
-                            st.dataframe(
-                                _tk_drill_display,
-                                use_container_width=True,
-                                hide_index=True,
-                                column_config={
-                                    "TCS": st.column_config.NumberColumn(
-                                        "TCS", format="%d"
-                                    ),
-                                    "Follow-Thru %": st.column_config.NumberColumn(
-                                        "Follow-Thru %", format="%.1f%%"
-                                    ),
-                                    "Result": st.column_config.TextColumn("Result"),
-                                },
+                            # Build an HTML table so the "View in Log" anchor links
+                            # work as true same-page navigation (LinkColumn opens new tabs).
+                            _dd_rows_html = ""
+                            for _, _dd_row in _tk_drill_display.iterrows():
+                                _dd_date   = str(_dd_row["Date"])
+                                _dd_tcs    = int(_dd_row["TCS"])
+                                _dd_pred   = str(_dd_row["Prediction"])
+                                _dd_eod    = str(_dd_row["EOD Reality"])
+                                _dd_ft     = _dd_row["Follow-Thru %"]
+                                _dd_ft_str = f"{float(_dd_ft):.1f}%" if _dd_ft == _dd_ft else "—"
+                                _dd_wl     = str(_dd_row["Result"])
+                                _dd_wl_clr = "#4caf50" if _dd_wl == "Win" else "#ef5350"
+                                _dd_anchor = f"trade-{_tk_name.lower()}-{_dd_date}"
+                                _dd_rows_html += (
+                                    f'<tr style="border-bottom:1px solid #0d2137;">'
+                                    f'<td style="padding:6px 8px;">{_html.escape(_dd_date)}</td>'
+                                    f'<td style="padding:6px 8px;">{_dd_tcs}</td>'
+                                    f'<td style="padding:6px 8px;">{_html.escape(_dd_pred)}</td>'
+                                    f'<td style="padding:6px 8px;">{_html.escape(_dd_eod)}</td>'
+                                    f'<td style="padding:6px 8px;">{_html.escape(_dd_ft_str)}</td>'
+                                    f'<td style="padding:6px 8px;color:{_dd_wl_clr};font-weight:700;">{_html.escape(_dd_wl)}</td>'
+                                    f'<td style="padding:6px 8px;">'
+                                    f'<a href="#{_dd_anchor}" '
+                                    f'style="color:#90caf9;font-size:11px;text-decoration:none;" '
+                                    f'title="Scroll to this trade in the main log below">'
+                                    f'&#8595; Jump</a></td>'
+                                    f'</tr>'
+                                )
+                            st.markdown(
+                                f'<div style="overflow-x:auto;">'
+                                f'<table style="width:100%;border-collapse:collapse;'
+                                f'font-size:12px;font-family:monospace;color:#cfd8dc;">'
+                                f'<thead><tr style="color:#1565c0;font-size:10px;'
+                                f'text-transform:uppercase;letter-spacing:0.8px;'
+                                f'border-bottom:1px solid #0d2137;">'
+                                f'<th style="padding:4px 8px;text-align:left;">Date</th>'
+                                f'<th style="padding:4px 8px;text-align:left;">TCS</th>'
+                                f'<th style="padding:4px 8px;text-align:left;">Prediction</th>'
+                                f'<th style="padding:4px 8px;text-align:left;">EOD Reality</th>'
+                                f'<th style="padding:4px 8px;text-align:left;">Follow-Thru %</th>'
+                                f'<th style="padding:4px 8px;text-align:left;">Result</th>'
+                                f'<th style="padding:4px 8px;text-align:left;">View in Log</th>'
+                                f'</tr></thead>'
+                                f'<tbody>{_dd_rows_html}</tbody>'
+                                f'</table></div>',
+                                unsafe_allow_html=True,
                             )
 
     st.markdown("---")
@@ -7103,9 +7137,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _row_bg = "#051015" if _wl == "Win" else "#120508"
 
+        _row_anchor = f"trade-{_r['ticker'].lower()}-{_sim_date_disp}"
         _row = st.columns(_BT_COLS)
         _row[0].markdown(
-            f'<div style="background:{_row_bg}; padding:10px 6px; '
+            f'<div id="{_row_anchor}" style="background:{_row_bg}; padding:10px 6px; '
             f'font-size:10px; color:#546e7a; font-family:monospace;">'
             f'{_sim_date_disp}</div>',
             unsafe_allow_html=True,
