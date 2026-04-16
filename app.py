@@ -5493,6 +5493,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
 
         _rp_uid = st.session_state.get("auth_user_id", "")
+
+        # Cache TCS thresholds — avoids slow 11k-row paginated query on every render
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _cached_tcs_thresholds():
+            try:
+                return compute_structure_tcs_thresholds()
+            except Exception:
+                return []
+
         _rp_mode = st.radio(
             "Sizing Mode",
             options=["📊 % Risk (custom)", "🤖 Match Live Bot (100 shares flat)"],
@@ -5513,15 +5522,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rp_pos_size = st.number_input(
                     "Position Size ($)", min_value=100, max_value=50000,
                     value=500, step=100, key="rp_pos_size",
-                    help="Fixed dollar amount invested per trade. P&L = position × follow-through%.",
+                    help="Fixed dollar amount invested per trade (or starting position if compounding is on).",
                 )
                 _rp_risk_pct = 2.0
+                _rp_compound = st.checkbox(
+                    "Compound position size",
+                    value=False, key="rp_compound",
+                    help=(
+                        "When ON: position size scales with equity. "
+                        "If equity doubles from $10K to $20K, your $500 position becomes $1,000. "
+                        "Formula: pos = starting_pos × (current_equity / starting_equity)."
+                    ),
+                )
             else:
                 _rp_pos_size = 500
+                _rp_compound = False
             _rp_equity = st.number_input(
                 "Starting Equity ($)", min_value=1000, max_value=500000,
                 value=10000, step=500, key="rp_equity",
-                help="Starting account size for the equity curve. Doesn't affect trade sizing — only the cumulative P&L chart.",
+                help="Starting account size for the equity curve.",
             )
         with _rp_col2:
             if _rp_bot_mode:
@@ -5634,7 +5653,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         if _rp_bot_mode and supabase and _rp_uid:
             with st.expander("📋 View per-structure TCS cutoffs (based on your accuracy data)", expanded=False):
                 try:
-                    _guide_rows = compute_structure_tcs_thresholds()
+                    _guide_rows = _cached_tcs_thresholds()
                     if _guide_rows:
                         # Map weight keys back to display labels
                         _WKEY_DISP = {
@@ -5669,6 +5688,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _guide_lines.append(f"**Other / unmapped**: base 50 → **effective {_fb}** (default fallback)")
                         for _gl in _guide_lines:
                             st.markdown("- " + _gl)
+                        st.caption(
+                            "📌 **Why fewer trades than TCS ≥ 50?** — Each structure's threshold is calibrated from your "
+                            "accuracy data (journal + bot + 11k backtest rows). Neutral is currently **TCS 59** (71.5% accuracy) "
+                            "— setups below 59 are filtered out as lower-edge. Use TCS Adjustment slider −9 to restore TCS 50 baseline."
+                        )
                         if _rp_tcs_offset != 0:
                             st.caption(
                                 f"TCS Adjustment is set to **{_rp_tcs_offset:+d}** — every structure's threshold has been shifted by this amount. "
@@ -5733,7 +5757,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _struct_tcs_map: dict = {}
                     if _rp_bot_mode:
                         try:
-                            _thresh_list = backend.compute_structure_tcs_thresholds()
+                            _thresh_list = _cached_tcs_thresholds()
                             _WKEY_TO_SKEY = {
                                 "trend_bull":     "trend",
                                 "trend_bear":     "trend",
@@ -5778,8 +5802,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _label_to_weight_key(str(r.get("predicted") or "")), _bot_tcs_fallback
                             )
                         )
-                        _offset_str = (f" (adj {_rp_tcs_offset:+d})" if _rp_tcs_offset != 0 else "")
-                        _sizing_note = f"${_rp_pos_size:,} position, per-structure TCS thresholds{_offset_str}"
+                        _offset_str   = (f" (adj {_rp_tcs_offset:+d})" if _rp_tcs_offset != 0 else "")
+                        _compound_str = " + compounding" if _rp_compound else ", no compounding"
+                        _sizing_note  = f"${_rp_pos_size:,} position{_compound_str}, per-structure TCS thresholds{_offset_str}"
                     else:
                         _raw_tcs_filtered = sum(1 for r in _rp_rows if float(r.get("tcs") or 0) >= _rp_min_tcs)
                         _sizing_note = f"fixed ${round(float(_rp_equity)*(_rp_risk_pct/100),0):,.0f} risk (no compounding)"
@@ -5862,12 +5887,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 continue
 
                             if _rp_bot_mode:
-                                # $500 position. _ft is SIGNED (neg = bearish break).
-                                # Use abs(_ft) so shorts show correct profit direction,
-                                # then apply win/loss sign: Win → +, Loss → −
-                                _shares    = _rp_pos_size / max(_entry, 0.01)
+                                # Position size: flat OR compounded with equity growth
+                                if _rp_compound:
+                                    _compound_factor = _rp_equity_cur / float(_rp_equity)
+                                    _eff_pos = _rp_pos_size * _compound_factor
+                                else:
+                                    _eff_pos = _rp_pos_size
+                                _shares    = _eff_pos / max(_entry, 0.01)
                                 _ft_abs    = abs(_ft)
-                                _trade_pnl = _rp_pos_size * (_ft_abs / 100.0) * (1 if _wl == "Win" else -1)
+                                _trade_pnl = _eff_pos * (_ft_abs / 100.0) * (1 if _wl == "Win" else -1)
                             else:
                                 _shares = _fixed_risk_amt / _stop_dist
                                 if _wl == "Win":
