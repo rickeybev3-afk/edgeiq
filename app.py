@@ -7357,6 +7357,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Date", "TCS", "Prediction", "EOD Reality",
                                 "Follow-Thru %", "Result",
                             ]
+                            # Attach optional extra columns from the raw drill frame
+                            _extra_col_map = {
+                                "ticker":          "Ticker",
+                                "open_price":      "Open Price",
+                                "ib_high":         "IB High",
+                                "ib_low":          "IB Low",
+                                "false_break_up":  "False Break Up",
+                                "false_break_down":"False Break Down",
+                            }
+                            for _raw_col, _display_col in _extra_col_map.items():
+                                if _raw_col in _tk_drill_df.columns:
+                                    _tk_drill_display[_display_col] = _tk_drill_df[_raw_col].values
                             _tk_drill_display["Date"] = (
                                 _tk_drill_display["Date"].astype(str).str[:10]
                             )
@@ -7416,17 +7428,37 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f'</table></div>',
                                 unsafe_allow_html=True,
                             )
-                            _tk_csv_bytes = _tk_drill_display[
-                                ["Date", "TCS", "Prediction", "EOD Reality", "Follow-Thru %", "Result"]
-                            ].to_csv(index=False).encode("utf-8")
-                            st.download_button(
-                                label="⬇ Download CSV",
-                                data=_tk_csv_bytes,
-                                file_name=f"{_tk_name}_TCS{_tk_drill_floor}_trades.csv",
-                                mime="text/csv",
-                                key=f"dl_csv_{_tk_name}_{_tk_drill_floor}",
-                                help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file",
+                            _csv_default_cols = [
+                                "Date", "TCS", "Prediction",
+                                "EOD Reality", "Follow-Thru %", "Result",
+                            ]
+                            _csv_all_cols = [
+                                c for c in _tk_drill_display.columns
+                                if c in _csv_default_cols
+                                or c in ["Ticker", "Open Price", "IB High",
+                                         "IB Low", "False Break Up", "False Break Down"]
+                            ]
+                            _csv_sel_cols = st.multiselect(
+                                "Columns to include in CSV export",
+                                options=_csv_all_cols,
+                                default=_csv_default_cols,
+                                key=f"csv_cols_{_tk_name}_{_tk_drill_floor}",
+                                help="Choose which columns appear in the downloaded CSV file.",
                             )
+                            if not _csv_sel_cols:
+                                st.warning("Select at least one column to enable the download.", icon="⚠️")
+                            else:
+                                _tk_csv_bytes = _tk_drill_display[
+                                    [c for c in _csv_sel_cols if c in _tk_drill_display.columns]
+                                ].to_csv(index=False).encode("utf-8")
+                                st.download_button(
+                                    label="⬇ Download CSV",
+                                    data=_tk_csv_bytes,
+                                    file_name=f"{_tk_name}_TCS{_tk_drill_floor}_trades.csv",
+                                    mime="text/csv",
+                                    key=f"dl_csv_{_tk_name}_{_tk_drill_floor}",
+                                    help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file",
+                                )
 
     st.markdown("---")
     st.markdown(
