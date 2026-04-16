@@ -6204,21 +6204,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             else:
                                 _rp_priority = "P3 🟡" if _tcs >= 70 else "P4 🟢"
                             _rp_trades.append({
-                                "Priority":  _rp_priority,
-                                "Date":      _rp_date_str,
-                                "Snapshot":  _rp_scan_str.capitalize(),
-                                "Ticker":    _tkr,
-                                "TCS":       int(_tcs),
-                                "Structure": _pred,
-                                "Direction": "Long" if _dir == 1 else "Short",
-                                "Entry":     round(_entry, 2),
-                                "Stop":      round(_stop, 2),
-                                "Shares":    int(_shares),
-                                "W/L":       "Win" if _trade_pnl > 0 else "Loss",
-                                "R":         round(_pnl_r, 2),
-                                "Move %":    round(_ft, 2),
-                                "P&L ($)":   round(_trade_pnl, 2),
-                                "Equity":    round(_rp_equity_cur, 2),
+                                "Priority":    _rp_priority,
+                                "Date":        _rp_date_str,
+                                "Snapshot":    _rp_scan_str.capitalize(),
+                                "Ticker":      _tkr,
+                                "TCS":         int(_tcs),
+                                "Structure":   _pred,
+                                "Direction":   "Long" if _dir == 1 else "Short",
+                                "Entry":       round(_entry, 2),
+                                "Stop":        round(_stop, 2),
+                                "Shares":      int(_shares),
+                                "W/L":         "Win" if _trade_pnl > 0 else "Loss",
+                                "False Break": _false_break,
+                                "R":           round(_pnl_r, 2),
+                                "Move %":      round(_ft, 2),
+                                "P&L ($)":     round(_trade_pnl, 2),
+                                "Equity":      round(_rp_equity_cur, 2),
                             })
 
                         if _day_trades > 0:
@@ -6254,14 +6255,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         # ── R-based stats row ─────────────────────────────────────────────
                         _r_ser          = _rp_df["R"]
-                        _false_brk_n    = (_r_ser == -1.0).sum()
+                        _false_brk_n    = _rp_df["False Break"].sum()
                         _false_brk_rate = round(_false_brk_n / _total_trades * 100, 1) if _total_trades else 0
                         _avg_win_r      = round(_r_ser[_r_ser > 0].mean(), 2) if (_r_ser > 0).any() else 0
                         _avg_loss_r     = round(_r_ser[_r_ser < 0].mean(), 2) if (_r_ser < 0).any() else 0
                         _expectancy_r   = round(_r_ser.mean(), 3) if _total_trades else 0
                         _sm6, _sm7, _sm8, _sm9 = st.columns(4)
-                        _sm6.metric("Stop-Out Rate",  f"{_false_brk_rate}%",
-                                    help="% of trades where false_break triggered a -1R stop-out")
+                        _sm6.metric("False-Break Rate",  f"{_false_brk_rate}%",
+                                    help="% of trades where false_break_up/false_break_down triggered a -1R stop-out")
                         _sm7.metric("Avg Win (R)",    f"+{_avg_win_r}R")
                         _sm8.metric("Avg Loss (R)",   f"{_avg_loss_r}R")
                         _sm9.metric("Expectancy",     f"{_expectancy_r:+.3f}R / trade",
