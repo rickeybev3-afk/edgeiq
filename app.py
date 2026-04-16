@@ -10568,6 +10568,114 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
+    # ════════════════════════════════════════════════════════════════════════
+    # PHASE 2 GATE TRACKER — Live Money Flip (target: ~May 6)
+    # Gate: 30 settled trades · 60% WR · 30 days elapsed
+    # ════════════════════════════════════════════════════════════════════════
+    try:
+        _gate_rows = []
+        if supabase and _AUTH_USER_ID:
+            _gate_resp = (
+                supabase.table("paper_trades")
+                .select("trade_date,win_loss")
+                .eq("user_id", _AUTH_USER_ID)
+                .in_("win_loss", ["Win", "Loss"])
+                .execute()
+            )
+            _gate_rows = _gate_resp.data or []
+
+        _gate_settled  = len(_gate_rows)
+        _gate_wins     = sum(1 for r in _gate_rows if r.get("win_loss") == "Win")
+        _gate_wr       = round(_gate_wins / _gate_settled * 100, 1) if _gate_settled else 0.0
+
+        _gate_dates    = sorted(r["trade_date"] for r in _gate_rows if r.get("trade_date"))
+        _gate_first    = _gate_dates[0] if _gate_dates else None
+        if _gate_first:
+            from datetime import date as _dt_date
+            _gate_start   = _dt_date.fromisoformat(_gate_first)
+            _gate_elapsed = (_dt_date.today() - _gate_start).days
+        else:
+            _gate_elapsed = 0
+
+        _GATE_TRADES  = 30
+        _GATE_WR      = 60.0
+        _GATE_DAYS    = 30
+
+        _g_t_ok  = _gate_settled >= _GATE_TRADES
+        _g_wr_ok = _gate_wr      >= _GATE_WR
+        _g_d_ok  = _gate_elapsed >= _GATE_DAYS
+        _gate_all_clear = _g_t_ok and _g_wr_ok and _g_d_ok
+        _gate_close     = sum([_g_t_ok, _g_wr_ok, _g_d_ok]) == 2
+
+        if _gate_all_clear:
+            _gate_border = "#2e7d32"; _gate_bg = "#0a1f0a"
+            _gate_status = "🟢 ALL CLEAR — READY TO FLIP TO LIVE"
+            _gate_status_color = "#66bb6a"
+        elif _gate_close:
+            _gate_border = "#f9a825"; _gate_bg = "#1a1500"
+            _gate_status = "🟡 ALMOST — 2 of 3 GATES PASSED"
+            _gate_status_color = "#ffee58"
+        else:
+            _gate_border = "#b71c1c"; _gate_bg = "#1a0000"
+            _gate_status = "🔴 IN PROGRESS — building the track record"
+            _gate_status_color = "#ef9a9a"
+
+        def _gate_bar(val, mx, ok):
+            pct  = min(100, round(val / mx * 100))
+            col  = "#2e7d32" if ok else ("#ef6c00" if pct >= 70 else "#c62828")
+            return (
+                f'<div style="height:6px;background:#1e2a3a;border-radius:3px;margin-top:4px;">'
+                f'<div style="width:{pct}%;height:6px;background:{col};border-radius:3px;"></div>'
+                f'</div>'
+            )
+
+        _g_t_c  = "#66bb6a" if _g_t_ok  else "#ef9a9a"
+        _g_wr_c = "#66bb6a" if _g_wr_ok else "#ef9a9a"
+        _g_d_c  = "#66bb6a" if _g_d_ok  else "#ef9a9a"
+
+        st.markdown(
+            f'<div style="background:{_gate_bg};border:1px solid {_gate_border};'
+            f'border-radius:10px;padding:14px 18px;margin-bottom:14px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1.5px;'
+            f'text-transform:uppercase;font-weight:700;">⚡ Phase 2 Gate — Live Money Flip</div>'
+            f'<div style="font-size:12px;font-weight:700;color:{_gate_status_color};">{_gate_status}</div>'
+            f'</div>'
+            f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">'
+
+            f'<div>'
+            f'<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;letter-spacing:1px;">Settled Trades</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{_g_t_c};">{_gate_settled}'
+            f'<span style="font-size:13px;color:#546e7a;"> / {_GATE_TRADES}</span></div>'
+            f'{_gate_bar(_gate_settled, _GATE_TRADES, _g_t_ok)}'
+            f'<div style="font-size:10px;color:#546e7a;margin-top:3px;">'
+            f'{"✓ Gate cleared" if _g_t_ok else f"{_GATE_TRADES - _gate_settled} more needed"}</div>'
+            f'</div>'
+
+            f'<div>'
+            f'<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;letter-spacing:1px;">Win Rate</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{_g_wr_c};">{_gate_wr:.1f}%'
+            f'<span style="font-size:13px;color:#546e7a;"> / {_GATE_WR:.0f}%</span></div>'
+            f'{_gate_bar(_gate_wr, _GATE_WR, _g_wr_ok)}'
+            f'<div style="font-size:10px;color:#546e7a;margin-top:3px;">'
+            f'{"✓ Gate cleared" if _g_wr_ok else f"{_gate_wins}W / {_gate_settled - _gate_wins}L"}</div>'
+            f'</div>'
+
+            f'<div>'
+            f'<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;letter-spacing:1px;">Days Elapsed</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{_g_d_c};">{_gate_elapsed}'
+            f'<span style="font-size:13px;color:#546e7a;"> / {_GATE_DAYS}</span></div>'
+            f'{_gate_bar(_gate_elapsed, _GATE_DAYS, _g_d_ok)}'
+            f'<div style="font-size:10px;color:#546e7a;margin-top:3px;">'
+            f'{"✓ Gate cleared" if _g_d_ok else (f"since {_gate_first}" if _gate_first else "no trades yet")}</div>'
+            f'</div>'
+
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+    except Exception as _gate_err:
+        st.caption(f"Gate tracker unavailable: {_gate_err}")
+
     # ── Live Auto-Scan mode — LOCKED ────────────────────────────────────────
     _pt_live_on = False
     st.session_state["_pt_live_mode"] = False
