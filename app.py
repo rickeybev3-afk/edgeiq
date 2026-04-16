@@ -5578,6 +5578,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
         if (st.session_state.get("_rp_prev_start_date") != _rp_cur_start or
                 st.session_state.get("_rp_prev_end_date") != _rp_cur_end):
             st.session_state.pop("rp_best_tcs_source", None)
+            for _k in list(st.session_state.keys()):
+                if _k.startswith("_drill_tcs_persist_"):
+                    del st.session_state[_k]
         st.session_state["_rp_prev_start_date"] = _rp_cur_start
         st.session_state["_rp_prev_end_date"]   = _rp_cur_end
 
@@ -6841,13 +6844,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _tkr_sweep_data = {}
             _best_tcs_options = []
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
-
-            _rp_date_sig = (str(_rp_start), str(_rp_end))
-            if st.session_state.get("_drill_tcs_last_date_sig") != _rp_date_sig:
-                for _k in list(st.session_state.keys()):
-                    if _k.startswith("_drill_tcs_persist_"):
-                        del st.session_state[_k]
-                st.session_state["_drill_tcs_last_date_sig"] = _rp_date_sig
 
             # ── Min-trade-count slider ─────────────────────────────────────────
             _min_tcs_col, _ = st.columns([1, 3])
