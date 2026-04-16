@@ -47,6 +47,9 @@ _SUPABASE_URL_PATTERN = _re.compile(r'^https://[a-z0-9]+\.supabase\.co$')
 
 ALPACA_API_KEY    = os.environ.get("ALPACA_API_KEY", "").strip()
 ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+# IS_PAPER_ALPACA declares the intended trading mode: "true" = paper (default), "false" = live.
+# Set IS_PAPER_ALPACA=false in your environment when using live brokerage keys.
+IS_PAPER_ALPACA = os.environ.get("IS_PAPER_ALPACA", "true").strip().lower() == "true"
 
 # Each entry is (secret_name, human_readable_message).
 # Validation is split into two sets:
@@ -114,8 +117,9 @@ except Exception as _he:
     logging.warning("[STARTUP] Could not write startup health file: %s", _he)
 
 # ── Alpaca paper/live account type validation (non-blocking) ─────────────────
-# Checks whether the configured Alpaca keys belong to a paper account or a live
-# account, so the operator is warned if they accidentally mix up key types.
+# Checks the is_paper_account field from GET /v2/account and compares it against
+# IS_PAPER_ALPACA so the operator is warned before any orders are placed if keys
+# belong to the wrong account type.
 if ALPACA_API_KEY and ALPACA_SECRET_KEY:
     def _check_alpaca_account_type() -> None:
         import threading as _threading
@@ -126,43 +130,79 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                     "APCA-API-KEY-ID":     ALPACA_API_KEY,
                     "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
                 }
-                # Try paper endpoint first — paper keys only work here
+                _mode_label = "paper (IS_PAPER_ALPACA=true)" if IS_PAPER_ALPACA else "live (IS_PAPER_ALPACA=false)"
+                # Try paper endpoint first — paper keys authenticate here; live keys do not.
                 _resp_paper = _req.get(
                     "https://paper-api.alpaca.markets/v2/account",
                     headers=_hdrs, timeout=8
                 )
                 if _resp_paper.status_code == 200:
-                    _is_paper = _resp_paper.json().get("is_paper_account", True)
-                    if not _is_paper:
-                        # Keys authenticated on paper endpoint but account says live —
-                        # unusual / unsupported combination, warn the operator.
+                    _key_is_paper = _resp_paper.json().get("is_paper_account", True)
+                    if _key_is_paper:
+                        if IS_PAPER_ALPACA:
+                            logging.info(
+                                "[STARTUP] Alpaca credentials verified: paper keys match "
+                                "paper mode (IS_PAPER_ALPACA=true) ✓"
+                            )
+                        else:
+                            logging.warning(
+                                "[STARTUP] ⚠️  ALPACA CREDENTIAL MISMATCH: keys belong to a "
+                                "PAPER trading account (is_paper_account=True) but "
+                                "IS_PAPER_ALPACA=false (live mode). Live orders will be "
+                                "rejected by Alpaca. Set IS_PAPER_ALPACA=true or switch to "
+                                "live brokerage keys."
+                            )
+                    else:
+                        # Rare: paper endpoint accepted the keys but is_paper_account=False.
                         logging.warning(
                             "[STARTUP] Alpaca keys authenticated on the paper endpoint "
-                            "but account reports is_paper_account=False. "
-                            "Verify your key type matches your intended trading mode."
+                            "but is_paper_account=False — unexpected combination. "
+                            "Verify your key type matches your intended %s mode.",
+                            _mode_label,
                         )
-                    else:
-                        logging.info("[STARTUP] Alpaca keys confirmed: paper account ✓")
                 elif _resp_paper.status_code in (401, 403):
-                    # Paper endpoint rejected the keys — they are likely live keys.
-                    # Check the live endpoint to confirm.
+                    # Paper endpoint rejected the keys — try the live endpoint.
                     _resp_live = _req.get(
                         "https://api.alpaca.markets/v2/account",
                         headers=_hdrs, timeout=8
                     )
                     if _resp_live.status_code == 200:
-                        logging.warning(
-                            "[STARTUP] ⚠️  Alpaca keys belong to a LIVE brokerage account "
-                            "(paper endpoint returned 401). If the app is running in paper "
-                            "mode, orders will fail. Confirm IS_PAPER_ALPACA matches your "
-                            "actual key type."
-                        )
+                        _key_is_paper = _resp_live.json().get("is_paper_account", False)
+                        if not _key_is_paper:
+                            if IS_PAPER_ALPACA:
+                                logging.warning(
+                                    "[STARTUP] ⚠️  ALPACA CREDENTIAL MISMATCH: keys belong to a "
+                                    "LIVE brokerage account (is_paper_account=False) but "
+                                    "IS_PAPER_ALPACA=true (paper mode). Paper trading will fail "
+                                    "or route real orders unexpectedly. Set IS_PAPER_ALPACA=false "
+                                    "or switch to paper trading keys."
+                                )
+                            else:
+                                logging.info(
+                                    "[STARTUP] Alpaca credentials verified: live keys match "
+                                    "live mode (IS_PAPER_ALPACA=false) ✓"
+                                )
+                        else:
+                            # Rare: live endpoint responded but is_paper_account=True.
+                            logging.warning(
+                                "[STARTUP] Alpaca keys authenticated on the live endpoint "
+                                "but is_paper_account=True — unexpected combination. "
+                                "Verify your key type matches your intended %s mode.",
+                                _mode_label,
+                            )
                     else:
                         logging.warning(
                             "[STARTUP] Alpaca account type check inconclusive "
                             "(paper=%s live=%s). Verify your keys manually.",
                             _resp_paper.status_code, _resp_live.status_code,
                         )
+                else:
+                    # Unexpected status from paper endpoint (e.g. 5xx transient error).
+                    logging.warning(
+                        "[STARTUP] Alpaca account type check inconclusive: paper endpoint "
+                        "returned unexpected status %s. Verify your keys manually.",
+                        _resp_paper.status_code,
+                    )
             except Exception as _ae:
                 logging.debug("[STARTUP] Alpaca account-type check skipped: %s", _ae)
         _threading.Thread(target=_run, daemon=True, name="alpaca-account-check").start()
