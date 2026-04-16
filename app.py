@@ -6290,13 +6290,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _avg_win_r      = round(_r_ser[_r_ser > 0].mean(), 2) if (_r_ser > 0).any() else 0
                         _avg_loss_r     = round(_r_ser[_r_ser < 0].mean(), 2) if (_r_ser < 0).any() else 0
                         _expectancy_r   = round(_r_ser.mean(), 3) if _total_trades else 0
-                        _sm6, _sm7, _sm8, _sm9 = st.columns(4)
+                        _cum_r_vals     = _r_ser.cumsum().reset_index(drop=True)
+                        _peak_r         = _cum_r_vals.cummax()
+                        _max_dd_r       = round((_cum_r_vals - _peak_r).min(), 2) if _total_trades else 0
+                        _sm6, _sm7, _sm8, _sm9, _sm10 = st.columns(5)
                         _sm6.metric("False-Break Rate",  f"{_false_brk_rate}%",
                                     help="% of trades where false_break_up/false_break_down triggered a -1R stop-out")
                         _sm7.metric("Avg Win (R)",    f"+{_avg_win_r}R")
                         _sm8.metric("Avg Loss (R)",   f"{_avg_loss_r}R")
                         _sm9.metric("Expectancy",     f"{_expectancy_r:+.3f}R / trade",
                                     help="Average R gained per trade — the raw edge, independent of position size")
+                        _sm10.metric("Max Drawdown (R)", f"{_max_dd_r}R",
+                                     help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim")
 
                         _eq_df = pd.DataFrame({
                             "Day": list(range(len(_rp_equity_curve))),
@@ -6310,6 +6315,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _cum_r_df = pd.DataFrame({"Trade #": range(len(_cum_r)), "Cumulative R": _cum_r})
                         st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade, no position sizing or compounding")
                         st.line_chart(_cum_r_df.set_index("Trade #"), height=160, use_container_width=True)
+
+                        # ── Replay CSV download ────────────────────────────────────────────
+                        _rp_csv_df = _rp_df.copy()
+                        _rp_csv_df.insert(
+                            _rp_csv_df.columns.get_loc("R") + 1,
+                            "Cumulative R",
+                            _cum_r.values,
+                        ) if "R" in _rp_csv_df.columns else None
+                        st.download_button(
+                            label="⬇ Download Replay CSV",
+                            data=_rp_csv_df.to_csv(index=False).encode("utf-8"),
+                            file_name="replay_trades.csv",
+                            mime="text/csv",
+                            key="rp_dl_csv",
+                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R for spreadsheet analysis",
+                        )
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
                         st.markdown("<br>", unsafe_allow_html=True)
@@ -7826,7 +7847,11 @@ Nothing here requires any input from you. All numbers update automatically as yo
         "Shows whether the model was warning you on days you lost."
     )
 
-    _xref_bt_df = load_backtest_sim_history(user_id=_uid)
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _load_xref_bt_hist(uid):
+        return load_backtest_sim_history(user_id=uid)
+
+    _xref_bt_df = _load_xref_bt_hist(uid=_uid)
 
     _xref = compute_journal_model_crossref(journal_df, _xref_bt_df)
 
@@ -12299,7 +12324,24 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_log_show = _pt_df[_pt_log_cols].sort_values(
             "trade_date", ascending=False
         ).reset_index(drop=True)
-        st.dataframe(_pt_log_show, use_container_width=True, hide_index=True)
+
+        def _pt_row_color(row):
+            wl = str(row.get("win_loss", "")).strip()
+            if wl in ("W", "Win"):
+                base = "background-color: rgba(76,175,80,0.08)"
+                hi   = "background-color: rgba(76,175,80,0.18); color:#66bb6a; font-weight:700"
+            elif wl in ("L", "Loss"):
+                base = "background-color: rgba(239,83,80,0.08)"
+                hi   = "background-color: rgba(239,83,80,0.18); color:#ef5350; font-weight:700"
+            else:
+                return [""] * len(row)
+            return [
+                hi if col == "win_loss" else base
+                for col in row.index
+            ]
+
+        _pt_log_styled = _pt_log_show.style.apply(_pt_row_color, axis=1)
+        st.dataframe(_pt_log_styled, use_container_width=True, hide_index=True)
         st.caption(
             f"Showing {len(_pt_log_show)} paper trades from last 21 days · "
             "Only TCS-filtered qualifying setups are stored here"
