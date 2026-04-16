@@ -11,6 +11,7 @@ import select
 import struct
 import hashlib
 import base64
+import json
 
 PROXY_PORT = int(os.environ.get("PORT", "8080"))
 STREAMLIT_PORT = 8501
@@ -63,8 +64,12 @@ MIME_TYPES = {
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
+        # Health endpoint — reads startup errors written by backend.py at import time
         path = self.path.split("?")[0]
+        if path == "/api/health":
+            self._health()
+            return
+        # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
             file_path = os.path.join(STATIC_DIR, rel)
@@ -100,6 +105,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self._proxy() if streamlit_ready else self._loading()
+
+    def _health(self):
+        """Return startup health status written by backend.py at import time.
+
+        backend.py writes /tmp/startup_health.json with {"ok": bool, "errors": [...]}
+        when it is imported by the Streamlit process (app.py → backend.py).
+        If the file is absent the server is still starting; 503 is returned.
+        """
+        health_path = "/tmp/startup_health.json"
+        try:
+            with open(health_path) as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            data = {"ok": False, "errors": ["Health status not yet available — server may still be starting."]}
+        except Exception as e:
+            data = {"ok": False, "errors": [f"Could not read health status: {e}"]}
+        status = 200 if data.get("ok") else 503
+        body = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _loading(self):
         self.send_response(200)

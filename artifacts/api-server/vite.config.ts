@@ -66,6 +66,12 @@ export default defineConfig({
       strict: true,
       deny: ["**/.*"],
     },
+    proxy: {
+      "/api/health": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     port,

@@ -66,6 +66,16 @@ if _startup_errors:
     for _err in _startup_errors:
         logging.error("[STARTUP] Required secret misconfigured — %s", _err)
 
+# Write startup health status to a file so the proxy can expose /api/health
+try:
+    import json as _json
+    _health_path = "/tmp/startup_health.json"
+    _health_payload = {"ok": len(_startup_errors) == 0, "errors": _startup_errors}
+    with open(_health_path, "w") as _hf:
+        _json.dump(_health_payload, _hf)
+except Exception as _he:
+    logging.warning("[STARTUP] Could not write startup health file: %s", _he)
+
 if SUPABASE_URL and SUPABASE_KEY and not _startup_errors:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
