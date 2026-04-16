@@ -45,52 +45,91 @@ SUPABASE_ANON_KEY = (
 
 _SUPABASE_URL_PATTERN = _re.compile(r'^https://[a-z0-9]+\.supabase\.co$')
 
-_startup_errors: list[str] = []
+ALPACA_API_KEY    = os.environ.get("ALPACA_API_KEY", "").strip()
+ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+
+# Each entry is (secret_name, human_readable_message).
+# Validation is split into two sets:
+#   _supabase_errors  — secrets that block Supabase client creation.
+#   _startup_errors   — all required secrets (superset); used for the summary
+#                       log and the /api/health payload.
+# Optional secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) are intentionally
+# omitted: those helpers return early gracefully when the vars are absent, so
+# the app functions correctly without them.
+_supabase_errors: list[tuple[str, str]] = []
+_startup_errors:  list[tuple[str, str]] = []
 
 if not SUPABASE_URL:
-    _startup_errors.append(
-        "SUPABASE_URL is missing. Set it to https://<project-ref>.supabase.co"
-    )
+    _supabase_errors.append((
+        "SUPABASE_URL",
+        "SUPABASE_URL is missing. Set it to https://<project-ref>.supabase.co",
+    ))
 elif not _SUPABASE_URL_PATTERN.match(SUPABASE_URL):
-    _startup_errors.append(
+    _supabase_errors.append((
+        "SUPABASE_URL",
         f"SUPABASE_URL is malformed: {SUPABASE_URL!r}. "
-        "Expected format: https://<project-ref>.supabase.co"
-    )
+        "Expected format: https://<project-ref>.supabase.co",
+    ))
 
 if not SUPABASE_KEY:
-    _startup_errors.append(
-        "SUPABASE_KEY (or SUPABASE_ANON_KEY / VITE_SUPABASE_ANON_KEY) is missing or empty."
-    )
+    _supabase_errors.append((
+        "SUPABASE_KEY",
+        "SUPABASE_KEY (or SUPABASE_ANON_KEY / VITE_SUPABASE_ANON_KEY) is missing or empty.",
+    ))
+
+_startup_errors.extend(_supabase_errors)
+
+if not ALPACA_API_KEY:
+    _startup_errors.append((
+        "ALPACA_API_KEY",
+        "ALPACA_API_KEY is missing. Required for live and paper order placement.",
+    ))
+
+if not ALPACA_SECRET_KEY:
+    _startup_errors.append((
+        "ALPACA_SECRET_KEY",
+        "ALPACA_SECRET_KEY is missing. Required for live and paper order placement.",
+    ))
 
 if _startup_errors:
-    for _err in _startup_errors:
+    for _name, _err in _startup_errors:
         logging.error("[STARTUP] Required secret misconfigured — %s", _err)
+    logging.error(
+        "[STARTUP] %d secret(s) need attention before the app will work correctly: %s",
+        len(_startup_errors),
+        ", ".join(_name for _name, _ in _startup_errors),
+    )
 
 # Write startup health status to a file so the proxy can expose /api/health
 try:
     import json as _json
     _health_path = "/tmp/startup_health.json"
-    _health_payload = {"ok": len(_startup_errors) == 0, "errors": _startup_errors}
+    _health_payload = {
+        "ok": len(_startup_errors) == 0,
+        "errors": [{"secret": _n, "message": _m} for _n, _m in _startup_errors],
+    }
     with open(_health_path, "w") as _hf:
         _json.dump(_health_payload, _hf)
 except Exception as _he:
     logging.warning("[STARTUP] Could not write startup health file: %s", _he)
 
-if SUPABASE_URL and SUPABASE_KEY and not _startup_errors:
+# Supabase client creation is gated only on Supabase-specific secrets so that
+# missing Alpaca credentials do not prevent data/analysis features from working.
+if SUPABASE_URL and SUPABASE_KEY and not _supabase_errors:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
     supabase = None
-    if _startup_errors:
+    if _supabase_errors:
         logging.error(
             "[STARTUP] Supabase client NOT initialised due to %d configuration error(s) above. "
             "Fix the secrets and restart the server.",
-            len(_startup_errors),
+            len(_supabase_errors),
         )
 
 # ── RLS-enforcing client (anon key + user JWT) ────────────────────────────────
 # This client respects Row Level Security. After a user logs in, call
 # set_user_session() to bind their JWT so all queries are user-scoped.
-if SUPABASE_URL and SUPABASE_ANON_KEY and not _startup_errors:
+if SUPABASE_URL and SUPABASE_ANON_KEY and not _supabase_errors:
     supabase_anon: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 else:
     supabase_anon = None
@@ -4469,8 +4508,8 @@ def place_alpaca_bracket_order(
 
     Returns dict with keys: ok (bool), order_id, qty, entry, stop, target, error.
     """
-    ak = api_key  or os.environ.get("ALPACA_API_KEY", "")
-    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    ak = api_key  or ALPACA_API_KEY
+    sk = secret_key or ALPACA_SECRET_KEY
     if not ak or not sk:
         return {"ok": False, "error": "Missing Alpaca credentials"}
 
@@ -4546,8 +4585,8 @@ def get_alpaca_account_equity(
     Returns float (dollars) or None if the request fails.
     Used by the bot to compute dynamic 1% risk per trade.
     """
-    ak = api_key   or os.environ.get("ALPACA_API_KEY", "")
-    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    ak = api_key   or ALPACA_API_KEY
+    sk = secret_key or ALPACA_SECRET_KEY
     if not ak or not sk:
         return None
     base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
@@ -4572,8 +4611,8 @@ def cancel_alpaca_day_orders(
 
     Returns dict: cancelled (int), errors (int).
     """
-    ak = api_key  or os.environ.get("ALPACA_API_KEY", "")
-    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    ak = api_key  or ALPACA_API_KEY
+    sk = secret_key or ALPACA_SECRET_KEY
     if not ak or not sk:
         return {"cancelled": 0, "errors": 0, "error": "Missing Alpaca credentials"}
 
@@ -4600,8 +4639,8 @@ def get_alpaca_open_positions(
     secret_key: str = "",
 ) -> list:
     """Return all open positions from Alpaca as a list of dicts."""
-    ak = api_key  or os.environ.get("ALPACA_API_KEY", "")
-    sk = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+    ak = api_key  or ALPACA_API_KEY
+    sk = secret_key or ALPACA_SECRET_KEY
     if not ak or not sk:
         return []
     base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
@@ -4629,8 +4668,8 @@ def reconcile_alpaca_fills(
         return {"matched": 0, "unmatched": 0, "errors": 0}
 
     fills, err = fetch_alpaca_fills(
-        api_key=api_key or os.environ.get("ALPACA_API_KEY", ""),
-        secret_key=secret_key or os.environ.get("ALPACA_SECRET_KEY", ""),
+        api_key=api_key or ALPACA_API_KEY,
+        secret_key=secret_key or ALPACA_SECRET_KEY,
         is_paper=is_paper,
         trade_date=trade_date,
     )
@@ -7344,8 +7383,8 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
     except Exception:
         _trade_date_obj = None
 
-    _alpaca_key = os.environ.get("ALPACA_API_KEY", "")
-    _alpaca_sec = os.environ.get("ALPACA_SECRET_KEY", "")
+    _alpaca_key = ALPACA_API_KEY
+    _alpaca_sec = ALPACA_SECRET_KEY
 
     # Batch-fetch stored alert_price, ib_high, ib_low values for this date so we can
     # compute post_alert_move_pct and use stored IB levels as fallback for tiered P&L
