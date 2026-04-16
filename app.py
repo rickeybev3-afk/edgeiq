@@ -6889,6 +6889,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     unsafe_allow_html=True,
                 )
                 st.caption(
+                    "Sorted by Best TCS net P&L — highest first. "
+                    "Tickers with insufficient data (fewer than the minimum trades per floor) fall to the bottom. "
                     "Each chart sweeps TCS 40 → 80 for that ticker only. "
                     f"Bold row = highest net P&L among floors with ≥{_MIN_TCS_TRADES} trades. "
                     "Floors marked ✗ have too few trades and are excluded from the Best TCS pick. "
