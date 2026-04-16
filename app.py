@@ -5486,7 +5486,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
     st.markdown("---")
 
     # ── Historical Paper Trade Replay ───────────────────────────────────────────
-    with st.expander("📈 Historical Paper Trade Replay", expanded=False):
+    with st.expander("📈 Historical Paper Trade Replay", expanded=True):
         st.caption(
             "Simulates your paper trader's entry/exit logic on historical backtest data. "
             "Uses IB breakout entries with fixed risk per trade to show real dollar P&L over time."
