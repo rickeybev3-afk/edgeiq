@@ -6904,7 +6904,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _help_txt = (
                                 f"Set TCS Adjustment to {_off_sign}{_bot_offset} "
                                 f"(≈ TCS {_bfloor} floor for {_btkr}) and re-run replay. "
-                                f"Offset = best floor {_bfloor} − base 50."
+                                f"Offset = best floor {_bfloor} − base 50. "
+                                f"Based on min {_MIN_TCS_TRADES} trades per floor."
                             )
                             if _clamped:
                                 _help_txt += (
@@ -6912,7 +6913,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f"exceeds slider range and is clamped to {_off_sign}{_bot_offset}."
                                 )
                             if st.button(
-                                f"{_btkr}: TCS {_bfloor}",
+                                f"{_btkr}: TCS {_bfloor} (≥{_MIN_TCS_TRADES} trades)",
                                 key=f"use_best_tcs_{_btkr}",
                                 help=_help_txt,
                             ):
@@ -6927,9 +6928,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.rerun()
                         else:
                             if st.button(
-                                f"{_btkr}: TCS {_bfloor}",
+                                f"{_btkr}: TCS {_bfloor} (≥{_MIN_TCS_TRADES} trades)",
                                 key=f"use_best_tcs_{_btkr}",
-                                help=f"Set Min TCS filter to {_bfloor} (best floor for {_btkr}) and re-run replay",
+                                help=f"Set Min TCS filter to {_bfloor} (best floor for {_btkr}) and re-run replay. Based on min {_MIN_TCS_TRADES} trades per floor.",
                             ):
                                 st.session_state["rp_min_tcs_slider"] = _bfloor
                                 st.session_state["rp_best_tcs_source"] = {"ticker": _btkr, "floor": _bfloor}
