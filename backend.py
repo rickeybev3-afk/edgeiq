@@ -7148,7 +7148,10 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
     try:
         existing = (
             supabase.table("paper_trades")
-            .select("ticker, trade_date, scan_type")
+            .select(
+                "ticker, trade_date, scan_type, "
+                "sim_outcome, pnl_r_sim, entry_price_sim, stop_price_sim, target_price_sim"
+            )
             .eq("user_id", user_id)
             .execute()
             .data or []
@@ -7157,12 +7160,55 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
             (r["ticker"], str(r["trade_date"]), r.get("scan_type") or "morning")
             for r in existing
         }
+        # Build a lookup so skipped rows can reuse stored sim values from the DB.
+        existing_sim_map = {
+            (r["ticker"], str(r["trade_date"]), r.get("scan_type") or "morning"): r
+            for r in existing
+        }
         records, skipped = [], 0
+        skipped_sim_rows = []
         for r in rows:
             scan_type = r.get("scan_type") or "morning"
             key = (r.get("ticker", ""), str(r.get("sim_date", r.get("trade_date", ""))), scan_type)
             if key in existing_keys:
                 skipped += 1
+                # Prefer the stored sim values from the DB record; fall back to
+                # recomputing from the input row so the confirmation screen always
+                # shows P&L data even when the DB record predates sim columns.
+                _db_rec = existing_sim_map.get(key, {})
+                if _db_rec.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                    skipped_sim_rows.append({
+                        "ticker":           r.get("ticker", ""),
+                        "sim_outcome":      _db_rec.get("sim_outcome"),
+                        "pnl_r_sim":        _db_rec.get("pnl_r_sim"),
+                        "entry_price_sim":  _db_rec.get("entry_price_sim"),
+                        "stop_price_sim":   _db_rec.get("stop_price_sim"),
+                        "target_price_sim": _db_rec.get("target_price_sim"),
+                        "already_logged":   True,
+                    })
+                else:
+                    # DB record has no sim data — recompute from current input row.
+                    _skip_record = {
+                        "ticker":          r.get("ticker", ""),
+                        "trade_date":      str(r.get("sim_date", r.get("trade_date", ""))),
+                        "predicted":       r.get("predicted", ""),
+                        "ib_low":          r.get("ib_low"),
+                        "ib_high":         r.get("ib_high"),
+                        "open_price":      r.get("open_price"),
+                        "alert_price":     r.get("close_price"),
+                        "follow_thru_pct": r.get("aft_move_pct"),
+                    }
+                    _skip_sim = compute_trade_sim(_skip_record)
+                    if _skip_sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                        skipped_sim_rows.append({
+                            "ticker":           r.get("ticker", ""),
+                            "sim_outcome":      _skip_sim.get("sim_outcome"),
+                            "pnl_r_sim":        _skip_sim.get("pnl_r_sim"),
+                            "entry_price_sim":  _skip_sim.get("entry_price_sim"),
+                            "stop_price_sim":   _skip_sim.get("stop_price_sim"),
+                            "target_price_sim": _skip_sim.get("target_price_sim"),
+                            "already_logged":   True,
+                        })
                 continue
             row_record = {
                 "user_id":        user_id or "",
@@ -7243,7 +7289,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                     print("log_paper_trades: optional columns missing — saved without them")
                 else:
                     raise
-        return {"saved": len(records), "skipped": skipped, "sim_rows": sim_rows}
+        return {"saved": len(records), "skipped": skipped, "sim_rows": sim_rows + skipped_sim_rows}
     except Exception as e:
         return {"saved": 0, "skipped": 0, "error": str(e)}
 

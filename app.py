@@ -11829,7 +11829,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             )
                             _sim_rows = _pt_log_result.get("sim_rows") or []
                             if _sim_rows:
-                                with st.expander("📈 Sim P&L for logged trades", expanded=True):
+                                _all_already_logged = all(r.get("already_logged") for r in _sim_rows)
+                                _expander_label = (
+                                    "📈 Sim P&L (already logged — shown from existing records)"
+                                    if _all_already_logged
+                                    else "📈 Sim P&L for logged trades"
+                                )
+                                with st.expander(_expander_label, expanded=True):
                                     _sim_df = pd.DataFrame(_sim_rows)
                                     _sim_df = _sim_df.rename(columns={
                                         "ticker":           "Ticker",
