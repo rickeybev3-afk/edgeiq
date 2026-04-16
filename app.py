@@ -6272,12 +6272,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Day": list(range(len(_rp_equity_curve))),
                             "Equity ($)": _rp_equity_curve,
                         })
+                        st.caption("**Equity Curve** — dollar P&L with position sizing applied")
                         st.line_chart(_eq_df.set_index("Day"), height=200, use_container_width=True)
 
                         # ── Cumulative R chart (raw edge, no position sizing) ──────────────
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
                         _cum_r_df = pd.DataFrame({"Trade #": range(len(_cum_r)), "Cumulative R": _cum_r})
-                        st.caption("**Cumulative R** — raw edge independent of position size or compounding")
+                        st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade, no position sizing or compounding")
                         st.line_chart(_cum_r_df.set_index("Trade #"), height=160, use_container_width=True)
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
