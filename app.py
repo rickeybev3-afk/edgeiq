@@ -11386,6 +11386,52 @@ ALTER TABLE backtest_sim_runs
             f"Historical: {_hist_src.get('backtest_sim_runs',0):,} backtest rows"
         )
 
+        # ── TCS threshold diff ────────────────────────────────────────────────────
+        _WK_DISPLAY_LOCAL = {
+            "trend_bull":     "Trend Bull",
+            "trend_bear":     "Trend Bear",
+            "double_dist":    "Double Dist",
+            "non_trend":      "Non-Trend",
+            "normal":         "Normal",
+            "neutral":        "Neutral",
+            "ntrl_extreme":   "Ntrl Extreme",
+            "nrml_variation": "Nrml Variation",
+        }
+        _tcs_rows = []
+        for _k, _nv in _new_tcs.items():
+            _ov = _old_tcs.get(_k)
+            if _ov is None:
+                continue
+            try:
+                _nv_i, _ov_i = int(_nv), int(_ov)
+            except (TypeError, ValueError):
+                continue
+            _diff = _nv_i - _ov_i
+            if abs(_diff) >= 3:
+                _tcs_rows.append({
+                    "Structure": _WK_DISPLAY_LOCAL.get(_k, _k),
+                    "Before":    _ov_i,
+                    "After":     _nv_i,
+                    "Change":    f"{'+'if _diff>0 else ''}{_diff}",
+                })
+        if _tcs_rows:
+            st.markdown("#### 🎯 TCS Threshold Changes")
+
+            def _color_tcs_change(val):
+                try:
+                    v = int(str(val).replace("+", ""))
+                    if v > 0:  return "color: #ef5350; font-weight:700"
+                    if v < 0:  return "color: #66bb6a; font-weight:700"
+                except Exception:
+                    pass
+                return ""
+
+            _tcs_df = pd.DataFrame(_tcs_rows)
+            st.dataframe(
+                _tcs_df.style.map(_color_tcs_change, subset=["Change"]),
+                use_container_width=True, hide_index=True,
+            )
+
         # Delta table
         _all_deltas = {}
         for _d in _live_cal.get("deltas", []):
