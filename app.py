@@ -6574,9 +6574,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _dates = sorted(_tgrp["sim_date"].astype(str).unique()) if "sim_date" in _tgrp else []
 
                 # ── Per-ticker TCS Optimizer sweep ────────────────────────────
+                _MIN_TCS_TRADES = 5   # floors with fewer trades are excluded from Best TCS
                 _best_tcs_label = "—"
                 _best_tcs_pnl_val = None
                 _tk_sweep_rows = []
+                _any_sweep_rows = False  # track if we had data but insufficient trades
                 if "tcs" in _tgrp.columns and "win_loss" in _tgrp.columns:
                     for _sw_tcs in range(40, 85, 5):
                         try:
@@ -6603,14 +6605,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 )
                             )
                             _sw_exp_n = _sw_pnl_n / len(_sw_sub)
+                            _sufficient = len(_sw_sub) >= _MIN_TCS_TRADES
+                            _any_sweep_rows = True
                             _tk_sweep_rows.append({
                                 "TCS Floor":      _sw_tcs,
                                 "Trades":         len(_sw_sub),
                                 "Win Rate":       round(_sw_wr_n, 1),
                                 "Net P&L ($)":    round(_sw_pnl_n, 0),
                                 "Expectancy ($)": round(_sw_exp_n, 2),
+                                "Sufficient":     "✓" if _sufficient else f"✗ (<{_MIN_TCS_TRADES})",
                             })
-                            if _best_tcs_pnl_val is None or _sw_pnl_n > _best_tcs_pnl_val:
+                            # only qualify this floor for Best TCS if it has enough trades
+                            if _sufficient and (
+                                _best_tcs_pnl_val is None or _sw_pnl_n > _best_tcs_pnl_val
+                            ):
                                 _best_tcs_pnl_val   = _sw_pnl_n
                                 _best_tcs_floor     = _sw_tcs
                                 _best_tcs_cnt       = len(_sw_sub)
@@ -6628,6 +6636,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f"{_pnl_sign}${_best_tcs_pnl_val:,.0f})"
                     )
                     _best_tcs_options.append((_tk, int(_best_tcs_floor)))
+                elif _any_sweep_rows:
+                    # had trades but no floor met the minimum count threshold
+                    _best_tcs_label = f"— (insufficient data, <{_MIN_TCS_TRADES} trades per floor)"
 
                 _tkr_rows.append({
                     "Ticker":         _tk,
@@ -6652,6 +6663,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         help=(
                             "The TCS cutoff (40–80) that produced the highest net P&L "
                             "for this specific ticker across all trades in the replay. "
+                            "Only floors with at least 5 trades are considered — floors "
+                            "with fewer trades are statistically unreliable and are "
+                            "excluded. Tickers with too few trades show "
+                            "'— (insufficient data)'. "
                             "Format: TCS floor · trade count · win rate · net P&L "
                             "(using the same position size as the replay above). "
                             "Different tickers may thrive at different TCS levels."
@@ -6664,7 +6679,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "🟡 45–60% — mixed signal, paper trade first  · "
                 "🔴 < 45% — IB framework doesn't fit this ticker · "
                 "False Brk % = how often IB breakouts reversed within 30 min  · "
-                "Best TCS = the TCS cutoff that produced the highest net P&L for that ticker "
+                "Best TCS = the TCS cutoff (≥5 trades) that produced the highest net P&L for that ticker "
                 "(hover the column header for details)"
             )
             if _best_tcs_options:
@@ -6690,32 +6705,52 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
                 st.caption(
                     "Each chart sweeps TCS 40 → 80 for that ticker only. "
-                    "Bold row = highest net P&L. Expand a ticker to see the full profit curve."
+                    "Bold row = highest net P&L among floors with ≥5 trades. "
+                    "Floors marked ✗ have too few trades and are excluded from the Best TCS pick. "
+                    "Expand a ticker to see the full profit curve."
                 )
                 import altair as _alt_tk
                 for _tk_name in sorted(_tkr_sweep_data.keys()):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
-                    _tk_best_pnl = _tk_sw_df["Net P&L ($)"].max()
-                    _tk_best_row = _tk_sw_df[_tk_sw_df["Net P&L ($)"] == _tk_best_pnl].iloc[0]
-                    with st.expander(
-                        f"📊 {_tk_name} — Best: TCS ≥ {int(_tk_best_row['TCS Floor'])} "
-                        f"· {int(_tk_best_row['Trades'])} trades "
-                        f"· {_tk_best_row['Win Rate']:.0f}% WR "
-                        f"· ${_tk_best_pnl:,.0f} net P&L",
-                        expanded=False,
-                    ):
-                        st.markdown(
-                            f'<div style="background:#1e3a2a;border-radius:8px;padding:8px 14px;'
-                            f'margin-bottom:10px;font-size:13px;color:#a5d6a7;">'
-                            f'📈 <b>Optimal for Max Profit:</b> TCS ≥ {int(_tk_best_row["TCS Floor"])} '
-                            f'→ {int(_tk_best_row["Trades"])} trades · {_tk_best_row["Win Rate"]:.1f}% WR · '
-                            f'${_tk_best_pnl:,.0f} net P&L</div>',
-                            unsafe_allow_html=True,
+                    # only consider floors with sufficient trades for the highlighted best
+                    _tk_sw_suff = _tk_sw_df[_tk_sw_df["Sufficient"] == "✓"]
+                    if not _tk_sw_suff.empty:
+                        _tk_best_pnl = _tk_sw_suff["Net P&L ($)"].max()
+                        _tk_best_row = _tk_sw_suff[_tk_sw_suff["Net P&L ($)"] == _tk_best_pnl].iloc[0]
+                        _tk_expander_label = (
+                            f"📊 {_tk_name} — Best: TCS ≥ {int(_tk_best_row['TCS Floor'])} "
+                            f"· {int(_tk_best_row['Trades'])} trades "
+                            f"· {_tk_best_row['Win Rate']:.0f}% WR "
+                            f"· ${_tk_best_pnl:,.0f} net P&L"
                         )
+                        _tk_has_best = True
+                    else:
+                        _tk_best_pnl = None
+                        _tk_best_row = None
+                        _tk_expander_label = f"📊 {_tk_name} — insufficient data (<5 trades per floor)"
+                        _tk_has_best = False
+                    with st.expander(_tk_expander_label, expanded=False):
+                        if _tk_has_best:
+                            st.markdown(
+                                f'<div style="background:#1e3a2a;border-radius:8px;padding:8px 14px;'
+                                f'margin-bottom:10px;font-size:13px;color:#a5d6a7;">'
+                                f'📈 <b>Optimal for Max Profit (≥5 trades):</b> TCS ≥ {int(_tk_best_row["TCS Floor"])} '
+                                f'→ {int(_tk_best_row["Trades"])} trades · {_tk_best_row["Win Rate"]:.1f}% WR · '
+                                f'${_tk_best_pnl:,.0f} net P&L</div>',
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.info(
+                                "No TCS floor has 5 or more trades for this ticker — "
+                                "Best TCS cannot be reliably determined yet.",
+                                icon="⚠️",
+                            )
 
                         _tk_chart_df = _tk_sw_df.copy()
-                        _tk_chart_df["_is_best"] = _tk_chart_df["Net P&L ($)"] == _tk_best_pnl
+                        _tk_chart_df["_is_best"] = (
+                            (_tk_chart_df["Net P&L ($)"] == _tk_best_pnl) & _tk_has_best
+                        )
                         _tk_chart_df["Color"] = _tk_chart_df.apply(
                             lambda r: "#4caf50" if r["_is_best"] else ("#ef5350" if r["Net P&L ($)"] < 0 else "#42a5f5"),
                             axis=1,
@@ -6751,7 +6786,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.altair_chart(_tk_bar, use_container_width=True)
 
                         def _tk_sw_style(row):
-                            if row["Net P&L ($)"] == _tk_best_pnl:
+                            if _tk_has_best and row["Net P&L ($)"] == _tk_best_pnl and row["Sufficient"] == "✓":
                                 return ["background:#1e3a2a;font-weight:bold"] * len(row)
                             return [""] * len(row)
 
@@ -6763,6 +6798,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Net P&L ($)":    st.column_config.NumberColumn(format="$%.0f"),
                                 "Expectancy ($)": st.column_config.NumberColumn(format="$%.2f"),
                                 "Win Rate":       st.column_config.NumberColumn(format="%.1f%%"),
+                                "Sufficient":     st.column_config.TextColumn(
+                                    "Sufficient",
+                                    help=f"✓ = at least 5 trades at this floor (eligible for Best TCS); ✗ = fewer than 5 trades (excluded from Best TCS pick)",
+                                ),
                             },
                         )
 
