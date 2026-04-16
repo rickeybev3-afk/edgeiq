@@ -491,6 +491,18 @@ def _broadcast_to_subscribers(message: str) -> int:
     return sent
 
 
+# ── Human-readable labels for each weight key in tcs_thresholds.json ──────────
+_WEIGHT_KEY_DISPLAY = {
+    "ntrl_extreme":   "Ntrl Extreme",
+    "double_dist":    "Double Dist",
+    "nrml_variation": "Nrml Variation",
+    "neutral":        "Neutral",
+    "trend_bull":     "Trend Bull",
+    "non_trend":      "Non-Trend",
+    "normal":         "Normal",
+}
+
+
 def _structure_emoji(predicted: str) -> str:
     p = (predicted or "").lower()
     if "trend" in p and ("up" in p or "bull" in p):
@@ -550,6 +562,15 @@ def _alert_setup(r: dict, trade_date: date):
     if r.get("_priority_tier"):
         priority_line = f"<b>{r['_priority_tier']}</b>\n"
 
+    # Per-structure TCS threshold line
+    struct_floor = int(r.get("_struct_tcs_floor") or 0)
+    if struct_floor:
+        _wk = label_to_weight_key(predicted) if predicted else ""
+        _display_name = _WEIGHT_KEY_DISPLAY.get(_wk, predicted or "structure")
+        tcs_line = f"⚡ TCS Score: <b>{tcs:.0f} ≥ {struct_floor}</b> ({_display_name} threshold) ✅"
+    else:
+        tcs_line = f"⚡ TCS Score: <b>{tcs:.0f} / 100</b>"
+
     msg = (
         f"{emoji} <b>EdgeIQ Setup — {ticker}</b>\n"
         f"⏰ {scan_time}  ·  📅 {trade_date}\n"
@@ -558,7 +579,7 @@ def _alert_setup(r: dict, trade_date: date):
         f"💰 Price at IB close: <b>${cur_px:.2f}</b>  "
         f"({chg_arrow}{abs(chg_pct):.1f}% from open ${open_px:.2f})\n"
         f"📊 Structure: <b>{predicted}</b>  ({conf:.0f}% conf)\n"
-        f"⚡ TCS Score: <b>{tcs:.0f} / 100</b>\n"
+        f"{tcs_line}\n"
         f"📦 IB Range:  ${ib_low:.2f} – ${ib_high:.2f}  (mid ${ib_mid:.2f})\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{entry_hint}\n"
@@ -574,7 +595,8 @@ def _alert_setup(r: dict, trade_date: date):
 
 
 def _alert_morning_summary(
-    qualified: list, total_scanned: int, trade_date: date, effective_tcs: int = None
+    qualified: list, total_scanned: int, trade_date: date,
+    effective_tcs: int = None, tcs_thresholds: dict = None,
 ):
     """Send a summary header before individual setup alerts."""
     tcs_threshold = effective_tcs if effective_tcs is not None else MIN_TCS
@@ -592,25 +614,42 @@ def _alert_morning_summary(
     except Exception:
         pass
 
+    # Build per-structure threshold legend (sorted by effective required TCS ascending)
+    # Uses max(calibrated, regime_floor) so the legend matches actual qualification bar.
+    _threshold_legend = ""
+    if tcs_thresholds:
+        _parts = []
+        for _wk, _cal_floor in sorted(tcs_thresholds.items(), key=lambda x: x[1]):
+            _label = _WEIGHT_KEY_DISPLAY.get(_wk, _wk)
+            _effective_floor = max(_cal_floor, tcs_threshold)
+            _parts.append(f"{_label} requires TCS {_effective_floor}")
+        if _parts:
+            _threshold_legend = "\n📐 " + " · ".join(_parts)
+
     if not qualified:
         tg_send(
             f"🔍 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
-            f"No setups met TCS ≥ {tcs_threshold} today out of {total_scanned} scanned.\n"
+            f"No setups met per-structure TCS thresholds today out of {total_scanned} scanned.\n"
             f"Watching for intraday opportunities..."
+            + _threshold_legend
             + _regime_line
         )
         return
     tg_send(
         f"🔔 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"✅ <b>{len(qualified)} setup(s)</b> qualified (TCS ≥ {tcs_threshold})\n"
+        f"✅ <b>{len(qualified)} setup(s)</b> qualified (per-structure thresholds)\n"
         f"📋 Scanned {total_scanned} tickers from your Finviz watchlist"
+        + _threshold_legend
         + _regime_line
         + "\nSending individual alerts now..."
     )
 
 
-def _alert_eod_summary(results: list, updated: int, trade_date: date):
+def _alert_eod_summary(
+    results: list, updated: int, trade_date: date,
+    global_filtered: int = 0, struct_filtered: int = 0,
+):
     """Send EOD outcome summary."""
     wins   = [r for r in results if r.get("win_loss") == "Win"]
     losses = [r for r in results if r.get("win_loss") == "Loss"]
@@ -629,6 +668,14 @@ def _alert_eod_summary(results: list, updated: int, trade_date: date):
     if wins or losses:
         wr = round(100 * len(wins) / max(1, len(wins) + len(losses)), 1)
         lines.append(f"📊 Today's structure win rate: <b>{wr}%</b>")
+    # Show per-structure vs global filter breakdown
+    if global_filtered or struct_filtered:
+        filter_parts = []
+        if struct_filtered:
+            filter_parts.append(f"{struct_filtered} filtered by structure threshold")
+        if global_filtered:
+            filter_parts.append(f"{global_filtered} below global floor")
+        lines.append(f"🚫 Filtered: " + " · ".join(filter_parts))
     tg_send("\n".join(lines))
 
 
@@ -912,7 +959,11 @@ def morning_scan():
     )
 
     # Telegram: summary header
-    _alert_morning_summary(qualified, len(results), today, effective_tcs=effective_min_tcs)
+    _alert_morning_summary(
+        qualified, len(results), today,
+        effective_tcs=effective_min_tcs,
+        tcs_thresholds=_tcs_thresholds,
+    )
 
     if qualified:
         # Sort by tier priority: P3 first → P4.  Within tier: higher TCS first.
@@ -1003,6 +1054,7 @@ def intraday_scan():
             f"<b>{len(qualified)} setup(s)</b> still active/developing:"
         )
         for r in qualified:
+            r["_struct_tcs_floor"] = _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
             tcs_val = float(r.get("tcs", 0))
             if tcs_val >= 70:
                 tier = "🔴 P1 — Intraday 70+  (avg +4.44R — ACT ON THIS)"
@@ -1087,9 +1139,27 @@ def eod_update():
             f"errors: {rec.get('errors', 0)}"
         )
 
-    # Telegram EOD summary
-    qualified_results = [r for r in results if float(r.get("tcs", 0)) >= MIN_TCS]
-    _alert_eod_summary(qualified_results, updated_count, today)
+    # Telegram EOD summary — compute per-structure filter breakdown.
+    # EOD uses the base MIN_TCS as global floor (regime not re-fetched here).
+    # Counts are baseline-floor accounting; small discrepancy vs morning/intraday
+    # regime-adjusted sessions is acceptable for end-of-day reporting.
+    _tcs_thresholds_eod = load_tcs_thresholds(default=MIN_TCS)
+    _eod_global_floor   = MIN_TCS
+    _global_filtered    = [r for r in results if float(r.get("tcs", 0)) < _eod_global_floor]
+    _struct_filtered    = [
+        r for r in results
+        if float(r.get("tcs", 0)) >= _eod_global_floor
+        and float(r.get("tcs", 0)) < _struct_tcs_floor(r, _tcs_thresholds_eod, _eod_global_floor)
+    ]
+    qualified_results = [
+        r for r in results
+        if float(r.get("tcs", 0)) >= _struct_tcs_floor(r, _tcs_thresholds_eod, _eod_global_floor)
+    ]
+    _alert_eod_summary(
+        qualified_results, updated_count, today,
+        global_filtered=len(_global_filtered),
+        struct_filtered=len(_struct_filtered),
+    )
 
     # ── Beta subscriber broadcast (clean — no TCS/brain language) ─────────
     _broadcast_eod_to_subscribers(results, today)
