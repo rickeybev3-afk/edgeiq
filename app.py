@@ -3864,6 +3864,13 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["pt_min_tcs"] = int(_prefs["pt_min_tcs"])
         except (ValueError, TypeError):
             pass
+    if "pt_price_range" in _prefs:
+        try:
+            _pr = _prefs["pt_price_range"]
+            if isinstance(_pr, (list, tuple)) and len(_pr) == 2:
+                st.session_state["pt_price_range"] = (float(_pr[0]), float(_pr[1]))
+        except (ValueError, TypeError):
+            pass
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
@@ -12534,6 +12541,14 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         value=(1.0, 20.0), step=0.5,
         key="pt_price_range",
     )
+    # Persist pt_price_range to user prefs when it changes
+    if _AUTH_USER_ID:
+        _pt_pr_cached = st.session_state.get("_cached_prefs", {})
+        _pt_pr_saved = _pt_pr_cached.get("pt_price_range")
+        if _pt_pr_saved is None or tuple(_pt_pr_saved) != tuple(_pt_price_range):
+            _pt_pr_new_prefs = {**_pt_pr_cached, "pt_price_range": list(_pt_price_range)}
+            save_user_prefs(_AUTH_USER_ID, _pt_pr_new_prefs)
+            st.session_state["_cached_prefs"] = _pt_pr_new_prefs
 
     # ── Auto-watchlist (Finviz) + optional extras ────────────────────────────
     _pt_auto_wl = load_watchlist(user_id=_AUTH_USER_ID) or []
