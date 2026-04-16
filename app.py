@@ -5484,8 +5484,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     if "range" in _lc:  return "—"
                     return "·"
 
+                def _safe_r(v):
+                    try:
+                        fv = float(v)
+                        return fv if fv == fv else None
+                    except (TypeError, ValueError):
+                        return None
+
                 _ls_results = []
                 for _, _lrow in _ls_rows_df.iterrows():
+                    _ls_eod_r    = _lrow.get("eod_pnl_r")
+                    _ls_tiered_r = _lrow.get("tiered_pnl_r")
                     _ls_results.append({
                         "ticker":         str(_lrow.get("ticker", "")),
                         "sim_date":       str(_lrow.get("sim_date", "")),
@@ -5501,6 +5510,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "aft_move_pct":   float(_lrow.get("follow_thru_pct") or _lrow.get("aft_move_pct") or 0),
                         "false_break_up":   bool(_lrow.get("false_break_up", False)),
                         "false_break_down": bool(_lrow.get("false_break_down", False)),
+                        "eod_pnl_r":      _safe_r(_ls_eod_r),
+                        "tiered_pnl_r":   _safe_r(_ls_tiered_r),
                     })
 
                 if _ls_results:
@@ -5521,6 +5532,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                          if "bull" in r["actual_outcome"].lower() and r["win_loss"] == "Win")
                     _ls_long_total   = _ls_bull_breaks or 1
                     _ls_fb_count     = sum(1 for r in _ls_results if r["false_break_up"] or r["false_break_down"])
+                    _ls_eod_vals    = [r["eod_pnl_r"]    for r in _ls_results if r.get("eod_pnl_r")    is not None]
+                    _ls_tiered_vals = [r["tiered_pnl_r"] for r in _ls_results if r.get("tiered_pnl_r") is not None]
                     _ls_summary = {
                         "win_rate":       _ls_wr,
                         "total":          _ls_total,
@@ -5536,6 +5549,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "range_bound":    _ls_range_bound,
                         "long_win_rate":  round(_ls_long_wins / _ls_long_total * 100, 1),
                         "false_break_rate": round(_ls_fb_count / _ls_total * 100, 1) if _ls_total > 0 else 0,
+                        "avg_eod_pnl_r":    round(sum(_ls_eod_vals) / len(_ls_eod_vals), 3) if _ls_eod_vals else None,
+                        "avg_tiered_pnl_r": round(sum(_ls_tiered_vals) / len(_ls_tiered_vals), 3) if _ls_tiered_vals else None,
+                        "eod_pnl_r_count":  len(_ls_eod_vals),
+                        "tiered_pnl_r_count": len(_ls_tiered_vals),
                     }
                     _ls_date_label = (
                         f"{min(_ls_sel)} → {max(_ls_sel)}" if len(_ls_sel) > 1 else _ls_sel[0]
@@ -6662,6 +6679,77 @@ Measures how accurately the 7-structure framework classified those days in hinds
         unsafe_allow_html=True,
     )
 
+    # ── EOD Hold vs Tiered Exit Strategy Comparison ─────────────────────────────
+    _avg_eod    = _summary.get("avg_eod_pnl_r")
+    _avg_tiered = _summary.get("avg_tiered_pnl_r")
+    _eod_n      = _summary.get("eod_pnl_r_count", 0)
+    _tiered_n   = _summary.get("tiered_pnl_r_count", 0)
+    if _avg_eod is not None or _avg_tiered is not None:
+        def _r_str(val, n):
+            if val is None:
+                return "—"
+            sign = "+" if val >= 0 else ""
+            return f"{sign}{val:.3f}R ({n} trades)"
+
+        def _r_color(val):
+            if val is None: return "#546e7a"
+            return "#4caf50" if val >= 0 else "#ef5350"
+
+        _eod_str    = _r_str(_avg_eod, _eod_n)
+        _tiered_str = _r_str(_avg_tiered, _tiered_n)
+        _eod_clr    = _r_color(_avg_eod)
+        _tiered_clr = _r_color(_avg_tiered)
+
+        if _avg_eod is not None and _avg_tiered is not None:
+            _diff = _avg_tiered - _avg_eod
+            _diff_sign = "+" if _diff >= 0 else ""
+            if abs(_diff) < 0.001:
+                _verdict = "Strategies tied"
+                _verdict_clr = "#90a4ae"
+            elif _diff > 0:
+                _verdict = f"Tiered exits outperform EOD hold by {_diff_sign}{_diff:.3f}R per trade"
+                _verdict_clr = "#ffb74d"
+            else:
+                _verdict = f"EOD hold outperforms tiered exits by {abs(_diff):.3f}R per trade"
+                _verdict_clr = "#81c784"
+        else:
+            _verdict = "Run sim backfill to populate both metrics"
+            _verdict_clr = "#546e7a"
+
+        st.markdown(
+            f'<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+            f'padding:14px 24px; margin-bottom:20px;">'
+            f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1.5px; margin-bottom:10px; font-weight:700; font-family:monospace;">'
+            f'📊 Strategy Comparison — EOD Hold vs Tiered Exits (avg R per trade)</div>'
+            f'<div style="display:flex; gap:32px; flex-wrap:wrap; align-items:center;">'
+
+            f'<div>'
+            f'<div style="font-size:9px; color:#81c784; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:2px;">📅 Held to Close (EOD)</div>'
+            f'<div style="font-size:26px; font-weight:800; color:{_eod_clr}; '
+            f'font-family:monospace;">{_eod_str}</div>'
+            f'</div>'
+
+            f'<div style="font-size:20px; color:#37474f; align-self:center;">vs</div>'
+
+            f'<div>'
+            f'<div style="font-size:9px; color:#ffb74d; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:2px;">🪜 50/25/25 Ladder (Tiered)</div>'
+            f'<div style="font-size:26px; font-weight:800; color:{_tiered_clr}; '
+            f'font-family:monospace;">{_tiered_str}</div>'
+            f'</div>'
+
+            f'<div style="border-left:1px solid #1a2744; padding-left:24px; align-self:center;">'
+            f'<div style="font-size:12px; font-weight:700; color:{_verdict_clr};">{_verdict}</div>'
+            f'<div style="font-size:10px; color:#37474f; margin-top:3px;">'
+            f'Positive = strategy added value vs a simple hold-to-close</div>'
+            f'</div>'
+
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
     # ── Directional breakdown row ────────────────────────────────────────────────
     _bull_ft_str = f"+{_summary['avg_bull_ft']:.1f}%" if _summary["avg_bull_ft"] else "—"
     _bear_ft_str = f"-{_summary['avg_bear_ft']:.1f}%" if _summary["avg_bear_ft"] else "—"
@@ -6963,6 +7051,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     save_user_prefs(_AUTH_USER_ID, _mtcs_new_prefs)
                     st.session_state["_cached_prefs"] = _mtcs_new_prefs
 
+            def _fmt_avg_r(vals):
+                if not vals:
+                    return "—"
+                avg = sum(vals) / len(vals)
+                sign = "+" if avg >= 0 else ""
+                return f"{sign}{avg:.3f}R"
+
             for _tk, _tgrp in _bt_df.groupby("ticker"):
                 _tw   = (_tgrp["win_loss"] == "Win").sum()
                 _tl   = (_tgrp["win_loss"] == "Loss").sum()
@@ -7048,6 +7143,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     # had trades but no floor met the minimum count threshold
                     _best_tcs_label = f"— (insufficient data, <{_MIN_TCS_TRADES} trades per floor)"
 
+                # ── Per-ticker EOD vs Tiered R averages ───────────────────────
+                _tk_eod_vals = (
+                    _tgrp["eod_pnl_r"].dropna().tolist()
+                    if "eod_pnl_r" in _tgrp.columns else []
+                )
+                _tk_tiered_vals = (
+                    _tgrp["tiered_pnl_r"].dropna().tolist()
+                    if "tiered_pnl_r" in _tgrp.columns else []
+                )
+                _tk_eod_str    = _fmt_avg_r(_tk_eod_vals)
+                _tk_tiered_str = _fmt_avg_r(_tk_tiered_vals)
+
                 _tkr_rows.append({
                     "Ticker":         _tk,
                     "Setups":         len(_tgrp),
@@ -7057,6 +7164,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Best TCS":       _best_tcs_label,
                     "Top Structure":  _top_struct,
                     "Avg Follow-Thru": f"{'+' if _tft >= 0 else ''}{_tft}%",
+                    "EOD Hold R":     _tk_eod_str,
+                    "Tiered Exit R":  _tk_tiered_str,
                     "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
                 })
@@ -7556,6 +7665,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "ib_low":          "IB Low",
                                 "false_break_up":  "False Break Up",
                                 "false_break_down":"False Break Down",
+                                "eod_pnl_r":       "EOD Hold R",
+                                "tiered_pnl_r":    "Tiered Exit R",
                             }
                             for _raw_col, _display_col in _extra_col_map.items():
                                 if _raw_col in _tk_drill_df.columns:

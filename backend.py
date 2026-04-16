@@ -6730,6 +6730,9 @@ def run_historical_backtest(
     false_break_rate = (round((len(fb_up) + len(fb_down)) / _breakable * 100, 1)
                         if _breakable else 0.0)
 
+    _eod_vals    = [r["eod_pnl_r"]    for r in results if r.get("eod_pnl_r")    is not None and r["eod_pnl_r"]    == r["eod_pnl_r"]]
+    _tiered_vals = [r["tiered_pnl_r"] for r in results if r.get("tiered_pnl_r") is not None and r["tiered_pnl_r"] == r["tiered_pnl_r"]]
+
     summary = {
         "win_rate":         win_rate,
         "total":            len(results),
@@ -6747,6 +6750,10 @@ def run_historical_backtest(
         "false_break_rate": false_break_rate,
         "fb_up_count":      len(fb_up),
         "fb_down_count":    len(fb_down),
+        "avg_eod_pnl_r":    round(sum(_eod_vals) / len(_eod_vals), 3) if _eod_vals else None,
+        "avg_tiered_pnl_r": round(sum(_tiered_vals) / len(_tiered_vals), 3) if _tiered_vals else None,
+        "eod_pnl_r_count":  len(_eod_vals),
+        "tiered_pnl_r_count": len(_tiered_vals),
     }
     return results, summary
 
@@ -6782,6 +6789,8 @@ def run_backtest_range(
         fb_u  = [r for r in rows if r.get("false_break_up")]
         fb_d  = [r for r in rows if r.get("false_break_down")]
         brk   = len(bull) + len(bear) + len(both)
+        _e_v  = [r["eod_pnl_r"]    for r in rows if r.get("eod_pnl_r")    is not None and r["eod_pnl_r"]    == r["eod_pnl_r"]]
+        _t_v  = [r["tiered_pnl_r"] for r in rows if r.get("tiered_pnl_r") is not None and r["tiered_pnl_r"] == r["tiered_pnl_r"]]
         return {
             "label":            label,
             "total":            total,
@@ -6803,6 +6812,10 @@ def run_backtest_range(
                                  if brk else 0.0),
             "fb_up_count":      len(fb_u),
             "fb_down_count":    len(fb_d),
+            "avg_eod_pnl_r":    round(sum(_e_v) / len(_e_v), 3) if _e_v else None,
+            "avg_tiered_pnl_r": round(sum(_t_v) / len(_t_v), 3) if _t_v else None,
+            "eod_pnl_r_count":  len(_e_v),
+            "tiered_pnl_r_count": len(_t_v),
         }
 
     # Collect weekdays in range, cap at 22 (~1 calendar month)
