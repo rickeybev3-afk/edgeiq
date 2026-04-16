@@ -5610,30 +5610,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
         if "rp_end_date" not in st.session_state:
             st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
 
-        # Clear the Best TCS badge as soon as the date range changes.
+        # Clear saved floor selections whenever any replay filter changes.
         # Streamlit writes widget values to session state before each rerun, so
         # reading the keys here gives the *current* (newly selected) values —
-        # even though the date_input widgets themselves render further down the
-        # page.  This must run before the badge is rendered (~line 5625).
-        # Note: on the very first render of a new session, _rp_prev_start_date
-        # and _rp_prev_end_date don't exist yet, so the comparison always
-        # triggers a clear.  This is intentional — rp_best_tcs_source won't be
-        # set on a fresh session anyway, so the pop() is a no-op.
+        # even though the widgets themselves render further down the page.
+        # The full parameter signature covers every input that affects which
+        # trades are included, so changing any one of them will invalidate the
+        # saved per-ticker TCS floors.
+        # Note: on the very first render of a new session _rp_prev_sig won't
+        # exist, so the comparison always triggers a clear.  This is intentional
+        # — rp_best_tcs_source won't be set yet, so the pop() is a no-op.
         _rp_cur_start = st.session_state["rp_start_date"]
         _rp_cur_end   = st.session_state["rp_end_date"]
-        if (st.session_state.get("_rp_prev_start_date") != _rp_cur_start or
-                st.session_state.get("_rp_prev_end_date") != _rp_cur_end):
+        _rp_sig = (
+            _rp_cur_start,
+            _rp_cur_end,
+            _rp_bot_mode,
+            st.session_state.get("rp_min_gap", 0.0),
+            st.session_state.get("rp_min_gap_vs_ib", 0.0),
+            st.session_state.get("rp_scan_type", "Morning (10:47 AM)"),
+            st.session_state.get("rp_tcs_offset", 0),
+            st.session_state.get("rp_min_tcs_slider", 0),
+            st.session_state.get("min_tcs_trades", 5),
+            st.session_state.get("rp_min_ft", 0.0),
+        )
+        if st.session_state.get("_rp_prev_sig") != _rp_sig:
             st.session_state.pop("rp_best_tcs_source", None)
-            # Only reset the TCS slider on actual user-driven date changes, not on the
-            # very first render of a new session (when _rp_prev_start_date is absent).
-            # Skipping the reset on first render lets the prefs-restored value survive.
-            if "_rp_prev_start_date" in st.session_state:
-                st.session_state["rp_min_tcs_slider"] = 0
+            # Only reset the TCS slider on actual user-driven date changes, not
+            # on the very first render of a new session (when _rp_prev_sig is
+            # absent).  Skipping the reset on first render lets the
+            # prefs-restored slider value survive.
+            if "_rp_prev_sig" in st.session_state:
+                _prev_sig = st.session_state["_rp_prev_sig"]
+                if _prev_sig[0] != _rp_cur_start or _prev_sig[1] != _rp_cur_end:
+                    st.session_state["rp_min_tcs_slider"] = 0
+                    # Reflect the slider reset in the signature so the stored
+                    # value matches actual session state and does not trigger a
+                    # spurious extra clear on the very next rerun.
+                    _rp_sig = _rp_sig[:7] + (0,) + _rp_sig[8:]
             for _k in list(st.session_state.keys()):
                 if _k.startswith("_drill_tcs_persist_"):
                     del st.session_state[_k]
-        st.session_state["_rp_prev_start_date"] = _rp_cur_start
-        st.session_state["_rp_prev_end_date"]   = _rp_cur_end
+        st.session_state["_rp_prev_sig"] = _rp_sig
 
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
