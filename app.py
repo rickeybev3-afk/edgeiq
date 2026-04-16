@@ -5587,23 +5587,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
         with _rp_snap_col:
             _rp_snap = st.selectbox(
                 "Snapshot",
-                options=["Morning (10:47 AM)", "Intraday (2:00 PM)", "EOD (4:00 PM)", "All"],
+                options=["Morning (10:47 AM)", "Intraday (2:00 PM)", "EOD (4:00 PM)", "All", "🏆 Best (Most Profit Combined)"],
                 index=0,
                 key="rp_scan_type",
                 help=(
                     "Morning = entry decision snapshot (IB just formed, 10:47 AM). "
                     "Intraday = 2 PM position-management check. "
                     "EOD = full-day TCS (matches what paper_trades records). "
-                    "All = no filter."
+                    "All = no filter. "
+                    "Best = picks whichever snapshot (morning/intraday/EOD) gave the "
+                    "highest follow-through % for each ticker+date — shows the theoretical "
+                    "ceiling if you always timed your entry perfectly."
                 ),
             )
             _rp_scan_type_map = {
-                "Morning (10:47 AM)": "morning",
-                "Intraday (2:00 PM)": "intraday",
-                "EOD (4:00 PM)":      "eod",
-                "All":                None,
+                "Morning (10:47 AM)":           "morning",
+                "Intraday (2:00 PM)":           "intraday",
+                "EOD (4:00 PM)":                "eod",
+                "All":                          None,
+                "🏆 Best (Most Profit Combined)": None,  # fetch all, pick best per ticker+date below
             }
-            _rp_scan_type_val = _rp_scan_type_map[_rp_snap]
+            _rp_scan_type_val  = _rp_scan_type_map[_rp_snap]
+            _rp_best_mode      = _rp_snap == "🏆 Best (Most Profit Combined)"
         if "rp_start_date" not in st.session_state:
             st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
         if "rp_end_date" not in st.session_state:
@@ -5736,6 +5741,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     except Exception as _rp_e:
                         _rp_rows = []
                         st.error(f"Failed to load data: {_rp_e}")
+
+                # ── Best (Most Profit Combined) — pick highest follow_thru_pct per ticker+date ──
+                if _rp_rows and _rp_best_mode:
+                    _best_seen: dict = {}  # key=(ticker,sim_date) → row with highest follow_thru_pct
+                    for _brow in _rp_rows:
+                        _bkey = (_brow.get("ticker",""), _brow.get("sim_date",""))
+                        _bpct = float(_brow.get("follow_thru_pct") or 0)
+                        if _bkey not in _best_seen or _bpct > float(_best_seen[_bkey].get("follow_thru_pct") or 0):
+                            _best_seen[_bkey] = _brow
+                    _rp_rows = list(_best_seen.values())
+                    # Label each row so Snapshot column in trade log shows "best (morning)" etc.
+                    for _brow in _rp_rows:
+                        _brow["scan_type"] = f"best ({_brow.get('scan_type','?')})"
 
                 # Cache raw rows for TCS Optimizer (needs unfiltered dataset)
                 if _rp_rows:
