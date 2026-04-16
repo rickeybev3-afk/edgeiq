@@ -6569,6 +6569,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _tkr_sweep_data = {}
             _best_tcs_options = []
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
+
+            # ── Min-trade-count slider ─────────────────────────────────────────
+            _min_tcs_col, _ = st.columns([1, 3])
+            with _min_tcs_col:
+                _MIN_TCS_TRADES = st.slider(
+                    "Min trades required for Best TCS",
+                    min_value=3,
+                    max_value=15,
+                    value=st.session_state.get("min_tcs_trades", 5),
+                    step=1,
+                    key="min_tcs_trades",
+                    help=(
+                        "Only TCS floors with at least this many trades are "
+                        "eligible for the Best TCS recommendation. "
+                        "Lower values allow more floors to qualify (less data needed); "
+                        "higher values require more trades before trusting a floor."
+                    ),
+                )
+
             for _tk, _tgrp in _bt_df.groupby("ticker"):
                 _tw   = (_tgrp["win_loss"] == "Win").sum()
                 _tl   = (_tgrp["win_loss"] == "Loss").sum()
@@ -6589,7 +6608,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _dates = sorted(_tgrp["sim_date"].astype(str).unique()) if "sim_date" in _tgrp else []
 
                 # ── Per-ticker TCS Optimizer sweep ────────────────────────────
-                _MIN_TCS_TRADES = 5   # floors with fewer trades are excluded from Best TCS
                 _best_tcs_label = "—"
                 _best_tcs_pnl_val = None
                 _tk_sweep_rows = []
@@ -6678,7 +6696,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         help=(
                             "The TCS cutoff (40–80) that produced the highest net P&L "
                             "for this specific ticker across all trades in the replay. "
-                            "Only floors with at least 5 trades are considered — floors "
+                            f"Only floors with at least {_MIN_TCS_TRADES} trades are considered — floors "
                             "with fewer trades are statistically unreliable and are "
                             "excluded. Tickers with too few trades show "
                             "'— (insufficient data)'. "
@@ -6694,7 +6712,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "🟡 45–60% — mixed signal, paper trade first  · "
                 "🔴 < 45% — IB framework doesn't fit this ticker · "
                 "False Brk % = how often IB breakouts reversed within 30 min  · "
-                "Best TCS = the TCS cutoff (≥5 trades) that produced the highest net P&L for that ticker "
+                f"Best TCS = the TCS cutoff (≥{_MIN_TCS_TRADES} trades) that produced the highest net P&L for that ticker "
                 "(hover the column header for details)"
             )
             if _best_tcs_options:
@@ -6752,7 +6770,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
                 st.caption(
                     "Each chart sweeps TCS 40 → 80 for that ticker only. "
-                    "Bold row = highest net P&L among floors with ≥5 trades. "
+                    f"Bold row = highest net P&L among floors with ≥{_MIN_TCS_TRADES} trades. "
                     "Floors marked ✗ have too few trades and are excluded from the Best TCS pick. "
                     "Expand a ticker to see the full profit curve."
                 )
@@ -6786,21 +6804,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     else:
                         _tk_best_pnl = None
                         _tk_best_row = None
-                        _tk_expander_label = f"📊 {_tk_name} — insufficient data (<5 trades per floor)"
+                        _tk_expander_label = f"📊 {_tk_name} — insufficient data (<{_MIN_TCS_TRADES} trades per floor)"
                         _tk_has_best = False
                     with st.expander(_tk_expander_label, expanded=False):
                         if _tk_has_best:
                             st.markdown(
                                 f'<div style="background:#1e3a2a;border-radius:8px;padding:8px 14px;'
                                 f'margin-bottom:10px;font-size:13px;color:#a5d6a7;">'
-                                f'📈 <b>Optimal for Max Profit (≥5 trades):</b> TCS ≥ {int(_tk_best_row["TCS Floor"])} '
+                                f'📈 <b>Optimal for Max Profit (≥{_MIN_TCS_TRADES} trades):</b> TCS ≥ {int(_tk_best_row["TCS Floor"])} '
                                 f'→ {int(_tk_best_row["Trades"])} trades · {_tk_best_row["Win Rate"]:.1f}% WR · '
                                 f'${_tk_best_pnl:,.0f} net P&L</div>',
                                 unsafe_allow_html=True,
                             )
                         else:
                             st.info(
-                                "No TCS floor has 5 or more trades for this ticker — "
+                                f"No TCS floor has {_MIN_TCS_TRADES} or more trades for this ticker — "
                                 "Best TCS cannot be reliably determined yet.",
                                 icon="⚠️",
                             )
@@ -6858,7 +6876,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Win Rate":       st.column_config.NumberColumn(format="%.1f%%"),
                                 "Sufficient":     st.column_config.TextColumn(
                                     "Sufficient",
-                                    help=f"✓ = at least 5 trades at this floor (eligible for Best TCS); ✗ = fewer than 5 trades (excluded from Best TCS pick)",
+                                    help=f"✓ = at least {_MIN_TCS_TRADES} trades at this floor (eligible for Best TCS); ✗ = fewer than {_MIN_TCS_TRADES} trades (excluded from Best TCS pick)",
                                 ),
                             },
                         )
