@@ -5630,7 +5630,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         if _rp_bot_mode and supabase and _rp_uid:
             with st.expander("📋 View per-structure TCS cutoffs (based on your accuracy data)", expanded=False):
                 try:
-                    _guide_rows = compute_structure_tcs_thresholds(supabase, _rp_uid)
+                    _guide_rows = compute_structure_tcs_thresholds()
                     if _guide_rows:
                         # Map weight keys back to display labels
                         _WKEY_DISP = {
