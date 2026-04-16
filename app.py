@@ -5578,6 +5578,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         if (st.session_state.get("_rp_prev_start_date") != _rp_cur_start or
                 st.session_state.get("_rp_prev_end_date") != _rp_cur_end):
             st.session_state.pop("rp_best_tcs_source", None)
+            st.session_state["rp_min_tcs_slider"] = 0
             for _k in list(st.session_state.keys()):
                 if _k.startswith("_drill_tcs_persist_"):
                     del st.session_state[_k]
