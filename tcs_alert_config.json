@@ -1,0 +1,13 @@
+{
+  "_comment": "List the structure keys you want TCS threshold-shift alerts for. Remove a key to silence alerts for that structure. Leave alert_structures as an empty list [] to silence ALL alerts, or delete this file to receive alerts for every structure (default behaviour).",
+  "alert_structures": [
+    "trend_bull",
+    "trend_bear",
+    "double_dist",
+    "non_trend",
+    "normal",
+    "neutral",
+    "ntrl_extreme",
+    "nrml_variation"
+  ]
+}

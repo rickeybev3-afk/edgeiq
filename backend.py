@@ -1827,11 +1827,46 @@ def append_tcs_threshold_history(previous: dict, current: dict, min_delta: int =
     _notify_tcs_threshold_shift(previous, current)
 
 
+def _load_tcs_alert_structures() -> set | None:
+    """Return the set of structure keys opted in for Telegram alerts.
+
+    Reads ``tcs_alert_config.json`` from the project root.  The file is
+    expected to have an ``alert_structures`` list, e.g.::
+
+        {"alert_structures": ["neutral", "double_dist"]}
+
+    Returns:
+        * ``None``  – file absent or ``alert_structures`` key missing → alert
+          on *all* structures (default / backwards-compatible behaviour).
+        * A ``set`` of strings – alert only on those keys (may be empty, which
+          silences every alert).
+    """
+    import json as _json
+
+    cfg_path = os.path.join(os.path.dirname(__file__) or ".", "tcs_alert_config.json")
+    if not os.path.exists(cfg_path):
+        return None
+    try:
+        with open(cfg_path) as _f:
+            cfg = _json.load(_f)
+        if "alert_structures" in cfg:
+            return set(cfg["alert_structures"])
+    except Exception:
+        pass
+    return None
+
+
 def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
     """Send a Telegram alert for any TCS structure whose threshold moved by ≥5 points.
 
     Only fires when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are configured.
     Silently skips if nothing changed significantly or credentials are absent.
+
+    Which structures trigger an alert is controlled by ``tcs_alert_config.json``
+    in the project root.  When the file is absent (or lacks the
+    ``alert_structures`` key) every structure is eligible — preserving the
+    original behaviour.  Set ``alert_structures`` to a subset of structure
+    keys to receive alerts only for those; an empty list silences all alerts.
     """
     import os as _os
     import requests as _req
@@ -1841,10 +1876,14 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
     if not _token or not _chat_id:
         return
 
+    opted_in = _load_tcs_alert_structures()
+
     _THRESHOLD = 5
     lines = []
     all_keys = set(list(previous.keys()) + list(current.keys()))
     for wk in sorted(all_keys):
+        if opted_in is not None and wk not in opted_in:
+            continue
         old_val = previous.get(wk)
         new_val = current.get(wk)
         if old_val is None or new_val is None:
