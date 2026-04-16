@@ -5932,12 +5932,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 else:
                                     _eff_pos = _rp_pos_size
                                 _shares = _eff_pos / max(_entry, 0.01)
-                                # Directed P&L: positive = price moved in predicted direction
-                                # Cap at ±50% per trade to prevent explosive compounding
-                                # (small caps can show 200%+ moves that aren't realistic entries)
-                                _directed_ft = _ft * _dir
-                                _ft_sim      = max(-50.0, min(50.0, _directed_ft))
-                                _trade_pnl   = _eff_pos * (_ft_sim / 100.0)
+                                # Win/Loss based on structure prediction accuracy (win_loss),
+                                # NOT actual_outcome × follow_thru — that gives 100% WR because
+                                # follow_thru_pct is MFE (always positive in the breakout direction).
+                                # win_loss = "Win" means the structure prediction was correct.
+                                # Cap at 50% per trade to prevent explosive compounding on outlier moves.
+                                if _wl == "Win":
+                                    _ft_capped = min(abs(_ft), 50.0)
+                                    _trade_pnl = _eff_pos * (_ft_capped / 100.0)
+                                else:
+                                    # -1R: lose the stop distance as % of position
+                                    _trade_pnl = -(_eff_pos * (_stop_dist / max(_entry, 0.01)))
                             else:
                                 _shares = _fixed_risk_amt / _stop_dist
                                 if _wl == "Win":
