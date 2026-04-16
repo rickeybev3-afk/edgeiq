@@ -37,7 +37,8 @@ These are the core IP. Any change breaks the entire system. If a task seems to r
 - **`actual_outcome`** = stores the **real market direction** (e.g. "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides") — set by EOD outcome logic based on whether price broke IB high/low, **regardless of what was predicted**.
 - **`win_loss`** = "Win" / "Loss" based on structure prediction accuracy — NOT trade P&L.
 - **`follow_thru_pct`** = **MFE** (how far the HIGH went above IB high for bullish, or LOW below IB low for bearish) — **ALWAYS POSITIVE for Bullish Break, ALWAYS NEGATIVE for Bearish Break by definition**. It is NOT the EOD close vs entry. Using `follow_thru_pct × direction` = always positive = fake 100% win rate. Use `win_loss` for win/loss determination in P&L simulations, and `abs(follow_thru_pct)` for the magnitude.
-- **`pnl_r_sim`** = sim P&L from `compute_trade_sim()` — MFE-based (best possible exit). High win rate is expected (~80-90%) because MFE is always positive except on false_break stop-outs.
+- **`pnl_r_sim`** = sim P&L from `compute_trade_sim()` — **MFE is the INTENDED permanent basis, not a fallback**. It measures the strategy's theoretical ceiling (how far the setup moved in your favor). The adaptive exit layer being built will try to capture as much of this MFE ceiling as possible by detecting volume decay, zone confluence failure, RVOL fade, etc. DO NOT switch to EOD close — MFE is correct by design. High win rate (~80-90%) is expected because MFE only goes negative on `false_break` stop-outs.
+- **`close_price`** = **intentionally left NULL** — not used for `pnl_r_sim`. The `compute_trade_sim()` close_price path exists for `eod_pnl_r` only.
 - **`eod_pnl_r`** = hold-to-close P&L, **intentionally uncapped** (no stop applied — can exceed -1R). Requires `close_price` column to be populated.
 - **`tiered_pnl_r`** = 50% at 1R → stop to BE → 25% at 2R → 25% runner to close (bar-by-bar replay, cannot backfill without bars).
 
