@@ -7222,11 +7222,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
             # ── Min-trade-count slider ─────────────────────────────────────────
             _min_tcs_col, _ = st.columns([1, 3])
             with _min_tcs_col:
+                _min_tcs_seed = max(5, min(20, st.session_state.get("min_tcs_trades", 8)))
                 _MIN_TCS_TRADES = st.slider(
                     "Min trades required for Best TCS",
-                    min_value=3,
-                    max_value=15,
-                    value=st.session_state.get("min_tcs_trades", 5),
+                    min_value=5,
+                    max_value=20,
+                    value=_min_tcs_seed,
                     step=1,
                     key="min_tcs_trades",
                     help=(
