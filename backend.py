@@ -1674,6 +1674,29 @@ def save_tcs_thresholds(thresholds: list) -> None:
             }
             with open(TCS_THRESHOLD_HISTORY_FILE, "a") as _hf:
                 _hf.write(_json.dumps(record) + "\n")
+
+            # Trim entries older than 90 days so the file doesn't grow indefinitely
+            cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=90)
+            try:
+                with open(TCS_THRESHOLD_HISTORY_FILE) as _hf:
+                    raw_lines = _hf.readlines()
+                kept = []
+                for line in raw_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = _json.loads(line)
+                        ts_str = entry.get("timestamp", "")
+                        ts = _dt.datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
+                        if ts >= cutoff:
+                            kept.append(line)
+                    except Exception:
+                        kept.append(line)
+                with open(TCS_THRESHOLD_HISTORY_FILE, "w") as _hf:
+                    _hf.write("\n".join(kept) + ("\n" if kept else ""))
+            except Exception:
+                pass
         except Exception:
             pass
         _notify_tcs_threshold_shift(previous, out)
