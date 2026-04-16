@@ -1910,23 +1910,44 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
         f"📅 {_date_str}\n"
         f"Recalibrated automatically — review before market open."
     )
-    try:
-        _resp = _req.post(
-            f"https://api.telegram.org/bot{_token}/sendMessage",
-            json={"chat_id": _chat_id, "text": msg, "parse_mode": "HTML"},
-            timeout=8,
-        )
-        if _resp.status_code != 200:
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
-                "TCS threshold shift Telegram alert failed: %s %s",
-                _resp.status_code,
-                _resp.text[:120],
+    import logging as _logging
+    import time as _time
+
+    def _send_one(chat_id):
+        try:
+            _resp = _req.post(
+                f"https://api.telegram.org/bot{_token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                timeout=8,
             )
+            if _resp.status_code != 200:
+                _logging.getLogger(__name__).warning(
+                    "TCS threshold shift Telegram alert failed (chat %s): %s %s",
+                    chat_id,
+                    _resp.status_code,
+                    _resp.text[:120],
+                )
+        except Exception as _exc:
+            _logging.getLogger(__name__).warning(
+                "TCS threshold shift Telegram alert error (chat %s): %s", chat_id, _exc
+            )
+
+    # Always notify the main admin chat
+    _send_one(_chat_id)
+
+    # Also broadcast to all beta subscribers, excluding the owner (who already
+    # received the message via the main TELEGRAM_CHAT_ID above).
+    _owner_id = _os.environ.get("PAPER_TRADE_USER_ID", "").strip()
+    try:
+        _pairs = get_beta_chat_ids(exclude_user_id=_owner_id)
+        for _uid, _sub_chat_id in _pairs:
+            if str(_sub_chat_id) == str(_chat_id):
+                continue  # extra guard: skip if chat_id matches main chat
+            _send_one(_sub_chat_id)
+            _time.sleep(0.1)
     except Exception as _exc:
-        import logging as _logging
         _logging.getLogger(__name__).warning(
-            "TCS threshold shift Telegram alert error: %s", _exc
+            "TCS threshold shift subscriber broadcast error: %s", _exc
         )
 
 
