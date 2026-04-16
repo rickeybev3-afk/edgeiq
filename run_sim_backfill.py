@@ -28,6 +28,11 @@ Results of the 2026-04-16 run (verified via null-count queries post-run):
 
 Uses concurrent threads to run Supabase updates in parallel — much faster
 than sequential updates.
+
+Usage
+─────
+  python run_sim_backfill.py                          # auto-discover all users
+  python run_sim_backfill.py <uid1> [uid2] [uid3]...  # explicit user IDs
 """
 
 import sys, os, time
@@ -35,10 +40,62 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-USER_ID   = "a5e1fcab-8369-42c4-8550-a8a19734510c"
-PAGE_SZ   = 1000
+PAGE_SZ     = 1000
 MAX_WORKERS = 20   # concurrent update threads
 
+BACKFILL_TABLES = [
+    ("backtest_sim_runs", "id"),
+    ("paper_trades",      "id"),
+]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# User discovery
+# ──────────────────────────────────────────────────────────────────────────────
+
+def discover_user_ids() -> list[str]:
+    """Return all distinct user_ids found across the tables being backfilled.
+
+    Paginates through every table exhaustively so no user is silently missed,
+    regardless of table size.
+    """
+    if not backend.supabase:
+        return []
+
+    uid_set: set[str] = set()
+    for table, _ in BACKFILL_TABLES:
+        offset     = 0
+        rows_scanned = 0
+        print(f"  Scanning {table} for user IDs…", end="", flush=True)
+        try:
+            while True:
+                resp = (
+                    backend.supabase.table(table)
+                    .select("user_id")
+                    .range(offset, offset + PAGE_SZ - 1)
+                    .execute()
+                )
+                rows = resp.data or []
+                for row in rows:
+                    uid = row.get("user_id")
+                    if uid:
+                        uid_set.add(uid)
+                rows_scanned += len(rows)
+                if len(rows) < PAGE_SZ:
+                    break
+                offset += PAGE_SZ
+        except Exception as e:
+            print(f"\n  ERROR: could not fully scan {table} for user_ids: {e}")
+            print("  Aborting — pass user IDs explicitly via CLI args to bypass discovery.")
+            sys.exit(1)
+        print(f" {rows_scanned} rows scanned.")
+
+    return sorted(uid_set)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Core backfill helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _sim_patch(r: dict) -> dict | None:
     sim = backend.compute_trade_sim(r)
@@ -79,13 +136,13 @@ def _update_one(table: str, id_col: str, row_id, patch: dict):
     return True
 
 
-def backfill_table(table: str, id_col: str):
+def backfill_table(table: str, id_col: str, user_id: str):
     if not backend.supabase:
         print("No Supabase connection.")
         return 0
 
     print(f"\n{'='*60}")
-    print(f"  Backfilling: {table}")
+    print(f"  Backfilling: {table}  (user {user_id})")
     print(f"{'='*60}")
 
     total_updated = 0
@@ -104,7 +161,7 @@ def backfill_table(table: str, id_col: str):
                 resp = (
                     backend.supabase.table(table)
                     .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,follow_thru_pct,false_break_up,false_break_down,close_price")
-                    .eq("user_id", USER_ID)
+                    .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
                     .range(offset, offset + PAGE_SZ - 1)
                     .execute()
@@ -118,7 +175,7 @@ def backfill_table(table: str, id_col: str):
                         resp = (
                             backend.supabase.table(table)
                             .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,follow_thru_pct,false_break_up,false_break_down")
-                            .eq("user_id", USER_ID)
+                            .eq("user_id", user_id)
                             .eq("actual_outcome", direction)
                             .range(offset, offset + PAGE_SZ - 1)
                             .execute()
@@ -177,11 +234,11 @@ def backfill_table(table: str, id_col: str):
     return total_updated
 
 
-def print_summary():
+def print_summary(user_id: str):
     if not backend.supabase:
         return
     print(f"\n{'='*60}")
-    print("  SIMULATION SUMMARY")
+    print(f"  SIMULATION SUMMARY  (user {user_id})")
     print(f"{'='*60}")
 
     for table in ("backtest_sim_runs", "paper_trades"):
@@ -189,7 +246,7 @@ def print_summary():
             resp = (
                 backend.supabase.table(table)
                 .select("scan_type,sim_outcome,pnl_r_sim")
-                .eq("user_id", USER_ID)
+                .eq("user_id", user_id)
                 .not_.is_("sim_outcome", "null")
                 .neq("sim_outcome", "no_trade")
                 .limit(15000)
@@ -232,14 +289,43 @@ def print_summary():
             print(f"  Summary error for {table}: {e}")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry point
+# ──────────────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     print("EdgeIQ — Paper Trade Simulation Backfill (concurrent)")
     print("=" * 60)
 
+    # Explicit user IDs can be passed as CLI args; otherwise auto-discover.
+    if len(sys.argv) > 1:
+        seen: dict[str, None] = {}
+        for uid in sys.argv[1:]:
+            seen[uid] = None
+        user_ids = list(seen)
+        if len(user_ids) < len(sys.argv) - 1:
+            print(f"  Note: {len(sys.argv) - 1 - len(user_ids)} duplicate user ID(s) removed.")
+        print(f"Using {len(user_ids)} user ID(s) from command-line arguments.")
+    else:
+        print("No user IDs specified — querying database for all distinct users...")
+        user_ids = discover_user_ids()
+        if not user_ids:
+            print("No users found in the database. Nothing to backfill.")
+            sys.exit(0)
+        print(f"Found {len(user_ids)} user(s): {user_ids}")
+
     t0 = time.time()
-    backfill_table("backtest_sim_runs", "id")
-    backfill_table("paper_trades",      "id")
+
+    for uid in user_ids:
+        print(f"\n{'#'*60}")
+        print(f"  Processing user: {uid}")
+        print(f"{'#'*60}")
+        for table, id_col in BACKFILL_TABLES:
+            backfill_table(table, id_col, uid)
+
     elapsed = time.time() - t0
 
-    print_summary()
-    print(f"\n✅ Backfill complete in {elapsed:.0f}s")
+    for uid in user_ids:
+        print_summary(uid)
+
+    print(f"\n✅ Backfill complete for {len(user_ids)} user(s) in {elapsed:.0f}s")
