@@ -43,16 +43,44 @@ SUPABASE_ANON_KEY = (
     SUPABASE_KEY
 )
 
-if SUPABASE_URL and SUPABASE_KEY:
+_SUPABASE_URL_PATTERN = _re.compile(r'^https://[a-z0-9]+\.supabase\.co$')
+
+_startup_errors: list[str] = []
+
+if not SUPABASE_URL:
+    _startup_errors.append(
+        "SUPABASE_URL is missing. Set it to https://<project-ref>.supabase.co"
+    )
+elif not _SUPABASE_URL_PATTERN.match(SUPABASE_URL):
+    _startup_errors.append(
+        f"SUPABASE_URL is malformed: {SUPABASE_URL!r}. "
+        "Expected format: https://<project-ref>.supabase.co"
+    )
+
+if not SUPABASE_KEY:
+    _startup_errors.append(
+        "SUPABASE_KEY (or SUPABASE_ANON_KEY / VITE_SUPABASE_ANON_KEY) is missing or empty."
+    )
+
+if _startup_errors:
+    for _err in _startup_errors:
+        logging.error("[STARTUP] Required secret misconfigured — %s", _err)
+
+if SUPABASE_URL and SUPABASE_KEY and not _startup_errors:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
     supabase = None
-    print("WARNING: Supabase credentials not found in environment variables.")
+    if _startup_errors:
+        logging.error(
+            "[STARTUP] Supabase client NOT initialised due to %d configuration error(s) above. "
+            "Fix the secrets and restart the server.",
+            len(_startup_errors),
+        )
 
 # ── RLS-enforcing client (anon key + user JWT) ────────────────────────────────
 # This client respects Row Level Security. After a user logs in, call
 # set_user_session() to bind their JWT so all queries are user-scoped.
-if SUPABASE_URL and SUPABASE_ANON_KEY:
+if SUPABASE_URL and SUPABASE_ANON_KEY and not _startup_errors:
     supabase_anon: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 else:
     supabase_anon = None
