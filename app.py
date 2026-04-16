@@ -7344,6 +7344,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
                 import altair as _alt_tk
 
+                # ── Bulk reset button ─────────────────────────────────────────
+                _persist_keys_all = [
+                    k for k in st.session_state if k.startswith("_drill_tcs_persist_")
+                ]
+                if _persist_keys_all:
+                    _bulk_reset_col, _ = st.columns([2, 5])
+                    with _bulk_reset_col:
+                        if st.button(
+                            "↩ Reset all to best",
+                            key="_bulk_reset_all_tickers",
+                            use_container_width=True,
+                            help="Clear every manual TCS floor override and restore the recommended floor for all tickers.",
+                        ):
+                            for _prst_k in list(st.session_state.keys()):
+                                if _prst_k.startswith("_drill_tcs_persist_") or _prst_k.startswith("drill_tcs_"):
+                                    del st.session_state[_prst_k]
+                            st.rerun()
+
                 _SWEEP_SORT_OPTIONS = ["P&L (default)", "Win Rate", "Trade Count", "Alphabetical"]
 
                 # ── Restore sort preference from localStorage (cross-session) ──
