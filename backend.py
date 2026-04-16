@@ -7385,6 +7385,11 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
         }
         records, skipped = [], 0
         skipped_sim_rows = []
+        skipped_sim_failed = []  # tickers excluded due to missing/invalid sim data
+        _SIM_REASON_LABELS = {
+            "missing_data": "missing IB data",
+            "invalid_ib":   "invalid IB range",
+        }
         for r in rows:
             scan_type = r.get("scan_type") or "morning"
             key = (r.get("ticker", ""), str(r.get("sim_date", r.get("trade_date", ""))), scan_type)
@@ -7417,16 +7422,26 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                         "follow_thru_pct": r.get("aft_move_pct"),
                     }
                     _skip_sim = compute_trade_sim(_skip_record)
-                    if _skip_sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
+                    _skip_outcome = _skip_sim.get("sim_outcome")
+                    if _skip_outcome not in ("no_trade", "missing_data", "invalid_ib", None):
                         skipped_sim_rows.append({
                             "ticker":           r.get("ticker", ""),
-                            "sim_outcome":      _skip_sim.get("sim_outcome"),
+                            "sim_outcome":      _skip_outcome,
                             "pnl_r_sim":        _skip_sim.get("pnl_r_sim"),
                             "entry_price_sim":  _skip_sim.get("entry_price_sim"),
                             "stop_price_sim":   _skip_sim.get("stop_price_sim"),
                             "target_price_sim": _skip_sim.get("target_price_sim"),
                             "already_logged":   True,
                         })
+                    elif _skip_outcome in ("missing_data", "invalid_ib"):
+                        # Sim computation failed due to a data-quality problem — record why
+                        # so the trader is warned on the confirmation screen.
+                        _reason = _SIM_REASON_LABELS.get(_skip_outcome, "unknown reason")
+                        skipped_sim_failed.append({
+                            "ticker": r.get("ticker", ""),
+                            "reason": _reason,
+                        })
+                    # no_trade means the setup legitimately didn't trigger — no warning needed.
                 continue
             row_record = {
                 "user_id":        user_id or "",
@@ -7507,7 +7522,12 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                     print("log_paper_trades: optional columns missing — saved without them")
                 else:
                     raise
-        return {"saved": len(records), "skipped": skipped, "sim_rows": sim_rows + skipped_sim_rows}
+        return {
+            "saved":            len(records),
+            "skipped":          skipped,
+            "sim_rows":         sim_rows + skipped_sim_rows,
+            "sim_failed":       skipped_sim_failed,
+        }
     except Exception as e:
         return {"saved": 0, "skipped": 0, "error": str(e)}
 

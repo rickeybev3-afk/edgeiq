@@ -12333,63 +12333,77 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                                 + (f" · {_sk} already logged (skipped)" if _sk else "")
                             )
                             _sim_rows = _pt_log_result.get("sim_rows") or []
-                            if _sim_rows:
-                                _all_already_logged = all(r.get("already_logged") for r in _sim_rows)
+                            _sim_failed = _pt_log_result.get("sim_failed") or []
+                            if _sim_rows or _sim_failed:
+                                _all_already_logged = bool(_sim_rows) and all(r.get("already_logged") for r in _sim_rows)
                                 _expander_label = (
                                     "📈 Sim P&L (already logged — shown from existing records)"
                                     if _all_already_logged
                                     else "📈 Sim P&L for logged trades"
                                 )
                                 with st.expander(_expander_label, expanded=True):
-                                    _sim_df = pd.DataFrame(_sim_rows)
-                                    _sim_df = _sim_df.rename(columns={
-                                        "ticker":           "Ticker",
-                                        "sim_outcome":      "Outcome",
-                                        "pnl_r_sim":        "P&L (R)",
-                                        "entry_price_sim":  "Entry",
-                                        "stop_price_sim":   "Stop",
-                                        "target_price_sim": "Target",
-                                    })
-                                    _col_order = [c for c in ["Ticker", "Outcome", "P&L (R)", "Entry", "Stop", "Target"] if c in _sim_df.columns]
+                                    if _sim_failed:
+                                        _failed_lines = ", ".join(
+                                            f"**{f['ticker']}** ({f['reason']})" for f in _sim_failed
+                                        )
+                                        st.warning(
+                                            f"⚠️ Sim data could not be computed for "
+                                            f"{len(_sim_failed)} ticker(s) — excluded from the table below: "
+                                            f"{_failed_lines}",
+                                            icon=None,
+                                        )
+                                    if not _sim_rows:
+                                        st.info("No sim P&L data available for these trades.")
+                                    else:
+                                        _sim_df = pd.DataFrame(_sim_rows)
+                                        _sim_df = _sim_df.rename(columns={
+                                            "ticker":           "Ticker",
+                                            "sim_outcome":      "Outcome",
+                                            "pnl_r_sim":        "P&L (R)",
+                                            "entry_price_sim":  "Entry",
+                                            "stop_price_sim":   "Stop",
+                                            "target_price_sim": "Target",
+                                        })
+                                        _col_order = [c for c in ["Ticker", "Outcome", "P&L (R)", "Entry", "Stop", "Target"] if c in _sim_df.columns]
 
-                                    def _sim_row_color(row):
-                                        import math as _math
-                                        pnl = row.get("P&L (R)")
-                                        try:
-                                            pnl_f = float(pnl)
-                                            if _math.isnan(pnl_f):
+                                        def _sim_row_color(row):
+                                            import math as _math
+                                            pnl = row.get("P&L (R)")
+                                            try:
+                                                pnl_f = float(pnl)
+                                                if _math.isnan(pnl_f):
+                                                    pnl_f = None
+                                            except (TypeError, ValueError):
                                                 pnl_f = None
-                                        except (TypeError, ValueError):
-                                            pnl_f = None
-                                        if pnl_f is None or pnl_f == 0:
-                                            bg = "background-color: rgba(158,158,158,0.12)"
-                                            fg_key = "color: #9e9e9e; font-weight:600"
-                                        elif pnl_f > 0:
-                                            bg = "background-color: rgba(102,187,106,0.12)"
-                                            fg_key = "color: #66bb6a; font-weight:600"
-                                        else:
-                                            bg = "background-color: rgba(239,83,80,0.12)"
-                                            fg_key = "color: #ef5350; font-weight:600"
-                                        return [
-                                            fg_key if col in ("Outcome", "P&L (R)") else bg
-                                            for col in row.index
-                                        ]
+                                            if pnl_f is None or pnl_f == 0:
+                                                bg = "background-color: rgba(158,158,158,0.12)"
+                                                fg_key = "color: #9e9e9e; font-weight:600"
+                                            elif pnl_f > 0:
+                                                bg = "background-color: rgba(102,187,106,0.12)"
+                                                fg_key = "color: #66bb6a; font-weight:600"
+                                            else:
+                                                bg = "background-color: rgba(239,83,80,0.12)"
+                                                fg_key = "color: #ef5350; font-weight:600"
+                                            return [
+                                                fg_key if col in ("Outcome", "P&L (R)") else bg
+                                                for col in row.index
+                                            ]
 
-                                    st.dataframe(
-                                        _sim_df[_col_order].style
-                                            .format(
-                                                {
-                                                    "P&L (R)": lambda v: f"{v:+.2f}R" if pd.notna(v) else "—",
-                                                    "Entry":   lambda v: f"${v:.2f}" if pd.notna(v) else "—",
-                                                    "Stop":    lambda v: f"${v:.2f}" if pd.notna(v) else "—",
-                                                    "Target":  lambda v: f"${v:.2f}" if pd.notna(v) else "—",
-                                                    "Outcome": lambda v: v if v else "—",
-                                                }
-                                            )
-                                            .apply(_sim_row_color, axis=1),
-                                        use_container_width=True,
-                                        hide_index=True,
-                                    )
+                                        st.dataframe(
+                                            _sim_df[_col_order].style
+                                                .format(
+                                                    {
+                                                        "P&L (R)": lambda v: f"{v:+.2f}R" if pd.notna(v) else "—",
+                                                        "Entry":   lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                        "Stop":    lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                        "Target":  lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                        "Outcome": lambda v: v if v else "—",
+                                                    }
+                                                )
+                                                .apply(_sim_row_color, axis=1),
+                                            use_container_width=True,
+                                            hide_index=True,
+                                        )
 
                     _pt_preview = _pt_qualified or _pt_results
                     _pt_preview_df = pd.DataFrame(_pt_preview)[[
