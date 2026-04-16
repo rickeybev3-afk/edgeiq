@@ -7883,9 +7883,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if not _csv_sel_cols:
                                 st.warning("Select at least one column to enable the download.", icon="⚠️")
                             else:
-                                _tk_csv_bytes = _tk_drill_display[
+                                _tk_csv_export = _tk_drill_display[
                                     [c for c in _csv_sel_cols if c in _tk_drill_display.columns]
-                                ].to_csv(index=False).encode("utf-8")
+                                ].copy()
+                                _csv_round_1dp = {"Follow-Thru %"}
+                                _csv_round_2dp = {"Open Price", "IB High", "IB Low", "EOD Hold R", "Tiered Exit R"}
+                                for _ccol in _tk_csv_export.columns:
+                                    if _ccol in _csv_round_1dp:
+                                        _tk_csv_export[_ccol] = (
+                                            pd.to_numeric(_tk_csv_export[_ccol], errors="coerce")
+                                            .round(1)
+                                        )
+                                    elif _ccol in _csv_round_2dp:
+                                        _tk_csv_export[_ccol] = (
+                                            pd.to_numeric(_tk_csv_export[_ccol], errors="coerce")
+                                            .round(2)
+                                        )
+                                    elif _ccol == "TCS":
+                                        _tk_csv_export[_ccol] = (
+                                            pd.to_numeric(_tk_csv_export[_ccol], errors="coerce")
+                                            .astype("Int64")
+                                        )
+                                _tk_csv_bytes = _tk_csv_export.to_csv(index=False).encode("utf-8")
                                 st.download_button(
                                     label="⬇ Download CSV",
                                     data=_tk_csv_bytes,
