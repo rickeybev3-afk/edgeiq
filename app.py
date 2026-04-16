@@ -7023,10 +7023,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 unsafe_allow_html=True,
                             )
                         else:
-                            st.info(
-                                f"No TCS floor has {_MIN_TCS_TRADES} or more trades for this ticker — "
-                                "Best TCS cannot be reliably determined yet.",
-                                icon="⚠️",
+                            st.markdown(
+                                f'<div style="background:#3a2a0a;border-left:4px solid #f9a825;border-radius:8px;'
+                                f'padding:8px 14px;margin-bottom:10px;font-size:13px;color:#ffe082;">'
+                                f'⚠️ <b>Insufficient data for Best TCS</b> — no TCS floor has '
+                                f'{_MIN_TCS_TRADES}+ trades yet. Collect more data or broaden the replay date range.</div>',
+                                unsafe_allow_html=True,
                             )
 
                         _tk_chart_df = _tk_sw_df.copy()
