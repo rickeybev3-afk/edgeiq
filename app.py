@@ -12814,16 +12814,6 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     # Always show current weights
     _cur_weights = load_brain_weights(_AUTH_USER_ID)
     _w_default   = 1.0
-    _wk_labels   = {
-        "trend_bull":    "📈 Trend Bull",
-        "trend_bear":    "📉 Trend Bear",
-        "double_dist":   "🔁 Double Dist",
-        "non_trend":     "↔ Non Trend",
-        "normal":        "🔲 Normal",
-        "neutral":       "⚖ Neutral",
-        "ntrl_extreme":  "⚡ Neutral Extreme",
-        "nrml_variation":"〰 Normal Variation",
-    }
 
     # Build display table with delta if calibration was just run
     _bh_deltas_map = {}
@@ -12832,7 +12822,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             _bh_deltas_map[d["key"]] = d
 
     _bh_rows = []
-    for wk, label in _wk_labels.items():
+    for wk, label in WK_DISPLAY.items():
         cur = _cur_weights.get(wk, 1.0)
         row = {
             "Structure":    label,
