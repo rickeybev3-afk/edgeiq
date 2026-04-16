@@ -6928,55 +6928,55 @@ def compute_trade_sim_tiered(
     locked_r   = 0.0
     remaining  = 1.0  # fraction of position still open
 
-    try:
-        for _, bar in aft_df.iterrows():
-            bar_high = float(bar.get("high", 0) or 0)
-            bar_low  = float(bar.get("low",  0) or 0)
+    for _, bar in aft_df.iterrows():
+        try:
+            bar_high = float(bar.get("high") or 0)
+            bar_low  = float(bar.get("low")  or 0)
+        except (TypeError, ValueError):
+            continue  # skip malformed bar; don't abort the whole sim
 
-            if direction == "Bullish Break":
-                if not hit_1r:
-                    if bar_low <= stop_level:
-                        locked_r += remaining * (-1.0)
-                        remaining = 0.0
-                        break
-                    if bar_high >= target_1r:
-                        hit_1r     = True
-                        locked_r  += 0.50 * 1.0
-                        remaining -= 0.50
-                        stop_level = entry      # stop → breakeven
-                elif not hit_2r:
-                    if bar_low <= entry:        # breakeven stop hit
-                        locked_r += remaining * 0.0
-                        remaining = 0.0
-                        break
-                    if bar_high >= target_2r:
-                        hit_2r     = True
-                        locked_r  += 0.25 * 2.0
-                        remaining -= 0.25
-                # runner still open — keep scanning
+        if direction == "Bullish Break":
+            if not hit_1r:
+                if bar_low <= stop_level:
+                    locked_r += remaining * (-1.0)
+                    remaining = 0.0
+                    break
+                if bar_high >= target_1r:
+                    hit_1r     = True
+                    locked_r  += 0.50 * 1.0
+                    remaining -= 0.50
+                    stop_level = entry      # stop → breakeven
+            elif not hit_2r:
+                if bar_low <= entry:        # breakeven stop hit
+                    locked_r += remaining * 0.0
+                    remaining = 0.0
+                    break
+                if bar_high >= target_2r:
+                    hit_2r     = True
+                    locked_r  += 0.25 * 2.0
+                    remaining -= 0.25
+            # else: runner still open — keep scanning
 
-            else:  # Bearish Break
-                if not hit_1r:
-                    if bar_high >= stop_level:
-                        locked_r += remaining * (-1.0)
-                        remaining = 0.0
-                        break
-                    if bar_low <= target_1r:
-                        hit_1r     = True
-                        locked_r  += 0.50 * 1.0
-                        remaining -= 0.50
-                        stop_level = entry
-                elif not hit_2r:
-                    if bar_high >= entry:       # breakeven stop hit
-                        locked_r += remaining * 0.0
-                        remaining = 0.0
-                        break
-                    if bar_low <= target_2r:
-                        hit_2r     = True
-                        locked_r  += 0.25 * 2.0
-                        remaining -= 0.25
-    except Exception:
-        pass
+        else:  # Bearish Break
+            if not hit_1r:
+                if bar_high >= stop_level:
+                    locked_r += remaining * (-1.0)
+                    remaining = 0.0
+                    break
+                if bar_low <= target_1r:
+                    hit_1r     = True
+                    locked_r  += 0.50 * 1.0
+                    remaining -= 0.50
+                    stop_level = entry
+            elif not hit_2r:
+                if bar_high >= entry:       # breakeven stop hit
+                    locked_r += remaining * 0.0
+                    remaining = 0.0
+                    break
+                if bar_low <= target_2r:
+                    hit_2r     = True
+                    locked_r  += 0.25 * 2.0
+                    remaining -= 0.25
 
     # Exit remaining position at EOD close
     if remaining > 0:

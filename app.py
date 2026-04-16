@@ -9764,6 +9764,12 @@ def render_performance_tab():
         "P&L measured in R multiples at EOD close."
     )
 
+    # Safe defaults so P1–P4 block below never hits NameError if no sim data
+    _sim_df    = pd.DataFrame()
+    _s_total   = 0
+    _s_total_r = 0.0
+    _s_wr      = 0.0
+
     _sim_has_data = (
         not _pt_df.empty
         and "pnl_r_sim" in _pt_df.columns
@@ -9810,35 +9816,46 @@ ALTER TABLE backtest_sim_runs
             _sim_df["scan_type"] = "morning"
         _sim_df["scan_type"] = _sim_df["scan_type"].fillna("morning")
 
-        # ── Three-scenario tabs ──────────────────────────────────────────────
         import altair as _alt
-        _scen_tabs = st.tabs(["📈 Best Possible (MFE)", "📅 Held to Close (EOD)", "🪜 50/25/25 Ladder"])
 
         _scen_defs = [
-            ("pnl_r_sim",    "#4fc3f7", "sim_outcome",
-             "Max intraday excursion from entry — theoretical ceiling, assumes perfect exit timing."),
-            ("eod_pnl_r",    "#81c784", "sim_outcome",
-             "Full position held to EOD close. No partial exits — raw hold-to-close P&L."),
-            ("tiered_pnl_r", "#ffb74d", "sim_outcome",
-             "50% off at 1R → stop to breakeven → 25% at 2R → 25% runner to close. "
-             "Populates as new batch backtests run (requires intraday bars)."),
+            ("pnl_r_sim",    "#4fc3f7", "📈 Best Possible (MFE)",
+             "Max intraday excursion — theoretical ceiling, assumes perfect exit timing."),
+            ("eod_pnl_r",    "#81c784", "📅 Held to Close (EOD)",
+             "Full position held to EOD close — no partial exits, raw hold-to-close P&L."),
+            ("tiered_pnl_r", "#ffb74d", "🪜 50 / 25 / 25 Ladder",
+             "50% off at 1R → stop to BE → 25% at 2R → 25% runner to close. "
+             "Populates as new batch backtests run (bar replay required)."),
         ]
 
-        for _stab, (_scol, _sclr, _sout_col, _sdesc) in zip(_scen_tabs, _scen_defs):
-            with _stab:
-                st.caption(_sdesc)
+        # ── Row 1 — Three scenario stat cards side by side ──────────────────
+        _scen_stat_cols = st.columns(3)
+        _scen_data_cache = {}   # store computed per-scenario data for overlay chart below
+
+        for _ci, (_scol, _sclr, _slabel, _sdesc) in enumerate(_scen_defs):
+            with _scen_stat_cols[_ci]:
+                st.markdown(
+                    f'<div style="border-left:3px solid {_sclr};padding-left:8px;margin-bottom:6px;">'
+                    f'<span style="font-size:13px;font-weight:700;color:{_sclr};">{_slabel}</span><br>'
+                    f'<span style="font-size:11px;color:#78909c;">{_sdesc}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
                 _has_scen = _scol in _sim_df.columns and _sim_df[_scol].notna().any()
                 if not _has_scen:
-                    if _scol == "eod_pnl_r":
-                        st.info("EOD Hold data not yet available. Run the SQL migration and `python run_sim_backfill.py` to backfill from stored close prices.")
-                    elif _scol == "tiered_pnl_r":
-                        st.info("Tiered ladder data not yet available. This populates automatically as the batch backtest runs on new days (requires intraday bar replay — cannot be backfilled from stored data).")
-                    else:
-                        st.info("No simulation data yet.")
+                    _missing_hint = {
+                        "eod_pnl_r":    "Run the SQL migration then `python run_sim_backfill.py`.",
+                        "tiered_pnl_r": "Populates automatically as the batch backtest runs on new days.",
+                    }.get(_scol, "Run the SQL migration and backfill script.")
+                    st.markdown(
+                        f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+                        f'<div style="font-size:12px;color:#546e7a;">No data yet</div>'
+                        f'<div style="font-size:11px;color:#455a64;margin-top:4px;">{_missing_hint}</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
                     continue
 
-                _sc_vals   = _sim_df[_scol].dropna().astype(float)
-                _sc_df     = _sim_df[_sim_df[_scol].notna()].copy()
+                _sc_df  = _sim_df[_sim_df[_scol].notna()].copy()
                 _sc_df[_scol] = _sc_df[_scol].astype(float)
                 _sc_wins   = _sc_df[_sc_df[_scol] > 0]
                 _sc_losses = _sc_df[_sc_df[_scol] <= 0]
@@ -9846,170 +9863,170 @@ ALTER TABLE backtest_sim_runs
                 _sc_wr     = len(_sc_wins) / _sc_total * 100 if _sc_total else 0.0
                 _sc_avg_w  = _sc_wins[_scol].mean()   if len(_sc_wins)   else 0.0
                 _sc_avg_l  = _sc_losses[_scol].mean() if len(_sc_losses) else 0.0
-                _sc_exp    = _sc_vals.mean() if _sc_total else 0.0
-                _sc_total_r = _sc_vals.sum()
+                _sc_exp    = _sc_df[_scol].mean() if _sc_total else 0.0
+                _sc_total_r = _sc_df[_scol].sum()
 
                 _sc_wr_c  = "#2e7d32" if _sc_wr >= 60 else ("#ef6c00" if _sc_wr >= 50 else "#c62828")
                 _sc_ex_c  = "#2e7d32" if _sc_exp > 0 else "#c62828"
                 _sc_tr_c  = "#2e7d32" if _sc_total_r > 0 else "#c62828"
 
-                _cc1, _cc2, _cc3, _cc4, _cc5 = st.columns(5)
-                with _cc1:
-                    st.markdown(
-                        f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                        f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Win Rate</div>'
-                        f'<div style="font-size:26px;font-weight:700;color:{_sc_wr_c};">{_sc_wr:.1f}%</div>'
-                        f'<div style="font-size:14px;color:#cfd8dc;">{len(_sc_wins)}W / {len(_sc_losses)}L</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
-                with _cc2:
-                    st.markdown(
-                        f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                        f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Avg Winner</div>'
-                        f'<div style="font-size:26px;font-weight:700;color:#2e7d32;">+{_sc_avg_w:.2f}R</div>'
-                        f'<div style="font-size:14px;color:#cfd8dc;">{len(_sc_wins)} trades</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
-                with _cc3:
-                    st.markdown(
-                        f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                        f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Avg Loser</div>'
-                        f'<div style="font-size:26px;font-weight:700;color:#c62828;">{_sc_avg_l:.2f}R</div>'
-                        f'<div style="font-size:14px;color:#cfd8dc;">{len(_sc_losses)} trades</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
-                with _cc4:
-                    st.markdown(
-                        f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                        f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Expectancy</div>'
-                        f'<div style="font-size:26px;font-weight:700;color:{_sc_ex_c};">{"+" if _sc_exp >= 0 else ""}{_sc_exp:.3f}R</div>'
-                        f'<div style="font-size:14px;color:#cfd8dc;">per trade</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
-                with _cc5:
-                    st.markdown(
-                        f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                        f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">Total R</div>'
-                        f'<div style="font-size:26px;font-weight:700;color:{_sc_tr_c};">{"+" if _sc_total_r >= 0 else ""}{_sc_total_r:.1f}R</div>'
-                        f'<div style="font-size:14px;color:#cfd8dc;">{_sc_total} trades</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
+                st.markdown(
+                    f'<div style="background:#1e2a3a;border-radius:8px;padding:12px 10px;">'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;text-transform:uppercase;">Win Rate</span>'
+                    f'  <span style="font-size:18px;font-weight:700;color:{_sc_wr_c};">{_sc_wr:.1f}%</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Avg Winner</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:#2e7d32;">+{_sc_avg_w:.2f}R</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Avg Loser</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:#c62828;">{_sc_avg_l:.2f}R</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Expectancy</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:{_sc_ex_c};">{"+" if _sc_exp >= 0 else ""}{_sc_exp:.3f}R</span>'
+                    f'</div>'
+                    f'<div style="display:flex;justify-content:space-between;">'
+                    f'  <span style="font-size:10px;color:#90a4ae;">Total R</span>'
+                    f'  <span style="font-size:13px;font-weight:600;color:{_sc_tr_c};">{"+" if _sc_total_r >= 0 else ""}{_sc_total_r:.1f}R</span>'
+                    f'</div>'
+                    f'<div style="font-size:10px;color:#546e7a;text-align:right;margin-top:4px;">{_sc_total} trades · {len(_sc_wins)}W / {len(_sc_losses)}L</div>'
+                    f'</div>', unsafe_allow_html=True
+                )
+                _scen_data_cache[_scol] = (_sc_df, _sclr, _slabel.split(" ", 1)[-1].strip())
 
-                st.markdown("<br>", unsafe_allow_html=True)
-
-                # Equity curve + scan-type comparison
-                _eq2_col, _cmp2_col = st.columns([3, 2])
-                with _eq2_col:
-                    st.markdown(
-                        '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
-                        'text-transform:uppercase;margin-bottom:6px;">Cumulative R Equity Curve</div>',
-                        unsafe_allow_html=True,
+        # ── Row 2 — Combined overlay equity curve ────────────────────────────
+        if _scen_data_cache:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                'text-transform:uppercase;margin-bottom:6px;">Cumulative R Equity Curves — All Scenarios</div>',
+                unsafe_allow_html=True,
+            )
+            _overlay_frames = []
+            for _oc, (_odf, _oclr, _olabel) in _scen_data_cache.items():
+                _odf2 = _odf.sort_values("trade_date", ascending=True).copy()
+                _odf2["cum_r"]   = _odf2[_oc].cumsum()
+                _odf2["trade_date"] = pd.to_datetime(_odf2["trade_date"])
+                _odf2["Scenario"] = _olabel
+                _overlay_frames.append(_odf2[["trade_date", "cum_r", "Scenario"]].copy())
+            if _overlay_frames:
+                _ov_df = pd.concat(_overlay_frames, ignore_index=True)
+                _ov_clr_domain = [_scen_data_cache[k][2] for k in _scen_data_cache]
+                _ov_clr_range  = [_scen_data_cache[k][1] for k in _scen_data_cache]
+                _ov_chart = (
+                    _alt.Chart(_ov_df)
+                    .mark_line(point=True, strokeWidth=2)
+                    .encode(
+                        x=_alt.X("trade_date:T", title="Date", axis=_alt.Axis(format="%b %d")),
+                        y=_alt.Y("cum_r:Q", title="Cumulative R", scale=_alt.Scale(zero=False)),
+                        color=_alt.Color(
+                            "Scenario:N",
+                            scale=_alt.Scale(domain=_ov_clr_domain, range=_ov_clr_range),
+                            legend=_alt.Legend(orient="top", labelColor="#cfd8dc", titleColor="#cfd8dc"),
+                        ),
+                        tooltip=[
+                            _alt.Tooltip("trade_date:T", title="Date"),
+                            _alt.Tooltip("Scenario:N",   title="Scenario"),
+                            _alt.Tooltip("cum_r:Q",      title="Cum R", format=".2f"),
+                        ],
                     )
-                    _eq_df2 = _sc_df.sort_values("trade_date", ascending=True).copy()
-                    _eq_df2["cum_r"] = _eq_df2[_scol].cumsum()
-                    _eq_df2["trade_date"] = pd.to_datetime(_eq_df2["trade_date"])
-                    _tt_cols = [
-                        _alt.Tooltip("trade_date:T", title="Date"),
-                        _alt.Tooltip("cum_r:Q",      title="Cum R",   format=".2f"),
-                        _alt.Tooltip(f"{_scol}:Q",   title="Trade R", format=".2f"),
-                    ]
-                    if "ticker" in _eq_df2.columns:
-                        _tt_cols.append(_alt.Tooltip("ticker:N", title="Ticker"))
-                    _eq_chart2 = (
-                        _alt.Chart(_eq_df2)
-                        .mark_line(point=True, strokeWidth=2, color=_sclr)
+                    .properties(height=240)
+                    .configure_view(fill="#141e2e", stroke=None)
+                    .configure_axis(labelColor="#90a4ae", titleColor="#90a4ae", gridColor="#263248")
+                )
+                st.altair_chart(_ov_chart, use_container_width=True)
+
+        # ── Row 3 — Structure vs Sim comparison + Scan-type breakdown (MFE) ─
+        if "pnl_r_sim" in _scen_data_cache:
+            _mfe_df, _, _ = _scen_data_cache["pnl_r_sim"]
+            _mfe_wr = len(_mfe_df[_mfe_df["pnl_r_sim"] > 0]) / len(_mfe_df) * 100 if len(_mfe_df) else 0.0
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            _cmp_col, _scan_col = st.columns([2, 3])
+
+            with _cmp_col:
+                st.markdown(
+                    '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-bottom:6px;">Structure Prediction vs Sim Win Rate (MFE)</div>',
+                    unsafe_allow_html=True,
+                )
+                _cmp_rows = [{"Category": "Overall", "Structure": round(_pt_rate, 1), "Sim": round(_mfe_wr, 1)}]
+                for _st_key in ["morning", "intraday", "eod"]:
+                    _st_mask = _pt_df["scan_type"].fillna("morning") == _st_key if "scan_type" in _pt_df.columns else pd.Series(False, index=_pt_df.index)
+                    _st_wl   = _pt_df.loc[_st_mask, "win_loss"].dropna() if not _pt_df.empty else pd.Series()
+                    _st_sw   = int((_st_wl.isin(["Win", "W"])).sum())
+                    _st_tot  = len(_st_wl[_st_wl.isin(["Win", "W", "Loss", "L"])])
+                    _st_swr  = _st_sw / _st_tot * 100 if _st_tot else 0
+                    _st_scn  = _mfe_df[_mfe_df["scan_type"] == _st_key] if "scan_type" in _mfe_df.columns else pd.DataFrame()
+                    _st_simwr = len(_st_scn[_st_scn["pnl_r_sim"] > 0]) / len(_st_scn) * 100 if len(_st_scn) else 0
+                    if _st_tot > 0 or len(_st_scn) > 0:
+                        _cmp_rows.append({"Category": _st_key.capitalize(), "Structure": round(_st_swr, 1), "Sim": round(_st_simwr, 1)})
+                _cmp_df = pd.DataFrame(_cmp_rows)
+                if not _cmp_df.empty:
+                    _cmp_melt = _cmp_df.melt("Category", var_name="Type", value_name="Win Rate %")
+                    _cmp_bar = (
+                        _alt.Chart(_cmp_melt)
+                        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
                         .encode(
-                            x=_alt.X("trade_date:T", title="Date", axis=_alt.Axis(format="%b %d")),
-                            y=_alt.Y("cum_r:Q", title="Cumulative R", scale=_alt.Scale(zero=False)),
-                            tooltip=_tt_cols,
+                            x=_alt.X("Category:N", title=""),
+                            y=_alt.Y("Win Rate %:Q", scale=_alt.Scale(domain=[0, 100])),
+                            color=_alt.Color(
+                                "Type:N",
+                                scale=_alt.Scale(domain=["Structure", "Sim"], range=["#4fc3f7", "#81c784"]),
+                                legend=_alt.Legend(orient="top", labelColor="#cfd8dc", titleColor="#cfd8dc"),
+                            ),
+                            xOffset="Type:N",
+                            tooltip=[
+                                _alt.Tooltip("Category:N",   title="Scan"),
+                                _alt.Tooltip("Type:N",       title="Type"),
+                                _alt.Tooltip("Win Rate %:Q", title="Win Rate", format=".1f"),
+                            ],
                         )
                         .properties(height=220)
                         .configure_view(fill="#141e2e", stroke=None)
                         .configure_axis(labelColor="#90a4ae", titleColor="#90a4ae", gridColor="#263248")
                     )
-                    st.altair_chart(_eq_chart2, use_container_width=True)
+                    st.altair_chart(_cmp_bar, use_container_width=True)
 
-                with _cmp2_col:
-                    st.markdown(
-                        '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
-                        'text-transform:uppercase;margin-bottom:6px;">Structure Pred vs Sim Win Rate</div>',
-                        unsafe_allow_html=True,
-                    )
-                    _cmp_rows2 = [{"Category": "Overall", "Structure": round(_pt_rate, 1), "Sim": round(_sc_wr, 1)}]
-                    for _st_key in ["morning", "intraday", "eod"]:
-                        _st_mask2 = _pt_df["scan_type"].fillna("morning") == _st_key if "scan_type" in _pt_df.columns else pd.Series(False, index=_pt_df.index)
-                        _st_wl2   = _pt_df.loc[_st_mask2, "win_loss"].dropna() if not _pt_df.empty else pd.Series()
-                        _st_sw    = int((_st_wl2.isin(["Win","W"])).sum())
-                        _st_stot  = len(_st_wl2[_st_wl2.isin(["Win","W","Loss","L"])])
-                        _st_swr2  = _st_sw / _st_stot * 100 if _st_stot else 0
-                        _st_scn2  = _sc_df[_sc_df["scan_type"] == _st_key] if "scan_type" in _sc_df.columns else pd.DataFrame()
-                        _st_simwr2 = len(_st_scn2[_st_scn2[_scol] > 0]) / len(_st_scn2) * 100 if len(_st_scn2) else 0
-                        if _st_stot > 0 or len(_st_scn2) > 0:
-                            _cmp_rows2.append({"Category": _st_key.capitalize(), "Structure": round(_st_swr2, 1), "Sim": round(_st_simwr2, 1)})
-                    _cmp_df2 = pd.DataFrame(_cmp_rows2)
-                    if not _cmp_df2.empty:
-                        _cmp_melt2 = _cmp_df2.melt("Category", var_name="Type", value_name="Win Rate %")
-                        _cmp_bar2 = (
-                            _alt.Chart(_cmp_melt2)
-                            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
-                            .encode(
-                                x=_alt.X("Category:N", title=""),
-                                y=_alt.Y("Win Rate %:Q", scale=_alt.Scale(domain=[0, 100])),
-                                color=_alt.Color(
-                                    "Type:N",
-                                    scale=_alt.Scale(domain=["Structure", "Sim"], range=["#4fc3f7", _sclr]),
-                                    legend=_alt.Legend(orient="top", labelColor="#cfd8dc", titleColor="#cfd8dc"),
-                                ),
-                                xOffset="Type:N",
-                                tooltip=[
-                                    _alt.Tooltip("Category:N",   title="Scan"),
-                                    _alt.Tooltip("Type:N",       title="Type"),
-                                    _alt.Tooltip("Win Rate %:Q", title="Win Rate", format=".1f"),
-                                ],
-                            )
-                            .properties(height=220)
-                            .configure_view(fill="#141e2e", stroke=None)
-                            .configure_axis(labelColor="#90a4ae", titleColor="#90a4ae", gridColor="#263248")
-                        )
-                        st.altair_chart(_cmp_bar2, use_container_width=True)
-
-                # Per-scan-type breakdown for this scenario
-                st.markdown("<br>", unsafe_allow_html=True)
+            with _scan_col:
                 st.markdown(
                     '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
-                    'text-transform:uppercase;margin-bottom:8px;">Breakdown by Scan Type</div>',
+                    'text-transform:uppercase;margin-bottom:6px;">Breakdown by Scan Type (MFE)</div>',
                     unsafe_allow_html=True,
                 )
-                _scan_cols2 = st.columns(3)
-                for _idx2, _stk2 in enumerate(["morning", "intraday", "eod"]):
-                    _stk2_df = _sc_df[_sc_df["scan_type"] == _stk2] if "scan_type" in _sc_df.columns else pd.DataFrame()
-                    with _scan_cols2[_idx2]:
-                        if _stk2_df.empty:
+                _scan_cards = st.columns(3)
+                for _idx3, _stk3 in enumerate(["morning", "intraday", "eod"]):
+                    _stk3_df = _mfe_df[_mfe_df["scan_type"] == _stk3] if "scan_type" in _mfe_df.columns else pd.DataFrame()
+                    with _scan_cards[_idx3]:
+                        if _stk3_df.empty:
                             st.markdown(
                                 f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
-                                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_stk2.upper()}</div>'
+                                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_stk3.upper()}</div>'
                                 f'<div style="font-size:13px;color:#546e7a;margin-top:6px;">No data</div>'
                                 f'</div>', unsafe_allow_html=True
                             )
                         else:
-                            _sk2_w   = len(_stk2_df[_stk2_df[_scol] > 0])
-                            _sk2_l   = len(_stk2_df[_stk2_df[_scol] <= 0])
-                            _sk2_wr  = _sk2_w / len(_stk2_df) * 100 if len(_stk2_df) else 0
-                            _sk2_exp = _stk2_df[_scol].mean() if not _stk2_df.empty else 0
-                            _sk2_tot = _stk2_df[_scol].sum()
-                            _sk2_c   = "#2e7d32" if _sk2_wr >= 55 else ("#ef6c00" if _sk2_wr >= 45 else "#c62828")
+                            _sk3_w   = len(_stk3_df[_stk3_df["pnl_r_sim"] > 0])
+                            _sk3_l   = len(_stk3_df[_stk3_df["pnl_r_sim"] <= 0])
+                            _sk3_wr  = _sk3_w / len(_stk3_df) * 100 if len(_stk3_df) else 0
+                            _sk3_exp = _stk3_df["pnl_r_sim"].mean() if not _stk3_df.empty else 0
+                            _sk3_tot = _stk3_df["pnl_r_sim"].sum()
+                            _sk3_c   = "#2e7d32" if _sk3_wr >= 55 else ("#ef6c00" if _sk3_wr >= 45 else "#c62828")
                             st.markdown(
                                 f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
-                                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_stk2.upper()}</div>'
-                                f'<div style="font-size:22px;font-weight:700;color:{_sk2_c};margin-top:4px;">{_sk2_wr:.1f}%</div>'
-                                f'<div style="font-size:12px;color:#cfd8dc;">{_sk2_w}W / {_sk2_l}L  ·  '
-                                f'Exp: {"+" if _sk2_exp >= 0 else ""}{_sk2_exp:.3f}R</div>'
-                                f'<div style="font-size:12px;color:#90a4ae;">Total: {"+" if _sk2_tot >= 0 else ""}{_sk2_tot:.1f}R '
-                                f'({len(_stk2_df)} trades)</div>'
+                                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_stk3.upper()}</div>'
+                                f'<div style="font-size:22px;font-weight:700;color:{_sk3_c};margin-top:4px;">{_sk3_wr:.1f}%</div>'
+                                f'<div style="font-size:12px;color:#cfd8dc;">{_sk3_w}W / {_sk3_l}L  ·  '
+                                f'Exp: {"+" if _sk3_exp >= 0 else ""}{_sk3_exp:.3f}R</div>'
+                                f'<div style="font-size:12px;color:#90a4ae;">Total: {"+" if _sk3_tot >= 0 else ""}{_sk3_tot:.1f}R '
+                                f'({len(_stk3_df)} trades)</div>'
                                 f'</div>', unsafe_allow_html=True
                             )
 
-        # Keep variables pointing to MFE column for P1-P4 tier breakdown below
+        # Update summary vars for P1-P4 tier breakdown below (use MFE as primary)
         _s_total   = len(_sim_df)
         _s_total_r = _sim_df["pnl_r_sim"].sum() if _s_total else 0.0
         _s_wr      = len(_sim_df[_sim_df["pnl_r_sim"] > 0]) / _s_total * 100 if _s_total else 0.0
