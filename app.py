@@ -5892,15 +5892,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _ibh <= _ibl or _ibl <= 0:
                                 continue
 
-                            _actual = str(_rp_r.get("actual_outcome") or "")
-                            if "bullish" in _actual.lower():
+                            # Use PREDICTED direction for entry — not actual_outcome.
+                            # actual_outcome only has "bullish/bearish" on correct predictions
+                            # which was silently excluding all losses → fake 100% WR.
+                            _pred_lower = str(_rp_r.get("predicted") or "").lower()
+                            if any(x in _pred_lower for x in ["bull", "trend_bull", "trend bull"]):
                                 _entry = _ibh
                                 _stop  = _ibl
-                            elif "bearish" in _actual.lower():
+                                _dir   = 1   # long: profitable when ft > 0
+                            elif any(x in _pred_lower for x in ["bear", "trend_bear", "trend bear"]):
                                 _entry = _ibl
                                 _stop  = _ibh
+                                _dir   = -1  # short: profitable when ft < 0
                             else:
-                                continue
+                                continue  # neutral/non-directional — skip
 
                             _stop_dist = abs(_entry - _stop)
                             if _stop_dist < 0.01:
@@ -5915,9 +5920,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _eff_pos = _rp_pos_size * _compound_factor
                                 else:
                                     _eff_pos = _rp_pos_size
-                                _shares    = _eff_pos / max(_entry, 0.01)
-                                _ft_abs    = abs(_ft)
-                                _trade_pnl = _eff_pos * (_ft_abs / 100.0) * (1 if _wl == "Win" else -1)
+                                _shares = _eff_pos / max(_entry, 0.01)
+                                # Directed P&L: positive = price moved in predicted direction
+                                # Cap at ±50% per trade to prevent explosive compounding
+                                # (small caps can show 200%+ moves that aren't realistic entries)
+                                _directed_ft = _ft * _dir
+                                _ft_sim      = max(-50.0, min(50.0, _directed_ft))
+                                _trade_pnl   = _eff_pos * (_ft_sim / 100.0)
                             else:
                                 _shares = _fixed_risk_amt / _stop_dist
                                 if _wl == "Win":
@@ -5942,11 +5951,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Ticker":    _tkr,
                                 "TCS":       int(_tcs),
                                 "Structure": _pred,
-                                "Direction": "Long" if "bullish" in _actual.lower() else "Short",
+                                "Direction": "Long" if _dir == 1 else "Short",
                                 "Entry":     round(_entry, 2),
                                 "Stop":      round(_stop, 2),
                                 "Shares":    int(_shares),
-                                "W/L":       _wl,
+                                "W/L":       "Win" if _trade_pnl > 0 else "Loss",
                                 "Move %":    round(_ft, 2),
                                 "P&L ($)":   round(_trade_pnl, 2),
                                 "Equity":    round(_rp_equity_cur, 2),
