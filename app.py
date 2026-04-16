@@ -6719,7 +6719,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Expand a ticker to see the full profit curve."
                 )
                 import altair as _alt_tk
-                for _tk_name in sorted(_tkr_sweep_data.keys()):
+
+                def _tk_sort_key(_name):
+                    _rows = _tkr_sweep_data[_name]
+                    _df = _pd_bt.DataFrame(_rows)
+                    _suff = _df[_df["Sufficient"] == "✓"]
+                    if _suff.empty:
+                        return (1, 0, 0, _name)
+                    _best_pnl = _suff["Net P&L ($)"].max()
+                    _best_wr = _suff[_suff["Net P&L ($)"] == _best_pnl]["Win Rate"].iloc[0]
+                    return (0, -_best_pnl, -_best_wr, _name)
+
+                for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
                     # only consider floors with sufficient trades for the highlighted best
