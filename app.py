@@ -7234,6 +7234,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 ),
                             },
                         )
+                        st.download_button(
+                            label="⬇️ Download Sweep Summary CSV",
+                            data=_tk_sw_df.to_csv(index=False),
+                            file_name=f"{_tk_name}_sweep_summary.csv",
+                            mime="text/csv",
+                            key=f"_dl_sweep_{_tk_name}",
+                        )
 
                         # ── Drill-down: trades at a selected TCS cutoff ──────────
                         st.markdown(
