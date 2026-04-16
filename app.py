@@ -3835,6 +3835,16 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["min_tcs_trades"] = int(_prefs["min_tcs_trades"])
         except (ValueError, TypeError):
             pass
+    if "rp_min_tcs_slider" in _prefs:
+        try:
+            st.session_state["rp_min_tcs_slider"] = int(_prefs["rp_min_tcs_slider"])
+        except (ValueError, TypeError):
+            pass
+    if "pt_min_tcs" in _prefs:
+        try:
+            st.session_state["pt_min_tcs"] = int(_prefs["pt_min_tcs"])
+        except (ValueError, TypeError):
+            pass
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
@@ -5578,7 +5588,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
         if (st.session_state.get("_rp_prev_start_date") != _rp_cur_start or
                 st.session_state.get("_rp_prev_end_date") != _rp_cur_end):
             st.session_state.pop("rp_best_tcs_source", None)
-            st.session_state["rp_min_tcs_slider"] = 0
+            # Only reset the TCS slider on actual user-driven date changes, not on the
+            # very first render of a new session (when _rp_prev_start_date is absent).
+            # Skipping the reset on first render lets the prefs-restored value survive.
+            if "_rp_prev_start_date" in st.session_state:
+                st.session_state["rp_min_tcs_slider"] = 0
             for _k in list(st.session_state.keys()):
                 if _k.startswith("_drill_tcs_persist_"):
                     del st.session_state[_k]
@@ -5651,6 +5665,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f"📌 Using {_rp_best_tcs_src['ticker']}'s Best TCS"
                         f" ({_rp_best_tcs_src['floor']})"
                     )
+                # Persist rp_min_tcs_slider to user prefs when it changes
+                if _AUTH_USER_ID:
+                    _rp_cached = st.session_state.get("_cached_prefs", {})
+                    if _rp_cached.get("rp_min_tcs_slider") != _rp_min_tcs:
+                        _rp_new_prefs = {**_rp_cached, "rp_min_tcs_slider": _rp_min_tcs}
+                        save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
+                        st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_col3:
             _rp_min_ft = st.slider(
                 "Min Follow-Through %", min_value=0.0, max_value=10.0,
@@ -11904,6 +11925,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             key="pt_min_tcs",
             help="Only setups with TCS ≥ this value get logged. 50 is the recommended minimum.",
         )
+        # Persist pt_min_tcs to user prefs when it changes
+        if _AUTH_USER_ID:
+            _pt_cached = st.session_state.get("_cached_prefs", {})
+            if _pt_cached.get("pt_min_tcs") != _pt_min_tcs:
+                _pt_new_prefs = {**_pt_cached, "pt_min_tcs": _pt_min_tcs}
+                save_user_prefs(_AUTH_USER_ID, _pt_new_prefs)
+                st.session_state["_cached_prefs"] = _pt_new_prefs
 
     _pt_price_range = st.slider(
         "Price Range ($)",
