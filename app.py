@@ -10861,6 +10861,50 @@ ALTER TABLE backtest_sim_runs
                 )
                 st.altair_chart(_bov_chart, use_container_width=True)
 
+            # ── Row 3 — Scan-type breakdown (MFE) ───────────────────────────
+            if "pnl_r_sim" in _bts_cache:
+                _bts_mfe_df, _, _ = _bts_cache["pnl_r_sim"]
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-bottom:6px;">Breakdown by Scan Type (MFE)</div>',
+                    unsafe_allow_html=True,
+                )
+                _bts_scan_cols = st.columns(2)
+                for _bts_idx, _bts_stk in enumerate(["morning", "intraday"]):
+                    _bts_stk_df = (
+                        _bts_mfe_df[_bts_mfe_df["scan_type"] == _bts_stk]
+                        if "scan_type" in _bts_mfe_df.columns
+                        else pd.DataFrame()
+                    )
+                    with _bts_scan_cols[_bts_idx]:
+                        if _bts_stk_df.empty:
+                            st.markdown(
+                                f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_bts_stk.upper()}</div>'
+                                f'<div style="font-size:13px;color:#546e7a;margin-top:6px;">No data</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            _bts_sk_w   = len(_bts_stk_df[_bts_stk_df["pnl_r_sim"] > 0])
+                            _bts_sk_l   = len(_bts_stk_df[_bts_stk_df["pnl_r_sim"] <= 0])
+                            _bts_sk_wr  = _bts_sk_w / len(_bts_stk_df) * 100 if len(_bts_stk_df) else 0
+                            _bts_sk_exp = _bts_stk_df["pnl_r_sim"].mean() if not _bts_stk_df.empty else 0
+                            _bts_sk_tot = _bts_stk_df["pnl_r_sim"].sum()
+                            _bts_sk_c   = "#2e7d32" if _bts_sk_wr >= 55 else ("#ef6c00" if _bts_sk_wr >= 45 else "#c62828")
+                            st.markdown(
+                                f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_bts_stk.upper()}</div>'
+                                f'<div style="font-size:22px;font-weight:700;color:{_bts_sk_c};margin-top:4px;">{_bts_sk_wr:.1f}%</div>'
+                                f'<div style="font-size:12px;color:#cfd8dc;">{_bts_sk_w}W / {_bts_sk_l}L  ·  '
+                                f'Exp: {"+" if _bts_sk_exp >= 0 else ""}{_bts_sk_exp:.3f}R</div>'
+                                f'<div style="font-size:12px;color:#90a4ae;">Total: {"+" if _bts_sk_tot >= 0 else ""}{_bts_sk_tot:.1f}R '
+                                f'({len(_bts_stk_df)} trades)</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
