@@ -594,6 +594,24 @@ def _alert_setup(r: dict, trade_date: date):
     return sent
 
 
+def _build_threshold_legend(tcs_thresholds: dict, tcs_threshold: int) -> str:
+    """Return the per-structure threshold legend line (or empty string if no thresholds).
+
+    Sorted by effective required TCS ascending so the tightest bar appears first.
+    Uses max(calibrated, regime_floor) so the legend matches the actual qualification bar.
+    """
+    if not tcs_thresholds:
+        return ""
+    _parts = []
+    for _wk, _cal_floor in sorted(tcs_thresholds.items(), key=lambda x: x[1]):
+        _label = _WEIGHT_KEY_DISPLAY.get(_wk, _wk)
+        _effective_floor = max(_cal_floor, tcs_threshold)
+        _parts.append(f"{_label} requires TCS {_effective_floor}")
+    if not _parts:
+        return ""
+    return "\n📐 " + " · ".join(_parts)
+
+
 def _alert_morning_summary(
     qualified: list, total_scanned: int, trade_date: date,
     effective_tcs: int = None, tcs_thresholds: dict = None,
@@ -614,17 +632,7 @@ def _alert_morning_summary(
     except Exception:
         pass
 
-    # Build per-structure threshold legend (sorted by effective required TCS ascending)
-    # Uses max(calibrated, regime_floor) so the legend matches actual qualification bar.
-    _threshold_legend = ""
-    if tcs_thresholds:
-        _parts = []
-        for _wk, _cal_floor in sorted(tcs_thresholds.items(), key=lambda x: x[1]):
-            _label = _WEIGHT_KEY_DISPLAY.get(_wk, _wk)
-            _effective_floor = max(_cal_floor, tcs_threshold)
-            _parts.append(f"{_label} requires TCS {_effective_floor}")
-        if _parts:
-            _threshold_legend = "\n📐 " + " · ".join(_parts)
+    _threshold_legend = _build_threshold_legend(tcs_thresholds, tcs_threshold)
 
     if not qualified:
         tg_send(
@@ -1048,10 +1056,12 @@ def intraday_scan():
     if qualified:
         # Sort by tier priority: P1 (Intraday 70+) first → P2 (Intraday 50-69).
         qualified = sorted(qualified, key=_tier_priority_key)
+        _threshold_legend = _build_threshold_legend(_tcs_thresholds, effective_min_tcs)
         tg_send(
             f"🔄 <b>Intraday Scan — {today} (2 PM)</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"<b>{len(qualified)} setup(s)</b> still active/developing:"
+            + _threshold_legend
         )
         for r in qualified:
             r["_struct_tcs_floor"] = _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
