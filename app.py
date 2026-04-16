@@ -6692,17 +6692,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "(hover the column header for details)"
             )
             if _best_tcs_options:
-                st.markdown("**🎯 Apply Best TCS to replay filter:**")
+                if _rp_bot_mode:
+                    st.markdown("**🎯 Apply Best TCS to replay filter (Bot mode — adjusts TCS offset):**")
+                else:
+                    st.markdown("**🎯 Apply Best TCS to replay filter:**")
                 _btn_cols = st.columns(min(len(_best_tcs_options), 6))
                 for _bi, (_btkr, _bfloor) in enumerate(_best_tcs_options):
                     with _btn_cols[_bi % 6]:
-                        if st.button(
-                            f"{_btkr}: TCS {_bfloor}",
-                            key=f"use_best_tcs_{_btkr}",
-                            help=f"Set Min TCS filter to {_bfloor} (best floor for {_btkr}) and re-run replay",
-                        ):
-                            st.session_state["rp_min_tcs_slider"] = _bfloor
-                            st.rerun()
+                        if _rp_bot_mode:
+                            _raw_offset = _bfloor - 50
+                            _bot_offset = max(-20, min(20, _raw_offset))
+                            _clamped = _raw_offset != _bot_offset
+                            _off_sign = "+" if _bot_offset >= 0 else ""
+                            _raw_sign = "+" if _raw_offset >= 0 else ""
+                            _help_txt = (
+                                f"Set TCS Adjustment to {_off_sign}{_bot_offset} "
+                                f"(≈ TCS {_bfloor} floor for {_btkr}) and re-run replay. "
+                                f"Offset = best floor {_bfloor} − base 50."
+                            )
+                            if _clamped:
+                                _help_txt += (
+                                    f" Note: ideal offset {_raw_sign}{_raw_offset} "
+                                    f"exceeds slider range and is clamped to {_off_sign}{_bot_offset}."
+                                )
+                            if st.button(
+                                f"{_btkr}: TCS {_bfloor}",
+                                key=f"use_best_tcs_{_btkr}",
+                                help=_help_txt,
+                            ):
+                                st.session_state["rp_tcs_offset"] = _bot_offset
+                                st.rerun()
+                            if _clamped:
+                                st.caption(
+                                    f"⚠ Clamped: ideal {_raw_sign}{_raw_offset} → applied {_off_sign}{_bot_offset}"
+                                )
+                        else:
+                            if st.button(
+                                f"{_btkr}: TCS {_bfloor}",
+                                key=f"use_best_tcs_{_btkr}",
+                                help=f"Set Min TCS filter to {_bfloor} (best floor for {_btkr}) and re-run replay",
+                            ):
+                                st.session_state["rp_min_tcs_slider"] = _bfloor
+                                st.rerun()
 
             # ── Per-Ticker TCS Sweep Charts ───────────────────────────────────
             if _tkr_sweep_data:
