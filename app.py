@@ -5898,20 +5898,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _ibh <= _ibl or _ibl <= 0:
                                 continue
 
-                            # Use PREDICTED direction for entry — not actual_outcome.
-                            # actual_outcome only has "bullish/bearish" on correct predictions
-                            # which was silently excluding all losses → fake 100% WR.
-                            _pred_lower = str(_rp_r.get("predicted") or "").lower()
-                            if any(x in _pred_lower for x in ["bull", "trend_bull", "trend bull"]):
+                            # Determine trade direction from actual_outcome (real market direction),
+                            # falling back to predicted if actual_outcome is unavailable.
+                            # actual_outcome = "Bullish Break" / "Bearish Break" regardless of
+                            # prediction accuracy — it reflects what the market actually did.
+                            # predicted stores structure TYPE ("Neutral", "Normal") — not direction.
+                            _actual_out = str(_rp_r.get("actual_outcome") or "").strip()
+                            _pred_dir   = str(_rp_r.get("predicted") or "").strip()
+                            _direction  = _actual_out if _actual_out in ("Bullish Break", "Bearish Break") \
+                                          else (_pred_dir if _pred_dir in ("Bullish Break", "Bearish Break") else "")
+                            if _direction == "Bullish Break":
                                 _entry = _ibh
                                 _stop  = _ibl
                                 _dir   = 1   # long: profitable when ft > 0
-                            elif any(x in _pred_lower for x in ["bear", "trend_bear", "trend bear"]):
+                            elif _direction == "Bearish Break":
                                 _entry = _ibl
                                 _stop  = _ibh
                                 _dir   = -1  # short: profitable when ft < 0
                             else:
-                                continue  # neutral/non-directional — skip
+                                continue  # Range-Bound / Both Sides / non-directional — skip
 
                             _stop_dist = abs(_entry - _stop)
                             if _stop_dist < 0.01:
@@ -10311,8 +10316,8 @@ ALTER TABLE backtest_sim_runs
 
                 st.dataframe(
                     _grid_df.style
-                    .applymap(_color_tier, subset=["Tier"])
-                    .applymap(_color_exp, subset=["True Exp"]),
+                    .map(_color_tier, subset=["Tier"])
+                    .map(_color_exp, subset=["True Exp"]),
                     use_container_width=True,
                     hide_index=True,
                     height=310,
@@ -10364,7 +10369,7 @@ ALTER TABLE backtest_sim_runs
                     f"⚠️  Live data is {len(_live_resolved)} trades — use 5-year backtest above for decision-making."
                 )
                 st.dataframe(
-                    _live_tbl.style.applymap(_color_tier, subset=["Tier"]),
+                    _live_tbl.style.map(_color_tier, subset=["Tier"]),
                     use_container_width=True,
                     hide_index=True,
                 )
@@ -11815,10 +11820,10 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 for _rk_sym in _wl_tickers:
                     _rc = st.columns([2, 3, 4])
                     _rc[0].markdown(f"`{_rk_sym}`")
-                    _sel = _rc[1].selectbox("", options=[0,1,2,3,4,5],
+                    _sel = _rc[1].selectbox("Rank", options=[0,1,2,3,4,5],
                                             format_func=lambda x, _rl=_rank_labels: _rl[x],
                                             key=f"rk_sel_{_rk_sym}", label_visibility="collapsed")
-                    _note = _rc[2].text_input("", placeholder="optional note",
+                    _note = _rc[2].text_input("Notes", placeholder="optional note",
                                               key=f"rk_note_{_rk_sym}", label_visibility="collapsed")
                     _rankings_input.append({"ticker": _rk_sym, "rank": _sel, "notes": _note})
 

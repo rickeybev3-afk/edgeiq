@@ -33,8 +33,8 @@ These are the core IP. Any change breaks the entire system. If a task seems to r
 - **SIP:** Paid real-time subscription active — no delay cap on `fetch_bars`. Historical bars always available.
 
 ### Data Column Semantics (CRITICAL — wrong assumptions cause silent bugs):
-- **`predicted` column** = stores the **structure TYPE** (e.g. "Neutral", "Ntrl Extreme") — NOT a directional signal.
-- **`actual_outcome`** = stores the **directional result** (e.g. "Bullish Break", "Bearish Break", "Range-Bound").
+- **`predicted` column** = normally stores the **structure TYPE** ("Neutral", "Ntrl Extreme", "Normal", "Nrml Var", "Dbl Dist", "Non-Trend", "Trend"). In the live bot, directional scans can also store "Bullish Break" / "Bearish Break" here when structure classification produces a directional signal. **Do NOT substring-match for "bull"/"bear" in `predicted` — use exact "Bullish Break"/"Bearish Break" matching, or prefer `actual_outcome` first.**
+- **`actual_outcome`** = stores the **real market direction** (e.g. "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides") — set by EOD outcome logic based on whether price broke IB high/low, **regardless of what was predicted**.
 - **`win_loss`** = "Win" / "Loss" based on structure prediction accuracy — NOT trade P&L.
 - **`pnl_r_sim`** = sim P&L from `compute_trade_sim()` — MFE-based (best possible exit).
 - **`eod_pnl_r`** = hold-to-close P&L, **intentionally uncapped** (no stop applied — can exceed -1R).
