@@ -6429,19 +6429,26 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _btw  = (_bt_td["P&L ($)"] > 0).sum()
                                     _btl2 = (_bt_td["P&L ($)"] <= 0).sum()
                                     _btwr = _btw / len(_bt_td) * 100
-                                    _bte2 = _bt_td["P&L ($)"].mean()
                                     _bttot = _bt_td["P&L ($)"].sum()
                                     _btc2 = "#2e7d32" if _btwr >= 60 else ("#ef6c00" if _btwr >= 50 else "#c62828")
+                                    _bt_r_ser   = _bt_td["R (MFE)"]
+                                    _bt_fb_rate = round(_bt_td["False Break"].sum() / len(_bt_td) * 100, 1)
+                                    _bt_avg_win_r = round(_bt_r_ser[_bt_r_ser > 0].mean(), 2) if (_bt_r_ser > 0).any() else 0
+                                    _bt_exp_r   = round(_bt_r_ser.mean(), 3)
+                                    _bt_exp_r_str = f'{"+" if _bt_exp_r >= 0 else ""}{_bt_exp_r:.3f}R'
+                                    _bt_exp_r_col = "#2e7d32" if _bt_exp_r > 0 else ("#ef6c00" if _bt_exp_r == 0 else "#c62828")
                                     st.markdown(
                                         f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
                                         f'<div style="font-size:13px;font-weight:700;color:{_btc};">{_bte} {_btl}</div>'
                                         f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_btd}</div>'
                                         f'<div style="font-size:22px;font-weight:700;color:{_btc2};margin-top:4px;">{_btwr:.1f}%</div>'
-                                        f'<div style="font-size:12px;color:#cfd8dc;">{_btw}W / {_btl2}L</div>'
-                                        f'<div style="font-size:12px;color:#90a4ae;">'
-                                        f'Exp: {"+" if _bte2 >= 0 else ""}${_bte2:,.0f}  ·  '
-                                        f'Total: {"+" if _bttot >= 0 else ""}${_bttot:,.0f}  ·  '
-                                        f'{len(_bt_td)} trades</div>'
+                                        f'<div style="font-size:12px;color:#cfd8dc;">{_btw}W / {_btl2}L  ·  {len(_bt_td)} trades</div>'
+                                        f'<div style="font-size:11px;color:#90a4ae;margin-top:6px;border-top:1px solid #263444;padding-top:6px;">'
+                                        f'Stop-Out: {_bt_fb_rate}%  ·  Avg Win R: +{_bt_avg_win_r}R</div>'
+                                        f'<div style="font-size:13px;font-weight:600;color:{_bt_exp_r_col};margin-top:2px;">'
+                                        f'Exp: {_bt_exp_r_str} / trade</div>'
+                                        f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">'
+                                        f'Total: {"+" if _bttot >= 0 else ""}${_bttot:,.0f}</div>'
                                         f'</div>', unsafe_allow_html=True
                                     )
 
