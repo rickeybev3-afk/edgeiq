@@ -11265,6 +11265,32 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                                 f"{_pt_total_scanned - len(_pt_qualified)} below-TCS setups filtered out"
                                 + (f" · {_sk} already logged (skipped)" if _sk else "")
                             )
+                            _sim_rows = _pt_log_result.get("sim_rows") or []
+                            if _sim_rows:
+                                with st.expander("📈 Sim P&L for logged trades", expanded=True):
+                                    _sim_df = pd.DataFrame(_sim_rows)
+                                    _sim_df = _sim_df.rename(columns={
+                                        "ticker":           "Ticker",
+                                        "sim_outcome":      "Outcome",
+                                        "pnl_r_sim":        "P&L (R)",
+                                        "entry_price_sim":  "Entry",
+                                        "stop_price_sim":   "Stop",
+                                        "target_price_sim": "Target",
+                                    })
+                                    _col_order = [c for c in ["Ticker", "Outcome", "P&L (R)", "Entry", "Stop", "Target"] if c in _sim_df.columns]
+                                    st.dataframe(
+                                        _sim_df[_col_order].style.format(
+                                            {
+                                                "P&L (R)": lambda v: f"{v:+.2f}R" if pd.notna(v) else "—",
+                                                "Entry":   lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                "Stop":    lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                "Target":  lambda v: f"${v:.2f}" if pd.notna(v) else "—",
+                                                "Outcome": lambda v: v if v else "—",
+                                            }
+                                        ),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                    )
 
                     _pt_preview = _pt_qualified or _pt_results
                     _pt_preview_df = pd.DataFrame(_pt_preview)[[

@@ -7095,6 +7095,17 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["stop_dist_pct"]    = _sim.get("stop_dist_pct")
                 row_record["target_price_sim"] = _sim.get("target_price_sim")
             records.append(row_record)
+        sim_rows = [
+            {
+                "ticker":           rec["ticker"],
+                "sim_outcome":      rec.get("sim_outcome"),
+                "pnl_r_sim":        rec.get("pnl_r_sim"),
+                "entry_price_sim":  rec.get("entry_price_sim"),
+                "stop_price_sim":   rec.get("stop_price_sim"),
+                "target_price_sim": rec.get("target_price_sim"),
+            }
+            for rec in records
+        ]
         if records:
             try:
                 supabase.table("paper_trades").insert(records).execute()
@@ -7113,7 +7124,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                     print("log_paper_trades: optional columns missing — saved without them")
                 else:
                     raise
-        return {"saved": len(records), "skipped": skipped}
+        return {"saved": len(records), "skipped": skipped, "sim_rows": sim_rows}
     except Exception as e:
         return {"saved": 0, "skipped": 0, "error": str(e)}
 
