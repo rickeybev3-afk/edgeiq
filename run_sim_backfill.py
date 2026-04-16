@@ -1,11 +1,24 @@
 """
 run_sim_backfill.py
 ───────────────────
+ONE-TIME HISTORICAL BACKFILL SCRIPT — already executed on 2026-04-16.
+
 Backfills sim P&L fields on existing backtest_sim_runs and paper_trades.
+New rows inserted after that date get sim computed automatically on insert,
+so this script should NOT need to be run again under normal circumstances.
+
+If new compute_trade_sim() logic is deployed (e.g. a formula change) and a
+full recompute is needed, it is safe to re-run — it overwrites all rows whose
+actual_outcome is "Bullish Break" or "Bearish Break".
+
+Results of the 2026-04-16 run (verified via null-count queries post-run):
+  backtest_sim_runs: 13 575 / 13 798 breakout rows filled (98.4%)
+                     223 rows remain null — all return invalid_ib (IB range
+                     is degenerate, e.g. ib_high <= ib_low); unfillable by design.
+  paper_trades     :     22 /     22 breakout rows filled (100%)
+
 Uses concurrent threads to run Supabase updates in parallel — much faster
 than sequential updates.
-
-Run once after the SQL migrations. Also safe to re-run (skips already-filled rows).
 """
 
 import sys, os, time
