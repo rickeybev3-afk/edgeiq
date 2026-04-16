@@ -6879,9 +6879,10 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                 }
             pnl_pct = (close_price - ib_high) / ib_high * 100
         elif ft_pct is not None:
-            # Fallback: max intraday excursion (MFE) — always positive for bull break
-            # False break: price reversed below stop within 6 bars of breakout
-            if false_up and float(ft_pct) < 0:
+            # Fallback to MFE when no close_price. MFE for Bullish Break is ALWAYS >= 0.
+            # false_break_up = price broke IB high then reversed back below IB low → stop out.
+            # The old check (false_up and ft_pct < 0) never fired because MFE is always positive.
+            if false_up:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
@@ -6912,7 +6913,10 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                 }
             pnl_pct = (ib_low - close_price) / ib_low * 100   # positive when price fell
         elif ft_pct is not None:
-            if false_dn and float(ft_pct) > 0:
+            # MFE for Bearish Break is ALWAYS <= 0 (price went down).
+            # false_break_down = price broke IB low then recovered back above IB high → stop out.
+            # The old check (false_dn and ft_pct > 0) never fired because MFE is always negative.
+            if false_dn:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
