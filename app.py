@@ -5549,6 +5549,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
         _rp_bot_mode = "bot" in _rp_mode.lower()
 
+        # Initialise date defaults before any widget renders so values are
+        # available in session state for the stale-badge check below.
+        if "rp_start_date" not in st.session_state:
+            st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
+        if "rp_end_date" not in st.session_state:
+            st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
+
+        # Clear the Best TCS badge as soon as the date range changes.
+        # Streamlit writes widget values to session state before each rerun, so
+        # reading the keys here gives the *current* (newly selected) values —
+        # even though the date_input widgets themselves render further down the
+        # page.  This must run before the badge is rendered (~line 5625).
+        # Note: on the very first render of a new session, _rp_prev_start_date
+        # and _rp_prev_end_date don't exist yet, so the comparison always
+        # triggers a clear.  This is intentional — rp_best_tcs_source won't be
+        # set on a fresh session anyway, so the pop() is a no-op.
+        _rp_cur_start = st.session_state["rp_start_date"]
+        _rp_cur_end   = st.session_state["rp_end_date"]
+        if (st.session_state.get("_rp_prev_start_date") != _rp_cur_start or
+                st.session_state.get("_rp_prev_end_date") != _rp_cur_end):
+            st.session_state.pop("rp_best_tcs_source", None)
+        st.session_state["_rp_prev_start_date"] = _rp_cur_start
+        st.session_state["_rp_prev_end_date"]   = _rp_cur_end
+
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
             if _rp_bot_mode:
@@ -5663,10 +5687,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
             }
             _rp_scan_type_val  = _rp_scan_type_map[_rp_snap]
             _rp_best_mode      = _rp_snap == "🏆 Best (Most Profit Combined)"
-        if "rp_start_date" not in st.session_state:
-            st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
-        if "rp_end_date" not in st.session_state:
-            st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
         with _rp_date_col1:
             _rp_start = st.date_input("From", key="rp_start_date",
                                       min_value=date(2018, 1, 1))
