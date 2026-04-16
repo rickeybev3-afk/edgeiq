@@ -5781,21 +5781,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _rp_rows = []
                         st.error(f"Failed to load data: {_rp_e}")
 
-                # ── Best (Most Profit Combined) — pick highest pnl_r_sim per ticker+date ──
-                # Uses pnl_r_sim (pre-computed MFE R-multiple incl. false-break losses) so the
-                # de-dup picks genuinely best expected value, not just biggest raw move.
-                # Falls back to follow_thru_pct for rows that pre-date the sim backfill.
+                # ── Best (Most Profit Combined) — pick highest abs(follow_thru_pct) per ticker+date ──
+                # Picks the scan with the biggest move for each ticker each day.
+                # TCS is already applied later; here we only de-dup across scan types.
                 if _rp_rows and _rp_best_mode:
-                    _best_seen: dict = {}
+                    _best_scores: dict = {}
+                    _best_seen: dict   = {}
                     for _brow in _rp_rows:
-                        _bkey  = (_brow.get("ticker",""), _brow.get("sim_date",""))
-                        _br    = _brow.get("pnl_r_sim")
-                        _bscore = float(_br) if _br is not None else float(_brow.get("follow_thru_pct") or 0)
-                        if _bkey not in _best_seen:
-                            _best_seen[_bkey] = (_bscore, _brow)
-                        elif _bscore > _best_seen[_bkey][0]:
-                            _best_seen[_bkey] = (_bscore, _brow)
-                    _rp_rows = [v for _, v in _best_seen.values()]
+                        _bkey   = (_brow.get("ticker",""), _brow.get("sim_date",""))
+                        _bscore = abs(float(_brow.get("follow_thru_pct") or 0))
+                        if _bkey not in _best_seen or _bscore > _best_scores[_bkey]:
+                            _best_seen[_bkey]   = _brow
+                            _best_scores[_bkey] = _bscore
+                    _rp_rows = list(_best_seen.values())
                     # Label each row so Snapshot column in trade log shows "best (morning)" etc.
                     for _brow in _rp_rows:
                         _brow["scan_type"] = f"best ({_brow.get('scan_type','?')})"
@@ -5937,25 +5935,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _ibh <= _ibl or _ibl <= 0:
                                 continue
 
-                            # Determine trade direction from actual_outcome (real market direction),
-                            # falling back to predicted if actual_outcome is unavailable.
-                            # actual_outcome = "Bullish Break" / "Bearish Break" regardless of
-                            # prediction accuracy — it reflects what the market actually did.
-                            # predicted stores structure TYPE ("Neutral", "Normal") — not direction.
+                            # ── Direction: ONLY from actual_outcome (confirmed market move) ─────
+                            # actual_outcome = what the market DID ("Bullish Break"/"Bearish Break")
+                            # predicted = structure TYPE ("Neutral", "Normal") — NEVER a direction.
+                            # Using predicted as fallback included Range-Bound days as fake trades
+                            # (market didn't break, but MFE was positive → fake 100% win rate).
                             _actual_out = str(_rp_r.get("actual_outcome") or "").strip()
-                            _pred_dir   = str(_rp_r.get("predicted") or "").strip()
-                            _direction  = _actual_out if _actual_out in ("Bullish Break", "Bearish Break") \
-                                          else (_pred_dir if _pred_dir in ("Bullish Break", "Bearish Break") else "")
+                            _direction  = _actual_out if _actual_out in ("Bullish Break", "Bearish Break") else ""
                             if _direction == "Bullish Break":
                                 _entry = _ibh
                                 _stop  = _ibl
-                                _dir   = 1   # long: profitable when ft > 0
+                                _dir   = 1
                             elif _direction == "Bearish Break":
                                 _entry = _ibl
                                 _stop  = _ibh
-                                _dir   = -1  # short: profitable when ft < 0
+                                _dir   = -1
                             else:
-                                continue  # Range-Bound / Both Sides / non-directional — skip
+                                continue  # Range-Bound / Both Sides / non-directional → no trade
 
                             _stop_dist = abs(_entry - _stop)
                             if _stop_dist < 0.01:
@@ -5966,33 +5962,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             # ── Position sizing ───────────────────────────────────────────────
                             if _rp_bot_mode:
                                 if _rp_compound:
-                                    _compound_factor = _rp_equity_cur / float(_rp_equity)
+                                    # Cap compound factor at 20× to prevent runaway exponential growth.
+                                    # Without this cap, 1000+ winning trades turn $10K into $480M.
+                                    _compound_factor = min(_rp_equity_cur / float(_rp_equity), 20.0)
                                     _eff_pos = _rp_pos_size * _compound_factor
                                 else:
                                     _eff_pos = _rp_pos_size
-                                _shares      = _eff_pos / max(_entry, 0.01)
-                                _risk_1r     = _eff_pos * (_stop_dist / max(_entry, 0.01))
+                                _shares  = _eff_pos / max(_entry, 0.01)
+                                _risk_1r = _eff_pos * (_stop_dist / max(_entry, 0.01))
                             else:
-                                _shares      = _fixed_risk_amt / _stop_dist
-                                _risk_1r     = _fixed_risk_amt
+                                _shares  = _fixed_risk_amt / _stop_dist
+                                _risk_1r = _fixed_risk_amt
 
-                            # ── P&L: prefer pnl_r_sim (pre-computed, includes false-break -1R losses)
-                            # Falls back to win_loss + follow_thru for rows that pre-date the backfill.
-                            # NEVER use follow_thru_pct × direction: follow_thru_pct is MFE (always
-                            # positive in the breakout direction) → gives fake 100% win rate.
-                            _pnl_r_stored = _rp_r.get("pnl_r_sim")
-                            if _pnl_r_stored is not None:
-                                _pnl_r     = float(_pnl_r_stored)
-                                # Cap extreme winners to avoid explosive compounding on outlier moves
-                                _pnl_r     = max(-1.0, min(_pnl_r, 10.0))
-                                _trade_pnl = _pnl_r * _risk_1r
+                            # ── P&L: false_break detection + MFE R-multiple ───────────────────
+                            # DO NOT use stored pnl_r_sim — it was computed from MFE fallback
+                            # (close_price was NULL for all pre-migration rows), so every value
+                            # is positive → 100% win rate before the simulation even starts.
+                            #
+                            # false_break_up / false_break_down ARE reliably populated for all
+                            # batch backtest rows (computed from intraday bars at scan time).
+                            # They are the only reliable loss signal without close_price.
+                            #
+                            # follow_thru_pct is MFE (max favorable excursion):
+                            #   Bullish Break: always > 0  (how far up price went)
+                            #   Bearish Break: always < 0  (how far down price went)
+                            # abs() normalises both directions to the same R-multiple scale.
+                            _stop_dist_pct = _stop_dist / max(_entry, 0.01) * 100.0
+                            _false_break   = bool(
+                                _rp_r.get("false_break_up")   if _direction == "Bullish Break"
+                                else _rp_r.get("false_break_down") or False
+                            )
+                            if _false_break:
+                                _pnl_r = -1.0   # price reversed back through stop → full -1R
                             else:
-                                # Fallback: win_loss + follow_thru (pre-backfill rows)
-                                if _wl == "Win":
-                                    _ft_capped = min(abs(_ft), _rp_max_move if not _rp_bot_mode else 50.0)
-                                    _trade_pnl = (_shares * (_ft_capped / 100.0) * _entry) if not _rp_bot_mode else (_eff_pos * (_ft_capped / 100.0))
-                                else:
-                                    _trade_pnl = -_risk_1r
+                                _raw_r  = abs(_ft) / _stop_dist_pct if _stop_dist_pct > 0 else 0.0
+                                # Cap winners: bot mode → 50% of position cap; % risk → _rp_max_move
+                                _max_r  = (50.0 / _stop_dist_pct) if _rp_bot_mode else (_rp_max_move / _stop_dist_pct)
+                                _pnl_r  = min(_raw_r, _max_r)
+                            _trade_pnl = _pnl_r * _risk_1r
 
                             _day_pnl      += _trade_pnl
                             _day_trades   += 1
@@ -6015,6 +6022,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Stop":      round(_stop, 2),
                                 "Shares":    int(_shares),
                                 "W/L":       "Win" if _trade_pnl > 0 else "Loss",
+                                "R":         round(_pnl_r, 2),
                                 "Move %":    round(_ft, 2),
                                 "P&L ($)":   round(_trade_pnl, 2),
                                 "Equity":    round(_rp_equity_cur, 2),
