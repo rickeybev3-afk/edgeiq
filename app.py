@@ -6245,6 +6245,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _profit_factor = (_gross_wins / _gross_losses) if _gross_losses > 0 else float("inf")
                         _pf_str        = f"{_profit_factor:.2f}x" if _profit_factor != float("inf") else "∞"
 
+                        if _rp_bot_mode:
+                            if _rp_tcs_offset == 0:
+                                _rp_floor_label = f"≈ TCS {_rp_effective_floor}"
+                            else:
+                                _rp_offset_sign_res = f"+{_rp_tcs_offset}" if _rp_tcs_offset > 0 else str(_rp_tcs_offset)
+                                _rp_floor_label = f"≈ TCS {_rp_effective_floor} (base 50 + offset {_rp_offset_sign_res})"
+                            st.caption(f"🤖 **Bot mode** · Effective TCS floor applied: **{_rp_floor_label}**")
+
                         _sm1, _sm2, _sm3, _sm4, _sm5 = st.columns(5)
                         _sm1.metric("Net P&L", f"${_total_pnl:,.0f}", f"{_net_return:+.1f}%")
                         _sm2.metric("Win Rate", f"{_win_rate}%",
