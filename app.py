@@ -5587,6 +5587,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "0 = use each structure's calculated threshold as-is."
                     ),
                 )
+                _rp_effective_floor = 50 + _rp_tcs_offset
+                _rp_offset_sign = f"+{_rp_tcs_offset}" if _rp_tcs_offset >= 0 else str(_rp_tcs_offset)
+                st.caption(f"≈ TCS {_rp_effective_floor} effective floor (base 50 + offset {_rp_offset_sign})")
                 _rp_min_tcs = 0
             else:
                 _rp_tcs_offset = 0
