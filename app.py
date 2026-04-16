@@ -45,6 +45,7 @@ from backend import (
     compute_portfolio_metrics,
     run_pending_migrations,
     _ALL_PENDING_MIGRATIONS,
+    _startup_errors,
 )
 
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
@@ -109,7 +110,7 @@ st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layo
 # ── Startup / configuration error banner ──────────────────────────────────────
 # _startup_errors is populated at import time in backend.py and surfaced here
 # so operators see misconfigured secrets immediately instead of silent failures.
-if _startup_errors:                                                              # type: ignore[name-defined]
+if _startup_errors:
     _err_lines = "\n".join(f"• {_msg}" for _, _msg in _startup_errors)
     st.error(
         f"**⚠️ Configuration problem detected — {len(_startup_errors)} secret(s) need attention:**\n\n"
@@ -121,6 +122,7 @@ if _startup_errors:                                                             
             "Database credentials are missing. Most features will show empty data until "
             "SUPABASE_URL and SUPABASE_KEY are correctly set."
         )
+        st.stop()
 
 # ── Session state ──────────────────────────────────────────────────────────────
 _DEFAULTS = {
