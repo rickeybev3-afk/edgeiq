@@ -7674,8 +7674,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _tk_best_row = None
                         _tk_max_trades = int(_tk_sw_df["Trades"].max()) if not _tk_sw_df.empty else 0
                         _tk_expander_label = (
-                            f"📊 {_tk_name} — ⚠️ {_tk_max_trades}/{_MIN_TCS_TRADES} trades "
-                            f"(need {_MIN_TCS_TRADES - _tk_max_trades} more)"
+                            f"📊 {_tk_name} — insufficient data "
+                            f"({_tk_max_trades} of {_MIN_TCS_TRADES} trades at best floor)"
                         )
                         _tk_has_best = False
                     with st.expander(_tk_expander_label, expanded=False):
