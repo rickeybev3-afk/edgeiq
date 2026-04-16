@@ -5648,11 +5648,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         for _gd in _guide_rows:
                             _disp     = _gd.get("structure", "Unknown")
                             _n        = int(_gd.get("sample_count") or 0)
+                            _j_n      = int(_gd.get("journal_n") or 0)
+                            _b_n      = int(_gd.get("bot_n") or 0)
+                            _h_n      = int(_gd.get("historical_n") or 0)
                             _base_tcs = int(_gd.get("recommended_tcs") or 50) if _n >= 5 else 50
                             _eff_tcs  = max(0, min(100, _base_tcs + _rp_tcs_offset))
                             _conf     = _gd.get("confidence", "")
                             _status   = _gd.get("status", "")
-                            _src      = f"n={_n}, {_conf}" if _n >= 5 else "insufficient data → default 50"
+                            if _n >= 5:
+                                _src_parts = []
+                                if _j_n: _src_parts.append(f"journal:{_j_n}")
+                                if _b_n: _src_parts.append(f"bot:{_b_n}")
+                                if _h_n: _src_parts.append(f"hist:{_h_n}")
+                                _src = f"n={_n} ({', '.join(_src_parts)}), {_conf}"
+                            else:
+                                _src = "insufficient data → default 50"
                             _guide_lines.append(f"{_status} **{_disp}**: TCS {_base_tcs} → **effective {_eff_tcs}** ({_src})")
                         # Unknown / fallback line
                         _fb = max(0, min(100, 50 + _rp_tcs_offset))
@@ -10145,6 +10155,76 @@ ALTER TABLE backtest_sim_runs
     # SECTION 5 — BRAIN WEIGHTS (raw learned values)
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 🧠 Current Brain Weights")
+
+    # ── Recalibrate button ────────────────────────────────────────────────────
+    _rc_col1, _rc_col2 = st.columns([2, 3])
+    with _rc_col1:
+        _do_recal = st.button("🔄 Recalibrate Both Brains Now", use_container_width=True,
+                              help="Runs live recalibration (journal + bot) AND historical calibration (11k+ backtest rows)")
+    if _do_recal:
+        with st.spinner("Recalibrating live brain from journal + paper trades…"):
+            _live_cal = recalibrate_from_supabase(user_id=_uid)
+        with st.spinner("Calibrating historical brain from backtest data…"):
+            _hist_cal = recalibrate_from_history(user_id=_uid)
+
+        _live_src = _live_cal.get("sources", {})
+        _hist_src = _hist_cal.get("sources", {})
+        st.success(
+            f"Done — Live: {_live_src.get('accuracy_tracker',0)} journal + "
+            f"{_live_src.get('paper_trades',0)} bot trades | "
+            f"Historical: {_hist_src.get('backtest_sim_runs',0):,} backtest rows"
+        )
+
+        # Delta table
+        _all_deltas = {}
+        for _d in _live_cal.get("deltas", []):
+            _all_deltas[_d["key"]] = {
+                "Structure":    _d["key"],
+                "Live Acc %":   _d.get("blended_acc", "—"),
+                "Live n":       (_d.get("journal_n",0) or 0) + (_d.get("bot_n",0) or 0),
+                "Hist Acc %":   "—",
+                "Hist n":       0,
+                "Old Weight":   _d["old"],
+                "New Weight":   _d["new"],
+                "Δ":            _d["delta"],
+            }
+        for _d in _hist_cal.get("deltas", []):
+            _k = _d["key"]
+            if _k in _all_deltas:
+                _all_deltas[_k]["Hist Acc %"] = _d.get("hist_acc", "—")
+                _all_deltas[_k]["Hist n"]     = _d.get("hist_n", 0)
+            else:
+                _all_deltas[_k] = {
+                    "Structure":  _k,
+                    "Live Acc %": "—",
+                    "Live n":     0,
+                    "Hist Acc %": _d.get("hist_acc", "—"),
+                    "Hist n":     _d.get("hist_n", 0),
+                    "Old Weight": _d["old"],
+                    "New Weight": _d["new"],
+                    "Δ":          _d["delta"],
+                }
+
+        if _all_deltas:
+            _delta_df = pd.DataFrame(list(_all_deltas.values()))
+
+            def _color_delta_cell(val):
+                try:
+                    v = float(val)
+                    if v > 0.02:   return "color: #66bb6a; font-weight:700"
+                    if v < -0.02:  return "color: #ef5350"
+                except Exception:
+                    pass
+                return "color: #90a4ae"
+
+            st.dataframe(
+                _delta_df.style.map(_color_delta_cell, subset=["Δ"]),
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.info("No structures had enough data to update weights.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     _bw_rows = []
     for _k, _v in _bw.items():

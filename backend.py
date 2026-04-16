@@ -190,7 +190,8 @@ from engine_v2 import (
 
 STATE_FILE   = "trade_state.json"
 TRACKER_FILE = "accuracy_tracker.csv"
-WEIGHTS_FILE = "brain_weights.json"   # ⛔ READ-ONLY — hand-calibrated signal weights; do not edit manually
+WEIGHTS_FILE      = "brain_weights.json"            # ⛔ READ-ONLY — live personal brain (paper trades + journal)
+HIST_WEIGHTS_FILE = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
 SA_JOURNAL_FILE  = "sa_journal.csv"
@@ -1502,11 +1503,177 @@ def recalibrate_from_supabase(user_id: str = "") -> dict:
     return result
 
 
+# ── Historical Brain (separate from live personal brain) ──────────────────────
+
+def load_historical_brain_weights() -> dict:
+    """Load the historical brain weights from brain_weights_historical.json.
+    Falls back to neutral 1.0 for all keys if file doesn't exist yet."""
+    import json as _json
+    defaults = {k: 1.0 for k in _BRAIN_WEIGHT_KEYS}
+    if not os.path.exists(HIST_WEIGHTS_FILE):
+        return defaults
+    try:
+        with open(HIST_WEIGHTS_FILE) as f:
+            stored = _json.load(f)
+        return {k: float(stored.get(k, 1.0)) for k in _BRAIN_WEIGHT_KEYS}
+    except Exception:
+        return defaults
+
+
+def _save_historical_brain_weights(weights: dict) -> None:
+    """Persist historical brain weights to brain_weights_historical.json."""
+    import json as _json
+    clean = {k: round(float(v), 4) for k, v in weights.items()}
+    try:
+        with open(HIST_WEIGHTS_FILE, "w") as f:
+            _json.dump(clean, f, indent=2)
+    except Exception:
+        pass
+
+
+def recalibrate_from_history(user_id: str = "") -> dict:
+    """Calibrate the HISTORICAL brain using backtest_sim_runs (11,000+ rows).
+
+    This is a SEPARATE brain from the live personal brain (brain_weights.json).
+    It learns statistical priors for all 7 structure types from years of historical
+    data so that structures with zero live paper trades still get calibrated weights.
+
+    Learning rate: standard EMA (same as live brain) — the data is large and real,
+    so no artificial cap is needed. With 1,000+ samples per structure, the EMA will
+    converge to a stable prior quickly.
+
+    Returns same shape as recalibrate_from_supabase() for easy comparison display.
+    """
+    import collections as _col
+
+    weights = load_historical_brain_weights()
+    result = {
+        "weights":    weights,
+        "deltas":     [],
+        "sources":    {"backtest_sim_runs": 0, "total": 0},
+        "calibrated": False,
+        "timestamp":  datetime.now(EASTERN).isoformat(),
+    }
+
+    if not supabase:
+        return result
+
+    hist_data: dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
+
+    try:
+        # Pull all resolved backtest rows — paginate to get all 11,000+
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            q = supabase.table("backtest_sim_runs").select("predicted,win_loss")
+            if user_id:
+                q = q.eq("user_id", user_id)
+            q = q.in_("win_loss", ["Win", "Loss"]).range(offset, offset + page_size - 1)
+            batch = q.execute().data or []
+            all_rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+
+        for r in all_rows:
+            pred = str(r.get("predicted", "") or "").strip()
+            wl   = str(r.get("win_loss",  "") or "").strip().lower()
+            if not pred or wl not in ("win", "loss"):
+                continue
+            wk = _label_to_weight_key(pred)
+            hist_data[wk]["total"] += 1
+            if wl == "win":
+                hist_data[wk]["wins"] += 1
+
+        result["sources"]["backtest_sim_runs"] = len(all_rows)
+        result["sources"]["total"] = len(all_rows)
+    except Exception as e:
+        print(f"recalibrate_from_history: backtest_sim_runs error: {e}")
+
+    if not hist_data:
+        return result
+
+    deltas = []
+    for wk, h in hist_data.items():
+        h_n = h["total"]
+        if h_n < 5:
+            continue
+
+        h_acc = h["wins"] / h_n
+
+        if   h_acc >= 0.70: target = 1.50
+        elif h_acc >= 0.50: target = 1.00
+        elif h_acc >= 0.30: target = 0.75
+        else:               target = 0.50
+
+        # EMA rate — same scale as live brain (large N → fast convergence)
+        if   h_n >= 100: ema_rate = 0.40
+        elif h_n >=  50: ema_rate = 0.35
+        elif h_n >=  25: ema_rate = 0.25
+        elif h_n >=  10: ema_rate = 0.15
+        else:            ema_rate = 0.10
+
+        old_val     = weights.get(wk, 1.0)
+        new_val     = round(old_val * (1 - ema_rate) + target * ema_rate, 4)
+        weights[wk] = new_val
+
+        deltas.append({
+            "key":        wk,
+            "old":        round(old_val, 4),
+            "new":        new_val,
+            "delta":      round(new_val - old_val, 4),
+            "hist_acc":   round(h_acc * 100, 1),
+            "hist_n":     h_n,
+            "ema_rate":   ema_rate,
+            "target":     target,
+        })
+
+    if deltas:
+        _save_historical_brain_weights(weights)
+        result["calibrated"] = True
+
+    result["weights"] = weights
+    result["deltas"]  = sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)
+    return result
+
+
+def blend_brain_weights(
+    live_weights: dict,
+    hist_weights: dict,
+    live_n: int,
+    hist_n: int,
+) -> dict:
+    """Volume-weighted blend of live personal brain + historical brain.
+
+    As live data grows, the live brain earns more influence automatically.
+    With 0 live trades: 100% historical prior.
+    With 300 live vs 11,000 hist: ~2.7% live, 97.3% historical.
+    With 3,000 live vs 11,000 hist: ~21% live, 79% historical.
+
+    This means the historical brain anchors early signal quality while
+    the live brain gradually earns dominance through real personal data.
+    """
+    total = live_n + hist_n
+    if total == 0:
+        return {k: 1.0 for k in _BRAIN_WEIGHT_KEYS}
+
+    live_ratio = live_n / total
+    hist_ratio = hist_n / total
+
+    blended = {}
+    for k in _BRAIN_WEIGHT_KEYS:
+        lw = live_weights.get(k, 1.0)
+        hw = hist_weights.get(k, 1.0)
+        blended[k] = round(live_ratio * lw + hist_ratio * hw, 4)
+    return blended
+
+
 def compute_structure_tcs_thresholds() -> list[dict]:
     """Compute per-structure TCS thresholds based on actual hit rates.
 
     Logic:
-      - Pulls per-structure accuracy from accuracy_tracker + paper_trades
+      - Pulls per-structure accuracy from accuracy_tracker + paper_trades + backtest_sim_runs
       - Higher hit rate → lower TCS threshold (take these trades more aggressively)
       - Lower hit rate → higher TCS threshold (require more confirmation)
 
@@ -1530,11 +1697,12 @@ def compute_structure_tcs_thresholds() -> list[dict]:
 
     journal_data: dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
     bot_data:     dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
+    hist_data:    dict = _col.defaultdict(lambda: {"wins": 0, "total": 0})
 
+    # Source 1: accuracy_tracker (journal / manual)
     try:
         q = supabase.table("accuracy_tracker").select("predicted,correct").range(0, 9999)
-        resp = q.execute()
-        for row in (resp.data or []):
+        for row in (q.execute().data or []):
             pred = row.get("predicted", "")
             corr = row.get("correct", "")
             if not pred:
@@ -1548,10 +1716,10 @@ def compute_structure_tcs_thresholds() -> list[dict]:
     except Exception:
         pass
 
+    # Source 2: paper_trades (bot automated signals)
     try:
         q = supabase.table("paper_trades").select("predicted,win_loss").range(0, 9999)
-        resp = q.execute()
-        for row in (resp.data or []):
+        for row in (q.execute().data or []):
             pred = row.get("predicted", "")
             wl   = str(row.get("win_loss", "")).strip().lower()
             if not pred or wl not in ("win", "loss"):
@@ -1565,27 +1733,64 @@ def compute_structure_tcs_thresholds() -> list[dict]:
     except Exception:
         pass
 
-    weights = load_brain_weights()
+    # Source 3: backtest_sim_runs (historical prior — paginated)
+    try:
+        page_size = 1000
+        offset    = 0
+        while True:
+            q = (
+                supabase.table("backtest_sim_runs")
+                .select("predicted,win_loss")
+                .in_("win_loss", ["Win", "Loss"])
+                .range(offset, offset + page_size - 1)
+            )
+            batch = q.execute().data or []
+            for row in batch:
+                pred = str(row.get("predicted", "") or "").strip()
+                wl   = str(row.get("win_loss",  "") or "").strip().lower()
+                if not pred or wl not in ("win", "loss"):
+                    continue
+                wk = _label_to_weight_key(pred)
+                if not wk:
+                    continue
+                hist_data[wk]["total"] += 1
+                if wl == "win":
+                    hist_data[wk]["wins"] += 1
+            if len(batch) < page_size:
+                break
+            offset += page_size
+    except Exception:
+        pass
+
+    # Load BLENDED brain weights (live personal + historical prior)
+    live_weights = load_brain_weights()
+    hist_weights = load_historical_brain_weights()
+    live_n_total = sum(d["total"] for d in journal_data.values()) + sum(d["total"] for d in bot_data.values())
+    hist_n_total = sum(d["total"] for d in hist_data.values())
+    blended_weights = blend_brain_weights(live_weights, hist_weights, live_n_total, hist_n_total)
 
     STRUCTURE_LABELS = {
         "neutral":      "🔄 Neutral",
         "ntrl_extreme": "⚡ Neutral Extreme",
         "normal":       "📊 Normal",
-        "trend":        "🚀 Trend Day",
+        "trend_bull":   "🚀 Trend Day",
         "double_dist":  "📉 Double Distribution",
-        "rotational":   "🔃 Rotational",
-        "other":        "❓ Other",
+        "non_trend":    "🔃 Rotational",
+        "nrml_variation": "❓ Other",
     }
 
     BASE_TCS = 65
     results = []
 
     for wk, label in STRUCTURE_LABELS.items():
-        j = journal_data[wk]
-        b = bot_data[wk]
+        j   = journal_data[wk]
+        b   = bot_data[wk]
+        h   = hist_data[wk]
         j_n = j["total"]
         b_n = b["total"]
-        total_n = j_n + b_n
+        h_n = h["total"]
+        live_n = j_n + b_n
+        total_n = live_n + h_n
 
         if total_n == 0:
             results.append({
@@ -1594,45 +1799,52 @@ def compute_structure_tcs_thresholds() -> list[dict]:
                 "sample_count":    0,
                 "journal_n":       0,
                 "bot_n":           0,
-                "brain_weight":    weights.get(wk, 1.0),
+                "historical_n":    0,
+                "brain_weight":    blended_weights.get(wk, 1.0),
                 "recommended_tcs": BASE_TCS,
                 "confidence":      "No Data",
                 "status":          "⏳",
             })
             continue
 
+        # Per-source accuracy
         j_acc = (j["wins"] / j_n) if j_n > 0 else None
         b_acc = (b["wins"] / b_n) if b_n > 0 else None
+        h_acc = (h["wins"] / h_n) if h_n > 0 else None
 
-        if j_n > 0 and b_n > 0:
-            hit_rate = (j_n * j_acc + b_n * b_acc) / total_n
-        elif j_n > 0:
-            hit_rate = j_acc
-        else:
-            hit_rate = b_acc
+        # Volume-weighted blend across all 3 sources
+        numerator   = 0.0
+        denominator = 0.0
+        if j_n > 0 and j_acc is not None:
+            numerator   += j_n * j_acc
+            denominator += j_n
+        if b_n > 0 and b_acc is not None:
+            numerator   += b_n * b_acc
+            denominator += b_n
+        if h_n > 0 and h_acc is not None:
+            numerator   += h_n * h_acc
+            denominator += h_n
 
-        hit_pct = hit_rate * 100
+        hit_rate = (numerator / denominator) if denominator > 0 else 0.5
+        hit_pct  = hit_rate * 100
 
         adjustment = (hit_pct - 60) * 0.5
-        rec_tcs = round(max(45, min(85, BASE_TCS - adjustment)))
+        rec_tcs    = round(max(45, min(85, BASE_TCS - adjustment)))
 
-        if total_n >= 30:
+        # Confidence based on total sample count
+        if total_n >= 100:
             conf = "High"
-        elif total_n >= 15:
+        elif total_n >= 30:
             conf = "Medium"
-        elif total_n >= 5:
+        elif total_n >= 10:
             conf = "Low"
         else:
             conf = "Very Low"
 
-        if hit_pct >= 70:
-            status = "🟢"
-        elif hit_pct >= 55:
-            status = "🟡"
-        elif hit_pct >= 40:
-            status = "🟠"
-        else:
-            status = "🔴"
+        if hit_pct >= 70:   status = "🟢"
+        elif hit_pct >= 55: status = "🟡"
+        elif hit_pct >= 40: status = "🟠"
+        else:               status = "🔴"
 
         results.append({
             "structure":       label,
@@ -1640,7 +1852,8 @@ def compute_structure_tcs_thresholds() -> list[dict]:
             "sample_count":    total_n,
             "journal_n":       j_n,
             "bot_n":           b_n,
-            "brain_weight":    round(weights.get(wk, 1.0), 4),
+            "historical_n":    h_n,
+            "brain_weight":    round(blended_weights.get(wk, 1.0), 4),
             "recommended_tcs": rec_tcs,
             "confidence":      conf,
             "status":          status,

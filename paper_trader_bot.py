@@ -82,6 +82,7 @@ try:
         fetch_finviz_watchlist,
         fetch_premarket_gappers,
         recalibrate_from_supabase,
+        recalibrate_from_history,
         verify_watchlist_predictions,
         verify_ticker_rankings,
         ensure_ticker_rankings_table,
@@ -1481,36 +1482,59 @@ def update_daily_build_notes() -> bool:
 
 
 def nightly_recalibration():
-    """4:30 PM ET — read all Supabase outcome data, update brain weights."""
+    """4:30 PM ET — update BOTH brains: live personal + historical prior."""
     log.info("=" * 60)
-    log.info("NIGHTLY RECALIBRATION — updating brain weights from live data")
+    log.info("NIGHTLY RECALIBRATION — live brain + historical brain")
     log.info("=" * 60)
+
+    # ── Live personal brain (accuracy_tracker + paper_trades) ─────────────────
     try:
         cal = recalibrate_from_supabase(user_id=USER_ID)
         src = cal.get("sources", {})
         log.info(
-            f"Data sources — accuracy_tracker: {src.get('accuracy_tracker', 0)} rows | "
-            f"paper_trades: {src.get('paper_trades', 0)} rows | "
+            f"Live brain — accuracy_tracker: {src.get('accuracy_tracker', 0)} | "
+            f"paper_trades: {src.get('paper_trades', 0)} | "
             f"total: {src.get('total', 0)}"
         )
         if not cal.get("calibrated"):
-            log.info("Not enough data yet (need ≥5 samples per structure). Weights unchanged.")
-            _alert_recalibration(cal)
-            return
-        deltas = cal.get("deltas", [])
-        log.info(f"Brain weights updated — {len(deltas)} structure(s) adjusted:")
-        for d in deltas:
-            direction = "▲" if d["delta"] > 0 else ("▼" if d["delta"] < 0 else "—")
-            total_n = (d.get("journal_n") or 0) + (d.get("bot_n") or 0)
-            log.info(
-                f"  {d['key']:16s} | {d['old']:.4f} → {d['new']:.4f} "
-                f"({direction}{abs(d['delta']):.4f}) | "
-                f"acc {d.get('blended_acc', '?')}% over {total_n} samples"
-            )
+            log.info("Live brain: not enough data yet (need ≥5 samples). Weights unchanged.")
+        else:
+            deltas = cal.get("deltas", [])
+            log.info(f"Live brain updated — {len(deltas)} structure(s) adjusted:")
+            for d in deltas:
+                direction = "▲" if d["delta"] > 0 else ("▼" if d["delta"] < 0 else "—")
+                total_n = (d.get("journal_n") or 0) + (d.get("bot_n") or 0)
+                log.info(
+                    f"  {d['key']:16s} | {d['old']:.4f} → {d['new']:.4f} "
+                    f"({direction}{abs(d['delta']):.4f}) | "
+                    f"acc {d.get('blended_acc', '?')}% over {total_n} samples"
+                )
         _alert_recalibration(cal)
     except Exception as exc:
-        log.error(f"Nightly recalibration failed: {exc}")
-        tg_send(f"⚠️ <b>Recalibration Error</b>\n{exc}")
+        log.error(f"Live brain recalibration failed: {exc}")
+        tg_send(f"⚠️ <b>Live Brain Recalibration Error</b>\n{exc}")
+
+    # ── Historical brain (backtest_sim_runs — statistical prior) ──────────────
+    try:
+        hist = recalibrate_from_history(user_id=USER_ID)
+        h_src = hist.get("sources", {})
+        log.info(
+            f"Historical brain — backtest_sim_runs: {h_src.get('backtest_sim_runs', 0):,} rows"
+        )
+        if not hist.get("calibrated"):
+            log.info("Historical brain: no resolved backtest rows found.")
+        else:
+            h_deltas = hist.get("deltas", [])
+            log.info(f"Historical brain updated — {len(h_deltas)} structure(s) calibrated:")
+            for d in h_deltas:
+                direction = "▲" if d["delta"] > 0 else ("▼" if d["delta"] < 0 else "—")
+                log.info(
+                    f"  {d['key']:16s} | {d['old']:.4f} → {d['new']:.4f} "
+                    f"({direction}{abs(d['delta']):.4f}) | "
+                    f"hist acc {d.get('hist_acc', '?')}% over {d.get('hist_n', 0):,} samples"
+                )
+    except Exception as exc:
+        log.error(f"Historical brain calibration failed: {exc}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
