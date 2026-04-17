@@ -8301,7 +8301,7 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
             # _full_bars is only available if bars were fetched above, but we
             # attempt a fresh fetch if needed so all exit types get MAE/MFE.
             _bars_for_excursion = None
-            if "_full_bars" in dir() and not _full_bars.empty:
+            if "_full_bars" in locals() and not _full_bars.empty:
                 _bars_for_excursion = _full_bars
             elif (
                 r.get("mae") is None

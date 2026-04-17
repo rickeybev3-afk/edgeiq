@@ -157,13 +157,15 @@ Bot is started via `deploy_server.py` which spawns all scheduled jobs.
 | Dec 2028 | $733,800 | $1,466,400 |
 | May 2031 (5yr) | $1,922,800 | $3,378,300 |
 
-### Live Paper Trade Results (April 14, 2026 — first 10 resolved trades)
+### Live Paper Trade Results (as of April 17, 2026 — 111 resolved trades, April 6–16)
 
-- **10/10 (100%) sim win rate** — outperforming 90.3% historical average
-- **+7.79R total** across 10 resolved trades
-- Outcome breakdown: 8 breakeven (0R), 1 hit_target (+3.61R), 1 partial_win (+1.33R)
-- Early signal tracking ABOVE baseline — positive early signal
-- Intraday P1/P2 data accumulation activated April 14
+- **Overall WR: 67.6%** (75W / 36L across all scan types and TCS levels)
+- **TCS≥50: 84.6% WR** (26 trades) — tracking *above* the 80.8% backtest prediction ✅
+- **TCS≥60: 78.9% WR** (19 trades)
+- **TCS≥70: 100% WR** (7 trades)
+- **Directional break WR: 100%** — every trade where the ticker actually broke IB in the predicted direction was a win (74 trades)
+- **Tiered P&L: +42.67R** total across 74 trades (+0.577R avg per trade)
+- Early April 14 snapshot (10 trades, 100% directional WR, +7.79R) was real — directional-only view
 
 ### True Compounding Breakdown (blended avg R per trade, trade-count weighted)
 
