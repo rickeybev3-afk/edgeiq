@@ -8465,10 +8465,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _fig_eq.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
                             st.plotly_chart(_fig_eq, use_container_width=True)
                             if _dd_trough_idx is not None and _dd_peak_idx is not None:
-                                _eq_dd_dollars = float(_rp_equity_curve[_eq_trough_idx]) - float(_rp_equity_curve[_eq_peak_idx])
+                                _eq_peak_val   = float(_rp_equity_curve[_eq_peak_idx])
+                                _eq_dd_dollars = float(_rp_equity_curve[_eq_trough_idx]) - _eq_peak_val
+                                _eq_dd_pct     = (abs(_eq_dd_dollars) / _eq_peak_val * 100) if _eq_peak_val else 0.0
                                 st.caption(
                                     f"🔴 Max drawdown period: trade \u00a0**#{_dd_peak_idx}** → **#{_dd_trough_idx}**"
                                     f"\u2002({_dd_trough_idx - _dd_peak_idx} trades)\u2002|\u2002dollar magnitude\u00a0**${abs(_eq_dd_dollars):,.0f}**"
+                                    f"\u2002(**{_eq_dd_pct:.1f}% of peak equity**)"
                                 )
                         elif _chart_view == "Cumulative R":
                             st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade, no position sizing or compounding")
