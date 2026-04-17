@@ -5079,6 +5079,60 @@ if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
+    # ── Persistent sticky feed indicator ───────────────────────────────────
+    st.markdown(
+        """
+<div id="_sfi_wrap" style="
+    position:sticky; top:0; z-index:999;
+    background:#0d1117;
+    border-bottom:1px solid #1f2937;
+    margin:-10px -16px 10px -16px;
+    padding:6px 16px;
+    display:flex; align-items:center; justify-content:space-between;
+    box-sizing:border-box;">
+  <span style="font-size:10px; font-weight:600; color:#6b7280;
+               letter-spacing:0.07em; text-transform:uppercase; white-space:nowrap;">
+    Active Feed
+  </span>
+  <span id="_sfi_pill" style="
+    font-size:10px; font-weight:700; padding:2px 10px;
+    border-radius:10px; letter-spacing:1px;
+    background:#1b5e20; color:#a5d6a7;">
+    SIP
+  </span>
+</div>
+<script>
+(function () {
+  function _sfiUpdate(feed) {
+    var pill = document.getElementById('_sfi_pill');
+    if (!pill) return;
+    var isSip = !feed || feed.toLowerCase().indexOf('iex') < 0;
+    pill.textContent      = isSip ? 'SIP' : 'IEX';
+    pill.style.background = isSip ? '#1b5e20' : '#0d3b6e';
+    pill.style.color      = isSip ? '#a5d6a7' : '#90caf9';
+  }
+  function _sfiRead() {
+    return localStorage.getItem('edgeiq_feed') ||
+           localStorage.getItem('global_default_feed') || 'sip';
+  }
+  _sfiUpdate(_sfiRead());
+  window.addEventListener('storage', function (e) {
+    if (e.key === 'edgeiq_feed' || e.key === 'global_default_feed') {
+      _sfiUpdate(_sfiRead());
+    }
+  });
+  try {
+    var _sfiBc = new BroadcastChannel('edgeiq_feed_sync');
+    _sfiBc.onmessage = function (e) {
+      if (e.data && e.data.feed) _sfiUpdate(e.data.feed);
+    };
+  } catch (e) {}
+})();
+</script>
+""",
+        unsafe_allow_html=True,
+    )
+
     # ── Database connection status ─────────────────────────────────────────
     _db_status_widget()
 
