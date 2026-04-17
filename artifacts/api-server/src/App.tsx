@@ -98,6 +98,14 @@ function AlpacaMismatchBanner({
 }
 
 function ErrorBanner({ errors, dbCheckedAt }: { errors: string[]; dbCheckedAt?: string }) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!dbCheckedAt) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [dbCheckedAt]);
+
   return (
     <div
       role="alert"
