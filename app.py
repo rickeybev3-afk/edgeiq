@@ -17851,6 +17851,86 @@ ALTER TABLE backtest_sim_runs
                 )
                 st.rerun()
 
+    # ── Reset sentinel-stamped (unavailable) paper_trades rows ───────────────────
+    with st.expander("🔄 Reset paper_trades Unavailable Rows (re-queue for backfill)", expanded=False):
+        st.markdown(
+            "Rows in **paper_trades** where Alpaca returned no bar data are permanently stamped "
+            "with a sentinel value (`tiered_pnl_r = -9999`) so they stop appearing in the "
+            "backfill queue.  If Alpaca has since added historical data for a ticker, or if a "
+            "row was retired due to a transient API glitch, use this tool to clear the sentinel "
+            "and re-queue those rows for a fresh backfill attempt."
+        )
+        _pt_rs_col_ticker, _pt_rs_col_from, _pt_rs_col_to = st.columns(3)
+        with _pt_rs_col_ticker:
+            _pt_rs_ticker = st.text_input(
+                "Ticker (optional)", key="pt_rs_ticker",
+                placeholder="e.g. AAPL — leave blank for all tickers"
+            )
+        with _pt_rs_col_from:
+            _pt_rs_date_from = st.date_input(
+                "From date (optional)", value=None, key="pt_rs_date_from"
+            )
+        with _pt_rs_col_to:
+            _pt_rs_date_to = st.date_input(
+                "To date (optional)", value=None, key="pt_rs_date_to"
+            )
+
+        _pt_rs_ticker_clean = _pt_rs_ticker.strip().upper() if _pt_rs_ticker.strip() else ""
+        _pt_rs_from_str     = str(_pt_rs_date_from) if _pt_rs_date_from else ""
+        _pt_rs_to_str       = str(_pt_rs_date_to)   if _pt_rs_date_to   else ""
+
+        _pt_rs_sentinel_count = count_paper_trades_tiered_sentinel(
+            user_id=_AUTH_USER_ID,
+            ticker=_pt_rs_ticker_clean,
+            date_from=_pt_rs_from_str,
+            date_to=_pt_rs_to_str,
+        )
+
+        _pt_rs_scope_parts = []
+        if _pt_rs_ticker_clean:
+            _pt_rs_scope_parts.append(f"ticker **{_pt_rs_ticker_clean}**")
+        if _pt_rs_from_str:
+            _pt_rs_scope_parts.append(f"from **{_pt_rs_from_str}**")
+        if _pt_rs_to_str:
+            _pt_rs_scope_parts.append(f"to **{_pt_rs_to_str}**")
+        _pt_rs_scope = (
+            f" ({', '.join(_pt_rs_scope_parts)})"
+            if _pt_rs_scope_parts else " (all tickers / all dates)"
+        )
+
+        if _pt_rs_sentinel_count > 0:
+            st.info(
+                f"**{_pt_rs_sentinel_count:,} sentinel-stamped row"
+                f"{'s' if _pt_rs_sentinel_count != 1 else ''}** found{_pt_rs_scope}. "
+                f"Click **Reset** to clear the sentinel and re-queue "
+                f"{'them' if _pt_rs_sentinel_count != 1 else 'it'} for backfill."
+            )
+        else:
+            st.success(f"No sentinel-stamped rows found{_pt_rs_scope}.")
+
+        if st.button(
+            "🔄 Reset paper_trades Unavailable Rows",
+            key="pt_tiered_reset_sentinel",
+            disabled=(_pt_rs_sentinel_count == 0),
+        ):
+            with st.spinner("Clearing sentinel values…"):
+                _pt_rs_result = reset_paper_trades_tiered_sentinel(
+                    user_id=_AUTH_USER_ID,
+                    ticker=_pt_rs_ticker_clean,
+                    date_from=_pt_rs_from_str,
+                    date_to=_pt_rs_to_str,
+                )
+            if _pt_rs_result.get("error"):
+                st.error(f"Reset failed: {_pt_rs_result['error']}")
+            else:
+                st.success(
+                    f"Reset {_pt_rs_result['reset']:,} row"
+                    f"{'s' if _pt_rs_result['reset'] != 1 else ''} — "
+                    f"{'they' if _pt_rs_result['reset'] != 1 else 'it'} will now "
+                    f"re-appear in the backfill queue."
+                )
+                st.rerun()
+
     # ── Missing EOD close price summary ─────────────────────────────────────────
     _missing_cp = get_missing_close_price_stats(user_id=_AUTH_USER_ID)
     _missing_cp_total = _missing_cp.get("total_missing", 0)

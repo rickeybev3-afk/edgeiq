@@ -787,10 +787,20 @@ def main():
         "--reset-sentinel",
         action="store_true",
         help=(
-            "Clear the unavailability sentinel (tiered_pnl_r = -9999) from "
-            "backtest_sim_runs rows so they can be retried.  "
+            "Clear the unavailability sentinel (tiered_pnl_r = -9999) from rows so they "
+            "can be retried.  Use --table to choose which table(s) to reset.  "
             "Combine with --ticker and/or --date-from / --date-to to scope the reset. "
             "Mutually exclusive with normal backfill — no Alpaca calls are made."
+        ),
+    )
+    parser.add_argument(
+        "--table",
+        metavar="TABLE",
+        default="backtest_sim_runs",
+        choices=["backtest_sim_runs", "paper_trades", "both"],
+        help=(
+            "Which table to reset when --reset-sentinel is active.  "
+            "Choices: backtest_sim_runs (default), paper_trades, both."
         ),
     )
     parser.add_argument(
@@ -803,13 +813,13 @@ def main():
         "--date-from",
         metavar="YYYY-MM-DD",
         default="",
-        help="Limit --reset-sentinel to rows with sim_date >= this date.",
+        help="Limit --reset-sentinel to rows on or after this date.",
     )
     parser.add_argument(
         "--date-to",
         metavar="YYYY-MM-DD",
         default="",
-        help="Limit --reset-sentinel to rows with sim_date <= this date.",
+        help="Limit --reset-sentinel to rows on or before this date.",
     )
     args = parser.parse_args()
 
@@ -818,14 +828,19 @@ def main():
     skip_backtest   = args.skip_backtest
     backtest_only   = args.backtest_only
     reset_sentinel  = args.reset_sentinel
+    rs_table        = args.table
     rs_ticker       = args.ticker.strip().upper() if args.ticker.strip() else ""
     rs_date_from    = args.date_from.strip()
     rs_date_to      = args.date_to.strip()
 
     # ── --reset-sentinel mode (mutually exclusive with normal backfill) ────────
     if reset_sentinel:
+        do_backtest    = rs_table in ("backtest_sim_runs", "both")
+        do_paper       = rs_table in ("paper_trades", "both")
+
         print("EdgeIQ — Reset Unavailability Sentinel")
         print("=" * 60)
+        print(f"  Table(s): {rs_table}")
         scope_parts = []
         if rs_ticker:
             scope_parts.append(f"ticker={rs_ticker}")
@@ -839,36 +854,79 @@ def main():
             print("  *** DRY RUN — no database writes ***")
         print()
 
-        before_count = backend.count_backtest_tiered_sentinel(
-            ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
-        )
-        print(f"  Sentinel-stamped rows found : {before_count:,}")
+        any_found = False
+        had_error = False
 
-        if before_count == 0:
-            print("  Nothing to reset — exiting.")
-            return
-
-        if dry_run:
-            print(
-                f"  Would reset {before_count:,} row(s) "
-                f"(re-run without --dry-run to apply)."
-            )
-        else:
-            result = backend.reset_backtest_tiered_sentinel(
+        if do_backtest:
+            print("  [backtest_sim_runs]")
+            bt_before = backend.count_backtest_tiered_sentinel(
                 ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
             )
-            if result.get("error"):
-                print(f"  ERROR: {result['error']}")
-                return
-            reset_count = result.get("reset", 0)
-            print(f"  Rows reset (sentinel cleared)   : {reset_count:,}")
-            after_count = backend.count_backtest_tiered_sentinel(
-                ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
-            )
-            print(f"  Sentinel-stamped rows remaining : {after_count:,}")
-            pending = backend.count_backtest_tiered_pending()
-            print(f"  Rows now in backfill queue      : {pending:,}")
+            print(f"  Sentinel-stamped rows found : {bt_before:,}")
+            if bt_before == 0:
+                print("  Nothing to reset in backtest_sim_runs.")
+            else:
+                any_found = True
+                if dry_run:
+                    print(
+                        f"  Would reset {bt_before:,} row(s) "
+                        f"(re-run without --dry-run to apply)."
+                    )
+                else:
+                    bt_result = backend.reset_backtest_tiered_sentinel(
+                        ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+                    )
+                    if bt_result.get("error"):
+                        print(f"  ERROR: {bt_result['error']}")
+                        had_error = True
+                    else:
+                        bt_reset = bt_result.get("reset", 0)
+                        print(f"  Rows reset (sentinel cleared)   : {bt_reset:,}")
+                        bt_after = backend.count_backtest_tiered_sentinel(
+                            ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+                        )
+                        print(f"  Sentinel-stamped rows remaining : {bt_after:,}")
+                        pending = backend.count_backtest_tiered_pending()
+                        print(f"  Rows now in backfill queue      : {pending:,}")
             print()
+
+        if do_paper:
+            print("  [paper_trades]")
+            pt_before = backend.count_paper_trades_tiered_sentinel(
+                ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+            )
+            print(f"  Sentinel-stamped rows found : {pt_before:,}")
+            if pt_before == 0:
+                print("  Nothing to reset in paper_trades.")
+            else:
+                any_found = True
+                if dry_run:
+                    print(
+                        f"  Would reset {pt_before:,} row(s) "
+                        f"(re-run without --dry-run to apply)."
+                    )
+                else:
+                    pt_result = backend.reset_paper_trades_tiered_sentinel(
+                        ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+                    )
+                    if pt_result.get("error"):
+                        print(f"  ERROR: {pt_result['error']}")
+                        had_error = True
+                    else:
+                        pt_reset = pt_result.get("reset", 0)
+                        print(f"  Rows reset (sentinel cleared)   : {pt_reset:,}")
+                        pt_after = backend.count_paper_trades_tiered_sentinel(
+                            ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+                        )
+                        print(f"  Sentinel-stamped rows remaining : {pt_after:,}")
+            print()
+
+        if had_error:
+            print("  PARTIAL FAILURE — one or more tables could not be reset (see ERROR lines above).")
+            sys.exit(1)
+        elif not any_found and not dry_run:
+            print("  Nothing to reset across selected table(s) — exiting.")
+        elif not dry_run:
             print("  Reset complete.  Re-run the normal backfill to process these rows.")
         return
 
