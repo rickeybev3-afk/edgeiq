@@ -357,6 +357,11 @@ _alpaca_mismatch_status: dict = {
 }
 
 # Write startup health status to a file so the proxy can expose /api/health
+# Tracks the app_config table status set by _ensure_app_config_table_exists().
+# Values: "ok" (table existed), "created" (just created), "missing" (absent/unreachable).
+_app_config_table_status: str = "missing"
+
+
 def _write_health_file() -> None:
     """Persist the current health payload to /tmp/startup_health.json."""
     try:
@@ -367,6 +372,7 @@ def _write_health_file() -> None:
             "errors": [{"secret": _n, "message": _m} for _n, _m in _startup_errors],
             "alpaca_mode_mismatch": _alpaca_mismatch_status["mismatch"],
             "alpaca_mismatch_message": _alpaca_mismatch_status["message"],
+            "app_config_table": _app_config_table_status,
         }
         with open(_health_path, "w") as _hf:
             _json.dump(_health_payload, _hf)
@@ -3130,11 +3136,18 @@ def _ensure_app_config_table_exists() -> None:
     ("undefined_table") to avoid spurious errors during transient
     network/auth issues.  Falls back to a warning when
     ``SUPABASE_ACCESS_TOKEN`` is not set or the Management API call fails.
+
+    Sets the module-level ``_app_config_table_status`` to one of:
+    - ``"ok"``      — table already existed and is reachable
+    - ``"created"`` — table was absent and was created successfully this run
+    - ``"missing"`` — table is absent or unreachable (operators must act)
     """
+    global _app_config_table_status
     if supabase is None:
         return
     try:
         supabase.table(_APP_CONFIG_TABLE).select("key").limit(1).execute()
+        _app_config_table_status = "ok"
     except Exception as _exc:
         _is_missing_table = False
         _code = getattr(_exc, "code", None)
@@ -3157,6 +3170,7 @@ def _ensure_app_config_table_exists() -> None:
                     "Alternatively run this SQL in the Supabase SQL editor: %s",
                     _APP_CONFIG_DDL,
                 )
+                _app_config_table_status = "missing"
             else:
                 logging.info(
                     "[STARTUP] app_config table not found — attempting to create it via "
@@ -3167,6 +3181,7 @@ def _ensure_app_config_table_exists() -> None:
                         "[STARTUP] app_config table created and verified successfully via "
                         "the Supabase Management API."
                     )
+                    _app_config_table_status = "created"
                 else:
                     logging.warning(
                         "[STARTUP] app_config table not found and could not be created "
@@ -3175,13 +3190,16 @@ def _ensure_app_config_table_exists() -> None:
                         "Run the following SQL in the Supabase SQL editor to fix this: %s",
                         _APP_CONFIG_DDL,
                     )
+                    _app_config_table_status = "missing"
         else:
             logging.debug(
                 "[STARTUP] Could not verify app_config table existence (transient error): %s", _exc
             )
+            _app_config_table_status = "missing"
 
 
 _ensure_app_config_table_exists()
+_write_health_file()
 
 _TCS_ALERT_CACHE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tcs_alert_cache.json"
