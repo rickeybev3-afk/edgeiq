@@ -9444,6 +9444,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     )
                     _csv_just_reset = True
 
+                # ── Global "Reset all CSV columns" button (above all ticker expanders) ──
+                _gcr_col, _ = st.columns([3, 7])
+                with _gcr_col:
+                    if st.button(
+                        "↩ Reset all CSV columns to defaults",
+                        key="csv_global_reset_top_btn",
+                        help="Clears the saved column preference for every ticker at once and reverts all multiselects to the default 6 columns.",
+                    ):
+                        st.session_state["_csv_global_reset"] = True
+                        st.rerun()
+
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
