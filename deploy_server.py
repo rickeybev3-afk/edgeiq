@@ -260,6 +260,102 @@ def _save_owner_prefs(prefs: dict) -> None:
             pass
 
 
+def _save_subscriber_prefs(user_id: str, prefs: dict) -> None:
+    """Persist a single subscriber's user preferences to local file + Supabase.
+
+    Mirrors the write path used by backend.py save_user_prefs so the stored
+    value is immediately visible to all backend logic.
+    """
+    import datetime as _dt
+    uid = user_id
+
+    # Local file first
+    try:
+        all_prefs: dict = {}
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                all_prefs = json.load(_f)
+        all_prefs[uid] = prefs
+        os.makedirs(os.path.dirname(_USER_PREFS_FILE), exist_ok=True)
+        with open(_USER_PREFS_FILE, "w") as _f:
+            json.dump(all_prefs, _f)
+    except Exception:
+        pass
+
+    # Supabase upsert
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_key = (
+        os.environ.get("SUPABASE_KEY") or
+        os.environ.get("SUPABASE_ANON_KEY") or
+        os.environ.get("VITE_SUPABASE_ANON_KEY") or
+        ""
+    )
+    if supabase_url and supabase_key:
+        try:
+            import urllib.request as _ur
+            payload = json.dumps({
+                "user_id": uid,
+                "prefs": json.dumps(prefs),
+                "updated_at": _dt.datetime.utcnow().isoformat(),
+            }).encode()
+            req = _ur.Request(
+                f"{supabase_url}/rest/v1/user_preferences",
+                data=payload,
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates",
+                },
+                method="POST",
+            )
+            _ur.urlopen(req, timeout=4)
+        except Exception:
+            pass
+
+
+def _load_subscriber_prefs(user_id: str) -> dict:
+    """Load a single subscriber's prefs from local file + Supabase."""
+    uid = user_id
+    result: dict = {}
+
+    try:
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                result = json.load(_f).get(uid, {})
+    except Exception:
+        pass
+
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_key = (
+        os.environ.get("SUPABASE_KEY") or
+        os.environ.get("SUPABASE_ANON_KEY") or
+        os.environ.get("VITE_SUPABASE_ANON_KEY") or
+        ""
+    )
+    if supabase_url and supabase_key:
+        try:
+            import urllib.request as _ur
+            import urllib.parse as _up
+            req = _ur.Request(
+                f"{supabase_url}/rest/v1/user_preferences?user_id=eq.{_up.quote(uid)}&select=prefs&limit=1",
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Accept": "application/json",
+                },
+            )
+            with _ur.urlopen(req, timeout=4) as resp:
+                rows = json.loads(resp.read())
+                if rows:
+                    raw = rows[0].get("prefs", "{}")
+                    result = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except Exception:
+            pass
+
+    return result
+
+
 _DB_CACHE_TTL = 10
 _DB_EVENTS_MAX = 50
 _db_cache_lock = threading.Lock()
@@ -497,6 +593,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/backfill-error-alerts":
             self._backfill_error_alerts_post()
             return
+        if path == "/api/subscribers/credential-alerts":
+            self._subscribers_credential_alerts_post()
+            return
         self._proxy() if streamlit_ready else self._loading()
 
     def do_PUT(self):
@@ -678,6 +777,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def _subscribers_credential_alerts_post(self):
+        """Accept {"user_id": str, "enabled": bool} and update that subscriber's credential_alerts_enabled pref.
+
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set, matching
+        the same authz model used by POST /api/trading-mode.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "user_id" not in payload or "enabled" not in payload:
+                body = json.dumps({"error": "'user_id' and 'enabled' fields are required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            user_id = str(payload["user_id"])
+            if not isinstance(payload["enabled"], bool):
+                body = json.dumps({"error": "'enabled' must be a JSON boolean"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            enabled = payload["enabled"]
+            prefs = _load_subscriber_prefs(user_id)
+            prefs["credential_alerts_enabled"] = enabled
+            _save_subscriber_prefs(user_id, prefs)
+            body = json.dumps({"user_id": user_id, "enabled": enabled}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
 
     def _db_events_get(self):
         """Return recent DB connectivity outage events as JSON."""

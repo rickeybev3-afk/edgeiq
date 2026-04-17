@@ -543,7 +543,20 @@ export default function Settings() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {subscribersState.subscribers.map((sub) => (
-                <SubscriberRow key={sub.user_id} subscriber={sub} />
+                <SubscriberRow
+                  key={sub.user_id}
+                  subscriber={sub}
+                  onToggle={(userId, enabled) => {
+                    setSubscribersState((s) => ({
+                      ...s,
+                      subscribers: s.subscribers.map((sr) =>
+                        sr.user_id === userId
+                          ? { ...sr, credential_alerts_enabled: enabled }
+                          : sr
+                      ),
+                    }));
+                  }}
+                />
               ))}
             </div>
           )}
@@ -804,10 +817,55 @@ function ModeButton({
   );
 }
 
-function SubscriberRow({ subscriber }: { subscriber: SubscriberCredentialStatus }) {
-  const enabled = subscriber.credential_alerts_enabled;
+function SubscriberRow({
+  subscriber,
+  onToggle,
+}: {
+  subscriber: SubscriberCredentialStatus;
+  onToggle: (userId: string, enabled: boolean) => void;
+}) {
+  const [enabled, setEnabled] = useState(subscriber.credential_alerts_enabled);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const displayName = subscriber.tg_name || subscriber.user_id;
   const hasName = Boolean(subscriber.tg_name);
+
+  useEffect(() => {
+    if (!saving) {
+      setEnabled(subscriber.credential_alerts_enabled);
+    }
+  }, [subscriber.credential_alerts_enabled]);
+
+  useEffect(() => {
+    if (!saving) {
+      setEnabled(subscriber.credential_alerts_enabled);
+    }
+  }, [subscriber.credential_alerts_enabled]);
+
+  async function handleToggle() {
+    const next = !enabled;
+    setEnabled(next);
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/subscribers/credential-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: subscriber.user_id, enabled: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server error ${res.status}`);
+      }
+      onToggle(subscriber.user_id, next);
+    } catch (err: unknown) {
+      setEnabled(!next);
+      setError(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div
       style={{
@@ -818,9 +876,10 @@ function SubscriberRow({ subscriber }: { subscriber: SubscriberCredentialStatus 
         background: "rgba(255,255,255,0.03)",
         border: `1px solid ${enabled ? "#2d3748" : "#7f1d1d"}`,
         borderRadius: "8px",
+        gap: "12px",
       }}
     >
-      <div style={{ flex: 1, marginRight: "16px", overflow: "hidden" }}>
+      <div style={{ flex: 1, overflow: "hidden" }}>
         <div
           style={{
             fontSize: "13px",
@@ -848,33 +907,34 @@ function SubscriberRow({ subscriber }: { subscriber: SubscriberCredentialStatus 
             {subscriber.user_id}
           </div>
         )}
+        {error && (
+          <div style={{ fontSize: "11px", color: "#f87171", marginTop: "4px" }}>
+            ⚠ {error}
+          </div>
+        )}
       </div>
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "6px",
+          gap: "8px",
           flexShrink: 0,
         }}
       >
         <span
           style={{
-            width: "8px",
-            height: "8px",
-            borderRadius: "50%",
-            background: enabled ? "#22c55e" : "#ef4444",
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{
-            fontSize: "12px",
-            fontWeight: 600,
+            fontSize: "11px",
             color: enabled ? "#4ade80" : "#f87171",
+            fontWeight: 600,
           }}
         >
           {enabled ? "Enabled" : "Opted out"}
         </span>
+        <ToggleSwitch
+          enabled={enabled}
+          disabled={saving}
+          onChange={() => handleToggle()}
+        />
       </div>
     </div>
   );
