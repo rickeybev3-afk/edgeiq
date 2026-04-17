@@ -12243,13 +12243,29 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
     # ── LIVE vs PROJECTED R/TRADE TRACKER ────────────────────────────────────
     st.markdown("---")
-    st.markdown("### 📈 Live vs Projected R/Trade")
+    _rp_hdr_col, _rp_sel_col = st.columns([4, 1])
+    with _rp_hdr_col:
+        st.markdown("### 📈 Live vs Projected R/Trade")
+    with _rp_sel_col:
+        _window_options = {"10": 10, "20": 20, "30": 30, "50": 50, "All": None}
+        _window_label = st.selectbox(
+            "Window",
+            options=list(_window_options.keys()),
+            index=2,
+            key="rp_window_size",
+            help="Number of recent settled trades used to compute the trailing R/trade average.",
+        )
+    _rp_window = _window_options[_window_label]
+    if _rp_window is not None:
+        _window_phrase = f"your last {_rp_window} settled"
+    else:
+        _window_phrase = "all of your settled"
     st.caption(
-        "Trailing avg R/trade from your last 30 settled paper trades (tiered 50/25/25 ladder). "
+        f"Trailing avg R/trade from {_window_phrase} paper trades (tiered 50/25/25 ladder). "
         "Compared against the 3 financial projection scenarios for Dec 2026."
     )
 
-    _rp = compute_r_projection(user_id=_uid, window=30)
+    _rp = compute_r_projection(user_id=_uid, window=_rp_window)
 
     _SCENARIO_META = {
         "Below Conservative": {"color": "#ef5350", "icon": "⚠️", "desc": "Below all targets"},

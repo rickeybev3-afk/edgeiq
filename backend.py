@@ -9630,7 +9630,7 @@ R_PROJECTION_SCENARIOS = [
 ]
 
 
-def compute_r_projection(user_id: str = "", window: int = 30) -> dict:
+def compute_r_projection(user_id: str = "", window: int | None = 30) -> dict:
     """Compute trailing R/trade from the last `window` settled paper trades
     and map it against the 3 financial projection scenarios (R_PROJECTION_SCENARIOS).
 
@@ -9681,17 +9681,17 @@ def compute_r_projection(user_id: str = "", window: int = 30) -> dict:
         canonical approach used elsewhere in the codebase.
         """
         try:
-            rows = (
+            q = (
                 supabase.table("paper_trades")
                 .select(f"trade_date, {col}")
                 .eq("user_id", user_id)
                 .not_.is_("win_loss", "null")
                 .not_.is_(col, "null")
                 .order("trade_date", desc=True)
-                .limit(window)
-                .execute()
-                .data or []
             )
+            if window is not None:
+                q = q.limit(window)
+            rows = q.execute().data or []
             return [float(r[col]) for r in rows if r.get(col) is not None]
         except Exception as e:
             print(f"compute_r_projection: fetch error ({col}): {e}")
