@@ -16667,14 +16667,27 @@ ALTER TABLE backtest_sim_runs
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── TCS Threshold History (collapsible) ───────────────────────────────────
+    _HIST_WINDOW_OPTS = [7, 30, 90]
+    _qp_hist_raw = st.query_params.get("tcs_hist_window")
+    try:
+        _qp_hist_int = int(_qp_hist_raw) if _qp_hist_raw is not None else None
+    except (TypeError, ValueError):
+        _qp_hist_int = None
+    if _qp_hist_int in _HIST_WINDOW_OPTS:
+        # URL is the authoritative source; honour it even in an active session
+        st.session_state["tcs_hist_days"] = _qp_hist_int
+    elif "tcs_hist_days" not in st.session_state:
+        # No (valid) URL param and no prior selection — use the default
+        st.session_state["tcs_hist_days"] = 30
     _bw_hist_days = st.radio(
         "History window",
-        options=[7, 30, 90],
-        index=1,
+        options=_HIST_WINDOW_OPTS,
         horizontal=True,
         format_func=lambda d: f"{d} days",
         key="tcs_hist_days",
     )
+    if st.query_params.get("tcs_hist_window") != str(_bw_hist_days):
+        st.query_params["tcs_hist_window"] = str(_bw_hist_days)
     _bw_tcs_hist   = _cached_load_tcs_threshold_history(days=_bw_hist_days)
     _bw_cur_thresh = _cached_load_tcs_thresholds()
     _bw_hist_90    = _cached_load_tcs_threshold_history(days=90)
