@@ -37,7 +37,18 @@ function AlpacaMismatchBanner({ message }: { message: string }) {
       <AlertCircle style={{ color: "#fb923c", flexShrink: 0, width: "18px", height: "18px" }} />
       <span style={{ color: "#fed7aa", fontSize: "13px", lineHeight: "1.5" }}>
         <strong style={{ color: "#fdba74" }}>⚠️ Alpaca credential mismatch:</strong>{" "}
-        {message}
+        {message}{" "}
+        <a
+          href="/edgeiq/#trading-mode"
+          style={{
+            color: "#fdba74",
+            fontWeight: 700,
+            textDecoration: "underline",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Go to Trading Mode settings →
+        </a>
       </span>
     </div>
   );

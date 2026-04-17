@@ -508,10 +508,17 @@ if not _alpaca_mismatch_status["mismatch"]:
 elif not st.session_state.get("alpaca_mismatch_dismissed", False):
     _col_msg, _col_btn = st.columns([10, 1])
     with _col_msg:
-        st.warning(
-            f"**⚠️ Alpaca credential mismatch detected**\n\n"
-            f"{_alpaca_mismatch_status['message']}\n\n"
-            "Use the **Trading Mode** toggle in the sidebar to switch modes without restarting."
+        st.markdown(
+            '<div style="background:#1c1000; border:1px solid #b45309; border-radius:6px; '
+            'padding:12px 16px; margin-bottom:12px; line-height:1.6;">'
+            '<span style="font-size:14px; font-weight:700; color:#fbbf24;">⚠️ Alpaca credential mismatch detected</span><br>'
+            f'<span style="font-size:13px; color:#fde68a;">{_alpaca_mismatch_status["message"]}</span><br>'
+            '<span style="font-size:13px; color:#fcd34d;">Use the '
+            '<a href="#trading-mode" style="color:#fbbf24; font-weight:700; '
+            'text-decoration:underline;">🔀 Trading Mode</a>'
+            ' toggle in the sidebar to switch modes without restarting.</span>'
+            '</div>',
+            unsafe_allow_html=True,
         )
     with _col_btn:
         if st.button("Dismiss", key="dismiss_alpaca_mismatch"):
@@ -4524,6 +4531,7 @@ with st.sidebar:
             st.session_state["_pref_alpaca_secret"] = secret_key
 
     st.markdown("---")
+    st.markdown('<a id="trading-mode"></a>', unsafe_allow_html=True)
     st.header("🔀 Trading Mode")
 
     @st.cache_data(ttl=300, show_spinner=False)
