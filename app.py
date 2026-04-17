@@ -6910,6 +6910,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "R (Tiered)": "Tiered Exit R",
                         })
 
+                        # ── Round numeric columns for clean spreadsheet output ─────────
+                        _rp_csv_round_1dp = {"Move %"}
+                        _rp_csv_round_2dp = {
+                            "Entry", "Stop", "R (MFE)", "EOD Hold R",
+                            "Tiered Exit R", "Cumulative R", "P&L ($)", "Equity",
+                        }
+                        _rp_csv_int_cols  = {"TCS", "TCS Floor", "Shares"}
+                        for _rc in list(_rp_csv_df.columns):
+                            if _rc in _rp_csv_round_1dp:
+                                _rp_csv_df[_rc] = pd.to_numeric(_rp_csv_df[_rc], errors="coerce").round(1)
+                            elif _rc in _rp_csv_round_2dp:
+                                _rp_csv_df[_rc] = pd.to_numeric(_rp_csv_df[_rc], errors="coerce").round(2)
+                            elif _rc in _rp_csv_int_cols:
+                                _rp_csv_df[_rc] = pd.to_numeric(_rp_csv_df[_rc], errors="coerce").astype("Int64")
+
                         # Append a blank separator then a per-stat summary block
                         _csv_cols   = list(_rp_csv_df.columns)
                         _label_col  = _csv_cols[0]
