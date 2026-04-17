@@ -2116,9 +2116,15 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
     return {"written": written, "skipped": skipped}
 
 
-def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
+def _recalc_eod_pnl_r_recent(lookback_days: int | None = None) -> dict:
     """Compute eod_pnl_r for paper_trades rows that now have close_price but
-    still have NULL eod_pnl_r, covering the past ``lookback_days`` calendar days.
+    still have NULL eod_pnl_r.
+
+    When ``lookback_days`` is None (the default), ALL historical rows are
+    considered — this ensures that close prices backfilled via the manual Retry
+    button or via _eod_collect_close_prices() for any date are always picked up
+    by the nightly run.  Pass an integer to restrict the sweep to the most
+    recent N calendar days (useful for ad-hoc targeted runs).
 
     Called immediately after _eod_collect_close_prices() during nightly
     recalibration so any rows whose close_price was just filled also get their
@@ -2142,7 +2148,11 @@ def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
         log.warning(f"_recalc_eod_pnl_r_recent: Cannot import compute_trade_sim_tiered: {_ie}")
         return {"written": 0, "skipped": 0}
 
-    cutoff = str(date.today() - timedelta(days=lookback_days))
+    cutoff = (
+        str(date.today() - timedelta(days=lookback_days))
+        if lookback_days is not None
+        else None
+    )
     _PAGE = 1000
     rows: list = []
     offset = 0
@@ -2151,18 +2161,19 @@ def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
         offset = 0
         while True:
             try:
-                resp = (
+                query = (
                     _supabase_client.table("paper_trades")
                     .select("id,actual_outcome,ib_high,ib_low,close_price")
                     .eq("user_id", USER_ID)
                     .eq("actual_outcome", direction)
                     .is_("eod_pnl_r", "null")
                     .not_.is_("close_price", "null")
-                    .gte("trade_date", cutoff)
                     .order("id", desc=True)
                     .range(offset, offset + _PAGE - 1)
-                    .execute()
                 )
+                if cutoff is not None:
+                    query = query.gte("trade_date", cutoff)
+                resp = query.execute()
             except Exception as _qe:
                 log.warning(
                     f"_recalc_eod_pnl_r_recent: DB query failed ({direction}): {_qe}"
@@ -2174,16 +2185,17 @@ def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
                 break
             offset += _PAGE
 
+    scope_desc = f"last {lookback_days} days" if lookback_days is not None else "all time"
     if not rows:
         log.info(
             "EOD close-price catch-up: no paper_trades rows need eod_pnl_r "
-            "recalculation (last %d days).", lookback_days
+            "recalculation (%s).", scope_desc
         )
         return {"written": 0, "skipped": 0}
 
     log.info(
         f"EOD eod_pnl_r recalc: {len(rows)} paper_trades row(s) have "
-        f"close_price but NULL eod_pnl_r — computing now…"
+        f"close_price but NULL eod_pnl_r ({scope_desc}) — computing now…"
     )
 
     written = 0
@@ -3139,8 +3151,12 @@ def nightly_recalibration():
     # ── eod_pnl_r recalculation for newly-filled close prices ────────────────
     # After filling close_price, immediately compute eod_pnl_r for any
     # breakout rows that are still missing it (avoids a manual backfill run).
+    # No lookback window is applied here — the sweep covers ALL historical
+    # paper_trades rows so that close prices backfilled via the manual Retry
+    # button (or any previous nightly run that lacked a close price) are
+    # always picked up, not just those from the last 7 days.
     try:
-        pr_result = _recalc_eod_pnl_r_recent(lookback_days=7)
+        pr_result = _recalc_eod_pnl_r_recent()
         if pr_result["written"]:
             log.info(
                 f"Nightly eod_pnl_r recalc: "
