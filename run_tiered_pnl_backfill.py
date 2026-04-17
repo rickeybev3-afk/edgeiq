@@ -782,12 +782,94 @@ def main():
         action="store_true",
         help="Only backfill backtest_sim_runs; skip paper_trades entirely.",
     )
+    parser.add_argument(
+        "--reset-sentinel",
+        action="store_true",
+        help=(
+            "Clear the unavailability sentinel (tiered_pnl_r = -9999) from "
+            "backtest_sim_runs rows so they can be retried.  "
+            "Combine with --ticker and/or --date-from / --date-to to scope the reset. "
+            "Mutually exclusive with normal backfill — no Alpaca calls are made."
+        ),
+    )
+    parser.add_argument(
+        "--ticker",
+        metavar="TICKER",
+        default="",
+        help="Limit --reset-sentinel to a single ticker symbol (e.g. AAPL).",
+    )
+    parser.add_argument(
+        "--date-from",
+        metavar="YYYY-MM-DD",
+        default="",
+        help="Limit --reset-sentinel to rows with sim_date >= this date.",
+    )
+    parser.add_argument(
+        "--date-to",
+        metavar="YYYY-MM-DD",
+        default="",
+        help="Limit --reset-sentinel to rows with sim_date <= this date.",
+    )
     args = parser.parse_args()
 
     dry_run         = args.dry_run
     rate_limit      = not args.no_ratelimit
     skip_backtest   = args.skip_backtest
     backtest_only   = args.backtest_only
+    reset_sentinel  = args.reset_sentinel
+    rs_ticker       = args.ticker.strip().upper() if args.ticker.strip() else ""
+    rs_date_from    = args.date_from.strip()
+    rs_date_to      = args.date_to.strip()
+
+    # ── --reset-sentinel mode (mutually exclusive with normal backfill) ────────
+    if reset_sentinel:
+        print("EdgeIQ — Reset Unavailability Sentinel")
+        print("=" * 60)
+        scope_parts = []
+        if rs_ticker:
+            scope_parts.append(f"ticker={rs_ticker}")
+        if rs_date_from:
+            scope_parts.append(f"date_from={rs_date_from}")
+        if rs_date_to:
+            scope_parts.append(f"date_to={rs_date_to}")
+        scope_str = ", ".join(scope_parts) if scope_parts else "all tickers / all dates"
+        print(f"  Scope: {scope_str}")
+        if dry_run:
+            print("  *** DRY RUN — no database writes ***")
+        print()
+
+        before_count = backend.count_backtest_tiered_sentinel(
+            ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+        )
+        print(f"  Sentinel-stamped rows found : {before_count:,}")
+
+        if before_count == 0:
+            print("  Nothing to reset — exiting.")
+            return
+
+        if dry_run:
+            print(
+                f"  Would reset {before_count:,} row(s) "
+                f"(re-run without --dry-run to apply)."
+            )
+        else:
+            result = backend.reset_backtest_tiered_sentinel(
+                ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+            )
+            if result.get("error"):
+                print(f"  ERROR: {result['error']}")
+                return
+            reset_count = result.get("reset", 0)
+            print(f"  Rows reset (sentinel cleared)   : {reset_count:,}")
+            after_count = backend.count_backtest_tiered_sentinel(
+                ticker=rs_ticker, date_from=rs_date_from, date_to=rs_date_to
+            )
+            print(f"  Sentinel-stamped rows remaining : {after_count:,}")
+            pending = backend.count_backtest_tiered_pending()
+            print(f"  Rows now in backfill queue      : {pending:,}")
+            print()
+            print("  Reset complete.  Re-run the normal backfill to process these rows.")
+        return
 
     print("EdgeIQ — Tiered P&L Backfill (50/25/25 ladder)")
     print("=" * 60)

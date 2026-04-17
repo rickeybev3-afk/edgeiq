@@ -8578,6 +8578,97 @@ def count_missing_close_price_in_range(
         return 0
 
 
+def count_backtest_tiered_sentinel(
+    user_id: str = "",
+    ticker: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> int:
+    """Return the count of backtest_sim_runs rows stamped with the unavailability sentinel.
+
+    Rows with tiered_pnl_r == TIERED_PNL_SENTINEL (-9999) were retired because
+    Alpaca returned no bar data at the time of the backfill.  This function lets
+    operators see how many such rows exist, optionally scoped to a ticker or
+    sim_date range, before deciding whether to reset them.
+
+    Parameters
+    ----------
+    user_id   : Scope to a single user (empty = all users).
+    ticker    : Exact ticker symbol filter (empty = all tickers).
+    date_from : Lower bound on sim_date, inclusive (YYYY-MM-DD, empty = no lower bound).
+    date_to   : Upper bound on sim_date, inclusive (YYYY-MM-DD, empty = no upper bound).
+    """
+    if not supabase:
+        return 0
+    try:
+        q = (
+            supabase.table("backtest_sim_runs")
+            .select("id", count="exact")
+            .eq("tiered_pnl_r", TIERED_PNL_SENTINEL)
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        if ticker:
+            q = q.eq("ticker", ticker.upper())
+        if date_from:
+            q = q.gte("sim_date", date_from)
+        if date_to:
+            q = q.lte("sim_date", date_to)
+        resp = q.execute()
+        return resp.count or 0
+    except Exception as e:
+        print(f"count_backtest_tiered_sentinel error: {e}")
+        return 0
+
+
+def reset_backtest_tiered_sentinel(
+    user_id: str = "",
+    ticker: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> dict:
+    """Clear the unavailability sentinel from backtest_sim_runs rows.
+
+    Sets tiered_pnl_r back to NULL so the rows re-enter the IS NULL pending
+    count and become eligible for a fresh backfill attempt.
+
+    Parameters
+    ----------
+    user_id   : Scope to a single user (empty = all users).
+    ticker    : Exact ticker symbol filter (empty = all tickers).
+    date_from : Lower bound on sim_date, inclusive (YYYY-MM-DD, empty = no lower bound).
+    date_to   : Upper bound on sim_date, inclusive (YYYY-MM-DD, empty = no upper bound).
+
+    Returns
+    -------
+    dict with keys:
+      reset  – int, number of rows whose sentinel was cleared.
+      error  – str | None, error message if the operation failed.
+    """
+    if not supabase:
+        return {"reset": 0, "error": "Supabase not initialised"}
+    try:
+        q = (
+            supabase.table("backtest_sim_runs")
+            .update({"tiered_pnl_r": None})
+            .eq("tiered_pnl_r", TIERED_PNL_SENTINEL)
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        if ticker:
+            q = q.eq("ticker", ticker.upper())
+        if date_from:
+            q = q.gte("sim_date", date_from)
+        if date_to:
+            q = q.lte("sim_date", date_to)
+        resp = q.execute()
+        reset_count = len(resp.data) if resp.data else 0
+        return {"reset": reset_count, "error": None}
+    except Exception as e:
+        print(f"reset_backtest_tiered_sentinel error: {e}")
+        return {"reset": 0, "error": str(e)}
+
+
 def get_missing_close_price_stats(user_id: str = "") -> dict:
     """Return stats on backtest_sim_runs rows that have no close_price.
 
