@@ -8000,14 +8000,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _bt_tier_exp_map[_bti2] = round(_bt_td2["R (MFE)"].mean(), 3)
                         _bt_best_exp_r = max(_bt_tier_exp_map.values()) if len(_bt_tier_exp_map) > 1 else None
 
-                        for _bti, (_btl, _bte, _btst, _btlo, _bthi, _btc, _btd) in enumerate(_bt_tier_defs):
+                        # Sort tier render order by expectancy R (best edge first) when multiple tiers have trades
+                        if len(_bt_tier_exp_map) > 1:
+                            _bt_render_order = sorted(
+                                range(len(_bt_tier_defs)),
+                                key=lambda _i: _bt_tier_exp_map.get(_i, float("-inf")),
+                                reverse=True,
+                            )
+                        else:
+                            _bt_render_order = list(range(len(_bt_tier_defs)))
+
+                        for _bt_rpos, _bti in enumerate(_bt_render_order):
+                            (_btl, _bte, _btst, _btlo, _bthi, _btc, _btd) = _bt_tier_defs[_bti]
                             _bt_tier_mask = (
                                 (_rp_df["Snapshot"].str.lower() == _btst) &
                                 (_rp_df["TCS"] >= _btlo) &
                                 (_rp_df["TCS"] <= _bthi)
                             )
                             _bt_td = _rp_df[_bt_tier_mask]
-                            with _bt_tier_cols[_bti]:
+                            with _bt_tier_cols[_bt_rpos]:
                                 if _bt_td.empty:
                                     st.markdown(
                                         f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
@@ -13050,8 +13061,19 @@ ALTER TABLE backtest_sim_runs
     # Only show best-edge highlight when more than one tier has trades
     _best_exp_r = max(_tier_exp_map.values()) if len(_tier_exp_map) > 1 else None
 
-    for _ti, (_tlabel, _temoji, _tst, _tcs_lo, _tcs_hi, _tcolor, _tdesc) in enumerate(_tier_defs):
-        with _tier_cols[_ti]:
+    # Sort tier render order by expectancy R (best edge first) when multiple tiers have trades
+    if len(_tier_exp_map) > 1:
+        _tier_render_order = sorted(
+            range(len(_tier_defs)),
+            key=lambda _i: _tier_exp_map.get(_i, float("-inf")),
+            reverse=True,
+        )
+    else:
+        _tier_render_order = list(range(len(_tier_defs)))
+
+    for _ti_rpos, _ti in enumerate(_tier_render_order):
+        (_tlabel, _temoji, _tst, _tcs_lo, _tcs_hi, _tcolor, _tdesc) = _tier_defs[_ti]
+        with _tier_cols[_ti_rpos]:
             if not _has_tcs:
                 st.markdown(
                     f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
