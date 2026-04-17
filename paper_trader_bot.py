@@ -1167,11 +1167,11 @@ def _build_threshold_legend(tcs_thresholds: dict, tcs_threshold: int) -> str:
     return "\n📐 " + " · ".join(_parts)
 
 
-def _count_filter_blocks(qualified: list) -> dict:
+def _count_filter_blocks(qualified: list, ib_pct_threshold: float = 10.0) -> dict:
     """Count how many qualified setups are blocked by quality filters.
 
     Returns dict with keys:
-      ib_wide          — IB range >= 10% of open price
+      ib_wide          — IB range >= ib_pct_threshold % of open price
       vwap_misaligned  — close price is on the wrong side of VWAP at IB close
     """
     ib_wide = 0
@@ -1182,7 +1182,7 @@ def _count_filter_blocks(qualified: list) -> dict:
         ib_low   = float(r.get("ib_low")     or 0)
         if open_px > 0 and ib_high > ib_low:
             ib_range_pct = (ib_high - ib_low) / open_px * 100
-            if ib_range_pct >= 10.0:
+            if ib_range_pct >= ib_pct_threshold:
                 ib_wide += 1
                 continue  # no point checking VWAP if already blocked
 
@@ -1203,7 +1203,7 @@ def _count_filter_blocks(qualified: list) -> dict:
 def _alert_morning_summary(
     qualified: list, total_scanned: int, trade_date: date,
     effective_tcs: int = None, tcs_thresholds: dict = None,
-    filter_blocks: dict = None,
+    filter_blocks: dict = None, ib_range_pct_threshold: float = None,
 ):
     """Send a summary header before individual setup alerts."""
     tcs_threshold = effective_tcs if effective_tcs is not None else MIN_TCS
@@ -1222,6 +1222,11 @@ def _alert_morning_summary(
         pass
 
     _threshold_legend = _build_threshold_legend(tcs_thresholds, tcs_threshold)
+
+    # Build IB range filter line
+    _ib_filter_line = ""
+    if ib_range_pct_threshold is not None:
+        _ib_filter_line = f"\n📐 IB filter: < {ib_range_pct_threshold:.1f}% of open price"
 
     # Build filter summary line
     _fb = filter_blocks or {}
@@ -1244,6 +1249,7 @@ def _alert_morning_summary(
             f"Watching for intraday opportunities..."
             + _threshold_legend
             + _regime_line
+            + _ib_filter_line
             + _filter_line
         )
         return
@@ -1254,6 +1260,7 @@ def _alert_morning_summary(
         f"📋 Scanned {total_scanned} tickers from your Finviz watchlist"
         + _threshold_legend
         + _regime_line
+        + _ib_filter_line
         + _filter_line
         + "\nSending individual alerts now..."
     )
@@ -1686,8 +1693,11 @@ def morning_scan():
         f"of {len(results)} scanned"
     )
 
+    # Load active IB range % threshold (used for both filter counting and the Telegram message)
+    _ib_pct_threshold = load_ib_range_pct_threshold()
+
     # Count how many qualified setups are blocked by quality filters
-    _filter_blocks = _count_filter_blocks(qualified)
+    _filter_blocks = _count_filter_blocks(qualified, ib_pct_threshold=_ib_pct_threshold)
     log.info(
         f"Filter blocks: {_filter_blocks['ib_wide']} IB-wide, "
         f"{_filter_blocks['vwap_misaligned']} VWAP-misaligned"
@@ -1699,6 +1709,7 @@ def morning_scan():
         effective_tcs=effective_min_tcs,
         tcs_thresholds=_tcs_thresholds,
         filter_blocks=_filter_blocks,
+        ib_range_pct_threshold=_ib_pct_threshold,
     )
 
     if qualified:
