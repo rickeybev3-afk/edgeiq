@@ -23812,6 +23812,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         'letter-spacing:1px; margin:16px 0 8px 0; font-weight:700;">Per-Ticker Stats</div>',
         unsafe_allow_html=True,
     )
+    def _pt_fmt_delta_r(eod_vals, tiered_vals):
+        if not len(eod_vals) or not len(tiered_vals):
+            return "—"
+        delta = tiered_vals.mean() - eod_vals.mean()
+        sign = "+" if delta >= 0 else ""
+        return f"{sign}{delta:.3f}R"
+
     _pt_tkr_rows = []
     for _ptk, _ptg in _pt_df.groupby("ticker"):
         _ptw = (_ptg["win_loss"] == "Win").sum()
@@ -23843,6 +23850,21 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         else:
             _ptk_r_adv  = None
             _ptk_winner = "—"
+
+        def _ptk_scan_vals(scan_key, col, _grp=_ptg):
+            if "scan_type" not in _grp.columns or col not in _grp.columns:
+                return pd.Series(dtype=float)
+            _mask = _grp["scan_type"].str.lower().str.startswith(scan_key, na=False)
+            return pd.to_numeric(_grp.loc[_mask, col], errors="coerce").dropna()
+
+        _ptk_eod_morn_vals    = _ptk_scan_vals("morning",  "eod_pnl_r")
+        _ptk_tiered_morn_vals = _ptk_scan_vals("morning",  "tiered_pnl_r")
+        _ptk_eod_intra_vals   = _ptk_scan_vals("intraday", "eod_pnl_r")
+        _ptk_tiered_intra_vals= _ptk_scan_vals("intraday", "tiered_pnl_r")
+
+        _ptk_delta_morn_str  = _pt_fmt_delta_r(_ptk_eod_morn_vals,  _ptk_tiered_morn_vals)
+        _ptk_delta_intra_str = _pt_fmt_delta_r(_ptk_eod_intra_vals, _ptk_tiered_intra_vals)
+
         _pt_tkr_rows.append({
             "Ticker":        _ptk,
             "Setups":        len(_ptg),
@@ -23855,6 +23877,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             "EOD Avg R":     _ptk_eod_avg  if _ptk_eod_avg  is not None else "—",
             "Tiered Avg R":  _ptk_tier_avg if _ptk_tier_avg is not None else "—",
             "R Adv (T−E)":   _ptk_r_adv    if _ptk_r_adv   is not None else "—",
+            "Δ Morn":        _ptk_delta_morn_str,
+            "Δ Intra":       _ptk_delta_intra_str,
             "Exit Edge":     _ptk_winner,
         })
     _pt_tkr_df = pd.DataFrame(_pt_tkr_rows)
@@ -23865,7 +23889,55 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         key=lambda s: pd.to_numeric(s, errors="coerce"),
         na_position="last",
     )
-    st.dataframe(_pt_tkr_df, use_container_width=True, hide_index=True)
+    _pt_tkr_display_df = _pt_tkr_df
+
+    def _pt_style_delta_cell(val):
+        if val == "—" or val is None:
+            return ""
+        try:
+            num = float(str(val).replace("R", "").replace("+", ""))
+            if num >= 0:
+                return "color:#66bb6a;font-weight:700"
+            else:
+                return "color:#ef5350;font-weight:700"
+        except (ValueError, TypeError):
+            return ""
+
+    _pt_delta_cols = [c for c in ["Δ Morn", "Δ Intra"] if c in _pt_tkr_display_df.columns]
+    _pt_styled = _pt_tkr_display_df.style
+    if _pt_delta_cols:
+        try:
+            _pt_styled = _pt_styled.map(_pt_style_delta_cell, subset=_pt_delta_cols)
+        except AttributeError:
+            _pt_styled = _pt_styled.applymap(_pt_style_delta_cell, subset=_pt_delta_cols)
+
+    _pt_col_cfg: dict = {}
+    if "Δ Morn" in _pt_tkr_display_df.columns:
+        _pt_col_cfg["Δ Morn"] = st.column_config.TextColumn(
+            "Δ Morn",
+            help=(
+                "Tiered R (Morn) − EOD R (Morn): how much tiered exits add or subtract "
+                "versus holding to close on morning scan trades. "
+                "Green = tiered exits win; red = EOD hold wins. "
+                "'—' when either side has no data."
+            ),
+        )
+    if "Δ Intra" in _pt_tkr_display_df.columns:
+        _pt_col_cfg["Δ Intra"] = st.column_config.TextColumn(
+            "Δ Intra",
+            help=(
+                "Tiered R (Intra) − EOD R (Intra): how much tiered exits add or subtract "
+                "versus holding to close on intraday scan trades. "
+                "Green = tiered exits win; red = EOD hold wins. "
+                "'—' when either side has no data."
+            ),
+        )
+    st.dataframe(
+        _pt_styled,
+        use_container_width=True,
+        hide_index=True,
+        column_config=_pt_col_cfg if _pt_col_cfg else None,
+    )
 
     # ── EOD vs Tiered Avg R — mini grouped bar chart ─────────────────────────
     _bar_rows = [
