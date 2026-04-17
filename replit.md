@@ -6,6 +6,22 @@ EdgeIQ is a Python Streamlit trading terminal designed for Volume Profile and In
 
 The core purpose is to identify and automate trading strategies based on structural market inefficiencies, specifically IB breakouts in high-TCS (Total Composite Score) small-cap setups. The long-term vision is to develop cognitive profiling software and a "Brain Marketplace" where verified traders can rent out their calibrated trading algorithms, fostering a consistency flywheel where logging trades leads to better calibration and passive income for traders. This marketplace will feature personalized brain matching based on cognitive fingerprinting.
 
+## Phase Gate Status (as of Apr 17, 2026)
+
+**Phase 1 — COMPLETE.** 111 paper trades logged. TCS≥50 win rate: **80.8%** (confirmed Apr 17, 2026 after false-break tracking bug fixed). Brain recalibration loop verified operational.
+
+**Phase 1.5 — IN PROGRESS.** Live Alpaca bracket order placement wired and tested in paper mode. PDT protection + concurrent position cap built (Apr 17, 2026) and active. First real-money order attempt target: **Apr 24, 2026** (flip `IS_PAPER_ALPACA=false`).
+
+**Phase 2 — Target: May 6, 2026.** Full live execution. Starting equity $7k, $1,500 position size, 2.14% account risk. Brain rental marketplace (50% rev share) long-term vision.
+
+### Phase 1.5 Gate Checklist
+- [x] PDT day-trade counter wired (`_check_pdt_guard` — Alpaca `/v2/account` `daytrade_count`)
+- [x] Concurrent position cap enforced (`_check_concurrent_positions_guard` — default 2 positions)
+- [x] Startup Telegram shows live PDT/position headroom for live accounts
+- [ ] API key swap (ALPACA_API_KEY/SECRET_KEY → live values)
+- [ ] Set `IS_PAPER_ALPACA=false`
+- [ ] Kill switch UI button verified
+
 The project is currently in Phase 1.5, focusing on paper execution of trades via Alpaca, with an upcoming transition to live execution (Phase 2). Financial projections indicate significant potential returns, with a strong emphasis on risk management and compounding.
 
 ## User Preferences
