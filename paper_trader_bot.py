@@ -934,7 +934,8 @@ def telegram_listener() -> None:
                         valid_requested = [k for k in requested_keys if k in WK_DISPLAY]
                         if unknown_keys:
                             valid_keys = ", ".join(
-                                f"<code>{k}</code>" for k in sorted(WK_DISPLAY.keys())
+                                f"<code>{k}</code> ({WK_DISPLAY_PLAIN.get(k, k)})"
+                                for k in sorted(WK_DISPLAY.keys())
                             )
                             unknown_fmt = ", ".join(
                                 f"<code>{k}</code>" for k in unknown_keys
