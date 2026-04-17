@@ -130,6 +130,61 @@ def _send_slack(message: str) -> None:
 _STATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            ".edgeiq_tiered_pnl_run_stats.json")
 
+_CACHE_ALERT_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".edgeiq_cache_alert_state.json",
+)
+
+_DEFAULT_COOLDOWN_HOURS = 23
+
+
+def _get_cooldown_hours() -> float:
+    """Return the configured alert cooldown in hours (default 23)."""
+    raw = os.getenv("CACHE_ALERT_COOLDOWN_HOURS", "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            log.warning(
+                "CACHE_ALERT_COOLDOWN_HOURS='%s' is not a valid number; using default %d h.",
+                raw,
+                _DEFAULT_COOLDOWN_HOURS,
+            )
+    return _DEFAULT_COOLDOWN_HOURS
+
+
+def _read_alert_state() -> dict:
+    """Return the persisted alert state, or an empty dict on any error."""
+    try:
+        with open(_CACHE_ALERT_STATE_FILE) as _f:
+            return json.load(_f)
+    except FileNotFoundError:
+        return {}
+    except Exception as _err:
+        log.warning("Could not read cache alert state file: %s", _err)
+        return {}
+
+
+def _write_alert_state(state: dict) -> None:
+    """Persist the alert state dict to disk."""
+    try:
+        with open(_CACHE_ALERT_STATE_FILE, "w") as _f:
+            json.dump(state, _f)
+    except Exception as _err:
+        log.warning("Could not write cache alert state file: %s", _err)
+
+
+def _clear_alert_cooldown(alert_key: str) -> None:
+    """Clear the cooldown for a specific alert key so the next failure alerts fresh.
+
+    Only the entry for `alert_key` is removed; cooldowns for other views are
+    left intact so an independent persistent failure continues to be suppressed.
+    """
+    state = _read_alert_state()
+    if alert_key in state:
+        del state[alert_key]
+        _write_alert_state(state)
+
 
 def _send_telegram(message: str) -> None:
     """Send a Telegram message using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
@@ -267,14 +322,51 @@ def _send_email_via_smtp(
 # ── Cache-failure alert dispatcher ───────────────────────────────────────────
 
 
-def _send_cache_failure_alert(error_msg: str) -> None:
-    """Dispatch an operator alert when mv_tiered_pnl_summary refresh fails.
+def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> None:
+    """Dispatch an operator alert when a materialised-view refresh fails.
 
     Tries Slack (SLACK_WEBHOOK_URL), Telegram (TELEGRAM_BOT_TOKEN +
     TELEGRAM_CHAT_ID), and Email (SENDGRID_API_KEY or SMTP_* + ALERT_EMAIL_*).
     Each channel silently skips if its credentials are absent, so operators
     only need to configure whichever channel(s) they use.
+
+    Cooldown: alerts are tracked independently per `alert_key` (typically the
+    view name).  If an alert for this key was already sent within
+    CACHE_ALERT_COOLDOWN_HOURS (default 23 h) the notification is suppressed
+    so operators are not flooded when the same view fails on consecutive nights.
+    A successful refresh for the same key resets its cooldown, so the very next
+    failure always generates a fresh alert.  Independent views are unaffected:
+    if view A succeeds its cooldown is cleared while view B's cooldown remains
+    in place.  Set CACHE_ALERT_COOLDOWN_HOURS=0 to disable suppression entirely.
     """
+    cooldown_hours = _get_cooldown_hours()
+    now_utc = datetime.datetime.utcnow()
+
+    if cooldown_hours > 0:
+        state = _read_alert_state()
+        key_state = state.get(alert_key, {})
+        last_sent_iso = key_state.get("last_sent_utc") if isinstance(key_state, dict) else None
+        if last_sent_iso:
+            try:
+                last_sent_dt = datetime.datetime.fromisoformat(last_sent_iso)
+                age_hours = (now_utc - last_sent_dt).total_seconds() / 3600
+                if age_hours < cooldown_hours:
+                    log.info(
+                        "Cache-failure alert suppressed for '%s' "
+                        "(last sent %.1f h ago, cooldown %.0f h). Error: %s",
+                        alert_key,
+                        age_hours,
+                        cooldown_hours,
+                        error_msg,
+                    )
+                    return
+            except Exception as _parse_err:
+                log.warning(
+                    "Could not parse last_sent_utc for key '%s' from state file: %s",
+                    alert_key,
+                    _parse_err,
+                )
+
     timestamp = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
     plain_msg = (
         f"[EdgeIQ] Ladder cache refresh FAILED\n"
@@ -297,6 +389,10 @@ def _send_cache_failure_alert(error_msg: str) -> None:
         f"<p><strong>Error:</strong> <code>{html.escape(error_msg[:400])}</code></p>"
     )
     _send_email_alert(email_subject, plain_msg, email_html)
+
+    state = _read_alert_state()
+    state[alert_key] = {"last_sent_utc": now_utc.isoformat()}
+    _write_alert_state(state)
 
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -335,6 +431,7 @@ def _refresh_one_view(backend_fn_name: str, view_name: str) -> None:
                 elapsed,
                 result.get("message", "ok"),
             )
+            _clear_alert_cooldown(alert_key=view_name)
         else:
             failure_msg = result.get("message", "unknown error")
             log.warning(
@@ -343,7 +440,7 @@ def _refresh_one_view(backend_fn_name: str, view_name: str) -> None:
                 elapsed,
                 failure_msg,
             )
-            _send_cache_failure_alert(f"{view_name}: {failure_msg}")
+            _send_cache_failure_alert(f"{view_name}: {failure_msg}", alert_key=view_name)
     except Exception as exc:
         elapsed = time.monotonic() - start
         log.error(
@@ -352,7 +449,10 @@ def _refresh_one_view(backend_fn_name: str, view_name: str) -> None:
             elapsed,
             exc,
         )
-        _send_cache_failure_alert(f"{view_name} exception after {elapsed:.1f}s: {exc}")
+        _send_cache_failure_alert(
+            f"{view_name} exception after {elapsed:.1f}s: {exc}",
+            alert_key=view_name,
+        )
 
 
 def refresh_summary_cache():
