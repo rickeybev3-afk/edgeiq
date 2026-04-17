@@ -7353,6 +7353,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
                 _tk_eod_str    = _fmt_avg_r(_tk_eod_vals)
                 _tk_tiered_str = _fmt_avg_r(_tk_tiered_vals)
+                _tk_eod_num    = (sum(_tk_eod_vals) / len(_tk_eod_vals)) if _tk_eod_vals else float("-inf")
+                _tk_tiered_num = (sum(_tk_tiered_vals) / len(_tk_tiered_vals)) if _tk_tiered_vals else float("-inf")
 
                 _tkr_rows.append({
                     "Ticker":         _tk,
@@ -7367,8 +7369,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Tiered Exit R":  _tk_tiered_str,
                     "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
+                    "_sort_win_pct":  _twr,
+                    "_sort_eod_r":    _tk_eod_num,
+                    "_sort_tiered_r": _tk_tiered_num,
                 })
-            _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values("Win %", ascending=False)
+            _sort_col_map = {
+                "Win %":         ("_sort_win_pct",  False),
+                "EOD Hold R":    ("_sort_eod_r",    False),
+                "Tiered Exit R": ("_sort_tiered_r", False),
+            }
+            _sort_choice = st.radio(
+                "Sort table by",
+                list(_sort_col_map.keys()),
+                index=0,
+                horizontal=True,
+                key="tkr_summary_sort_radio",
+            )
+            _sort_key, _sort_asc = _sort_col_map[_sort_choice]
+            _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
             _insuff_mask = _tkr_summary_df["Best TCS"].str.contains("insufficient", na=False)
             _insuff_count = int(_insuff_mask.sum())
             if _insuff_count > 0:
@@ -7382,7 +7400,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 if "insufficient" in str(row["Best TCS"]):
                     return ["background-color: #e8e8e8; color: #666666"] * len(row)
                 return [""] * len(row)
-            _styled_summary = _tkr_summary_df.style.apply(_style_insufficient_rows, axis=1)
+            _tkr_display_df = _tkr_summary_df.drop(
+                columns=["_sort_win_pct", "_sort_eod_r", "_sort_tiered_r"],
+                errors="ignore",
+            )
+            _styled_summary = _tkr_display_df.style.apply(_style_insufficient_rows, axis=1)
             st.dataframe(
                 _styled_summary,
                 use_container_width=True,
