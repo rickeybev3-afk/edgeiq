@@ -17309,6 +17309,146 @@ ALTER TABLE backtest_sim_runs
                                 unsafe_allow_html=True,
                             )
 
+                # ── Row 4c — Monthly advantage trend by scan type ─────────────
+                _bts_sc_date_col = (
+                    "trade_date" if "trade_date" in _bts_df.columns
+                    else "sim_date" if "sim_date" in _bts_df.columns
+                    else None
+                )
+                if (
+                    _bts_sc_date_col is not None
+                    and "scan_type" in _bts_df.columns
+                    and "eod_pnl_r" in _bts_df.columns
+                    and "tiered_pnl_r" in _bts_df.columns
+                ):
+                    _bts_sc_trend_src = _bts_df[
+                        _bts_df["scan_type"].isin(["morning", "intraday"])
+                        & _bts_df["eod_pnl_r"].notna()
+                        & _bts_df["tiered_pnl_r"].notna()
+                    ].copy()
+                    if not _bts_sc_trend_src.empty:
+                        _bts_sc_trend_src["_sd"] = pd.to_datetime(
+                            _bts_sc_trend_src[_bts_sc_date_col], errors="coerce"
+                        )
+                        _bts_sc_trend_src = _bts_sc_trend_src.dropna(subset=["_sd"])
+                        _bts_sc_trend_src["_adv"] = (
+                            _bts_sc_trend_src["tiered_pnl_r"].astype(float)
+                            - _bts_sc_trend_src["eod_pnl_r"].astype(float)
+                        )
+                        _bts_sc_trend_src["_month"] = (
+                            _bts_sc_trend_src["_sd"].dt.to_period("M").dt.to_timestamp()
+                        )
+                        _bts_sc_monthly = (
+                            _bts_sc_trend_src.groupby(["_month", "scan_type"])
+                            .agg(_avg_adv=("_adv", "mean"), _n=("_adv", "count"))
+                            .reset_index()
+                            .rename(columns={"_month": "month", "_avg_adv": "avg_advantage", "_n": "count"})
+                        )
+                        _bts_sc_monthly["scan_label"] = _bts_sc_monthly["scan_type"].map(
+                            {"morning": "🌅 Morning", "intraday": "⚡ Intraday"}
+                        )
+                        _sc_types_with_history = (
+                            _bts_sc_monthly.groupby("scan_type")["month"]
+                            .nunique()
+                        )
+                        _sc_both_have_history = (
+                            (_sc_types_with_history.get("morning",   0) >= 2)
+                            and (_sc_types_with_history.get("intraday", 0) >= 2)
+                        )
+                        _sc_n_months = _bts_sc_monthly["month"].nunique()
+                        if _sc_both_have_history:
+                            import altair as _alt_sc
+                            st.markdown(
+                                '<div style="font-size:11px;color:#546e7a;letter-spacing:1px;'
+                                'text-transform:uppercase;margin-top:14px;margin-bottom:6px;">'
+                                'Monthly Avg Tiered − EOD Advantage by Scan Type</div>',
+                                unsafe_allow_html=True,
+                            )
+                            _sc_zero = (
+                                _alt_sc.Chart(pd.DataFrame({"y": [0]}))
+                                .mark_rule(color="#37474f", strokeDash=[4, 4])
+                                .encode(y=_alt_sc.Y("y:Q"))
+                            )
+                            _sc_line = (
+                                _alt_sc.Chart(_bts_sc_monthly)
+                                .mark_line(strokeWidth=2, point=True)
+                                .encode(
+                                    x=_alt_sc.X(
+                                        "month:T",
+                                        title="Month",
+                                        axis=_alt_sc.Axis(
+                                            format="%b %Y",
+                                            labelColor="#90a4ae",
+                                            titleColor="#90a4ae",
+                                            gridColor="#1a2744",
+                                        ),
+                                    ),
+                                    y=_alt_sc.Y(
+                                        "avg_advantage:Q",
+                                        title="Avg R Advantage (Tiered − EOD)",
+                                        axis=_alt_sc.Axis(
+                                            labelColor="#90a4ae",
+                                            titleColor="#90a4ae",
+                                            gridColor="#1a2744",
+                                        ),
+                                    ),
+                                    color=_alt_sc.Color(
+                                        "scan_label:N",
+                                        title="Scan Type",
+                                        scale=_alt_sc.Scale(
+                                            domain=["🌅 Morning", "⚡ Intraday"],
+                                            range=["#ffb74d", "#7986cb"],
+                                        ),
+                                        legend=_alt_sc.Legend(
+                                            orient="top-right",
+                                            labelColor="#90a4ae",
+                                            titleColor="#546e7a",
+                                        ),
+                                    ),
+                                    tooltip=[
+                                        _alt_sc.Tooltip("month:T",         title="Month",         format="%b %Y"),
+                                        _alt_sc.Tooltip("scan_label:N",    title="Scan Type"),
+                                        _alt_sc.Tooltip("avg_advantage:Q", title="Avg Δ (R)",      format="+.3f"),
+                                        _alt_sc.Tooltip("count:Q",         title="Matched Trades"),
+                                    ],
+                                )
+                            )
+                            _sc_chart = (
+                                (_sc_zero + _sc_line)
+                                .properties(
+                                    height=220,
+                                    title=_alt_sc.TitleParams(
+                                        "Monthly Avg Tiered − EOD Advantage — Morning vs Intraday",
+                                        color="#90a4ae",
+                                        fontSize=11,
+                                        anchor="start",
+                                        subtitle=(
+                                            "Rising = tiered exits outperforming  ·  "
+                                            "Falling = EOD hold winning  ·  "
+                                            f"{_sc_n_months} months, "
+                                            f"{len(_bts_sc_trend_src)} matched trades"
+                                        ),
+                                        subtitleColor="#546e7a",
+                                        subtitleFontSize=10,
+                                    ),
+                                )
+                                .configure_view(strokeWidth=0, fill="#020813")
+                                .configure_axis(domainColor="#1a2744", tickColor="#1a2744")
+                                .configure_legend(
+                                    fillColor="#020813",
+                                    strokeColor="#1a2744",
+                                    labelColor="#90a4ae",
+                                    titleColor="#546e7a",
+                                )
+                                .interactive()
+                            )
+                            st.altair_chart(_sc_chart, use_container_width=True)
+                        else:
+                            st.caption(
+                                "Monthly Morning vs Intraday trend chart requires at least "
+                                "2 months of matched-row history for each scan type."
+                            )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
