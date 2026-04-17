@@ -55,10 +55,10 @@ Alpaca bracket orders live on paper account (`paper-api.alpaca.markets`) — zer
 `LIVE_ORDERS_ENABLED=true` set in Replit Secrets. Bot placing real bracket orders each scan.
 
 **Phase Gate to Phase 2 (Live Money):**
-- 30 settled paper trades
-- 60% win rate
-- 30 days of operation
-- Target: ~May 6, 2026
+- 30 settled paper trades ✅ PASSED (111/30 as of April 17)
+- 60% win rate ✅ PASSED (67.6% as of April 17)
+- 30 days of operation 🔴 IN PROGRESS (11/30 days — unlocks May 6, 2026)
+- Target: May 6, 2026 (on track)
 
 ### Phase 2 — Live Execution 🔲 NEXT
 One config change: `IS_PAPER_ALPACA=false` in Replit Secrets.
@@ -194,16 +194,21 @@ Built in `compute_trade_sim()` and `compute_trade_sim_tiered()` in backend.py.
 - **RLS:** ON permanently — all queries need `.eq("user_id", user_id)`
 
 ### `paper_trades` columns
-`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf, regime_tag, rvol, gap_pct, mae, mfe, entry_time, exit_trigger, entry_ib_distance, scan_type, sim_outcome, pnl_r_sim, pnl_pct_sim, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, alpaca_order_id, alpaca_qty, order_placed_at, alpaca_fill_price, close_price, eod_pnl_r, tiered_pnl_r`
+`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf, regime_tag, rvol, gap_pct, mae, mfe, entry_time, exit_trigger, entry_ib_distance, scan_type, sim_outcome, pnl_r_sim, pnl_pct_sim, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, alpaca_order_id, alpaca_qty, order_placed_at, alpaca_fill_price, close_price, eod_pnl_r, tiered_pnl_r, ib_range_pct, vwap_at_ib`
+
+**New columns (added Task #205, April 2026):**
+- `ib_range_pct` — `(ib_high - ib_low) / open_price * 100`. Filter: skip order if ≥ 10%. Populated at `log_paper_trades()` insert. Retroactively backfilled 142 rows April 17.
+- `vwap_at_ib` — VWAP at IB close time (~10:30 AM ET). Patched by `log_context_levels()`. Filter: close_price must be on correct VWAP side for the predicted direction. Retroactively backfilled 110 rows via `vwap_replay.py --patch` April 17.
 
 ### `backtest_sim_runs` columns
 `id, user_id, sim_date, ticker, tcs, predicted, actual_outcome, ib_low, ib_high, follow_thru_pct, false_break_up, false_break_down, scan_type, sim_outcome, pnl_r_sim, pnl_pct_sim, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, close_price, eod_pnl_r, tiered_pnl_r, open_price, rvol, poc_price, ib_range_pct, gap_pct, gap_vs_ib_pct, day_of_week, entry_hour`
 
-**Live counts (as of April 16, 2026):**
-- `backtest_sim_runs`: 29,625 total rows | 13,575 with pnl_r_sim computed
-- `paper_trades`: 67 total rows | 22 with pnl_r_sim computed (breakout setups only)
-- Historical sim win rate (live compute, TCS ≥ 50): **87.3% WR, +2.929R expectancy**
-- Paper trade sim win rate (corrected, MFE-based): **86.4% WR, +0.347R expectancy**
+**Live counts (as of April 17, 2026):**
+- `backtest_sim_runs`: 33,776+ rows | 16,766 Bullish/Bearish Break with pnl_r_sim
+- `paper_trades`: 143 total rows | 111 settled (win_loss set) | 74 with pnl_r_sim
+- Paper trade WR (all settled): **67.6%** | TCS≥50: **84.6%** | Full filter intraday: **92.3%**
+- Full filter backtest target: **95.7% WR, +2.46R expectancy** (TCS≥50 + IB<10% + VWAP)
+- Total R logged live (74 priced trades): **+58.6R** avg **+0.79R/trade**
 
 ### SQL Migrations — ALL COMPLETED ✅
 All columns listed below are confirmed present in both tables. No pending migrations.
@@ -237,6 +242,25 @@ Bearish Break = mirror image (sell short at IB low, stop at IB high, target = IB
 | `/?private=<PRIVATE_KEY>` | `7c3f9b2a-4e1d-4a8c-b05f-3d8e6f1a9c4b` | Private build notes |
 | `/?journal=<USER_ID>` | User ID | Trade Journal Logger |
 | `/?beta=<BETA_USER_ID>` | Beta user's ID | Beta tester portal |
+
+## Streamlit Multipage App (/pages/)
+
+| File | Path | Purpose |
+|---|---|---|
+| `pages/build_notes.py` | `/build_notes` | Public build notes markdown viewer |
+| `pages/build_notes_private.py` | `/build_notes_private` | Private build notes (passcode gated) |
+| `pages/filter_sim.py` | `/filter_sim` | **Interactive filter simulation** — dial TCS/IB/VWAP sliders, see live WR & expectancy from 33k+ historical trades. Filter funnel, IB bucket chart, scan type split, full combo matrix. Cache 60 min. |
+
+## Analysis / Utility Scripts
+
+| Script | Purpose | Key Flags |
+|---|---|---|
+| `filter_validation_backtest.py` | Validate IB+VWAP filters against full historical dataset | `--user-id`, `--max-rows` |
+| `vwap_replay.py` | Retroactive VWAP replay on live paper_trades — fetches Alpaca 1-min bars, computes VWAP at IB close, applies full filter | `--patch` (writes vwap_at_ib back to DB), `--user-id` |
+| `adaptive_exit_backtest.py` | Exit strategy backtesting | — |
+| `batch_backtest.py` | Batch simulation run | `--days`, `--screener`, `--dry-run`, `--user-id` |
+| `backfill_close_prices.py` | Fill missing close prices | — |
+| `run_sim_backfill.py` | Backfill simulation outcomes | — |
 
 ---
 
