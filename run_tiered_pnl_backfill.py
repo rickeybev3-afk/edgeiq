@@ -828,13 +828,19 @@ def main():
         "--date-from",
         metavar="YYYY-MM-DD",
         default="",
-        help="Limit --reset-sentinel to rows on or after this date.",
+        help=(
+            "Restrict processing to rows with sim_date >= this date (YYYY-MM-DD). "
+            "Applies to both normal backfill and --reset-sentinel mode."
+        ),
     )
     parser.add_argument(
         "--date-to",
         metavar="YYYY-MM-DD",
         default="",
-        help="Limit --reset-sentinel to rows on or before this date.",
+        help=(
+            "Restrict processing to rows with sim_date <= this date (YYYY-MM-DD). "
+            "Applies to both normal backfill and --reset-sentinel mode."
+        ),
     )
     args = parser.parse_args()
 
@@ -1017,9 +1023,18 @@ def main():
     # ── backtest_sim_runs phase ───────────────────────────────────────────────
     if not skip_backtest:
         print(f"\n{'#'*60}")
-        print(f"  backtest_sim_runs — all rows")
+        if rs_date_from or rs_date_to:
+            _window = f"{rs_date_from or '…'} → {rs_date_to or '…'}"
+            print(f"  backtest_sim_runs — date window: {_window}")
+        else:
+            print(f"  backtest_sim_runs — all rows")
         print(f"{'#'*60}")
-        bstats = backfill_backtest_sim_runs(dry_run=dry_run, rate_limit=rate_limit)
+        bstats = backfill_backtest_sim_runs(
+            dry_run=dry_run,
+            rate_limit=rate_limit,
+            date_from=rs_date_from,
+            date_to=rs_date_to,
+        )
 
         print(f"\n  --- backtest_sim_runs summary ---")
         print(f"  Rows processed          : {bstats['fetched']}")

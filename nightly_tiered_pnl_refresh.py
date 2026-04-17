@@ -27,10 +27,12 @@ Usage (managed by the "Nightly Tiered P&L Refresh" Replit workflow)
 
 Flags passed through to run_tiered_pnl_backfill
 ─────────────────────────────────────────────────
-  --no-ratelimit   Skip inter-request Alpaca sleep (useful on paid data plans)
+  --no-ratelimit          Skip inter-request Alpaca sleep (useful on paid data plans)
+  --date-from YYYY-MM-DD  Only rescan rows with sim_date >= this date
+  --date-to   YYYY-MM-DD  Only rescan rows with sim_date <= this date
 """
 
-import sys, os, time, datetime, subprocess, logging, signal, threading, json, html
+import sys, os, time, datetime, subprocess, logging, signal, threading, json, html, argparse
 
 # ── Shutdown flag — set by signal handler ─────────────────────────────────────
 
@@ -236,7 +238,7 @@ def refresh_summary_cache():
 
 # ── Backfill runner ───────────────────────────────────────────────────────────
 
-def run_backfill():
+def run_backfill(date_from: str = "", date_to: str = ""):
     """Invoke run_tiered_pnl_backfill.py --backtest-only as a subprocess.
 
     Using subprocess (rather than importing the module) keeps each run in a
@@ -245,6 +247,10 @@ def run_backfill():
 
     After each run a Telegram summary is sent (if credentials are available)
     with rows fetched, updated, skipped, errors, and elapsed time.
+
+    date_from / date_to: optional ISO date strings (YYYY-MM-DD) forwarded to
+    run_tiered_pnl_backfill.py to scope the rescan to a specific sim_date
+    window.  When omitted the full-table scan runs as normal.
     """
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "run_tiered_pnl_backfill.py")
@@ -253,6 +259,12 @@ def run_backfill():
     # Honour --no-ratelimit if this wrapper was started with it.
     if "--no-ratelimit" in sys.argv:
         cmd.append("--no-ratelimit")
+
+    # Forward date-window filters when supplied.
+    if date_from:
+        cmd.extend(["--date-from", date_from])
+    if date_to:
+        cmd.extend(["--date-to", date_to])
 
     # Remove any stale stats file so we can detect a fresh write.
     try:
@@ -357,12 +369,45 @@ def run_backfill():
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Nightly Tiered P&L Refresh scheduler",
+        add_help=False,
+    )
+    parser.add_argument(
+        "--date-from",
+        default="",
+        metavar="YYYY-MM-DD",
+        help="Only rescan backtest_sim_runs rows with sim_date >= this date.",
+    )
+    parser.add_argument(
+        "--date-to",
+        default="",
+        metavar="YYYY-MM-DD",
+        help="Only rescan backtest_sim_runs rows with sim_date <= this date.",
+    )
+    parser.add_argument(
+        "--no-ratelimit",
+        action="store_true",
+        default=False,
+        help="Skip inter-request Alpaca sleep (forwarded to the backfill script).",
+    )
+    args, _unknown = parser.parse_known_args()
+
+    date_from = args.date_from.strip()
+    date_to   = args.date_to.strip()
+
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT,  _handle_signal)
 
     log.info("=" * 60)
     log.info("Nightly Tiered P&L Refresh — started")
     log.info("Scheduled events (ET):  21:00 → cache refresh,  00:05 → backfill + cache refresh")
+    if date_from or date_to:
+        log.info(
+            "Date window: %s → %s",
+            date_from or "(unbounded)",
+            date_to   or "(unbounded)",
+        )
     log.info("=" * 60)
 
     # Report which failure-alert channels are active so misconfiguration is visible immediately.
@@ -385,7 +430,7 @@ def main():
 
     # Run backfill immediately on startup to catch any rows written since last run.
     log.info("─── Startup run ──────────────────────────────────────────────")
-    run_backfill()
+    run_backfill(date_from=date_from, date_to=date_to)
     refresh_summary_cache()
 
     run_number = 0
@@ -422,7 +467,7 @@ def main():
                  run_number, next_event)
 
         if do_backfill:
-            run_backfill()
+            run_backfill(date_from=date_from, date_to=date_to)
             if _shutdown.is_set():
                 break
 
