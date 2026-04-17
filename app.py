@@ -12276,7 +12276,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.download_button(
                     label="⬇️ Download flagged tickers",
                     data=_flagged_csv_df.to_csv(index=False),
-                    file_name="flagged_tickers.csv",
+                    file_name=f"flagged_tickers_{datetime.now().strftime('%Y%m%d')}_thresh{_div_thresh:.2f}.csv",
                     mime="text/csv",
                     key="_dl_flagged_tickers",
                 )
