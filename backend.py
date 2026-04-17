@@ -8837,6 +8837,22 @@ CREATE TABLE IF NOT EXISTS decision_log (
 );
 """.strip()
 
+_DECISION_LOG_RLS_SQLS = [
+    "ALTER TABLE decision_log ENABLE ROW LEVEL SECURITY",
+    (
+        "CREATE POLICY dl_select ON decision_log FOR SELECT "
+        "USING (user_id::text = auth.uid()::text)"
+    ),
+    (
+        "CREATE POLICY dl_insert ON decision_log FOR INSERT "
+        "WITH CHECK (user_id::text = auth.uid()::text)"
+    ),
+    (
+        "CREATE POLICY dl_update ON decision_log FOR UPDATE "
+        "USING (user_id::text = auth.uid()::text)"
+    ),
+]
+
 _DECISION_SEEDS = [
     {
         "decision_date": "2026-01-01",
@@ -8844,7 +8860,7 @@ _DECISION_SEEDS = [
         "call": "VP/IB structure has genuine alpha that can be systematized",
         "reasoning": "Initial hypothesis based on manual backtesting of Volume Profile patterns.",
         "outcome": "Confirmed",
-        "outcome_date": "2026-03-01",
+        "outcome_date": "2026-01-31",
         "outcome_notes": "Live paper WR = 83.8% overall, 95.2% at TCS>=50. Edge confirmed.",
     },
     {
@@ -8853,7 +8869,7 @@ _DECISION_SEEDS = [
         "call": "TCS scoring is the key filter — higher TCS = dramatically better WR",
         "reasoning": "Hypothesis that a composite conviction score would separate signal from noise.",
         "outcome": "Confirmed",
-        "outcome_date": "2026-02-15",
+        "outcome_date": "2026-02-14",
         "outcome_notes": "TCS>=50 live WR 95.2% vs 83.8% overall — 11.4pp improvement confirmed.",
     },
     {
@@ -8862,7 +8878,7 @@ _DECISION_SEEDS = [
         "call": "Intraday scan will outperform morning scan on WR",
         "reasoning": "Intraday setups have more confirmation data (IB established, volume settled).",
         "outcome": "Confirmed",
-        "outcome_date": "2026-04-01",
+        "outcome_date": "2026-03-03",
         "outcome_notes": "Intraday WR 83.7%, avg win +1.07R vs morning 83.9% avg win +0.88R. Intraday edges on R.",
     },
     {
@@ -8871,7 +8887,7 @@ _DECISION_SEEDS = [
         "call": "Live paper WR will track backtest WR within 5%",
         "reasoning": "If the edge is real and not overfit, live and backtest should converge.",
         "outcome": "Confirmed",
-        "outcome_date": "2026-04-10",
+        "outcome_date": "2026-03-31",
         "outcome_notes": "TCS>=50 live WR 84.6% vs backtest 85.2% — 0.6pp gap. Near-perfect tracking.",
     },
     {
@@ -8880,7 +8896,7 @@ _DECISION_SEEDS = [
         "call": "Full combo filter (TCS>=50 + IB<10% + VWAP) will push live WR above 90%",
         "reasoning": "Combining three independent confirmation signals should compound the edge.",
         "outcome": "Confirmed",
-        "outcome_date": "2026-04-15",
+        "outcome_date": "2026-04-14",
         "outcome_notes": "Full filter live WR = 93.3% on 15 trades (+1.343R expectancy). Target exceeded.",
     },
     {
@@ -8914,19 +8930,34 @@ _DECISION_SEEDS = [
 
 
 def ensure_decision_log_table() -> bool:
-    """Create the decision_log table if it doesn't exist. Returns True if available."""
+    """Create the decision_log table and RLS policies if they don't exist.
+
+    Returns True if the table is available for use.
+    Uses the Supabase service-role key (module-level `supabase` client), which bypasses
+    RLS for application writes. RLS + policies are still applied so direct/anon access
+    is properly scoped to the owning user.
+    """
     if not supabase:
         return False
     try:
         supabase.table("decision_log").select("id").limit(1).execute()
-        return True
     except Exception:
         try:
             supabase.rpc("exec_sql", {"query": _DECISION_LOG_SQL}).execute()
-            return True
         except Exception as e:
-            print(f"ensure_decision_log_table error: {e}")
+            print(f"ensure_decision_log_table CREATE error: {e}")
             return False
+
+    for rls_sql in _DECISION_LOG_RLS_SQLS:
+        try:
+            supabase.rpc("exec_sql", {"query": rls_sql}).execute()
+        except Exception as e:
+            es = str(e)
+            if "already exists" in es.lower() or "42710" in es or "42P16" in es:
+                pass
+            else:
+                print(f"ensure_decision_log_table RLS warning ({rls_sql[:40]}): {es[:120]}")
+    return True
 
 
 def get_decisions(user_id: str) -> list:
@@ -8968,8 +8999,12 @@ def insert_decision(user_id: str, decision_date, category: str, call: str, reaso
         return False
 
 
-def update_decision_outcome(decision_id: str, outcome: str, outcome_date, outcome_notes: str = "") -> bool:
-    """Update outcome fields for an existing decision."""
+def update_decision_outcome(decision_id: str, user_id: str, outcome: str, outcome_date, outcome_notes: str = "") -> bool:
+    """Update outcome fields for an existing decision.
+
+    Filters by both `id` AND `user_id` so callers can only modify their own rows,
+    even without relying solely on RLS.
+    """
     if not supabase:
         return False
     try:
@@ -8978,7 +9013,7 @@ def update_decision_outcome(decision_id: str, outcome: str, outcome_date, outcom
             "outcome_date": str(outcome_date) if outcome_date else None,
             "outcome_notes": outcome_notes.strip() or None,
         }
-        supabase.table("decision_log").update(patch).eq("id", decision_id).execute()
+        supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
         return True
     except Exception as e:
         print(f"update_decision_outcome error: {e}")

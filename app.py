@@ -13126,7 +13126,7 @@ def render_decision_log_tab():
                 with _oc3:
                     _new_on = st.text_input("Notes", placeholder="What actually happened?", key=f"dl_on_{_dec_id}")
                 if st.button("Save Outcome", key=f"dl_save_{_dec_id}", type="primary"):
-                    _upd_ok = update_decision_outcome(_dec_id, _new_oc, _new_od, _new_on)
+                    _upd_ok = update_decision_outcome(_dec_id, _dl_uid, _new_oc, _new_od, _new_on)
                     if _upd_ok:
                         st.success(f"Marked as {_new_oc}.")
                         st.rerun()
