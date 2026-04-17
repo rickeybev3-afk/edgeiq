@@ -8788,33 +8788,46 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _rp_neutral = int((~_rp_wl_col.isin(["Win", "Loss"])).sum())
                         _rp_total   = _rp_wins + _rp_losses + _rp_neutral
                         _rp_wr_pct  = (_rp_wins / (_rp_wins + _rp_losses) * 100) if (_rp_wins + _rp_losses) > 0 else 0.0
+                        _rp_bar_win_pct  = (_rp_wins  / _rp_total * 100) if _rp_total > 0 else 0.0
+                        _rp_bar_loss_pct = (_rp_losses / _rp_total * 100) if _rp_total > 0 else 0.0
+                        _rp_bar_neut_pct = (_rp_neutral / _rp_total * 100) if _rp_total > 0 else 0.0
                         st.markdown(
                             f"""
                             <div style="
-                                display:flex;gap:12px;align-items:center;
+                                display:flex;flex-direction:column;gap:6px;
                                 padding:8px 12px;margin-bottom:6px;
                                 background:rgba(30,30,30,0.45);
                                 border-radius:8px;border:1px solid rgba(255,255,255,0.07);
-                                font-size:0.88rem;flex-wrap:wrap;
+                                font-size:0.88rem;
                             ">
-                              <span style="color:#66bb6a;font-weight:700;">
-                                ✔ {_rp_wins} Win{"s" if _rp_wins != 1 else ""}
-                              </span>
-                              <span style="color:rgba(255,255,255,0.25);">|</span>
-                              <span style="color:#ef5350;font-weight:700;">
-                                ✘ {_rp_losses} Loss{"es" if _rp_losses != 1 else ""}
-                              </span>
-                              <span style="color:rgba(255,255,255,0.25);">|</span>
-                              <span style="color:#90a4ae;font-weight:700;">
-                                — {_rp_neutral} Neutral
-                              </span>
-                              <span style="color:rgba(255,255,255,0.25);">|</span>
-                              <span style="color:rgba(255,255,255,0.55);">
-                                {_rp_total} total &nbsp;·&nbsp;
-                                <span style="color:{'#66bb6a' if _rp_wr_pct >= 50 else '#ef5350'};font-weight:700;">
-                                  {_rp_wr_pct:.1f}% win rate
+                              <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+                                <span style="color:#66bb6a;font-weight:700;">
+                                  ✔ {_rp_wins} Win{"s" if _rp_wins != 1 else ""}
                                 </span>
-                              </span>
+                                <span style="color:rgba(255,255,255,0.25);">|</span>
+                                <span style="color:#ef5350;font-weight:700;">
+                                  ✘ {_rp_losses} Loss{"es" if _rp_losses != 1 else ""}
+                                </span>
+                                <span style="color:rgba(255,255,255,0.25);">|</span>
+                                <span style="color:#90a4ae;font-weight:700;">
+                                  — {_rp_neutral} Neutral
+                                </span>
+                                <span style="color:rgba(255,255,255,0.25);">|</span>
+                                <span style="color:rgba(255,255,255,0.55);">
+                                  {_rp_total} total &nbsp;·&nbsp;
+                                  <span style="color:{'#66bb6a' if _rp_wr_pct >= 50 else '#ef5350'};font-weight:700;">
+                                    {_rp_wr_pct:.1f}% win rate
+                                  </span>
+                                </span>
+                              </div>
+                              <div style="
+                                  display:flex;width:100%;height:6px;border-radius:3px;overflow:hidden;
+                                  background:rgba(255,255,255,0.06);
+                              ">
+                                <div style="width:{_rp_bar_win_pct:.2f}%;background:#66bb6a;"></div>
+                                <div style="width:{_rp_bar_loss_pct:.2f}%;background:#ef5350;"></div>
+                                <div style="width:{_rp_bar_neut_pct:.2f}%;background:#546e7a;"></div>
+                              </div>
                             </div>
                             """,
                             unsafe_allow_html=True,
