@@ -6855,6 +6855,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _bt_r_ser   = _bt_td["R (MFE)"]
                                     _bt_fb_rate = round(_bt_td["False Break"].sum() / len(_bt_td) * 100, 1)
                                     _bt_avg_win_r = round(_bt_r_ser[_bt_r_ser > 0].mean(), 2) if (_bt_r_ser > 0).any() else 0
+                                    _bt_avg_loss_r = round(_bt_r_ser[_bt_r_ser < 0].mean(), 2) if (_bt_r_ser < 0).any() else 0
                                     _bt_exp_r   = round(_bt_r_ser.mean(), 3)
                                     _bt_exp_r_str = f'{"+" if _bt_exp_r >= 0 else ""}{_bt_exp_r:.3f}R'
                                     _bt_exp_r_col = "#2e7d32" if _bt_exp_r > 0 else ("#ef6c00" if _bt_exp_r == 0 else "#c62828")
@@ -6865,7 +6866,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         f'<div style="font-size:22px;font-weight:700;color:{_btc2};margin-top:4px;">{_btwr:.1f}%</div>'
                                         f'<div style="font-size:12px;color:#cfd8dc;">{_btw}W / {_btl2}L  ·  {len(_bt_td)} trades</div>'
                                         f'<div style="font-size:11px;color:#90a4ae;margin-top:6px;border-top:1px solid #263444;padding-top:6px;">'
-                                        f'Stop-Out: {_bt_fb_rate}%  ·  Avg Win R: +{_bt_avg_win_r}R</div>'
+                                        f'Stop-Out: {_bt_fb_rate}%  ·  '
+                                        f'<span style="color:#4fc3f7;">Avg Win R: +{_bt_avg_win_r}R</span>  ·  '
+                                        f'<span style="color:#ef9a9a;">Avg Loss R: {_bt_avg_loss_r}R</span></div>'
                                         f'<div style="font-size:13px;font-weight:600;color:{_bt_exp_r_col};margin-top:2px;">'
                                         f'Exp: {_bt_exp_r_str} / trade</div>'
                                         f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">'
@@ -11497,6 +11500,7 @@ ALTER TABLE backtest_sim_runs
                     _tl  = len(_tdf[_tdf["pnl_r_sim"] <= 0])
                     _twr = _tw / len(_tdf) * 100
                     _tavg_w = _tdf[_tdf["pnl_r_sim"] > 0]["pnl_r_sim"].mean() if _tw else 0
+                    _tavg_l = _tdf[_tdf["pnl_r_sim"] < 0]["pnl_r_sim"].mean() if _tl and (_tdf["pnl_r_sim"] < 0).any() else 0
                     _texp = _tdf["pnl_r_sim"].mean()
                     _ttot = _tdf["pnl_r_sim"].sum()
                     _pct_trades = len(_tdf) / _s_total * 100 if _s_total else 0
@@ -11510,7 +11514,8 @@ ALTER TABLE backtest_sim_runs
                         f'{_twr:.1f}%</div>'
                         f'<div style="font-size:11px;color:#cfd8dc;">{_tw}W / {_tl}L</div>'
                         f'<div style="font-size:11px;color:#cfd8dc;margin-top:4px;">'
-                        f'Avg Win: <b>+{_tavg_w:.2f}R</b></div>'
+                        f'Avg Win: <b style="color:#4fc3f7;">+{_tavg_w:.2f}R</b>  ·  '
+                        f'Avg Loss: <b style="color:#ef9a9a;">{_tavg_l:.2f}R</b></div>'
                         f'<div style="font-size:11px;color:#cfd8dc;">'
                         f'Exp: <b>{"+" if _texp >= 0 else ""}{_texp:.3f}R</b></div>'
                         f'<div style="font-size:11px;color:#90a4ae;margin-top:4px;">'
