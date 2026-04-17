@@ -2039,7 +2039,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
 
         log.info(
             f"  {trade_date_str}: {len(tickers)} ticker(s) — "
-            f"{', '.join(tickers[:10])}{'…' if len(tickers) > 10 else ''}"
+            f"{', '.join(tickers[:SWEEP_ALERT_MAX_TICKERS])}{'…' if len(tickers) > SWEEP_ALERT_MAX_TICKERS else ''}"
         )
 
         try:
@@ -2316,7 +2316,7 @@ def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
 
         log.info(
             f"  {sim_date_str}: {len(tickers)} ticker(s) — "
-            f"{', '.join(tickers[:10])}{'…' if len(tickers) > 10 else ''}"
+            f"{', '.join(tickers[:SWEEP_ALERT_MAX_TICKERS])}{'…' if len(tickers) > SWEEP_ALERT_MAX_TICKERS else ''}"
         )
 
         try:
