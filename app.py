@@ -12494,6 +12494,150 @@ Nothing here requires any input from you. All numbers update automatically as yo
             f"Stretch ≥1.20R → $80,000 · {_mo_left} months to Dec 2026"
         )
 
+        # ── ROLLING R/TRADE TREND CHART ───────────────────────────────────────
+        st.markdown("#### 📉 R/Trade Rolling Average — Historical Trend")
+        st.caption(
+            "10-trade and 30-trade rolling averages over all settled paper trades. "
+            "Rolling lines appear once enough trades have accumulated (10-trade avg from trade 10, 30-trade avg from trade 30). "
+            "Dashed lines mark the Conservative (0.50R), Expected (0.79R), and Stretch (1.20R) thresholds."
+        )
+
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _load_r_trend(uid, src):
+            return compute_r_trend_history(user_id=uid, r_source=src)
+
+        _trend_df = _load_r_trend(_uid, _r_source)
+
+        if _trend_df.empty or len(_trend_df) < 2:
+            st.info(
+                "Not enough settled trade history to plot a rolling trend yet. "
+                "At least 2 trades are needed."
+            )
+        else:
+            import plotly.graph_objects as _go_trend
+
+            _tfig = _go_trend.Figure()
+
+            # Raw per-trade dots (light, for context)
+            _tfig.add_trace(_go_trend.Scatter(
+                x=_trend_df["trade_date"],
+                y=_trend_df["r_val"],
+                mode="markers",
+                marker=dict(size=5, color="#546e7a", opacity=0.45),
+                name="Per-trade R",
+                hovertemplate="%{x}<br>R: %{y:+.3f}<extra></extra>",
+            ))
+
+            # 10-trade rolling average
+            _roll10_valid = _trend_df.dropna(subset=["roll10"])
+            if not _roll10_valid.empty:
+                _tfig.add_trace(_go_trend.Scatter(
+                    x=_roll10_valid["trade_date"],
+                    y=_roll10_valid["roll10"],
+                    mode="lines",
+                    line=dict(color="#29b6f6", width=2),
+                    name="10-trade avg",
+                    hovertemplate="%{x}<br>10-avg: %{y:+.3f}R<extra></extra>",
+                ))
+
+            # 30-trade rolling average
+            _roll30_valid = _trend_df.dropna(subset=["roll30"])
+            if not _roll30_valid.empty:
+                _tfig.add_trace(_go_trend.Scatter(
+                    x=_roll30_valid["trade_date"],
+                    y=_roll30_valid["roll30"],
+                    mode="lines",
+                    line=dict(color="#ff9800", width=2.5),
+                    name="30-trade avg",
+                    hovertemplate="%{x}<br>30-avg: %{y:+.3f}R<extra></extra>",
+                ))
+
+            # Scenario threshold reference lines
+            _thresh_meta = [
+                (0.50, "#ffa726", "Conservative 0.50R"),
+                (0.79, "#4caf50", "Expected 0.79R"),
+                (1.20, "#29b6f6", "Stretch 1.20R"),
+            ]
+            for _tv, _tc_color, _tname in _thresh_meta:
+                _tfig.add_hline(
+                    y=_tv,
+                    line=dict(color=_tc_color, width=1.5, dash="dot"),
+                    annotation_text=_tname,
+                    annotation_position="right",
+                    annotation_font=dict(color=_tc_color, size=10),
+                )
+
+            # Zero reference
+            _tfig.add_hline(
+                y=0,
+                line=dict(color="#555555", width=1, dash="dot"),
+            )
+
+            # Trend direction badge using last 5 points of whichever rolling series is available
+            _trend_series = _roll30_valid["roll30"] if len(_roll30_valid) >= 5 else (
+                _roll10_valid["roll10"] if len(_roll10_valid) >= 5 else None
+            )
+            _trend_label = ""
+            _trend_color = "#90caf9"
+            if _trend_series is not None and len(_trend_series) >= 5:
+                _last5 = _trend_series.iloc[-5:].tolist()
+                _slope = _last5[-1] - _last5[0]
+                if _slope > 0.05:
+                    _trend_label = "↑ Improving"
+                    _trend_color = "#4caf50"
+                elif _slope < -0.05:
+                    _trend_label = "↓ Declining"
+                    _trend_color = "#ef5350"
+                else:
+                    _trend_label = "→ Flat"
+                    _trend_color = "#ffa726"
+
+            _n_trades_total = len(_trend_df)
+            _tfig.update_layout(
+                paper_bgcolor="#1a1a2e",
+                plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"),
+                height=320,
+                xaxis=dict(
+                    title="Date",
+                    gridcolor="#2a2a4a",
+                    zeroline=False,
+                    type="date",
+                ),
+                yaxis=dict(
+                    title="Rolling Avg R/Trade",
+                    gridcolor="#2a2a4a",
+                    zeroline=False,
+                ),
+                legend=dict(
+                    bgcolor="#12122288",
+                    bordercolor="#2a2a4a",
+                    borderwidth=1,
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="left",
+                    x=0,
+                ),
+                margin=dict(l=10, r=80, t=40, b=40),
+                hovermode="x unified",
+            )
+
+            st.plotly_chart(_tfig, use_container_width=True)
+
+            if _trend_label:
+                _trend_series_name = "30-trade" if len(_roll30_valid) >= 5 else "10-trade"
+                st.markdown(
+                    f'<div style="background:#12122288;border-left:3px solid {_trend_color};'
+                    f'padding:8px 14px;border-radius:4px;font-size:13px;color:#cfd8dc;'
+                    f'margin-top:2px;">'
+                    f'<b style="color:{_trend_color};">{_trend_label}</b> — '
+                    f'{_trend_series_name} rolling avg over last 5 data points '
+                    f'(based on {_n_trades_total} total settled trades).'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
     # ── JOURNAL × MODEL CROSS-REFERENCE (runs regardless of tracker state) ────
     st.markdown("---")
     st.markdown("### 🔬 Personal Trades × Model Predictions — Cross-Reference")

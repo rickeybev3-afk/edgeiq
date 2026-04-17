@@ -9759,6 +9759,68 @@ def compute_r_projection(user_id: str = "", window: int | None = 30) -> dict:
     }
 
 
+def compute_r_trend_history(user_id: str = "", r_source: str | None = None) -> "pd.DataFrame":
+    """Return a DataFrame of settled paper trades (oldest first) with rolling R averages.
+
+    Columns returned:
+        trade_num  – sequential trade index (1-based)
+        trade_date – date string (YYYY-MM-DD)
+        r_val      – raw R value for that trade
+        roll10     – 10-trade rolling average (NaN until 10 trades accumulated)
+        roll30     – 30-trade rolling average (NaN until 30 trades accumulated)
+
+    r_source controls which R column to use:
+        None / "tiered_pnl_r" → tries tiered_pnl_r first, falls back to pnl_r_sim
+        "pnl_r_sim"           → uses pnl_r_sim directly
+    """
+    import pandas as _pd_trend
+
+    _empty_df = _pd_trend.DataFrame(
+        columns=["trade_num", "trade_date", "r_val", "roll10", "roll30", "r_source"]
+    )
+
+    if not supabase:
+        return _empty_df
+
+    def _fetch_all(col: str) -> list:
+        try:
+            rows = (
+                supabase.table("paper_trades")
+                .select(f"trade_date, {col}")
+                .eq("user_id", user_id)
+                .not_.is_("win_loss", "null")
+                .not_.is_(col, "null")
+                .order("trade_date", desc=False)
+                .execute()
+                .data or []
+            )
+            return [(r["trade_date"], float(r[col])) for r in rows if r.get(col) is not None]
+        except Exception as e:
+            print(f"compute_r_trend_history: fetch error ({col}): {e}")
+            return []
+
+    if r_source == "pnl_r_sim":
+        pairs = _fetch_all("pnl_r_sim")
+        used_source = "pnl_r_sim"
+    else:
+        pairs = _fetch_all("tiered_pnl_r")
+        used_source = "tiered_pnl_r"
+        if not pairs:
+            pairs = _fetch_all("pnl_r_sim")
+            used_source = "pnl_r_sim"
+
+    if not pairs:
+        return _empty_df
+
+    df = _pd_trend.DataFrame(pairs, columns=["trade_date", "r_val"])
+    df["trade_num"] = range(1, len(df) + 1)
+    df["roll10"] = df["r_val"].rolling(window=10, min_periods=10).mean()
+    df["roll30"] = df["r_val"].rolling(window=30, min_periods=30).mean()
+    df["r_source"] = used_source
+
+    return df[["trade_num", "trade_date", "r_val", "roll10", "roll30", "r_source"]]
+
+
 def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
     """Load paper trades from the last N days (default 21 = 3 weeks)."""
     if not supabase:
