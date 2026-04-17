@@ -14785,6 +14785,100 @@ ALTER TABLE backtest_sim_runs
             else:
                 st.info(f"No threshold shifts ≥ 3 pts recorded in the last {_bw_hist_days} days.")
 
+            # ── Per-structure sparklines (90-day threshold history) ──────────
+            _spark_series: dict = {}
+            _sp_today = _bw_now.strftime("%Y-%m-%d")
+            for _sp_k, _sp_cur_val in _bw_cur_thresh.items():
+                _sp_pts: list = []
+                for _sp_rec in _bw_hist_90:
+                    _sp_ts = _sp_rec.get("timestamp", "")[:10]
+                    _sp_thresh = _sp_rec.get("thresholds", {}).get(_sp_k)
+                    if _sp_thresh is not None and _sp_ts:
+                        try:
+                            _sp_pts.append((_sp_ts, int(_sp_thresh)))
+                        except (TypeError, ValueError):
+                            pass
+                # Append today's current value
+                if _sp_cur_val is not None:
+                    try:
+                        _sp_pts.append((_sp_today, int(_sp_cur_val)))
+                    except (TypeError, ValueError):
+                        pass
+                # Deduplicate (keep last value per date) and sort chronologically
+                _sp_by_date: dict = {}
+                for _sp_d, _sp_v in _sp_pts:
+                    _sp_by_date[_sp_d] = _sp_v
+                _sp_sorted = sorted(_sp_by_date.items())
+                if _sp_sorted:
+                    _spark_series[_sp_k] = _sp_sorted
+
+            if _spark_series:
+                import plotly.graph_objects as _go
+                st.markdown("---")
+                st.markdown("**Per-Structure Threshold Sparklines — last 90 days**")
+                _sp_all_keys = sorted(_spark_series.keys())
+                _sp_n_cols = 3
+                for _sp_row_start in range(0, len(_sp_all_keys), _sp_n_cols):
+                    _sp_row_keys = _sp_all_keys[_sp_row_start: _sp_row_start + _sp_n_cols]
+                    _sp_cols = st.columns(_sp_n_cols)
+                    for _sp_col_i, _sp_k in enumerate(_sp_row_keys):
+                        _sp_pts = _spark_series[_sp_k]
+                        _sp_dates = [p[0] for p in _sp_pts]
+                        _sp_vals  = [p[1] for p in _sp_pts]
+                        _sp_label = WK_DISPLAY.get(_sp_k, _sp_k)
+                        _sp_cur_v = _sp_vals[-1] if _sp_vals else None
+                        _sp_min_v = min(_sp_vals) if _sp_vals else 0
+                        _sp_max_v = max(_sp_vals) if _sp_vals else 100
+                        # Colour by direction: trending up = red (stricter), down = green (looser), flat = blue
+                        if len(_sp_vals) >= 2 and _sp_vals[-1] > _sp_vals[0]:
+                            _sp_line_color = "#ef5350"
+                            _sp_fill_color = "rgba(239,83,80,0.07)"
+                        elif len(_sp_vals) >= 2 and _sp_vals[-1] < _sp_vals[0]:
+                            _sp_line_color = "#66bb6a"
+                            _sp_fill_color = "rgba(102,187,106,0.07)"
+                        else:
+                            _sp_line_color = "#42a5f5"
+                            _sp_fill_color = "rgba(66,165,245,0.07)"
+                        _sp_fig = _go.Figure()
+                        _sp_fig.add_trace(_go.Scatter(
+                            x=_sp_dates,
+                            y=_sp_vals,
+                            mode="lines+markers",
+                            line=dict(color=_sp_line_color, width=2),
+                            marker=dict(size=4, color=_sp_line_color),
+                            fill="tozeroy",
+                            fillcolor=_sp_fill_color,
+                            showlegend=False,
+                            hovertemplate="%{x}: <b>%{y}</b><extra></extra>",
+                        ))
+                        _sp_y_pad = max(2, (_sp_max_v - _sp_min_v) * 0.2) if _sp_max_v != _sp_min_v else 5
+                        _sp_fig.update_layout(
+                            title=dict(
+                                text=f"{_sp_label} <span style='color:#90a4ae;font-size:11px'>({_sp_cur_v})</span>",
+                                font=dict(size=11),
+                                x=0,
+                                xref="paper",
+                            ),
+                            height=130,
+                            margin=dict(l=4, r=4, t=30, b=4),
+                            xaxis=dict(visible=False),
+                            yaxis=dict(
+                                visible=True,
+                                tickfont=dict(size=8),
+                                tickformat="d",
+                                range=[max(0, _sp_min_v - _sp_y_pad), _sp_max_v + _sp_y_pad],
+                                gridcolor="rgba(128,128,128,0.1)",
+                            ),
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                        )
+                        with _sp_cols[_sp_col_i]:
+                            st.plotly_chart(
+                                _sp_fig,
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                            )
+
     _bw_rows = []
     for _k, _v in _bw.items():
         if isinstance(_v, (int, float)):
