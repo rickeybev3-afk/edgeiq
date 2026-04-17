@@ -5027,9 +5027,9 @@ if _af_feed_param in ("sip", "iex"):
     # Remove the transient param so it doesn't pollute bookmarks or shared URLs.
     del st.query_params["_feed_default"]
 
-# Seed localStorage with the DB-stored feed preference on first load (new device/browser).
-# This runs once per session when prefs are loaded and only touches localStorage if it is
-# empty — so it never overrides a choice the trader has already made in this browser.
+# Seed localStorage with the DB-stored feed preference on every page load so that new
+# devices and fresh browser sessions always reflect the trader's saved choice. The DB
+# value always wins — stale localStorage values are overwritten unconditionally.
 _gdf_for_seed = st.session_state.get("_global_default_feed", "")
 if _gdf_for_seed in ("sip", "iex"):
     import streamlit.components.v1 as _cmp_feed_seed
@@ -5038,7 +5038,7 @@ if _gdf_for_seed in ("sip", "iex"):
         f"""<script>
 (function() {{
     var dbFeed = {repr(_gdf_for_seed)};
-    if (!dbFeed || localStorage.getItem('edgeiq_feed')) return;
+    if (!dbFeed) return;
     localStorage.setItem('edgeiq_feed', dbFeed);
     localStorage.setItem('global_default_feed', dbFeed);
     localStorage.setItem('hist_scan_feed', dbFeed);
