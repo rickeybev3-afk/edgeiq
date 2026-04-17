@@ -20283,6 +20283,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         _rk_res = save_ticker_rankings(_rk_uid, _rk_date, _rankings_input)
                         if _rk_res["saved"] > 0:
                             _clear_rk_draft(_rk_uid, _rk_date)
+                            _cached_load_ticker_rankings.clear()
+                            _cached_load_watchlist_predictions.clear()
                             st.success(f"✅ Saved {_rk_res['saved']} rankings for {_rk_date}")
                         else:
                             st.error("Failed to save — check Supabase connection. Your draft is still preserved.")
@@ -20445,6 +20447,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 if st.button("💾 Save Delta Log", key="cd_save_btn"):
                     _cd_res = save_cognitive_delta_entries(_cd_uid, _cd_date, _cd_entries)
                     if _cd_res["saved"] > 0:
+                        _cached_load_cognitive_delta_today.clear()
+                        _cached_load_cognitive_delta_analysis.clear()
                         st.success(f"✅ Logged {_cd_res['saved']} decisions for {_cd_date}")
                     if _cd_res["errors"]:
                         st.warning(f"Some errors: {_cd_res['errors']}")
