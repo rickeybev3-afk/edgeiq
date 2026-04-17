@@ -5803,6 +5803,23 @@ with st.sidebar:
                     if _seek_pos > 0 and len(_tail_lines) > 1:
                         _tail_lines = _tail_lines[1:]
                     _tail_text = "\n".join(_tail_lines[-30:])
+                    # Parse the most-recent PROGRESS: N/M line from the tail
+                    import re as _re
+                    _progress_current = None
+                    _progress_total   = None
+                    for _pl in reversed(_tail_lines):
+                        _pm = _re.search(r"PROGRESS:\s*(\d+)/(\d+)", _pl)
+                        if _pm:
+                            _progress_current = int(_pm.group(1))
+                            _progress_total   = int(_pm.group(2))
+                            break
+                    if _progress_current is not None and _progress_total and _progress_total > 0:
+                        _pct = _progress_current / _progress_total
+                        st.progress(_pct)
+                        st.caption(
+                            f"📈 Ticker {_progress_current:,} of {_progress_total:,} "
+                            f"({_pct:.0%} complete)"
+                        )
                     st.caption(f"📄 {_total_lines} log line{'s' if _total_lines != 1 else ''} so far — auto-refreshing every 3 s")
                     st.code(_tail_text or "(log initialising…)", language="text")
                 except Exception:

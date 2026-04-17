@@ -218,18 +218,31 @@ def write_closes(table: str, rows_for_date: list[dict], closes: dict[str, float]
 
 def process_table(table: str, date_field: str, dry_run: bool,
                   start_date: str | None = None,
-                  end_date: str | None = None) -> tuple[int, int]:
-    """Backfill close_price for one table. Returns (total_updated, total_skipped)."""
+                  end_date: str | None = None,
+                  preloaded_rows: list[dict] | None = None,
+                  ticker_offset: int = 0,
+                  global_total: int | None = None) -> tuple[int, int, int]:
+    """Backfill close_price for one table.
+
+    Returns (total_updated, total_skipped, tickers_done).
+
+    Optional parameters for global progress tracking across multiple tables:
+      preloaded_rows  — pre-fetched row list (skips the fetch_null_rows call)
+      ticker_offset   — number of tickers already counted in previous tables
+      global_total    — total ticker count across all tables (denominator for
+                        PROGRESS lines); falls back to this table's count if None
+    """
     print(f"\n{'─'*64}")
     print(f"  Table: {table}  (date field: {date_field})")
     if start_date or end_date:
         print(f"  Date range: {start_date or 'beginning'} → {end_date or 'end'}")
     print(f"{'─'*64}")
 
-    rows = fetch_null_rows(table, date_field, start_date=start_date, end_date=end_date)
+    rows = (preloaded_rows if preloaded_rows is not None
+            else fetch_null_rows(table, date_field, start_date=start_date, end_date=end_date))
     if not rows:
         print(f"  Nothing to backfill — all {table} rows already have a close_price.")
-        return 0, 0
+        return 0, 0, 0
 
     by_date = group_by_date(rows, date_field)
     dates   = sorted(by_date.keys())
@@ -239,6 +252,11 @@ def process_table(table: str, date_field: str, dry_run: bool,
 
     total_updated = 0
     total_skipped = 0
+
+    # Unique (date, ticker) pairs for this table; used as fallback denominator
+    local_total    = sum(len({r["ticker"] for r in by_date[d]}) for d in dates)
+    effective_total = global_total if global_total is not None else local_total
+    tickers_done   = 0
 
     for di, trade_date_str in enumerate(dates, 1):
         date_rows = by_date[trade_date_str]
@@ -252,7 +270,12 @@ def process_table(table: str, date_field: str, dry_run: bool,
         total_skipped   += skipped
         print(f"→ {updated} written  {skipped} no-data")
 
-    return total_updated, total_skipped
+        # Emit one PROGRESS line per ticker so the UI can show e.g. "Ticker 45 of 200"
+        for _ in tickers:
+            tickers_done += 1
+            print(f"PROGRESS: {ticker_offset + tickers_done}/{effective_total}", flush=True)
+
+    return total_updated, total_skipped, tickers_done
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -278,19 +301,39 @@ def main():
         if args.table is None or args.table == t
     ]
 
+    # ── Pre-fetch rows for all tables so we can compute the global ticker total
+    # before any processing begins.  This ensures PROGRESS lines are monotonic
+    # across table boundaries (e.g. "Ticker 150 of 200" not resetting to 1/50
+    # at the start of the second table).
+    prefetched: dict[str, list[dict]] = {}
+    global_total_tickers = 0
+    for table, date_field in tables_to_process:
+        rows = fetch_null_rows(table, date_field,
+                               start_date=args.start, end_date=args.end)
+        prefetched[table] = rows
+        by_date_tmp = group_by_date(rows, date_field)
+        global_total_tickers += sum(
+            len({r["ticker"] for r in by_date_tmp[d]}) for d in by_date_tmp
+        )
+
     grand_updated = 0
     grand_skipped = 0
+    global_ticker_offset = 0
     t0 = time.time()
 
     for table, date_field in tables_to_process:
-        updated, skipped = process_table(
+        updated, skipped, done = process_table(
             table, date_field,
             dry_run=args.dry_run,
             start_date=args.start,
             end_date=args.end,
+            preloaded_rows=prefetched[table],
+            ticker_offset=global_ticker_offset,
+            global_total=global_total_tickers,
         )
-        grand_updated += updated
-        grand_skipped += skipped
+        grand_updated        += updated
+        grand_skipped        += skipped
+        global_ticker_offset += done
 
     elapsed = time.time() - t0
     print()
