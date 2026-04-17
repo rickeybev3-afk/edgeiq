@@ -20175,6 +20175,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _ptk_eod_avg  = round(_ptk_eod_vals.mean(),  2) if len(_ptk_eod_vals)  > 0 else None
         _ptk_tier_avg = round(_ptk_tier_vals.mean(), 2) if len(_ptk_tier_vals) > 0 else None
         if _ptk_eod_avg is not None and _ptk_tier_avg is not None:
+            _ptk_r_adv = round(_ptk_tier_avg - _ptk_eod_avg, 3)
             if _ptk_tier_avg > _ptk_eod_avg:
                 _ptk_winner = "🏆 Tiered"
             elif _ptk_eod_avg > _ptk_tier_avg:
@@ -20182,6 +20183,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             else:
                 _ptk_winner = "🤝 Tie"
         else:
+            _ptk_r_adv  = None
             _ptk_winner = "—"
         _pt_tkr_rows.append({
             "Ticker":        _ptk,
@@ -20194,9 +20196,17 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             "Days Seen":     _ptg["trade_date"].nunique() if "trade_date" in _ptg.columns else 0,
             "EOD Avg R":     _ptk_eod_avg  if _ptk_eod_avg  is not None else "—",
             "Tiered Avg R":  _ptk_tier_avg if _ptk_tier_avg is not None else "—",
+            "R Adv (T−E)":   _ptk_r_adv    if _ptk_r_adv   is not None else "—",
             "Exit Edge":     _ptk_winner,
         })
-    _pt_tkr_df = pd.DataFrame(_pt_tkr_rows).sort_values("Win %", ascending=False)
+    _pt_tkr_df = pd.DataFrame(_pt_tkr_rows)
+    _sort_col = "R Adv (T−E)" if "R Adv (T−E)" in _pt_tkr_df.columns else "Win %"
+    _pt_tkr_df = _pt_tkr_df.sort_values(
+        _sort_col,
+        ascending=False,
+        key=lambda s: pd.to_numeric(s, errors="coerce"),
+        na_position="last",
+    )
     st.dataframe(_pt_tkr_df, use_container_width=True, hide_index=True)
 
     # ── EOD Hold Performance — Morning / Intraday split
