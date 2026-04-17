@@ -12307,13 +12307,52 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     unsafe_allow_html=True,
                 )
                 _flagged_csv_df = pd.DataFrame(_flagged_csv_rows, columns=["Ticker", "Divergence Magnitude", "Max Divergence label"])
-                st.download_button(
-                    label="⬇️ Download flagged tickers",
-                    data=_flagged_csv_df.to_csv(index=False),
-                    file_name=f"flagged_tickers_{datetime.now().strftime('%Y%m%d')}_thresh{_div_thresh:.2f}.csv",
-                    mime="text/csv",
-                    key="_dl_flagged_tickers",
-                )
+                _div_alert_dl_col, _div_alert_send_col = st.columns([1, 1])
+                with _div_alert_dl_col:
+                    st.download_button(
+                        label="⬇️ Download flagged tickers",
+                        data=_flagged_csv_df.to_csv(index=False),
+                        file_name=f"flagged_tickers_{datetime.now().strftime('%Y%m%d')}_thresh{_div_thresh:.2f}.csv",
+                        mime="text/csv",
+                        key="_dl_flagged_tickers",
+                    )
+                with _div_alert_send_col:
+                    _tg_configured  = bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
+                    _dc_configured  = bool(os.environ.get("DISCORD_WEBHOOK_URL"))
+                    _any_channel    = _tg_configured or _dc_configured
+                    _send_btn_label = "📤 Send divergence alert"
+                    _send_btn_help  = (
+                        "Send this flagged-tickers list (+ CSV attachment) via "
+                        + (", ".join(filter(None, [
+                            "Telegram" if _tg_configured else "",
+                            "Discord"  if _dc_configured else "",
+                        ])) or "—")
+                        + "."
+                    )
+                    if _any_channel:
+                        if st.button(
+                            _send_btn_label,
+                            key="_send_div_alert_btn",
+                            help=_send_btn_help,
+                            use_container_width=True,
+                        ):
+                            _div_alert_result = send_divergence_alert(
+                                flagged_rows=_flagged_csv_rows,
+                                threshold=_div_thresh,
+                            )
+                            _sent_to = [ch for ch, ok in _div_alert_result.items() if ok]
+                            _failed  = [ch for ch, ok in _div_alert_result.items() if not ok and os.environ.get(
+                                "TELEGRAM_BOT_TOKEN" if ch == "telegram" else "DISCORD_WEBHOOK_URL"
+                            )]
+                            if _sent_to:
+                                st.success(f"Alert sent via {', '.join(c.title() for c in _sent_to)}.", icon="✅")
+                            if _failed:
+                                st.warning(f"Could not send via {', '.join(c.title() for c in _failed)}.", icon="⚠️")
+                    else:
+                        st.caption(
+                            "Configure TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID or "
+                            "DISCORD_WEBHOOK_URL to enable external alerts."
+                        )
             elif _div_thresh is not None:
                 # Threshold is set but nothing exceeds it
                 st.markdown(

@@ -11831,6 +11831,106 @@ def _maybe_telegram_playbook_alert(
         pass
 
 
+def send_divergence_alert(
+    flagged_rows: list,
+    threshold: float,
+    tg_token: str = "",
+    tg_chat_id: str = "",
+    discord_webhook_url: str = "",
+) -> dict:
+    """Send a divergence alert with the flagged-tickers CSV to Telegram and/or Discord.
+
+    Parameters
+    ----------
+    flagged_rows : list of dicts with keys ``Ticker``, ``Divergence Magnitude``,
+                   ``Max Divergence label``
+    threshold : the divergence threshold that was used
+    tg_token / tg_chat_id : Telegram credentials (read from env if blank)
+    discord_webhook_url : Discord webhook URL (read from env if blank)
+
+    Returns
+    -------
+    dict with keys ``telegram`` and ``discord`` (True = sent, False = failed/skipped)
+    """
+    import io as _io
+
+    tg_token    = (tg_token    or os.environ.get("TELEGRAM_BOT_TOKEN", "")).strip()
+    tg_chat_id  = (tg_chat_id  or os.environ.get("TELEGRAM_CHAT_ID",    "")).strip()
+    discord_webhook_url = (
+        discord_webhook_url or os.environ.get("DISCORD_WEBHOOK_URL", "")
+    ).strip()
+
+    n = len(flagged_rows)
+    today_str = date.today().strftime("%b %d, %Y")
+
+    csv_lines = ["Ticker,Divergence Magnitude,Max Divergence label"]
+    for row in flagged_rows:
+        csv_lines.append(
+            f"{row['Ticker']},{row['Divergence Magnitude']},{row['Max Divergence label']}"
+        )
+    csv_bytes = "\n".join(csv_lines).encode("utf-8")
+
+    results = {"telegram": False, "discord": False}
+
+    if tg_token and tg_chat_id:
+        _ticker_lines = "\n".join(
+            f"• <b>{r['Ticker']}</b>  mag={r['Divergence Magnitude']}  "
+            f"{r['Max Divergence label']}"
+            for r in flagged_rows
+        )
+        _tg_msg = (
+            f"⚠️ <b>DIVERGENCE ALERT — {n} ticker{'s' if n != 1 else ''} flagged</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Threshold: <b>{threshold:.2f}</b>   |   📅 {today_str}\n\n"
+            f"{_ticker_lines}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Full list attached as CSV."
+        )
+        try:
+            _doc_resp = requests.post(
+                f"https://api.telegram.org/bot{tg_token}/sendDocument",
+                data={"chat_id": tg_chat_id, "caption": _tg_msg, "parse_mode": "HTML"},
+                files={"document": ("flagged_tickers.csv", _io.BytesIO(csv_bytes), "text/csv")},
+                timeout=10,
+            )
+            results["telegram"] = _doc_resp.status_code == 200
+        except Exception:
+            results["telegram"] = False
+
+    if discord_webhook_url and discord_webhook_url.startswith("http"):
+        _ticker_value = "\n".join(
+            f"`{r['Ticker']}` — mag {r['Divergence Magnitude']} — {r['Max Divergence label']}"
+            for r in flagged_rows
+        ) or "—"
+        _embed_payload = {
+            "username": "VolumeProfile Bot",
+            "embeds": [
+                {
+                    "title": f"⚠️ Divergence Alert — {n} ticker{'s' if n != 1 else ''} flagged",
+                    "color": 0xFFD600,
+                    "fields": [
+                        {"name": "Threshold", "value": f"{threshold:.2f}", "inline": True},
+                        {"name": "Date",      "value": today_str,          "inline": True},
+                        {"name": "Flagged tickers", "value": _ticker_value[:1024], "inline": False},
+                    ],
+                    "footer": {"text": "Full list in attached CSV  ·  Volume Profile Terminal"},
+                }
+            ],
+        }
+        try:
+            _dc_resp = requests.post(
+                discord_webhook_url,
+                data={"payload_json": json.dumps(_embed_payload)},
+                files={"files[0]": ("flagged_tickers.csv", _io.BytesIO(csv_bytes), "text/csv")},
+                timeout=10,
+            )
+            results["discord"] = _dc_resp.status_code in (200, 204)
+        except Exception:
+            results["discord"] = False
+
+    return results
+
+
 def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
                            feed: str = "iex", max_tickers: int = 20,
                            user_id: str = "",
