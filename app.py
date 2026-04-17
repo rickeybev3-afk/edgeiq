@@ -17769,6 +17769,28 @@ def render_decision_log_tab():
                     else:
                         st.error("Update failed.")
 
+        if _outcome != "Pending" and _dec_id:
+            _reopen_key = f"dl_reopen_confirm_{_dec_id}"
+            if not st.session_state.get(_reopen_key, False):
+                if st.button("↩ Reopen", key=f"dl_reopen_{_dec_id}"):
+                    st.session_state[_reopen_key] = True
+                    st.rerun()
+            else:
+                st.warning("Reset outcome to Pending? This will clear the outcome date and notes.")
+                _ro_c1, _ro_c2 = st.columns([1, 5])
+                with _ro_c1:
+                    if st.button("Yes, reopen", key=f"dl_reopen_yes_{_dec_id}", type="primary"):
+                        _ro_ok = update_decision_outcome(_dec_id, _dl_uid, "Pending", None, "")
+                        st.session_state[_reopen_key] = False
+                        if _ro_ok:
+                            st.rerun()
+                        else:
+                            st.error("Reopen failed. Check Supabase connection.")
+                with _ro_c2:
+                    if st.button("Cancel", key=f"dl_reopen_cancel_{_dec_id}"):
+                        st.session_state[_reopen_key] = False
+                        st.rerun()
+
         if _dec_id:
             _confirm_key = f"dl_del_confirm_{_dec_id}"
             if not st.session_state.get(_confirm_key, False):
