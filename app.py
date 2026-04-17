@@ -16247,8 +16247,30 @@ ALTER TABLE backtest_sim_runs
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🔄 Retry Close Price Fetch", key="cp_retry_backfill_btn",
                          use_container_width=True):
-                with st.spinner("Fetching close prices from Alpaca — this may take a moment…"):
-                    _cp_result = run_close_price_backfill_batch(user_id=_AUTH_USER_ID)
+                _cp_progress_bar  = st.progress(0.0)
+                _cp_status_text   = st.empty()
+                _cp_status_text.caption("Scanning for missing close prices…")
+
+                def _cp_progress_cb(done: int, total: int, date_str: str):
+                    try:
+                        if total > 0:
+                            _cp_progress_bar.progress(done / total)
+                        if done < total:
+                            _cp_status_text.caption(
+                                f"Processing batch {done} of {total} ({date_str})…"
+                            )
+                        else:
+                            label = f"{total} batch{'es' if total != 1 else ''}"
+                            _cp_status_text.caption(f"All {label} processed.")
+                    except Exception:
+                        pass
+
+                _cp_result = run_close_price_backfill_batch(
+                    user_id=_AUTH_USER_ID,
+                    progress_callback=_cp_progress_cb,
+                )
+                _cp_progress_bar.empty()
+                _cp_status_text.empty()
                 _cp_filled   = _cp_result.get("filled", 0)
                 _cp_still    = _cp_result.get("still_missing", 0)
                 _cp_errors   = _cp_result.get("errors", 0)

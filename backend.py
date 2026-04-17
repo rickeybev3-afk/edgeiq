@@ -8718,7 +8718,8 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
                 "ticker_list_complete": True}
 
 
-def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False) -> dict:
+def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False,
+                                   progress_callback=None) -> dict:
     """Attempt to re-fetch EOD close prices from Alpaca for all rows that are
     currently missing close_price in backtest_sim_runs and paper_trades.
 
@@ -8730,6 +8731,12 @@ def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False) -> 
       filled        – number of rows successfully updated with a close price
       still_missing – number of rows that remained unfilled (no Alpaca data)
       errors        – number of write errors encountered
+
+    progress_callback(done: int, total: int, date_str: str) — optional callable
+      invoked after each date batch is processed so callers can display live
+      progress.  ``done`` is the number of dates completed so far, ``total`` is
+      the total number of unique dates to process, and ``date_str`` is the date
+      string that was just finished.
     """
     from datetime import datetime, timedelta
     from collections import defaultdict
@@ -8820,6 +8827,8 @@ def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False) -> 
             {"close_price": round(close_price, 4)}
         ).eq("id", row_id).execute()
 
+    # ── Phase 1: collect all date-batches across both tables ─────────────────
+    all_work: list = []  # [(table, date_field, trade_date_str, date_rows), …]
     for table, date_field in TABLES:
         try:
             rows = _fetch_null_rows(table, date_field)
@@ -8837,36 +8846,49 @@ def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False) -> 
                 by_date[sd].append(r)
 
         for trade_date_str, date_rows in sorted(by_date.items()):
-            tickers = sorted({r.get("ticker", "") for r in date_rows if r.get("ticker")})
-            if not tickers:
-                stats["still_missing"] += len(date_rows)
-                continue
+            all_work.append((table, date_field, trade_date_str, date_rows))
 
-            closes = _fetch_closes_for_date(trade_date_str, tickers)
+    total_dates = len(all_work)
 
-            updates = []
-            for r in date_rows:
-                ticker = r.get("ticker", "")
-                cp     = closes.get(ticker)
-                if cp is None:
-                    stats["still_missing"] += 1
-                else:
-                    updates.append((r["id"], cp))
+    # ── Phase 2: process each date-batch, firing progress callback each time ─
+    for work_idx, (table, date_field, trade_date_str, date_rows) in enumerate(all_work):
+        tickers = sorted({r.get("ticker", "") for r in date_rows if r.get("ticker")})
+        if not tickers:
+            stats["still_missing"] += len(date_rows)
+            if progress_callback:
+                progress_callback(work_idx + 1, total_dates, trade_date_str)
+            continue
 
-            if dry_run or not updates:
-                stats["filled"] += len(updates)
-                continue
+        closes = _fetch_closes_for_date(trade_date_str, tickers)
 
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-                futures = {pool.submit(_update_one, table, rid, cp): rid
-                           for rid, cp in updates}
-                for fut in as_completed(futures):
-                    try:
-                        fut.result()
-                        stats["filled"] += 1
-                    except Exception as e:
-                        print(f"run_close_price_backfill_batch write error: {e}")
-                        stats["errors"] += 1
+        updates = []
+        for r in date_rows:
+            ticker = r.get("ticker", "")
+            cp     = closes.get(ticker)
+            if cp is None:
+                stats["still_missing"] += 1
+            else:
+                updates.append((r["id"], cp))
+
+        if dry_run or not updates:
+            stats["filled"] += len(updates)
+            if progress_callback:
+                progress_callback(work_idx + 1, total_dates, trade_date_str)
+            continue
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(_update_one, table, rid, cp): rid
+                       for rid, cp in updates}
+            for fut in as_completed(futures):
+                try:
+                    fut.result()
+                    stats["filled"] += 1
+                except Exception as e:
+                    print(f"run_close_price_backfill_batch write error: {e}")
+                    stats["errors"] += 1
+
+        if progress_callback:
+            progress_callback(work_idx + 1, total_dates, trade_date_str)
 
     return stats
 
