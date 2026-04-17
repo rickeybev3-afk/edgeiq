@@ -1116,7 +1116,7 @@ def premarket_scan():
 def watchlist_refresh():
     """9:35 AM ET — pull today's movers from Finviz, save to Supabase.
 
-    Runs TWO screener passes and merges them:
+    Runs THREE screener passes and merges them:
       Pass 1 — Gap-of-day plays: ≥3% change · Float ≤100M · $1–$20
                Catches high-momentum small-float catalysts.
       Pass 2 — Trend continuation plays: ≥1% change · Float ≤500M · $5–$50
@@ -1124,13 +1124,16 @@ def watchlist_refresh():
                Catches institutional-quality stocks extending multi-week trends.
                These produce cleaner Bullish/Bearish Break IB structure vs
                gap-and-stall small-floats that tend to read as Neutral/Ntrl Extreme.
+      Pass 3 — Short squeeze candidates: Short float ≥15% · Float ≤50M · ≥1% chg
+               High short interest + low float = covering pressure amplifies IB breaks.
+               These are layered behind gap/trend fills; capped at 30 tickers.
 
-    Gap plays take priority (listed first). Trend plays fill behind them.
+    Gap plays take priority (listed first), then trend, then squeeze.
     Combined list is capped at 100 tickers.
     """
     global TICKERS
     log.info("=" * 60)
-    log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend passes)")
+    log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze passes)")
     log.info("=" * 60)
     try:
         # ── Pass 1: gap-of-day (existing behaviour) ───────────────────────────
@@ -1144,7 +1147,7 @@ def watchlist_refresh():
         )
         log.info(f"Gap-of-day screener: {len(gap_tickers)} tickers")
 
-        # ── Pass 2: trend continuation (new) ─────────────────────────────────
+        # ── Pass 2: trend continuation ────────────────────────────────────────
         # Stocks in established uptrends on elevated volume → cleaner IB structure
         # and more Bullish Break / Bearish Break outcomes vs gap-and-stall noise.
         trend_tickers = fetch_finviz_watchlist(
@@ -1158,9 +1161,27 @@ def watchlist_refresh():
         )
         log.info(f"Trend-continuation screener: {len(trend_tickers)} tickers")
 
-        # ── Merge: gap plays first, trend plays fill behind (deduped) ─────────
+        # ── Pass 3: short squeeze candidates ─────────────────────────────────
+        # High short interest (≥15% float short) + low float → covering pressure
+        # amplifies IB breakouts. When a heavily shorted stock clears IB high,
+        # shorts are forced to cover into the move on top of buyer demand.
+        squeeze_tickers = fetch_finviz_watchlist(
+            change_min_pct=1.0,
+            float_max_m=50.0,
+            price_min=1.0,
+            price_max=50.0,
+            avg_vol_min_k=500,
+            max_tickers=30,
+            extra_filters=["sh_short_o15"],  # short float > 15%
+        )
+        log.info(f"Short-squeeze screener: {len(squeeze_tickers)} tickers")
+
+        # ── Merge: gap → trend → squeeze (deduped), cap at 100 ───────────────
         merged: list[str] = list(gap_tickers)
         for t in trend_tickers:
+            if t not in merged:
+                merged.append(t)
+        for t in squeeze_tickers:
             if t not in merged:
                 merged.append(t)
         merged = merged[:100]
@@ -1171,21 +1192,23 @@ def watchlist_refresh():
                 TICKERS = merged
                 log.info(
                     f"Watchlist updated: {len(merged)} total tickers "
-                    f"({len(gap_tickers)} gap · {len(trend_tickers)} trend) → "
+                    f"({len(gap_tickers)} gap · {len(trend_tickers)} trend · "
+                    f"{len(squeeze_tickers)} squeeze) → "
                     f"{', '.join(merged)}"
                 )
                 tg_send(
                     f"📋 <b>Watchlist Refreshed — {date.today()}</b>\n"
                     f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
-                    f"{len(trend_tickers)} trend continuation)\n"
+                    f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze)\n"
                     f"Gap: ≥3% chg · Float ≤100M · $1–$20\n"
-                    f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA · Vol ≥2M\n"
+                    f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
+                    f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
                     f"Morning scan at 10:47 AM ET..."
                 )
             else:
                 log.warning("Finviz returned tickers but Supabase save failed — keeping existing watchlist")
         else:
-            log.warning("Both Finviz screeners returned 0 tickers — keeping existing watchlist")
+            log.warning("All Finviz screeners returned 0 tickers — keeping existing watchlist")
     except Exception as exc:
         log.warning(f"Watchlist refresh failed: {exc} — keeping existing watchlist")
 
