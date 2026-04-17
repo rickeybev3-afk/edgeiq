@@ -21781,12 +21781,19 @@ def render_decision_log_tab():
                     st.session_state[_reopen_key] = True
                     st.rerun()
             else:
-                st.warning("Reset outcome to Pending? This will clear the outcome date and notes.")
+                st.warning("Reset outcome to Pending? This will clear the outcome date. Any reason you enter below will replace the existing notes.")
+                _ro_reason_key = f"dl_reopen_reason_{_dec_id}"
+                _ro_reason = st.text_input(
+                    "Reason for reopening (optional)",
+                    key=_ro_reason_key,
+                    placeholder="e.g. Awaiting confirmation candle",
+                )
                 _ro_c1, _ro_c2 = st.columns([1, 5])
                 with _ro_c1:
                     if st.button("Yes, reopen", key=f"dl_reopen_yes_{_dec_id}", type="primary"):
-                        _ro_ok = update_decision_outcome(_dec_id, _dl_uid, "Pending", None, "")
+                        _ro_ok = update_decision_outcome(_dec_id, _dl_uid, "Pending", None, _ro_reason.strip())
                         st.session_state[_reopen_key] = False
+                        st.session_state.pop(_ro_reason_key, None)
                         if _ro_ok:
                             st.rerun()
                         else:
@@ -21794,6 +21801,7 @@ def render_decision_log_tab():
                 with _ro_c2:
                     if st.button("Cancel", key=f"dl_reopen_cancel_{_dec_id}"):
                         st.session_state[_reopen_key] = False
+                        st.session_state.pop(_ro_reason_key, None)
                         st.rerun()
 
         if _outcome != "Pending" and _dec_id:
