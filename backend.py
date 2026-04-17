@@ -246,6 +246,9 @@ def recheck_secret_statuses() -> None:
     _startup_errors.clear()
     _startup_errors.extend(_fresh_startup_errors)
 
+    _supabase_errors.clear()
+    _supabase_errors.extend(_fresh_supabase_errors)
+
     _fresh_error_names     = {_n for _n, _ in _fresh_startup_errors}
     _fresh_malformed_names = {_n for _n, _m in _fresh_startup_errors if "malformed" in _m.lower()}
 
@@ -261,6 +264,53 @@ def recheck_secret_statuses() -> None:
         _item["name"]: _fresh_status(_item["name"])
         for _item in _SECRET_CATALOG
     })
+
+    _write_health_file()
+
+    # Re-initialise Supabase clients if they are now healthy so that data reads
+    # succeed without requiring a full server restart.
+    if not _fresh_supabase_errors:
+        global SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY  # noqa: PLW0603
+        global ALPACA_API_KEY, ALPACA_SECRET_KEY              # noqa: PLW0603
+        global supabase, supabase_anon                         # noqa: PLW0603
+
+        SUPABASE_URL = _fresh_url
+        SUPABASE_KEY = _fresh_key
+        SUPABASE_ANON_KEY = (
+            os.environ.get("SUPABASE_ANON_KEY") or
+            os.environ.get("VITE_SUPABASE_ANON_KEY") or
+            _fresh_key
+        )
+        ALPACA_API_KEY    = _fresh_alpaca_api
+        ALPACA_SECRET_KEY = _fresh_alpaca_secret
+
+        _reinit_error: str = ""
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            logging.info("[RECHECK] Supabase client re-initialised with updated credentials.")
+        except Exception as _e:
+            _reinit_error = str(_e)[:120]
+            logging.error("[RECHECK] Failed to re-create Supabase client: %s", _e)
+            supabase = None
+
+        try:
+            supabase_anon = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+            logging.info("[RECHECK] Supabase anon client re-initialised.")
+        except Exception as _e:
+            if not _reinit_error:
+                _reinit_error = str(_e)[:120]
+            logging.error("[RECHECK] Failed to re-create Supabase anon client: %s", _e)
+            supabase_anon = None
+
+        if _reinit_error:
+            _runtime_err = (
+                "SUPABASE_URL",
+                f"Supabase client could not be created after re-check: {_reinit_error}",
+            )
+            _supabase_errors.append(_runtime_err)
+            _startup_errors.append(_runtime_err)
+            _secret_statuses["SUPABASE_URL"] = "malformed"
+            _write_health_file()
 
 
 if _startup_errors:
