@@ -19832,58 +19832,94 @@ ALTER TABLE backtest_sim_runs
                 f"{'them' if _pt_rs_sentinel_count != 1 else 'it'} for backfill."
             )
             # ── Per-ticker breakdown ──────────────────────────────────────────
-            _pt_rs_stats = get_paper_trades_tiered_sentinel_stats(
+            _pt_rs_breakdown = list_paper_trades_tiered_sentinel_tickers(
                 user_id=_AUTH_USER_ID,
                 ticker=_pt_rs_ticker_clean,
                 date_from=_pt_rs_from_str,
                 date_to=_pt_rs_to_str,
             )
-            _pt_rs_top_tickers          = _pt_rs_stats.get("top_tickers", [])
-            _pt_rs_total_tickers        = _pt_rs_stats.get("total_tickers", len(_pt_rs_top_tickers))
-            _pt_rs_ticker_list_complete = _pt_rs_stats.get("ticker_list_complete", True)
-            if _pt_rs_top_tickers:
-                _pt_rs_ticker_badges = "".join(
-                    f'<span style="display:inline-block; background:#1a2744; border:1px solid #263260; '
-                    f'border-radius:4px; padding:2px 8px; margin:2px 4px 2px 0; font-family:monospace; '
-                    f'font-size:11px; color:#90a4ae;">'
-                    f'{t["ticker"]} <span style="color:#546e7a;">×{t["count"]}</span></span>'
-                    for t in _pt_rs_top_tickers
+            _pt_rs_tickers          = _pt_rs_breakdown.get("tickers", [])
+            _pt_rs_total_tickers    = _pt_rs_breakdown.get("total_tickers", 0)
+            _pt_rs_list_complete    = _pt_rs_breakdown.get("ticker_list_complete", True)
+            if _pt_rs_tickers:
+                _pt_rs_shown = len(_pt_rs_tickers)
+                _pt_rs_hidden = _pt_rs_total_tickers - _pt_rs_shown
+                _pt_rs_ticker_label = (
+                    f"**{_pt_rs_total_tickers:,} ticker{'s' if _pt_rs_total_tickers != 1 else ''}** affected"
+                    if _pt_rs_list_complete
+                    else f"**at least {_pt_rs_total_tickers:,} ticker{'s' if _pt_rs_total_tickers != 1 else ''}** affected"
                 )
-                _pt_rs_shown_count = len(_pt_rs_top_tickers)
-                _pt_rs_more_hidden = _pt_rs_total_tickers - _pt_rs_shown_count
-                if _pt_rs_more_hidden > 0:
-                    _pt_rs_more_note = (
-                        f'<span style="font-size:10px; color:#37474f;">'
-                        f' + {_pt_rs_more_hidden} more ticker'
-                        f'{"s" if _pt_rs_more_hidden != 1 else ""} not shown</span>'
-                    )
-                elif not _pt_rs_ticker_list_complete:
-                    _pt_rs_more_note = (
-                        f'<span style="font-size:10px; color:#37474f;">'
-                        f' + additional tickers not shown</span>'
-                    )
-                else:
-                    _pt_rs_more_note = ""
-                if _pt_rs_ticker_list_complete:
-                    _pt_rs_tickers_label = (
-                        f'{_pt_rs_total_tickers} ticker'
-                        f'{"s" if _pt_rs_total_tickers != 1 else ""} affected'
-                    )
-                else:
-                    _pt_rs_tickers_label = (
-                        f'at least {_pt_rs_total_tickers} ticker'
-                        f'{"s" if _pt_rs_total_tickers != 1 else ""} affected'
-                    )
                 st.markdown(
-                    f'<div style="background:#020813; border:1px solid #263260; border-radius:8px; '
-                    f'padding:10px 16px; margin-bottom:12px;">'
-                    f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
-                    f'letter-spacing:1.5px; font-weight:700; font-family:monospace; margin-bottom:6px;">'
-                    f'Tickers most affected · {_pt_rs_tickers_label}</div>'
-                    f'<div>{_pt_rs_ticker_badges}{_pt_rs_more_note}</div>'
-                    f'</div>',
+                    f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+                    f'letter-spacing:1.2px; font-weight:700; font-family:monospace; '
+                    f'margin:12px 0 6px;">Affected tickers — {_pt_rs_ticker_label}</div>',
                     unsafe_allow_html=True,
                 )
+                _pt_rs_hdr = st.columns([1.5, 1.2, 1.5, 1.5, 0.9])
+                for _pt_rs_hdr_col, _pt_rs_hdr_label in zip(
+                    _pt_rs_hdr,
+                    ["Ticker", "Sentinel Rows", "Earliest Date", "Latest Date", ""],
+                ):
+                    _pt_rs_hdr_col.markdown(
+                        f'<div style="font-size:11px;color:#546e7a;font-weight:700;'
+                        f'text-transform:uppercase;letter-spacing:0.8px;">'
+                        f'{_pt_rs_hdr_label}</div>',
+                        unsafe_allow_html=True,
+                    )
+                for _pt_rr in _pt_rs_tickers:
+                    _pt_rr_ticker = _pt_rr["ticker"]
+                    _pt_rr_count  = _pt_rr["count"]
+                    _pt_rr_from   = _pt_rr.get("date_from") or "—"
+                    _pt_rr_to     = _pt_rr.get("date_to") or "—"
+                    _pt_rr_cols   = st.columns([1.5, 1.2, 1.5, 1.5, 0.9])
+                    _pt_rr_cols[0].markdown(
+                        f'<span style="font-family:monospace;font-weight:700;'
+                        f'color:#cfd8dc;">{_pt_rr_ticker}</span>',
+                        unsafe_allow_html=True,
+                    )
+                    _pt_rr_cols[1].markdown(str(_pt_rr_count))
+                    _pt_rr_cols[2].markdown(_pt_rr_from)
+                    _pt_rr_cols[3].markdown(_pt_rr_to)
+                    if _pt_rr_cols[4].button(
+                        "Filter",
+                        key=f"pt_rs_ticker_pick_{_pt_rr_ticker}",
+                        help=f"Pre-fill the Ticker filter with {_pt_rr_ticker}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["pt_rs_ticker"] = _pt_rr_ticker
+                        st.rerun()
+                _pt_rs_df = pd.DataFrame([
+                    {
+                        "Ticker": r["ticker"],
+                        "Sentinel Rows": r["count"],
+                        "Earliest Date": r.get("date_from") or "—",
+                        "Latest Date": r.get("date_to") or "—",
+                    }
+                    for r in _pt_rs_tickers
+                ])
+                _pt_rs_csv_parts = ["unavailable_paper_trades_tickers"]
+                if _pt_rs_from_str:
+                    _pt_rs_csv_parts.append(_pt_rs_from_str)
+                if _pt_rs_to_str:
+                    _pt_rs_csv_parts.append(_pt_rs_to_str)
+                _pt_rs_csv_filename = "_".join(_pt_rs_csv_parts) + ".csv"
+                st.download_button(
+                    label="⬇ Download CSV",
+                    data=_pt_rs_df.to_csv(index=False),
+                    file_name=_pt_rs_csv_filename,
+                    mime="text/csv",
+                    key="pt_rs_download_csv",
+                )
+                if _pt_rs_hidden > 0:
+                    st.caption(
+                        f"Showing top {_pt_rs_shown} of {_pt_rs_total_tickers} affected tickers. "
+                        f"Enter a ticker above to inspect a specific symbol."
+                    )
+                elif not _pt_rs_list_complete:
+                    st.caption(
+                        "Additional tickers may exist beyond those shown. "
+                        "Enter a ticker above to inspect a specific symbol."
+                    )
         else:
             st.success(f"No sentinel-stamped rows found{_pt_rs_scope}.")
 

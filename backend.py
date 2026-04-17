@@ -9319,6 +9319,115 @@ def get_paper_trades_tiered_sentinel_stats(
                 "ticker_list_complete": True}
 
 
+def list_paper_trades_tiered_sentinel_tickers(
+    user_id: str = "",
+    ticker: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    top_n: int = 50,
+) -> dict:
+    """Return a per-ticker breakdown of sentinel-stamped paper_trades rows.
+
+    Rows with tiered_pnl_r == TIERED_PNL_SENTINEL (-9999) were retired because
+    Alpaca returned no bar data.  This function lets operators see which tickers
+    are affected, how many rows each has, and the earliest/latest trade_date seen,
+    so they can prioritise investigation without querying the database manually.
+
+    Parameters
+    ----------
+    user_id   : Scope to a single user (empty = all users).
+    ticker    : Exact ticker symbol filter (empty = all tickers).
+    date_from : Lower bound on trade_date, inclusive (YYYY-MM-DD, empty = no lower bound).
+    date_to   : Upper bound on trade_date, inclusive (YYYY-MM-DD, empty = no upper bound).
+    top_n     : Maximum number of tickers to return (sorted by row count descending).
+
+    Returns
+    -------
+    dict with keys:
+      total_sentinel       – int, total sentinel-stamped rows in scope.
+      total_tickers        – int, number of distinct tickers affected.
+      ticker_list_complete – bool, True when all rows were seen during aggregation.
+      tickers              – list of dicts sorted descending by count:
+                               {"ticker": str, "count": int,
+                                "date_from": str | None, "date_to": str | None}
+    """
+    if not supabase:
+        return {"total_sentinel": 0, "total_tickers": 0,
+                "ticker_list_complete": True, "tickers": []}
+    try:
+        def _base_q():
+            q = (
+                supabase.table("paper_trades")
+                .eq("tiered_pnl_r", TIERED_PNL_SENTINEL)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            if ticker:
+                q = q.eq("ticker", ticker.upper())
+            if date_from:
+                q = q.gte("trade_date", date_from)
+            if date_to:
+                q = q.lte("trade_date", date_to)
+            return q
+
+        count_resp = _base_q().select("id", count="exact").limit(1).execute()
+        total_sentinel = count_resp.count or 0
+        if total_sentinel == 0:
+            return {"total_sentinel": 0, "total_tickers": 0,
+                    "ticker_list_complete": True, "tickers": []}
+
+        PAGE = 1000
+        MAX_PAGES = 20
+        ticker_counts: dict[str, int] = {}
+        ticker_min: dict[str, str] = {}
+        ticker_max: dict[str, str] = {}
+        rows_seen = 0
+        for page in range(MAX_PAGES):
+            chunk = (
+                _base_q()
+                .select("ticker,trade_date")
+                .range(page * PAGE, page * PAGE + PAGE - 1)
+                .execute()
+                .data or []
+            )
+            for r in chunk:
+                t = r.get("ticker") or "UNKNOWN"
+                d = r.get("trade_date") or ""
+                ticker_counts[t] = ticker_counts.get(t, 0) + 1
+                if d:
+                    if t not in ticker_min or d < ticker_min[t]:
+                        ticker_min[t] = d
+                    if t not in ticker_max or d > ticker_max[t]:
+                        ticker_max[t] = d
+            rows_seen += len(chunk)
+            if len(chunk) < PAGE:
+                break
+
+        ticker_list_complete = (rows_seen >= total_sentinel)
+        sorted_tickers = sorted(
+            ticker_counts.items(), key=lambda x: x[1], reverse=True
+        )[:top_n]
+        tickers = [
+            {
+                "ticker": t,
+                "count": c,
+                "date_from": ticker_min.get(t),
+                "date_to": ticker_max.get(t),
+            }
+            for t, c in sorted_tickers
+        ]
+        return {
+            "total_sentinel": total_sentinel,
+            "total_tickers": len(ticker_counts),
+            "ticker_list_complete": ticker_list_complete,
+            "tickers": tickers,
+        }
+    except Exception as e:
+        print(f"list_paper_trades_tiered_sentinel_tickers error: {e}")
+        return {"total_sentinel": 0, "total_tickers": 0,
+                "ticker_list_complete": True, "tickers": []}
+
+
 def get_missing_close_price_stats(user_id: str = "") -> dict:
     """Return stats on backtest_sim_runs rows that have no close_price.
 
