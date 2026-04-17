@@ -7744,12 +7744,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.altair_chart(_tk_bar, use_container_width=True)
 
                         st.markdown(
-                            '<div style="display:flex;gap:18px;flex-wrap:wrap;margin:-6px 0 10px 0;font-size:11px;color:#90a4ae;">'
-                            '<span><span style="display:inline-block;width:10px;height:10px;background:#4caf50;border-radius:2px;margin-right:4px;"></span>Best floor</span>'
-                            '<span><span style="display:inline-block;width:10px;height:10px;background:#42a5f5;border-radius:2px;margin-right:4px;"></span>Profitable</span>'
-                            '<span><span style="display:inline-block;width:10px;height:10px;background:#ef5350;border-radius:2px;margin-right:4px;"></span>Unprofitable</span>'
-                            '<span><span style="display:inline-block;width:10px;height:10px;background:#555555;border-radius:2px;margin-right:4px;"></span>Insufficient data</span>'
-                            '</div>',
+                            f'<div style="display:flex;gap:18px;flex-wrap:wrap;margin:-6px 0 10px 0;font-size:11px;color:#90a4ae;">'
+                            f'<span><span style="display:inline-block;width:10px;height:10px;background:#4caf50;border-radius:2px;margin-right:4px;"></span>Best floor</span>'
+                            f'<span><span style="display:inline-block;width:10px;height:10px;background:#42a5f5;border-radius:2px;margin-right:4px;"></span>Profitable</span>'
+                            f'<span><span style="display:inline-block;width:10px;height:10px;background:#ef5350;border-radius:2px;margin-right:4px;"></span>Unprofitable</span>'
+                            f'<span><span style="display:inline-block;width:10px;height:10px;background:#555555;border-radius:2px;margin-right:4px;"></span>'
+                            f'Insufficient data (&lt;{_MIN_TCS_TRADES} trades)</span>'
+                            f'</div>',
                             unsafe_allow_html=True,
                         )
 
