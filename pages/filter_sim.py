@@ -540,10 +540,10 @@ else:
     for trade in sorted_trades:
         r_val = trade.get("pnl_r_sim") or 0.0
         if pnl_risk_mode == "Fixed $ per trade":
-            risk_$ = float(pnl_fixed_risk)
+            risk_amt = float(pnl_fixed_risk)
         else:
-            risk_$ = eq * (float(pnl_risk_pct) / 100.0)
-        eq += r_val * risk_$
+            risk_amt = eq * (float(pnl_risk_pct) / 100.0)
+        eq += r_val * risk_amt
         eq = max(eq, 0.0)
         curve.append(eq)
         if eq > peak:
