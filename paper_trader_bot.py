@@ -1819,6 +1819,124 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
     return {"written": written, "skipped": skipped}
 
 
+def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
+    """Compute eod_pnl_r for paper_trades rows that now have close_price but
+    still have NULL eod_pnl_r, covering the past ``lookback_days`` calendar days.
+
+    Called immediately after _eod_collect_close_prices() during nightly
+    recalibration so any rows whose close_price was just filled also get their
+    EOD hold P&L computed without waiting for a manual run_sim_backfill.py run.
+
+    Only processes confirmed breakout rows (actual_outcome in
+    'Bullish Break' / 'Bearish Break') since the EOD P&L formula requires a
+    directional break to have occurred.
+
+    Returns {"written": N, "skipped": M}.
+    """
+    from datetime import timedelta
+
+    if not _supabase_client:
+        log.warning("_recalc_eod_pnl_r_recent: No Supabase connection — skipping.")
+        return {"written": 0, "skipped": 0}
+
+    try:
+        from backend import compute_trade_sim_tiered as _compute_tiered
+    except Exception as _ie:
+        log.warning(f"_recalc_eod_pnl_r_recent: Cannot import compute_trade_sim_tiered: {_ie}")
+        return {"written": 0, "skipped": 0}
+
+    cutoff = str(date.today() - timedelta(days=lookback_days))
+    _PAGE = 1000
+    rows: list = []
+    offset = 0
+
+    for direction in ("Bullish Break", "Bearish Break"):
+        offset = 0
+        while True:
+            try:
+                resp = (
+                    _supabase_client.table("paper_trades")
+                    .select("id,actual_outcome,ib_high,ib_low,close_price")
+                    .eq("user_id", USER_ID)
+                    .eq("actual_outcome", direction)
+                    .is_("eod_pnl_r", "null")
+                    .not_.is_("close_price", "null")
+                    .gte("trade_date", cutoff)
+                    .order("id", desc=True)
+                    .range(offset, offset + _PAGE - 1)
+                    .execute()
+                )
+            except Exception as _qe:
+                log.warning(
+                    f"_recalc_eod_pnl_r_recent: DB query failed ({direction}): {_qe}"
+                )
+                break
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < _PAGE:
+                break
+            offset += _PAGE
+
+    if not rows:
+        log.info(
+            "Nightly close-price catch-up: no paper_trades rows need eod_pnl_r "
+            "recalculation (last %d days).", lookback_days
+        )
+        return {"written": 0, "skipped": 0}
+
+    log.info(
+        f"Nightly eod_pnl_r recalc: {len(rows)} paper_trades row(s) have "
+        f"close_price but NULL eod_pnl_r — computing now…"
+    )
+
+    written = 0
+    skipped = 0
+
+    for row in rows:
+        close_price = row.get("close_price")
+        ib_high = row.get("ib_high")
+        ib_low = row.get("ib_low")
+        direction = (row.get("actual_outcome") or "").strip()
+        row_id = row.get("id")
+
+        if close_price is None or ib_high is None or ib_low is None:
+            skipped += 1
+            continue
+
+        try:
+            tiered = _compute_tiered(
+                aft_df=None,
+                ib_high=ib_high,
+                ib_low=ib_low,
+                direction=direction,
+                close_px=close_price,
+            )
+        except Exception as _te:
+            log.debug(f"  compute_trade_sim_tiered failed for id={row_id}: {_te}")
+            skipped += 1
+            continue
+
+        eod_pnl_r = tiered.get("eod_pnl_r")
+        if eod_pnl_r is None:
+            skipped += 1
+            continue
+
+        try:
+            _supabase_client.table("paper_trades").update(
+                {"eod_pnl_r": round(float(eod_pnl_r), 6)}
+            ).eq("id", row_id).execute()
+            log.info(f"    id={row_id}: eod_pnl_r → {eod_pnl_r:.4f}R")
+            written += 1
+        except Exception as _ue:
+            log.warning(f"    DB update failed for id={row_id}: {_ue}")
+            skipped += 1
+
+    log.info(
+        f"Nightly eod_pnl_r recalc done — {written} written, {skipped} skipped."
+    )
+    return {"written": written, "skipped": skipped}
+
+
 def eod_update():
     """4:20 PM ET — update paper trades with full-day outcomes + send EOD summary."""
     today = date.today()
@@ -2422,6 +2540,34 @@ def nightly_recalibration():
         append_tcs_threshold_history(old_tcs, new_tcs)
     except Exception as exc:
         log.warning(f"TCS threshold change alert/history failed: {exc}")
+
+    # ── Close-price catch-up sweep (last 7 days) ──────────────────────────────
+    # The 4:20 PM eod_update() sweep covers today's rows.  Any day the bot was
+    # down or the sweep itself failed will leave NULLs behind.  Re-running with
+    # a 7-day window here heals those stragglers automatically every evening.
+    try:
+        log.info("Nightly close-price catch-up sweep: checking last 7 days…")
+        cp_result = _eod_collect_close_prices(lookback_days=7)
+        log.info(
+            f"Nightly close-price catch-up: "
+            f"{cp_result['written']} filled, {cp_result['skipped']} skipped."
+        )
+    except Exception as exc:
+        log.warning(f"Nightly close-price catch-up sweep failed: {exc}")
+
+    # ── eod_pnl_r recalculation for newly-filled close prices ────────────────
+    # After filling close_price, immediately compute eod_pnl_r for any
+    # breakout rows that are still missing it (avoids a manual backfill run).
+    try:
+        pr_result = _recalc_eod_pnl_r_recent(lookback_days=7)
+        if pr_result["written"]:
+            log.info(
+                f"Nightly eod_pnl_r recalc: "
+                f"{pr_result['written']} row(s) updated, "
+                f"{pr_result['skipped']} skipped."
+            )
+    except Exception as exc:
+        log.warning(f"Nightly eod_pnl_r recalculation failed: {exc}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
