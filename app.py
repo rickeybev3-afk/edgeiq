@@ -9250,6 +9250,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                     if not _rp_trades:
                         st.warning("No qualifying trades found. Try lowering the Min TCS filter or expanding the date range.")
+                        if _rp_bot_mode:
+                            st.markdown("---")
+                            st.markdown("**🟡 Marginal Trades** *(TCS cleared floor by ≤ 5 pts)*")
+                            _ms1, _ms2, _ms3 = st.columns(3)
+                            _ms1.metric(
+                                "Count", "—",
+                                help="Number of trades where TCS − TCS Floor ≤ 5 (borderline entries), and their share of all trades"
+                            )
+                            _ms2.metric(
+                                "Win Rate", "—",
+                                help="Win rate across borderline entries only — compare to the overall win rate above"
+                            )
+                            _ms3.metric(
+                                "Avg R", "—",
+                                help="Average R (MFE) for borderline entries — see the Marginal Entry Analysis section below for a full comfortable vs marginal comparison"
+                            )
+                            st.markdown("---")
+                            st.markdown("#### 🟡 Marginal Entry Analysis *(TCS cleared floor by ≤ 5 pts)*")
+                            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                            _mc1.metric(
+                                "Marginal Trades", "0  (0%)",
+                                help="Trades where TCS − TCS Floor ≤ 5 (borderline entries)"
+                            )
+                            _mc2.metric(
+                                "Marginal Win Rate", "—",
+                                help="Win rate for borderline entries only"
+                            )
+                            _mc3.metric(
+                                "Marginal Avg R", "—",
+                                help="Average R (MFE) for borderline entries"
+                            )
+                            _mc4.metric(
+                                "Comfortable Trades", "0  (—)",
+                                help="Non-marginal trades (TCS cleared floor by > 5 pts) — count and win rate"
+                            )
+                            st.caption(
+                                "No TCS / TCS Floor data yet — marginal entry stats will appear once the bot has taken trades."
+                            )
                     else:
                         _rp_df = pd.DataFrame(_rp_trades)
                         if not _rp_bot_mode and "TCS Floor" in _rp_df.columns:
@@ -9462,7 +9500,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         help=f"Average P&L across {_pnl_losses} losing trade(s)")
 
                         # ── Marginal trades summary row (Bot Mode, in stats summary) ─────
-                        if _has_marginal_data:
+                        if _rp_bot_mode:
                             st.markdown("---")
                             st.markdown("**🟡 Marginal Trades** *(TCS cleared floor by ≤ 5 pts)*")
                             _ms1, _ms2, _ms3 = st.columns(3)
@@ -9558,7 +9596,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                       help="Average R per trade using tiered scaled exits")
 
                         # ── Marginal-trade detailed analysis (Bot Mode only) ─────────────
-                        if _has_marginal_data:
+                        if _rp_bot_mode:
                             st.markdown("---")
                             st.markdown("#### 🟡 Marginal Entry Analysis *(TCS cleared floor by ≤ 5 pts)*")
                             _mc1, _mc2, _mc3, _mc4 = st.columns(4)
@@ -9586,7 +9624,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"{_comf_n_pre}  ({_comf_wr_pre}%)" if _comf_wr_pre is not None else f"{_comf_n_pre}  (—)",
                                 help="Non-marginal trades (TCS cleared floor by > 5 pts) — count and win rate"
                             )
-                            if _marg_n_pre == 0:
+                            if not _has_marginal_data:
+                                st.caption("No TCS / TCS Floor data yet — marginal entry stats will appear once the bot has taken trades.")
+                            elif _marg_n_pre == 0:
                                 st.caption("No marginal entries in this sim — all trades cleared the TCS floor comfortably.")
                             elif _comf_n_pre == 0:
                                 st.caption(
