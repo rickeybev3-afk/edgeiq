@@ -17491,6 +17491,52 @@ ALTER TABLE backtest_sim_runs
                         'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
                         'Best Edge ⭐</div>'
                     ) if _is_best else ""
+                    # ── Per-tier EOD Hold R stats ─────────────────────────────
+                    _t_eod_ser = pd.to_numeric(_tdf.get("eod_pnl_r", pd.Series(dtype=float)), errors="coerce").dropna()
+                    _t_eod_n   = len(_t_eod_ser)
+                    if _t_eod_n:
+                        _t_eod_wr  = round((_t_eod_ser > 0).sum() / _t_eod_n * 100, 1)
+                        _t_eod_aw  = round(_t_eod_ser[_t_eod_ser > 0].mean(), 2) if (_t_eod_ser > 0).any() else 0
+                        _t_eod_al  = round(_t_eod_ser[_t_eod_ser < 0].mean(), 2) if (_t_eod_ser < 0).any() else 0
+                        _t_eod_exp = round(_t_eod_ser.mean(), 3)
+                        _t_eod_wr_col  = "#2e7d32" if _t_eod_wr >= 60 else ("#ef6c00" if _t_eod_wr >= 50 else "#c62828")
+                        _t_eod_exp_col = "#2e7d32" if _t_eod_exp > 0 else ("#ef6c00" if _t_eod_exp == 0 else "#c62828")
+                        _t_eod_html = (
+                            f'<div style="font-size:10px;color:#90a4ae;margin-top:6px;border-top:1px solid #263444;padding-top:5px;text-align:left;">'
+                            f'<span style="color:#80cbc4;font-weight:600;">EOD Hold R</span>'
+                            f'</div>'
+                            f'<div style="font-size:11px;color:#cfd8dc;text-align:left;">'
+                            f'WR: <span style="color:{_t_eod_wr_col};font-weight:600;">{_t_eod_wr}%</span>'
+                            f'  ·  <span style="color:#4fc3f7;">+{_t_eod_aw}R</span>'
+                            f'  /  <span style="color:#ef9a9a;">{_t_eod_al}R</span>'
+                            f'  ·  Exp: <span style="color:{_t_eod_exp_col};font-weight:600;">{_t_eod_exp:+.3f}R</span>'
+                            f'</div>'
+                        )
+                    else:
+                        _t_eod_html = ""
+                    # ── Per-tier Tiered Exit R stats ──────────────────────────
+                    _t_tier_ser = pd.to_numeric(_tdf.get("tiered_pnl_r", pd.Series(dtype=float)), errors="coerce").dropna()
+                    _t_tier_n   = len(_t_tier_ser)
+                    if _t_tier_n:
+                        _t_tier_wr  = round((_t_tier_ser > 0).sum() / _t_tier_n * 100, 1)
+                        _t_tier_aw  = round(_t_tier_ser[_t_tier_ser > 0].mean(), 2) if (_t_tier_ser > 0).any() else 0
+                        _t_tier_al  = round(_t_tier_ser[_t_tier_ser < 0].mean(), 2) if (_t_tier_ser < 0).any() else 0
+                        _t_tier_exp = round(_t_tier_ser.mean(), 3)
+                        _t_tier_wr_col  = "#2e7d32" if _t_tier_wr >= 60 else ("#ef6c00" if _t_tier_wr >= 50 else "#c62828")
+                        _t_tier_exp_col = "#2e7d32" if _t_tier_exp > 0 else ("#ef6c00" if _t_tier_exp == 0 else "#c62828")
+                        _t_tier_html = (
+                            f'<div style="font-size:10px;color:#90a4ae;margin-top:4px;text-align:left;">'
+                            f'<span style="color:#ce93d8;font-weight:600;">Tiered Exit R</span>'
+                            f'</div>'
+                            f'<div style="font-size:11px;color:#cfd8dc;text-align:left;">'
+                            f'WR: <span style="color:{_t_tier_wr_col};font-weight:600;">{_t_tier_wr}%</span>'
+                            f'  ·  <span style="color:#4fc3f7;">+{_t_tier_aw}R</span>'
+                            f'  /  <span style="color:#ef9a9a;">{_t_tier_al}R</span>'
+                            f'  ·  Exp: <span style="color:{_t_tier_exp_col};font-weight:600;">{_t_tier_exp:+.3f}R</span>'
+                            f'</div>'
+                        )
+                    else:
+                        _t_tier_html = ""
                     st.markdown(
                         f'<div style="background:#1e2a3a;border-left:{_card_border};'
                         f'border-radius:8px;padding:12px;text-align:center;">'
@@ -17509,6 +17555,8 @@ ALTER TABLE backtest_sim_runs
                         f'Total: {"+" if _ttot >= 0 else ""}{_ttot:.1f}R · {len(_tdf)} trades</div>'
                         f'<div style="font-size:10px;color:#546e7a;margin-top:3px;">'
                         f'{_pct_trades:.1f}% of trades · {_pct_r:.1f}% of R</div>'
+                        f'{_t_eod_html}'
+                        f'{_t_tier_html}'
                         f'</div>', unsafe_allow_html=True
                     )
 
