@@ -12408,6 +12408,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.session_state[f"_tk_exp_{_qp_tkr_detail}"] = True
 
                 # ── Per-ticker expanders ──────────────────────────────────────
+                st.caption("✱ = custom TCS floor override is active for that ticker")
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
