@@ -8689,10 +8689,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 if _all_sweep_frames:
                     _all_sweep_df = _pd_bt.concat(_all_sweep_frames, ignore_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
+                    _sweep_suf_only = st.checkbox(
+                        "Sufficient floors only",
+                        value=False,
+                        key="_sweep_export_sufficient_only",
+                        help=(
+                            "When checked, the exported CSV only includes rows marked ✓ "
+                            "(enough trades to be statistically actionable). "
+                            "Rows marked ✗ (insufficient trades) are excluded."
+                        ),
+                    )
+                    if _sweep_suf_only:
+                        _all_sweep_export_df = _all_sweep_df[
+                            _all_sweep_df["Sufficient"] == "✓"
+                        ].reset_index(drop=True)
+                        _sweep_btn_label = "⬇️ Download All Tickers Sweep CSV (sufficient only)"
+                        _sweep_fname = "sweep_summary_all_sufficient.csv"
+                    else:
+                        _all_sweep_export_df = _all_sweep_df
+                        _sweep_btn_label = "⬇️ Download All Tickers Sweep CSV"
+                        _sweep_fname = "sweep_summary_all.csv"
                     st.download_button(
-                        label="⬇️ Download All Tickers Sweep CSV",
-                        data=_all_sweep_df.to_csv(index=False),
-                        file_name="sweep_summary_all.csv",
+                        label=_sweep_btn_label,
+                        data=_all_sweep_export_df.to_csv(index=False),
+                        file_name=_sweep_fname,
                         mime="text/csv",
                         key="_dl_sweep_all_tickers",
                         help=(
