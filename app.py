@@ -9512,7 +9512,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f"⚠️ **{_insuff_count} ticker{'s' if _insuff_count != 1 else ''} "
                     f"{'have' if _insuff_count != 1 else 'has'} insufficient data for Best TCS optimization** — "
                     f"fewer than {_MIN_TCS_TRADES} trades exist at any single TCS floor. "
-                    f"These rows are highlighted in grey below. Collect more trade data or broaden the replay date range."
+                    f"These rows are highlighted in grey below (or amber if also the top-ranked ticker). Collect more trade data or broaden the replay date range."
                 )
             _tkr_display_df = _tkr_summary_df.drop(
                 columns=["_sort_win_pct", "_sort_eod_r", "_sort_tiered_r"],
@@ -9530,9 +9530,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _best_row_idx = None
 
             def _style_rows(row):
-                if "insufficient" in str(row.get("Best TCS", "")):
+                _is_best = _best_row_idx is not None and row.name == _best_row_idx
+                _is_insufficient = "insufficient" in str(row.get("Best TCS", ""))
+                if _is_best and _is_insufficient:
+                    return ["background-color: #fff3cd; color: #7a5700; font-weight: bold"] * len(row)
+                if _is_insufficient:
                     return ["background-color: #e8e8e8; color: #666666"] * len(row)
-                if _best_row_idx is not None and row.name == _best_row_idx:
+                if _is_best:
                     return ["background-color: #fffbcc; font-weight: bold"] * len(row)
                 return [""] * len(row)
 
