@@ -9787,6 +9787,71 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f" {repr(_csv_cols_joined)});</script>",
                                     height=0,
                                 )
+                            # ── R-stats: compute once, always shown ──────────────
+                            _dd_r_col = (
+                                "eod_pnl_r" if "eod_pnl_r" in _tk_drill_df.columns
+                                else ("tiered_pnl_r" if "tiered_pnl_r" in _tk_drill_df.columns else None)
+                            )
+                            if _dd_r_col is not None:
+                                _dd_r_ser      = pd.to_numeric(_tk_drill_df[_dd_r_col], errors="coerce").dropna()
+                                _dd_n          = len(_dd_r_ser)
+                                _dd_fb_n       = 0
+                                if "false_break_up" in _tk_drill_df.columns:
+                                    _dd_fb_n = (
+                                        _tk_drill_df["false_break_up"].fillna(False).astype(bool).sum()
+                                        + _tk_drill_df.get("false_break_down", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()
+                                    )
+                                _dd_fb_rate    = round(_dd_fb_n / _dd_n * 100, 1) if _dd_n else 0
+                                _dd_avg_win_r  = round(_dd_r_ser[_dd_r_ser > 0].mean(), 2) if (_dd_r_ser > 0).any() else 0
+                                _dd_avg_loss_r = round(_dd_r_ser[_dd_r_ser < 0].mean(), 2) if (_dd_r_ser < 0).any() else 0
+                                _dd_exp_r      = round(_dd_r_ser.mean(), 3) if _dd_n else 0
+                                _dd_cum_r_v    = _dd_r_ser.cumsum().reset_index(drop=True)
+                                _dd_peak_r     = _dd_cum_r_v.cummax()
+                                _dd_max_dd_r   = round((_dd_cum_r_v - _dd_peak_r).min(), 2) if _dd_n else 0
+                                # ── Visual R-stats metric chips ───────────────────
+                                _dd_exp_clr  = "#66bb6a" if _dd_exp_r >= 0 else "#ef5350"
+                                _dd_sor_clr  = "#ffb300" if _dd_fb_rate >= 30 else "#90a4ae"
+                                _dd_r_label  = "EOD Hold R" if _dd_r_col == "eod_pnl_r" else "Tiered Exit R"
+                                st.markdown(
+                                    f'<div style="margin:10px 0 6px 0;">'
+                                    f'<span style="font-size:10px;font-weight:700;'
+                                    f'color:#90caf9;letter-spacing:0.8px;'
+                                    f'text-transform:uppercase;">R-Stats ({_dd_r_label})</span>'
+                                    f'</div>'
+                                    f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
+                                    f'<div style="background:rgba(255,179,0,0.10);border:1px solid rgba(255,179,0,0.25);'
+                                    f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                    f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                    f'text-transform:uppercase;margin-bottom:3px;">Stop-Out Rate</div>'
+                                    f'<div style="font-size:18px;font-weight:700;color:{_dd_sor_clr};">'
+                                    f'{_dd_fb_rate}%</div></div>'
+                                    f'<div style="background:rgba(76,175,80,0.10);border:1px solid rgba(76,175,80,0.25);'
+                                    f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                    f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                    f'text-transform:uppercase;margin-bottom:3px;">Avg Win R</div>'
+                                    f'<div style="font-size:18px;font-weight:700;color:#66bb6a;">'
+                                    f'+{_dd_avg_win_r}R</div></div>'
+                                    f'<div style="background:rgba(239,83,80,0.10);border:1px solid rgba(239,83,80,0.25);'
+                                    f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                    f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                    f'text-transform:uppercase;margin-bottom:3px;">Avg Loss R</div>'
+                                    f'<div style="font-size:18px;font-weight:700;color:#ef5350;">'
+                                    f'{_dd_avg_loss_r}R</div></div>'
+                                    f'<div style="background:rgba(144,164,174,0.08);border:1px solid rgba(144,164,174,0.20);'
+                                    f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                    f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                    f'text-transform:uppercase;margin-bottom:3px;">Expectancy</div>'
+                                    f'<div style="font-size:18px;font-weight:700;color:{_dd_exp_clr};">'
+                                    f'{_dd_exp_r:+.3f}R</div></div>'
+                                    f'<div style="background:rgba(239,83,80,0.08);border:1px solid rgba(239,83,80,0.18);'
+                                    f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                    f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                    f'text-transform:uppercase;margin-bottom:3px;">Max Drawdown R</div>'
+                                    f'<div style="font-size:18px;font-weight:700;color:#ef5350;">'
+                                    f'{abs(_dd_max_dd_r)}R</div></div>'
+                                    f'</div>',
+                                    unsafe_allow_html=True,
+                                )
                             if not _csv_sel_cols:
                                 st.warning("Select at least one column to enable the download.", icon="⚠️")
                             else:
@@ -9815,26 +9880,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _dd_csv_cols  = list(_tk_csv_export.columns)
                                 _dd_lbl_col   = _dd_csv_cols[0]
                                 _dd_val_col   = _dd_csv_cols[1] if len(_dd_csv_cols) > 1 else _dd_csv_cols[0]
-                                _dd_r_col     = (
-                                    "eod_pnl_r" if "eod_pnl_r" in _tk_drill_df.columns
-                                    else ("tiered_pnl_r" if "tiered_pnl_r" in _tk_drill_df.columns else None)
-                                )
                                 if _dd_r_col is not None:
-                                    _dd_r_ser      = pd.to_numeric(_tk_drill_df[_dd_r_col], errors="coerce").dropna()
-                                    _dd_n          = len(_dd_r_ser)
-                                    _dd_fb_n       = 0
-                                    if "false_break_up" in _tk_drill_df.columns:
-                                        _dd_fb_n = (
-                                            _tk_drill_df["false_break_up"].fillna(False).astype(bool).sum()
-                                            + _tk_drill_df.get("false_break_down", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()
-                                        )
-                                    _dd_fb_rate    = round(_dd_fb_n / _dd_n * 100, 1) if _dd_n else 0
-                                    _dd_avg_win_r  = round(_dd_r_ser[_dd_r_ser > 0].mean(), 2) if (_dd_r_ser > 0).any() else 0
-                                    _dd_avg_loss_r = round(_dd_r_ser[_dd_r_ser < 0].mean(), 2) if (_dd_r_ser < 0).any() else 0
-                                    _dd_exp_r      = round(_dd_r_ser.mean(), 3) if _dd_n else 0
-                                    _dd_cum_r_v    = _dd_r_ser.cumsum().reset_index(drop=True)
-                                    _dd_peak_r     = _dd_cum_r_v.cummax()
-                                    _dd_max_dd_r   = round((_dd_cum_r_v - _dd_peak_r).min(), 2) if _dd_n else 0
                                     def _dd_stat_r(lbl, val):
                                         _rx = {c: "" for c in _dd_csv_cols}
                                         _rx[_dd_lbl_col] = lbl
