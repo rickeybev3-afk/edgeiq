@@ -8777,6 +8777,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _pf_str        = f"{_profit_factor:.2f}x" if _profit_factor != float("inf") else "∞"
 
                         # ── Pre-compute marginal-trade stats (used by both summary row and detailed analysis) ──
+                        # Safe defaults ensure variables are always defined regardless of execution path
+                        _marg_df_pre   = None
+                        _comf_df_pre   = None
+                        _marg_n_pre    = 0
+                        _comf_n_pre    = 0
+                        _marg_pct_pre  = 0
+                        _marg_wr_pre   = None
+                        _comf_wr_pre   = None
+                        _marg_avgr_pre = None
+                        _comf_avgr_pre = None
+
                         _has_marginal_data = (
                             _rp_bot_mode
                             and "TCS Floor" in _rp_df.columns
