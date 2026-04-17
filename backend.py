@@ -694,14 +694,14 @@ TCS_HISTORY_RETENTION_DAYS = _parse_retention_days(os.environ.get("TCS_HISTORY_R
 # Canonical display-label mapping for TCS structure weight keys.
 # Single source of truth — imported by app.py and paper_trader_bot.py.
 WK_DISPLAY: dict[str, str] = {
-    "trend_bull":     "Trend Bull",
-    "trend_bear":     "Trend Bear",
-    "double_dist":    "Double Dist",
-    "non_trend":      "Non-Trend",
-    "normal":         "Normal",
-    "neutral":        "Neutral",
-    "ntrl_extreme":   "Ntrl Extreme",
-    "nrml_variation": "Nrml Variation",
+    "trend_bull":     "📈 Trend Bull",
+    "trend_bear":     "📉 Trend Bear",
+    "double_dist":    "🔀 Double Dist",
+    "non_trend":      "➡️ Non-Trend",
+    "normal":         "🔔 Normal",
+    "neutral":        "⚖️ Neutral",
+    "ntrl_extreme":   "⚡ Ntrl Extreme",
+    "nrml_variation": "〰️ Nrml Variation",
 }
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
