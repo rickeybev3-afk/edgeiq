@@ -19961,6 +19961,39 @@ def render_decision_log_tab():
                         st.session_state[_reopen_key] = False
                         st.rerun()
 
+        if _outcome != "Pending" and _dec_id:
+            with st.expander("✏️ Edit outcome", expanded=False):
+                _eo_c1, _eo_c2, _eo_c3 = st.columns([1, 1, 2])
+                with _eo_c1:
+                    _eo_oc_opts = ["Confirmed", "Refuted", "Partial"]
+                    _eo_oc_idx = _eo_oc_opts.index(_outcome) if _outcome in _eo_oc_opts else 0
+                    _eo_new_oc = st.selectbox(
+                        "Outcome",
+                        _eo_oc_opts,
+                        index=_eo_oc_idx,
+                        key=f"dl_eo_oc_{_dec_id}",
+                    )
+                with _eo_c2:
+                    try:
+                        _eo_date_val = date.fromisoformat(_out_date) if _out_date else date.today()
+                    except (ValueError, AttributeError):
+                        _eo_date_val = date.today()
+                    _eo_new_od = st.date_input("Outcome Date", value=_eo_date_val, key=f"dl_eo_od_{_dec_id}")
+                with _eo_c3:
+                    _eo_new_on = st.text_input(
+                        "Notes",
+                        value=_out_notes,
+                        placeholder="What actually happened?",
+                        key=f"dl_eo_on_{_dec_id}",
+                    )
+                if st.button("Save Outcome", key=f"dl_eo_save_{_dec_id}", type="primary"):
+                    _eo_ok = update_decision_outcome(_dec_id, _dl_uid, _eo_new_oc, _eo_new_od, _eo_new_on)
+                    if _eo_ok:
+                        st.success(f"Outcome updated to {_eo_new_oc}.")
+                        st.rerun()
+                    else:
+                        st.error("Update failed.")
+
         if _dec_id:
             _dl_cats = ["System Design", "Market Thesis", "Filter", "Sizing", "Timing", "Other"]
             with st.expander("✏️ Edit", expanded=False):
