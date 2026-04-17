@@ -14740,8 +14740,48 @@ ALTER TABLE backtest_sim_runs
                     _chart_pivot.index.name = "Date"
                     _plottable = [c for c in _chart_pivot.columns if _chart_pivot[c].notna().sum() >= 2]
                     if _plottable:
-                        st.caption("Threshold drift over time — structures with ≥ 2 changes shown")
-                        st.line_chart(_chart_pivot[_plottable], use_container_width=True)
+                        st.caption("Threshold drift over time — structures with ≥ 2 changes shown · dotted line = current live threshold")
+                        _live_thresh_by_name = {
+                            WK_DISPLAY.get(_k, _k): int(_v)
+                            for _k, _v in _bw_cur_thresh.items()
+                            if isinstance(_v, (int, float))
+                        }
+                        _drift_palette = [
+                            "#42a5f5", "#66bb6a", "#ffa726", "#ef5350",
+                            "#ab47bc", "#26c6da", "#d4e157", "#ff7043",
+                        ]
+                        _drift_fig = go.Figure()
+                        for _ci, _col in enumerate(_plottable):
+                            _drift_color = _drift_palette[_ci % len(_drift_palette)]
+                            _drift_series = _chart_pivot[_col].dropna()
+                            _drift_fig.add_trace(go.Scatter(
+                                x=_drift_series.index,
+                                y=_drift_series.values,
+                                mode="lines+markers",
+                                name=_col,
+                                line=dict(color=_drift_color, width=2),
+                                marker=dict(size=5),
+                            ))
+                            _drift_live = _live_thresh_by_name.get(_col)
+                            if _drift_live is not None:
+                                _drift_fig.add_hline(
+                                    y=_drift_live,
+                                    line=dict(color=_drift_color, dash="dot", width=1.5),
+                                    annotation_text=f"{_col}: {_drift_live}",
+                                    annotation_position="right",
+                                    annotation_font=dict(color=_drift_color, size=10),
+                                )
+                        _drift_fig.update_layout(
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="#0e1117",
+                            font=dict(color="#cfd8dc"),
+                            legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#cfd8dc")),
+                            margin=dict(l=0, r=130, t=10, b=0),
+                            xaxis=dict(gridcolor="#1e2a3a"),
+                            yaxis=dict(gridcolor="#1e2a3a", title="Threshold"),
+                            height=350,
+                        )
+                        st.plotly_chart(_drift_fig, use_container_width=True)
             else:
                 st.info(f"No threshold shifts ≥ 3 pts recorded in the last {_bw_hist_days} days.")
 
