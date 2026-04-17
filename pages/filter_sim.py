@@ -546,6 +546,10 @@ with pnl_c3:
         )
         pnl_fixed_risk = round(float(pnl_pos_size) * float(pnl_stop_pct) / 100.0, 2)
         pnl_risk_pct = None
+        pnl_pos_compound = st.checkbox(
+            "Compound position size", value=False, key="fs_pnl_pos_compound",
+            help="Scale position size as account grows (same cap as % mode).",
+        )
         st.caption(f"→ 1R = **${pnl_fixed_risk:,.0f}** per trade")
     elif pnl_risk_mode == "Fixed risk $ per trade":
         pnl_fixed_risk = st.number_input(
@@ -554,6 +558,7 @@ with pnl_c3:
             help="Dollar amount you lose when stopped out (1R). E.g. $150 = 2.1% of a $7k account.",
         )
         pnl_risk_pct = None
+        pnl_pos_compound = False
     else:
         pnl_risk_pct = st.number_input(
             "Risk % per trade", min_value=0.5, max_value=10.0,
@@ -561,6 +566,7 @@ with pnl_c3:
             help="% of current equity risked per trade (1R = this amount). Compounds as equity grows.",
         )
         pnl_fixed_risk = None
+        pnl_pos_compound = False
 
 # ── Date range filter ──────────────────────────────────────────────────────────
 _all_sorted = sorted(final, key=lambda r: r.get("sim_date") or "")
@@ -630,9 +636,15 @@ else:
     for trade in sorted_trades:
         r_val = trade.get("pnl_r_sim") or 0.0
         if pnl_fixed_risk is not None:
-            risk_amt = float(pnl_fixed_risk)
+            if pnl_pos_compound:
+                compound_factor = min(eq / _start_eq, COMPOUND_CAP)
+                if compound_factor >= COMPOUND_CAP:
+                    cap_hit = True
+                risk_amt = float(pnl_fixed_risk) * compound_factor
+            else:
+                risk_amt = float(pnl_fixed_risk)
         else:
-            # Compound, but cap position size at COMPOUND_CAP × starting risk
+            # % of equity compounding
             compound_factor = min(eq / _start_eq, COMPOUND_CAP)
             if compound_factor >= COMPOUND_CAP:
                 cap_hit = True
@@ -694,11 +706,13 @@ else:
               delta=f"{max_dd_pct:.1f}% from peak")
     m4.metric("Avg $ / Trade",   fmt_money(avg_trade_amt),
               delta=f"{s3['exp']:+.3f}R avg")
-    _r_label = (
-        f"1R = {fmt_money(pnl_fixed_risk)}" if pnl_risk_mode == "Fixed $ per trade"
-        else f"1R = {pnl_risk_pct}% of equity (capped {int(COMPOUND_CAP)}×)"
-        if cap_hit else f"1R = {pnl_risk_pct}% of equity"
-    )
+    if pnl_fixed_risk is not None:
+        _compound_note = " (compounding)" if pnl_pos_compound else ""
+        _r_label = f"1R = {fmt_money(pnl_fixed_risk)}{_compound_note}"
+    elif cap_hit:
+        _r_label = f"1R = {pnl_risk_pct}% of equity (capped {int(COMPOUND_CAP)}×)"
+    else:
+        _r_label = f"1R = {pnl_risk_pct}% of equity"
     m5.metric("Risk per trade",  _r_label, delta=None)
 
     # ── Equity curve chart ─────────────────────────────────────────────────────
