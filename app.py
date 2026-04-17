@@ -22665,10 +22665,18 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     r_valid = True
                 except (TypeError, ValueError):
                     r_valid = False
+                _pt_outcome_labels = {
+                    "hit_target":   "Hit Target",
+                    "partial_win":  "Partial Win",
+                    "stopped_out":  "Stopped Out",
+                    "breakeven":    "Breakeven",
+                    "expired":      "Expired",
+                    "simulated":    "Simulated",
+                }
                 if v and v not in _pt_sim_fail_labels:
-                    return str(v)
+                    return _pt_outcome_labels.get(v, str(v).replace("_", " ").title())
                 if r_valid:
-                    return "simulated"
+                    return "Simulated"
                 return "⚠ No sim — unavailable"
 
             def _pt_sim_pnl_label(row):
