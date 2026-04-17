@@ -5739,7 +5739,13 @@ with st.sidebar:
             st.code(_ALL_PENDING_MIGRATIONS, language="sql")
 
     # ── Close Price Backfill ───────────────────────────────────────────────────
-    with st.sidebar.expander("📥 Close Price Backfill", expanded=False):
+    # Clear confirmation flags immediately when the panel is closed so that
+    # reopening always shows a clean state (no stale "are you sure?" prompt).
+    if not st.session_state.get("bf_expander", False):
+        st.session_state.pop("_bf_confirm_rerun", None)
+        st.session_state.pop("_bf_confirm_after_cancel", None)
+
+    with st.sidebar.expander("📥 Close Price Backfill", expanded=False, key="bf_expander"):
         st.caption(
             "Fetches missing EOD close prices from Alpaca for all historical trades, "
             "then recomputes P&L. Runs in the background — may take several minutes."
@@ -5859,8 +5865,6 @@ with st.sidebar:
                 _bt.start()
                 return True
             return False  # Lock unexpectedly held
-
-        _BF_CONFIRM_TTL = 60  # seconds — stale confirmation flags auto-expire
 
         if _bf_lock_held:
             # A pipeline is actively running (lock is held by the background thread)
@@ -6025,14 +6029,6 @@ with st.sidebar:
                     st.warning("Could not acquire lock — please try again.")
 
         elif _bf_file_status == "done":
-            # Clear stale confirmation flag — if the panel was closed before the
-            # operator confirmed, the flag lingers in session state.  Any flag
-            # older than _BF_CONFIRM_TTL seconds is considered stale (the panel
-            # was almost certainly closed in the interim).
-            _bf_rerun_ts = st.session_state.get("_bf_confirm_rerun")
-            if _bf_rerun_ts and (time.time() - _bf_rerun_ts) > _BF_CONFIRM_TTL:
-                st.session_state.pop("_bf_confirm_rerun", None)
-
             st.success("✅ Backfill complete!")
 
             # ── Parse summary numbers from the log ─────────────────────────
@@ -6082,7 +6078,7 @@ with st.sidebar:
                     disabled=_bf_nothing_to_do,
                     help="No missing close prices in this range." if _bf_nothing_to_do else None,
                 ):
-                    st.session_state["_bf_confirm_rerun"] = time.time()
+                    st.session_state["_bf_confirm_rerun"] = True
                     st.rerun()
             else:
                 st.warning(
@@ -6113,11 +6109,6 @@ with st.sidebar:
                         st.rerun()
 
         elif _bf_file_status == "cancelled":
-            # Clear stale confirmation flag (same TTL logic as the done branch).
-            _bf_cancel_ts = st.session_state.get("_bf_confirm_after_cancel")
-            if _bf_cancel_ts and (time.time() - _bf_cancel_ts) > _BF_CONFIRM_TTL:
-                st.session_state.pop("_bf_confirm_after_cancel", None)
-
             st.warning("⏹ Backfill was cancelled by the operator.")
             if not st.session_state.get("_bf_confirm_after_cancel"):
                 if st.button(
@@ -6125,7 +6116,7 @@ with st.sidebar:
                     use_container_width=True,
                     key="bf_after_cancel_btn",
                 ):
-                    st.session_state["_bf_confirm_after_cancel"] = time.time()
+                    st.session_state["_bf_confirm_after_cancel"] = True
                     st.rerun()
             else:
                 st.warning(
