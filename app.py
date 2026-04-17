@@ -9529,13 +9529,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.query_params["tkr_r_min"] = _r_min_str
                     elif "tkr_r_min" in st.query_params:
                         del st.query_params["tkr_r_min"]
+                _r_filter_is_active = _r_filter_min is not None
                 if _r_filter_min is None:
                     _r_filter_min = float("-inf")
             _sort_key, _sort_asc = _sort_col_map[_sort_choice]
             _r_filter_key = _r_filter_col_map[_r_filter_col]
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
+            _tkr_total_count = len(_tkr_summary_df)
             _r_filter_mask = _tkr_summary_df[_r_filter_key].isna() | (_tkr_summary_df[_r_filter_key] >= _r_filter_min)
             _tkr_summary_df = _tkr_summary_df[_r_filter_mask]
+            _tkr_visible_count = len(_tkr_summary_df)
             _filtered_count = int((~_r_filter_mask).sum())
             if _filtered_count > 0:
                 st.info(
@@ -9595,6 +9598,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 return [""] * len(row)
 
             _styled_summary = _tkr_display_df.style.apply(_style_rows, axis=1)
+            if _r_filter_is_active:
+                st.markdown(
+                    f'<div style="font-size:12px;color:#90a4ae;margin-bottom:4px;">'
+                    f'Showing <strong style="color:#e0e0e0;">{_tkr_visible_count}</strong> / '
+                    f'<strong style="color:#e0e0e0;">{_tkr_total_count}</strong> tickers'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             st.dataframe(
                 _styled_summary,
                 use_container_width=True,
