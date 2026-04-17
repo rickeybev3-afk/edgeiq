@@ -3205,6 +3205,10 @@ _TCS_ALERT_CACHE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tcs_alert_cache.json"
 )
 
+_LADDER_REFRESH_META_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "ladder_refresh_meta.json"
+)
+
 
 def _load_tcs_alert_cache() -> dict:
     """Load the deduplication cache from disk, discarding entries from past UTC days."""
@@ -8621,6 +8625,71 @@ def get_ladder_pnl_summary(
         return pd.DataFrame()
 
 
+def _write_ladder_refresh_timestamp() -> None:
+    """Persist the current UTC timestamp to _LADDER_REFRESH_META_FILE."""
+    import json as _json
+    import datetime as _dt
+
+    ts = _dt.datetime.utcnow().isoformat() + "Z"
+    try:
+        with open(_LADDER_REFRESH_META_FILE, "w") as _f:
+            _json.dump({"last_refreshed_utc": ts}, _f)
+    except Exception as _exc:
+        print(f"_write_ladder_refresh_timestamp: could not write meta file: {_exc}")
+
+
+def _utc_to_et(utc_dt: "datetime.datetime") -> "datetime.datetime":
+    """Convert a UTC datetime to US/Eastern, with DST-aware fallback.
+
+    Prefers zoneinfo (stdlib ≥ 3.9); falls back to a fixed-offset
+    approximation that accounts for EDT vs EST correctly.
+    """
+    import datetime as _dt
+
+    try:
+        from zoneinfo import ZoneInfo
+        return utc_dt.astimezone(ZoneInfo("America/New_York"))
+    except Exception:
+        month = utc_dt.month
+        if 3 < month < 11:
+            offset = -4
+        elif month == 3:
+            offset = -4 if utc_dt.day >= 8 else -5
+        elif month == 11:
+            offset = -5 if utc_dt.day >= 7 else -4
+        else:
+            offset = -5
+        return utc_dt + _dt.timedelta(hours=offset)
+
+
+def get_ladder_refresh_timestamp() -> str:
+    """Return the last-refresh timestamp as a human-readable ET string.
+
+    Reads _LADDER_REFRESH_META_FILE written by refresh_mv_tiered_pnl_summary().
+    Returns an empty string if the file is absent or unreadable.
+    Format: "Apr 16, 9:01 PM ET"
+    """
+    import json as _json
+    import datetime as _dt
+
+    try:
+        with open(_LADDER_REFRESH_META_FILE) as _f:
+            meta = _json.load(_f)
+        ts_str = meta.get("last_refreshed_utc", "")
+        if not ts_str:
+            return ""
+        utc_dt = _dt.datetime.fromisoformat(ts_str.rstrip("Z")).replace(
+            tzinfo=_dt.timezone.utc
+        )
+        et_dt = _utc_to_et(utc_dt)
+        return et_dt.strftime("%b %-d, %-I:%M %p ET")
+    except FileNotFoundError:
+        return ""
+    except Exception as _exc:
+        print(f"get_ladder_refresh_timestamp: {_exc}")
+        return ""
+
+
 def refresh_mv_tiered_pnl_summary() -> dict:
     """Trigger a REFRESH MATERIALIZED VIEW CONCURRENTLY on mv_tiered_pnl_summary.
 
@@ -8636,6 +8705,7 @@ def refresh_mv_tiered_pnl_summary() -> dict:
             "exec_sql",
             {"query": "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_tiered_pnl_summary"},
         ).execute()
+        _write_ladder_refresh_timestamp()
         return {"success": True, "message": "mv_tiered_pnl_summary refreshed successfully"}
     except Exception as e:
         err = str(e)

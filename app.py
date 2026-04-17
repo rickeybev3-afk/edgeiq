@@ -49,6 +49,7 @@ from backend import (
     run_pending_migrations,
     _ALL_PENDING_MIGRATIONS,
     get_ladder_pnl_summary,
+    get_ladder_refresh_timestamp,
     refresh_mv_tiered_pnl_summary,
     _startup_errors,
     _SECRET_CATALOG,
@@ -19217,6 +19218,15 @@ ALTER TABLE backtest_sim_runs
         else:
             _bts_ldr_tot = _bts_ldr_wins = _bts_ldr_loss = 0
             _bts_ldr_wr = _bts_ldr_tot_r = _bts_ldr_exp = 0.0
+
+        _ldr_refresh_ts = get_ladder_refresh_timestamp()
+        if _ldr_refresh_ts:
+            st.markdown(
+                f'<div style="font-size:11px;color:#78909c;margin-bottom:8px;">'
+                f'Updated nightly &middot; last run {_ldr_refresh_ts}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
         _bts_scen_defs = [
             ("pnl_r_sim",    "#4fc3f7", "📈 Best Possible (MFE)",
