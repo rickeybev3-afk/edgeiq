@@ -11619,6 +11619,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _tkr_div_chart_data = {}
             _best_tcs_options = []
             _tkr_max_div_data = {}
+            _tkr_ib_threshold = _cached_load_ib_range_pct_threshold()
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
             # ── Min-trade-count slider ─────────────────────────────────────────
@@ -11685,6 +11686,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 ) if "false_break_up" in _tgrp else 0
                 _fb_rate = round(_fb_count / len(_tgrp) * 100) if len(_tgrp) > 0 else 0
                 _dates = sorted(_tgrp["sim_date"].astype(str).unique()) if "sim_date" in _tgrp else []
+
+                # ── IB filter pass rate ────────────────────────────────────────
+                _ib_pass_pct = None
+                _ib_pass_str = "—"
+                if "ib_range_pct" in _tgrp.columns:
+                    _ib_valid = _tgrp["ib_range_pct"].dropna()
+                    if len(_ib_valid) > 0:
+                        _ib_pass_n = (_ib_valid.astype(float) < _tkr_ib_threshold).sum()
+                        _ib_pass_pct = round(_ib_pass_n / len(_ib_valid) * 100, 1)
+                        _ib_icon = "🟢" if _ib_pass_pct >= 70 else "🟡" if _ib_pass_pct >= 40 else "🔴"
+                        _ib_pass_str = f"{_ib_icon} {_ib_pass_pct}%"
 
                 # ── Per-ticker TCS Optimizer sweep ────────────────────────────
                 _best_tcs_label = "—"
@@ -11892,6 +11904,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Δ Intra":        _tk_delta_intra_str,
                     "Max Divergence": _tk_div_label,
                     "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
+                    "IB Pass %":      _ib_pass_str,
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
                     "_sort_win_pct":       _twr,
                     "_sort_eod_r":         _tk_eod_num,
@@ -12218,6 +12231,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "versus holding to close on intraday scan trades. "
                             "Green = tiered exits win; red = EOD hold wins. "
                             "'—' when either side has no data."
+                        ),
+                    ),
+                    "IB Pass %": st.column_config.TextColumn(
+                        "IB Pass %",
+                        help=(
+                            f"Percentage of this ticker's backtest trades whose IB range % "
+                            f"was below the active threshold ({_tkr_ib_threshold:.1f}%) and would "
+                            f"therefore pass the IB filter in live trading. "
+                            f"🟢 ≥ 70% pass · 🟡 40–69% pass · 🔴 < 40% pass. "
+                            f"'—' means no IB range % data recorded for this ticker."
                         ),
                     ),
                 },
