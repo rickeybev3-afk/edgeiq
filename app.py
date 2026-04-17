@@ -404,9 +404,10 @@ if(p.get('key')===KEY){{document.getElementById('gate').style.display='none';doc
 _regenerate_notes_html()
 
 # ── Close-price backfill pipeline (background thread) ─────────────────────────
-_BACKFILL_LOG        = "/tmp/backfill_pipeline.log"
-_BACKFILL_STATUS     = "/tmp/backfill_pipeline.status"
-_BACKFILL_START_TIME = "/tmp/backfill_pipeline.start_time"
+_BACKFILL_LOG             = "/tmp/backfill_pipeline.log"
+_BACKFILL_STATUS          = "/tmp/backfill_pipeline.status"
+_BACKFILL_START_TIME      = "/tmp/backfill_pipeline.start_time"
+_BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
 
 # Module-level lock ensures only one pipeline thread runs at a time.
 # The lock is held for the entire duration of the run and released in the
@@ -503,6 +504,12 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
             # ── Step 2 ────────────────────────────────────────────────────────
             lf.write("=== Step 2 of 2: Recomputing eod_pnl_r ===\n\n")
             lf.flush()
+            try:
+                import time as _step2_time
+                with open(_BACKFILL_STEP2_START_TIME, "w") as _s2f:
+                    _s2f.write(str(_step2_time.time()))
+            except Exception:
+                pass
             rc2 = _run_step(
                 [sys.executable, os.path.join(script_dir, "run_sim_backfill.py")],
                 "Step 2", lf,
@@ -5832,7 +5839,7 @@ with st.sidebar:
             """Clear old logs/status and start a new pipeline thread."""
             if _bf_range_invalid:
                 return False  # Blocked by invalid date range shown above
-            for _p in [_BACKFILL_LOG, _BACKFILL_STATUS, _BACKFILL_START_TIME]:
+            for _p in [_BACKFILL_LOG, _BACKFILL_STATUS, _BACKFILL_START_TIME, _BACKFILL_STEP2_START_TIME]:
                 try:
                     os.remove(_p)
                 except FileNotFoundError:
@@ -5915,46 +5922,54 @@ with st.sidebar:
                         _pct = _progress_current / _progress_total
                         st.caption(f"**Step {_current_step} of 2**")
                         st.progress(_pct)
+
+                        # ── Shared ETA helper ─────────────────────────────────
+                        def _compute_eta(start_file: str, pct: float) -> str:
+                            """Return a human-readable ETA string, or 'estimating…'."""
+                            import time as _t
+                            try:
+                                if not os.path.exists(start_file):
+                                    return "estimating…"
+                                with open(start_file) as _sf:
+                                    _start_ts = float(_sf.read().strip())
+                                if pct <= 0.005:
+                                    return "estimating…"
+                                _elapsed = _t.time() - _start_ts
+                                _remaining = max(0.0, _elapsed / pct - _elapsed)
+                                if _remaining < 60:
+                                    return f"~{int(_remaining)}s remaining"
+                                elif _remaining < 3600:
+                                    _mins = int(_remaining / 60)
+                                    return f"~{_mins}m remaining"
+                                else:
+                                    _hr  = int(_remaining // 3600)
+                                    _min = int((_remaining % 3600) // 60)
+                                    return f"~{_hr}h {_min}m remaining"
+                            except Exception:
+                                return "estimating…"
+
                         if _current_step == 2:
-                            st.caption(
+                            _eta_str2 = _compute_eta(_BACKFILL_STEP2_START_TIME, _pct)
+                            _progress_caption2 = (
                                 f"⚙️ Row {_progress_current:,} of {_progress_total:,} "
                                 f"({_pct:.0%} complete)"
                             )
+                            _progress_caption2 += f"  ·  ⏱ {_eta_str2}"
+                            st.caption(_progress_caption2)
                         else:
-                            # ── ETA calculation (step 1 only) ────────────────
-                            _eta_str = ""
-                            try:
-                                import time as _eta_time
-                                _bf_start_ts: float | None = None
-                                if os.path.exists(_BACKFILL_START_TIME):
-                                    with open(_BACKFILL_START_TIME) as _tsf:
-                                        _bf_start_ts = float(_tsf.read().strip())
-                                if _bf_start_ts and _pct > 0:
-                                    _elapsed_s = _eta_time.time() - _bf_start_ts
-                                    _total_est_s = _elapsed_s / _pct
-                                    _remaining_s = max(0.0, _total_est_s - _elapsed_s)
-                                    if _remaining_s < 60:
-                                        _eta_str = f"~{int(_remaining_s)}s remaining"
-                                    elif _remaining_s < 3600:
-                                        _eta_str = f"~{int(_remaining_s / 60)}m remaining"
-                                    else:
-                                        _eta_hr  = int(_remaining_s // 3600)
-                                        _eta_min = int((_remaining_s % 3600) // 60)
-                                        _eta_str = f"~{_eta_hr}h {_eta_min}m remaining"
-                            except Exception:
-                                _eta_str = ""
+                            # ── ETA for step 1 ───────────────────────────────
+                            _eta_str = _compute_eta(_BACKFILL_START_TIME, _pct)
                             _progress_caption = (
                                 f"📈 Ticker {_progress_current:,} of {_progress_total:,} "
                                 f"({_pct:.0%} complete)"
                             )
-                            if _eta_str:
-                                _progress_caption += f"  ·  ⏱ {_eta_str}"
+                            _progress_caption += f"  ·  ⏱ {_eta_str}"
                             st.caption(_progress_caption)
                     elif _in_step2:
                         # Step 2 has started but hasn't emitted a PROGRESS line yet
                         st.caption("**Step 2 of 2**")
                         st.progress(0.0)
-                        st.caption("⚙️ P&L recompute starting…")
+                        st.caption("⚙️ P&L recompute starting…  ·  ⏱ estimating…")
                     else:
                         # Step 1 running but no PROGRESS line yet
                         st.caption("**Step 1 of 2**")
