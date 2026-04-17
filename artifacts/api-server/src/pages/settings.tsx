@@ -599,18 +599,24 @@ export default function Settings() {
                   label="Rows saved"
                   value={backfillHealth.rows_saved ?? 0}
                   color="#4ade80"
+                  prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].rows_saved : undefined}
+                  higherIsBetter={true}
                 />
                 <BackfillStat
                   label="No-bars"
                   value={backfillHealth.no_bars ?? 0}
                   color="#fbbf24"
                   warn={(backfillHealth.no_bars ?? 0) > 0}
+                  prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].no_bars : undefined}
+                  higherIsBetter={false}
                 />
                 <BackfillStat
                   label="Errors"
                   value={backfillHealth.errors ?? 0}
                   color={(backfillHealth.errors ?? 0) > 0 ? "#f87171" : "#4ade80"}
                   warn={(backfillHealth.errors ?? 0) > 0}
+                  prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].errors : undefined}
+                  higherIsBetter={false}
                 />
               </div>
               {backfillHealth.completed_at && (
@@ -879,12 +885,32 @@ function BackfillStat({
   value,
   color,
   warn = false,
+  prev,
+  higherIsBetter = true,
 }: {
   label: string;
   value: number;
   color: string;
   warn?: boolean;
+  prev?: number;
+  higherIsBetter?: boolean;
 }) {
+  let trendArrow: string | null = null;
+  let trendColor = "#64748b";
+
+  if (prev !== undefined) {
+    if (value > prev) {
+      trendArrow = "↑";
+      trendColor = higherIsBetter ? "#4ade80" : "#f87171";
+    } else if (value < prev) {
+      trendArrow = "↓";
+      trendColor = higherIsBetter ? "#f87171" : "#4ade80";
+    } else {
+      trendArrow = "=";
+      trendColor = "#64748b";
+    }
+  }
+
   return (
     <div
       style={{
@@ -895,8 +921,18 @@ function BackfillStat({
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: "24px", fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>
-        {value.toLocaleString()}
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: "6px" }}>
+        <span style={{ fontSize: "24px", fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>
+          {value.toLocaleString()}
+        </span>
+        {trendArrow && (
+          <span
+            style={{ fontSize: "14px", fontWeight: 700, color: trendColor, lineHeight: 1 }}
+            title={prev !== undefined ? `Previous run: ${prev.toLocaleString()}` : undefined}
+          >
+            {trendArrow}
+          </span>
+        )}
       </div>
       <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", letterSpacing: "0.03em" }}>
         {label}
