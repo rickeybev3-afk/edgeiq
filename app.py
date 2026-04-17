@@ -11113,6 +11113,71 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f'</div>',
                                     unsafe_allow_html=True,
                                 )
+                                # ── Mini equity curve chart ───────────────────────────
+                                if _dd_n >= 1:
+                                    _dd_dd_series = _dd_cum_r_v - _dd_peak_r
+                                    if _dd_max_dd_r < 0:
+                                        _dd_dd_trough_idx = int(_dd_dd_series.idxmin())
+                                        _dd_dd_peak_idx   = int(_dd_cum_r_v.iloc[:_dd_dd_trough_idx + 1].idxmax())
+                                    else:
+                                        _dd_dd_trough_idx = None
+                                        _dd_dd_peak_idx   = None
+
+                                    _dd_line_clr = "#66bb6a" if float(_dd_cum_r_v.iloc[-1]) >= 0 else "#ef5350"
+                                    _dd_chart_mode = "lines+markers" if _dd_n == 1 else "lines"
+                                    _dd_fig_eq = go.Figure()
+                                    _dd_fig_eq.add_hline(
+                                        y=0,
+                                        line=dict(color="rgba(144,164,174,0.35)", width=1, dash="dot"),
+                                    )
+                                    _dd_fig_eq.add_trace(go.Scatter(
+                                        x=list(range(1, len(_dd_cum_r_v) + 1)),
+                                        y=_dd_cum_r_v.tolist(),
+                                        mode=_dd_chart_mode,
+                                        name="Cumulative R",
+                                        line=dict(color=_dd_line_clr, width=2),
+                                        marker=dict(color=_dd_line_clr, size=6),
+                                        hovertemplate="Trade #%{x}<br>Cum R: %{y:.2f}R<extra></extra>",
+                                    ))
+                                    if _dd_dd_trough_idx is not None and _dd_dd_peak_idx is not None:
+                                        _dd_fig_eq.add_vrect(
+                                            x0=_dd_dd_peak_idx,
+                                            x1=_dd_dd_trough_idx,
+                                            fillcolor="rgba(220, 50, 50, 0.12)",
+                                            layer="below",
+                                            line_width=0,
+                                        )
+                                    _dd_fig_eq.update_layout(
+                                        height=180,
+                                        margin=dict(l=0, r=0, t=4, b=28),
+                                        xaxis_title="Trade #",
+                                        yaxis_title="Cum R",
+                                        showlegend=False,
+                                        plot_bgcolor="rgba(0,0,0,0)",
+                                        paper_bgcolor="rgba(0,0,0,0)",
+                                        font=dict(size=10),
+                                    )
+                                    _dd_fig_eq.update_xaxes(
+                                        showgrid=True,
+                                        gridcolor="rgba(128,128,128,0.12)",
+                                        tickfont=dict(size=9),
+                                    )
+                                    _dd_fig_eq.update_yaxes(
+                                        showgrid=True,
+                                        gridcolor="rgba(128,128,128,0.12)",
+                                        tickfont=dict(size=9),
+                                        ticksuffix="R",
+                                    )
+                                    _eq_chart_col, _ = st.columns([3, 1])
+                                    with _eq_chart_col:
+                                        st.caption(
+                                            f"**Equity curve** — cumulative R, TCS ≥ {_tk_drill_floor}"
+                                        )
+                                        st.plotly_chart(
+                                            _dd_fig_eq,
+                                            use_container_width=True,
+                                            key=f"dd_eq_{_tk_name}_{_tk_drill_floor}",
+                                        )
                             if not _csv_sel_cols:
                                 st.warning("Select at least one column to enable the download.", icon="⚠️")
                             else:
