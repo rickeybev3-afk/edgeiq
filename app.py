@@ -15442,6 +15442,196 @@ ALTER TABLE backtest_sim_runs
                                 f'</div>', unsafe_allow_html=True
                             )
 
+            # ── Row 3c — P1–P4 Priority Tier Breakdown — EOD Hold ───────────
+            _bts_has_eod_col = "eod_pnl_r" in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
+            if _bts_has_eod_col:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-bottom:6px;">'
+                    'P1–P4 Priority Tier Breakdown — EOD Hold</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
+                    "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+                )
+                _bts_eod_tier_defs = [
+                    ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
+                    ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
+                    ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                    ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
+                ]
+                _bts_eod_has_tcs = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
+                _bts_eod_tier_cols = st.columns(4)
+                _bts_eod_exp_map: dict = {}
+                if _bts_eod_has_tcs:
+                    for _bts_eii, (_bts_el, _bts_ee, _bts_est, _bts_elo, _bts_ehi, _bts_ec, _bts_ed) in enumerate(_bts_eod_tier_defs):
+                        _bts_etd = _bts_df[
+                            (_bts_df["scan_type"].fillna("morning") == _bts_est) &
+                            (_bts_df["tcs"].fillna(0) >= _bts_elo) &
+                            (_bts_df["tcs"].fillna(0) <= _bts_ehi) &
+                            _bts_df["eod_pnl_r"].notna()
+                        ]
+                        if not _bts_etd.empty:
+                            _bts_eod_exp_map[_bts_eii] = float(_bts_etd["eod_pnl_r"].astype(float).mean())
+                _bts_eod_best_exp = max(_bts_eod_exp_map.values()) if len(_bts_eod_exp_map) > 1 else None
+                for _bts_ei, (_bts_etl, _bts_ete, _bts_etst, _bts_etlo, _bts_ethi, _bts_etc, _bts_etd) in enumerate(_bts_eod_tier_defs):
+                    with _bts_eod_tier_cols[_bts_ei]:
+                        if not _bts_eod_has_tcs:
+                            st.markdown(
+                                f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                f'<div style="font-size:13px;font-weight:700;color:{_bts_etc};">{_bts_ete} {_bts_etl}</div>'
+                                f'<div style="font-size:11px;color:#546e7a;margin-top:6px;">TCS data unavailable</div>'
+                                f'</div>', unsafe_allow_html=True
+                            )
+                        else:
+                            _bts_etdf = _bts_df[
+                                (_bts_df["scan_type"].fillna("morning") == _bts_etst) &
+                                (_bts_df["tcs"].fillna(0) >= _bts_etlo) &
+                                (_bts_df["tcs"].fillna(0) <= _bts_ethi) &
+                                _bts_df["eod_pnl_r"].notna()
+                            ].copy()
+                            _bts_etdf["eod_pnl_r"] = _bts_etdf["eod_pnl_r"].astype(float)
+                            if _bts_etdf.empty:
+                                st.markdown(
+                                    f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                    f'<div style="font-size:13px;font-weight:700;color:{_bts_etc};">{_bts_ete} {_bts_etl}</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_bts_etd}</div>'
+                                    f'<div style="font-size:12px;color:#546e7a;margin-top:6px;">No trades</div>'
+                                    f'</div>', unsafe_allow_html=True
+                                )
+                            else:
+                                _bts_etw   = (_bts_etdf["eod_pnl_r"] > 0).sum()
+                                _bts_etl2  = (_bts_etdf["eod_pnl_r"] <= 0).sum()
+                                _bts_etwr  = _bts_etw / len(_bts_etdf) * 100
+                                _bts_etexp = _bts_etdf["eod_pnl_r"].mean()
+                                _bts_ettot = _bts_etdf["eod_pnl_r"].sum()
+                                _bts_etavgw = _bts_etdf[_bts_etdf["eod_pnl_r"] > 0]["eod_pnl_r"].mean() if _bts_etw else 0.0
+                                _bts_etavgl = _bts_etdf[_bts_etdf["eod_pnl_r"] < 0]["eod_pnl_r"].mean() if (_bts_etdf["eod_pnl_r"] < 0).any() else 0.0
+                                _bts_etwr_c = "#2e7d32" if _bts_etwr >= 60 else ("#ef6c00" if _bts_etwr >= 50 else "#c62828")
+                                _bts_etexp_str = f'{"+" if _bts_etexp >= 0 else ""}{_bts_etexp:.3f}R'
+                                _bts_etexp_col = "#2e7d32" if _bts_etexp > 0 else ("#ef6c00" if _bts_etexp == 0 else "#c62828")
+                                _bts_et_is_best = _bts_eod_best_exp is not None and abs(_bts_etexp - _bts_eod_best_exp) < 1e-9
+                                _bts_et_border = "2px solid #ffd54f" if _bts_et_is_best else f"3px solid {_bts_etc}"
+                                _bts_et_badge = (
+                                    '<div style="font-size:10px;font-weight:700;color:#ffd54f;'
+                                    'background:rgba(255,213,79,0.12);border-radius:4px;'
+                                    'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
+                                    'Best Edge ⭐</div>'
+                                ) if _bts_et_is_best else ""
+                                st.markdown(
+                                    f'<div style="background:#1e2a3a;border-left:{_bts_et_border};'
+                                    f'border-radius:8px;padding:12px;text-align:center;">'
+                                    f'{_bts_et_badge}'
+                                    f'<div style="font-size:13px;font-weight:700;color:{_bts_etc};">{_bts_ete} {_bts_etl}</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_bts_etd}</div>'
+                                    f'<div style="font-size:22px;font-weight:700;color:{_bts_etwr_c};margin-top:4px;">{_bts_etwr:.1f}%</div>'
+                                    f'<div style="font-size:12px;color:#cfd8dc;">{_bts_etw}W / {_bts_etl2}L  ·  {len(_bts_etdf)} trades</div>'
+                                    f'<div style="font-size:13px;font-weight:600;color:{_bts_etexp_col};margin-top:4px;">'
+                                    f'Exp: {_bts_etexp_str} / trade</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">'
+                                    f'Avg Win: +{_bts_etavgw:.2f}R  ·  Avg Loss: {_bts_etavgl:.2f}R</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;">'
+                                    f'Total: {"+" if _bts_ettot >= 0 else ""}{_bts_ettot:.1f}R</div>'
+                                    f'</div>', unsafe_allow_html=True
+                                )
+
+            # ── Row 3d — P1–P4 Priority Tier Breakdown — Ladder Exit ─────────
+            _bts_has_ldr_col = "tiered_pnl_r" in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
+            if _bts_has_ldr_col:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-bottom:6px;">'
+                    'P1–P4 Priority Tier Breakdown — 50/25/25 Ladder Exit</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
+                    "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+                )
+                _bts_ldr_tier_defs = [
+                    ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
+                    ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
+                    ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                    ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
+                ]
+                _bts_ldr_has_tcs = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
+                _bts_ldr_tier_cols = st.columns(4)
+                _bts_ldr_exp_map: dict = {}
+                if _bts_ldr_has_tcs:
+                    for _bts_lii, (_bts_ll, _bts_le, _bts_lst, _bts_llo, _bts_lhi, _bts_lc, _bts_ld) in enumerate(_bts_ldr_tier_defs):
+                        _bts_ltd = _bts_df[
+                            (_bts_df["scan_type"].fillna("morning") == _bts_lst) &
+                            (_bts_df["tcs"].fillna(0) >= _bts_llo) &
+                            (_bts_df["tcs"].fillna(0) <= _bts_lhi) &
+                            _bts_df["tiered_pnl_r"].notna()
+                        ]
+                        if not _bts_ltd.empty:
+                            _bts_ldr_exp_map[_bts_lii] = float(_bts_ltd["tiered_pnl_r"].astype(float).mean())
+                _bts_ldr_best_exp = max(_bts_ldr_exp_map.values()) if len(_bts_ldr_exp_map) > 1 else None
+                for _bts_li, (_bts_ltl, _bts_lte, _bts_ltst, _bts_ltlo, _bts_lthi, _bts_ltc, _bts_ltd2) in enumerate(_bts_ldr_tier_defs):
+                    with _bts_ldr_tier_cols[_bts_li]:
+                        if not _bts_ldr_has_tcs:
+                            st.markdown(
+                                f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                f'<div style="font-size:13px;font-weight:700;color:{_bts_ltc};">{_bts_lte} {_bts_ltl}</div>'
+                                f'<div style="font-size:11px;color:#546e7a;margin-top:6px;">TCS data unavailable</div>'
+                                f'</div>', unsafe_allow_html=True
+                            )
+                        else:
+                            _bts_ltdf = _bts_df[
+                                (_bts_df["scan_type"].fillna("morning") == _bts_ltst) &
+                                (_bts_df["tcs"].fillna(0) >= _bts_ltlo) &
+                                (_bts_df["tcs"].fillna(0) <= _bts_lthi) &
+                                _bts_df["tiered_pnl_r"].notna()
+                            ].copy()
+                            _bts_ltdf["tiered_pnl_r"] = _bts_ltdf["tiered_pnl_r"].astype(float)
+                            if _bts_ltdf.empty:
+                                st.markdown(
+                                    f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                    f'<div style="font-size:13px;font-weight:700;color:{_bts_ltc};">{_bts_lte} {_bts_ltl}</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_bts_ltd2}</div>'
+                                    f'<div style="font-size:12px;color:#546e7a;margin-top:6px;">No trades</div>'
+                                    f'</div>', unsafe_allow_html=True
+                                )
+                            else:
+                                _bts_ltw   = (_bts_ltdf["tiered_pnl_r"] > 0).sum()
+                                _bts_ltl2  = (_bts_ltdf["tiered_pnl_r"] <= 0).sum()
+                                _bts_ltwr  = _bts_ltw / len(_bts_ltdf) * 100
+                                _bts_ltexp = _bts_ltdf["tiered_pnl_r"].mean()
+                                _bts_lttot = _bts_ltdf["tiered_pnl_r"].sum()
+                                _bts_ltavgw = _bts_ltdf[_bts_ltdf["tiered_pnl_r"] > 0]["tiered_pnl_r"].mean() if _bts_ltw else 0.0
+                                _bts_ltavgl = _bts_ltdf[_bts_ltdf["tiered_pnl_r"] < 0]["tiered_pnl_r"].mean() if (_bts_ltdf["tiered_pnl_r"] < 0).any() else 0.0
+                                _bts_ltwr_c = "#2e7d32" if _bts_ltwr >= 60 else ("#ef6c00" if _bts_ltwr >= 50 else "#c62828")
+                                _bts_ltexp_str = f'{"+" if _bts_ltexp >= 0 else ""}{_bts_ltexp:.3f}R'
+                                _bts_ltexp_col = "#2e7d32" if _bts_ltexp > 0 else ("#ef6c00" if _bts_ltexp == 0 else "#c62828")
+                                _bts_lt_is_best = _bts_ldr_best_exp is not None and abs(_bts_ltexp - _bts_ldr_best_exp) < 1e-9
+                                _bts_lt_border = "2px solid #ffd54f" if _bts_lt_is_best else f"3px solid {_bts_ltc}"
+                                _bts_lt_badge = (
+                                    '<div style="font-size:10px;font-weight:700;color:#ffd54f;'
+                                    'background:rgba(255,213,79,0.12);border-radius:4px;'
+                                    'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
+                                    'Best Edge ⭐</div>'
+                                ) if _bts_lt_is_best else ""
+                                st.markdown(
+                                    f'<div style="background:#1e2a3a;border-left:{_bts_lt_border};'
+                                    f'border-radius:8px;padding:12px;text-align:center;">'
+                                    f'{_bts_lt_badge}'
+                                    f'<div style="font-size:13px;font-weight:700;color:{_bts_ltc};">{_bts_lte} {_bts_ltl}</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_bts_ltd2}</div>'
+                                    f'<div style="font-size:22px;font-weight:700;color:{_bts_ltwr_c};margin-top:4px;">{_bts_ltwr:.1f}%</div>'
+                                    f'<div style="font-size:12px;color:#cfd8dc;">{_bts_ltw}W / {_bts_ltl2}L  ·  {len(_bts_ltdf)} trades</div>'
+                                    f'<div style="font-size:13px;font-weight:600;color:{_bts_ltexp_col};margin-top:4px;">'
+                                    f'Exp: {_bts_ltexp_str} / trade</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">'
+                                    f'Avg Win: +{_bts_ltavgw:.2f}R  ·  Avg Loss: {_bts_ltavgl:.2f}R</div>'
+                                    f'<div style="font-size:11px;color:#90a4ae;">'
+                                    f'Total: {"+" if _bts_lttot >= 0 else ""}{_bts_lttot:.1f}R</div>'
+                                    f'</div>', unsafe_allow_html=True
+                                )
+
             # ── Row 4 — Tiered vs EOD Head-to-Head Comparison ────────────────
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(
