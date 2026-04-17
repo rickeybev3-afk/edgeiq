@@ -14,6 +14,8 @@ import base64
 import json
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
+from typing import Optional
 
 PROXY_PORT = int(os.environ.get("PORT", "8080"))
 STREAMLIT_PORT = 8501
@@ -79,15 +81,17 @@ def _clear_mismatch_in_health_file() -> None:
 _DB_CACHE_TTL = 10
 _db_cache_lock = threading.Lock()
 _db_reachable_cache: bool = False
+_db_cache_checked_at: Optional[datetime] = None
 
 
 def _refresh_db_cache() -> None:
     """Background thread: refresh the DB reachability cache every _DB_CACHE_TTL seconds."""
-    global _db_reachable_cache
+    global _db_reachable_cache, _db_cache_checked_at
     while True:
         result = _check_db_reachable()
         with _db_cache_lock:
             _db_reachable_cache = result
+            _db_cache_checked_at = datetime.now(timezone.utc)
         time.sleep(_DB_CACHE_TTL)
 
 
@@ -95,6 +99,14 @@ def _get_db_reachable() -> bool:
     """Return the cached DB reachability result; never blocks on a network call."""
     with _db_cache_lock:
         return _db_reachable_cache
+
+
+def _get_db_checked_at() -> Optional[str]:
+    """Return the ISO-8601 UTC timestamp of the last completed DB check, or None."""
+    with _db_cache_lock:
+        if _db_cache_checked_at is None:
+            return None
+        return _db_cache_checked_at.isoformat()
 
 
 LOADING_PAGE = b"""<html><head><title>EdgeIQ</title></head>
@@ -245,6 +257,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             data = {"ok": False, "errors": [f"Could not read health status: {e}"]}
         data["db_reachable"] = _get_db_reachable()
+        data["db_checked_at"] = _get_db_checked_at()
         status = 200 if data.get("ok") else 503
         body = json.dumps(data).encode()
         self.send_response(status)
