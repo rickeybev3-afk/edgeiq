@@ -7219,15 +7219,31 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "Lower the minimum or expand your date range."
                     )
                 else:
-                    _opt_df = pd.DataFrame(_opt_table_rows).sort_values("Expectancy", ascending=False).reset_index(drop=True)
+                    _opt_sort_col = st.radio(
+                        "Sort results by",
+                        ["Expectancy", "Total R", "Win Rate %", "Max DD (R)"],
+                        horizontal=True,
+                        key="opt_sort_col",
+                    )
+                    _opt_sort_asc = _opt_sort_col == "Max DD (R)"
+                    _opt_df = pd.DataFrame(_opt_table_rows).sort_values(_opt_sort_col, ascending=_opt_sort_asc).reset_index(drop=True)
                     _opt_best = _opt_df.iloc[0]
 
+                    _opt_sort_label = (
+                        f"lowest Max DD {_opt_best['Max DD (R)']:.2f}R"
+                        if _opt_sort_col == "Max DD (R)"
+                        else f"{_opt_best['Expectancy']:+.3f}R expectancy"
+                        if _opt_sort_col == "Expectancy"
+                        else f"{_opt_best['Total R']:+.1f} Total R"
+                        if _opt_sort_col == "Total R"
+                        else f"{_opt_best['Win Rate %']}% Win Rate"
+                    )
                     st.markdown(
                         f'<div style="background:#0a2a0a;border-left:3px solid #00e676;padding:8px 14px;'
                         f'border-radius:4px;margin-bottom:10px;">'
-                        f'<span style="color:#00e676;font-weight:700;">🏆 Best combo: '
+                        f'<span style="color:#00e676;font-weight:700;">🏆 Best combo (by {_opt_sort_col}): '
                         f'{_opt_best["Scan Type"]} · TCS ≥ {_opt_best["Min TCS"]} — '
-                        f'{_opt_best["Expectancy"]:+.3f}R expectancy · '
+                        f'{_opt_sort_label} · '
                         f'{_opt_best["Win Rate %"]}% WR · {int(_opt_best["Trades"])} trades · '
                         f'Max DD {_opt_best["Max DD (R)"]:.2f}R</span>'
                         f'</div>',
