@@ -21504,6 +21504,47 @@ ALTER TABLE backtest_sim_runs
                 f"green = below threshold (pass), orange = within 20% of threshold (near), "
                 f"red = at or above threshold (would be filtered)"
             )
+
+        # ── Delta R aggregate summary for all-tickers sweep ──────────────────
+        if "Delta R" in _show.columns:
+            _sw_dr_series = pd.to_numeric(_show["Delta R"], errors="coerce").dropna()
+            _sw_dr_total  = len(_sw_dr_series)
+            _sw_dr_pos    = int((_sw_dr_series > 0).sum())
+            _sw_dr_neg    = int((_sw_dr_series < 0).sum())
+            _sw_dr_flat   = _sw_dr_total - _sw_dr_pos - _sw_dr_neg
+            _sw_dr_avg    = _sw_dr_series.mean() if _sw_dr_total > 0 else float("nan")
+            _sw_dr_avg_str = f"{_sw_dr_avg:+.2f}R" if _sw_dr_total > 0 else "—"
+            _sw_dr_avg_clr = (
+                "#66bb6a" if _sw_dr_total > 0 and _sw_dr_avg > 0
+                else "#ef5350" if _sw_dr_total > 0 and _sw_dr_avg < 0
+                else "#cfd8dc"
+            )
+            if _sw_dr_total > 0:
+                _sw_dr_pct = _sw_dr_pos / _sw_dr_total * 100
+                _sw_dr_pct_str = f"{_sw_dr_pct:.0f}%"
+                _sw_dr_parts = [
+                    f'<span style="color:#90caf9;font-weight:700;">Delta R summary</span>',
+                    f'<span style="color:#cfd8dc;">{_sw_dr_total} trade{"s" if _sw_dr_total != 1 else ""} with R data</span>',
+                    f'<span style="color:#66bb6a;">&#9650; Tiered won: {_sw_dr_pos} ({_sw_dr_pct_str})</span>',
+                    f'<span style="color:#ef5350;">&#9660; EOD won: {_sw_dr_neg}</span>',
+                ]
+                if _sw_dr_flat:
+                    _sw_dr_parts.append(
+                        f'<span style="color:#78909c;">Flat: {_sw_dr_flat}</span>'
+                    )
+                _sw_dr_parts.append(
+                    f'<span>Avg Delta R: <span style="color:{_sw_dr_avg_clr};font-weight:700;">{_sw_dr_avg_str}</span></span>'
+                )
+                _sw_dr_html = (
+                    '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;'
+                    'font-size:12px;font-family:monospace;color:#90caf9;'
+                    'padding:6px 10px;margin-bottom:6px;'
+                    'background:#0d2137;border-radius:6px;border-left:3px solid #1565c0;">'
+                    + " &nbsp;·&nbsp; ".join(_sw_dr_parts)
+                    + "</div>"
+                )
+                st.markdown(_sw_dr_html, unsafe_allow_html=True)
+
         st.dataframe(_styled, use_container_width=True, height=280)
 
         # ── EOD Hold Performance — Morning / Intraday split
