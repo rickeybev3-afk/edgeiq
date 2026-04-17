@@ -22993,7 +22993,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
         _ib_threshold = _cached_load_ib_range_pct_threshold()
 
-        _PT_GREEN_STRONG = "background-color:rgba(76,175,80,0.30);color:#66bb6a;font-weight:700"
+        _PT_GREEN_STRONG  = "background-color:rgba(76,175,80,0.30);color:#66bb6a;font-weight:700"
+        _PT_ORANGE_STRONG = "background-color:rgba(255,152,0,0.25);color:#ff9800;font-weight:700"
         _PT_RED_STRONG   = "background-color:rgba(239,83,80,0.30);color:#ef5350;font-weight:700"
         _PT_GREY_CELL    = "background-color:rgba(144,164,174,0.12);color:#90a4ae"
 
@@ -23038,7 +23039,12 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 elif col == "ib_range_pct" and _pt_log_has_ib_pct:
                     try:
                         v = float(row["ib_range_pct"])
-                        result.append(_PT_GREEN_STRONG if v < _ib_threshold else _PT_RED_STRONG)
+                        if v < _ib_threshold:
+                            result.append(_PT_GREEN_STRONG)
+                        elif v < _ib_threshold * 1.2:
+                            result.append(_PT_ORANGE_STRONG)
+                        else:
+                            result.append(_PT_RED_STRONG)
                     except (TypeError, ValueError):
                         result.append(_PT_GREY_CELL)
                 elif col == "vwap_at_ib" and _pt_log_has_vwap:
@@ -23071,7 +23077,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_col_cfg = {}
         if _pt_log_has_ib_pct:
             _pt_col_cfg["ib_range_pct"] = st.column_config.NumberColumn(
-                "IB Width %", format="%.2f%%", help=f"IB range as % of open price · green < {_ib_threshold:.1f}% (pass, active threshold)"
+                "IB Width %", format="%.2f%%", help=f"IB range as % of open price · green < {_ib_threshold:.1f}% (pass) · orange < {_ib_threshold*1.2:.1f}% (near threshold) · red = filtered"
             )
         if _pt_log_has_vwap:
             _pt_col_cfg["vwap_at_ib"] = st.column_config.NumberColumn(
