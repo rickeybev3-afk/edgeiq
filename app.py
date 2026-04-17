@@ -8996,10 +8996,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _sufficient = len(_sw_sub) >= _MIN_TCS_TRADES
                             _any_sweep_rows = True
                             _tk_sweep_rows.append({
-                                "TCS Floor":      _sw_tcs,
-                                "Trades":         len(_sw_sub),
+                                "TCS Floor":      int(_sw_tcs),
+                                "Trades":         int(len(_sw_sub)),
                                 "Win Rate":       round(_sw_wr_n, 1),
-                                "Net P&L ($)":    round(_sw_pnl_n, 0),
+                                "Net P&L ($)":    int(round(_sw_pnl_n, 0)),
                                 "Expectancy ($)": round(_sw_exp_n, 2),
                                 "Sufficient":     "✓" if _sufficient else f"✗ (<{_MIN_TCS_TRADES})",
                             })
@@ -9457,6 +9457,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
+                    # ── Round numeric columns for clean CSV export ────────────────
+                    _sw_csv_int_cols  = {"TCS Floor", "Trades"}
+                    _sw_csv_1dp_cols  = {"Win Rate"}
+                    _sw_csv_2dp_cols  = {"Expectancy ($)"}
+                    for _swc in list(_tk_sw_df.columns):
+                        if _swc in _sw_csv_int_cols:
+                            _tk_sw_df[_swc] = _pd_bt.to_numeric(_tk_sw_df[_swc], errors="coerce").astype("Int64")
+                        elif _swc in _sw_csv_1dp_cols:
+                            _tk_sw_df[_swc] = _pd_bt.to_numeric(_tk_sw_df[_swc], errors="coerce").round(1)
+                        elif _swc in _sw_csv_2dp_cols:
+                            _tk_sw_df[_swc] = _pd_bt.to_numeric(_tk_sw_df[_swc], errors="coerce").round(2)
+                        elif _swc == "Net P&L ($)":
+                            _tk_sw_df[_swc] = _pd_bt.to_numeric(_tk_sw_df[_swc], errors="coerce").round(0).astype("Int64")
                     # only consider floors with sufficient trades for the highlighted best
                     _tk_sw_suff = _tk_sw_df[_tk_sw_df["Sufficient"] == "✓"]
                     _tk_persist_key_hdr = f"_drill_tcs_persist_{_tk_name}"
