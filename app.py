@@ -21826,7 +21826,10 @@ ALTER TABLE backtest_sim_runs
                         st.session_state["_cached_prefs"] = _grid_d_prefs
                     st.rerun()
     else:
-        st.caption("🔗 Date filters are linked — synced automatically")
+        st.caption(
+                "🔗 Filters linked — both date ranges stay in sync automatically. "
+                "When both sections are edited simultaneously, the Backtest P&L dates take precedence."
+            )
 
     _grid_dr_cols = st.columns([1, 1, 4])
     with _grid_dr_cols[0]:
