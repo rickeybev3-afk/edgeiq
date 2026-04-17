@@ -15832,6 +15832,33 @@ ALTER TABLE backtest_sim_runs
                 key="bts_dr_end",
                 help="Show backtest runs up to this date (inclusive). Leave blank for all time.",
             )
+        with _bts_dr_cols[2]:
+            # Sync button: copy the Edge Map date range into the Backtest P&L filter
+            _grid_sync_start = st.session_state.get("grid_dr_start")
+            _grid_sync_end   = st.session_state.get("grid_dr_end")
+            _bts_sync_help = (
+                f"Copy the Edge Map date range ({_grid_sync_start or 'any'} → {_grid_sync_end or 'any'}) into the Backtest P&L filter"
+                if (_grid_sync_start or _grid_sync_end)
+                else "Copy the Edge Map date filter (currently unset — clears Backtest P&L dates to all time) into the Backtest P&L filter"
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button(
+                "⇄ Sync from Edge Map",
+                key="bts_sync_grid_dates",
+                help=_bts_sync_help,
+            ):
+                # Clamp synced dates to the valid Backtest P&L date range
+                def _clamp_to_bts(d):
+                    if d is None:
+                        return None
+                    if _bts_min_date and d < _bts_min_date:
+                        return _bts_min_date
+                    if _bts_max_date and d > _bts_max_date:
+                        return _bts_max_date
+                    return d
+                st.session_state["bts_dr_start"] = _clamp_to_bts(_grid_sync_start)
+                st.session_state["bts_dr_end"]   = _clamp_to_bts(_grid_sync_end)
+                st.rerun()
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
 
