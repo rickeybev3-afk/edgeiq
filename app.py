@@ -15180,6 +15180,7 @@ def render_decision_log_tab():
     from backend import (
         ensure_decision_log_table, get_decisions,
         insert_decision, update_decision_outcome, seed_decisions_if_empty,
+        delete_decision,
     )
 
     st.markdown(
@@ -15356,6 +15357,28 @@ def render_decision_log_tab():
                         st.rerun()
                     else:
                         st.error("Update failed.")
+
+        if _dec_id:
+            _confirm_key = f"dl_del_confirm_{_dec_id}"
+            if not st.session_state.get(_confirm_key, False):
+                if st.button("🗑 Delete", key=f"dl_del_{_dec_id}"):
+                    st.session_state[_confirm_key] = True
+                    st.rerun()
+            else:
+                st.warning("Are you sure you want to delete this decision? This cannot be undone.")
+                _conf_c1, _conf_c2 = st.columns([1, 5])
+                with _conf_c1:
+                    if st.button("Yes, delete", key=f"dl_del_yes_{_dec_id}", type="primary"):
+                        _del_ok = delete_decision(_dec_id, _dl_uid)
+                        st.session_state[_confirm_key] = False
+                        if _del_ok:
+                            st.rerun()
+                        else:
+                            st.error("Delete failed. Check Supabase connection.")
+                with _conf_c2:
+                    if st.button("Cancel", key=f"dl_del_cancel_{_dec_id}"):
+                        st.session_state[_confirm_key] = False
+                        st.rerun()
 
         st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 

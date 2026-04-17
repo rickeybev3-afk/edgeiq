@@ -9528,6 +9528,18 @@ def update_decision_outcome(decision_id: str, user_id: str, outcome: str, outcom
         return False
 
 
+def delete_decision(decision_id: str, user_id: str) -> bool:
+    """Delete a single decision_log row owned by user_id."""
+    if not supabase:
+        return False
+    try:
+        supabase.table("decision_log").delete().eq("id", decision_id).eq("user_id", user_id).execute()
+        return True
+    except Exception as e:
+        print(f"delete_decision error: {e}")
+        return False
+
+
 def seed_decisions_if_empty(user_id: str) -> int:
     """If no decisions exist for this user, insert the seed set. Returns rows inserted."""
     if not supabase:
