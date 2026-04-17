@@ -9044,10 +9044,38 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _struct_df = _pd_ma.DataFrame(_struct_rows).sort_values(
                                             "Marginal Trades", ascending=False
                                         ).reset_index(drop=True)
-                                        st.dataframe(_struct_df, use_container_width=True, hide_index=True)
+
+                                        _DWR_WARN_THRESH = -5.0   # amber: ΔWR ≤ −5 pp
+                                        _DWR_CRIT_THRESH = -10.0  # red:   ΔWR ≤ −10 pp
+
+                                        def _struct_row_style(row):
+                                            _dwr_cell = row.get("ΔWR (marg−comf)", "—")
+                                            try:
+                                                _dwr_val = float(
+                                                    str(_dwr_cell).replace("pp", "").replace("+", "")
+                                                )
+                                            except Exception:
+                                                return [""] * len(row)
+                                            if _dwr_val <= _DWR_CRIT_THRESH:
+                                                return [
+                                                    "background-color:#3d1010;color:#ff5252;font-weight:600;"
+                                                ] * len(row)
+                                            if _dwr_val <= _DWR_WARN_THRESH:
+                                                return [
+                                                    "background-color:#3d2a00;color:#ffab40;font-weight:600;"
+                                                ] * len(row)
+                                            return [""] * len(row)
+
+                                        st.dataframe(
+                                            _struct_df.style.apply(_struct_row_style, axis=1),
+                                            use_container_width=True,
+                                            hide_index=True,
+                                        )
                                         st.caption(
-                                            "ΔWR shows how each structure's marginal win rate compares to its own comfortable "
-                                            "win rate. A large negative value suggests that structure's TCS floor may need raising."
+                                            "🟠 **Amber** — ΔWR worse than −5 pp and better than −10 pp (borderline)  |  "
+                                            "🔴 **Red** — ΔWR −10 pp or worse (underperforming).  "
+                                            "ΔWR compares each structure's marginal win rate to its own comfortable win rate. "
+                                            "A large negative value suggests that structure's TCS floor may need raising."
                                         )
 
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
