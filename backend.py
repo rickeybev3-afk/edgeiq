@@ -9364,15 +9364,16 @@ def recompute_eod_pnl_for_filled_rows(user_id: str = "", progress_callback=None)
     IB range — the same prerequisites used by compute_trade_sim_tiered().
 
     Returns a dict with keys:
-      recomputed – number of rows successfully updated with eod_pnl_r
-      skipped    – rows processed but not updated (bad data / compute returned None)
-      errors     – write errors encountered
+      recomputed_backtest – rows from backtest_sim_runs successfully updated with eod_pnl_r
+      recomputed_paper    – rows from paper_trades successfully updated with eod_pnl_r
+      skipped             – rows processed but not updated (bad data / compute returned None)
+      errors              – write errors encountered
     """
     PAGE_SZ = 1000
     MAX_WORKERS = 20
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    stats = {"recomputed": 0, "skipped": 0, "errors": 0}
+    stats = {"recomputed_backtest": 0, "recomputed_paper": 0, "skipped": 0, "errors": 0}
 
     if not supabase:
         stats["errors"] = 1
@@ -9420,9 +9421,9 @@ def recompute_eod_pnl_for_filled_rows(user_id: str = "", progress_callback=None)
         supabase.table(table).update(
             {"eod_pnl_r": eod}
         ).eq("id", row["id"]).execute()
-        return "recomputed"
+        return "recomputed_backtest" if table == "backtest_sim_runs" else "recomputed_paper"
 
-    total_rows = len(rows)
+    total_rows = len(all_rows)
     done_count = 0
 
     if progress_callback and total_rows > 0:

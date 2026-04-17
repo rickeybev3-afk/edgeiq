@@ -18588,7 +18588,8 @@ ALTER TABLE backtest_sim_runs
                         "Check that ALPACA_API_KEY and ALPACA_SECRET_KEY are set."
                     )
                 else:
-                    _eod_recomputed = 0
+                    _eod_recomputed_bt = 0
+                    _eod_recomputed_pt = 0
                     _eod_errors = 0
                     if _cp_filled > 0:
                         _eod_progress_bar = st.progress(0.0)
@@ -18616,16 +18617,23 @@ ALTER TABLE backtest_sim_runs
                         )
                         _eod_progress_bar.empty()
                         _eod_status_text.empty()
-                        _eod_recomputed = _eod_result.get("recomputed", 0)
+                        _eod_recomputed_bt = _eod_result.get("recomputed_backtest", 0)
+                        _eod_recomputed_pt = _eod_result.get("recomputed_paper", 0)
                         _eod_errors = _eod_result.get("errors", 0)
                     _still_note = (
                         f"{_cp_still:,} still missing (delisted / no IEX coverage)."
                         if _cp_still else "All rows filled successfully."
                     )
-                    _eod_note = (
-                        f" EOD P&L recomputed for {_eod_recomputed:,} row{'s' if _eod_recomputed != 1 else ''}."
-                        if _eod_recomputed else ""
-                    )
+                    _eod_total = _eod_recomputed_bt + _eod_recomputed_pt
+                    if _eod_total:
+                        _parts = []
+                        if _eod_recomputed_bt:
+                            _parts.append(f"{_eod_recomputed_bt:,} backtest row{'s' if _eod_recomputed_bt != 1 else ''}")
+                        if _eod_recomputed_pt:
+                            _parts.append(f"{_eod_recomputed_pt:,} paper trade row{'s' if _eod_recomputed_pt != 1 else ''}")
+                        _eod_note = f" EOD P&L recomputed for {' + '.join(_parts)}."
+                    else:
+                        _eod_note = ""
                     st.success(
                         f"Done — {_cp_filled:,} row{'s' if _cp_filled != 1 else ''} filled. "
                         f"{_still_note}{_eod_note}"
@@ -21282,21 +21290,29 @@ ALTER TABLE backtest_sim_runs
                         "Check that ALPACA_API_KEY and ALPACA_SECRET_KEY are set."
                     )
                 else:
-                    _pt_eod_recomputed = 0
+                    _pt_eod_recomputed_bt = 0
+                    _pt_eod_recomputed_pt = 0
                     _pt_eod_errors = 0
                     if _pt_cp_filled > 0:
                         with st.spinner("Recomputing EOD P&L for newly filled rows…"):
                             _pt_eod_result = recompute_eod_pnl_for_filled_rows(user_id=_AUTH_USER_ID)
-                        _pt_eod_recomputed = _pt_eod_result.get("recomputed", 0)
+                        _pt_eod_recomputed_bt = _pt_eod_result.get("recomputed_backtest", 0)
+                        _pt_eod_recomputed_pt = _pt_eod_result.get("recomputed_paper", 0)
                         _pt_eod_errors = _pt_eod_result.get("errors", 0)
                     _pt_still_note = (
                         f"{_pt_cp_still:,} still missing (delisted / no IEX coverage)."
                         if _pt_cp_still else "All rows filled successfully."
                     )
-                    _pt_eod_note = (
-                        f" EOD P&L recomputed for {_pt_eod_recomputed:,} row{'s' if _pt_eod_recomputed != 1 else ''}."
-                        if _pt_eod_recomputed else ""
-                    )
+                    _pt_eod_total = _pt_eod_recomputed_bt + _pt_eod_recomputed_pt
+                    if _pt_eod_total:
+                        _pt_parts = []
+                        if _pt_eod_recomputed_bt:
+                            _pt_parts.append(f"{_pt_eod_recomputed_bt:,} backtest row{'s' if _pt_eod_recomputed_bt != 1 else ''}")
+                        if _pt_eod_recomputed_pt:
+                            _pt_parts.append(f"{_pt_eod_recomputed_pt:,} paper trade row{'s' if _pt_eod_recomputed_pt != 1 else ''}")
+                        _pt_eod_note = f" EOD P&L recomputed for {' + '.join(_pt_parts)}."
+                    else:
+                        _pt_eod_note = ""
                     st.success(
                         f"Done — {_pt_cp_filled:,} row{'s' if _pt_cp_filled != 1 else ''} filled. "
                         f"{_pt_still_note}{_pt_eod_note}"
@@ -21309,8 +21325,8 @@ ALTER TABLE backtest_sim_runs
                         )
                     if _pt_eod_errors:
                         st.warning(
-                            f"{_pt_eod_errors} EOD P&L row{'s' if _pt_eod_errors != 1 else ''} could not be "
-                            f"written — check server logs for details."
+                            f"{_pt_eod_errors} EOD P&L write error{'s' if _pt_eod_errors != 1 else ''} — "
+                            f"check server logs for details."
                         )
                     st.rerun()
 
