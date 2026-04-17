@@ -12,6 +12,8 @@ import struct
 import hashlib
 import base64
 import json
+import urllib.request
+import urllib.error
 
 PROXY_PORT = int(os.environ.get("PORT", "8080"))
 STREAMLIT_PORT = 8501
@@ -60,6 +62,40 @@ MIME_TYPES = {
     ".svg":  "image/svg+xml",
     ".ico":  "image/x-icon",
 }
+
+
+def _check_db_reachable() -> bool:
+    """Perform a lightweight live check of Supabase reachability.
+
+    Mirrors the logic in backend.py check_db_connection() but uses only
+    the standard library so it can run inside the proxy process.
+    Returns True when the database responds with HTTP 200 or 404 (which
+    means the REST root is reachable and the API key is accepted).
+    """
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_key = (
+        os.environ.get("SUPABASE_KEY")
+        or os.environ.get("SUPABASE_ANON_KEY")
+        or os.environ.get("VITE_SUPABASE_ANON_KEY")
+        or ""
+    ).strip()
+    if not supabase_url or not supabase_key:
+        return False
+    try:
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/",
+            method="HEAD",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status in (200, 404)
+    except urllib.error.HTTPError as exc:
+        return exc.code in (200, 404)
+    except Exception:
+        return False
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -112,6 +148,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         backend.py writes /tmp/startup_health.json with {"ok": bool, "errors": [...]}
         when it is imported by the Streamlit process (app.py → backend.py).
         If the file is absent the server is still starting; 503 is returned.
+        A live db_reachable check is performed at request time so monitoring
+        tools can detect connectivity regressions without restarting the app.
         """
         health_path = "/tmp/startup_health.json"
         try:
@@ -121,6 +159,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = {"ok": False, "errors": ["Health status not yet available — server may still be starting."]}
         except Exception as e:
             data = {"ok": False, "errors": [f"Could not read health status: {e}"]}
+        data["db_reachable"] = _check_db_reachable()
         status = 200 if data.get("ok") else 503
         body = json.dumps(data).encode()
         self.send_response(status)
