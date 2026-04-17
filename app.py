@@ -13,7 +13,7 @@ import sys
 
 from backend import *
 from backend import (
-    _compute_value_area, _strip_emoji,
+    _compute_value_area, _strip_emoji, _runtime_credential_errors,
     _parse_batch_pairs, _RECALIBRATE_EVERY, _BRAIN_WEIGHT_KEYS,
     _JOURNAL_COLS, _find_peaks, _is_strong_hvn, _detect_double_distribution,
     _label_to_weight_key, _save_brain_weights, _stream_worker, _GRADE_COLORS, _GRADE_SCORE,
@@ -416,6 +416,26 @@ def _render_setup_checklist() -> None:
                 check_credentials_runtime(force=True)
                 _st.session_state["_runtime_recheck_requested"] = True
                 _st.rerun()
+
+        import time as _time
+        _last_ts = get_runtime_last_check_ts()
+        if _last_ts > 0.0:
+            _elapsed_s = _time.monotonic() - _last_ts
+            if _elapsed_s < 60:
+                _age_label = "just now"
+            elif _elapsed_s < 3600:
+                _age_label = f"{int(_elapsed_s // 60)} min ago"
+            else:
+                _age_label = f"{int(_elapsed_s // 3600)} hr ago"
+            if _runtime_credential_errors:
+                _n_errs = len(_runtime_credential_errors)
+                _err_word = "error" if _n_errs == 1 else "errors"
+                _st.caption(f"Last checked: {_age_label} — {_n_errs} {_err_word}")
+            else:
+                _st.caption(f"Last checked: {_age_label} — all OK ✅")
+        else:
+            _st.caption("Last checked: not yet run")
+
         _st.markdown("---")
 
         for _sc_item in _SECRET_CATALOG:
