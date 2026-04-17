@@ -11908,8 +11908,49 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     )
                             else:
                                 # ── Dual-axis: Equity ($) left, Cumulative R right ──
-                                _sw_start_eq   = float(st.session_state.get("bt_mc_equity", 10_000))
-                                _sw_risk_frac  = st.session_state.get("bt_mc_risk", 2.0) / 100.0
+                                # Per-ticker keys so these don't collide with the MC-section widgets
+                                _sw_eq_key   = f"opt_both_equity_{_tk_name}"
+                                _sw_risk_key = f"opt_both_risk_{_tk_name}"
+                                if _sw_eq_key not in st.session_state:
+                                    st.session_state[_sw_eq_key] = float(
+                                        st.session_state.get("bt_mc_equity", 10_000)
+                                    )
+                                if _sw_risk_key not in st.session_state:
+                                    st.session_state[_sw_risk_key] = float(
+                                        st.session_state.get("bt_mc_risk", 2.0)
+                                    )
+                                _sw_ctrl_cols = st.columns([1, 1, 2])
+                                with _sw_ctrl_cols[0]:
+                                    _sw_start_eq = float(st.number_input(
+                                        "Starting equity ($)",
+                                        min_value=1_000, max_value=1_000_000,
+                                        step=1_000,
+                                        key=_sw_eq_key,
+                                        help=(
+                                            "Simulated starting account size used to build the equity curve. "
+                                            "Defaults to the Monte Carlo Starting Equity set in Backtest → Advanced settings."
+                                        ),
+                                    ))
+                                with _sw_ctrl_cols[1]:
+                                    _sw_risk_pct = float(st.slider(
+                                        "Risk per trade (%)",
+                                        min_value=0.5, max_value=5.0, step=0.5,
+                                        key=_sw_risk_key,
+                                        help=(
+                                            "Fraction of equity risked on each trade (fixed position sizing). "
+                                            "Defaults to the Risk per Trade set in Backtest → Advanced settings."
+                                        ),
+                                    ))
+                                with _sw_ctrl_cols[2]:
+                                    st.markdown(
+                                        f'<div style="margin-top:26px; font-size:12px; color:#78909c; line-height:1.5;">'
+                                        f'Equity curve uses <b style="color:#4fc3f7">${_sw_start_eq:,.0f}</b> starting equity '
+                                        f'· <b style="color:#4fc3f7">{_sw_risk_pct:.1f}%</b> risk per trade '
+                                        f'(fixed-size). These are local overrides — edit here or update the global defaults in '
+                                        f'<i>Backtest → Advanced settings</i>.</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                                _sw_risk_frac  = _sw_risk_pct / 100.0
                                 _sw_risk_amt   = _sw_start_eq * _sw_risk_frac
                                 _sw_eq_curve: list = [_sw_start_eq]
                                 for _sw_rv in _sw_r_ser:
