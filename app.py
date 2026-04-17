@@ -18424,20 +18424,39 @@ ALTER TABLE backtest_sim_runs
                         f'margin:12px 0 6px;">Affected tickers — {_rs_ticker_label}</div>',
                         unsafe_allow_html=True,
                     )
-                    _rs_df = pd.DataFrame([
-                        {
-                            "Ticker": r["ticker"],
-                            "Sentinel Rows": r["count"],
-                            "Earliest Date": r.get("date_from") or "—",
-                            "Latest Date": r.get("date_to") or "—",
-                        }
-                        for r in _rs_tickers
-                    ])
-                    st.dataframe(
-                        _rs_df,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
+                    _rs_hdr = st.columns([1.5, 1.2, 1.5, 1.5, 0.9])
+                    for _rs_hdr_col, _rs_hdr_label in zip(
+                        _rs_hdr,
+                        ["Ticker", "Sentinel Rows", "Earliest Date", "Latest Date", ""],
+                    ):
+                        _rs_hdr_col.markdown(
+                            f'<div style="font-size:11px;color:#546e7a;font-weight:700;'
+                            f'text-transform:uppercase;letter-spacing:0.8px;">'
+                            f'{_rs_hdr_label}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    for _rs_row in _rs_tickers:
+                        _rr_ticker = _rs_row["ticker"]
+                        _rr_count  = _rs_row["count"]
+                        _rr_from   = _rs_row.get("date_from") or "—"
+                        _rr_to     = _rs_row.get("date_to") or "—"
+                        _rr_cols   = st.columns([1.5, 1.2, 1.5, 1.5, 0.9])
+                        _rr_cols[0].markdown(
+                            f'<span style="font-family:monospace;font-weight:700;'
+                            f'color:#cfd8dc;">{_rr_ticker}</span>',
+                            unsafe_allow_html=True,
+                        )
+                        _rr_cols[1].markdown(str(_rr_count))
+                        _rr_cols[2].markdown(_rr_from)
+                        _rr_cols[3].markdown(_rr_to)
+                        if _rr_cols[4].button(
+                            "Filter",
+                            key=f"bt_rs_ticker_pick_{_rr_ticker}",
+                            help=f"Pre-fill the Ticker filter with {_rr_ticker}",
+                            use_container_width=True,
+                        ):
+                            st.session_state["bt_rs_ticker"] = _rr_ticker
+                            st.rerun()
                     if _rs_hidden > 0:
                         st.caption(
                             f"Showing top {_rs_shown} of {_rs_total_tickers} affected tickers. "
