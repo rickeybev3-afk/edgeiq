@@ -9557,6 +9557,68 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _sw_cum_r_vals  = _sw_r_ser.cumsum().reset_index(drop=True)
                             _sw_peak_r      = _sw_cum_r_vals.cummax()
                             _sw_max_dd_r    = round((_sw_cum_r_vals - _sw_peak_r).min(), 2) if _sw_n else 0
+
+                            # ── Cumulative R chart with drawdown highlight ──────────
+                            _sw_dd_series = _sw_cum_r_vals - _sw_peak_r
+                            if _sw_n and _sw_max_dd_r < 0:
+                                _sw_dd_trough_idx = int(_sw_dd_series.idxmin())
+                                _sw_dd_peak_idx   = int(_sw_cum_r_vals.iloc[:_sw_dd_trough_idx + 1].idxmax())
+                            else:
+                                _sw_dd_trough_idx = None
+                                _sw_dd_peak_idx   = None
+
+                            _sw_fig_cum_r = go.Figure()
+                            _sw_fig_cum_r.add_trace(go.Scatter(
+                                x=list(range(len(_sw_cum_r_vals))),
+                                y=_sw_cum_r_vals.tolist(),
+                                mode="lines",
+                                name="Cumulative R",
+                                line=dict(color="#1f77b4", width=2),
+                            ))
+
+                            if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
+                                _sw_fig_cum_r.add_vrect(
+                                    x0=_sw_dd_peak_idx,
+                                    x1=_sw_dd_trough_idx,
+                                    fillcolor="rgba(220, 50, 50, 0.15)",
+                                    layer="below",
+                                    line_width=0,
+                                )
+                                _sw_fig_cum_r.add_trace(go.Scatter(
+                                    x=[_sw_dd_peak_idx],
+                                    y=[float(_sw_cum_r_vals.iloc[_sw_dd_peak_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
+                                    name=f"DD Start (trade #{_sw_dd_peak_idx})",
+                                ))
+                                _sw_fig_cum_r.add_trace(go.Scatter(
+                                    x=[_sw_dd_trough_idx],
+                                    y=[float(_sw_cum_r_vals.iloc[_sw_dd_trough_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#d62728", size=10, symbol="triangle-up"),
+                                    name=f"DD End (trade #{_sw_dd_trough_idx})",
+                                ))
+
+                            _sw_fig_cum_r.update_layout(
+                                height=240,
+                                margin=dict(l=0, r=0, t=10, b=30),
+                                xaxis_title="Trade #",
+                                yaxis_title="Cumulative R",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                            )
+                            _sw_fig_cum_r.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                            _sw_fig_cum_r.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                            st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade across all TCS floors")
+                            st.plotly_chart(_sw_fig_cum_r, use_container_width=True)
+
+                            if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
+                                st.caption(
+                                    f"🔴 Max drawdown period: trade\u00a0**#{_sw_dd_peak_idx}** → **#{_sw_dd_trough_idx}**"
+                                    f"\u2002({_sw_dd_trough_idx - _sw_dd_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_sw_max_dd_r)}R**"
+                                )
+
                             def _sw_stat_r(lbl, val):
                                 _rx = {c: "" for c in _sw_sum_cols}
                                 _rx[_sw_lbl_col] = lbl
