@@ -10184,13 +10184,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     k for k in st.session_state if k.startswith("_drill_tcs_persist_")
                 ]
                 if _persist_keys_all:
+                    _overridden_tickers = sorted(
+                        k[len("_drill_tcs_persist_"):] for k in _persist_keys_all
+                    )
+                    _MAX_TOOLTIP_TICKERS = 20
+                    if len(_overridden_tickers) <= _MAX_TOOLTIP_TICKERS:
+                        _ticker_lines = "\n".join(f"• {t}" for t in _overridden_tickers)
+                    else:
+                        _shown = _overridden_tickers[:_MAX_TOOLTIP_TICKERS]
+                        _remaining = len(_overridden_tickers) - _MAX_TOOLTIP_TICKERS
+                        _ticker_lines = "\n".join(f"• {t}" for t in _shown) + f"\n… and {_remaining} more"
+                    _bulk_reset_help = (
+                        f"Tickers with active floor overrides:\n{_ticker_lines}\n\n"
+                        "Clear every manual TCS floor override and restore the recommended floor for all tickers."
+                    )
                     _bulk_reset_col, _ = st.columns([2, 5])
                     with _bulk_reset_col:
                         if st.button(
                             f"↩ Reset all to best ({len(_persist_keys_all)} ticker{'s' if len(_persist_keys_all) != 1 else ''})",
                             key="_bulk_reset_all_tickers",
                             use_container_width=True,
-                            help="Clear every manual TCS floor override and restore the recommended floor for all tickers.",
+                            help=_bulk_reset_help,
                         ):
                             for _prst_k in list(st.session_state.keys()):
                                 if _prst_k.startswith("_drill_tcs_persist_") or _prst_k.startswith("drill_tcs_"):
