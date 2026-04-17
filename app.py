@@ -10880,7 +10880,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "EOD Hold R":    "_sort_eod_r",
                 "Tiered Exit R": "_sort_tiered_r",
             }
-            _ctrl_col_sort, _ctrl_col_filter = st.columns([3, 2])
+            _ctrl_col_sort, _ctrl_col_filter, _ctrl_col_div = st.columns([3, 2, 2])
             with _ctrl_col_sort:
                 # Restore sort choice from URL query params on first load
                 if "tkr_summary_sort_radio" not in st.session_state:
@@ -10949,6 +10949,41 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _r_filter_is_active = _r_filter_min is not None
                 if _r_filter_min is None:
                     _r_filter_min = float("-inf")
+            with _ctrl_col_div:
+                # Restore divergence threshold from URL query params on first load
+                if "tkr_div_thresh" not in st.session_state:
+                    _qp_div_thresh_str = st.query_params.get("tkr_div_thresh", "")
+                    try:
+                        _qp_div_thresh_raw = float(_qp_div_thresh_str) if _qp_div_thresh_str else None
+                        if _qp_div_thresh_raw is not None and not (0.0 <= _qp_div_thresh_raw <= 1.0):
+                            _qp_div_thresh_raw = None
+                        st.session_state["tkr_div_thresh"] = _qp_div_thresh_raw
+                    except (ValueError, TypeError):
+                        st.session_state["tkr_div_thresh"] = None
+                _div_thresh = st.number_input(
+                    "Divergence flag threshold",
+                    value=None,
+                    placeholder="No flag (show all)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    step=0.05,
+                    format="%.2f",
+                    key="tkr_div_thresh",
+                    help=(
+                        "Flag tickers whose Max Divergence magnitude exceeds this value. "
+                        "Flagged tickers are highlighted in the table and listed in a warning banner. "
+                        "Example: enter 0.3 to flag tickers with divergence magnitude > 0.3. "
+                        "Leave blank to disable flagging."
+                    ),
+                )
+                # Sync divergence threshold to query params
+                _qp_div_thresh_cur = st.query_params.get("tkr_div_thresh", "")
+                _div_thresh_str = str(_div_thresh) if _div_thresh is not None else ""
+                if _qp_div_thresh_cur != _div_thresh_str:
+                    if _div_thresh_str:
+                        st.query_params["tkr_div_thresh"] = _div_thresh_str
+                    elif "tkr_div_thresh" in st.query_params:
+                        del st.query_params["tkr_div_thresh"]
             _sort_key, _sort_asc = _sort_col_map[_sort_choice]
             _r_filter_key = _r_filter_col_map[_r_filter_col]
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
@@ -10999,17 +11034,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _silver_row_idx = None
                 _bronze_row_idx = None
 
-            # Identify the ticker with the largest sizing divergence
+            # Identify the ticker with the largest sizing divergence (always tracked)
             _worst_div_row_idx = None
+            # Identify all tickers that exceed the configurable divergence threshold
+            _flagged_div_indices = set()
             if "_sort_div_mag" in _tkr_summary_df.columns:
                 _div_mag_vals = _tkr_summary_df["_sort_div_mag"]
                 if _div_mag_vals.max() >= 0.02:
                     _worst_div_row_idx = int(_div_mag_vals.idxmax())
+                if _div_thresh is not None:
+                    _flagged_div_indices = set(
+                        _tkr_summary_df.index[_div_mag_vals > _div_thresh].tolist()
+                    )
 
             def _style_rows(row):
                 _is_best = _best_row_idx is not None and row.name == _best_row_idx
                 _is_insufficient = "insufficient" in str(row.get("Best TCS", ""))
-                _is_worst_div = _worst_div_row_idx is not None and row.name == _worst_div_row_idx
+                _is_flagged_div = row.name in _flagged_div_indices
+                _is_worst_div = _div_thresh is None and _worst_div_row_idx is not None and row.name == _worst_div_row_idx
                 if _is_best and _is_insufficient:
                     return ["background-color: #fff3cd; color: #7a5700; font-weight: bold"] * len(row)
                 if _is_insufficient:
@@ -11020,7 +11062,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     return ["background-color: #f0f0f0; font-weight: bold"] * len(row)
                 if _bronze_row_idx is not None and row.name == _bronze_row_idx:
                     return ["background-color: #fde8cc; font-weight: bold"] * len(row)
-                if _is_worst_div:
+                if _is_flagged_div or _is_worst_div:
                     return ["background-color: #2a1a0a; color: #ffd600; font-weight: bold"] * len(row)
                 return [""] * len(row)
 
@@ -11096,15 +11138,46 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ),
                 },
             )
-            if _worst_div_row_idx is not None:
-                _worst_div_tkr = _tkr_summary_df.loc[_worst_div_row_idx, "Ticker"] if _worst_div_row_idx in _tkr_summary_df.index else "—"
-                _worst_div_cell = _tkr_summary_df.loc[_worst_div_row_idx, "Max Divergence"] if _worst_div_row_idx in _tkr_summary_df.index else "—"
+            if _div_thresh is not None and _flagged_div_indices:
+                # Threshold is set — list every ticker that exceeds it
+                _flagged_tkrs = []
+                for _fi in sorted(_flagged_div_indices):
+                    if _fi in _tkr_summary_df.index:
+                        _ft_name = _html.escape(str(_tkr_summary_df.loc[_fi, "Ticker"]))
+                        _ft_div  = _html.escape(str(_tkr_summary_df.loc[_fi, "Max Divergence"]))
+                        _ft_mag  = _tkr_summary_df.loc[_fi, "_sort_div_mag"] if "_sort_div_mag" in _tkr_summary_df.columns else None
+                        _ft_mag_str = f" ({_ft_mag:.2f})" if _ft_mag is not None else ""
+                        _flagged_tkrs.append(f"{_ft_name}{_ft_mag_str} — {_ft_div}")
+                _n_flagged = len(_flagged_tkrs)
+                _flag_list_html = "  ·  ".join(_flagged_tkrs)
+                st.markdown(
+                    f'<div style="background:#1a0f00;border-left:3px solid #ffd600;padding:7px 14px;'
+                    f'border-radius:4px;margin-bottom:6px;font-size:13px;">'
+                    f'<span style="color:#ffd600;font-weight:700;">⚠️ {_n_flagged} ticker{"s" if _n_flagged != 1 else ""} '
+                    f'exceed divergence threshold ({_div_thresh:.2f}):</span> '
+                    f'<span style="color:#ffd600;">{_flag_list_html}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            elif _div_thresh is not None:
+                # Threshold is set but nothing exceeds it
+                st.markdown(
+                    f'<div style="background:#0d1f0d;border-left:3px solid #4caf50;padding:7px 14px;'
+                    f'border-radius:4px;margin-bottom:6px;font-size:13px;">'
+                    f'<span style="color:#81c784;font-weight:700;">✔ No tickers exceed divergence threshold ({_div_thresh:.2f})</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            elif _worst_div_row_idx is not None:
+                # No threshold set — fall back to highlighting the single worst ticker
+                _worst_div_tkr = _html.escape(str(_tkr_summary_df.loc[_worst_div_row_idx, "Ticker"])) if _worst_div_row_idx in _tkr_summary_df.index else "—"
+                _worst_div_cell = _html.escape(str(_tkr_summary_df.loc[_worst_div_row_idx, "Max Divergence"])) if _worst_div_row_idx in _tkr_summary_df.index else "—"
                 st.markdown(
                     f'<div style="background:#1a0f00;border-left:3px solid #ffd600;padding:7px 14px;'
                     f'border-radius:4px;margin-bottom:6px;font-size:13px;">'
                     f'<span style="color:#ffd600;font-weight:700;">⚡ Worst sizing mismatch: '
                     f'{_worst_div_tkr} — {_worst_div_cell}</span>'
-                    f'<span style="color:#aaa;margin-left:12px;">Sort by Divergence to rank all tickers by mismatch magnitude.</span>'
+                    f'<span style="color:#aaa;margin-left:12px;">Set a divergence threshold above to flag multiple tickers, or sort by Divergence to rank all.</span>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
