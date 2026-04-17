@@ -13311,6 +13311,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _tk_sw_csv_export["Max Div Direction"] = _sw_div_info.get("direction") if _sw_div_info.get("direction") is not None else "—"
                         _tk_sw_csv_export["Max Div Magnitude"] = _sw_div_info.get("magnitude") if _sw_div_info.get("magnitude") is not None else "—"
 
+                        # ── Inject Δ Morn and Δ Intra delta columns ───────────────
+                        _tk_sw_csv_export["Δ Morn"]  = _tk_delta_morn_str
+                        _tk_sw_csv_export["Δ Intra"] = _tk_delta_intra_str
+
                         st.download_button(
                             label="⬇️ Download Sweep Summary CSV",
                             data=_tk_sw_csv_export.to_csv(index=False),
