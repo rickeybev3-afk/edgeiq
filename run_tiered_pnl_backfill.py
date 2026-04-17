@@ -14,6 +14,35 @@ Results of the 2026-04-16 initial run (verified via null-count queries post-run)
   Note             : The 50/25/25 Ladder tab will be populated going forward
                      as new paper trades are logged with close_price stored.
 
+Results of the 2026-04-17 re-run (after close_price backfill completed):
+  paper_trades     : 74 breakout rows total; 74 qualifying rows found
+                     (close_price, ib_high, ib_low all now populated).
+                     74 rows updated with tiered_pnl_r and eod_pnl_r.
+                     0 rows skipped (no Alpaca bars unavailable).
+                     0 flat rows (price crossed IB entry on all 74 trades).
+  Verification     : PASS — 0 qualifying NULL rows remain after the run.
+  Verification SQL : SELECT COUNT(*) FROM paper_trades
+                     WHERE actual_outcome IN ('Bullish Break','Bearish Break')
+                     AND tiered_pnl_r IS NULL
+                     AND close_price IS NOT NULL
+                     AND ib_high IS NOT NULL AND ib_low IS NOT NULL;
+                     → Result: 0 (confirmed)
+  backtest_sim_runs: Large backlog (~16,233 rows) being processed in batches.
+                     Run  `python run_tiered_pnl_backfill.py --backtest-only`
+                     repeatedly until the analogous COUNT(*) query returns 0.
+
+Completion runbook (backtest_sim_runs)
+───────────────────────────────────────
+  1. Run:  python run_tiered_pnl_backfill.py --backtest-only [--no-ratelimit]
+  2. Repeat until the script prints "No qualifying backtest_sim_runs rows found"
+     or the verification count below hits 0.
+  3. Verify:
+       SELECT COUNT(*) FROM backtest_sim_runs
+       WHERE actual_outcome IN ('Bullish Break','Bearish Break')
+         AND tiered_pnl_r IS NULL
+         AND close_price IS NOT NULL
+         AND ib_high IS NOT NULL AND ib_low IS NOT NULL;
+
 Supported tables
 ────────────────
   paper_trades       — one user at a time, partitioned by user_id
