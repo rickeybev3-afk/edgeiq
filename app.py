@@ -12037,6 +12037,41 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             '<div style="border-top:1px solid #1e2a3a;margin:16px 0 10px 0;"></div>',
                             unsafe_allow_html=True,
                         )
+                        # ── Pinned R-stats summary (compact repeat of chips above) ─
+                        if _sw_r_col is not None:
+                            _pin_exp_clr = "#66bb6a" if _sw_exp_r >= 0 else "#ef5350"
+                            _pin_sor_clr = "#ffb300" if _sw_fb_rate >= 30 else "#90a4ae"
+                            st.markdown(
+                                f'<div style="display:flex;align-items:center;gap:6px;'
+                                f'flex-wrap:wrap;margin-bottom:10px;padding:6px 10px;'
+                                f'background:rgba(144,202,249,0.05);'
+                                f'border:1px solid rgba(144,202,249,0.15);border-radius:6px;">'
+                                f'<span style="font-size:9px;font-weight:700;color:#90caf9;'
+                                f'letter-spacing:0.7px;text-transform:uppercase;'
+                                f'margin-right:4px;">📌 R-Stats ({_sw_r_label})</span>'
+                                f'<span style="font-size:11px;font-weight:700;color:{_pin_sor_clr};'
+                                f'padding:2px 8px;background:rgba(255,179,0,0.08);'
+                                f'border-radius:4px;border:1px solid rgba(255,179,0,0.18);">'
+                                f'SOR {_sw_fb_rate}%</span>'
+                                f'<span style="font-size:11px;font-weight:700;color:#66bb6a;'
+                                f'padding:2px 8px;background:rgba(76,175,80,0.08);'
+                                f'border-radius:4px;border:1px solid rgba(76,175,80,0.18);">'
+                                f'Avg W +{_sw_avg_win_r}R</span>'
+                                f'<span style="font-size:11px;font-weight:700;color:#ef5350;'
+                                f'padding:2px 8px;background:rgba(239,83,80,0.08);'
+                                f'border-radius:4px;border:1px solid rgba(239,83,80,0.18);">'
+                                f'Avg L {_sw_avg_loss_r}R</span>'
+                                f'<span style="font-size:11px;font-weight:700;color:{_pin_exp_clr};'
+                                f'padding:2px 8px;background:rgba(144,164,174,0.06);'
+                                f'border-radius:4px;border:1px solid rgba(144,164,174,0.15);">'
+                                f'E {_sw_exp_r:+.3f}R</span>'
+                                f'<span style="font-size:11px;font-weight:700;color:#ef5350;'
+                                f'padding:2px 8px;background:rgba(239,83,80,0.06);'
+                                f'border-radius:4px;border:1px solid rgba(239,83,80,0.12);">'
+                                f'MDD {abs(_sw_max_dd_r)}R</span>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
                         st.markdown(
                             '<div style="font-size:12px;font-weight:700;color:#90caf9;'
                             'margin-bottom:6px;">🔍 Drill into trades at a TCS cutoff</div>',
