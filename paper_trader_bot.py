@@ -2486,14 +2486,14 @@ def _recalc_eod_pnl_r_recent_backtest(lookback_days: int | None = None) -> dict:
     if not rows:
         scope = f"last {lookback_days} days" if lookback_days is not None else "all-time"
         log.info(
-            "Nightly close-price catch-up (backtest): no backtest_sim_runs rows need eod_pnl_r "
+            "EOD close-price catch-up (backtest): no backtest_sim_runs rows need eod_pnl_r "
             "recalculation (%s).", scope
         )
         return {"written": 0, "skipped": 0}
 
     sweep_scope = f"last {lookback_days} days" if lookback_days is not None else "all-time"
     log.info(
-        f"Nightly eod_pnl_r recalc (backtest, {sweep_scope}): {len(rows)} backtest_sim_runs row(s) have "
+        f"EOD eod_pnl_r recalc (backtest, {sweep_scope}): {len(rows)} backtest_sim_runs row(s) have "
         f"close_price but NULL eod_pnl_r — computing now…"
     )
 
@@ -2540,7 +2540,7 @@ def _recalc_eod_pnl_r_recent_backtest(lookback_days: int | None = None) -> dict:
             skipped += 1
 
     log.info(
-        f"Nightly eod_pnl_r recalc (backtest) done — {written} written, {skipped} skipped."
+        f"EOD eod_pnl_r recalc (backtest) done — {written} written, {skipped} skipped."
     )
     return {"written": written, "skipped": skipped}
 
