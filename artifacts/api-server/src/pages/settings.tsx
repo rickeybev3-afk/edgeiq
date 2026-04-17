@@ -18,6 +18,30 @@ interface CredentialAlertsState {
   saved: boolean;
 }
 
+interface BackfillHealth {
+  available: boolean;
+  loading: boolean;
+  completed_at?: string;
+  rows_saved?: number;
+  no_bars?: number;
+  errors?: number;
+  error?: string;
+}
+
+function formatRelativeTime(isoTimestamp: string): string {
+  const t = new Date(isoTimestamp);
+  if (isNaN(t.getTime())) return isoTimestamp;
+  const diffMs = Date.now() - t.getTime();
+  const diffSec = Math.round(diffMs / 1000);
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDays = Math.round(diffHr / 24);
+  return `${diffDays}d ago`;
+}
+
 export default function Settings() {
   const [state, setState] = useState<TradingModeState>({
     mode: "paper",
@@ -89,13 +113,36 @@ export default function Settings() {
     };
   }, []);
 
+  const [backfillHealth, setBackfillHealth] = useState<BackfillHealth>({ available: false, loading: true });
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetch("/api/backfill-health")
+        .then((r) => r.json())
+        .then((data) => {
+          if (!cancelled) {
+            setBackfillHealth({ loading: false, ...data });
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setBackfillHealth({ available: false, loading: false, error: "Could not reach server." });
+          }
+        });
+    };
+    poll();
+    const id = setInterval(poll, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   const handledHashRef = useRef<string | null>(null);
 
   useEffect(() => {
     const hash = window.location.hash;
     if (!hash || handledHashRef.current === hash) return;
 
-    const knownHashes = ["#trading-mode", "#credential-alerts"];
+    const knownHashes = ["#trading-mode", "#credential-alerts", "#backfill-health"];
     if (!knownHashes.includes(hash)) return;
 
     const el = document.getElementById(hash.slice(1));
@@ -109,7 +156,7 @@ export default function Settings() {
     }, 1500);
 
     return () => clearTimeout(timerId);
-  }, [state.loading, credAlerts.loading]);
+  }, [state.loading, credAlerts.loading, backfillHealth.loading]);
 
   async function handleChange(newMode: TradingMode) {
     setState((s) => ({ ...s, saving: true, error: null, saved: false }));
@@ -243,6 +290,7 @@ export default function Settings() {
             borderRadius: "10px",
             padding: "24px",
             scrollMarginTop: "24px",
+            marginBottom: "20px",
           }}
         >
           <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
@@ -295,6 +343,80 @@ export default function Settings() {
             <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
               ⚠ {credAlerts.error}
             </p>
+          )}
+        </section>
+
+        <section
+          id="backfill-health"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "24px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Backfill Health
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            Summary of the most recent context-levels backfill run. Refreshes every minute.
+          </p>
+
+          {backfillHealth.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : !backfillHealth.available ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "14px 16px",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #2d3748",
+                borderRadius: "8px",
+                color: "#64748b",
+                fontSize: "13px",
+              }}
+            >
+              <span style={{ fontSize: "16px" }}>—</span>
+              No backfill run recorded yet. Stats will appear here after the next run.
+            </div>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: "12px",
+                  marginBottom: "14px",
+                }}
+              >
+                <BackfillStat
+                  label="Rows saved"
+                  value={backfillHealth.rows_saved ?? 0}
+                  color="#4ade80"
+                />
+                <BackfillStat
+                  label="No-bars"
+                  value={backfillHealth.no_bars ?? 0}
+                  color="#fbbf24"
+                  warn={(backfillHealth.no_bars ?? 0) > 0}
+                />
+                <BackfillStat
+                  label="Errors"
+                  value={backfillHealth.errors ?? 0}
+                  color={(backfillHealth.errors ?? 0) > 0 ? "#f87171" : "#4ade80"}
+                  warn={(backfillHealth.errors ?? 0) > 0}
+                />
+              </div>
+              {backfillHealth.completed_at && (
+                <p style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", margin: 0 }}>
+                  Completed {formatRelativeTime(backfillHealth.completed_at)} &nbsp;·&nbsp;{" "}
+                  {new Date(backfillHealth.completed_at).toLocaleString()}
+                </p>
+              )}
+            </div>
           )}
         </section>
       </div>
@@ -424,5 +546,36 @@ function ModeButton({
         {description}
       </p>
     </button>
+  );
+}
+
+function BackfillStat({
+  label,
+  value,
+  color,
+  warn = false,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  warn?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        background: warn ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.03)",
+        border: `1px solid ${warn ? "#7f1d1d" : "#2d3748"}`,
+        borderRadius: "8px",
+        padding: "14px 16px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: "24px", fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>
+        {value.toLocaleString()}
+      </div>
+      <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", letterSpacing: "0.03em" }}>
+        {label}
+      </div>
+    </div>
   );
 }

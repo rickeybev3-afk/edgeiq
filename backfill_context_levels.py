@@ -404,5 +404,19 @@ def main():
     log.info('=' * 60)
     log.info(f'COMPLETE — {total_saved} rows saved, {total_no_bars} no-bars, {total_errors} errors')
 
+    import json as _json
+    import datetime as _dt
+    _health = {
+        'completed_at': _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        'rows_saved': total_saved,
+        'no_bars': total_no_bars,
+        'errors': total_errors,
+    }
+    try:
+        with open('/tmp/backfill_health.json', 'w') as _hf:
+            _json.dump(_health, _hf)
+    except Exception as _e:
+        log.warning(f'Could not write backfill health file: {_e}')
+
 if __name__ == '__main__':
     main()

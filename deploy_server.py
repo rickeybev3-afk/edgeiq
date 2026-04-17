@@ -378,6 +378,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/db-events":
             self._db_events_get()
             return
+        if path == "/api/backfill-health":
+            self._backfill_health()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -445,6 +448,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         status = 200 if data.get("ok") else 503
         body = json.dumps(data).encode()
         self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _backfill_health(self):
+        """Return the latest backfill run stats written by backfill_context_levels.py.
+
+        The backfill script writes /tmp/backfill_health.json with keys:
+          completed_at, rows_saved, no_bars, errors
+        If the file is absent the endpoint returns {"available": false}.
+        """
+        backfill_path = "/tmp/backfill_health.json"
+        try:
+            with open(backfill_path) as f:
+                data = json.load(f)
+            data["available"] = True
+        except FileNotFoundError:
+            data = {"available": False}
+        except Exception as e:
+            data = {"available": False, "error": str(e)}
+        body = json.dumps(data).encode()
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
