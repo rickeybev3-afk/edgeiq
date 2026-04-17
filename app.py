@@ -20209,6 +20209,72 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     )
     st.dataframe(_pt_tkr_df, use_container_width=True, hide_index=True)
 
+    # ── EOD vs Tiered Avg R — mini grouped bar chart ─────────────────────────
+    _bar_rows = [
+        r for r in _pt_tkr_rows
+        if r.get("EOD Avg R") != "—" or r.get("Tiered Avg R") != "—"
+    ]
+    if _bar_rows:
+        _bar_tickers   = [r["Ticker"] for r in _bar_rows]
+        _bar_eod_vals  = [r["EOD Avg R"]    if r["EOD Avg R"]    != "—" else None for r in _bar_rows]
+        _bar_tier_vals = [r["Tiered Avg R"] if r["Tiered Avg R"] != "—" else None for r in _bar_rows]
+
+        _bar_fig = go.Figure()
+        _bar_fig.add_trace(go.Bar(
+            name="EOD Avg R",
+            x=_bar_tickers,
+            y=_bar_eod_vals,
+            marker_color="#81c784",
+            text=[f"{v:.2f}R" if v is not None else "" for v in _bar_eod_vals],
+            textposition="outside",
+            textfont=dict(size=10, color="#81c784"),
+        ))
+        _bar_fig.add_trace(go.Bar(
+            name="Tiered Avg R",
+            x=_bar_tickers,
+            y=_bar_tier_vals,
+            marker_color="#ffb74d",
+            text=[f"{v:.2f}R" if v is not None else "" for v in _bar_tier_vals],
+            textposition="outside",
+            textfont=dict(size=10, color="#ffb74d"),
+        ))
+        _bar_fig.add_hline(y=0, line_dash="dot", line_color="#37474f", line_width=1)
+        _bar_fig.update_layout(
+            barmode="group",
+            paper_bgcolor="#020813",
+            plot_bgcolor="#020813",
+            font=dict(color="#cfd8dc", size=11),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="left",
+                x=0,
+                font=dict(size=11),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            xaxis=dict(
+                tickfont=dict(size=11, color="#90a4ae"),
+                gridcolor="#0d1b2e",
+                showgrid=False,
+            ),
+            yaxis=dict(
+                title="Avg R",
+                tickfont=dict(size=10, color="#546e7a"),
+                gridcolor="#0d1b2e",
+                zeroline=False,
+            ),
+            margin=dict(t=40, b=40, l=50, r=20),
+            height=280,
+        )
+        st.markdown(
+            '<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+            'letter-spacing:1.5px; margin-top:14px; margin-bottom:4px; font-weight:700; '
+            'font-family:monospace;">📊 EOD vs Tiered Avg R — per ticker</div>',
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(_bar_fig, use_container_width=True)
+
     # ── EOD Hold Performance — Morning / Intraday split
     if "eod_pnl_r" in _pt_df.columns and _pt_df["eod_pnl_r"].notna().any():
         st.markdown(
