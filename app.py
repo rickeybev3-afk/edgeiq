@@ -12676,13 +12676,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 # Per-ticker keys so these don't collide with the MC-section widgets
                                 _sw_eq_key   = f"opt_both_equity_{_tk_name}"
                                 _sw_risk_key = f"opt_both_risk_{_tk_name}"
+                                # Separate non-widget memory keys survive chart-view switches
+                                # (Streamlit may drop widget keys when the widget isn't rendered)
+                                _sw_eq_mem_key   = f"opt_both_equity_mem_{_tk_name}"
+                                _sw_risk_mem_key = f"opt_both_risk_mem_{_tk_name}"
                                 if _sw_eq_key not in st.session_state:
-                                    st.session_state[_sw_eq_key] = float(
-                                        st.session_state.get("bt_mc_equity", 10_000)
+                                    st.session_state[_sw_eq_key] = st.session_state.get(
+                                        _sw_eq_mem_key,
+                                        float(st.session_state.get("bt_mc_equity", 10_000)),
                                     )
                                 if _sw_risk_key not in st.session_state:
-                                    st.session_state[_sw_risk_key] = float(
-                                        st.session_state.get("bt_mc_risk", 2.0)
+                                    st.session_state[_sw_risk_key] = st.session_state.get(
+                                        _sw_risk_mem_key,
+                                        float(st.session_state.get("bt_mc_risk", 2.0)),
                                     )
                                 _sw_ctrl_cols = st.columns([1, 1, 2])
                                 with _sw_ctrl_cols[0]:
@@ -12706,6 +12712,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                             "Defaults to the Risk per Trade set in Backtest → Advanced settings."
                                         ),
                                     ))
+                                # Persist values in non-widget keys so they survive view switches
+                                st.session_state[_sw_eq_mem_key]   = _sw_start_eq
+                                st.session_state[_sw_risk_mem_key] = _sw_risk_pct
                                 with _sw_ctrl_cols[2]:
                                     st.markdown(
                                         f'<div style="margin-top:26px; font-size:12px; color:#78909c; line-height:1.5;">'
