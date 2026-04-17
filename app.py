@@ -48,6 +48,8 @@ from backend import (
     compute_portfolio_metrics,
     run_pending_migrations,
     _ALL_PENDING_MIGRATIONS,
+    get_ladder_pnl_summary,
+    refresh_mv_tiered_pnl_summary,
     _startup_errors,
     _SECRET_CATALOG,
     _secret_statuses,
@@ -5524,6 +5526,14 @@ with st.sidebar:
                 st.info(f"All {_mig_res['already_exist']} column(s) already exist — nothing to do.")
             else:
                 st.error(f"Migration errors: {_mig_res['errors']}")
+        st.divider()
+        st.caption("Refresh the Ladder P&L summary cache (mv_tiered_pnl_summary).")
+        if st.button("🪜 Refresh Ladder Cache", key="refresh_ladder_cache_btn"):
+            _rv_res = refresh_mv_tiered_pnl_summary()
+            if _rv_res["success"]:
+                st.success("✅ " + _rv_res["message"])
+            else:
+                st.warning(_rv_res["message"])
         with st.expander("📋 View SQL", expanded=False):
             st.code(_ALL_PENDING_MIGRATIONS, language="sql")
 

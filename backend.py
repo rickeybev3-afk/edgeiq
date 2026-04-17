@@ -7817,6 +7817,11 @@ def run_pending_migrations() -> dict:
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS vwap_at_ib REAL",
         # Data quality flag — 'ok' when intraday bars were available, 'no_bars' when not
         "ALTER TABLE backtest_context_levels ADD COLUMN IF NOT EXISTS data_quality TEXT DEFAULT 'ok'",
+        # Performance index for Ladder tab — speeds up filtering by outcome + tiered_pnl_r + date
+        (
+            "CREATE INDEX IF NOT EXISTS idx_bsr_outcome_tiered_date "
+            "ON backtest_sim_runs(actual_outcome, tiered_pnl_r, sim_date)"
+        ),
     ]
 
     ran = 0
@@ -7888,6 +7893,37 @@ ALTER TABLE paper_trades       ADD COLUMN IF NOT EXISTS close_price NUMERIC;
 -- 5. Tiered P&L columns for backtest_sim_runs (50/25/25 ladder backfill):
 ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS tiered_pnl_r NUMERIC;
 ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS eod_pnl_r NUMERIC;
+
+-- 6. Performance index for the Ladder tab (speeds up filtered reads on 16 k+ rows):
+CREATE INDEX IF NOT EXISTS idx_bsr_outcome_tiered_date
+    ON backtest_sim_runs(actual_outcome, tiered_pnl_r, sim_date);
+
+-- 7. Materialised summary view — refreshed nightly by refresh_mv_tiered_pnl_summary():
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_tiered_pnl_summary AS
+SELECT
+    user_id,
+    predicted                         AS screener,
+    scan_type,
+    date_trunc('month', sim_date::date)::date AS month,
+    COUNT(*)                          AS total_trades,
+    COUNT(*) FILTER (WHERE tiered_pnl_r > 0)  AS wins,
+    COUNT(*) FILTER (WHERE tiered_pnl_r <= 0) AS losses,
+    ROUND(AVG(tiered_pnl_r)::numeric, 4)      AS avg_tiered_r,
+    ROUND(SUM(tiered_pnl_r)::numeric, 4)      AS sum_tiered_r,
+    ROUND(AVG(eod_pnl_r)::numeric, 4)         AS avg_eod_r,
+    ROUND(SUM(eod_pnl_r)::numeric, 4)         AS sum_eod_r,
+    ROUND(AVG(pnl_r_sim)::numeric, 4)         AS avg_sim_r,
+    ROUND(
+        COUNT(*) FILTER (WHERE tiered_pnl_r > 0)::numeric
+        / NULLIF(COUNT(*), 0) * 100, 2
+    )                                          AS win_rate_pct
+FROM backtest_sim_runs
+WHERE tiered_pnl_r IS NOT NULL
+  AND tiered_pnl_r <> -9999
+GROUP BY user_id, screener, scan_type, month;
+
+CREATE UNIQUE INDEX IF NOT EXISTS mv_tiered_pnl_summary_uidx
+    ON mv_tiered_pnl_summary(user_id, screener, scan_type, month);
 """
 
 
@@ -8498,8 +8534,20 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
         print(f"Backtest save error: {e}")
 
 
+_BACKTEST_SIM_COLS = (
+    "id,user_id,sim_date,ticker,open_price,close_price,ib_low,ib_high,"
+    "tcs,predicted,actual_outcome,win_loss,follow_thru_pct,false_break_up,"
+    "false_break_down,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,pnl_pct_sim,"
+    "eod_pnl_r,tiered_pnl_r"
+)
+
+
 def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
-    """Load saved backtest runs from Supabase (most recent first, up to 1000 rows).
+    """Load saved backtest runs from Supabase (most recent first, up to 5000 rows).
+
+    Only the columns consumed by the UI are fetched — this avoids transferring
+    wide SELECT * payloads over the wire and is significantly faster with
+    16 000+ rows in the table.
 
     Rows whose tiered_pnl_r equals TIERED_PNL_SENTINEL (-9999) are permanently
     unfillable (no Alpaca bars available).  The sentinel is replaced with NaN so
@@ -8509,7 +8557,7 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
     if not supabase:
         return pd.DataFrame()
     try:
-        q = supabase.table("backtest_sim_runs").select("*")
+        q = supabase.table("backtest_sim_runs").select(_BACKTEST_SIM_COLS)
         if user_id:
             q = q.eq("user_id", user_id)
         data = q.order("sim_date", desc=True).limit(5000).execute().data
@@ -8522,6 +8570,92 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
     except Exception as e:
         print(f"Backtest load error: {e}")
         return pd.DataFrame()
+
+
+def get_ladder_pnl_summary(
+    user_id: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> "pd.DataFrame":
+    """Return pre-aggregated Ladder P&L summary stats from the materialised view.
+
+    Reads *mv_tiered_pnl_summary* (created via the SQL in _ALL_PENDING_MIGRATIONS)
+    which stores per-screener/scan_type/month roll-ups.  Falling back to an
+    in-process aggregate from backtest_sim_runs if the view is unavailable.
+
+    Parameters
+    ----------
+    user_id    : scope to a single user; empty string = all users.
+    start_date : ISO date string (inclusive); empty = no lower bound.
+    end_date   : ISO date string (inclusive); empty = no upper bound.
+
+    Returns a DataFrame with columns:
+        screener, scan_type, month, total_trades, wins, losses,
+        avg_tiered_r, sum_tiered_r, avg_eod_r, sum_eod_r, win_rate_pct
+    """
+    if not supabase:
+        return pd.DataFrame()
+
+    try:
+        q = supabase.table("mv_tiered_pnl_summary").select(
+            "screener,scan_type,month,total_trades,wins,losses,"
+            "avg_tiered_r,sum_tiered_r,avg_eod_r,sum_eod_r,win_rate_pct"
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        if start_date:
+            q = q.gte("month", start_date)
+        if end_date:
+            q = q.lte("month", end_date)
+        data = q.order("month", desc=True).execute().data
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        err = str(e)
+        if "relation" in err.lower() and "does not exist" in err.lower():
+            print(
+                "get_ladder_pnl_summary: mv_tiered_pnl_summary not yet created. "
+                "Run the SQL in _ALL_PENDING_MIGRATIONS in the Supabase SQL Editor."
+            )
+        else:
+            print(f"get_ladder_pnl_summary error: {e}")
+        return pd.DataFrame()
+
+
+def refresh_mv_tiered_pnl_summary() -> dict:
+    """Trigger a REFRESH MATERIALIZED VIEW CONCURRENTLY on mv_tiered_pnl_summary.
+
+    Designed to be called from a nightly scheduled job or manually from the
+    admin panel.  Uses the exec_sql RPC so no direct DB connection is needed.
+
+    Returns dict with keys: success (bool), message (str).
+    """
+    if not supabase:
+        return {"success": False, "message": "Supabase not connected"}
+    try:
+        supabase.rpc(
+            "exec_sql",
+            {"query": "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_tiered_pnl_summary"},
+        ).execute()
+        return {"success": True, "message": "mv_tiered_pnl_summary refreshed successfully"}
+    except Exception as e:
+        err = str(e)
+        if "PGRST202" in err:
+            return {
+                "success": False,
+                "message": (
+                    "exec_sql function not found — run CREATE FUNCTION in the "
+                    "Supabase SQL Editor first (see _EXEC_SQL_FUNCTION constant)."
+                ),
+            }
+        if "relation" in err.lower() and "does not exist" in err.lower():
+            return {
+                "success": False,
+                "message": (
+                    "mv_tiered_pnl_summary does not exist yet. "
+                    "Run the SQL in _ALL_PENDING_MIGRATIONS to create it."
+                ),
+            }
+        return {"success": False, "message": f"Refresh failed: {err}"}
 
 
 def count_backtest_tiered_pending(user_id: str = "") -> int:
