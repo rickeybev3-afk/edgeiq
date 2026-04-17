@@ -9706,22 +9706,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if st.query_params.get("rp_log_wl") != _rp_log_wl_filter:
                                 st.query_params["rp_log_wl"] = _rp_log_wl_filter
                         with _rp_log_fcol3:
+                            if "rp_log_show_neutral" not in st.session_state:
+                                st.session_state["rp_log_show_neutral"] = (
+                                    st.query_params.get("rp_log_neutral", "1") != "0"
+                                )
                             _rp_log_show_neutral = st.checkbox(
                                 "Show neutral rows",
-                                value=True,
                                 key="rp_log_show_neutral",
                             )
+                            if st.query_params.get("rp_log_neutral") != ("1" if _rp_log_show_neutral else "0"):
+                                st.query_params["rp_log_neutral"] = "1" if _rp_log_show_neutral else "0"
 
                         if _rp_bot_mode:
                             _rp_marg_label = (
                                 f"Show only marginal entries (TCS ≤ Floor + 5)"
                                 f" — {_rp_marginal_count_all} marginal"
                             )
+                            if "rp_log_only_marginal" not in st.session_state:
+                                st.session_state["rp_log_only_marginal"] = (
+                                    st.query_params.get("rp_log_marginal", "0") == "1"
+                                )
                             _rp_log_only_marginal = st.checkbox(
                                 _rp_marg_label,
-                                value=False,
                                 key="rp_log_only_marginal",
                             )
+                            if st.query_params.get("rp_log_marginal") != ("1" if _rp_log_only_marginal else "0"):
+                                st.query_params["rp_log_marginal"] = "1" if _rp_log_only_marginal else "0"
                             # Sub-caption: win/loss breakdown for marginal trades
                             if _rp_log_only_marginal and _rp_marginal_count_all > 0:
                                 _marg_w_pct = round(_rp_marginal_wins_all   / _rp_marginal_count_all * 100, 1)
