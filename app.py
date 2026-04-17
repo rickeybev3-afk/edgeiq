@@ -278,6 +278,30 @@ def _render_setup_checklist() -> None:
                 _st.rerun()
         _st.markdown("---")
 
+        if "_runtime_recheck_requested" not in _st.session_state:
+            _st.session_state["_runtime_recheck_requested"] = False
+        if _st.session_state.get("_runtime_recheck_requested"):
+            _st.toast("Credential re-check requested — results will appear momentarily.", icon="🔑")
+            _st.session_state["_runtime_recheck_requested"] = False
+
+        _col_rt_caption, _col_rt_btn = _st.columns([3, 1])
+        with _col_rt_caption:
+            _st.caption(
+                "**Force a live credential validation** against Alpaca & Supabase right now, "
+                "without waiting for the 5-minute background cycle."
+            )
+        with _col_rt_btn:
+            if _st.button(
+                "🔑 Re-check now",
+                key="_recheck_runtime_creds_btn",
+                use_container_width=True,
+                help="Immediately re-validate Alpaca and Supabase credentials",
+            ):
+                check_credentials_runtime(force=True)
+                _st.session_state["_runtime_recheck_requested"] = True
+                _st.rerun()
+        _st.markdown("---")
+
         for _sc_item in _SECRET_CATALOG:
             _sc_name   = _sc_item["name"]
             _sc_status = _secret_statuses.get(_sc_name, "missing")
