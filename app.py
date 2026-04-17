@@ -14901,6 +14901,96 @@ ALTER TABLE backtest_sim_runs
                     )
                     st.altair_chart(_cmp_chart, use_container_width=True)
 
+                # ── Row 4b — Morning vs Intraday breakdown ────────────────────
+                st.markdown(
+                    '<div style="font-size:11px;color:#546e7a;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-top:14px;margin-bottom:6px;">'
+                    'Tiered vs EOD Breakdown by Scan Type</div>',
+                    unsafe_allow_html=True,
+                )
+                _bts_scan_cmp_cols = st.columns(2)
+                for _bts_sc_idx, _bts_sc_name in enumerate(["morning", "intraday"]):
+                    _bts_sc_df = (
+                        _bts_df[_bts_df["scan_type"] == _bts_sc_name].copy()
+                        if "scan_type" in _bts_df.columns
+                        else pd.DataFrame()
+                    )
+                    _bts_sc_both = (
+                        _bts_sc_df[
+                            _bts_sc_df["eod_pnl_r"].notna() & _bts_sc_df["tiered_pnl_r"].notna()
+                        ].copy()
+                        if not _bts_sc_df.empty
+                        and "eod_pnl_r" in _bts_sc_df.columns
+                        and "tiered_pnl_r" in _bts_sc_df.columns
+                        else pd.DataFrame()
+                    )
+                    _icon = "🌅" if _bts_sc_name == "morning" else "⚡"
+                    with _bts_scan_cmp_cols[_bts_sc_idx]:
+                        if _bts_sc_both.empty:
+                            st.markdown(
+                                f'<div style="background:#020813;border:1px solid #1a2744;'
+                                f'border-radius:8px;padding:14px 18px;">'
+                                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;'
+                                f'letter-spacing:1.5px;font-weight:700;margin-bottom:8px;">'
+                                f'{_icon} {_bts_sc_name.capitalize()}</div>'
+                                f'<div style="font-size:12px;color:#37474f;">No matched rows</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            _bts_sc_avg_eod    = _bts_sc_both["eod_pnl_r"].astype(float).mean()
+                            _bts_sc_avg_tiered = _bts_sc_both["tiered_pnl_r"].astype(float).mean()
+                            _bts_sc_n          = len(_bts_sc_both)
+                            _bts_sc_eod_sign   = "+" if _bts_sc_avg_eod >= 0 else ""
+                            _bts_sc_tie_sign   = "+" if _bts_sc_avg_tiered >= 0 else ""
+                            _bts_sc_eod_clr    = "#4caf50" if _bts_sc_avg_eod >= 0 else "#ef5350"
+                            _bts_sc_tie_clr    = "#4caf50" if _bts_sc_avg_tiered >= 0 else "#ef5350"
+                            _bts_sc_diff       = _bts_sc_avg_tiered - _bts_sc_avg_eod
+                            if _bts_sc_avg_eod != 0:
+                                _bts_sc_pct     = _bts_sc_diff / abs(_bts_sc_avg_eod) * 100
+                                _bts_sc_pct_str = f'{("+" if _bts_sc_pct >= 0 else "")}{_bts_sc_pct:.1f}% vs EOD'
+                            else:
+                                _bts_sc_pct_str = "N/A (EOD avg = 0)"
+                            if abs(_bts_sc_diff) < 0.001:
+                                _bts_sc_verdict     = "Strategies tied"
+                                _bts_sc_verdict_clr = "#90a4ae"
+                            elif _bts_sc_diff > 0:
+                                _bts_sc_verdict     = f'Tiered leads by {_bts_sc_diff:+.3f}R/trade'
+                                _bts_sc_verdict_clr = "#ffb74d"
+                            else:
+                                _bts_sc_verdict     = f'EOD leads by {abs(_bts_sc_diff):.3f}R/trade'
+                                _bts_sc_verdict_clr = "#81c784"
+                            st.markdown(
+                                f'<div style="background:#020813;border:1px solid #1a2744;'
+                                f'border-radius:8px;padding:14px 18px;">'
+                                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;'
+                                f'letter-spacing:1.5px;font-weight:700;margin-bottom:10px;">'
+                                f'{_icon} {_bts_sc_name.capitalize()} '
+                                f'<span style="font-size:9px;font-weight:400;color:#37474f;">'
+                                f'({_bts_sc_n} matched trades)</span></div>'
+                                f'<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">'
+                                f'<div>'
+                                f'<div style="font-size:9px;color:#81c784;text-transform:uppercase;'
+                                f'letter-spacing:1px;margin-bottom:2px;">📅 EOD Hold</div>'
+                                f'<div style="font-size:20px;font-weight:800;color:{_bts_sc_eod_clr};'
+                                f'font-family:monospace;">{_bts_sc_eod_sign}{_bts_sc_avg_eod:.3f}R</div>'
+                                f'</div>'
+                                f'<div style="font-size:16px;color:#37474f;align-self:center;">vs</div>'
+                                f'<div>'
+                                f'<div style="font-size:9px;color:#ffb74d;text-transform:uppercase;'
+                                f'letter-spacing:1px;margin-bottom:2px;">🪜 Tiered</div>'
+                                f'<div style="font-size:20px;font-weight:800;color:{_bts_sc_tie_clr};'
+                                f'font-family:monospace;">{_bts_sc_tie_sign}{_bts_sc_avg_tiered:.3f}R</div>'
+                                f'</div>'
+                                f'</div>'
+                                f'<div style="font-size:11px;font-weight:700;color:{_bts_sc_verdict_clr};">'
+                                f'{_bts_sc_verdict}</div>'
+                                f'<div style="font-size:10px;color:#ffb74d;margin-top:2px;">'
+                                f'{_bts_sc_pct_str}</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
