@@ -11443,6 +11443,60 @@ def render_performance_tab():
             f'</div>', unsafe_allow_html=True
         )
 
+    # ── Trades/Day pace row ─────────────────────────────────────────────────────
+    _TARGET_PER_DAY  = 0.81   # best-only target (P3→P1→P4→P2 priority, backtest)
+    _TARGET_PER_YEAR = 202    # 0.81 × 250 trading days
+
+    # Count actual trading days elapsed since first settled trade
+    _td_first = None
+    if not _pt_df.empty and "trade_date" in _pt_df.columns:
+        _td_dates = _pt_df["trade_date"].dropna().astype(str)
+        if not _td_dates.empty:
+            try:
+                _td_first = pd.to_datetime(_td_dates).min().date()
+            except Exception:
+                _td_first = None
+
+    if _td_first:
+        import pandas as _pd_biz
+        _td_today = datetime.now(EASTERN).date()
+        _td_bdays = max(1, len(_pd_biz.bdate_range(str(_td_first), str(_td_today))))
+        _trades_per_day  = round(_total_trades / _td_bdays, 2) if _td_bdays else 0.0
+        _annual_pace     = round(_trades_per_day * 250)
+        _pace_color      = "#66bb6a" if _trades_per_day >= _TARGET_PER_DAY * 0.7 else (
+                           "#ef6c00"  if _trades_per_day >= _TARGET_PER_DAY * 0.4 else "#90a4ae")
+        _pace_label      = (
+            f"{_total_trades} trades / {_td_bdays} trading days"
+        )
+        _pace_sub = f"~{_annual_pace}/yr pace  ·  target {_TARGET_PER_DAY}/day ({_TARGET_PER_YEAR}/yr)"
+    else:
+        _trades_per_day  = 0.0
+        _annual_pace     = 0
+        _pace_color      = "#90a4ae"
+        _pace_label      = "no trades yet"
+        _pace_sub        = f"target {_TARGET_PER_DAY}/day ({_TARGET_PER_YEAR}/yr)"
+
+    st.markdown(
+        f'<div style="background:#151f2e;border:1px solid #1e2a3a;border-radius:8px;'
+        f'padding:10px 18px;margin-top:10px;display:flex;align-items:center;gap:24px;">'
+        f'<div style="min-width:140px;">'
+        f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Avg Trades / Day</div>'
+        f'<div style="font-size:28px;font-weight:700;color:{_pace_color};line-height:1.1;">'
+        f'{_trades_per_day:.2f}<span style="font-size:14px;color:#546e7a;font-weight:400;"> /day</span></div>'
+        f'</div>'
+        f'<div style="flex:1;">'
+        f'<div style="font-size:13px;color:#cfd8dc;">{_pace_label}</div>'
+        f'<div style="font-size:11px;color:#546e7a;margin-top:2px;">{_pace_sub}</div>'
+        f'</div>'
+        f'<div style="text-align:right;min-width:100px;">'
+        f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Annual Pace</div>'
+        f'<div style="font-size:22px;font-weight:700;color:{_pace_color};">{_annual_pace}'
+        f'<span style="font-size:12px;color:#546e7a;font-weight:400;">/yr</span></div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
