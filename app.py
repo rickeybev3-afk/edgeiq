@@ -7988,19 +7988,47 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 return []
 
         _RP_SIZING_OPTIONS = ["📊 % Risk (custom)", "🤖 Match Live Bot (100 shares flat)"]
+        import streamlit.components.v1 as _cmp_rp_filters
 
-        # ── Restore sizing mode from localStorage (cross-session) ──────────────
-        import streamlit.components.v1 as _cmp_sizing
-        _cmp_sizing.html("""
+        # ── Restore sizing mode + all numeric replay filters from localStorage ────
+        # IMPORTANT: this block MUST appear before the radio widget and any
+        # localStorage writes below. By appearing first in the DOM, the browser
+        # executes this redirect JS before the localStorage-write snippets run,
+        # ensuring that a saved rp_sizing_mode (or rp_equity) is never overwritten
+        # by the default value before the restore redirect has fired.
+        # Sizing mode (rp_sizing) is included here — alongside equity and all other
+        # filters — so that ONE single redirect carries every param at once.  The
+        # old two-block design (a separate sizing-mode redirect + this block) could
+        # trigger two sequential redirects; on the first redirect rp_equity wasn't
+        # yet in the URL, causing equity to appear to reset to its default of 10 000.
+        _cmp_rp_filters.html("""
 <script>
 (function() {
-    var _LS_KEY = 'rp_sizing_mode';
     var url = new URL(window.parent.location.href);
-    if (url.searchParams.has('rp_sizing')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) return;
-    url.searchParams.set('rp_sizing', saved);
-    window.parent.location.replace(url.toString());
+    var params = [
+        ['rp_sizing',        'rp_sizing_mode'],
+        ['rp_min_tcs',       'rp_min_tcs_slider'],
+        ['rp_min_gap',       'rp_min_gap'],
+        ['rp_min_gap_vs_ib', 'rp_min_gap_vs_ib'],
+        ['rp_min_ft',        'rp_min_ft'],
+        ['rp_start_date',    'rp_start_date'],
+        ['rp_end_date',      'rp_end_date'],
+        ['rp_tcs_floor',     'rp_tcs_floor_filter'],
+        ['rp_tcs_offset',    'rp_tcs_offset'],
+        ['rp_pos_size',      'rp_pos_size'],
+        ['rp_compound',      'rp_compound'],
+        ['rp_equity',        'rp_equity'],
+    ];
+    var changed = false;
+    params.forEach(function(pair) {
+        var qp = pair[0], lsKey = pair[1];
+        if (url.searchParams.has(qp)) return;
+        var saved = localStorage.getItem(lsKey);
+        if (saved === null) return;
+        url.searchParams.set(qp, saved);
+        changed = true;
+    });
+    if (changed) window.parent.location.replace(url.toString());
 })();
 </script>
 """, height=0)
@@ -8031,45 +8059,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _qp_sizing_cur = st.query_params.get("rp_sizing")
         if _qp_sizing_cur != _rp_mode:
             st.query_params["rp_sizing"] = _rp_mode
-        _cmp_sizing.html(
+        _cmp_rp_filters.html(
             f"<script>localStorage.setItem('rp_sizing_mode', {repr(_rp_mode)});</script>",
             height=0,
         )
 
         _rp_bot_mode = "bot" in _rp_mode.lower()
-
-        # ── Restore numeric replay filters from localStorage (cross-session) ─────
-        import streamlit.components.v1 as _cmp_rp_filters
-        _cmp_rp_filters.html("""
-<script>
-(function() {
-    var url = new URL(window.parent.location.href);
-    var params = [
-        ['rp_min_tcs', 'rp_min_tcs_slider'],
-        ['rp_min_gap',       'rp_min_gap'],
-        ['rp_min_gap_vs_ib', 'rp_min_gap_vs_ib'],
-        ['rp_min_ft',        'rp_min_ft'],
-        ['rp_start_date',    'rp_start_date'],
-        ['rp_end_date',      'rp_end_date'],
-        ['rp_tcs_floor',     'rp_tcs_floor_filter'],
-        ['rp_tcs_offset',    'rp_tcs_offset'],
-        ['rp_pos_size',      'rp_pos_size'],
-        ['rp_compound',      'rp_compound'],
-        ['rp_equity',        'rp_equity'],
-    ];
-    var changed = false;
-    params.forEach(function(pair) {
-        var qp = pair[0], lsKey = pair[1];
-        if (url.searchParams.has(qp)) return;
-        var saved = localStorage.getItem(lsKey);
-        if (saved === null) return;
-        url.searchParams.set(qp, saved);
-        changed = true;
-    });
-    if (changed) window.parent.location.replace(url.toString());
-})();
-</script>
-""", height=0)
 
         # Initialise date defaults before any widget renders so values are
         # available in session state for the stale-badge check below.
