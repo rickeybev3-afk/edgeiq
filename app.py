@@ -19566,6 +19566,7 @@ ALTER TABLE backtest_sim_runs
                                     f'</div>', unsafe_allow_html=True
                                 )
                                 _bts_et_spk_data = None
+                                _bts_et_spk_df = None
                                 if "sim_date" in _bts_etdf.columns:
                                     try:
                                         _bts_et_spk = _bts_etdf.copy()
@@ -19579,6 +19580,7 @@ ALTER TABLE backtest_sim_runs
                                         _bts_et_wkly["_wr"] = _bts_et_wkly["_wins"] / _bts_et_wkly["_tot"] * 100
                                         if len(_bts_et_wkly) >= 3:
                                             _bts_et_spk_data = _bts_et_wkly
+                                            _bts_et_spk_df = _bts_et_spk
                                     except (ValueError, KeyError, TypeError) as _bts_et_spk_err:
                                         import sys
                                         print(f"[BTS EOD sparkline] {_bts_etl}: {_bts_et_spk_err}", file=sys.stderr)
@@ -19608,6 +19610,40 @@ ALTER TABLE backtest_sim_runs
                                         config={"displayModeBar": False},
                                     )
                                     st.caption("Weekly EOD win rate")
+                                    # ── Week drill-down ───────────────────────
+                                    _bts_et_wk_opts = ["— pick a week —"] + [
+                                        idx.strftime("w/e %b %d, %Y")
+                                        for idx in _bts_et_spk_data.index
+                                    ]
+                                    _bts_et_wk_sel = st.selectbox(
+                                        "Drill into week",
+                                        _bts_et_wk_opts,
+                                        key=f"bts_eod_spk_week_{_bts_ei}",
+                                        label_visibility="collapsed",
+                                    )
+                                    if _bts_et_wk_sel != "— pick a week —" and _bts_et_spk_df is not None:
+                                        _bts_et_sel_pos = _bts_et_wk_opts.index(_bts_et_wk_sel) - 1
+                                        _bts_et_wend = _bts_et_spk_data.index[_bts_et_sel_pos]
+                                        _bts_et_wstart = _bts_et_wend - pd.Timedelta(days=6)
+                                        _bts_et_wk_df = _bts_et_spk_df[
+                                            (_bts_et_spk_df.index >= _bts_et_wstart) &
+                                            (_bts_et_spk_df.index <= _bts_et_wend)
+                                        ].copy()
+                                        _bts_et_wk_cols = [
+                                            c for c in ["sim_date", "ticker", "eod_pnl_r"]
+                                            if c in _bts_et_wk_df.columns
+                                        ]
+                                        if _bts_et_wk_cols and len(_bts_et_wk_df) > 0:
+                                            _bts_et_wk_disp = _bts_et_wk_df[_bts_et_wk_cols].copy()
+                                            if "sim_date" in _bts_et_wk_disp.columns:
+                                                _bts_et_wk_disp = _bts_et_wk_disp.sort_values("sim_date")
+                                            st.dataframe(
+                                                _bts_et_wk_disp,
+                                                use_container_width=True,
+                                                hide_index=True,
+                                            )
+                                        else:
+                                            st.caption("No trades found for this week.")
 
             # ── Row 3d — P1–P4 Priority Tier Breakdown — Ladder Exit ─────────
             _bts_has_ldr_col = "tiered_pnl_r" in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
