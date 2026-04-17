@@ -4303,15 +4303,23 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     else:
-        st.markdown(
-            '<div style="background:#1a0a0a; border:1px solid #c62828; border-radius:8px; '
-            'padding:8px 12px; margin-bottom:8px;">'
-            f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
-            f'🔴 Database: Unreachable</span>'
-            f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        _db_badge_col, _db_btn_col = st.columns([3, 1])
+        with _db_badge_col:
+            st.markdown(
+                '<div style="background:#1a0a0a; border:1px solid #c62828; border-radius:8px; '
+                'padding:8px 12px; margin-bottom:8px;">'
+                f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
+                f'🔴 Database: Unreachable</span>'
+                f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        with _db_btn_col:
+            st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
+            if st.button("↩", key="_db_retry_btn",
+                         help="Retry: clear cached status and recheck the database connection"):
+                _cached_db_status.clear()
+                st.rerun()
 
     st.header("🔑 Alpaca Credentials")
     api_key = st.text_input(
