@@ -16688,6 +16688,7 @@ ALTER TABLE backtest_sim_runs
     )
     if st.query_params.get("tcs_hist_window") != str(_bw_hist_days):
         st.query_params["tcs_hist_window"] = str(_bw_hist_days)
+    st.caption("This window controls the shift history table and drift chart below. The stability summary always looks back 90 days.")
     _bw_tcs_hist   = _cached_load_tcs_threshold_history(days=_bw_hist_days)
     _bw_cur_thresh = _cached_load_tcs_thresholds()
     _bw_hist_90    = _cached_load_tcs_threshold_history(days=90)
@@ -16754,7 +16755,7 @@ ALTER TABLE backtest_sim_runs
                     "Stable For":        _bw_stable_str,
                 })
             if _bw_stab_rows:
-                st.markdown("**Current Threshold Stability**")
+                st.markdown("**Current Threshold Stability** *(always based on the last 90 days)*")
 
                 def _bw_color_stable(val):
                     try:
