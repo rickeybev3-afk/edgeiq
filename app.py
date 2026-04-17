@@ -19712,6 +19712,12 @@ ALTER TABLE backtest_sim_runs
                         ):
                             st.session_state["bt_rs_ticker"] = _rr_ticker
                             st.rerun()
+                    _rs_all_tickers = list_backtest_tiered_sentinel_tickers(
+                        user_id=_AUTH_USER_ID,
+                        date_from=_rs_from_str,
+                        date_to=_rs_to_str,
+                        top_n=9999,
+                    ).get("tickers", [])
                     _rs_df = pd.DataFrame([
                         {
                             "Ticker": r["ticker"],
@@ -19719,7 +19725,7 @@ ALTER TABLE backtest_sim_runs
                             "Earliest Date": r.get("date_from") or "—",
                             "Latest Date": r.get("date_to") or "—",
                         }
-                        for r in _rs_tickers
+                        for r in _rs_all_tickers
                     ])
                     _rs_csv_parts = ["unavailable_backtest_tickers"]
                     if _rs_from_str:
