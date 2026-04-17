@@ -11659,6 +11659,71 @@ Measures how accurately the 7-structure framework classified those days in hinds
     # ── Per-Ticker Breakdown ──────────────────────────────────────────────────
     import pandas as _pd_bt
     _bt_df = _pd_bt.DataFrame(_results)
+
+    # ── Enrich _bt_df with eod_pnl_r / tiered_pnl_r from backtest_sim_runs ──
+    # _backtest_single does not compute these; fetch matching rows from DB so
+    # they appear in the per-ticker drill-down and sweep-summary CSV exports.
+    if not _bt_df.empty and "ticker" in _bt_df.columns:
+        try:
+            if supabase and _AUTH_USER_ID:
+                _bt_tickers = _bt_df["ticker"].dropna().unique().tolist()
+                _bt_dates = (
+                    _bt_df["sim_date"].dropna().astype(str).unique().tolist()
+                    if "sim_date" in _bt_df.columns
+                    else [str(_sim_date)]
+                )
+                if _bt_tickers and _bt_dates:
+                    _bt_eod_resp = (
+                        supabase.table("backtest_sim_runs")
+                        .select("id,ticker,sim_date,eod_pnl_r,tiered_pnl_r")
+                        .eq("user_id", _AUTH_USER_ID)
+                        .in_("ticker", _bt_tickers)
+                        .in_("sim_date", _bt_dates)
+                        .execute()
+                    )
+                    _bt_eod_rows = _bt_eod_resp.data or []
+                    if _bt_eod_rows:
+                        import numpy as _np_bt_eod
+                        _bt_eod_src = _pd_bt.DataFrame(_bt_eod_rows)
+                        _bt_eod_src["sim_date"] = _bt_eod_src["sim_date"].astype(str)
+                        _bt_eod_src["eod_pnl_r"] = _pd_bt.to_numeric(
+                            _bt_eod_src["eod_pnl_r"], errors="coerce"
+                        )
+                        _bt_eod_src["tiered_pnl_r"] = _pd_bt.to_numeric(
+                            _bt_eod_src["tiered_pnl_r"], errors="coerce"
+                        )
+                        _bt_eod_src.loc[
+                            _bt_eod_src["tiered_pnl_r"] == -9999, "tiered_pnl_r"
+                        ] = _np_bt_eod.nan
+                        # Sort by id desc so keep_last="first" retains the newest row
+                        # when multiple runs exist for the same (ticker, sim_date).
+                        _bt_eod_src = (
+                            _bt_eod_src
+                            .sort_values("id", ascending=False)
+                            .drop_duplicates(subset=["ticker", "sim_date"], keep="first")
+                        )
+                        if "sim_date" in _bt_df.columns:
+                            _bt_df["sim_date"] = _bt_df["sim_date"].astype(str)
+                            _bt_df = _bt_df.merge(
+                                _bt_eod_src[["ticker", "sim_date", "eod_pnl_r", "tiered_pnl_r"]],
+                                on=["ticker", "sim_date"],
+                                how="left",
+                            )
+                        else:
+                            _bt_df["_sim_date_tmp"] = str(_sim_date)
+                            _bt_eod_src = _bt_eod_src.rename(
+                                columns={"sim_date": "_sim_date_tmp"}
+                            )
+                            _bt_df = _bt_df.merge(
+                                _bt_eod_src[["ticker", "_sim_date_tmp", "eod_pnl_r", "tiered_pnl_r"]],
+                                on=["ticker", "_sim_date_tmp"],
+                                how="left",
+                            )
+                            _bt_df = _bt_df.drop(columns=["_sim_date_tmp"])
+        except Exception as _bt_eod_exc:
+            import sys as _sys_bt_eod
+            print(f"[bt_eod_enrich] Could not load EOD/Tiered R: {_bt_eod_exc}", file=_sys_bt_eod.stderr)
+
     if not _bt_df.empty and "ticker" in _bt_df.columns:
         with st.expander(
             f"📊 Per-Ticker Breakdown — {_bt_df['ticker'].nunique()} tickers across all dates",
