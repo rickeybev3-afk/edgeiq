@@ -9275,8 +9275,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 .between(0, 5)
                             )
                             _rp_marginal_count_all = int(_rp_marginal_mask_all.sum())
+                            # Break down marginal trades into wins / losses for the sub-caption
+                            _rp_marg_all_df = _rp_df[_rp_marginal_mask_all]
+                            if "P&L ($)" in _rp_df.columns:
+                                _rp_marginal_wins_all   = int((_rp_marg_all_df["P&L ($)"] > 0).sum())
+                                _rp_marginal_losses_all = int((_rp_marg_all_df["P&L ($)"] < 0).sum())
+                            else:
+                                _rp_marginal_wins_all = _rp_marginal_losses_all = 0
                         else:
-                            _rp_marginal_count_all = 0
+                            _rp_marginal_count_all  = 0
+                            _rp_marginal_wins_all   = 0
+                            _rp_marginal_losses_all = 0
 
                         _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3 = st.columns([2, 1, 1])
                         with _rp_log_fcol1:
@@ -9320,6 +9329,26 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 value=False,
                                 key="rp_log_only_marginal",
                             )
+                            # Sub-caption: win/loss breakdown for marginal trades
+                            if _rp_log_only_marginal and _rp_marginal_count_all > 0:
+                                _marg_w_pct = round(_rp_marginal_wins_all   / _rp_marginal_count_all * 100, 1)
+                                _marg_l_pct = round(_rp_marginal_losses_all / _rp_marginal_count_all * 100, 1)
+                                _marg_neutral_all = _rp_marginal_count_all - _rp_marginal_wins_all - _rp_marginal_losses_all
+                                _marg_wl_label = {"Win": "wins", "Loss": "losses"}.get(_rp_log_wl_filter, _rp_log_wl_filter)
+                                _marg_wl_note = (
+                                    f" · showing **{_marg_wl_label} only**"
+                                    if _rp_log_wl_filter != "All" else ""
+                                )
+                                _marg_neutral_note = (
+                                    f" · {_marg_neutral_all} neutral"
+                                    if _marg_neutral_all > 0 else ""
+                                )
+                                st.caption(
+                                    f"🟡 Of {_rp_marginal_count_all} marginal entries — "
+                                    f"✔ {_rp_marginal_wins_all} win{'s' if _rp_marginal_wins_all != 1 else ''} ({_marg_w_pct}%) · "
+                                    f"✖ {_rp_marginal_losses_all} loss{'es' if _rp_marginal_losses_all != 1 else ''} ({_marg_l_pct}%)"
+                                    f"{_marg_neutral_note}{_marg_wl_note}"
+                                )
                         else:
                             _rp_log_only_marginal = False
 
