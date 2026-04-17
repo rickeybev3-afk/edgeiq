@@ -42,6 +42,7 @@ SUPABASE_ANON_KEY = (
     os.environ.get("VITE_SUPABASE_ANON_KEY") or
     SUPABASE_KEY
 )
+SUPABASE_ACCESS_TOKEN = os.environ.get("SUPABASE_ACCESS_TOKEN", "").strip()
 
 _SUPABASE_URL_PATTERN = _re.compile(r'^https://[a-z0-9]+\.supabase\.co$')
 
@@ -146,6 +147,19 @@ _SECRET_CATALOG: list[dict] = [
         "obtain_label": "Supabase Dashboard → Settings → API → Project API Keys → anon / public",
     },
     {
+        "name": "SUPABASE_ACCESS_TOKEN",
+        "label": "Supabase Personal Access Token (optional)",
+        "description": (
+            "A Supabase account-level personal access token (PAT). "
+            "Required for automatic database table creation on first startup via the "
+            "Supabase Management API. Without it the app still works, but the app_config "
+            "table must be created manually via the Supabase SQL editor."
+        ),
+        "obtain_url": "https://supabase.com/dashboard/account/tokens",
+        "obtain_label": "Supabase Dashboard → Account → Access Tokens → Generate new token",
+        "optional": True,
+    },
+    {
         "name": "ALPACA_API_KEY",
         "label": "Alpaca API Key",
         "description": (
@@ -184,6 +198,9 @@ _secret_statuses: dict[str, str] = {
     _item["name"]: _resolve_secret_status(_item["name"])
     for _item in _SECRET_CATALOG
 }
+_secret_statuses["SUPABASE_ACCESS_TOKEN"] = (
+    "set" if SUPABASE_ACCESS_TOKEN else "missing"
+)
 
 
 def recheck_secret_statuses() -> None:
@@ -268,14 +285,17 @@ def recheck_secret_statuses() -> None:
         _item["name"]: _fresh_status(_item["name"])
         for _item in _SECRET_CATALOG
     })
+    _fresh_pat = os.environ.get("SUPABASE_ACCESS_TOKEN", "").strip()
+    _secret_statuses["SUPABASE_ACCESS_TOKEN"] = "set" if _fresh_pat else "missing"
 
     _write_health_file()
 
     # Re-initialise Supabase clients if they are now healthy so that data reads
     # succeed without requiring a full server restart.
     if not _fresh_supabase_errors:
-        global SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY  # noqa: PLW0603
-        global ALPACA_API_KEY, ALPACA_SECRET_KEY              # noqa: PLW0603
+        global SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY   # noqa: PLW0603
+        global SUPABASE_ACCESS_TOKEN                           # noqa: PLW0603
+        global ALPACA_API_KEY, ALPACA_SECRET_KEY               # noqa: PLW0603
         global supabase, supabase_anon                         # noqa: PLW0603
 
         SUPABASE_URL = _fresh_url
@@ -285,6 +305,7 @@ def recheck_secret_statuses() -> None:
             os.environ.get("VITE_SUPABASE_ANON_KEY") or
             _fresh_key
         )
+        SUPABASE_ACCESS_TOKEN = _fresh_pat
         ALPACA_API_KEY    = _fresh_alpaca_api
         ALPACA_SECRET_KEY = _fresh_alpaca_secret
 
@@ -2883,12 +2904,85 @@ def get_tcs_alert_config_last_saved() -> str | None:
     return None
 
 
+_APP_CONFIG_DDL = (
+    "CREATE TABLE IF NOT EXISTS app_config ("
+    "key TEXT PRIMARY KEY, "
+    "value JSONB NOT NULL, "
+    "updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+    ");"
+)
+
+
+def _create_app_config_via_management_api() -> bool:
+    """Attempt to create the ``app_config`` table via the Supabase Management API.
+
+    Uses ``api.supabase.com/v1/projects/{ref}/database/query`` with a Supabase
+    personal access token (``SUPABASE_ACCESS_TOKEN``) as the Bearer token.
+    Returns ``True`` when the DDL statement is accepted **and** a subsequent
+    probe confirms the table is now readable, ``False`` otherwise.
+
+    This does NOT go through PostgREST — it calls the Supabase Management REST
+    API which accepts arbitrary SQL and requires an account-level personal
+    access token (PAT), not the project's anon/service-role key.
+    Returns ``False`` immediately when ``SUPABASE_ACCESS_TOKEN`` is not set.
+    """
+    import re as _re2
+    import urllib.request as _urllib_req
+    import json as _json2
+
+    if not SUPABASE_ACCESS_TOKEN:
+        return False
+
+    _ref_match = _re2.search(r"https://([a-z0-9]+)\.supabase\.co", SUPABASE_URL or "")
+    if not _ref_match:
+        return False
+    _ref = _ref_match.group(1)
+    _mgmt_url = f"https://api.supabase.com/v1/projects/{_ref}/database/query"
+    _payload = _json2.dumps({"query": _APP_CONFIG_DDL}).encode()
+    _req = _urllib_req.Request(
+        _mgmt_url,
+        data=_payload,
+        headers={
+            "Authorization": f"Bearer {SUPABASE_ACCESS_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with _urllib_req.urlopen(_req, timeout=10) as _resp:
+            _status = _resp.status
+        if _status not in (200, 201, 204):
+            logging.debug(
+                "[STARTUP] Management API returned HTTP %s while creating app_config table.",
+                _status,
+            )
+            return False
+    except Exception as _e:
+        logging.debug(
+            "[STARTUP] Management API call failed while creating app_config table: %s", _e
+        )
+        return False
+
+    if supabase is None:
+        return True
+    try:
+        supabase.table(_APP_CONFIG_TABLE).select("key").limit(1).execute()
+        return True
+    except Exception as _verify_exc:
+        logging.debug(
+            "[STARTUP] app_config table probe after creation failed: %s", _verify_exc
+        )
+        return False
+
+
 def _ensure_app_config_table_exists() -> None:
-    """Warn at startup if the ``app_config`` Supabase table has not been created.
+    """Create the ``app_config`` Supabase table automatically on first startup.
 
     The table is required for durable alert preference storage.  If it is
-    absent the code falls back to the local JSON file automatically, but
-    operators should create it once via the Supabase SQL editor::
+    absent the code attempts to create it automatically via the Supabase
+    Management API (``api.supabase.com``) using a personal access token
+    (``SUPABASE_ACCESS_TOKEN``), which avoids any PostgREST limitation on
+    DDL statements::
 
         CREATE TABLE IF NOT EXISTS app_config (
             key        TEXT PRIMARY KEY,
@@ -2896,9 +2990,10 @@ def _ensure_app_config_table_exists() -> None:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
-    Only emits a warning when the error message contains PostgreSQL error code
-    42P01 ("undefined_table") to avoid spurious warnings during transient
-    network/auth issues.
+    Only acts when the error message contains PostgreSQL error code 42P01
+    ("undefined_table") to avoid spurious errors during transient
+    network/auth issues.  Falls back to a warning when
+    ``SUPABASE_ACCESS_TOKEN`` is not set or the Management API call fails.
     """
     if supabase is None:
         return
@@ -2917,11 +3012,33 @@ def _ensure_app_config_table_exists() -> None:
                 or "does not exist" in _msg.lower()
             )
         if _is_missing_table:
-            logging.warning(
-                "[STARTUP] app_config table not found in Supabase. "
-                "Alert preferences will fall back to tcs_alert_config.json until the table is created. "
-                "Run migrations/create_app_config.sql in the Supabase SQL editor to fix this."
-            )
+            if not SUPABASE_ACCESS_TOKEN:
+                logging.warning(
+                    "[STARTUP] app_config table not found. "
+                    "Set SUPABASE_ACCESS_TOKEN (Supabase Dashboard → Account → Access Tokens) "
+                    "to allow automatic table creation on startup. "
+                    "Alert preferences will fall back to tcs_alert_config.json until then. "
+                    "Alternatively run this SQL in the Supabase SQL editor: %s",
+                    _APP_CONFIG_DDL,
+                )
+            else:
+                logging.info(
+                    "[STARTUP] app_config table not found — attempting to create it via "
+                    "the Supabase Management API…"
+                )
+                if _create_app_config_via_management_api():
+                    logging.info(
+                        "[STARTUP] app_config table created and verified successfully via "
+                        "the Supabase Management API."
+                    )
+                else:
+                    logging.warning(
+                        "[STARTUP] app_config table not found and could not be created "
+                        "automatically (Management API call failed or post-creation probe failed). "
+                        "Alert preferences will fall back to tcs_alert_config.json. "
+                        "Run the following SQL in the Supabase SQL editor to fix this: %s",
+                        _APP_CONFIG_DDL,
+                    )
         else:
             logging.debug(
                 "[STARTUP] Could not verify app_config table existence (transient error): %s", _exc
