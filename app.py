@@ -3987,6 +3987,22 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             pass
     if "pt_extra_tickers" in _prefs:
         st.session_state["pt_extra_tickers"] = str(_prefs["pt_extra_tickers"])
+    if "bts_dr_start" in _prefs:
+        try:
+            import datetime as _dt_bts
+            _bts_d = _prefs["bts_dr_start"]
+            if _bts_d:
+                st.session_state["bts_dr_start"] = _dt_bts.date.fromisoformat(str(_bts_d))
+        except (ValueError, TypeError):
+            pass
+    if "bts_dr_end" in _prefs:
+        try:
+            import datetime as _dt_bts
+            _bts_d = _prefs["bts_dr_end"]
+            if _bts_d:
+                st.session_state["bts_dr_end"] = _dt_bts.date.fromisoformat(str(_bts_d))
+        except (ValueError, TypeError):
+            pass
     if "trading_mode" in _prefs:
         _saved_is_paper = _prefs["trading_mode"] == "paper"
         set_trading_mode(_saved_is_paper)
@@ -12235,6 +12251,23 @@ ALTER TABLE backtest_sim_runs
             )
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
+
+        # Persist bts date-range filter to user prefs so it survives page reloads
+        if _AUTH_USER_ID:
+            _bts_dr_cached = st.session_state.get("_cached_prefs", {})
+            _bts_start_str = _bts_start.isoformat() if _bts_start else None
+            _bts_end_str   = _bts_end.isoformat()   if _bts_end   else None
+            if (
+                _bts_dr_cached.get("bts_dr_start") != _bts_start_str
+                or _bts_dr_cached.get("bts_dr_end") != _bts_end_str
+            ):
+                _bts_dr_new_prefs = {
+                    **_bts_dr_cached,
+                    "bts_dr_start": _bts_start_str,
+                    "bts_dr_end":   _bts_end_str,
+                }
+                save_user_prefs(_AUTH_USER_ID, _bts_dr_new_prefs)
+                st.session_state["_cached_prefs"] = _bts_dr_new_prefs
 
         if _bts_start and _bts_end and _bts_start > _bts_end:
             st.error("'From' date must be on or before the 'To' date — no results shown.")
