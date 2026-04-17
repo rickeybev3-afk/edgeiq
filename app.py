@@ -11198,12 +11198,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         k[len("_drill_tcs_persist_"):] for k in _persist_keys_all
                     )
                     _MAX_TOOLTIP_TICKERS = 20
+                    def _fmt_override(t):
+                        _val = st.session_state.get(f"_drill_tcs_persist_{t}")
+                        if _val is not None:
+                            return f"• {t} — floor {_val}"
+                        return f"• {t}"
                     if len(_overridden_tickers) <= _MAX_TOOLTIP_TICKERS:
-                        _ticker_lines = "\n".join(f"• {t}" for t in _overridden_tickers)
+                        _ticker_lines = "\n".join(_fmt_override(t) for t in _overridden_tickers)
                     else:
                         _shown = _overridden_tickers[:_MAX_TOOLTIP_TICKERS]
                         _remaining = len(_overridden_tickers) - _MAX_TOOLTIP_TICKERS
-                        _ticker_lines = "\n".join(f"• {t}" for t in _shown) + f"\n… and {_remaining} more"
+                        _ticker_lines = "\n".join(_fmt_override(t) for t in _shown) + f"\n… and {_remaining} more"
                     _bulk_reset_help = (
                         f"Tickers with active floor overrides:\n{_ticker_lines}\n\n"
                         "Clear every manual TCS floor override and restore the recommended floor for all tickers."
