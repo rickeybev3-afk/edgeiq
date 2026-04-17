@@ -11859,22 +11859,45 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _tk_div_label   = "—"
                 _tk_max_div_idx = None
                 try:
-                    _ft_col_div = "follow_thru_pct" if "follow_thru_pct" in _tgrp.columns else "aft_move_pct"
-                    if _ft_col_div in _tgrp.columns and "win_loss" in _tgrp.columns:
-                        _ft_vals_div = _tgrp[_ft_col_div].fillna(0).astype(float).tolist()
-                        _wl_vals_div = _tgrp["win_loss"].tolist()
-                        # Build cumulative $ equity curve (starts at 0)
-                        _tk_eq_cum = [0.0]
-                        for _fv, _wv in zip(_ft_vals_div, _wl_vals_div):
-                            _tk_eq_cum.append(
-                                _tk_eq_cum[-1] + _tk_pos_size * abs(_fv) / 100 * (1 if _wv == "Win" else -1)
-                            )
+                    _ft_col_div  = "follow_thru_pct" if "follow_thru_pct" in _tgrp.columns else "aft_move_pct"
+                    _tk_eq_cum   = None
+                    _eq_crv_src  = None
+                    _ft_vals_div = []
+                    _wl_vals_div = _tgrp["win_loss"].tolist() if "win_loss" in _tgrp.columns else []
+
+                    # ── Primary: build equity curve from follow-thru % ───────────
+                    if _ft_col_div in _tgrp.columns and _wl_vals_div:
+                        _ft_vals_raw = _tgrp[_ft_col_div].fillna(0).astype(float).tolist()
+                        if any(v != 0.0 for v in _ft_vals_raw):
+                            _ft_vals_div = _ft_vals_raw
+                            _tk_eq_cum   = [0.0]
+                            for _fv, _wv in zip(_ft_vals_div, _wl_vals_div):
+                                _tk_eq_cum.append(
+                                    _tk_eq_cum[-1] + _tk_pos_size * abs(_fv) / 100 * (1 if _wv == "Win" else -1)
+                                )
+                            _eq_crv_src = _ft_col_div
+
+                    # ── Fallback: build equity curve from raw P&L $ ──────────────
+                    # Triggered when follow-thru column is absent or all-zero.
+                    # P&L values carry their own sign, so win_loss is not required.
+                    if _tk_eq_cum is None or len(_tk_eq_cum) <= 1:
+                        _pnl_cands = ["pnl_dollars", "pnl", "gross_pnl", "net_pnl", "P&L ($)"]
+                        _pnl_fc = next((c for c in _pnl_cands if c in _tgrp.columns), None)
+                        if _pnl_fc:
+                            _pnl_vals = _pd_bt.to_numeric(_tgrp[_pnl_fc], errors="coerce").fillna(0).tolist()
+                            if any(v != 0.0 for v in _pnl_vals):
+                                _tk_eq_cum  = [0.0]
+                                for _pv in _pnl_vals:
+                                    _tk_eq_cum.append(_tk_eq_cum[-1] + _pv)
+                                _eq_crv_src = f"raw P&L ({_pnl_fc})"
+
+                    if _tk_eq_cum is not None and len(_tk_eq_cum) > 1:
                         # Build cumulative R curve (starts at 0)
                         if _tk_eod_vals:
                             _tk_r_trades_div = _tk_eod_vals
                         elif _tk_tiered_vals:
                             _tk_r_trades_div = _tk_tiered_vals
-                        elif "stop_dist_pct" in _tgrp.columns:
+                        elif "stop_dist_pct" in _tgrp.columns and _ft_vals_div and _wl_vals_div:
                             _sd_vals_div = _tgrp["stop_dist_pct"].fillna(0).astype(float).tolist()
                             _tk_r_trades_div = [
                                 (abs(fv) / sd if sd > 0 else 0) * (1 if wv == "Win" else -1)
@@ -11903,6 +11926,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "r_curve":     _tk_r_cum[:_min_len_tk],
                                     "max_div_idx": _max_div_idx_tk,
                                     "max_div_val": _max_div_val_tk,
+                                    "eq_source":   _eq_crv_src,
                                 }
                                 if abs(_max_div_val_tk) >= 0.02:
                                     _tk_max_div_val = _max_div_val_tk
@@ -11912,11 +11936,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         else:
                             # No R data — store equity curve only so the mini-chart
                             # can still render a fallback equity-only view.
-                            if len(_tk_eq_cum) > 1:
-                                _tkr_div_chart_data[_tk] = {
-                                    "eq_curve": _tk_eq_cum,
-                                    "eq_only":  True,
-                                }
+                            _tkr_div_chart_data[_tk] = {
+                                "eq_curve": _tk_eq_cum,
+                                "eq_only":  True,
+                                "eq_source": _eq_crv_src,
+                            }
                 except Exception:
                     pass
 
@@ -13494,9 +13518,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 unsafe_allow_html=True,
                             )
                             st.caption(
-                                "📉 Divergence chart not available — add an EOD exit or "
-                                "tiered exit column (and ensure trades have varying follow-thru %) "
-                                "to unlock the Equity vs R mini-chart."
+                                "📉 Divergence chart not available — no follow-thru %, P&L $, "
+                                "or R-value data found. Add an EOD or tiered-exit column to "
+                                "unlock the Equity vs R mini-chart."
                             )
                         if _mini_div_data and _mini_eq_only:
                             # Equity-only fallback: no R column available
@@ -13550,9 +13574,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "displayModeBar": False,
                                 },
                             )
+                            _eq_src_lbl = _mini_div_data.get("eq_source") or "follow-thru %"
                             st.caption(
-                                "ℹ️ Divergence analysis requires an EOD or tiered-exit R column — "
-                                "showing equity curve only."
+                                f"ℹ️ Equity curve built from {_eq_src_lbl}. "
+                                "Divergence analysis requires an EOD or tiered-exit R column."
                             )
                             _mini_eq_csv_rows = "\n".join(
                                 f"{i},{v:.2f}" for i, v in enumerate(_mini_eq)
@@ -13662,8 +13687,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "modeBarButtons": [["zoomIn2d", "zoomOut2d", "resetScale2d"]],
                                 },
                             )
+                            _div_eq_src = _mini_div_data.get("eq_source")
+                            _div_src_note = (
+                                f" · Equity curve built from {_div_eq_src}."
+                                if _div_eq_src and "follow_thru" not in _div_eq_src
+                                   and "aft_move" not in _div_eq_src
+                                else ""
+                            )
                             st.caption(
-                                f"🟡 **Trade\u00a0#{_mini_idx}**: {_mini_div_msg}"
+                                f"🟡 **Trade\u00a0#{_mini_idx}**: {_mini_div_msg}{_div_src_note}"
                             )
                             _mini_csv_len = min(len(_mini_eq), len(_mini_r))
                             _mini_div_csv_rows = "\n".join(
