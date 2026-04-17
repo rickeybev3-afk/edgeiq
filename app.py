@@ -14578,11 +14578,19 @@ ALTER TABLE backtest_sim_runs
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── TCS Threshold History (collapsible) ───────────────────────────────────
-    _bw_tcs_hist   = _cached_load_tcs_threshold_history(days=30)
+    _bw_hist_days = st.radio(
+        "History window",
+        options=[7, 30, 90],
+        index=1,
+        horizontal=True,
+        format_func=lambda d: f"{d} days",
+        key="tcs_hist_days",
+    )
+    _bw_tcs_hist   = _cached_load_tcs_threshold_history(days=_bw_hist_days)
     _bw_cur_thresh = _cached_load_tcs_thresholds()
     _bw_hist_90    = _cached_load_tcs_threshold_history(days=90)
     _bw_expander_label = (
-        f"📈 TCS Threshold Shift History — last {len(_bw_tcs_hist)} recalibrations (30 days)"
+        f"📈 TCS Threshold Shift History — last {len(_bw_tcs_hist)} recalibrations ({_bw_hist_days} days)"
         if _bw_tcs_hist
         else "📈 TCS Threshold Stability"
     )
@@ -14700,7 +14708,7 @@ ALTER TABLE backtest_sim_runs
                         st.caption("Threshold drift over time — structures with ≥ 2 changes shown")
                         st.line_chart(_chart_pivot[_plottable], use_container_width=True)
             else:
-                st.info("No threshold shifts ≥ 3 pts recorded in the last 30 days.")
+                st.info(f"No threshold shifts ≥ 3 pts recorded in the last {_bw_hist_days} days.")
 
     _bw_rows = []
     for _k, _v in _bw.items():
