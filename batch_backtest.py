@@ -894,6 +894,7 @@ def main():
     parser.add_argument("--workers",    type=int,   default=8,    help="Parallel workers per day (default: 8)")
     parser.add_argument("--batch",      type=int,   default=50,   help="Ticker batch size for daily bars (default: 50)")
     parser.add_argument("--dry-run",    action="store_true",      help="Skip Supabase save (test mode)")
+    parser.add_argument("--no-ratelimit", action="store_true",   help="Disable Alpaca API rate limiting (paid plans)")
     parser.add_argument("--user-id",    type=str,   default="",   help="Supabase user_id for data scoping")
     parser.add_argument(
         "--skip-post-backfill",
@@ -1202,8 +1203,8 @@ def main():
             print("  Running targeted tiered P&L backfill for this date window...")
             try:
                 bstats = backfill_backtest_sim_runs(
-                    dry_run=False,
-                    rate_limit=True,
+                    dry_run=args.dry_run,
+                    rate_limit=not args.no_ratelimit,
                     date_from=str(start_date),
                     date_to=str(end_date),
                 )
