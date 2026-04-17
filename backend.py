@@ -8534,6 +8534,15 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                     # tiered_pnl_r left NULL — backfill required (see above)
             records.append(rec)
         supabase.table("backtest_sim_runs").insert(records).execute()
+        try:
+            _ref_result = refresh_mv_tiered_pnl_summary()
+            if not _ref_result.get("success"):
+                print(
+                    f"save_backtest_sim_runs: mv refresh returned failure (non-fatal): "
+                    f"{_ref_result.get('message', _ref_result)}"
+                )
+        except Exception as _ref_err:
+            print(f"save_backtest_sim_runs: mv refresh failed (non-fatal): {_ref_err}")
     except Exception as e:
         print(f"Backtest save error: {e}")
 
