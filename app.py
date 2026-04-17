@@ -20830,6 +20830,8 @@ ALTER TABLE backtest_sim_runs
                 ):
                     st.session_state["grid_sync_dismissed_at"] = _grid_dismiss_key
                     st.rerun()
+    else:
+        st.caption("🔗 Date filters are linked — synced automatically")
 
     _grid_dr_cols = st.columns([1, 1, 4])
     with _grid_dr_cols[0]:
