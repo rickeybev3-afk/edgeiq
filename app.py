@@ -19198,79 +19198,121 @@ ALTER TABLE backtest_sim_runs
                         _sc_n_months = _bts_sc_monthly["month"].nunique()
                         if _sc_both_have_history:
                             import altair as _alt_sc
-                            st.markdown(
-                                f'<div style="font-size:11px;color:#546e7a;letter-spacing:1px;'
-                                f'text-transform:uppercase;margin-top:14px;margin-bottom:6px;">'
-                                f'{_sc_header_text}</div>',
-                                unsafe_allow_html=True,
-                            )
+                            _sc_hdr_col, _sc_tog_col = st.columns([4, 1])
+                            with _sc_hdr_col:
+                                st.markdown(
+                                    f'<div style="font-size:11px;color:#546e7a;letter-spacing:1px;'
+                                    f'text-transform:uppercase;margin-top:14px;margin-bottom:6px;">'
+                                    f'{_sc_header_text}</div>',
+                                    unsafe_allow_html=True,
+                                )
+                            with _sc_tog_col:
+                                st.markdown(
+                                    '<div style="font-size:10px;color:#546e7a;letter-spacing:1px;'
+                                    'text-transform:uppercase;margin-top:14px;margin-bottom:2px;">'
+                                    'Chart type</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                _sc_chart_type = st.radio(
+                                    "Chart type",
+                                    ["Line", "Bar"],
+                                    horizontal=True,
+                                    key="row4c_chart_type",
+                                    label_visibility="collapsed",
+                                )
                             _sc_zero = (
                                 _alt_sc.Chart(pd.DataFrame({"y": [0]}))
                                 .mark_rule(color="#37474f", strokeDash=[4, 4])
                                 .encode(y=_alt_sc.Y("y:Q"))
                             )
-                            _sc_line = (
-                                _alt_sc.Chart(_bts_sc_monthly)
-                                .mark_line(strokeWidth=2, point=True)
-                                .encode(
-                                    x=_alt_sc.X(
-                                        "month:T",
-                                        title=_sc_x_title,
-                                        axis=_alt_sc.Axis(
-                                            format=_sc_x_format,
-                                            labelColor="#90a4ae",
-                                            titleColor="#90a4ae",
-                                            gridColor="#1a2744",
-                                        ),
-                                    ),
-                                    y=_alt_sc.Y(
-                                        "avg_advantage:Q",
-                                        title="Avg R Advantage (Tiered − EOD)",
-                                        axis=_alt_sc.Axis(
-                                            labelColor="#90a4ae",
-                                            titleColor="#90a4ae",
-                                            gridColor="#1a2744",
-                                        ),
-                                    ),
-                                    color=_alt_sc.Color(
-                                        "scan_label:N",
-                                        title="Scan Type",
-                                        scale=_alt_sc.Scale(
-                                            domain=["🌅 Morning", "⚡ Intraday"],
-                                            range=["#ffb74d", "#7986cb"],
-                                        ),
-                                        legend=_alt_sc.Legend(
-                                            orient="top-right",
-                                            labelColor="#90a4ae",
-                                            titleColor="#546e7a",
-                                        ),
-                                    ),
-                                    tooltip=[
-                                        _alt_sc.Tooltip("month:T",         title=_sc_x_title,     format=_sc_tt_format),
-                                        _alt_sc.Tooltip("scan_label:N",    title="Scan Type"),
-                                        _alt_sc.Tooltip("avg_advantage:Q", title="Avg Δ (R)",      format="+.3f"),
-                                        _alt_sc.Tooltip("count:Q",         title="Matched Trades"),
-                                    ],
-                                )
+                            _sc_x_axis = _alt_sc.Axis(
+                                format=_sc_x_format,
+                                labelColor="#90a4ae",
+                                titleColor="#90a4ae",
+                                gridColor="#1a2744",
                             )
+                            _sc_y_axis = _alt_sc.Axis(
+                                labelColor="#90a4ae",
+                                titleColor="#90a4ae",
+                                gridColor="#1a2744",
+                            )
+                            _sc_color_enc = _alt_sc.Color(
+                                "scan_label:N",
+                                title="Scan Type",
+                                scale=_alt_sc.Scale(
+                                    domain=["🌅 Morning", "⚡ Intraday"],
+                                    range=["#ffb74d", "#7986cb"],
+                                ),
+                                legend=_alt_sc.Legend(
+                                    orient="top-right",
+                                    labelColor="#90a4ae",
+                                    titleColor="#546e7a",
+                                ),
+                            )
+                            _sc_tooltips = [
+                                _alt_sc.Tooltip("month:T",         title=_sc_x_title,     format=_sc_tt_format),
+                                _alt_sc.Tooltip("scan_label:N",    title="Scan Type"),
+                                _alt_sc.Tooltip("avg_advantage:Q", title="Avg Δ (R)",      format="+.3f"),
+                                _alt_sc.Tooltip("count:Q",         title="Matched Trades"),
+                            ]
+                            _sc_title_params = _alt_sc.TitleParams(
+                                _sc_chart_title,
+                                color="#90a4ae",
+                                fontSize=11,
+                                anchor="start",
+                                subtitle=(
+                                    "Rising = tiered exits outperforming  ·  "
+                                    "Falling = EOD hold winning  ·  "
+                                    f"{_sc_n_months} {_sc_label_word}, "
+                                    f"{len(_bts_sc_trend_src)} matched trades"
+                                ),
+                                subtitleColor="#546e7a",
+                                subtitleFontSize=10,
+                            )
+                            if _sc_chart_type == "Bar":
+                                _sc_mark = (
+                                    _alt_sc.Chart(_bts_sc_monthly)
+                                    .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                                    .encode(
+                                        x=_alt_sc.X(
+                                            "month:T",
+                                            title=_sc_x_title,
+                                            axis=_sc_x_axis,
+                                        ),
+                                        y=_alt_sc.Y(
+                                            "avg_advantage:Q",
+                                            title="Avg R Advantage (Tiered − EOD)",
+                                            axis=_sc_y_axis,
+                                        ),
+                                        xOffset=_alt_sc.XOffset("scan_label:N"),
+                                        color=_sc_color_enc,
+                                        tooltip=_sc_tooltips,
+                                    )
+                                )
+                            else:
+                                _sc_mark = (
+                                    _alt_sc.Chart(_bts_sc_monthly)
+                                    .mark_line(strokeWidth=2, point=True)
+                                    .encode(
+                                        x=_alt_sc.X(
+                                            "month:T",
+                                            title=_sc_x_title,
+                                            axis=_sc_x_axis,
+                                        ),
+                                        y=_alt_sc.Y(
+                                            "avg_advantage:Q",
+                                            title="Avg R Advantage (Tiered − EOD)",
+                                            axis=_sc_y_axis,
+                                        ),
+                                        color=_sc_color_enc,
+                                        tooltip=_sc_tooltips,
+                                    )
+                                )
                             _sc_chart = (
-                                (_sc_zero + _sc_line)
+                                (_sc_zero + _sc_mark)
                                 .properties(
                                     height=220,
-                                    title=_alt_sc.TitleParams(
-                                        _sc_chart_title,
-                                        color="#90a4ae",
-                                        fontSize=11,
-                                        anchor="start",
-                                        subtitle=(
-                                            "Rising = tiered exits outperforming  ·  "
-                                            "Falling = EOD hold winning  ·  "
-                                            f"{_sc_n_months} {_sc_label_word}, "
-                                            f"{len(_bts_sc_trend_src)} matched trades"
-                                        ),
-                                        subtitleColor="#546e7a",
-                                        subtitleFontSize=10,
-                                    ),
+                                    title=_sc_title_params,
                                 )
                                 .configure_view(strokeWidth=0, fill="#020813")
                                 .configure_axis(domainColor="#1a2744", tickColor="#1a2744")
