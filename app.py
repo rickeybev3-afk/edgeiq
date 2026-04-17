@@ -5865,6 +5865,31 @@ if st.session_state.get("_migration_needed"):
 
 st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
 
+# ── Live Mode Banner ────────────────────────────────────────────────────────────
+_live_banner_mode = st.session_state.get("_trading_mode", "paper" if get_trading_mode() else "live")
+if _live_banner_mode == "live":
+    if st.session_state.get("_live_banner_prev_mode") != "live":
+        st.session_state["_live_banner_dismissed"] = False
+    st.session_state["_live_banner_prev_mode"] = "live"
+else:
+    st.session_state["_live_banner_prev_mode"] = "paper"
+
+if _live_banner_mode == "live" and not st.session_state.get("_live_banner_dismissed", False):
+    _b_col, _x_col = st.columns([22, 1])
+    with _b_col:
+        st.markdown(
+            '<div style="background:#7f1d1d; border:2px solid #ef4444; border-radius:8px; '
+            'padding:10px 16px; font-size:14px; font-weight:700; color:#fecaca; '
+            'margin-bottom:4px;">'
+            '🔴 Live mode — real orders are routed to your brokerage'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    with _x_col:
+        if st.button("✕", key="_dismiss_live_banner", help="Dismiss this banner"):
+            st.session_state["_live_banner_dismissed"] = True
+            st.rerun()
+
 # ── Trading Mode Badge ─────────────────────────────────────────────────────────
 _hdr_tm = st.session_state.get("_trading_mode", "paper" if get_trading_mode() else "live")
 if _hdr_tm == "paper":
