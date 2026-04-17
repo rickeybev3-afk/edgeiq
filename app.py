@@ -5040,8 +5040,34 @@ with st.sidebar:
             def_d = today - timedelta(days=2)
         selected_date = st.date_input("Trading Date", value=def_d, max_value=today,
                                        help="Pick a weekday (Mon–Fri). Today's intraday data is supported.")
-        data_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
+        import streamlit.components.v1 as _cmp_hist_feed
+        _cmp_hist_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'hist_scan_feed';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('hist_scan_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('hist_scan_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _HIST_FEED_OPTS = ["sip", "iex"]
+        if "hist_scan_feed" not in st.session_state:
+            _qp_hist_feed = st.query_params.get("hist_scan_feed", "sip")
+            st.session_state["hist_scan_feed"] = (
+                _qp_hist_feed if _qp_hist_feed in _HIST_FEED_OPTS else "sip"
+            )
+        data_feed = st.selectbox("Data Feed", _HIST_FEED_OPTS, key="hist_scan_feed",
                                   help="SIP = full national tape (recommended). IEX = free tier, regular hours only.")
+        if st.query_params.get("hist_scan_feed") != data_feed:
+            st.query_params["hist_scan_feed"] = data_feed
+        _cmp_hist_feed.html(
+            f"<script>localStorage.setItem('hist_scan_feed', {repr(data_feed)});</script>",
+            height=0,
+        )
         run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
 
     elif mode == "🎬 Replay":
@@ -5054,8 +5080,34 @@ with st.sidebar:
             def_d = today - timedelta(days=2)
         selected_date = st.date_input("Trading Date", value=def_d, max_value=today,
                                        help="Pick a trading day to replay.", key="replay_date_input")
-        data_feed = st.selectbox("Data Feed", ["sip", "iex"], index=0,
-                                  help="SIP = full national tape (recommended). IEX = free tier fallback.", key="replay_feed_sel")
+        import streamlit.components.v1 as _cmp_replay_scan_feed
+        _cmp_replay_scan_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'replay_feed_sel';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('replay_scan_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('replay_scan_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _REPLAY_SCAN_FEED_OPTS = ["sip", "iex"]
+        if "replay_feed_sel" not in st.session_state:
+            _qp_replay_scan_feed = st.query_params.get("replay_scan_feed", "sip")
+            st.session_state["replay_feed_sel"] = (
+                _qp_replay_scan_feed if _qp_replay_scan_feed in _REPLAY_SCAN_FEED_OPTS else "sip"
+            )
+        data_feed = st.selectbox("Data Feed", _REPLAY_SCAN_FEED_OPTS, key="replay_feed_sel",
+                                  help="SIP = full national tape (recommended). IEX = free tier fallback.")
+        if st.query_params.get("replay_scan_feed") != data_feed:
+            st.query_params["replay_scan_feed"] = data_feed
+        _cmp_replay_scan_feed.html(
+            f"<script>localStorage.setItem('replay_feed_sel', {repr(data_feed)});</script>",
+            height=0,
+        )
         replay_load = st.button("📥 Load Day for Replay", use_container_width=True, type="primary")
 
         # ── Replay controls (shown once bars are loaded) ───────────────────────
@@ -5122,8 +5174,34 @@ with st.sidebar:
                 st.rerun()
 
     else:
-        live_feed = st.selectbox("Data Feed", ["iex", "sip"], index=0,
+        import streamlit.components.v1 as _cmp_live_feed
+        _cmp_live_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'live_scan_feed';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('live_scan_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('live_scan_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _LIVE_FEED_OPTS = ["iex", "sip"]
+        if "live_scan_feed" not in st.session_state:
+            _qp_live_feed = st.query_params.get("live_scan_feed", "iex")
+            st.session_state["live_scan_feed"] = (
+                _qp_live_feed if _qp_live_feed in _LIVE_FEED_OPTS else "iex"
+            )
+        live_feed = st.selectbox("Data Feed", _LIVE_FEED_OPTS, key="live_scan_feed",
                                   help="IEX = free real-time feed. SIP = full national tape (requires paid Alpaca subscription).")
+        if st.query_params.get("live_scan_feed") != live_feed:
+            st.query_params["live_scan_feed"] = live_feed
+        _cmp_live_feed.html(
+            f"<script>localStorage.setItem('live_scan_feed', {repr(live_feed)});</script>",
+            height=0,
+        )
         if not st.session_state.live_active:
             start_live = st.button("▶ Start Live Stream", use_container_width=True, type="primary")
         else:
@@ -5321,8 +5399,34 @@ with st.sidebar:
         help="Tickers priced $1–$50 at scan time will be analysed.",
         key="watchlist_raw",
     )
-    scan_feed = st.selectbox("Scanner Feed", ["sip", "iex"], index=0, key="scan_feed_select",
+    import streamlit.components.v1 as _cmp_scan_feed
+    _cmp_scan_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'scan_feed_select';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('scan_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('scan_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+    _SCAN_FEED_OPTS = ["sip", "iex"]
+    if "scan_feed_select" not in st.session_state:
+        _qp_scan_feed = st.query_params.get("scan_feed", "sip")
+        st.session_state["scan_feed_select"] = (
+            _qp_scan_feed if _qp_scan_feed in _SCAN_FEED_OPTS else "sip"
+        )
+    scan_feed = st.selectbox("Scanner Feed", _SCAN_FEED_OPTS, key="scan_feed_select",
                              help="SIP = full national tape with PM RVOL (recommended). IEX = free tier, regular hours only.")
+    if st.query_params.get("scan_feed") != scan_feed:
+        st.query_params["scan_feed"] = scan_feed
+    _cmp_scan_feed.html(
+        f"<script>localStorage.setItem('scan_feed_select', {repr(scan_feed)});</script>",
+        height=0,
+    )
     if scan_feed == "iex":
         st.info("ℹ️ IEX (free tier): PM Volume will be blank. Switch to SIP for full pre-market data.")
     _price_cols = st.columns(3)
@@ -11566,10 +11670,36 @@ Nothing here requires any input from you. All numbers update automatically as yo
     _pat_scan_uid = st.session_state.get("auth_user_id", "")
     _pat_result   = st.session_state.get("_pat_scan_result")
 
+    import streamlit.components.v1 as _cmp_pat_feed
+    _cmp_pat_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'pat_scan_feed';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('pat_scan_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('pat_scan_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+    _PAT_FEED_OPTS = ["iex", "sip"]
+    if "pat_scan_feed" not in st.session_state:
+        _qp_pat_feed = st.query_params.get("pat_scan_feed", "iex")
+        st.session_state["pat_scan_feed"] = (
+            _qp_pat_feed if _qp_pat_feed in _PAT_FEED_OPTS else "iex"
+        )
     _pat_col1, _pat_col2 = st.columns([3, 1])
     _pat_scan_feed = _pat_col2.selectbox(
-        "Feed", ["iex", "sip"], key="pat_scan_feed",
+        "Feed", _PAT_FEED_OPTS, key="pat_scan_feed",
         help="iex = free tier. sip = paid Alpaca subscription."
+    )
+    if st.query_params.get("pat_scan_feed") != _pat_scan_feed:
+        st.query_params["pat_scan_feed"] = _pat_scan_feed
+    _cmp_pat_feed.html(
+        f"<script>localStorage.setItem('pat_scan_feed', {repr(_pat_scan_feed)});</script>",
+        height=0,
     )
 
     if _pat_col1.button("🔬 Scan Trade History for Patterns",
@@ -11795,9 +11925,35 @@ def render_tracker_tab():
         _bt_pairs_text = st.text_area(
             "Ticker / Date pairs", value=_BATCH_DEFAULT, height=220, key="bt_pairs_input"
         )
+        import streamlit.components.v1 as _cmp_bt_batch_feed
+        _cmp_bt_batch_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'bt_feed_select';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('bt_batch_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('bt_batch_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _BT_BATCH_FEED_OPTS = ["iex", "sip"]
+        if "bt_feed_select" not in st.session_state:
+            _qp_bt_batch_feed = st.query_params.get("bt_batch_feed", "iex")
+            st.session_state["bt_feed_select"] = (
+                _qp_bt_batch_feed if _qp_bt_batch_feed in _BT_BATCH_FEED_OPTS else "iex"
+            )
         _bt_feed = st.selectbox(
-            "Data feed", ["iex", "sip"], index=0, key="bt_feed_select",
+            "Data feed", _BT_BATCH_FEED_OPTS, key="bt_feed_select",
             help="IEX = free tier (recommended for backtests). SIP = full tape."
+        )
+        if st.query_params.get("bt_batch_feed") != _bt_feed:
+            st.query_params["bt_batch_feed"] = _bt_feed
+        _cmp_bt_batch_feed.html(
+            f"<script>localStorage.setItem('bt_feed_select', {repr(_bt_feed)});</script>",
+            height=0,
         )
         _bt_run = st.button("▶ Run Batch Backtest", type="primary",
                             use_container_width=True, key="bt_run_btn")
@@ -15976,11 +16132,42 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             help="Set to today for live paper trades, or any past date to backfill.",
         )
     with _pt_c2:
+        import streamlit.components.v1 as _cmp_pt_feed
+        _cmp_pt_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'pt_feed';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('pt_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('pt_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _PT_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
+        if "pt_feed" not in st.session_state:
+            _qp_pt_feed = st.query_params.get("pt_feed", "SIP (paid — accurate)")
+            st.session_state["pt_feed"] = (
+                _qp_pt_feed if _qp_pt_feed in _PT_FEED_OPTIONS else "SIP (paid — accurate)"
+            )
         _pt_feed = st.radio(
             "Bar Data Feed",
-            ["SIP (paid — accurate)", "IEX (free — limited)"],
+            _PT_FEED_OPTIONS,
+            index=_PT_FEED_OPTIONS.index(
+                st.session_state.get("pt_feed", "SIP (paid — accurate)")
+                if st.session_state.get("pt_feed", "SIP (paid — accurate)") in _PT_FEED_OPTIONS
+                else "SIP (paid — accurate)"
+            ),
             key="pt_feed",
             horizontal=True,
+        )
+        if st.query_params.get("pt_feed") != _pt_feed:
+            st.query_params["pt_feed"] = _pt_feed
+        _cmp_pt_feed.html(
+            f"<script>localStorage.setItem('pt_feed', {repr(_pt_feed)});</script>",
+            height=0,
         )
         _pt_feed_str = "sip" if "SIP" in _pt_feed else "iex"
     with _pt_c3:
@@ -17538,8 +17725,34 @@ with tab_scan:
     _wpe_count = len(_wpe_saved_tickers)
 
     # ── Always-visible action buttons ─────────────────────────────────────────
-    _wpe_feed = st.selectbox("Feed", ["sip", "iex"], key="wpe_feed_select",
+    import streamlit.components.v1 as _cmp_wpe_feed
+    _cmp_wpe_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'wpe_feed_select';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('wpe_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('wpe_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+    _WPE_FEED_OPTS = ["sip", "iex"]
+    if "wpe_feed_select" not in st.session_state:
+        _qp_wpe_feed = st.query_params.get("wpe_feed", "sip")
+        st.session_state["wpe_feed_select"] = (
+            _qp_wpe_feed if _qp_wpe_feed in _WPE_FEED_OPTS else "sip"
+        )
+    _wpe_feed = st.selectbox("Feed", _WPE_FEED_OPTS, key="wpe_feed_select",
                              help="SIP = full national tape (recommended). IEX = free tier fallback.")
+    if st.query_params.get("wpe_feed") != _wpe_feed:
+        st.query_params["wpe_feed"] = _wpe_feed
+    _cmp_wpe_feed.html(
+        f"<script>localStorage.setItem('wpe_feed_select', {repr(_wpe_feed)});</script>",
+        height=0,
+    )
     _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
 
     # Predict All — only active when tickers are entered
