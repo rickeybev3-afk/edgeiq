@@ -19994,6 +19994,241 @@ ALTER TABLE backtest_sim_runs
                         help="Download the Screener × Outcome P&L summary as a CSV file.",
                     )
 
+                    # ── TCS Tier Breakdown (P1–P4) ────────────────────────────
+                    _bq_has_tcs = (
+                        "tcs" in _bq_src.columns
+                        and _bq_src["tcs"].notna().any()
+                    )
+                    if _bq_has_tcs:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.markdown(
+                            '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                            'text-transform:uppercase;margin-bottom:4px;">'
+                            '🏷️ P&amp;L by TCS Tier — P1 / P2 / P3 / P4</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.caption(
+                            "Same paired trades sliced by confidence tier. "
+                            "P1 🔴 = Intraday 70+  ·  P2 🟠 = Intraday 50–69  ·  "
+                            "P3 🟡 = Morning 70+  ·  P4 🟢 = Morning 50–69. "
+                            "Reveals whether the EOD vs Tiered gap is driven by high- or low-confidence setups."
+                        )
+                        _bq_tier_defs = [
+                            ("P1", "🔴", "intraday", 70, 999, "#ef5350",  "Intraday 70+"),
+                            ("P2", "🟠", "intraday", 50,  69, "#ef6c00",  "Intraday 50–69"),
+                            ("P3", "🟡", "morning",  70, 999, "#f9a825",  "Morning 70+"),
+                            ("P4", "🟢", "morning",  50,  69, "#66bb6a",  "Morning 50–69"),
+                        ]
+                        _bq_src["_tcs_num"] = pd.to_numeric(
+                            _bq_src["tcs"], errors="coerce"
+                        ).fillna(0)
+
+                        # Compute per-tier stats
+                        _bq_tier_rows = []
+                        for _bqt_label, _bqt_emoji, _bqt_st, _bqt_lo, _bqt_hi, _bqt_clr, _bqt_desc in _bq_tier_defs:
+                            _bqt_mask = (
+                                (_bq_src["scan_type"].fillna("morning") == _bqt_st)
+                                & (_bq_src["_tcs_num"] >= _bqt_lo)
+                                & (_bq_src["_tcs_num"] <= _bqt_hi)
+                            )
+                            _bqt_df = _bq_src[_bqt_mask]
+                            if _bqt_df.empty:
+                                _bq_tier_rows.append({
+                                    "tier": _bqt_label,
+                                    "emoji": _bqt_emoji,
+                                    "desc": _bqt_desc,
+                                    "color": _bqt_clr,
+                                    "n": 0,
+                                    "avg_eod": None,
+                                    "avg_tiered": None,
+                                    "eod_wr": None,
+                                    "tiered_wr": None,
+                                })
+                            else:
+                                _bq_tier_rows.append({
+                                    "tier": _bqt_label,
+                                    "emoji": _bqt_emoji,
+                                    "desc": _bqt_desc,
+                                    "color": _bqt_clr,
+                                    "n": len(_bqt_df),
+                                    "avg_eod":    float(_bqt_df["eod_pnl_r"].mean()),
+                                    "avg_tiered": float(_bqt_df["tiered_pnl_r"].mean()),
+                                    "eod_wr":     float((_bqt_df["eod_pnl_r"] > 0).mean() * 100),
+                                    "tiered_wr":  float((_bqt_df["tiered_pnl_r"] > 0).mean() * 100),
+                                })
+
+                        # Identify best-expectancy tier (by avg tiered R) for badge
+                        _bq_valid_tiers = [r for r in _bq_tier_rows if r["n"] > 0]
+                        _bq_best_exp = (
+                            max(_bq_valid_tiers, key=lambda r: r["avg_tiered"])["tier"]
+                            if len(_bq_valid_tiers) > 1 else None
+                        )
+
+                        # Stat cards — 4 columns
+                        _bq_tc4 = st.columns(4)
+                        for _bq_ti, _bq_tr in enumerate(_bq_tier_rows):
+                            with _bq_tc4[_bq_ti]:
+                                if _bq_tr["n"] == 0:
+                                    st.markdown(
+                                        f'<div style="background:#1a2535;border:2px solid #263248;'
+                                        f'border-radius:8px;padding:12px 10px;text-align:center;">'
+                                        f'<div style="font-size:13px;font-weight:700;'
+                                        f'color:{_bq_tr["color"]};">{_bq_tr["emoji"]} {_bq_tr["tier"]}</div>'
+                                        f'<div style="font-size:10px;color:#546e7a;margin-top:2px;">{_bq_tr["desc"]}</div>'
+                                        f'<div style="font-size:11px;color:#455a64;margin-top:8px;">No paired trades</div>'
+                                        f'</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                                else:
+                                    _bq_eod_c2   = "#4caf50" if _bq_tr["avg_eod"] >= 0 else "#ef5350"
+                                    _bq_tier_c2  = "#4caf50" if _bq_tr["avg_tiered"] >= 0 else "#ef5350"
+                                    _bq_diff2    = _bq_tr["avg_tiered"] - _bq_tr["avg_eod"]
+                                    if abs(_bq_diff2) < 0.001:
+                                        _bq_v2_lbl = "Tied"
+                                        _bq_v2_clr = "#90a4ae"
+                                    elif _bq_diff2 > 0:
+                                        _bq_v2_lbl = f"Tiered +{_bq_diff2:.3f}R"
+                                        _bq_v2_clr = "#ffb74d"
+                                    else:
+                                        _bq_v2_lbl = f"EOD +{abs(_bq_diff2):.3f}R"
+                                        _bq_v2_clr = "#81c784"
+                                    _bq_best_badge2 = (
+                                        '<div style="font-size:9px;font-weight:700;color:#ffd54f;'
+                                        'background:rgba(255,213,79,0.12);border-radius:3px;'
+                                        'padding:1px 5px;display:inline-block;margin-bottom:3px;">'
+                                        'Best Edge ⭐</div>'
+                                    ) if _bq_best_exp == _bq_tr["tier"] else ""
+                                    _bq_card_border2 = (
+                                        "2px solid #ffd54f"
+                                        if _bq_best_exp == _bq_tr["tier"]
+                                        else f"2px solid {_bq_tr['color']}"
+                                    )
+                                    st.markdown(
+                                        f'<div style="background:#1a2535;border:{_bq_card_border2};'
+                                        f'border-radius:8px;padding:12px 10px;text-align:center;">'
+                                        f'{_bq_best_badge2}'
+                                        f'<div style="font-size:13px;font-weight:700;'
+                                        f'color:{_bq_tr["color"]};">{_bq_tr["emoji"]} {_bq_tr["tier"]}</div>'
+                                        f'<div style="font-size:10px;color:#90a4ae;margin-bottom:6px;">{_bq_tr["desc"]}</div>'
+                                        f'<div style="display:flex;justify-content:space-around;margin:4px 0;">'
+                                        f'<div style="text-align:center;">'
+                                        f'<div style="font-size:9px;color:#81c784;text-transform:uppercase;'
+                                        f'letter-spacing:0.7px;margin-bottom:2px;">📅 EOD</div>'
+                                        f'<div style="font-size:14px;font-weight:700;color:{_bq_eod_c2};'
+                                        f'font-family:monospace;">{"+" if _bq_tr["avg_eod"] >= 0 else ""}{_bq_tr["avg_eod"]:.3f}R</div>'
+                                        f'<div style="font-size:9px;color:#90a4ae;">{_bq_tr["eod_wr"]:.0f}% win</div>'
+                                        f'</div>'
+                                        f'<div style="font-size:11px;color:#37474f;align-self:center;">vs</div>'
+                                        f'<div style="text-align:center;">'
+                                        f'<div style="font-size:9px;color:#ffb74d;text-transform:uppercase;'
+                                        f'letter-spacing:0.7px;margin-bottom:2px;">🪜 Tiered</div>'
+                                        f'<div style="font-size:14px;font-weight:700;color:{_bq_tier_c2};'
+                                        f'font-family:monospace;">{"+" if _bq_tr["avg_tiered"] >= 0 else ""}{_bq_tr["avg_tiered"]:.3f}R</div>'
+                                        f'<div style="font-size:9px;color:#90a4ae;">{_bq_tr["tiered_wr"]:.0f}% win</div>'
+                                        f'</div>'
+                                        f'</div>'
+                                        f'<div style="font-size:10px;font-weight:700;color:{_bq_v2_clr};'
+                                        f'margin-top:4px;">{_bq_v2_lbl}</div>'
+                                        f'<div style="font-size:9px;color:#455a64;margin-top:3px;">{_bq_tr["n"]} paired trades</div>'
+                                        f'</div>',
+                                        unsafe_allow_html=True,
+                                    )
+
+                        # Grouped bar chart — TCS tier × strategy
+                        if _bq_valid_tiers:
+                            _bq_tier_long = []
+                            for _bqtl in _bq_valid_tiers:
+                                _bq_tier_long += [
+                                    {
+                                        "Tier":     f'{_bqtl["emoji"]} {_bqtl["tier"]}',
+                                        "Strategy": "📅 EOD Hold",
+                                        "Avg R":    round(_bqtl["avg_eod"], 4),
+                                        "Win Rate": round(_bqtl["eod_wr"], 1),
+                                        "Trades":   _bqtl["n"],
+                                    },
+                                    {
+                                        "Tier":     f'{_bqtl["emoji"]} {_bqtl["tier"]}',
+                                        "Strategy": "🪜 Tiered Exit",
+                                        "Avg R":    round(_bqtl["avg_tiered"], 4),
+                                        "Win Rate": round(_bqtl["tiered_wr"], 1),
+                                        "Trades":   _bqtl["n"],
+                                    },
+                                ]
+                            _bq_tier_long_df = pd.DataFrame(_bq_tier_long)
+                            _bq_tier_order = [
+                                f'{r["emoji"]} {r["tier"]}' for r in _bq_valid_tiers
+                            ]
+                            _bq_t_zero = (
+                                _alt_bq.Chart(pd.DataFrame({"y": [0]}))
+                                .mark_rule(color="#455a64", strokeDash=[4, 4], strokeWidth=1)
+                                .encode(y=_alt_bq.Y("y:Q"))
+                            )
+                            _bq_t_bars = (
+                                _alt_bq.Chart(_bq_tier_long_df)
+                                .mark_bar(
+                                    cornerRadiusTopLeft=3,
+                                    cornerRadiusTopRight=3,
+                                    size=20,
+                                )
+                                .encode(
+                                    x=_alt_bq.X(
+                                        "Tier:N",
+                                        title=None,
+                                        sort=_bq_tier_order,
+                                        axis=_alt_bq.Axis(
+                                            labelColor="#90a4ae",
+                                            labelFontSize=11,
+                                            ticks=False,
+                                        ),
+                                    ),
+                                    xOffset=_alt_bq.XOffset(
+                                        "Strategy:N",
+                                        sort=["📅 EOD Hold", "🪜 Tiered Exit"],
+                                    ),
+                                    y=_alt_bq.Y(
+                                        "Avg R:Q",
+                                        title="Avg R per Trade",
+                                        scale=_alt_bq.Scale(zero=True),
+                                        axis=_alt_bq.Axis(
+                                            labelColor="#90a4ae",
+                                            titleColor="#90a4ae",
+                                            gridColor="#263248",
+                                        ),
+                                    ),
+                                    color=_alt_bq.Color(
+                                        "Strategy:N",
+                                        scale=_alt_bq.Scale(
+                                            domain=["📅 EOD Hold", "🪜 Tiered Exit"],
+                                            range=["#81c784", "#ffb74d"],
+                                        ),
+                                        legend=_alt_bq.Legend(
+                                            orient="top",
+                                            labelColor="#cfd8dc",
+                                            titleColor="#cfd8dc",
+                                            title="Strategy",
+                                        ),
+                                    ),
+                                    tooltip=[
+                                        _alt_bq.Tooltip("Tier:N",     title="TCS Tier"),
+                                        _alt_bq.Tooltip("Strategy:N", title="Strategy"),
+                                        _alt_bq.Tooltip("Avg R:Q",    title="Avg R / trade", format="+.3f"),
+                                        _alt_bq.Tooltip("Win Rate:Q", title="Win Rate %",     format=".1f"),
+                                        _alt_bq.Tooltip("Trades:Q",   title="Paired Trades"),
+                                    ],
+                                )
+                                .properties(height=220)
+                            )
+                            _bq_t_chart = (
+                                (_bq_t_zero + _bq_t_bars)
+                                .configure_view(fill="#141e2e", stroke=None)
+                                .configure_axis(
+                                    labelColor="#90a4ae",
+                                    titleColor="#90a4ae",
+                                    gridColor="#263248",
+                                )
+                            )
+                            st.altair_chart(_bq_t_chart, use_container_width=True)
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
