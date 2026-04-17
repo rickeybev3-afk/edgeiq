@@ -7,6 +7,9 @@ import time
 import pytz
 import os
 import html as _html
+import threading
+import subprocess
+import sys
 
 from backend import *
 from backend import (
@@ -178,6 +181,65 @@ if(p.get('key')===KEY){{document.getElementById('gate').style.display='none';doc
         pass
 
 _regenerate_notes_html()
+
+# ── Close-price backfill pipeline (background thread) ─────────────────────────
+_BACKFILL_LOG    = "/tmp/backfill_pipeline.log"
+_BACKFILL_STATUS = "/tmp/backfill_pipeline.status"
+
+# Module-level lock ensures only one pipeline thread runs at a time.
+# The lock is held for the entire duration of the run and released in the
+# finally block, so even a UI "clear" during a run cannot start a second run.
+_BACKFILL_LOCK: threading.Lock = threading.Lock()
+
+
+def _backfill_pipeline_thread():
+    """Run backfill_close_prices.py then run_sim_backfill.py sequentially.
+    Progress is written to _BACKFILL_LOG; final status to _BACKFILL_STATUS.
+    The module-level _BACKFILL_LOCK is held for the full duration and released
+    in the finally block, preventing concurrent runs."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(_BACKFILL_LOG, "w", buffering=1) as lf:
+            lf.write("=== Step 1 of 2: Fetching EOD close prices from Alpaca ===\n\n")
+            lf.flush()
+            r1 = subprocess.run(
+                [sys.executable, os.path.join(script_dir, "backfill_close_prices.py")],
+                stdout=lf, stderr=subprocess.STDOUT,
+                cwd=script_dir, timeout=7200,
+            )
+            lf.write(f"\n[Step 1 complete — exit code {r1.returncode}]\n\n")
+            if r1.returncode != 0:
+                lf.write("[Pipeline halted: step 1 exited with an error. See output above.]\n")
+                with open(_BACKFILL_STATUS, "w") as sf:
+                    sf.write("error")
+                return
+            lf.write("=== Step 2 of 2: Recomputing eod_pnl_r ===\n\n")
+            lf.flush()
+            r2 = subprocess.run(
+                [sys.executable, os.path.join(script_dir, "run_sim_backfill.py")],
+                stdout=lf, stderr=subprocess.STDOUT,
+                cwd=script_dir, timeout=7200,
+            )
+            lf.write(f"\n[Step 2 complete — exit code {r2.returncode}]\n\n")
+            if r2.returncode != 0:
+                lf.write("[Pipeline halted: step 2 exited with an error. See output above.]\n")
+                with open(_BACKFILL_STATUS, "w") as sf:
+                    sf.write("error")
+                return
+            lf.write("=== Backfill pipeline finished successfully ===\n")
+        with open(_BACKFILL_STATUS, "w") as sf:
+            sf.write("done")
+    except Exception as _exc:
+        try:
+            with open(_BACKFILL_LOG, "a") as lf:
+                lf.write(f"\n[FATAL ERROR: {_exc}]\n")
+        except Exception:
+            pass
+        with open(_BACKFILL_STATUS, "w") as sf:
+            sf.write("error")
+    finally:
+        _BACKFILL_LOCK.release()
+
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
 
@@ -4582,6 +4644,127 @@ with st.sidebar:
                 st.error(f"Migration errors: {_mig_res['errors']}")
         with st.expander("📋 View SQL", expanded=False):
             st.code(_ALL_PENDING_MIGRATIONS, language="sql")
+
+    # ── Close Price Backfill ───────────────────────────────────────────────────
+    with st.sidebar.expander("📥 Close Price Backfill", expanded=False):
+        st.caption(
+            "Fetches missing EOD close prices from Alpaca for all historical trades, "
+            "then recomputes P&L. Runs in the background — may take several minutes."
+        )
+        # Derive current status from status file (persists across Streamlit re-runs).
+        # The in-process _BACKFILL_LOCK is the authoritative concurrency guard;
+        # the status file is used purely for UI display.
+        _bf_file_status = "idle"
+        if os.path.exists(_BACKFILL_STATUS):
+            try:
+                with open(_BACKFILL_STATUS) as _sf:
+                    _bf_file_status = _sf.read().strip() or "idle"
+            except Exception:
+                _bf_file_status = "idle"
+        elif os.path.exists(_BACKFILL_LOG):
+            # Log file exists but no status written yet → thread still starting
+            _bf_file_status = "running"
+
+        # Whether a thread is actively holding the lock right now
+        _bf_lock_held = not _BACKFILL_LOCK.acquire(blocking=False)
+        if not _bf_lock_held:
+            # We acquired it just to check — release immediately
+            _BACKFILL_LOCK.release()
+
+        # ── Helper: clear temp files and launch a new pipeline run ───────────
+        def _bf_launch():
+            """Clear old logs/status and start a new pipeline thread."""
+            for _p in [_BACKFILL_LOG, _BACKFILL_STATUS]:
+                try:
+                    os.remove(_p)
+                except FileNotFoundError:
+                    pass
+            if _BACKFILL_LOCK.acquire(blocking=False):
+                with open(_BACKFILL_STATUS, "w") as _sf:
+                    _sf.write("running")
+                _bt = threading.Thread(target=_backfill_pipeline_thread, daemon=True)
+                _bt.start()
+                return True
+            return False  # Lock unexpectedly held
+
+        if _bf_lock_held:
+            # A pipeline is actively running (lock is held by the background thread)
+            st.info("⏳ Backfill is running in the background…")
+            st.caption("Click Refresh to see the latest log output.")
+            if st.button("🔄 Refresh Status", use_container_width=True, key="bf_refresh_btn"):
+                st.rerun()
+
+        elif _bf_file_status == "idle":
+            st.markdown(
+                '<div style="font-size:12px;color:#888;margin-bottom:6px;">'
+                'No backfill has been run yet.</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("▶️ Start Backfill", use_container_width=True, key="bf_start_btn"):
+                if _bf_launch():
+                    st.rerun()
+                else:
+                    st.warning("A backfill is already in progress — please wait.")
+
+        elif _bf_file_status == "running" and not _bf_lock_held:
+            # Status file says "running" but the lock is free → the process
+            # restarted or crashed while a run was in progress (stale state).
+            st.warning(
+                "A previous backfill run did not finish cleanly (the app may have "
+                "restarted while it was running). The log below shows what ran before "
+                "the interruption. You can start a fresh run now."
+            )
+            if st.button("▶️ Start Fresh Run", use_container_width=True, key="bf_stale_btn"):
+                if _bf_launch():
+                    st.rerun()
+                else:
+                    st.warning("Could not acquire lock — please try again.")
+
+        elif _bf_file_status == "done":
+            st.success("✅ Backfill complete!")
+            if st.button("🔄 Run Again", use_container_width=True, key="bf_again_btn"):
+                if _bf_launch():
+                    st.rerun()
+                else:
+                    st.warning("A backfill is already in progress — please wait.")
+
+        elif _bf_file_status == "error":
+            st.error("❌ Backfill encountered an error. Check the log below.")
+            if st.button("🔄 Retry", use_container_width=True, key="bf_retry_btn"):
+                if _bf_launch():
+                    st.rerun()
+                else:
+                    st.warning("A backfill is already in progress — please wait.")
+
+        else:
+            # Unexpected status value — allow manual reset
+            st.warning(f"Unexpected status: {_bf_file_status!r}. Clear state to reset.")
+            if st.button("🗑 Clear State", use_container_width=True, key="bf_clear_btn"):
+                for _p in [_BACKFILL_LOG, _BACKFILL_STATUS]:
+                    try:
+                        os.remove(_p)
+                    except FileNotFoundError:
+                        pass
+                st.rerun()
+
+        if os.path.exists(_BACKFILL_LOG):
+            with st.expander(
+                "📋 View Log",
+                expanded=(_bf_file_status in ("done", "error")),
+            ):
+                try:
+                    with open(_BACKFILL_LOG) as _lf:
+                        _log_txt = _lf.read()
+                    if _log_txt:
+                        # Show last 4 000 chars so the sidebar doesn't overflow
+                        _preview = _log_txt[-4000:] if len(_log_txt) > 4000 else _log_txt
+                        if len(_log_txt) > 4000:
+                            st.caption(f"Showing last 4 000 of {len(_log_txt):,} characters.")
+                        st.code(_preview, language="text")
+                    else:
+                        st.caption("Log is empty — pipeline may still be initialising.")
+                except Exception as _le:
+                    st.caption(f"Could not read log: {_le}")
 
     # ── Setup Checklist ────────────────────────────────────────────────────────
     _render_setup_checklist()
