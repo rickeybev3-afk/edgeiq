@@ -11744,6 +11744,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _tkr_div_chart_data = {}
             _best_tcs_options = []
             _tkr_max_div_data = {}
+            _tkr_delta_data = {}
             _tkr_ib_threshold = _cached_load_ib_range_pct_threshold()
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
@@ -11928,6 +11929,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _tk_delta_intra_str = _fmt_delta_r(_tk_eod_intra_vals, _tk_tiered_intra_vals)
                 _tk_delta_morn_num  = _delta_num(_tk_eod_morn_vals,    _tk_tiered_morn_vals)
                 _tk_delta_intra_num = _delta_num(_tk_eod_intra_vals,   _tk_tiered_intra_vals)
+
+                _tkr_delta_data[str(_tk)] = {
+                    "delta_morn":  _tk_delta_morn_str,
+                    "delta_intra": _tk_delta_intra_str,
+                }
 
                 # ── Per-ticker max-divergence (equity $ vs cumulative R) ───────
                 _tk_max_div_val = 0.0
@@ -15114,6 +15120,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     else:
                         _exp_df["Best TCS Floor"] = ""
                         _exp_df["Recommended"] = ""
+                    _exp_delta = _tkr_delta_data.get(str(_exp_tk), {})
+                    _exp_df["Δ Morn"]  = _exp_delta.get("delta_morn",  "—")
+                    _exp_df["Δ Intra"] = _exp_delta.get("delta_intra", "—")
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
