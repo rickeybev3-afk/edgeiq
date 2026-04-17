@@ -20479,8 +20479,11 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                               "false_break_up", "false_break_down", "min_tcs_filter",
                               "ib_range_pct", "vwap_at_ib"]
         _pt_include_sim_outcome = "sim_outcome" in _pt_df.columns
+        _pt_include_pnl_r_sim   = "pnl_r_sim" in _pt_df.columns
         if _pt_include_sim_outcome:
             _pt_log_base_cols = _pt_log_base_cols + ["sim_outcome"]
+        if _pt_include_pnl_r_sim:
+            _pt_log_base_cols = _pt_log_base_cols + ["pnl_r_sim"]
         # Also pull ib_high/ib_low temporarily to compute VWAP alignment
         _pt_log_vwap_helpers = [c for c in ["ib_high", "ib_low"] if c in _pt_df.columns]
         _pt_log_cols_all = list(dict.fromkeys(
@@ -20522,20 +20525,55 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             columns=[c for c in _pt_log_vwap_helpers if c in _pt_log_show.columns]
         )
 
-        # Derive the human-readable "Sim" annotation from the sorted slice,
-        # then drop the raw sim_outcome column so it doesn't appear in the table.
-        if _pt_include_sim_outcome and "sim_outcome" in _pt_log_show.columns:
-            _pt_log_show.insert(
-                _pt_log_show.columns.get_loc("ticker") + 1,
-                "Sim",
-                _pt_log_show["sim_outcome"].apply(
-                    lambda v: f"⚠ No sim — {_pt_sim_fail_labels[v]}"
-                    if v in _pt_sim_fail_labels else ""
-                ),
-            )
-            _pt_log_show = _pt_log_show.drop(columns=["sim_outcome"])
+        # Derive "Sim Outcome" and "Sim P&L (R)" display columns from the sorted slice,
+        # then drop the raw sim_outcome / pnl_r_sim columns so they don't appear twice.
+        _pt_has_any_sim_cols = (
+            (_pt_include_sim_outcome and "sim_outcome" in _pt_log_show.columns)
+            or (_pt_include_pnl_r_sim  and "pnl_r_sim"   in _pt_log_show.columns)
+        )
+        if _pt_has_any_sim_cols:
+            def _pt_sim_outcome_label(row):
+                v = row.get("sim_outcome") if "sim_outcome" in row.index else None
+                if v in _pt_sim_fail_labels:
+                    return f"⚠ No sim — {_pt_sim_fail_labels[v]}"
+                r = row.get("pnl_r_sim") if "pnl_r_sim" in row.index else None
+                try:
+                    float(r)
+                    r_valid = True
+                except (TypeError, ValueError):
+                    r_valid = False
+                if v and v not in _pt_sim_fail_labels:
+                    return str(v)
+                if r_valid:
+                    return "simulated"
+                return "⚠ No sim — unavailable"
 
-        _pt_log_has_sim_col = "Sim" in _pt_log_show.columns
+            def _pt_sim_pnl_label(row):
+                v = row.get("sim_outcome") if "sim_outcome" in row.index else None
+                if v in _pt_sim_fail_labels:
+                    return None
+                r = row.get("pnl_r_sim") if "pnl_r_sim" in row.index else None
+                try:
+                    return float(r)
+                except (TypeError, ValueError):
+                    return None
+
+            insert_pos = _pt_log_show.columns.get_loc("ticker") + 1
+            _pt_log_show.insert(
+                insert_pos, "Sim Outcome",
+                _pt_log_show.apply(_pt_sim_outcome_label, axis=1),
+            )
+            if _pt_include_pnl_r_sim:
+                _pt_log_show.insert(
+                    insert_pos + 1, "Sim P&L (R)",
+                    _pt_log_show.apply(_pt_sim_pnl_label, axis=1),
+                )
+            _pt_log_show = _pt_log_show.drop(
+                columns=[c for c in ["sim_outcome", "pnl_r_sim"] if c in _pt_log_show.columns]
+            )
+
+        _pt_log_has_sim_col  = "Sim Outcome" in _pt_log_show.columns
+        _pt_log_has_sim_pnl  = "Sim P&L (R)" in _pt_log_show.columns
         _pt_log_has_ib_pct   = "ib_range_pct" in _pt_log_show.columns
         _pt_log_has_vwap     = "vwap_at_ib" in _pt_log_show.columns
 
@@ -20543,12 +20581,16 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _PT_RED_STRONG   = "background-color:rgba(239,83,80,0.30);color:#ef5350;font-weight:700"
         _PT_GREY_CELL    = "background-color:rgba(144,164,174,0.12);color:#90a4ae"
 
+        _PT_SIM_GREEN = "color:#66bb6a;font-weight:700"
+        _PT_SIM_RED   = "color:#ef5350;font-weight:700"
+        _PT_SIM_GREY  = "color:#90a4ae"
+
         def _pt_row_color(row):
-            if _pt_log_has_sim_col and str(row.get("Sim", "")).startswith("⚠ No sim"):
+            if _pt_log_has_sim_col and str(row.get("Sim Outcome", "")).startswith("⚠ No sim"):
                 warn = "background-color: rgba(255,152,0,0.15)"
                 warn_cell = "background-color: rgba(255,152,0,0.15); color:#e65100; font-weight:700"
                 return [
-                    warn_cell if col == "Sim" else warn
+                    warn_cell if col == "Sim Outcome" else warn
                     for col in row.index
                 ]
             wl = str(row.get("win_loss", "")).strip()
@@ -20566,6 +20608,17 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             for col in row.index:
                 if col == "win_loss":
                     result.append(hi)
+                elif col in ("Sim Outcome", "Sim P&L (R)") and (_pt_log_has_sim_col or _pt_log_has_sim_pnl):
+                    try:
+                        r_val = float(row.get("Sim P&L (R)"))
+                        if r_val > 0:
+                            result.append(base + ";" + _PT_SIM_GREEN)
+                        elif r_val < 0:
+                            result.append(base + ";" + _PT_SIM_RED)
+                        else:
+                            result.append(base + ";" + _PT_SIM_GREY)
+                    except (TypeError, ValueError):
+                        result.append(base + ";" + _PT_SIM_GREY)
                 elif col == "ib_range_pct" and _pt_log_has_ib_pct:
                     try:
                         v = float(row["ib_range_pct"])
@@ -20594,6 +20647,10 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         if _pt_log_has_vwap:
             _pt_col_cfg["vwap_at_ib"] = st.column_config.NumberColumn(
                 "VWAP", format="$%.2f", help="VWAP at IB close · green = aligned with predicted direction"
+            )
+        if _pt_log_has_sim_pnl:
+            _pt_col_cfg["Sim P&L (R)"] = st.column_config.NumberColumn(
+                "Sim P&L (R)", format="%.2f", help="Simulated P&L in R units · green = win, red = loss"
             )
 
         _pt_log_styled = (
