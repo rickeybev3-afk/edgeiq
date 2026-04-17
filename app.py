@@ -18720,6 +18720,19 @@ def render_performance_tab():
         "P&L measured in R multiples at EOD close."
     )
 
+    # ── paper_trades sentinel count (unavailable rows flagged with -9999) ────────
+    _pt_sentinel_total_1b = count_paper_trades_tiered_sentinel(user_id=_AUTH_USER_ID)
+    if _pt_sentinel_total_1b > 0:
+        st.markdown(
+            f'<p style="margin:0 0 6px 0; font-size:0.9em; color:#ef9a9a;">'
+            f'\u26a0 <strong>{_pt_sentinel_total_1b:,} paper_trades row'
+            f'{"s" if _pt_sentinel_total_1b != 1 else ""} flagged unavailable</strong>'
+            f' (sentinel <code>-9999</code>) \u2014 '
+            f'<a href="#pt-sentinel-reset" style="color:#90caf9; text-decoration:underline;">'
+            f'jump to reset tool \u2193</a></p>',
+            unsafe_allow_html=True,
+        )
+
     # Safe defaults so P1–P4 block below never hits NameError if no sim data
     _sim_df    = pd.DataFrame()
     _s_total   = 0
