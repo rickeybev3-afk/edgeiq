@@ -10688,6 +10688,51 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f"\u2002({_sw_dd_trough_idx - _sw_dd_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_sw_max_dd_r)}R**"
                                 )
 
+                            # ── Visual R-stats metric chips ───────────────────────
+                            _sw_exp_clr = "#66bb6a" if _sw_exp_r >= 0 else "#ef5350"
+                            _sw_sor_clr = "#ffb300" if _sw_fb_rate >= 30 else "#90a4ae"
+                            _sw_r_label = "EOD Hold R" if _sw_r_col == "eod_pnl_r" else "Tiered Exit R"
+                            st.markdown(
+                                f'<div style="margin:10px 0 6px 0;">'
+                                f'<span style="font-size:10px;font-weight:700;'
+                                f'color:#90caf9;letter-spacing:0.8px;'
+                                f'text-transform:uppercase;">R-Stats ({_sw_r_label})</span>'
+                                f'</div>'
+                                f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
+                                f'<div style="background:rgba(255,179,0,0.10);border:1px solid rgba(255,179,0,0.25);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Stop-Out Rate</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:{_sw_sor_clr};">'
+                                f'{_sw_fb_rate}%</div></div>'
+                                f'<div style="background:rgba(76,175,80,0.10);border:1px solid rgba(76,175,80,0.25);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Avg Win R</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#66bb6a;">'
+                                f'+{_sw_avg_win_r}R</div></div>'
+                                f'<div style="background:rgba(239,83,80,0.10);border:1px solid rgba(239,83,80,0.25);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Avg Loss R</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#ef5350;">'
+                                f'{_sw_avg_loss_r}R</div></div>'
+                                f'<div style="background:rgba(144,164,174,0.08);border:1px solid rgba(144,164,174,0.20);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Expectancy</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:{_sw_exp_clr};">'
+                                f'{_sw_exp_r:+.3f}R</div></div>'
+                                f'<div style="background:rgba(239,83,80,0.08);border:1px solid rgba(239,83,80,0.18);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#90a4ae;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Max Drawdown R</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#ef5350;">'
+                                f'{abs(_sw_max_dd_r)}R</div></div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
                             def _sw_stat_r(lbl, val):
                                 _rx = {c: "" for c in _sw_sum_cols}
                                 _rx[_sw_lbl_col] = lbl
