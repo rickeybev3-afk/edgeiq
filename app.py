@@ -312,7 +312,7 @@ _BACKFILL_STATUS = "/tmp/backfill_pipeline.status"
 _BACKFILL_LOCK: threading.Lock = threading.Lock()
 
 
-def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | None = None):
+def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | None = None, table: str | None = None):
     """Run backfill_close_prices.py then run_sim_backfill.py sequentially.
     Progress is written to _BACKFILL_LOG; final status to _BACKFILL_STATUS.
     The module-level _BACKFILL_LOCK is held for the full duration and released
@@ -320,6 +320,8 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
 
     start_date / end_date (YYYY-MM-DD strings) are forwarded to the script as
     --start / --end so that only rows within the specified range are processed.
+    table (None | "backtest_sim_runs" | "paper_trades") is forwarded as --table
+    to limit processing to a single table; None means both tables are processed.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     backfill_cmd = [sys.executable, os.path.join(script_dir, "backfill_close_prices.py")]
@@ -327,6 +329,8 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
         backfill_cmd += ["--start", start_date]
     if end_date:
         backfill_cmd += ["--end", end_date]
+    if table:
+        backfill_cmd += ["--table", table]
     try:
         with open(_BACKFILL_LOG, "w", buffering=1) as lf:
             lf.write("=== Step 1 of 2: Fetching EOD close prices from Alpaca ===\n\n")
@@ -5319,6 +5323,22 @@ with st.sidebar:
         if _bf_range_invalid:
             st.error("⚠️ Start Date must be on or before End Date.", icon="⚠️")
 
+        # ── Table selector ────────────────────────────────────────────────────
+        _BF_TABLE_OPTIONS = ["Both", "Backtest only", "Paper trades only"]
+        _BF_TABLE_MAP = {
+            "Both":              None,
+            "Backtest only":     "backtest_sim_runs",
+            "Paper trades only": "paper_trades",
+        }
+        _bf_table_label = st.selectbox(
+            "Table",
+            options=_BF_TABLE_OPTIONS,
+            index=0,
+            help="Limit the backfill to a single table. Defaults to Both.",
+            key="bf_table_select",
+        )
+        _bf_table_val = _BF_TABLE_MAP[_bf_table_label]
+
         # Derive current status from status file (persists across Streamlit re-runs).
         # The in-process _BACKFILL_LOCK is the authoritative concurrency guard;
         # the status file is used purely for UI display.
@@ -5354,7 +5374,7 @@ with st.sidebar:
                     _sf.write("running")
                 _bt = threading.Thread(
                     target=_backfill_pipeline_thread,
-                    args=(_bf_start_str, _bf_end_str),
+                    args=(_bf_start_str, _bf_end_str, _bf_table_val),
                     daemon=True,
                 )
                 _bt.start()
