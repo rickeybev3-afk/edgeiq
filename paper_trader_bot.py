@@ -173,6 +173,153 @@ def _tier_priority_key(r: dict) -> tuple:
     return (3, -tcs)                               # P4 — or unclassified
 
 
+# ── Context level logging (S/R, VWAP, MACD) ───────────────────────────────────
+def _fetch_prev_day_bars(tickers: list, trade_date_str: str) -> dict:
+    """Return dict[ticker] = {high, low} for the previous trading session."""
+    from datetime import datetime, timedelta
+    import requests as _req
+    prev = (datetime.strptime(trade_date_str, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d')
+    end  = (datetime.strptime(trade_date_str, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+    result = {}
+    for i in range(0, len(tickers), 10):
+        batch = tickers[i:i+10]
+        try:
+            r = _req.get(
+                'https://data.alpaca.markets/v2/stocks/bars',
+                headers={'APCA-API-KEY-ID': ALPACA_API_KEY, 'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY},
+                params={'symbols': ','.join(batch), 'start': prev, 'end': end,
+                        'timeframe': '1Day', 'feed': 'iex', 'limit': 1000},
+                timeout=20,
+            )
+            r.raise_for_status()
+            for sym, bars in (r.json().get('bars') or {}).items():
+                if bars:
+                    result[sym] = {'high': bars[-1]['h'], 'low': bars[-1]['l']}
+        except Exception as e:
+            log.warning(f'  context levels: prev-day bars error {e}')
+        time.sleep(0.3)
+    return result
+
+def _fetch_intraday_5min(ticker: str, trade_date_str: str) -> list:
+    """Return list of 5-min bar dicts from 9:30 AM–4:00 PM ET on trade_date."""
+    import requests as _req
+    import pytz
+    from datetime import datetime
+    ET = pytz.timezone('America/New_York')
+    dt = datetime.strptime(trade_date_str, '%Y-%m-%d')
+    start = ET.localize(dt.replace(hour=9, minute=30)).isoformat()
+    end   = ET.localize(dt.replace(hour=16, minute=0)).isoformat()
+    try:
+        r = _req.get(
+            f'https://data.alpaca.markets/v2/stocks/{ticker}/bars',
+            headers={'APCA-API-KEY-ID': ALPACA_API_KEY, 'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY},
+            params={'start': start, 'end': end, 'timeframe': '5Min', 'feed': 'iex', 'limit': 1000},
+            timeout=20,
+        )
+        if r.status_code == 422:
+            return []
+        r.raise_for_status()
+        return r.json().get('bars') or []
+    except Exception as e:
+        log.warning(f'  context levels: intraday bars error {ticker}: {e}')
+        return []
+
+def _compute_vwap(bars: list) -> float | None:
+    total_vol = sum(b['v'] for b in bars if b.get('v', 0) > 0)
+    if not total_vol:
+        return None
+    return sum(b.get('vw', b['c']) * b['v'] for b in bars if b.get('v', 0) > 0) / total_vol
+
+def _compute_macd(bars: list, fast=12, slow=26, sig=9):
+    closes = [b['c'] for b in bars]
+    if len(closes) < slow + sig:
+        return None, None, None, None
+    def ema(data, p):
+        k, v = 2.0 / (p + 1), data[0]
+        out = [v]
+        for x in data[1:]: v = x * k + v * (1 - k); out.append(v)
+        return out
+    macd_vals = [f - s for f, s in zip(ema(closes, fast), ema(closes, slow))]
+    sig_vals  = ema(macd_vals[slow - 1:], sig)
+    ml, sl    = macd_vals[-1], sig_vals[-1]
+    hist      = ml - sl
+    direction = 'bullish' if hist > 0 else ('bearish' if hist < 0 else 'neutral')
+    return ml, sl, hist, direction
+
+def _bars_before_signal(bars: list, trade_date_str: str, scan_type: str) -> list:
+    import pytz
+    from datetime import datetime
+    ET = pytz.timezone('America/New_York')
+    sig = '09:35:00' if scan_type == 'morning' else '10:47:00'
+    dt  = datetime.strptime(trade_date_str, '%Y-%m-%d')
+    h, m, s = [int(x) for x in sig.split(':')]
+    cutoff = ET.localize(dt.replace(hour=h, minute=m, second=s))
+    result = []
+    for b in bars:
+        try:
+            bar_dt = datetime.fromisoformat(b['t'].replace('Z', '+00:00'))
+            if bar_dt <= cutoff:
+                result.append(b)
+        except Exception:
+            continue
+    return result
+
+def log_context_levels(results: list, trade_date_str: str) -> None:
+    """
+    After a scan is logged, pull and store context levels (S/R, VWAP, MACD)
+    for each ticker in results. Upserts to backtest_context_levels table.
+    Runs in background — failures are logged but never raise.
+    """
+    if not results:
+        return
+    tickers = list({r.get('ticker') for r in results if r.get('ticker')})
+    prev_day = _fetch_prev_day_bars(tickers, trade_date_str)
+    rows_to_upsert = []
+    for r in results:
+        ticker    = r.get('ticker')
+        scan_type = r.get('scan_type', 'morning')
+        if not ticker:
+            continue
+        try:
+            intraday = _fetch_intraday_5min(ticker, trade_date_str)
+            time.sleep(0.25)
+            bars_at  = _bars_before_signal(intraday, trade_date_str, scan_type)
+            vwap     = _compute_vwap(bars_at)
+            ml, sl, hist, direction = _compute_macd(bars_at)
+            pd       = prev_day.get(ticker, {})
+            ib_high  = float(r.get('ib_high') or 0) or None
+            ib_low   = float(r.get('ib_low')  or 0) or None
+            predicted = r.get('predicted', '')
+            ib_break = ib_high if predicted == 'Bullish Break' else ib_low
+            key_lvls = [l for l in [pd.get('high'), pd.get('low'), vwap] if l]
+            above    = [l for l in key_lvls if ib_break and l > ib_break]
+            below    = [l for l in key_lvls if ib_break and l <= ib_break]
+            rows_to_upsert.append({
+                'ticker':             ticker,
+                'trade_date':         trade_date_str,
+                'scan_type':          scan_type,
+                'prev_day_high':      pd.get('high'),
+                'prev_day_low':       pd.get('low'),
+                'premarket_high':     None,
+                'premarket_low':      None,
+                'vwap_at_signal':     round(vwap, 4) if vwap else None,
+                'macd_line':          round(ml, 6) if ml is not None else None,
+                'macd_signal_line':   round(sl, 6) if sl is not None else None,
+                'macd_histogram':     round(hist, 6) if hist is not None else None,
+                'macd_direction':     direction,
+                'nearest_resistance': round(min(above), 4) if above else None,
+                'nearest_support':    round(max(below), 4) if below else None,
+            })
+        except Exception as e:
+            log.warning(f'  context levels: {ticker} error: {e}')
+    if rows_to_upsert:
+        try:
+            _supabase_client.table('backtest_context_levels').upsert(rows_to_upsert).execute()
+            log.info(f'  Context levels saved: {len(rows_to_upsert)} rows')
+        except Exception as e:
+            log.warning(f'  context levels upsert failed: {e}')
+
+
 # ── Order placement ────────────────────────────────────────────────────────────
 def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
@@ -1013,6 +1160,12 @@ def morning_scan():
         f"{all_results_logged.get('skipped', 0)} skipped | regime: {regime_tag or 'none'}"
     )
 
+    # Log context levels (S/R, VWAP, MACD) for adaptive exit analysis
+    try:
+        log_context_levels(results, str(today))
+    except Exception as _ctx_err:
+        log.warning(f"Context level logging failed (non-critical): {_ctx_err}")
+
     # Load per-structure calibrated TCS thresholds (from nightly recalibration)
     _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
     qualified = [
@@ -1102,6 +1255,12 @@ def intraday_scan():
     # ── Log ALL intraday results to paper_trades (dedup by ticker+date+scan_type)
     logged = log_paper_trades(results, user_id=USER_ID, min_tcs=effective_min_tcs)
     log.info(f"Intraday paper trades logged: {logged.get('saved',0)} new, {logged.get('skipped',0)} already existed")
+
+    # Log context levels (S/R, VWAP, MACD) for adaptive exit analysis
+    try:
+        log_context_levels(results, str(today))
+    except Exception as _ctx_err:
+        log.warning(f"Context level logging failed (non-critical): {_ctx_err}")
 
     _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
     qualified = [
