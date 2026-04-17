@@ -8684,21 +8684,29 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3 = st.columns([2, 1, 1])
                         with _rp_log_fcol1:
+                            if "rp_log_ticker_filter" not in st.session_state:
+                                st.session_state["rp_log_ticker_filter"] = st.query_params.get("rp_log_ticker", "")
                             _rp_log_ticker_filter = st.text_input(
                                 "Filter by ticker",
-                                value="",
                                 key="rp_log_ticker_filter",
                                 placeholder="e.g. AAPL, NVDA",
                                 label_visibility="collapsed",
                             )
+                            if st.query_params.get("rp_log_ticker") != _rp_log_ticker_filter:
+                                st.query_params["rp_log_ticker"] = _rp_log_ticker_filter
                         with _rp_log_fcol2:
+                            _rp_wl_options = ["All", "Win", "Loss"]
+                            if "rp_log_wl_filter" not in st.session_state:
+                                _rp_wl_param = st.query_params.get("rp_log_wl", "All")
+                                st.session_state["rp_log_wl_filter"] = _rp_wl_param if _rp_wl_param in _rp_wl_options else "All"
                             _rp_log_wl_filter = st.selectbox(
                                 "W/L filter",
-                                options=["All", "Win", "Loss"],
-                                index=0,
+                                options=_rp_wl_options,
                                 key="rp_log_wl_filter",
                                 label_visibility="collapsed",
                             )
+                            if st.query_params.get("rp_log_wl") != _rp_log_wl_filter:
+                                st.query_params["rp_log_wl"] = _rp_log_wl_filter
                         with _rp_log_fcol3:
                             _rp_log_show_neutral = st.checkbox(
                                 "Show neutral rows",
