@@ -35,6 +35,15 @@ Results of the 2026-04-16 close_price migration + re-run:
   Verified          : 0 rows have close_price IS NOT NULL AND eod_pnl_r IS NULL for
                       any Bullish Break / Bearish Break row. Backfill complete.
 
+Re-run required after close_price historical backfill (run backfill_close_prices.py first):
+  backfill_close_prices.py now populates close_price for all historical rows
+  (backtest_sim_runs AND paper_trades) that had close_price = NULL by fetching
+  EOD daily bars from Alpaca IEX.  After that script finishes, re-run this
+  script to compute eod_pnl_r for the ~13,800 newly-populated rows.
+  Steps:
+    1. python backfill_close_prices.py
+    2. python run_sim_backfill.py
+
 Uses concurrent threads to run Supabase updates in parallel — much faster
 than sequential updates.
 
