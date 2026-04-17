@@ -167,18 +167,33 @@ if _startup_errors:
         ", ".join(_name for _name, _ in _startup_errors),
     )
 
+# ── Alpaca credential mismatch status ────────────────────────────────────────
+# Mutated in-place by the background thread so app.py always sees the latest
+# value without a new import.  None means the check has not finished yet.
+_alpaca_mismatch_status: dict = {
+    "checked": False,   # True once the background check has completed
+    "mismatch": False,  # True if keys don't match IS_PAPER_ALPACA
+    "message":  "",     # Human-readable description when mismatch=True
+}
+
 # Write startup health status to a file so the proxy can expose /api/health
-try:
-    import json as _json
-    _health_path = "/tmp/startup_health.json"
-    _health_payload = {
-        "ok": len(_startup_errors) == 0,
-        "errors": [{"secret": _n, "message": _m} for _n, _m in _startup_errors],
-    }
-    with open(_health_path, "w") as _hf:
-        _json.dump(_health_payload, _hf)
-except Exception as _he:
-    logging.warning("[STARTUP] Could not write startup health file: %s", _he)
+def _write_health_file() -> None:
+    """Persist the current health payload to /tmp/startup_health.json."""
+    try:
+        import json as _json
+        _health_path = "/tmp/startup_health.json"
+        _health_payload = {
+            "ok": len(_startup_errors) == 0,
+            "errors": [{"secret": _n, "message": _m} for _n, _m in _startup_errors],
+            "alpaca_mode_mismatch": _alpaca_mismatch_status["mismatch"],
+            "alpaca_mismatch_message": _alpaca_mismatch_status["message"],
+        }
+        with open(_health_path, "w") as _hf:
+            _json.dump(_health_payload, _hf)
+    except Exception as _he:
+        logging.warning("[STARTUP] Could not write startup health file: %s", _he)
+
+_write_health_file()
 
 # ── Alpaca paper/live account type validation (non-blocking) ─────────────────
 # Checks the is_paper_account field from GET /v2/account and compares it against
@@ -195,6 +210,7 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                     "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
                 }
                 _mode_label = "paper (IS_PAPER_ALPACA=true)" if IS_PAPER_ALPACA else "live (IS_PAPER_ALPACA=false)"
+                _mismatch_msg = ""
                 # Try paper endpoint first — paper keys authenticate here; live keys do not.
                 _resp_paper = _req.get(
                     "https://paper-api.alpaca.markets/v2/account",
@@ -209,12 +225,15 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                                 "paper mode (IS_PAPER_ALPACA=true) ✓"
                             )
                         else:
+                            _mismatch_msg = (
+                                "Paper keys detected but app is in live mode (IS_PAPER_ALPACA=false). "
+                                "Live orders will be rejected by Alpaca. "
+                                "Set IS_PAPER_ALPACA=true or switch to live brokerage keys."
+                            )
                             logging.warning(
                                 "[STARTUP] ⚠️  ALPACA CREDENTIAL MISMATCH: keys belong to a "
                                 "PAPER trading account (is_paper_account=True) but "
-                                "IS_PAPER_ALPACA=false (live mode). Live orders will be "
-                                "rejected by Alpaca. Set IS_PAPER_ALPACA=true or switch to "
-                                "live brokerage keys."
+                                "IS_PAPER_ALPACA=false (live mode). %s", _mismatch_msg
                             )
                     else:
                         # Rare: paper endpoint accepted the keys but is_paper_account=False.
@@ -234,12 +253,15 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                         _key_is_paper = _resp_live.json().get("is_paper_account", False)
                         if not _key_is_paper:
                             if IS_PAPER_ALPACA:
+                                _mismatch_msg = (
+                                    "Live keys detected but app is in paper mode (IS_PAPER_ALPACA=true). "
+                                    "Paper trading will fail or route real orders unexpectedly. "
+                                    "Set IS_PAPER_ALPACA=false or switch to paper trading keys."
+                                )
                                 logging.warning(
                                     "[STARTUP] ⚠️  ALPACA CREDENTIAL MISMATCH: keys belong to a "
                                     "LIVE brokerage account (is_paper_account=False) but "
-                                    "IS_PAPER_ALPACA=true (paper mode). Paper trading will fail "
-                                    "or route real orders unexpectedly. Set IS_PAPER_ALPACA=false "
-                                    "or switch to paper trading keys."
+                                    "IS_PAPER_ALPACA=true (paper mode). %s", _mismatch_msg
                                 )
                             else:
                                 logging.info(
@@ -267,8 +289,15 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                         "returned unexpected status %s. Verify your keys manually.",
                         _resp_paper.status_code,
                     )
+                # Update the shared status dict in-place so app.py sees the result.
+                _alpaca_mismatch_status["checked"] = True
+                _alpaca_mismatch_status["mismatch"] = bool(_mismatch_msg)
+                _alpaca_mismatch_status["message"]  = _mismatch_msg
+                # Re-write the health file so /api/health reflects the check result.
+                _write_health_file()
             except Exception as _ae:
                 logging.debug("[STARTUP] Alpaca account-type check skipped: %s", _ae)
+                _alpaca_mismatch_status["checked"] = True
         _threading.Thread(target=_run, daemon=True, name="alpaca-account-check").start()
     _check_alpaca_account_type()
 

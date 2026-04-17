@@ -12,6 +12,35 @@ interface HealthState {
   checked: boolean;
   ok: boolean;
   errors: string[];
+  alpaca_mode_mismatch?: boolean;
+  alpaca_mismatch_message?: string;
+}
+
+function AlpacaMismatchBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 9998,
+        background: "#431407",
+        borderBottom: "1px solid #c2410c",
+        padding: "10px 20px",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+      }}
+    >
+      <AlertCircle style={{ color: "#fb923c", flexShrink: 0, width: "18px", height: "18px" }} />
+      <span style={{ color: "#fed7aa", fontSize: "13px", lineHeight: "1.5" }}>
+        <strong style={{ color: "#fdba74" }}>⚠️ Alpaca credential mismatch:</strong>{" "}
+        {message}
+      </span>
+    </div>
+  );
 }
 
 function ErrorBanner({ errors }: { errors: string[] }) {
@@ -96,7 +125,13 @@ function App() {
         const res = await fetch("/api/health");
         const data = await res.json();
         if (!cancelled) {
-          setHealth({ checked: true, ok: !!data.ok, errors: data.errors ?? [] });
+          setHealth({
+            checked: true,
+            ok: !!data.ok,
+            errors: data.errors ?? [],
+            alpaca_mode_mismatch: !!data.alpaca_mode_mismatch,
+            alpaca_mismatch_message: data.alpaca_mismatch_message ?? "",
+          });
         }
       } catch {
         if (!cancelled) {
@@ -127,6 +162,9 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
+        {health.alpaca_mode_mismatch && health.alpaca_mismatch_message && (
+          <AlpacaMismatchBanner message={health.alpaca_mismatch_message} />
+        )}
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <Router />
         </WouterRouter>

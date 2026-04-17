@@ -48,6 +48,7 @@ from backend import (
     _startup_errors,
     _SECRET_CATALOG,
     _secret_statuses,
+    _alpaca_mismatch_status,
 )
 
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
@@ -212,6 +213,18 @@ if _runtime_errors:
             "Supabase credentials are no longer valid. Database queries may fail "
             "until SUPABASE_URL and SUPABASE_KEY are updated and the app is restarted."
         )
+
+# ── Alpaca credential mismatch banner ─────────────────────────────────────────
+# _alpaca_mismatch_status is mutated in-place by the background account-type
+# check thread in backend.py.  Streamlit re-runs this script on every
+# interaction, so the banner appears as soon as the thread has finished (usually
+# within a few seconds of first page load).
+if _alpaca_mismatch_status["mismatch"]:
+    st.warning(
+        f"**⚠️ Alpaca credential mismatch detected**\n\n"
+        f"{_alpaca_mismatch_status['message']}\n\n"
+        "Update **IS_PAPER_ALPACA** in your environment **Secrets**, then restart the app."
+    )
 
 # ── Session state ──────────────────────────────────────────────────────────────
 _DEFAULTS = {
