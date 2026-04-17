@@ -626,6 +626,7 @@ function App() {
         title: "Alpaca credentials are now consistent",
         description: "The credential mismatch has been resolved.",
         duration: 5000,
+        variant: "success",
       });
     }
     prevMismatch.current = current;
