@@ -7917,6 +7917,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm10.metric("Max Drawdown (R)", f"{abs(_max_dd_r)}R",
                                      help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim (shown as a positive magnitude)")
 
+                        # ── EOD Hold R and Tiered Exit R on-screen stats ──────────────────
+                        _has_eod_col    = "R (EOD)"    in _rp_df.columns
+                        _has_tiered_col = "R (Tiered)" in _rp_df.columns
+                        _csv_ov_eod_ser  = pd.to_numeric(_rp_df["R (EOD)"],    errors="coerce").dropna() if _has_eod_col    else pd.Series(dtype=float)
+                        _csv_ov_eod_n    = len(_csv_ov_eod_ser)
+                        _csv_ov_eod_wr   = round((_csv_ov_eod_ser > 0).sum() / _csv_ov_eod_n * 100, 1) if _csv_ov_eod_n else 0
+                        _csv_ov_eod_aw   = round(_csv_ov_eod_ser[_csv_ov_eod_ser > 0].mean(), 2) if (_csv_ov_eod_ser > 0).any() else 0
+                        _csv_ov_eod_al   = round(_csv_ov_eod_ser[_csv_ov_eod_ser < 0].mean(), 2) if (_csv_ov_eod_ser < 0).any() else 0
+                        _csv_ov_eod_exp  = round(_csv_ov_eod_ser.mean(), 3) if _csv_ov_eod_n else 0
+                        _csv_ov_eod_cum  = _csv_ov_eod_ser.cumsum().reset_index(drop=True)
+                        _csv_ov_eod_mdd  = round((_csv_ov_eod_cum - _csv_ov_eod_cum.cummax()).min(), 2) if _csv_ov_eod_n else 0
+                        _csv_ov_tier_ser = pd.to_numeric(_rp_df["R (Tiered)"], errors="coerce").dropna() if _has_tiered_col else pd.Series(dtype=float)
+                        _csv_ov_tier_n   = len(_csv_ov_tier_ser)
+                        _csv_ov_tier_wr  = round((_csv_ov_tier_ser > 0).sum() / _csv_ov_tier_n * 100, 1) if _csv_ov_tier_n else 0
+                        _csv_ov_tier_aw  = round(_csv_ov_tier_ser[_csv_ov_tier_ser > 0].mean(), 2) if (_csv_ov_tier_ser > 0).any() else 0
+                        _csv_ov_tier_al  = round(_csv_ov_tier_ser[_csv_ov_tier_ser < 0].mean(), 2) if (_csv_ov_tier_ser < 0).any() else 0
+                        _csv_ov_tier_exp = round(_csv_ov_tier_ser.mean(), 3) if _csv_ov_tier_n else 0
+                        _csv_ov_tier_cum = _csv_ov_tier_ser.cumsum().reset_index(drop=True)
+                        _csv_ov_tier_mdd = round((_csv_ov_tier_cum - _csv_ov_tier_cum.cummax()).min(), 2) if _csv_ov_tier_n else 0
+
+                        st.markdown("**EOD Hold R**")
+                        _eod1, _eod2, _eod3, _eod4 = st.columns(4)
+                        _eod1.metric("Win Rate (EOD)", f"{_csv_ov_eod_wr}%" if _csv_ov_eod_n else "N/A",
+                                     help="Win rate using EOD Hold R — holding to end of day")
+                        _eod2.metric("Avg Win (EOD R)", f"+{_csv_ov_eod_aw}R" if _csv_ov_eod_n else "N/A")
+                        _eod3.metric("Avg Loss (EOD R)", f"{_csv_ov_eod_al}R" if _csv_ov_eod_n else "N/A")
+                        _eod4.metric("Expectancy (EOD R)", f"{_csv_ov_eod_exp:+.3f}R/trade" if _csv_ov_eod_n else "N/A",
+                                     help="Average R per trade if you held every position to end of day")
+
+                        st.markdown("**Tiered Exit R**")
+                        _tier1, _tier2, _tier3, _tier4 = st.columns(4)
+                        _tier1.metric("Win Rate (Tiered)", f"{_csv_ov_tier_wr}%" if _csv_ov_tier_n else "N/A",
+                                      help="Win rate using Tiered Exit R — scaled exits by TCS tier")
+                        _tier2.metric("Avg Win (Tiered R)", f"+{_csv_ov_tier_aw}R" if _csv_ov_tier_n else "N/A")
+                        _tier3.metric("Avg Loss (Tiered R)", f"{_csv_ov_tier_al}R" if _csv_ov_tier_n else "N/A")
+                        _tier4.metric("Expectancy (Tiered R)", f"{_csv_ov_tier_exp:+.3f}R/trade" if _csv_ov_tier_n else "N/A",
+                                      help="Average R per trade using tiered scaled exits")
+
                         # ── Marginal-trade summary (Bot Mode only) ────────────────────────
                         if _rp_bot_mode and "TCS Floor" in _rp_df.columns and "TCS" in _rp_df.columns:
                             _marginal_mask = (
@@ -8378,29 +8416,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
                             ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
                         ]
-
-                        # Overall EOD Hold R stats — drawn from _rp_df (stable source,
-                        # unaffected by column-deselection in the CSV export)
-                        _has_eod_col    = "R (EOD)"    in _rp_df.columns
-                        _has_tiered_col = "R (Tiered)" in _rp_df.columns
-                        _csv_ov_eod_ser  = pd.to_numeric(_rp_df["R (EOD)"],    errors="coerce").dropna() if _has_eod_col    else pd.Series(dtype=float)
-                        _csv_ov_eod_n    = len(_csv_ov_eod_ser)
-                        _csv_ov_eod_wr   = round((_csv_ov_eod_ser > 0).sum() / _csv_ov_eod_n * 100, 1) if _csv_ov_eod_n else 0
-                        _csv_ov_eod_aw   = round(_csv_ov_eod_ser[_csv_ov_eod_ser > 0].mean(), 2) if (_csv_ov_eod_ser > 0).any() else 0
-                        _csv_ov_eod_al   = round(_csv_ov_eod_ser[_csv_ov_eod_ser < 0].mean(), 2) if (_csv_ov_eod_ser < 0).any() else 0
-                        _csv_ov_eod_exp  = round(_csv_ov_eod_ser.mean(), 3) if _csv_ov_eod_n else 0
-                        _csv_ov_eod_cum  = _csv_ov_eod_ser.cumsum().reset_index(drop=True)
-                        _csv_ov_eod_mdd  = round((_csv_ov_eod_cum - _csv_ov_eod_cum.cummax()).min(), 2) if _csv_ov_eod_n else 0
-
-                        # Overall Tiered Exit R stats
-                        _csv_ov_tier_ser = pd.to_numeric(_rp_df["R (Tiered)"], errors="coerce").dropna() if _has_tiered_col else pd.Series(dtype=float)
-                        _csv_ov_tier_n   = len(_csv_ov_tier_ser)
-                        _csv_ov_tier_wr  = round((_csv_ov_tier_ser > 0).sum() / _csv_ov_tier_n * 100, 1) if _csv_ov_tier_n else 0
-                        _csv_ov_tier_aw  = round(_csv_ov_tier_ser[_csv_ov_tier_ser > 0].mean(), 2) if (_csv_ov_tier_ser > 0).any() else 0
-                        _csv_ov_tier_al  = round(_csv_ov_tier_ser[_csv_ov_tier_ser < 0].mean(), 2) if (_csv_ov_tier_ser < 0).any() else 0
-                        _csv_ov_tier_exp = round(_csv_ov_tier_ser.mean(), 3) if _csv_ov_tier_n else 0
-                        _csv_ov_tier_cum = _csv_ov_tier_ser.cumsum().reset_index(drop=True)
-                        _csv_ov_tier_mdd = round((_csv_ov_tier_cum - _csv_ov_tier_cum.cummax()).min(), 2) if _csv_ov_tier_n else 0
 
                         _summary_rows = [
                             {c: "" for c in _csv_cols},
