@@ -7525,6 +7525,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         # Rename R columns to human-readable headers for the spreadsheet
                         _rp_csv_df = _rp_csv_df.rename(columns={
+                            "R (MFE)":    "MFE R",
                             "R (EOD)":    "EOD Hold R",
                             "R (Tiered)": "Tiered Exit R",
                         })
@@ -7532,7 +7533,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         # ── Round numeric columns for clean spreadsheet output ─────────
                         _rp_csv_round_1dp = {"Move %"}
                         _rp_csv_round_2dp = {
-                            "Entry", "Stop", "R (MFE)", "EOD Hold R",
+                            "Entry", "Stop", "MFE R", "EOD Hold R",
                             "Tiered Exit R", "Cumulative R", "P&L ($)", "Equity",
                         }
                         _rp_csv_int_cols  = {"TCS", "TCS Floor", "Shares"}
@@ -7543,6 +7544,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _rp_csv_df[_rc] = pd.to_numeric(_rp_csv_df[_rc], errors="coerce").round(2)
                             elif _rc in _rp_csv_int_cols:
                                 _rp_csv_df[_rc] = pd.to_numeric(_rp_csv_df[_rc], errors="coerce").astype("Int64")
+
+                        # ── R-column selector ──────────────────────────────────────────────
+                        _r_col_options = ["MFE R", "EOD Hold R", "Tiered Exit R"]
+                        _r_col_default = [c for c in _r_col_options if c in _rp_csv_df.columns]
+                        _r_cols_selected = st.multiselect(
+                            "R columns in CSV",
+                            options=_r_col_options,
+                            default=_r_col_default,
+                            key="rp_r_col_select",
+                            help=(
+                                "Choose which R-multiple columns to include in the downloaded CSV. "
+                                "Deselect columns you don't use to keep your spreadsheet tidy."
+                            ),
+                        )
+                        # Drop unselected R columns from the export dataframe.
+                        # Cumulative R is the running sum of MFE R, so it is dropped
+                        # together when MFE R is excluded.
+                        if "MFE R" not in _r_cols_selected:
+                            _rp_csv_df = _rp_csv_df.drop(
+                                columns=["MFE R", "Cumulative R"],
+                                errors="ignore",
+                            )
+                        if "EOD Hold R" not in _r_cols_selected:
+                            _rp_csv_df = _rp_csv_df.drop(columns=["EOD Hold R"], errors="ignore")
+                        if "Tiered Exit R" not in _r_cols_selected:
+                            _rp_csv_df = _rp_csv_df.drop(columns=["Tiered Exit R"], errors="ignore")
 
                         # Append a blank separator then a per-stat summary block
                         _csv_cols   = list(_rp_csv_df.columns)
