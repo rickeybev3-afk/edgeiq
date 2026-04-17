@@ -11830,6 +11830,92 @@ ALTER TABLE backtest_sim_runs
 
         st.dataframe(_styled, use_container_width=True, height=280)
 
+        # ── EOD Hold vs Tiered Exit Strategy Comparison ─────────────────────
+        _pt_has_eod    = "eod_pnl_r"    in _verified.columns
+        _pt_has_tiered = "tiered_pnl_r" in _verified.columns
+        _pt_eod_vals    = _verified["eod_pnl_r"].dropna().tolist()    if _pt_has_eod    else []
+        _pt_tiered_vals = _verified["tiered_pnl_r"].dropna().tolist() if _pt_has_tiered else []
+        _pt_avg_eod    = round(sum(_pt_eod_vals)    / len(_pt_eod_vals),    3) if _pt_eod_vals    else None
+        _pt_avg_tiered = round(sum(_pt_tiered_vals) / len(_pt_tiered_vals), 3) if _pt_tiered_vals else None
+
+        # For the verdict use only rows where BOTH metrics are populated so the
+        # comparison is apples-to-apples (partial backfill won't skew the diff).
+        if _pt_has_eod and _pt_has_tiered:
+            _pt_paired = _verified[_verified["eod_pnl_r"].notna() & _verified["tiered_pnl_r"].notna()]
+        else:
+            _pt_paired = pd.DataFrame()
+        _pt_paired_n = len(_pt_paired)
+
+        if _pt_avg_eod is not None or _pt_avg_tiered is not None:
+            def _pt_r_str(val, n):
+                if val is None:
+                    return "—"
+                sign = "+" if val >= 0 else ""
+                return f"{sign}{val:.3f}R ({n} trades)"
+
+            def _pt_r_color(val):
+                if val is None:
+                    return "#546e7a"
+                return "#4caf50" if val >= 0 else "#ef5350"
+
+            _pt_eod_str    = _pt_r_str(_pt_avg_eod,    len(_pt_eod_vals))
+            _pt_tiered_str = _pt_r_str(_pt_avg_tiered, len(_pt_tiered_vals))
+            _pt_eod_clr    = _pt_r_color(_pt_avg_eod)
+            _pt_tiered_clr = _pt_r_color(_pt_avg_tiered)
+
+            if _pt_paired_n > 0:
+                _pt_pair_eod    = _pt_paired["eod_pnl_r"].astype(float).mean()
+                _pt_pair_tiered = _pt_paired["tiered_pnl_r"].astype(float).mean()
+                _pt_diff        = _pt_pair_tiered - _pt_pair_eod
+                _pt_diff_sign   = "+" if _pt_diff >= 0 else ""
+                _pt_paired_note = f"({_pt_paired_n} matched trades)"
+                if abs(_pt_diff) < 0.001:
+                    _pt_verdict     = f"Strategies tied on your paper trades {_pt_paired_note}"
+                    _pt_verdict_clr = "#90a4ae"
+                elif _pt_diff > 0:
+                    _pt_verdict     = f"Tiered exits outperform EOD hold by {_pt_diff_sign}{_pt_diff:.3f}R per trade {_pt_paired_note}"
+                    _pt_verdict_clr = "#ffb74d"
+                else:
+                    _pt_verdict     = f"EOD hold outperforms tiered exits by {abs(_pt_diff):.3f}R per trade {_pt_paired_note}"
+                    _pt_verdict_clr = "#81c784"
+            else:
+                _pt_verdict     = "Both metrics needed for a comparison"
+                _pt_verdict_clr = "#546e7a"
+
+            st.markdown(
+                f'<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+                f'padding:14px 24px; margin-top:14px; margin-bottom:6px;">'
+                f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+                f'letter-spacing:1.5px; margin-bottom:10px; font-weight:700; font-family:monospace;">'
+                f'📊 Strategy Comparison — EOD Hold vs Tiered Exits (avg R per trade, paper trades)</div>'
+                f'<div style="display:flex; gap:32px; flex-wrap:wrap; align-items:center;">'
+
+                f'<div>'
+                f'<div style="font-size:9px; color:#81c784; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:2px;">📅 Held to Close (EOD)</div>'
+                f'<div style="font-size:26px; font-weight:800; color:{_pt_eod_clr}; '
+                f'font-family:monospace;">{_pt_eod_str}</div>'
+                f'</div>'
+
+                f'<div style="font-size:20px; color:#37474f; align-self:center;">vs</div>'
+
+                f'<div>'
+                f'<div style="font-size:9px; color:#ffb74d; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:2px;">🪜 50/25/25 Ladder (Tiered)</div>'
+                f'<div style="font-size:26px; font-weight:800; color:{_pt_tiered_clr}; '
+                f'font-family:monospace;">{_pt_tiered_str}</div>'
+                f'</div>'
+
+                f'<div style="border-left:1px solid #1a2744; padding-left:24px; align-self:center;">'
+                f'<div style="font-size:12px; font-weight:700; color:{_pt_verdict_clr};">{_pt_verdict}</div>'
+                f'<div style="font-size:10px; color:#37474f; margin-top:3px;">'
+                f'Positive = strategy added value vs a simple hold-to-close</div>'
+                f'</div>'
+
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
