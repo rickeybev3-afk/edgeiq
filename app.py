@@ -162,24 +162,77 @@ def _cached_check_db_connection() -> tuple[bool, str]:
     return check_db_connection()
 
 
+# Exponential back-off constants for the DB status widget
+_DB_RETRY_BASE_S: int = 30   # initial / reset interval (seconds)
+_DB_RETRY_MAX_S: int = 300   # cap at 5 minutes
+
+
 @st.fragment(run_every=30)
 def _db_status_widget() -> None:
     """Render the DB connection badge inside the sidebar.
 
-    Streamlit automatically reruns this fragment every 30 seconds via
-    ``run_every``.  When the DB is unreachable, the cached result is cleared
-    and a fresh HTTP HEAD check is made so the badge self-heals as soon as
-    connectivity returns.  When the DB is healthy or unconfigured, the cached
-    result is reused to avoid unnecessary network probes.  The manual Retry
-    button still works for on-demand rechecks.
-    """
-    _db_ok, _db_err = _cached_check_db_connection()
-    if not _db_ok and _db_err != "Credentials not configured":
-        _cached_check_db_connection.clear()
-        _db_ok, _db_err = _cached_check_db_connection()
+    The fragment fires every 30 s (the minimum granularity).  An exponential
+    back-off is tracked in session state so that the actual network probe is
+    issued less frequently the longer the DB stays unreachable:
 
+        fail 0 → retry in  30 s
+        fail 1 → retry in  60 s
+        fail 2 → retry in 120 s
+        fail 3 → retry in 240 s
+        fail 4+ → retry in 300 s  (cap)
+
+    The interval resets to 30 s as soon as the DB responds successfully.  The
+    badge shows "next retry in Xs" so operators know the widget is still alive.
+    The manual Retry button always triggers an immediate probe and resets the
+    back-off counter.
+    """
+    _now = time.monotonic()
+    _ss = st.session_state
+
+    # ── Initialise back-off state on first render ──────────────────────────
+    if "_db_next_retry_ts" not in _ss:
+        _ss["_db_next_retry_ts"] = _now  # probe immediately on first run
+    if "_db_fail_count" not in _ss:
+        _ss["_db_fail_count"] = 0
+    if "_db_last_ok" not in _ss:
+        _ss["_db_last_ok"] = None
+    if "_db_last_err" not in _ss:
+        _ss["_db_last_err"] = ""
+
+    # ── Probe only when the back-off window has elapsed ───────────────────
+    if _now >= _ss["_db_next_retry_ts"]:
+        # Clear the global cache only when we need a guaranteed-fresh result:
+        # on first run (_db_last_ok is None) or when recovering from a failure.
+        # Healthy probes can reuse whatever the TTL-30 cache already holds so
+        # concurrent sessions aren't unnecessarily invalidated.
+        if not _ss["_db_last_ok"]:
+            _cached_check_db_connection.clear()
+        _db_ok, _db_err = _cached_check_db_connection()
+        _ss["_db_last_ok"] = _db_ok
+        _ss["_db_last_err"] = _db_err
+
+        if _db_ok:
+            _ss["_db_fail_count"] = 0
+            _ss["_db_next_retry_ts"] = _now + _DB_RETRY_BASE_S
+            _ss["_db_last_connected_ts"] = _now
+        elif _db_err == "Credentials not configured":
+            _ss["_db_next_retry_ts"] = _now + _DB_RETRY_BASE_S
+        else:
+            _fail = _ss["_db_fail_count"]
+            _interval = min(_DB_RETRY_BASE_S * (2 ** _fail), _DB_RETRY_MAX_S)
+            _ss["_db_fail_count"] = _fail + 1
+            _ss["_db_next_retry_ts"] = _now + _interval
+
+    _db_ok = _ss["_db_last_ok"]
+    _db_err = _ss["_db_last_err"]
+
+    # Guard: very first render hasn't completed a probe yet (shouldn't happen
+    # because we initialise _db_next_retry_ts = now, but be safe).
+    if _db_ok is None:
+        return
+
+    # ── Render badge ───────────────────────────────────────────────────────
     if _db_ok:
-        st.session_state["_db_last_connected_ts"] = time.monotonic()
         st.markdown(
             '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
             'padding:8px 12px; margin-bottom:8px;">'
@@ -198,9 +251,9 @@ def _db_status_widget() -> None:
             unsafe_allow_html=True,
         )
     else:
-        _db_last_ts = st.session_state.get("_db_last_connected_ts")
+        _db_last_ts = _ss.get("_db_last_connected_ts")
         if _db_last_ts is not None:
-            _db_elapsed_s = time.monotonic() - _db_last_ts
+            _db_elapsed_s = _now - _db_last_ts
             if _db_elapsed_s < 60:
                 _db_last_label = "just now"
             elif _db_elapsed_s < 3600:
@@ -210,6 +263,16 @@ def _db_status_widget() -> None:
             _db_last_line = f'<br><span style="font-size:10px; color:#ef9a9a;">Last connected: {_db_last_label}</span>'
         else:
             _db_last_line = '<br><span style="font-size:10px; color:#ef9a9a;">Never connected this session</span>'
+
+        _retry_in_s = max(0, int(_ss["_db_next_retry_ts"] - _now))
+        if _retry_in_s >= 60:
+            _retry_label = f"{_retry_in_s // 60}m {_retry_in_s % 60}s"
+        else:
+            _retry_label = f"{_retry_in_s}s"
+        _retry_line = (
+            f'<br><span style="font-size:10px; color:#ef9a9a;">Next retry in {_retry_label}</span>'
+        )
+
         _db_badge_col, _db_btn_col = st.columns([3, 1])
         with _db_badge_col:
             st.markdown(
@@ -219,6 +282,7 @@ def _db_status_widget() -> None:
                 f'🔴 Database: Unreachable</span>'
                 f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
                 f'{_db_last_line}'
+                f'{_retry_line}'
                 '</div>',
                 unsafe_allow_html=True,
             )
@@ -226,6 +290,8 @@ def _db_status_widget() -> None:
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
             if st.button("↩", key="_db_retry_btn",
                          help="Retry: clear cached status and recheck the database connection"):
+                _ss["_db_fail_count"] = 0
+                _ss["_db_next_retry_ts"] = _now
                 _cached_check_db_connection.clear()
                 st.rerun()
 
