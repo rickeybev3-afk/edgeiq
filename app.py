@@ -12389,6 +12389,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     height=0,
                 )
 
+                # ── Restore ticker detail expansion from URL query param ──────
+                _qp_tkr_detail = st.query_params.get("tkr_detail", "")
+                if _qp_tkr_detail and f"_tk_exp_{_qp_tkr_detail}" not in st.session_state:
+                    st.session_state[f"_tk_exp_{_qp_tkr_detail}"] = True
+
                 # ── Per-ticker expanders ──────────────────────────────────────
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
@@ -13719,6 +13724,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     key=f"dl_csv_{_tk_name}_{_tk_drill_floor}",
                                     help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file — includes R-stats summary block at the bottom",
                                 )
+
+                # ── Sync open ticker detail expander to URL query param ───────
+                _open_tkr_detail = next(
+                    (_n for _n in _tkr_sweep_data if st.session_state.get(f"_tk_exp_{_n}", False)),
+                    None,
+                )
+                _cur_tkr_detail_qp = st.query_params.get("tkr_detail", "")
+                if _open_tkr_detail and _cur_tkr_detail_qp != _open_tkr_detail:
+                    st.query_params["tkr_detail"] = _open_tkr_detail
+                elif not _open_tkr_detail and _cur_tkr_detail_qp:
+                    del st.query_params["tkr_detail"]
 
                 # ── Export All Tickers Sweep CSV ──────────────────────────────────
                 # Build a ticker → best TCS floor lookup from the earlier sweep
