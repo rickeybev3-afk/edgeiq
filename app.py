@@ -14598,6 +14598,32 @@ ALTER TABLE backtest_sim_runs
     _bw_tcs_hist   = _cached_load_tcs_threshold_history(days=_bw_hist_days)
     _bw_cur_thresh = _cached_load_tcs_thresholds()
     _bw_hist_90    = _cached_load_tcs_threshold_history(days=90)
+
+    # ── Pre-compute stability map for use in the main table ───────────────────
+    _bw_stability_map: dict = {}
+    _bw_now_stab = datetime.utcnow()
+    for _bw_sk, _bw_sv in _bw_cur_thresh.items():
+        _bw_last_chg = None
+        for _bw_rec in reversed(_bw_hist_90):
+            _bw_rp = _bw_rec.get("previous", {})
+            _bw_rn = _bw_rec.get("thresholds", {})
+            _bw_ov = _bw_rp.get(_bw_sk)
+            _bw_nv = _bw_rn.get(_bw_sk)
+            if _bw_ov is not None and _bw_nv is not None:
+                try:
+                    if int(_bw_ov) != int(_bw_nv):
+                        _bw_ts_s = _bw_rec.get("timestamp", "")
+                        _bw_last_chg = datetime.fromisoformat(
+                            _bw_ts_s.replace("Z", "+00:00")
+                        ).replace(tzinfo=None)
+                        break
+                except (TypeError, ValueError):
+                    pass
+        if _bw_last_chg is not None:
+            _bw_stability_map[_bw_sk] = f"{(_bw_now_stab - _bw_last_chg).days}d"
+        else:
+            _bw_stability_map[_bw_sk] = "≥ 90d"
+
     _bw_expander_label = (
         f"📈 TCS Threshold Shift History — last {len(_bw_tcs_hist)} recalibrations ({_bw_hist_days} days)"
         if _bw_tcs_hist
@@ -14724,10 +14750,11 @@ ALTER TABLE backtest_sim_runs
         if isinstance(_v, (int, float)):
             _delta = round(_v - 1.0, 4)
             _bw_rows.append({
-                "Structure": _k,
-                "Weight": round(_v, 4),
+                "Structure":  _k,
+                "Weight":     round(_v, 4),
                 "Δ Baseline": f"{'+'if _delta >= 0 else ''}{_delta:.4f}",
-                "Signal": "▲ Learning" if _delta > 0.02 else ("▼ Suppressed" if _delta < -0.02 else "— Flat")
+                "Signal":     "▲ Learning" if _delta > 0.02 else ("▼ Suppressed" if _delta < -0.02 else "— Flat"),
+                "Stable For": _bw_stability_map.get(_k, "—"),
             })
 
     if _bw_rows:
@@ -14742,8 +14769,21 @@ ALTER TABLE backtest_sim_runs
                 pass
             return "color: #90a4ae"
 
+        def _color_stable(val):
+            try:
+                _sd = int(str(val).replace("≥", "").replace("d", "").strip())
+                if _sd >= 30:  return "color: #66bb6a; font-weight:700"
+                if _sd >= 7:   return "color: #ffa726; font-weight:700"
+                return "color: #ef5350; font-weight:700"
+            except Exception:
+                if str(val).startswith("≥"):
+                    return "color: #66bb6a; font-weight:700"
+            return "color: #90a4ae"
+
         st.dataframe(
-            _bw_display.style.map(_color_delta, subset=["Δ Baseline"]),
+            _bw_display.style
+                .map(_color_delta, subset=["Δ Baseline"])
+                .map(_color_stable, subset=["Stable For"]),
             use_container_width=True, hide_index=True, height="stretch"
         )
     else:
