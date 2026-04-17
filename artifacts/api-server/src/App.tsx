@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
+import { useToast } from "@/hooks/use-toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AlertCircle } from "lucide-react";
 import NotFound from "@/pages/not-found";
@@ -515,12 +516,19 @@ function App() {
     () => localStorage.getItem(MISMATCH_DISMISSED_KEY) === "1"
   );
   const prevMismatch = useRef(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     const current = !!health.alpaca_mode_mismatch;
     if (current && !prevMismatch.current) {
       localStorage.removeItem(MISMATCH_DISMISSED_KEY);
       setMismatchDismissed(false);
+    } else if (!current && prevMismatch.current) {
+      toast({
+        title: "Alpaca credentials are now consistent",
+        description: "The credential mismatch has been resolved.",
+        duration: 5000,
+      });
     }
     prevMismatch.current = current;
   }, [health.alpaca_mode_mismatch]);
