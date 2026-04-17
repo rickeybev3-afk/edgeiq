@@ -8777,6 +8777,147 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
         return {"saved": 0, "skipped": 0, "error": str(e)}
 
 
+# ── R/Trade Projection Scenarios ────────────────────────────────────────────
+# Centralized scenario constants used by compute_r_projection() and the Analytics UI.
+# "Expected" anchor ($51,400) is from Phase 1 verified projections.
+# Conservative and Stretch are proportionally derived from the same underlying model.
+# Boundaries are threshold-based: a trader is "at" a scenario when they've reached its R target.
+R_PROJECTION_SCENARIOS = [
+    {"name": "Conservative", "r": 0.50, "dec2026": 32_500},
+    {"name": "Expected",     "r": 0.79, "dec2026": 51_400},
+    {"name": "Stretch",      "r": 1.20, "dec2026": 78_000},
+]
+
+
+def compute_r_projection(user_id: str = "", window: int = 30) -> dict:
+    """Compute trailing R/trade from the last `window` settled paper trades
+    and map it against the 3 financial projection scenarios (R_PROJECTION_SCENARIOS).
+
+    Scenario assignment uses threshold-based boundaries:
+        trailing_r < 0.50  → "Below Conservative"
+        0.50 ≤ r < 0.79    → "Conservative"
+        0.79 ≤ r < 1.20    → "Expected"
+        r ≥ 1.20           → "Stretch"
+
+    Primary R column: tiered_pnl_r (50/25/25 ladder).
+    Fallback: pnl_r_sim (simple MFE sim) if tiered_pnl_r has no data.
+
+    Returns a dict with:
+        trailing_r      – float | None
+        trade_count     – int
+        scenario        – str ("Conservative" | "Expected" | "Stretch" | "Below Conservative")
+        scenario_r      – float  (the canonical R threshold for that scenario)
+        dec2026_est     – float | None  (piecewise-interpolated Dec 2026 account value)
+        months_left     – float  (months remaining to Dec 31 2026 from today)
+        r_source        – str    ("tiered_pnl_r" or "pnl_r_sim")
+    """
+    from datetime import date as _date_cls
+    _today = _date_cls.today()
+    _dec31 = _date_cls(2026, 12, 31)
+    _days_left = max((_dec31 - _today).days, 0)
+    _months_left = round(_days_left / 30.44, 1)
+
+    _empty = {
+        "trailing_r": None,
+        "trade_count": 0,
+        "scenario": None,
+        "scenario_r": None,
+        "dec2026_est": None,
+        "months_left": _months_left,
+        "r_source": "tiered_pnl_r",
+    }
+
+    if not supabase:
+        return _empty
+
+    def _fetch_r_vals(col: str) -> list:
+        """Fetch R values from settled trades.
+
+        "Settled" is inferred via two non-null proxies:
+          - win_loss set: EOD outcome resolution ran
+          - R column set: tiered sim (or fallback MFE sim) was computed
+        The paper_trades table has no explicit settled flag; this is the
+        canonical approach used elsewhere in the codebase.
+        """
+        try:
+            rows = (
+                supabase.table("paper_trades")
+                .select(f"trade_date, {col}")
+                .eq("user_id", user_id)
+                .not_.is_("win_loss", "null")
+                .not_.is_(col, "null")
+                .order("trade_date", desc=True)
+                .limit(window)
+                .execute()
+                .data or []
+            )
+            return [float(r[col]) for r in rows if r.get(col) is not None]
+        except Exception as e:
+            print(f"compute_r_projection: fetch error ({col}): {e}")
+            return []
+
+    # Primary: tiered_pnl_r (50/25/25 ladder — preferred)
+    vals = _fetch_r_vals("tiered_pnl_r")
+    r_source = "tiered_pnl_r"
+
+    # Fallback: pnl_r_sim (simple MFE-based sim) if no tiered data available
+    if not vals:
+        vals = _fetch_r_vals("pnl_r_sim")
+        r_source = "pnl_r_sim"
+
+    if not vals:
+        return _empty
+
+    trailing_r = round(sum(vals) / len(vals), 3)
+    trade_count = len(vals)
+
+    # ── Scenario mapping — threshold-based ───────────────────────────────
+    # A trader is "at" a scenario when they've reached its R target.
+    # Conservative band: [0.50, 0.79)  Expected band: [0.79, 1.20)
+    if trailing_r < 0.50:
+        scenario = "Below Conservative"
+        scenario_r = 0.50
+    elif trailing_r < 0.79:
+        scenario = "Conservative"
+        scenario_r = 0.50
+    elif trailing_r < 1.20:
+        scenario = "Expected"
+        scenario_r = 0.79
+    else:
+        scenario = "Stretch"
+        scenario_r = 1.20
+
+    # ── Dec 2026 estimate via piecewise linear interpolation ─────────────
+    def _interp_dec2026(r: float) -> float:
+        lo  = R_PROJECTION_SCENARIOS[0]
+        mid = R_PROJECTION_SCENARIOS[1]
+        hi  = R_PROJECTION_SCENARIOS[2]
+        if r <= lo["r"]:
+            frac = max(r / lo["r"], 0.0)
+            return round(frac * lo["dec2026"], 0)
+        elif r <= mid["r"]:
+            frac = (r - lo["r"]) / (mid["r"] - lo["r"])
+            return round(lo["dec2026"] + frac * (mid["dec2026"] - lo["dec2026"]), 0)
+        elif r <= hi["r"]:
+            frac = (r - mid["r"]) / (hi["r"] - mid["r"])
+            return round(mid["dec2026"] + frac * (hi["dec2026"] - mid["dec2026"]), 0)
+        else:
+            slope = (hi["dec2026"] - mid["dec2026"]) / (hi["r"] - mid["r"])
+            return round(hi["dec2026"] + slope * (r - hi["r"]), 0)
+
+    dec2026_est = _interp_dec2026(trailing_r)
+
+    return {
+        "trailing_r": trailing_r,
+        "trade_count": trade_count,
+        "scenario": scenario,
+        "scenario_r": scenario_r,
+        "dec2026_est": dec2026_est,
+        "months_left": _months_left,
+        "r_source": r_source,
+    }
+
+
 def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
     """Load paper trades from the last N days (default 21 = 3 weeks)."""
     if not supabase:

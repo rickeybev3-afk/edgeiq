@@ -57,6 +57,8 @@ from backend import (
     save_tcs_alert_structures,
     get_tcs_alert_config_last_saved,
     get_runtime_last_healthy_ts,
+    compute_r_projection,
+    R_PROJECTION_SCENARIOS,
 )
 
 # ── Cached DB-loader wrappers (ttl=300 s ≈ 5 min) ────────────────────────────
@@ -10707,6 +10709,203 @@ Nothing here requires any input from you. All numbers update automatically as yo
         st.markdown(_kpi("Journal Entries", str(j_count), "#90caf9",
                          f"{s['total_trades']} synced to tracker"),
                     unsafe_allow_html=True)
+
+    # ── LIVE vs PROJECTED R/TRADE TRACKER ────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📈 Live vs Projected R/Trade")
+    st.caption(
+        "Trailing avg R/trade from your last 30 settled paper trades (tiered 50/25/25 ladder). "
+        "Compared against the 3 financial projection scenarios for Dec 2026."
+    )
+
+    _rp = compute_r_projection(user_id=_uid, window=30)
+
+    _SCENARIO_META = {
+        "Below Conservative": {"color": "#ef5350", "icon": "⚠️", "desc": "Below all targets"},
+        "Conservative":       {"color": "#ffa726", "icon": "🟡", "desc": "0.5R target · $32,500 by Dec 2026"},
+        "Expected":           {"color": "#4caf50", "icon": "✅", "desc": "0.79R target · $51,400 by Dec 2026"},
+        "Stretch":            {"color": "#29b6f6", "icon": "🚀", "desc": "1.2R target · $78,000 by Dec 2026"},
+    }
+    _SCENARIO_COLORS = {
+        "Conservative": "#ffa726",
+        "Expected":     "#4caf50",
+        "Stretch":      "#29b6f6",
+    }
+    _SCENARIO_BARS = [
+        (s["name"], s["r"], _SCENARIO_COLORS[s["name"]])
+        for s in R_PROJECTION_SCENARIOS
+    ]
+
+    if _rp["trailing_r"] is None:
+        st.info(
+            "No settled paper trades with R data yet. "
+            "Once the bot resolves trade outcomes and records tiered_pnl_r, this tracker will populate."
+        )
+    else:
+        _tr        = _rp["trailing_r"]
+        _tc        = _rp["trade_count"]
+        _scen      = _rp["scenario"]
+        _dec_est   = _rp["dec2026_est"]
+        _mo_left   = _rp["months_left"]
+        _r_source  = _rp.get("r_source", "tiered_pnl_r")
+        _smeta     = _SCENARIO_META.get(_scen, _SCENARIO_META["Conservative"])
+
+        # ── Top KPI strip ─────────────────────────────────────────────────
+        _rp_c1, _rp_c2, _rp_c3, _rp_c4 = st.columns(4)
+
+        # Card 1 — Trailing R
+        _tr_color = (
+            "#29b6f6" if _tr >= 1.20 else
+            "#4caf50" if _tr >= 0.79 else
+            "#ffa726" if _tr >= 0.50 else
+            "#ef5350"
+        )
+        with _rp_c1:
+            st.markdown(
+                f'<div style="background:#12122288;border:1px solid #2a2a4a;'
+                f'border-radius:10px;padding:14px 18px;text-align:center;">'
+                f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
+                f'letter-spacing:1px;margin-bottom:4px;">Trailing R/Trade</div>'
+                f'<div style="font-size:28px;font-weight:900;color:{_tr_color};">'
+                f'{_tr:+.2f}R</div>'
+                f'<div style="font-size:10px;color:#666;margin-top:2px;">last {_tc} settled trades</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # Card 2 — Scenario
+        with _rp_c2:
+            st.markdown(
+                f'<div style="background:#12122288;border:1px solid {_smeta["color"]}55;'
+                f'border-radius:10px;padding:14px 18px;text-align:center;">'
+                f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
+                f'letter-spacing:1px;margin-bottom:4px;">Scenario</div>'
+                f'<div style="font-size:20px;font-weight:900;color:{_smeta["color"]};">'
+                f'{_smeta["icon"]} {_scen}</div>'
+                f'<div style="font-size:10px;color:#666;margin-top:2px;">{_smeta["desc"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # Card 3 — Dec 2026 Estimate
+        with _rp_c3:
+            _dec_str = f"${_dec_est:,.0f}" if _dec_est is not None else "—"
+            st.markdown(
+                f'<div style="background:#12122288;border:1px solid #2a2a4a;'
+                f'border-radius:10px;padding:14px 18px;text-align:center;">'
+                f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
+                f'letter-spacing:1px;margin-bottom:4px;">Dec 2026 Estimate</div>'
+                f'<div style="font-size:24px;font-weight:900;color:{_smeta["color"]};">'
+                f'{_dec_str}</div>'
+                f'<div style="font-size:10px;color:#666;margin-top:2px;">if current pace holds</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # Card 4 — Months Remaining
+        with _rp_c4:
+            st.markdown(
+                f'<div style="background:#12122288;border:1px solid #2a2a4a;'
+                f'border-radius:10px;padding:14px 18px;text-align:center;">'
+                f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
+                f'letter-spacing:1px;margin-bottom:4px;">Months to Dec 2026</div>'
+                f'<div style="font-size:28px;font-weight:900;color:#90caf9;">'
+                f'{_mo_left}</div>'
+                f'<div style="font-size:10px;color:#666;margin-top:2px;">remaining runway</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── R gauge vs scenario bars ───────────────────────────────────────
+        import plotly.graph_objects as _go_rp
+
+        _fig_rp = _go_rp.Figure()
+
+        # Scenario target lines
+        for _sname, _sr, _sc in _SCENARIO_BARS:
+            _fig_rp.add_vline(
+                x=_sr,
+                line=dict(color=_sc, width=2, dash="dash"),
+                annotation_text=f"{_sname}<br>{_sr}R",
+                annotation_position="top",
+                annotation_font=dict(color=_sc, size=10),
+            )
+
+        # Current trailing R marker
+        _fig_rp.add_trace(_go_rp.Scatter(
+            x=[_tr],
+            y=[0],
+            mode="markers+text",
+            marker=dict(size=18, color=_tr_color, symbol="diamond",
+                        line=dict(color="#ffffff", width=2)),
+            text=[f"{_tr:+.2f}R"],
+            textposition="top center",
+            textfont=dict(size=12, color=_tr_color),
+            name="Current Trailing R",
+            hovertemplate=f"Trailing R/Trade: {_tr:+.3f}<extra></extra>",
+        ))
+
+        _x_min = min(-0.2, _tr - 0.3)
+        _x_max = max(1.5,  _tr + 0.3)
+
+        _fig_rp.update_layout(
+            paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+            font=dict(color="#e0e0e0"),
+            height=130,
+            xaxis=dict(
+                title="R/Trade",
+                range=[_x_min, _x_max],
+                gridcolor="#2a2a4a",
+                zeroline=True, zerolinecolor="#555",
+            ),
+            yaxis=dict(visible=False, range=[-0.5, 0.5]),
+            margin=dict(l=10, r=10, t=40, b=30),
+            showlegend=False,
+        )
+        st.plotly_chart(_fig_rp, use_container_width=True)
+
+        # ── Narrative summary ──────────────────────────────────────────────
+        # Scenarios use threshold-based boundaries: reach the threshold to be in that scenario.
+        _gap_to_expected = round(0.79 - _tr, 2)
+        if _scen == "Stretch":
+            _narrative = (
+                f"🚀 You're tracking <b style='color:#29b6f6;'>{_tr:+.2f}R/trade</b> — "
+                f"at or above the Stretch threshold (≥1.20R). If this holds, the model projects "
+                f"<b style='color:#29b6f6;'>{_dec_str}</b> by Dec 2026."
+            )
+        elif _scen == "Expected":
+            _narrative = (
+                f"✅ You're tracking <b style='color:#4caf50;'>{_tr:+.2f}R/trade</b> — "
+                f"in the Expected band (0.79–1.20R). "
+                f"Estimated account value: <b style='color:#4caf50;'>{_dec_str}</b> by Dec 2026."
+            )
+        elif _scen == "Conservative":
+            _narrative = (
+                f"🟡 You're tracking <b style='color:#ffa726;'>{_tr:+.2f}R/trade</b> — "
+                f"in the Conservative band (0.50–0.79R). "
+                f"Need +{_gap_to_expected:.2f}R/trade to reach Expected. "
+                f"Estimated: <b style='color:#ffa726;'>{_dec_str}</b> by Dec 2026."
+            )
+        else:  # Below Conservative
+            _narrative = (
+                f"⚠️ Trailing R/trade is <b style='color:#ef5350;'>{_tr:+.2f}</b> — "
+                f"below all projection scenarios (&lt;0.50R). "
+                f"Estimated: <b style='color:#ef5350;'>{_dec_str}</b> by Dec 2026. "
+                f"Need +{abs(_gap_to_expected):.2f}R/trade to reach Expected."
+            )
+
+        st.markdown(
+            f'<div style="background:#0d1f2d;border-left:3px solid {_smeta["color"]};'
+            f'padding:10px 16px;border-radius:4px;font-size:13px;color:#cfd8dc;'
+            f'margin-top:4px;">{_narrative}</div>',
+            unsafe_allow_html=True,
+        )
+        _r_source_label = "tiered 50/25/25 R" if _r_source == "tiered_pnl_r" else "sim R (MFE)"
+        st.caption(
+            f"Based on {_tc} settled paper trades ({_r_source_label}) · "
+            f"Scenarios: Conservative ≥0.50R → $32,500 | Expected ≥0.79R → $51,400 | "
+            f"Stretch ≥1.20R → $78,000 · {_mo_left} months to Dec 2026"
+        )
 
     # ── JOURNAL × MODEL CROSS-REFERENCE (runs regardless of tracker state) ────
     st.markdown("---")
