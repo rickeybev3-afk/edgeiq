@@ -7663,6 +7663,29 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             type="primary")
 
         # ── 🎯 TCS + Scan Type Optimizer ─────────────────────────────────────────
+        # Restore optimizer sort order from localStorage (cross-session)
+        import streamlit.components.v1 as _cmp_opt_sort
+        _OPT_SORT_OPTIONS = ["Expectancy", "Total R", "Win Rate %", "Max DD (R)"]
+        _cmp_opt_sort.html("""
+<script>
+(function() {
+    var _LS_KEY = 'opt_sort_col';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('opt_sort_col')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('opt_sort_col', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+        if "opt_sort_col" not in st.session_state:
+            _qp_opt_sort = st.query_params.get("opt_sort_col", "Expectancy")
+            st.session_state["opt_sort_col"] = (
+                _qp_opt_sort if _qp_opt_sort in _OPT_SORT_OPTIONS else "Expectancy"
+            )
+
         with st.expander("🎯 Find Optimal Filter Combo — maximize +R", expanded=False):
             st.caption(
                 "Scans every combination of **Scan Type × TCS floor** across your selected date range "
@@ -7782,9 +7805,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 else:
                     _opt_sort_col = st.radio(
                         "Sort results by",
-                        ["Expectancy", "Total R", "Win Rate %", "Max DD (R)"],
+                        _OPT_SORT_OPTIONS,
+                        index=_OPT_SORT_OPTIONS.index(
+                            st.session_state.get("opt_sort_col", "Expectancy")
+                            if st.session_state.get("opt_sort_col", "Expectancy") in _OPT_SORT_OPTIONS
+                            else "Expectancy"
+                        ),
                         horizontal=True,
                         key="opt_sort_col",
+                    )
+                    _opt_sort_qp_cur = st.query_params.get("opt_sort_col")
+                    if _opt_sort_qp_cur != _opt_sort_col:
+                        st.query_params["opt_sort_col"] = _opt_sort_col
+                    _cmp_opt_sort.html(
+                        f"<script>localStorage.setItem('opt_sort_col', {repr(_opt_sort_col)});</script>",
+                        height=0,
                     )
                     _opt_sort_asc = _opt_sort_col == "Max DD (R)"
                     _opt_df = pd.DataFrame(_opt_table_rows).sort_values(_opt_sort_col, ascending=_opt_sort_asc).reset_index(drop=True)
