@@ -9570,8 +9570,43 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _struct_df["_dwr_sort"] = _struct_df["ΔWR (marg−comf)"].map(_parse_dwr)
                                         _struct_df = _struct_df.sort_values("_dwr_sort", ascending=True).drop(columns=["_dwr_sort"]).reset_index(drop=True)
 
-                                        _DWR_WARN_THRESH = -5.0   # amber: ΔWR ≤ −5 pp
-                                        _DWR_CRIT_THRESH = -10.0  # red:   ΔWR ≤ −10 pp
+                                        if "dwr_warn_thresh" not in st.session_state:
+                                            st.session_state["dwr_warn_thresh"] = -5.0
+                                        if "dwr_crit_thresh" not in st.session_state:
+                                            st.session_state["dwr_crit_thresh"] = -10.0
+
+                                        _thresh_col1, _thresh_col2, _thresh_spacer = st.columns([1, 1, 3])
+                                        with _thresh_col1:
+                                            st.session_state["dwr_warn_thresh"] = st.number_input(
+                                                "🟠 Amber threshold (pp)",
+                                                min_value=-50.0,
+                                                max_value=0.0,
+                                                value=float(st.session_state["dwr_warn_thresh"]),
+                                                step=1.0,
+                                                help="ΔWR at or below this value turns the row amber (borderline underperformance).",
+                                                key="dwr_warn_input",
+                                            )
+                                        with _thresh_col2:
+                                            st.session_state["dwr_crit_thresh"] = st.number_input(
+                                                "🔴 Red threshold (pp)",
+                                                min_value=-50.0,
+                                                max_value=0.0,
+                                                value=float(st.session_state["dwr_crit_thresh"]),
+                                                step=1.0,
+                                                help="ΔWR at or below this value turns the row red (significant underperformance).",
+                                                key="dwr_crit_input",
+                                            )
+
+                                        _DWR_WARN_THRESH = float(st.session_state["dwr_warn_thresh"])
+                                        _DWR_CRIT_THRESH = float(st.session_state["dwr_crit_thresh"])
+
+                                        if _DWR_WARN_THRESH <= _DWR_CRIT_THRESH:
+                                            st.warning(
+                                                f"⚠️ Amber threshold ({_DWR_WARN_THRESH:+.1f} pp) must be less severe than "
+                                                f"the red threshold ({_DWR_CRIT_THRESH:+.1f} pp). "
+                                                "Set amber closer to 0 than red (e.g. amber −5, red −10).",
+                                                icon=None,
+                                            )
 
                                         def _struct_row_style(row):
                                             _dwr_cell = row.get("ΔWR (marg−comf)", "—")
@@ -9597,8 +9632,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                             hide_index=True,
                                         )
                                         st.caption(
-                                            "🟠 **Amber** — ΔWR worse than −5 pp and better than −10 pp (borderline)  |  "
-                                            "🔴 **Red** — ΔWR −10 pp or worse (underperforming).  "
+                                            f"🟠 **Amber** — ΔWR ≤ {_DWR_WARN_THRESH:+.1f} pp and better than {_DWR_CRIT_THRESH:+.1f} pp (borderline)  |  "
+                                            f"🔴 **Red** — ΔWR ≤ {_DWR_CRIT_THRESH:+.1f} pp (underperforming).  "
                                             "ΔWR compares each structure's marginal win rate to its own comfortable win rate. "
                                             "A large negative value suggests that structure's TCS floor may need raising."
                                         )
