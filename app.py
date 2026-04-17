@@ -18396,6 +18396,104 @@ ALTER TABLE backtest_sim_runs
                         f'</div>', unsafe_allow_html=True
                     )
 
+    # ── TCS Tier Summary Table ────────────────────────────────────────────────
+    if _has_tcs:
+        _tbl_rows = []
+        for _tsi, (_tsl, _tse, _tsst, _tslo, _tshi, _tsc, _tsd) in enumerate(_tier_defs):
+            _tsdf = _sim_df[
+                (_sim_df["scan_type"].fillna("morning") == _tsst) &
+                (_sim_df["tcs"].fillna(0) >= _tslo) &
+                (_sim_df["tcs"].fillna(0) <= _tshi)
+            ]
+            if _tsdf.empty:
+                _tbl_rows.append({
+                    "idx": _tsi, "label": _tsl, "emoji": _tse, "desc": _tsd, "color": _tsc,
+                    "n": 0,
+                    "eod_wr": None, "eod_exp": None,
+                    "tier_wr": None, "tier_exp": None,
+                })
+            else:
+                _ts_n = len(_tsdf)
+                _ts_eod_ser  = pd.to_numeric(_tsdf.get("eod_pnl_r",    pd.Series(dtype=float)), errors="coerce").dropna()
+                _ts_tier_ser = pd.to_numeric(_tsdf.get("tiered_pnl_r", pd.Series(dtype=float)), errors="coerce").dropna()
+                _tbl_rows.append({
+                    "idx": _tsi, "label": _tsl, "emoji": _tse, "desc": _tsd, "color": _tsc,
+                    "n": _ts_n,
+                    "eod_wr":   round((_ts_eod_ser  > 0).sum() / len(_ts_eod_ser)  * 100, 1) if len(_ts_eod_ser)  else None,
+                    "eod_exp":  round(_ts_eod_ser.mean(),  3) if len(_ts_eod_ser)  else None,
+                    "tier_wr":  round((_ts_tier_ser > 0).sum() / len(_ts_tier_ser) * 100, 1) if len(_ts_tier_ser) else None,
+                    "tier_exp": round(_ts_tier_ser.mean(), 3) if len(_ts_tier_ser) else None,
+                })
+
+        _ts_valid_exps = [r["eod_exp"] for r in _tbl_rows if r["eod_exp"] is not None]
+        _ts_best_eod_exp = max(_ts_valid_exps) if len(_ts_valid_exps) > 1 else None
+        _ts_valid_tier_exps = [r["tier_exp"] for r in _tbl_rows if r["tier_exp"] is not None]
+        _ts_best_tier_exp = max(_ts_valid_tier_exps) if len(_ts_valid_tier_exps) > 1 else None
+
+        def _ts_wr_col(v):
+            if v is None: return "#546e7a"
+            return "#2e7d32" if v >= 60 else ("#ef6c00" if v >= 50 else "#c62828")
+
+        def _ts_exp_col(v):
+            if v is None: return "#546e7a"
+            return "#2e7d32" if v > 0 else ("#ef6c00" if v == 0 else "#c62828")
+
+        _ts_header = (
+            '<tr style="background:#1a2738;font-size:11px;color:#90a4ae;letter-spacing:0.5px;">'
+            '<th style="padding:6px 10px;text-align:left;">Tier</th>'
+            '<th style="padding:6px 10px;text-align:left;">Description</th>'
+            '<th style="padding:6px 10px;text-align:right;">Trades</th>'
+            '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Win%</th>'
+            '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Exp</th>'
+            '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Win%</th>'
+            '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Exp</th>'
+            '<th style="padding:6px 10px;text-align:center;">Edge Winner</th>'
+            '</tr>'
+        )
+        _ts_body = ""
+        for _tsr in _tbl_rows:
+            _ts_eod_wr_str  = f'<span style="color:{_ts_wr_col(_tsr["eod_wr"])};font-weight:600;">{_tsr["eod_wr"]}%</span>'  if _tsr["eod_wr"]  is not None else '<span style="color:#546e7a;">—</span>'
+            _ts_eod_exp_str = f'<span style="color:{_ts_exp_col(_tsr["eod_exp"])};font-weight:600;">{_tsr["eod_exp"]:+.3f}R</span>' if _tsr["eod_exp"] is not None else '<span style="color:#546e7a;">—</span>'
+            _ts_tier_wr_str  = f'<span style="color:{_ts_wr_col(_tsr["tier_wr"])};font-weight:600;">{_tsr["tier_wr"]}%</span>'  if _tsr["tier_wr"]  is not None else '<span style="color:#546e7a;">—</span>'
+            _ts_tier_exp_str = f'<span style="color:{_ts_exp_col(_tsr["tier_exp"])};font-weight:600;">{_tsr["tier_exp"]:+.3f}R</span>' if _tsr["tier_exp"] is not None else '<span style="color:#546e7a;">—</span>'
+            _ts_is_best_eod  = _ts_best_eod_exp  is not None and _tsr["eod_exp"]  is not None and abs(_tsr["eod_exp"]  - _ts_best_eod_exp)  < 1e-9
+            _ts_is_best_tier = _ts_best_tier_exp is not None and _tsr["tier_exp"] is not None and abs(_tsr["tier_exp"] - _ts_best_tier_exp) < 1e-9
+            if _ts_is_best_eod and _ts_is_best_tier:
+                _ts_badge = '<span style="color:#ffd54f;font-weight:700;">⭐ Both</span>'
+            elif _ts_is_best_eod:
+                _ts_badge = '<span style="color:#80cbc4;font-weight:700;">⭐ EOD</span>'
+            elif _ts_is_best_tier:
+                _ts_badge = '<span style="color:#ce93d8;font-weight:700;">⭐ Tiered</span>'
+            else:
+                _ts_badge = '<span style="color:#546e7a;">—</span>'
+            _ts_n_str = f'<span style="color:#cfd8dc;">{_tsr["n"]}</span>' if _tsr["n"] > 0 else '<span style="color:#546e7a;">0</span>'
+            _ts_body += (
+                f'<tr style="border-top:1px solid #1e2a3a;">'
+                f'<td style="padding:6px 10px;"><span style="color:{_tsr["color"]};font-weight:700;">{_tsr["emoji"]} {_tsr["label"]}</span></td>'
+                f'<td style="padding:6px 10px;font-size:11px;color:#90a4ae;">{_tsr["desc"]}</td>'
+                f'<td style="padding:6px 10px;text-align:right;">{_ts_n_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;">{_ts_eod_wr_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;">{_ts_eod_exp_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;">{_ts_tier_wr_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;">{_ts_tier_exp_str}</td>'
+                f'<td style="padding:6px 10px;text-align:center;">{_ts_badge}</td>'
+                f'</tr>'
+            )
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+            'text-transform:uppercase;margin-bottom:6px;">Tier Comparison Summary</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div style="overflow-x:auto;">'
+            f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
+            f'{_ts_header}'
+            f'<tbody>{_ts_body}</tbody>'
+            f'</table></div>',
+            unsafe_allow_html=True,
+        )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
