@@ -13500,6 +13500,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 dragmode="zoom",
+                                uirevision=f"mini_eq_{_tk_name}",
                                 showlegend=False,
                                 xaxis=dict(
                                     title=dict(text="Trade #", font=dict(size=10)),
@@ -13587,6 +13588,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 dragmode="zoom",
+                                uirevision=f"mini_div_{_tk_name}",
                                 legend=dict(
                                     orientation="h",
                                     yanchor="bottom", y=1.02,
