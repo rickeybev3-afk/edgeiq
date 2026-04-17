@@ -14223,14 +14223,14 @@ ALTER TABLE backtest_sim_runs
     # ── Tiered P&L backfill warning ─────────────────────────────────────────────
     _tiered_pending_count = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
     if _tiered_pending_count > 0:
-        _tp_col_warn, _tp_col_btn = st.columns([3, 1])
+        _tp_col_warn, _tp_col_btn, _tp_col_full = st.columns([3, 1, 1])
         with _tp_col_warn:
             st.warning(
                 f"**{_tiered_pending_count:,} backtest rows are missing tiered P&L** "
                 f"(50/25/25 ladder exit). Tiered P&L requires intraday bar data from Alpaca "
                 f"and cannot be computed at save time. Click **Run Backfill (25 rows)** to "
-                f"process a batch, or run `python run_tiered_pnl_backfill.py --backtest-only` "
-                f"from the shell for the full backlog."
+                f"process a single batch, or **Run Full Backfill** to process all pending rows "
+                f"automatically."
             )
         with _tp_col_btn:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -14256,6 +14256,104 @@ ALTER TABLE backtest_sim_runs
                         f"{_bf_updated} updated, {_bf_no_bars} deferred (no bars), "
                         f"{_bf_no_cross} skipped (no entry cross). "
                         f"{_bf_remain:,} rows still pending."
+                    )
+                    st.rerun()
+        with _tp_col_full:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("⚡ Run Full Backfill", key="bt_tiered_backfill_full_btn",
+                         use_container_width=True, type="primary"):
+                _full_total   = _tiered_pending_count
+                _full_done    = 0
+                _full_updated = 0
+                _full_no_bars = 0
+                _full_no_cross = 0
+                _full_errors  = 0
+                _full_batches = 0
+                _full_batch_sz = 25
+
+                _prog_bar    = st.progress(0.0)
+                _status_text = st.empty()
+                _status_text.info(
+                    f"Starting full backfill — **{_full_total:,} rows** to process…"
+                )
+
+                _full_aborted    = False
+                _all_skipped_ids = []  # accumulates IDs that can't be processed this run
+                while True:
+                    _bf_result = run_backtest_tiered_backfill_batch(
+                        batch_size=_full_batch_sz, user_id=_AUTH_USER_ID,
+                        exclude_ids=_all_skipped_ids if _all_skipped_ids else None)
+
+                    _batch_fetched  = _bf_result.get("fetched", 0)
+                    _batch_updated  = _bf_result.get("updated", 0)
+                    _batch_no_bars  = _bf_result.get("skipped_no_bars", 0)
+                    _batch_no_cross = _bf_result.get("skipped_no_tiered", 0)
+                    _batch_errors   = _bf_result.get("errors", 0)
+                    _batch_skipped  = _bf_result.get("skipped_ids", [])
+
+                    # Accumulate skipped IDs so subsequent batches skip past them
+                    _all_skipped_ids.extend(_batch_skipped)
+
+                    _full_batches  += 1
+                    _full_done     += _batch_fetched
+                    _full_updated  += _batch_updated
+                    _full_no_bars  += _batch_no_bars
+                    _full_no_cross += _batch_no_cross
+                    _full_errors   += _batch_errors
+
+                    # Abort if Alpaca credentials are missing (errors but nothing fetched)
+                    if _batch_errors and not _batch_fetched:
+                        _full_aborted = True
+                        break
+
+                    if _full_total > 0:
+                        _prog_frac = min(1.0, _full_done / _full_total)
+                    else:
+                        _prog_frac = 1.0
+                    _prog_bar.progress(_prog_frac)
+
+                    _remain_now = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
+                    _status_text.info(
+                        f"Batch {_full_batches} complete — "
+                        f"**{_full_done:,}** processed so far · "
+                        f"**{_remain_now:,}** remaining"
+                    )
+
+                    # Loop terminates when fetched == 0: with exclusions applied, no
+                    # more qualifying rows exist (all remaining are permanently skipped
+                    # or the backlog is fully cleared).
+                    if _batch_fetched == 0 or _remain_now == 0:
+                        break
+
+                _prog_bar.progress(1.0)
+                _final_remain = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
+                _status_text.empty()
+                if _full_aborted:
+                    st.error(
+                        "Full backfill aborted — Alpaca credentials may be missing. "
+                        "Check that ALPACA_API_KEY and ALPACA_SECRET_KEY are set."
+                    )
+                elif _final_remain > 0 and len(_all_skipped_ids) > 0:
+                    st.warning(
+                        f"Full backfill complete — "
+                        f"**{_full_done:,}** rows processed across {_full_batches} batches. "
+                        f"{_full_updated:,} updated, "
+                        f"{_full_no_bars:,} deferred (no Alpaca bars), "
+                        f"{_full_no_cross:,} skipped (no entry cross), "
+                        f"{_full_errors:,} errors. "
+                        f"**{_final_remain:,} rows still pending** — these rows have no "
+                        f"Alpaca bar data or no entry cross and cannot be filled automatically."
+                    )
+                    st.rerun()
+                else:
+                    st.success(
+                        f"Full backfill complete — "
+                        f"**{_full_done:,}** rows processed across {_full_batches} batches. "
+                        f"{_full_updated:,} updated, "
+                        f"{_full_no_bars:,} deferred (no Alpaca bars), "
+                        f"{_full_no_cross:,} skipped (no entry cross), "
+                        f"{_full_errors:,} errors. "
+                        f"**{_final_remain:,} rows still pending.**"
                     )
                     st.rerun()
 

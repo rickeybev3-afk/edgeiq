@@ -8079,24 +8079,32 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
 
 
 def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = False,
-                                       user_id: str = "") -> dict:
+                                       user_id: str = "",
+                                       exclude_ids: list | None = None) -> dict:
     """Process one batch of backtest_sim_runs rows missing tiered_pnl_r.
 
     Fetches up to *batch_size* qualifying rows (oldest first by sim_date then id),
     pulls 1-minute bars from Alpaca for each, computes tiered_pnl_r via the
     50/25/25 ladder, and writes the result back to the DB.  Returns a summary
     dict with keys: fetched, updated, skipped_no_bars, skipped_no_tiered, errors,
-    remaining.
+    remaining, skipped_ids.
+
+    *exclude_ids* — list of row IDs to skip in this batch.  Pass the accumulated
+    ``skipped_ids`` from previous batches so the full-backfill loop can advance past
+    rows that are permanently unprocessable (no Alpaca bars, no entry cross).  This
+    mirrors the skipped_ids exclusion used by the CLI script and prevents the loop
+    from re-fetching the same unprocessable rows indefinitely.
 
     Pass *user_id* to limit processing to one user's rows (recommended in
     multi-tenant deployments). Empty string processes all users' rows.
 
-    Use this for the one-click dashboard trigger.  For large backlogs, run
-    ``python run_tiered_pnl_backfill.py --backtest-only`` from the shell.
+    Use this for the one-click dashboard trigger.  For large backlogs without a UI,
+    run ``python run_tiered_pnl_backfill.py --backtest-only`` from the shell.
     """
     from datetime import date as _date, datetime as _datetime
     stats = {"fetched": 0, "updated": 0, "skipped_no_bars": 0,
-             "skipped_no_tiered": 0, "errors": 0, "remaining": 0}
+             "skipped_no_tiered": 0, "errors": 0, "remaining": 0,
+             "skipped_ids": []}
 
     if not supabase:
         stats["errors"] = 1
@@ -8120,6 +8128,8 @@ def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = Fal
         )
         if user_id:
             q = q.eq("user_id", user_id)
+        if exclude_ids:
+            q = q.not_.in_("id", list(exclude_ids))
         rows = q.limit(batch_size).execute().data or []
     except Exception as e:
         print(f"run_backtest_tiered_backfill_batch fetch error: {e}")
@@ -8151,6 +8161,7 @@ def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = Fal
                 raise ValueError(f"unexpected type {type(sim_date_raw)}")
         except Exception:
             stats["errors"] += 1
+            stats["skipped_ids"].append(row_id)
             continue
 
         try:
@@ -8171,6 +8182,7 @@ def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = Fal
                 except Exception:
                     pass
             stats["skipped_no_bars"] += 1
+            stats["skipped_ids"].append(row_id)
             continue
 
         try:
@@ -8195,6 +8207,7 @@ def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = Fal
 
         if tiered_pnl_r is None:
             stats["skipped_no_tiered"] += 1
+            stats["skipped_ids"].append(row_id)
             if not dry_run and existing_eod is None and eod_pnl_r is not None:
                 try:
                     supabase.table("backtest_sim_runs").update(
@@ -8215,6 +8228,7 @@ def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = Fal
             except Exception as e:
                 print(f"run_backtest_tiered_backfill_batch update error id={row_id}: {e}")
                 stats["errors"] += 1
+                stats["skipped_ids"].append(row_id)
         else:
             stats["updated"] += 1
 
