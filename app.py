@@ -12146,6 +12146,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _CSV_PREF_DEFAULTS = [
                     "Date", "TCS", "Prediction",
                     "EOD Reality", "Follow-Thru %", "Result",
+                    "EOD Hold R", "Tiered Exit R", "Delta R",
                 ]
                 if "_csv_cols_pref" not in st.session_state:
                     _qp_csv = st.query_params.get("csv_cols", "")
@@ -12177,7 +12178,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     if st.button(
                         "↩ Reset all CSV columns to defaults",
                         key="csv_global_reset_top_btn",
-                        help="Clears the saved column preference for every ticker at once and reverts all multiselects to the default 6 columns.",
+                        help="Clears the saved column preference for every ticker at once and reverts all multiselects to the default columns: Date, TCS, Prediction, EOD Reality, Follow-Thru %, Result, EOD Hold R, Tiered Exit R, Delta R.",
                     ):
                         st.session_state["_csv_global_reset"] = True
                         st.rerun()
@@ -13425,6 +13426,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _csv_default_cols = [
                                 "Date", "TCS", "Prediction",
                                 "EOD Reality", "Follow-Thru %", "Result",
+                                "EOD Hold R", "Tiered Exit R", "Delta R",
                             ]
                             _csv_all_cols = [
                                 c for c in _tk_drill_display.columns
@@ -13452,7 +13454,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 if st.button(
                                     "↩ Reset to defaults",
                                     key=f"csv_reset_btn_{_tk_name}_{_tk_drill_floor}",
-                                    help="Clear the saved column preference and reset to the default 6 columns: Date, TCS, Prediction, EOD Reality, Follow-Thru %, Result.",
+                                    help="Clear the saved column preference and reset to the default columns: Date, TCS, Prediction, EOD Reality, Follow-Thru %, Result, EOD Hold R, Tiered Exit R, Delta R.",
                                 ):
                                     st.session_state["_csv_global_reset"] = True
                                     st.rerun()
