@@ -7756,10 +7756,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 yaxis="y2",
                             ))
                             _fig_dual.update_layout(
-                                height=280,
+                                height=340,
                                 margin=dict(l=10, r=10, t=10, b=10),
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 plot_bgcolor="rgba(0,0,0,0)",
+                                dragmode="zoom",
                                 legend=dict(
                                     orientation="h",
                                     yanchor="bottom", y=1.02,
@@ -7771,6 +7772,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     gridcolor="#1a1a2e",
                                     color="#cccccc",
                                     zeroline=False,
+                                    rangeslider=dict(visible=True, thickness=0.08),
                                 ),
                                 yaxis=dict(
                                     title=dict(text="Equity ($)", font=dict(color="#4fc3f7")),
@@ -7789,7 +7791,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 ),
                             )
                             st.caption("**Equity & R** — divergences reveal where position sizing amplifies or dampens raw edge")
-                            st.plotly_chart(_fig_dual, use_container_width=True)
+                            st.plotly_chart(
+                                _fig_dual,
+                                use_container_width=True,
+                                config={
+                                    "scrollZoom": True,
+                                    "displayModeBar": True,
+                                    "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+                                    "toImageButtonOptions": {"format": "png"},
+                                },
+                            )
 
                         # ── Replay CSV download ────────────────────────────────────────────
                         _rp_csv_df = _rp_df.copy()
