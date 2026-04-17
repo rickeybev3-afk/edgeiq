@@ -9159,7 +9159,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _bulk_reset_col, _ = st.columns([2, 5])
                     with _bulk_reset_col:
                         if st.button(
-                            "↩ Reset all to best",
+                            f"↩ Reset all to best ({len(_persist_keys_all)} ticker{'s' if len(_persist_keys_all) != 1 else ''})",
                             key="_bulk_reset_all_tickers",
                             use_container_width=True,
                             help="Clear every manual TCS floor override and restore the recommended floor for all tickers.",
