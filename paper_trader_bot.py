@@ -23,12 +23,14 @@ Required environment secrets:
   TELEGRAM_CHAT_ID      — your chat ID from @userinfobot
 
 Optional env vars:
-  PAPER_TRADE_USER_ID      — EdgeIQ user ID (defaults below)
-  PAPER_TRADE_MIN_TCS      — minimum TCS threshold (default: 50)
-  PAPER_TRADE_FEED         — sip or iex (default: sip)
-  PAPER_TRADE_PRICE_MIN    — min price filter (default: 1.0)
-  PAPER_TRADE_PRICE_MAX    — max price filter (default: 20.0)
-  SWEEP_ALERT_MAX_TICKERS  — max tickers shown in the close-price sweep Telegram alert (default: 10)
+  PAPER_TRADE_USER_ID        — EdgeIQ user ID (defaults below)
+  PAPER_TRADE_MIN_TCS        — minimum TCS threshold (default: 50)
+  PAPER_TRADE_FEED           — sip or iex (default: sip)
+  PAPER_TRADE_PRICE_MIN      — min price filter (default: 1.0)
+  PAPER_TRADE_PRICE_MAX      — max price filter (default: 20.0)
+  SWEEP_ALERT_MAX_TICKERS    — max tickers shown in the close-price sweep Telegram alert (default: 10)
+  BACKTEST_CLOSE_LOOKBACK_DAYS — how many calendar days the nightly backtest close-price sweep
+                                 covers (default: 60, matching the paper-trades sweep)
 """
 
 import os
@@ -55,7 +57,8 @@ MIN_TCS           = int(os.getenv("PAPER_TRADE_MIN_TCS", "50"))
 FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
 PRICE_MIN               = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
 PRICE_MAX               = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
-SWEEP_ALERT_MAX_TICKERS = int(os.getenv("SWEEP_ALERT_MAX_TICKERS", "10"))
+SWEEP_ALERT_MAX_TICKERS      = int(os.getenv("SWEEP_ALERT_MAX_TICKERS", "10"))
+BACKTEST_CLOSE_LOOKBACK_DAYS = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 
 # ── Alpaca live execution config ───────────────────────────────────────────────
 # Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
@@ -2231,7 +2234,7 @@ def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
     return {"written": written, "skipped": skipped}
 
 
-def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
+def _eod_collect_close_prices_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKBACK_DAYS) -> dict:
     """Fetch and store EOD close prices for backtest_sim_runs rows that still
     have NULL close_price, covering the past ``lookback_days`` calendar days.
 
@@ -2390,7 +2393,7 @@ def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
     return {"written": written, "skipped": skipped}
 
 
-def _recalc_eod_pnl_r_recent_backtest(lookback_days: int = 7) -> dict:
+def _recalc_eod_pnl_r_recent_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKBACK_DAYS) -> dict:
     """Compute eod_pnl_r for backtest_sim_runs rows that now have close_price
     but still have NULL eod_pnl_r, covering the past ``lookback_days`` days.
 
@@ -3147,14 +3150,17 @@ def nightly_recalibration():
     except Exception as exc:
         log.warning(f"Nightly eod_pnl_r recalculation failed: {exc}")
 
-    # ── Backtest close-price catch-up sweep (last 7 days) ─────────────────────
+    # ── Backtest close-price catch-up sweep ────────────────────────────────────
     # backtest_sim_runs can also accumulate NULL close_price rows when the bot
-    # was down or Alpaca data was unavailable.  Running the same 7-day sweep
+    # was down or Alpaca data was unavailable.  Running the same look-back sweep
     # here keeps both tables self-healing without manual backfill_close_prices.py
-    # invocations.
+    # invocations.  Window is controlled by BACKTEST_CLOSE_LOOKBACK_DAYS (default 60).
     try:
-        log.info("Nightly close-price catch-up sweep (backtest): checking last 7 days…")
-        bcp_result = _eod_collect_close_prices_backtest(lookback_days=7)
+        log.info(
+            f"Nightly close-price catch-up sweep (backtest): "
+            f"checking last {BACKTEST_CLOSE_LOOKBACK_DAYS} days…"
+        )
+        bcp_result = _eod_collect_close_prices_backtest(lookback_days=BACKTEST_CLOSE_LOOKBACK_DAYS)
         log.info(
             f"Nightly close-price catch-up (backtest): "
             f"{bcp_result['written']} filled, {bcp_result['skipped']} skipped."
@@ -3164,7 +3170,7 @@ def nightly_recalibration():
 
     # ── eod_pnl_r recalculation for newly-filled backtest close prices ─────────
     try:
-        bpr_result = _recalc_eod_pnl_r_recent_backtest(lookback_days=7)
+        bpr_result = _recalc_eod_pnl_r_recent_backtest(lookback_days=BACKTEST_CLOSE_LOOKBACK_DAYS)
         if bpr_result["written"]:
             log.info(
                 f"Nightly eod_pnl_r recalc (backtest): "
