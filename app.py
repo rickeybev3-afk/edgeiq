@@ -8932,6 +8932,43 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 help="Average R (MFE) for borderline entries — see the Marginal Entry Analysis section below for a full comfortable vs marginal comparison"
                             )
 
+                            # ── Drill-in: individual marginal trades ───────────────────────
+                            if _marg_n_pre > 0:
+                                with st.expander(
+                                    f"🔍 View {_marg_n_pre} marginal trade{'s' if _marg_n_pre != 1 else ''}",
+                                    expanded=False,
+                                ):
+                                    def _amber_row_style(row):
+                                        amber_base = "background-color:rgba(255,167,38,0.14)"
+                                        amber_hi   = "background-color:rgba(255,167,38,0.28);color:#ffb300;font-weight:700"
+                                        return [amber_hi if col == "W/L" else amber_base for col in row.index]
+                                    _marg_drill_styled = _marg_df_pre.style.apply(_amber_row_style, axis=1)
+                                    _marg_drill_col_cfg = {
+                                        "P&L ($)":    st.column_config.NumberColumn(format="$%.2f"),
+                                        "Equity":     st.column_config.NumberColumn(format="$%.2f"),
+                                        "Move %":     st.column_config.NumberColumn(format="%.2f%%"),
+                                        "R (MFE)":    st.column_config.NumberColumn(format="%.2fR"),
+                                        "R (EOD)":    st.column_config.NumberColumn(
+                                                          format="%.2fR",
+                                                          help="EOD hold P&L: full position held to close, no stops"),
+                                        "R (Tiered)": st.column_config.NumberColumn(
+                                                          format="%.2fR",
+                                                          help="50% at 1R → BE stop → 25% at 2R → 25% runner to close"),
+                                        "TCS Floor":  st.column_config.NumberColumn(
+                                                          format="%d",
+                                                          help="Per-structure TCS threshold. Trade cleared it by ≤ 5 pts."),
+                                    }
+                                    st.dataframe(
+                                        _marg_drill_styled,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config=_marg_drill_col_cfg,
+                                    )
+                                    st.caption(
+                                        "🟡 Every row here cleared the TCS floor by ≤ 5 points. "
+                                        "If these setups are dragging down your edge, consider raising the TCS floor."
+                                    )
+
                         # ── EOD Hold R and Tiered Exit R on-screen stats ──────────────────
                         _has_eod_col    = "R (EOD)"    in _rp_df.columns
                         _has_tiered_col = "R (Tiered)" in _rp_df.columns
