@@ -10,6 +10,8 @@ import Settings from "@/pages/settings";
 
 const queryClient = new QueryClient();
 
+const HEALTH_POLL_MS = Number(import.meta.env.VITE_HEALTH_POLL_MS) || 10_000;
+
 const MISMATCH_DISMISSED_KEY = "alpaca_mismatch_banner_dismissed";
 
 interface HealthState {
@@ -659,7 +661,7 @@ function App() {
       }
     };
     check();
-    const interval = setInterval(check, 10_000);
+    const interval = setInterval(check, HEALTH_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
