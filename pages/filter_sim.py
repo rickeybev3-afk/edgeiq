@@ -10,6 +10,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import sys, os
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import backend
@@ -529,13 +530,37 @@ with pnl_c3:
 if s3["n"] == 0:
     st.info("No trades pass the current filters. Adjust sliders above.")
 else:
-    # Sort filtered trades chronologically
+    # ── Sort and extract date range ────────────────────────────────────────────
     sorted_trades = sorted(final, key=lambda r: r.get("sim_date") or "")
+    sim_dates = [r["sim_date"] for r in sorted_trades if r.get("sim_date")]
+    sim_start_str = sim_dates[0]  if sim_dates else None
+    sim_end_str   = sim_dates[-1] if sim_dates else None
+    trading_years = None
+    if sim_start_str and sim_end_str:
+        try:
+            d1 = datetime.strptime(sim_start_str, "%Y-%m-%d")
+            d2 = datetime.strptime(sim_end_str,   "%Y-%m-%d")
+            trading_years = max((d2 - d1).days / 365.25, 1/365.25)
+        except Exception:
+            pass
 
-    eq = float(pnl_equity)
+    # ── Risk % warning ─────────────────────────────────────────────────────────
+    if pnl_risk_mode == "Fixed $ per trade":
+        _risk_pct_warn = float(pnl_fixed_risk) / float(pnl_equity) * 100
+        if _risk_pct_warn > 10:
+            st.warning(
+                f"⚠️ **${pnl_fixed_risk:,} risk on a ${pnl_equity:,} account = "
+                f"{_risk_pct_warn:.1f}% per trade.** Standard practice is 1–2%. "
+                "Results below will look unrealistically large."
+            )
+
+    # ── Simulation ─────────────────────────────────────────────────────────────
+    eq   = float(pnl_equity)
     curve = [eq]
-    peak = eq
-    drawdowns = [0.0]
+    peak  = eq
+    max_dd_pct    = 0.0
+    max_dd_dollar = 0.0
+    drawdown_pcts = [0.0]
 
     for trade in sorted_trades:
         r_val = trade.get("pnl_r_sim") or 0.0
@@ -544,30 +569,59 @@ else:
         else:
             risk_amt = eq * (float(pnl_risk_pct) / 100.0)
         eq += r_val * risk_amt
-        eq = max(eq, 0.0)
+        eq  = max(eq, 0.0)
         curve.append(eq)
         if eq > peak:
             peak = eq
-        dd = (peak - eq) / peak * 100 if peak > 0 else 0.0
-        drawdowns.append(dd)
+        dd_dollar = peak - eq
+        dd_pct    = dd_dollar / peak * 100 if peak > 0 else 0.0
+        drawdown_pcts.append(dd_pct)
+        if dd_dollar > max_dd_dollar:
+            max_dd_dollar = dd_dollar
+            max_dd_pct    = dd_pct
 
     final_equity   = curve[-1]
     net_return_pct = (final_equity - float(pnl_equity)) / float(pnl_equity) * 100
-    max_dd         = max(drawdowns)
     avg_trade_amt  = (final_equity - float(pnl_equity)) / s3["n"] if s3["n"] else 0
 
-    # ── Summary metrics ───────────────────────────────────────────────────────
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Final Equity", f"${final_equity:,.0f}",
-              delta=f"{net_return_pct:+.1f}%")
-    m2.metric("Net Return", f"{net_return_pct:+.1f}%",
-              delta=f"${final_equity - float(pnl_equity):+,.0f}")
-    m3.metric("Max Drawdown", f"{max_dd:.1f}%",
-              delta=None)
-    m4.metric("Avg $ / Trade", f"${avg_trade_amt:+,.0f}",
-              delta=f"{s3['exp']:+.3f}R avg")
+    # Annualised return (CAGR)
+    ann_return = None
+    if trading_years and float(pnl_equity) > 0 and final_equity > 0:
+        ann_return = ((final_equity / float(pnl_equity)) ** (1.0 / trading_years) - 1) * 100
 
-    # ── Equity curve chart ────────────────────────────────────────────────────
+    trades_per_yr = s3["n"] / trading_years if trading_years else None
+
+    # ── Period header ──────────────────────────────────────────────────────────
+    if sim_start_str and sim_end_str:
+        period_str = f"{sim_start_str} → {sim_end_str}"
+        yrs_str    = f"{trading_years:.1f} yr" if trading_years else ""
+        tpy_str    = f"{trades_per_yr:.0f} trades/yr" if trades_per_yr else ""
+        st.markdown(
+            f"<div style='color:#7986cb;font-size:13px;margin-bottom:8px;'>"
+            f"📅 Simulation period: <b>{period_str}</b> &nbsp;·&nbsp; "
+            f"{yrs_str} &nbsp;·&nbsp; {tpy_str}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Summary metrics ────────────────────────────────────────────────────────
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Final Equity",    f"${final_equity:,.0f}",
+              delta=f"{net_return_pct:+.1f}% total")
+    m2.metric("CAGR (annualised)",
+              f"{ann_return:+.1f}%" if ann_return is not None else "n/a",
+              delta=f"over {trading_years:.1f} yrs" if trading_years else None)
+    m3.metric("Max Drawdown",    f"${max_dd_dollar:,.0f}",
+              delta=f"{max_dd_pct:.1f}% from peak")
+    m4.metric("Avg $ / Trade",   f"${avg_trade_amt:+,.0f}",
+              delta=f"{s3['exp']:+.3f}R avg")
+    _r_label = (
+        f"1R = ${pnl_fixed_risk:,}" if pnl_risk_mode == "Fixed $ per trade"
+        else f"1R = {pnl_risk_pct}% of equity"
+    )
+    m5.metric("Risk per trade",  _r_label, delta=None)
+
+    # ── Equity curve chart ─────────────────────────────────────────────────────
     fig_eq = go.Figure()
     fig_eq.add_trace(go.Scatter(
         x=list(range(len(curve))),
@@ -591,17 +645,16 @@ else:
         yaxis=dict(title="Account ($)", gridcolor="#1e1e3a",
                    tickprefix="$", tickformat=",.0f"),
         margin=dict(t=20, b=30, l=10, r=10),
-        height=320,
-        showlegend=False,
+        height=320, showlegend=False,
     )
     st.plotly_chart(fig_eq, use_container_width=True)
 
-    # ── Drawdown chart ────────────────────────────────────────────────────────
+    # ── Drawdown chart ─────────────────────────────────────────────────────────
     with st.expander("Show Drawdown Chart"):
         fig_dd = go.Figure()
         fig_dd.add_trace(go.Scatter(
-            x=list(range(len(drawdowns))),
-            y=[-d for d in drawdowns],
+            x=list(range(len(drawdown_pcts))),
+            y=[-d for d in drawdown_pcts],
             mode="lines",
             fill="tozeroy",
             line=dict(color="#ef9a9a", width=1.5),
@@ -612,7 +665,7 @@ else:
             plot_bgcolor="#0e0e1e", paper_bgcolor="#0e0e1e",
             font=dict(color="#9fa8da"),
             xaxis=dict(title="Trade #", gridcolor="#1e1e3a"),
-            yaxis=dict(title="Drawdown (%)", gridcolor="#1e1e3a",
+            yaxis=dict(title="Drawdown (% from peak)", gridcolor="#1e1e3a",
                        ticksuffix="%"),
             margin=dict(t=10, b=30, l=10, r=10),
             height=220, showlegend=False,
@@ -620,14 +673,15 @@ else:
         st.plotly_chart(fig_dd, use_container_width=True)
 
     sizing_label = (
-        f"${pnl_fixed_risk}/trade fixed risk"
+        f"${pnl_fixed_risk:,}/trade fixed risk"
         if pnl_risk_mode == "Fixed $ per trade"
-        else f"{pnl_risk_pct}% compounding"
+        else f"{pnl_risk_pct}% of equity (compounding)"
     )
     st.caption(
-        f"Simulation: {s3['n']:,} trades · {sizing_label} · "
-        f"trades sorted by sim_date. "
-        "Past performance of backtested data does not guarantee future results."
+        f"Simulation: {s3['n']:,} batch-backtest trades · {sizing_label} · "
+        "sorted chronologically by sim_date. "
+        "Does not include slippage, commissions, or execution gaps. "
+        "Past backtest performance does not guarantee future results."
     )
 
 st.divider()
