@@ -293,6 +293,7 @@ def main():
         by_date[r['sim_date']].append(r)
 
     total_saved = 0
+    total_no_bars = 0
     total_errors = 0
 
     for trade_date, date_rows in sorted(by_date.items()):
@@ -337,6 +338,7 @@ def main():
 
             if not intraday:
                 log.warning(f'  \u26a0 {ticker} {trade_date} no intraday bars \u2014 all context columns will be NULL')
+                total_no_bars += 1
 
             bars_at_signal = bars_up_to_signal(intraday, trade_date, scan_type)
 
@@ -389,7 +391,7 @@ def main():
         log.info(f'  [{trade_date}] done — saved={total_saved} errors={total_errors}')
 
     log.info('=' * 60)
-    log.info(f'COMPLETE — {total_saved} rows saved, {total_errors} errors')
+    log.info(f'COMPLETE — {total_saved} rows saved, {total_no_bars} no-bars, {total_errors} errors')
 
 if __name__ == '__main__':
     main()
