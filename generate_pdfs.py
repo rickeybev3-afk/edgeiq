@@ -3,12 +3,16 @@
 generate_pdfs.py — Converts EdgeIQ markdown files to PDFs.
 Runs automatically at 11:59 PM ET via the Paper Trader Bot scheduler.
 
-PDFs generated:
-  EdgeIQ_Public_Build_Notes.pdf    <- build_notes.md
-  EdgeIQ_Private_Build_Notes.pdf   <- build_notes_private.md
-  EdgeIQ_IP_Documentation.pdf      <- ip_documentation.md
-  EdgeIQ_Study_Notes.pdf           <- edgeiq_study_notes.md  (if present)
-  EdgeIQ_System_Documentation.pdf  <- replit.md              (if present)
+PDFs generated (all 9 documents):
+  EdgeIQ_Public_Build_Notes.pdf                     <- build_notes_private.md
+  EdgeIQ_Private_Build_Notes.pdf                    <- build_notes.md
+  EdgeIQ_IP_Documentation.pdf                       <- ip_documentation.md
+  EdgeIQ_Study_Notes.pdf                            <- edgeiq_study_notes.md        (if present)
+  EdgeIQ_System_Documentation.pdf                   <- replit.md                    (if present)
+  EdgeIQ_App_Source.pdf                             <- app.py + replit.md           (combined live source)
+  EdgeIQ_Beta_Tester_Screening.pdf                  <- beta_tester_screening.md     (if present)
+  EdgeIQ_Cognitive_Profiling_Interview_Methodology.pdf <- cognitive_profiling_interview_methodology.md (if present)
+  EdgeIQ_NDA_Template.pdf                           <- nda_template.md              (if present)
 """
 
 import re
@@ -221,6 +225,50 @@ def render_markdown_to_pdf(md_path: str, pdf_path: str, title: str):
     return pdf.page
 
 
+def render_app_source_to_pdf(pdf_path: str) -> int:
+    """
+    Generate EdgeIQ_App_Source.pdf by combining app.py (raw source) and
+    replit.md (system docs) into a single timestamped PDF.
+    """
+    app_py   = os.path.join(PROJ_ROOT, 'app.py')
+    replit_md = os.path.join(PROJ_ROOT, 'replit.md')
+
+    sources_found = [p for p in (app_py, replit_md) if os.path.exists(p)]
+    if not sources_found:
+        raise FileNotFoundError('Neither app.py nor replit.md found')
+
+    import tempfile
+    ts_header = datetime.now().strftime('%B %d, %Y at %I:%M %p ET')
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.md',
+                                     delete=False, encoding='utf-8') as tmp:
+        tmp_path = tmp.name
+        tmp.write(f'# EdgeIQ -- Application Source\n\n')
+        tmp.write(f'*Snapshot: {ts_header}*\n\n')
+        tmp.write('---\n\n')
+
+        if os.path.exists(app_py):
+            tmp.write('## app.py\n\n')
+            tmp.write('```python\n')
+            with open(app_py, 'r', encoding='utf-8') as f:
+                tmp.write(f.read())
+            tmp.write('\n```\n\n')
+
+        if os.path.exists(replit_md):
+            tmp.write('---\n\n')
+            tmp.write('## replit.md\n\n')
+            with open(replit_md, 'r', encoding='utf-8') as f:
+                tmp.write(f.read())
+
+    try:
+        pages = render_markdown_to_pdf(tmp_path, pdf_path,
+                                       'EdgeIQ -- Application Source')
+    finally:
+        os.unlink(tmp_path)
+
+    return pages
+
+
 def generate_all_pdfs() -> list[str]:
     """
     Build all PDFs from their markdown sources.
@@ -228,12 +276,12 @@ def generate_all_pdfs() -> list[str]:
     """
     tasks = [
         (
-            os.path.join(DOCS_DIR, 'build_notes.md'),
+            os.path.join(DOCS_DIR, 'build_notes_private.md'),
             os.path.join(DOCS_DIR, 'EdgeIQ_Public_Build_Notes.pdf'),
             'EdgeIQ -- Public Build Notes',
         ),
         (
-            os.path.join(DOCS_DIR, 'build_notes_private.md'),
+            os.path.join(DOCS_DIR, 'build_notes.md'),
             os.path.join(DOCS_DIR, 'EdgeIQ_Private_Build_Notes.pdf'),
             'EdgeIQ -- Private Build Notes (Confidential)',
         ),
@@ -252,6 +300,21 @@ def generate_all_pdfs() -> list[str]:
             os.path.join(DOCS_DIR, 'EdgeIQ_System_Documentation.pdf'),
             'EdgeIQ -- System Documentation',
         ),
+        (
+            os.path.join(DOCS_DIR, 'beta_tester_screening.md'),
+            os.path.join(DOCS_DIR, 'EdgeIQ_Beta_Tester_Screening.pdf'),
+            'EdgeIQ -- Beta Tester Screening',
+        ),
+        (
+            os.path.join(DOCS_DIR, 'cognitive_profiling_interview_methodology.md'),
+            os.path.join(DOCS_DIR, 'EdgeIQ_Cognitive_Profiling_Interview_Methodology.pdf'),
+            'EdgeIQ -- Cognitive Profiling Interview Methodology',
+        ),
+        (
+            os.path.join(DOCS_DIR, 'nda_template.md'),
+            os.path.join(DOCS_DIR, 'EdgeIQ_NDA_Template.pdf'),
+            'EdgeIQ -- NDA Template',
+        ),
     ]
 
     results = []
@@ -264,6 +327,14 @@ def generate_all_pdfs() -> list[str]:
             results.append(f'OK {os.path.basename(pdf_path)} ({pages}pp)')
         except Exception as e:
             results.append(f'ERROR {os.path.basename(pdf_path)}: {e}')
+
+    # App Source PDF — always regenerate from live app.py + replit.md
+    app_source_pdf = os.path.join(DOCS_DIR, 'EdgeIQ_App_Source.pdf')
+    try:
+        pages = render_app_source_to_pdf(app_source_pdf)
+        results.append(f'OK EdgeIQ_App_Source.pdf ({pages}pp)')
+    except Exception as e:
+        results.append(f'ERROR EdgeIQ_App_Source.pdf: {e}')
 
     return results
 
