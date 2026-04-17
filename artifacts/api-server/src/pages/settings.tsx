@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type TradingMode = "paper" | "live";
 
@@ -89,20 +89,26 @@ export default function Settings() {
     };
   }, []);
 
+  const handledHashRef = useRef<string | null>(null);
+
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash === "#trading-mode") {
-      const el = document.getElementById("trading-mode");
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }
-    if (hash === "#credential-alerts") {
-      const el = document.getElementById("credential-alerts");
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }
+    if (!hash || handledHashRef.current === hash) return;
+
+    const knownHashes = ["#trading-mode", "#credential-alerts"];
+    if (!knownHashes.includes(hash)) return;
+
+    const el = document.getElementById(hash.slice(1));
+    if (!el) return;
+
+    handledHashRef.current = hash;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    const timerId = setTimeout(() => {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }, 1500);
+
+    return () => clearTimeout(timerId);
   }, [state.loading, credAlerts.loading]);
 
   async function handleChange(newMode: TradingMode) {
