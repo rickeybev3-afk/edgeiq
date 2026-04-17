@@ -12185,6 +12185,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "_sort_tiered_intra_r":_tk_tiered_intra_num,
                     "_sort_delta_morn":    _tk_delta_morn_num,
                     "_sort_delta_intra":   _tk_delta_intra_num,
+                    "_sort_ib_pass":       _ib_pass_pct if _ib_pass_pct is not None else float("inf"),
                 })
             _sort_col_map = {
                 "Win %":            ("_sort_win_pct",        False),
@@ -12197,6 +12198,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "Tiered R (Intra)": ("_sort_tiered_intra_r", False),
                 "Δ Morn":           ("_sort_delta_morn",     False),
                 "Δ Intra":          ("_sort_delta_intra",    False),
+                "IB Pass %":        ("_sort_ib_pass",        True),
             }
             _r_filter_col_map = {
                 "EOD Hold R":    "_sort_eod_r",
@@ -12333,7 +12335,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 columns=[
                     "_sort_win_pct", "_sort_eod_r", "_sort_tiered_r", "_sort_div_mag",
                     "_sort_eod_morn_r", "_sort_tiered_morn_r", "_sort_eod_intra_r", "_sort_tiered_intra_r",
-                    "_sort_delta_morn", "_sort_delta_intra",
+                    "_sort_delta_morn", "_sort_delta_intra", "_sort_ib_pass",
                 ],
                 errors="ignore",
             )
