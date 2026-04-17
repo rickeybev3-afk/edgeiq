@@ -2,7 +2,9 @@
 nightly_tiered_pnl_refresh.py
 ──────────────────────────────
 Long-running scheduler that keeps backtest_sim_runs.tiered_pnl_r up-to-date
-by calling the backtest-only backfill once every night.
+by calling the backtest-only backfill once every night, and refreshes the
+mv_tiered_pnl_summary materialised view so the Ladder tab always shows
+current stats without manual intervention.
 
 Design
 ──────
@@ -10,7 +12,11 @@ Design
   since the last run are caught straight away.
 • After each run it sleeps until midnight US/Eastern (≈ 00:05 ET to give
   any late-night batch jobs a few minutes to finish writing).
-• If the backfill itself raises an exception the scheduler logs the error
+• At 21:00 ET (9 PM, after market close) the mv_tiered_pnl_summary view is
+  refreshed so the Ladder tab is warm well before the midnight backfill.
+• After each midnight backfill the view is refreshed a second time so it
+  captures any rows written by the backfill itself.
+• If the backfill or refresh raises an exception the scheduler logs the error
   and continues to the next nightly window rather than crashing.
 • SIGTERM / SIGINT (e.g. Replit workflow stop) are caught so the process
   exits cleanly rather than mid-sleep or mid-run.
@@ -98,6 +104,41 @@ logging.basicConfig(
 log = logging.getLogger("nightly_tiered_pnl")
 
 
+# ── Ladder P&L summary-cache refresh ─────────────────────────────────────────
+
+def refresh_summary_cache():
+    """Call backend.refresh_mv_tiered_pnl_summary() and log the outcome.
+
+    The function is imported lazily so this module can still start up even if
+    backend.py has import-time side effects that haven't finished yet.
+    """
+    log.info("Refreshing mv_tiered_pnl_summary materialised view …")
+    start = time.monotonic()
+    try:
+        import backend as _backend
+        result = _backend.refresh_mv_tiered_pnl_summary()
+        elapsed = time.monotonic() - start
+        if result.get("success"):
+            log.info(
+                "mv_tiered_pnl_summary refresh complete (%.1fs): %s",
+                elapsed,
+                result.get("message", "ok"),
+            )
+        else:
+            log.warning(
+                "mv_tiered_pnl_summary refresh failed (%.1fs): %s",
+                elapsed,
+                result.get("message", "unknown error"),
+            )
+    except Exception as exc:
+        elapsed = time.monotonic() - start
+        log.error(
+            "mv_tiered_pnl_summary refresh raised an exception after %.1fs: %s",
+            elapsed,
+            exc,
+        )
+
+
 # ── Backfill runner ───────────────────────────────────────────────────────────
 
 def run_backfill():
@@ -143,29 +184,53 @@ def main():
 
     log.info("=" * 60)
     log.info("Nightly Tiered P&L Refresh — started")
+    log.info("Scheduled events (ET):  21:00 → cache refresh,  00:05 → backfill + cache refresh")
     log.info("=" * 60)
+
+    # Run backfill immediately on startup to catch any rows written since last run.
+    log.info("─── Startup run ──────────────────────────────────────────────")
+    run_backfill()
+    refresh_summary_cache()
 
     run_number = 0
     while not _shutdown.is_set():
-        run_number += 1
-        log.info("─── Run #%d ───────────────────────────────────────────────",
-                 run_number)
-        run_backfill()
+        # Calculate seconds until each scheduled event.
+        secs_to_9pm     = _seconds_until_midnight_et(target_hour=21, target_minute=0)
+        secs_to_midnight = _seconds_until_midnight_et(target_hour=0,  target_minute=5)
 
-        if _shutdown.is_set():
-            break
+        # Wake at whichever event is sooner.
+        if secs_to_9pm < secs_to_midnight:
+            sleep_secs = secs_to_9pm
+            next_event = "21:00 ET cache refresh"
+            do_backfill = False
+        else:
+            sleep_secs = secs_to_midnight
+            next_event = "00:05 ET backfill + cache refresh"
+            do_backfill = True
 
-        sleep_secs = _seconds_until_midnight_et(target_hour=0, target_minute=5)
         wake_et = _et_now() + datetime.timedelta(seconds=sleep_secs)
         log.info(
-            "Next run at %s ET (sleeping %.0f s / %.1f h).",
+            "Next event: %s at %s ET (sleeping %.0f s / %.1f h).",
+            next_event,
             wake_et.strftime("%Y-%m-%d %H:%M"),
             sleep_secs,
             sleep_secs / 3600,
         )
+
         completed = _interruptible_sleep(sleep_secs)
         if not completed:
             break
+
+        run_number += 1
+        log.info("─── Event #%d: %s ─────────────────────────────────────────",
+                 run_number, next_event)
+
+        if do_backfill:
+            run_backfill()
+            if _shutdown.is_set():
+                break
+
+        refresh_summary_cache()
 
     log.info("Nightly Tiered P&L Refresh — stopped cleanly.")
 
