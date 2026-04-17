@@ -12973,7 +12973,31 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     )
 
                 # ── Per-ticker expanders ──────────────────────────────────────
-                st.caption("✱ = custom TCS floor override is active for that ticker")
+                _sw_hdr_col_cap, _sw_hdr_col_btn = st.columns([3, 1])
+                with _sw_hdr_col_cap:
+                    st.caption("✱ = custom TCS floor override is active for that ticker")
+                with _sw_hdr_col_btn:
+                    _sw_has_overrides = any(
+                        k.startswith("opt_both_equity_") or k.startswith("opt_both_risk_")
+                        for k in st.session_state
+                    )
+                    if st.button(
+                        "↺ Reset all to MC defaults",
+                        key="opt_both_reset_all",
+                        disabled=not _sw_has_overrides,
+                        help=(
+                            "Clear all per-ticker equity and risk overrides at once. "
+                            "All tickers will revert to the global MC defaults set in "
+                            "Backtest → Advanced settings."
+                        ),
+                        use_container_width=True,
+                    ):
+                        for _k in [
+                            k for k in list(st.session_state.keys())
+                            if k.startswith("opt_both_equity_") or k.startswith("opt_both_risk_")
+                        ]:
+                            st.session_state.pop(_k, None)
+                        st.rerun()
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
