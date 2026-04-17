@@ -8297,6 +8297,43 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                 except Exception as _tiered_err:
                     print(f"Paper trade tiered P&L error ({ticker}): {_tiered_err}")
 
+            # ── MAE / MFE from intraday bars (long or short) ─────────────────
+            # _full_bars is only available if bars were fetched above, but we
+            # attempt a fresh fetch if needed so all exit types get MAE/MFE.
+            _bars_for_excursion = None
+            if "_full_bars" in dir() and not _full_bars.empty:
+                _bars_for_excursion = _full_bars
+            elif (
+                r.get("mae") is None
+                and _trade_date_obj is not None
+                and _alpaca_key and _alpaca_sec
+                and _actual_outcome not in ("", None)
+            ):
+                try:
+                    _bars_for_excursion = fetch_bars(_alpaca_key, _alpaca_sec, ticker, _trade_date_obj)
+                except Exception:
+                    _bars_for_excursion = None
+
+            if (
+                _bars_for_excursion is not None
+                and not _bars_for_excursion.empty
+                and r.get("mae") is None
+            ):
+                _ap_val = alert_prices.get(ticker)
+                if _ap_val and float(_ap_val) > 0:
+                    _ep = float(_ap_val)
+                    _is_long = "Bullish" in str(_actual_outcome)
+                    _bl = _bars_for_excursion["low"]
+                    _bh = _bars_for_excursion["high"]
+                    if _is_long:
+                        _mae_val = round((float(_bl.min()) - _ep) / _ep * 100, 2)
+                        _mfe_val = round((float(_bh.max()) - _ep) / _ep * 100, 2)
+                    else:
+                        _mae_val = round((_ep - float(_bh.max())) / _ep * 100, 2)
+                        _mfe_val = round((_ep - float(_bl.min())) / _ep * 100, 2)
+                    r["mae"] = _mae_val
+                    r["mfe"] = _mfe_val
+
             if ticker in existing_tickers:
                 # ── UPDATE existing record ────────────────────────────────────
                 patch = {
@@ -11666,4 +11703,212 @@ def get_kalshi_performance_summary(user_id: str = "") -> dict:
         "avg_confidence":     round(sum(conf_vals) / max(len(conf_vals), 1), 3),
         "first_trade_date":   first_trade_date,
         "paper_days_elapsed": paper_days_elapsed,
+    }
+
+
+# ── Social Sentiment: StockTwits ───────────────────────────────────────────────
+
+def fetch_stocktwits_sentiment(ticker: str) -> dict:
+    """
+    Fetch StockTwits sentiment for a ticker. Public endpoint, no API key required.
+    Returns dict with bull_pct, bear_pct, neutral_pct, msg_count, msg_velocity, trending, error.
+    """
+    import datetime as _dt
+    NO_DATA = {
+        "bull_pct": None, "bear_pct": None, "neutral_pct": None,
+        "msg_count": 0, "msg_velocity": 0.0, "trending": False, "error": True,
+    }
+    try:
+        url = f"https://api.stocktwits.com/api/2/streams/symbol/{ticker.upper()}.json"
+        resp = requests.get(url, timeout=5,
+                            headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            return NO_DATA
+        data = resp.json()
+        messages = (data.get("messages") or [])[:30]
+        if not messages:
+            return NO_DATA
+
+        bull = 0
+        bear = 0
+        neutral = 0
+        now_utc = _dt.datetime.utcnow().replace(tzinfo=_dt.timezone.utc)
+        msgs_last_hour = 0
+        msgs_prev_hour = 0
+
+        for m in messages:
+            # Sentiment tag
+            sent = (m.get("entities") or {}).get("sentiment") or {}
+            basic = (sent.get("basic") or "").lower()
+            if basic == "bullish":
+                bull += 1
+            elif basic == "bearish":
+                bear += 1
+            else:
+                neutral += 1
+
+            # Message velocity: count msgs in last 1h vs prev 1h
+            ts_str = m.get("created_at") or ""
+            try:
+                ts = _dt.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                age_h = (now_utc - ts).total_seconds() / 3600
+                if age_h <= 1:
+                    msgs_last_hour += 1
+                elif age_h <= 2:
+                    msgs_prev_hour += 1
+            except Exception:
+                pass
+
+        total = bull + bear + neutral
+        if total == 0:
+            return NO_DATA
+
+        velocity = float(msgs_last_hour) - float(msgs_prev_hour)
+        trending = bool(msgs_last_hour >= 3 and velocity > 0)
+
+        return {
+            "bull_pct":    round(bull   / total * 100, 1),
+            "bear_pct":    round(bear   / total * 100, 1),
+            "neutral_pct": round(neutral / total * 100, 1),
+            "msg_count":   total,
+            "msg_velocity": velocity,
+            "trending":    trending,
+            "error":       False,
+        }
+    except Exception:
+        return NO_DATA
+
+
+# ── Psychology Engine: Lunar Cycle + Runner Similarity ────────────────────────
+
+def get_lunar_phase(dt=None) -> dict:
+    """
+    Compute current lunar phase using standard moon age formula.
+    Pure math — no external library.
+    Returns: phase_name, emoji, moon_age_days, retail_mania (bool), icon_label.
+    """
+    import datetime as _dt
+    if dt is None:
+        dt = _dt.date.today()
+    elif hasattr(dt, "date"):
+        dt = dt.date()
+
+    # Reference new moon: Jan 6, 2000 (Julian date midpoint)
+    ref_new_moon = _dt.date(2000, 1, 6)
+    SYNODIC = 29.53059  # days
+
+    days_since = (dt - ref_new_moon).days
+    moon_age   = days_since % SYNODIC
+
+    if moon_age < 1.0 or moon_age >= 28.5:
+        phase, emoji = "New Moon", "🌑"
+    elif moon_age < 7.4:
+        phase, emoji = "Waxing Crescent", "🌒"
+    elif moon_age < 8.4:
+        phase, emoji = "First Quarter", "🌓"
+    elif moon_age < 14.8:
+        phase, emoji = "Waxing Gibbous", "🌔"
+    elif moon_age < 15.8:
+        phase, emoji = "Full Moon", "🌕"
+    elif moon_age < 22.1:
+        phase, emoji = "Waning Gibbous", "🌖"
+    elif moon_age < 23.1:
+        phase, emoji = "Last Quarter", "🌗"
+    else:
+        phase, emoji = "Waning Crescent", "🌘"
+
+    retail_mania = phase in ("New Moon", "Full Moon")
+    icon_label   = "Retail Mania Window 🔥" if retail_mania else phase
+
+    return {
+        "phase":         phase,
+        "emoji":         emoji,
+        "moon_age_days": round(moon_age, 1),
+        "retail_mania":  retail_mania,
+        "icon_label":    icon_label,
+    }
+
+
+# ── Runner Similarity Engine ──────────────────────────────────────────────────
+
+# 10 archetypal volume profile vectors (20 bins each, normalized to sum=1)
+# Each represents a characteristic small-cap intraday volume distribution
+_RUNNER_ARCHETYPES = {
+    "Classic Breakout":     [0.18, 0.12, 0.09, 0.07, 0.06, 0.05, 0.05, 0.05, 0.04, 0.04,
+                              0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.03, 0.03, 0.01],
+    "Late-Day Runner":      [0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.05, 0.05,
+                              0.06, 0.07, 0.08, 0.09, 0.10, 0.10, 0.08, 0.06, 0.03, 0.01],
+    "Steady Accumulation":  [0.08, 0.07, 0.07, 0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.05,
+                              0.05, 0.05, 0.05, 0.05, 0.05, 0.04, 0.04, 0.04, 0.03, 0.01],
+    "Open-Drive Power":     [0.25, 0.14, 0.10, 0.08, 0.06, 0.05, 0.05, 0.04, 0.04, 0.03,
+                              0.03, 0.03, 0.02, 0.02, 0.02, 0.01, 0.01, 0.01, 0.00, 0.01],
+    "Double Distribution":  [0.10, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.03, 0.04, 0.05,
+                              0.06, 0.07, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01],
+    "Short Squeeze":        [0.05, 0.04, 0.04, 0.04, 0.04, 0.04, 0.05, 0.06, 0.08, 0.10,
+                              0.12, 0.12, 0.10, 0.08, 0.06, 0.05, 0.04, 0.03, 0.02, 0.00],
+    "Dump (Distribution)":  [0.20, 0.15, 0.12, 0.10, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03,
+                              0.03, 0.02, 0.02, 0.01, 0.01, 0.01, 0.00, 0.00, 0.00, 0.00],
+    "Low Volume Drift":     [0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05,
+                              0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.04, 0.04, 0.03],
+    "News Spike Fade":      [0.22, 0.16, 0.12, 0.09, 0.07, 0.06, 0.05, 0.05, 0.04, 0.03,
+                              0.03, 0.02, 0.02, 0.01, 0.01, 0.01, 0.00, 0.00, 0.00, 0.00],
+    "IB Range Compression": [0.07, 0.07, 0.07, 0.07, 0.07, 0.07, 0.07, 0.06, 0.06, 0.05,
+                              0.05, 0.05, 0.04, 0.04, 0.04, 0.03, 0.03, 0.03, 0.02, 0.01],
+}
+
+
+def compute_runner_similarity(bin_centers: list, vap: list) -> dict:
+    """
+    Compare today's volume profile (bin_centers, vap) against 10 archetypal profiles
+    using cosine similarity. Returns top match name, similarity %, and a confidence label.
+    """
+    import math
+
+    NO_RESULT = {"archetype": "Unknown", "similarity": 0.0, "label": "No match", "is_strong": False}
+
+    if not vap or len(vap) < 5:
+        return NO_RESULT
+
+    # Resample vap to 20 bins via uniform bucketing
+    n = len(vap)
+    N = 20
+    total_vol = sum(vap)
+    if total_vol <= 0:
+        return NO_RESULT
+
+    # Normalize to 20 bins
+    bin_size = n / N
+    vec = []
+    for i in range(N):
+        start = int(i * bin_size)
+        end   = int((i + 1) * bin_size)
+        vec.append(sum(vap[start:end]) / total_vol)
+
+    # Cosine similarity vs each archetype
+    def cosine(a, b):
+        dot  = sum(x * y for x, y in zip(a, b))
+        na   = math.sqrt(sum(x*x for x in a))
+        nb   = math.sqrt(sum(x*x for x in b))
+        return dot / (na * nb + 1e-12)
+
+    best_name  = "Unknown"
+    best_score = -1.0
+    for name, arch in _RUNNER_ARCHETYPES.items():
+        s = cosine(vec, arch)
+        if s > best_score:
+            best_score = s
+            best_name  = name
+
+    similarity_pct = round(best_score * 100, 1)
+    is_strong      = similarity_pct >= 60.0
+    label = (
+        f"Runner DNA: {similarity_pct:.0f}% — {best_name}" if is_strong
+        else f"DNA: {similarity_pct:.0f}% (weak match)"
+    )
+
+    return {
+        "archetype":   best_name,
+        "similarity":  similarity_pct,
+        "label":       label,
+        "is_strong":   is_strong,
     }

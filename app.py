@@ -1104,6 +1104,9 @@ def render_log_entry_ui():
                 "notes":     notes,
                 "grade":     grade,
                 "grade_reason": reason,
+                "social_bull_pct":  state.get("social_bull_pct"),
+                "social_bear_pct":  state.get("social_bear_pct"),
+                "social_msg_count": state.get("social_msg_count"),
             }
             save_journal_entry(entry, user_id=st.session_state.get("auth_user_id", ""))
             # Clear fetched price state so next log starts fresh
@@ -3122,6 +3125,70 @@ def render_buy_sell_widget(bsp, rvol_val=None):
     """, unsafe_allow_html=True)
 
 
+def render_social_sentiment_widget(sentiment: dict, rvol_val=None, buy_pct: float = 50.0):
+    """Social sentiment widget — StockTwits bull/bear/neutral bars with HERD/TRAP alerts."""
+    if not sentiment or sentiment.get("error"):
+        return
+
+    bull  = sentiment.get("bull_pct") or 0
+    bear  = sentiment.get("bear_pct") or 0
+    neut  = sentiment.get("neutral_pct") or 0
+    count = sentiment.get("msg_count", 0)
+    vel   = sentiment.get("msg_velocity", 0.0)
+    trend = sentiment.get("trending", False)
+
+    # Velocity arrow
+    if vel > 1:
+        vel_arrow, vel_color = f"▲ +{vel:.0f}/hr", "#4caf50"
+    elif vel < -1:
+        vel_arrow, vel_color = f"▼ {vel:.0f}/hr", "#ef5350"
+    else:
+        vel_arrow, vel_color = "→ Steady", "#aaaaaa"
+
+    # HERD PILING IN alert: rising msgs + RVOL ≥ 3 + buy pressure ramping
+    alert_html = ""
+    rvol_hot = rvol_val is not None and rvol_val >= 3.0
+    if trend and rvol_hot and buy_pct >= 55:
+        alert_html = (
+            '<div style="background:#4caf5022; border:1px solid #4caf5088; '
+            'border-radius:6px; padding:6px 12px; margin-bottom:6px; '
+            'font-size:12px; font-weight:700; color:#4caf50; text-align:center;">'
+            '🐂 HERD PILING IN — Messages spiking + RVOL hot + Buy pressure'
+            '</div>'
+        )
+    elif trend and rvol_hot and buy_pct <= 45:
+        alert_html = (
+            '<div style="background:#ffa72622; border:1px solid #ffa72688; '
+            'border-radius:6px; padding:6px 12px; margin-bottom:6px; '
+            'font-size:12px; font-weight:700; color:#ffa726; text-align:center;">'
+            '⚠️ CROWD TRAP — Retail buying but sell pressure dominant'
+            '</div>'
+        )
+
+    st.markdown(f"""
+    <div style="background:#1a1a2e; border:1px solid #33336655; border-radius:8px;
+                padding:10px 16px; margin:4px 0 6px 0;">
+      {alert_html}
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.8px;">
+          Social Sentiment &nbsp;<span style="color:#555;">(StockTwits · {count} msgs)</span>
+        </span>
+        <span style="font-size:11px; color:{vel_color};">{vel_arrow}</span>
+      </div>
+      <div style="display:flex; gap:3px; height:8px; border-radius:4px; overflow:hidden; margin-bottom:5px;">
+        <div style="width:{bull:.1f}%; background:#4caf50;"></div>
+        <div style="width:{neut:.1f}%; background:#666;"></div>
+        <div style="width:{bear:.1f}%; background:#ef5350;"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between;">
+        <span style="font-size:11px; color:#4caf50;">🟢 Bull {bull:.0f}%</span>
+        <span style="font-size:11px; color:#888;">Neutral {neut:.0f}%</span>
+        <span style="font-size:11px; color:#ef5350;">🔴 Bear {bear:.0f}%</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_order_flow_widget(ofs):
     """Tier 2 order flow panel — pressure acceleration, bar quality, vol surge, streak."""
     if ofs is None:
@@ -3601,13 +3668,34 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
 
     render_velocity_widget(df)
     render_rvol_widget(rvol_val, rvol_lbl, rvol_color, is_runner)
-    render_buy_sell_widget(compute_buy_sell_pressure(df), rvol_val=rvol_val)
+    _bsp_social = compute_buy_sell_pressure(df)
+    render_buy_sell_widget(_bsp_social, rvol_val=rvol_val)
+    _social_sentiment = fetch_stocktwits_sentiment(ticker)
+    render_social_sentiment_widget(
+        _social_sentiment,
+        rvol_val=rvol_val,
+        buy_pct=float(_bsp_social.get("buy_pct", 50) if _bsp_social else 50),
+    )
     render_order_flow_widget(
         compute_order_flow_signals(df, ib_high=ib_high, ib_low=ib_low)
     )
     render_pattern_widget(
         detect_chart_patterns(df, poc_price=poc_price, ib_high=ib_high, ib_low=ib_low)
     )
+    # ── Runner DNA similarity badge ───────────────────────────────────────────
+    _runner_sim = compute_runner_similarity(bin_centers, vap)
+    if _runner_sim.get("is_strong"):
+        _rsim_pct   = _runner_sim["similarity"]
+        _rsim_arch  = _runner_sim["archetype"]
+        _rsim_color = "#4caf50" if _rsim_arch not in ("Dump (Distribution)", "News Spike Fade") else "#ef5350"
+        st.markdown(
+            f'<div style="background:#1a1a2e; border:1px solid {_rsim_color}55; '
+            f'border-radius:6px; padding:6px 14px; margin:4px 0 6px 0; '
+            f'font-size:12px; color:{_rsim_color}; font-weight:600;">'
+            f'🧬 Runner DNA: <b>{_rsim_pct:.0f}% match</b> — {_rsim_arch}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
     render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)
@@ -3741,6 +3829,9 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
         "edge_score":       _chart_edge,
         "edge_breakdown":   _chart_edge_bkd,
         "struct_conf":      _top_struct_conf,
+        "social_bull_pct":  (_social_sentiment or {}).get("bull_pct"),
+        "social_bear_pct":  (_social_sentiment or {}).get("bear_pct"),
+        "social_msg_count": (_social_sentiment or {}).get("msg_count", 0),
     }
 
     # ── Update peak price + auto-alerts for open position ────────────────────
@@ -3968,6 +4059,11 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["rp_min_gap"] = float(_prefs["rp_min_gap"])
         except (ValueError, TypeError):
             pass
+    if "rp_min_gap_vs_ib" in _prefs:
+        try:
+            st.session_state["rp_min_gap_vs_ib"] = float(_prefs["rp_min_gap_vs_ib"])
+        except (ValueError, TypeError):
+            pass
     if "rp_min_ft" in _prefs:
         try:
             st.session_state["rp_min_ft"] = float(_prefs["rp_min_ft"])
@@ -3987,6 +4083,8 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             pass
     if "pt_extra_tickers" in _prefs:
         st.session_state["pt_extra_tickers"] = str(_prefs["pt_extra_tickers"])
+    if "rk_extra_tickers" in _prefs:
+        st.session_state["rk_extra_tickers"] = str(_prefs["rk_extra_tickers"])
     if "bts_dr_start" in _prefs:
         try:
             import datetime as _dt_bts
@@ -4218,6 +4316,18 @@ with st.sidebar:
         help="If this ETF is up > 1% on the day, TCS gets a +10 pt Sector Tailwind bonus."
     )
 
+    st.markdown("---")
+    # ── Lunar Cycle ─────────────────────────────────────────────────────────
+    _lunar = get_lunar_phase()
+    _lunar_color = "#ff6b35" if _lunar["retail_mania"] else "#888"
+    st.markdown(
+        f'<div style="font-size:13px; padding:4px 0 2px 0;">'
+        f'{_lunar["emoji"]} <span style="color:{_lunar_color}; font-weight:{"700" if _lunar["retail_mania"] else "400"};">'
+        f'{_lunar["icon_label"]}</span> '
+        f'<span style="color:#555; font-size:10px;">(day {_lunar["moon_age_days"]:.0f})</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("---")
     st.header("🌡️ Macro Regime")
     st.caption("Stockbee breadth data — top-down tape filter")
@@ -6032,8 +6142,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
     var url = new URL(window.parent.location.href);
     var params = [
         ['rp_min_tcs', 'rp_min_tcs_slider'],
-        ['rp_min_gap', 'rp_min_gap'],
-        ['rp_min_ft',  'rp_min_ft'],
+        ['rp_min_gap',       'rp_min_gap'],
+        ['rp_min_gap_vs_ib', 'rp_min_gap_vs_ib'],
+        ['rp_min_ft',        'rp_min_ft'],
     ];
     var changed = false;
     params.forEach(function(pair) {
@@ -6333,6 +6444,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
                     st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_gap_col2:
+            if "rp_min_gap_vs_ib" not in st.session_state:
+                try:
+                    st.session_state["rp_min_gap_vs_ib"] = float(st.query_params.get("rp_min_gap_vs_ib", 0.0))
+                except (ValueError, TypeError):
+                    st.session_state["rp_min_gap_vs_ib"] = 0.0
             _rp_min_gap_vs_ib = st.number_input(
                 "Min Gap vs IB (×)",
                 min_value=0.0, max_value=10.0, value=0.0, step=0.25,
@@ -6344,6 +6460,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "0 = no filter."
                 ),
             )
+            if st.query_params.get("rp_min_gap_vs_ib") != str(_rp_min_gap_vs_ib):
+                st.query_params["rp_min_gap_vs_ib"] = str(_rp_min_gap_vs_ib)
+            _cmp_rp_filters.html(
+                f"<script>localStorage.setItem('rp_min_gap_vs_ib', {repr(str(_rp_min_gap_vs_ib))});</script>",
+                height=0,
+            )
+            if _AUTH_USER_ID:
+                _rp_cached = st.session_state.get("_cached_prefs", {})
+                if _rp_cached.get("rp_min_gap_vs_ib") != _rp_min_gap_vs_ib:
+                    _rp_new_prefs = {**_rp_cached, "rp_min_gap_vs_ib": _rp_min_gap_vs_ib}
+                    save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
+                    st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_gap_col3:
             if _rp_min_gap > 0 or _rp_min_gap_vs_ib > 0:
                 st.caption(
@@ -14753,6 +14881,12 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             _extra_rk = st.text_input("Add tickers (comma-separated)",
                                       placeholder="ARAI, SKYQ, CUE",
                                       key="rk_extra_tickers")
+            if _rk_uid:
+                _rk_et_cached = st.session_state.get("_cached_prefs", {})
+                if _rk_et_cached.get("rk_extra_tickers") != _extra_rk:
+                    _rk_et_new_prefs = {**_rk_et_cached, "rk_extra_tickers": _extra_rk}
+                    save_user_prefs(_rk_uid, _rk_et_new_prefs)
+                    st.session_state["_cached_prefs"] = _rk_et_new_prefs
             if _extra_rk:
                 for t in _extra_rk.upper().split(","):
                     t = t.strip()
