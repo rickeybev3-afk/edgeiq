@@ -13046,11 +13046,12 @@ Nothing here requires any input from you. All numbers update automatically as yo
                             _backfill_fail += 1
                     except Exception:
                         _backfill_fail += 1
+                # Clear the cache so the Analytics tab reflects the newly-synced
+                # trades immediately on the next render instead of serving stale data.
                 _cached_load_accuracy_tracker.clear()
                 st.success(
                     f"Synced **{_backfill_count} trades** to analytics."
                     + (f" {_backfill_fail} entries skipped (missing P&L data)." if _backfill_fail else "")
-                    + " Refresh the page to see your stats."
                 )
                 st.rerun()
         else:
