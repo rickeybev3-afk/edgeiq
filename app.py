@@ -11852,7 +11852,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             f"{_tk_override_badge}"
                         )
                         _tk_has_best = False
-                    with st.expander(_tk_expander_label, expanded=False, key=f"_tk_exp_{_tk_name}"):
+                    _tk_exp_key = f"_tk_exp_{_tk_name}"
+                    with st.expander(_tk_expander_label, expanded=bool(st.session_state.get(_tk_exp_key, False)), key=_tk_exp_key):
                         if _tk_override_active:
                             st.caption("✱ = custom TCS floor override is active for this ticker")
                         if _tk_has_best:
