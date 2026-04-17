@@ -590,6 +590,7 @@ _runtime_credential_lock = threading.Lock()
 _RUNTIME_CHECK_INTERVAL_S: float = 300.0   # 5 minutes between re-checks
 _runtime_last_check_ts: float = 0.0        # monotonic timestamp of last check
 _runtime_last_healthy_ts: float = 0.0      # monotonic timestamp of last fully-clean check
+_runtime_first_check_done: bool = False    # True once _run_credential_check() finishes at least once
 
 # Tracks which credential providers have been confirmed working at least once.
 # A failure is only surfaced as a "runtime failure" (was working, now broken)
@@ -634,7 +635,7 @@ def _run_credential_check() -> None:
     A failure is only reported as a runtime failure once the provider has been
     confirmed healthy at least once, ensuring "was working, now broken" is accurate.
     """
-    global _runtime_last_check_ts, _runtime_last_healthy_ts
+    global _runtime_last_check_ts, _runtime_last_healthy_ts, _runtime_first_check_done
     errors: list[tuple[str, str]] = []
 
     # Per-run outcome flags — True only when the provider actively returned a
@@ -796,6 +797,17 @@ def _run_credential_check() -> None:
     # whether Telegram is configured — ensures a later re-failure always alerts.
     for _recovered in _runtime_credential_alerted - _failed_names:
         _runtime_credential_alerted.discard(_recovered)
+    _runtime_first_check_done = True
+
+
+def get_runtime_first_check_done() -> bool:
+    """Return True once _run_credential_check() has completed at least one full run.
+
+    Unlike get_runtime_last_check_ts(), this is only set to True *after* the
+    background thread finishes its work — not optimistically before it spawns.
+    Use this to distinguish "check still in-flight" from "check ran but unhealthy".
+    """
+    return _runtime_first_check_done
 
 
 def get_runtime_last_check_ts() -> float:

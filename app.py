@@ -57,6 +57,7 @@ from backend import (
     save_tcs_alert_structures,
     get_tcs_alert_config_last_saved,
     get_runtime_last_healthy_ts,
+    get_runtime_first_check_done,
     compute_r_projection,
     R_PROJECTION_SCENARIOS,
     _RUNTIME_CHECK_INTERVAL_S,
@@ -4701,7 +4702,16 @@ with st.sidebar:
 
     # ── Credential health indicator ────────────────────────────────────────
     _cred_healthy_ts = get_runtime_last_healthy_ts()
-    if _cred_healthy_ts > 0.0:
+    if not get_runtime_first_check_done():
+        st.markdown(
+            '<div style="font-size:11px; color:#888; text-align:right; '
+            'margin-bottom:6px;" '
+            'title="Credential check has not completed yet — running in the background">'
+            "🔒 Credential check pending…"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    elif _cred_healthy_ts > 0.0:
         _cred_elapsed_s = time.monotonic() - _cred_healthy_ts
         if _cred_elapsed_s < 60:
             _cred_age_label = "just now"
@@ -4723,6 +4733,15 @@ with st.sidebar:
             f'title="{_cred_tooltip}">'
             f"🔒 Credentials verified {_cred_age_label}"
             f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="font-size:11px; color:#888; text-align:right; '
+            'margin-bottom:6px;" '
+            'title="A credential check has run but credentials have not yet been confirmed healthy — check the fields below">'
+            "🔒 Credential check ran; not yet verified"
+            "</div>",
             unsafe_allow_html=True,
         )
 
