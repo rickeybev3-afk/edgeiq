@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useHashScroll } from "@/hooks/useHashScroll";
 
 type TradingMode = "paper" | "live";
 
@@ -136,27 +137,10 @@ export default function Settings() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  const handledHashRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (!hash || handledHashRef.current === hash) return;
-
-    const knownHashes = ["#trading-mode", "#credential-alerts", "#backfill-health"];
-    if (!knownHashes.includes(hash)) return;
-
-    const el = document.getElementById(hash.slice(1));
-    if (!el) return;
-
-    handledHashRef.current = hash;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
-
-    const timerId = setTimeout(() => {
-      history.replaceState(null, "", window.location.pathname + window.location.search);
-    }, 1500);
-
-    return () => clearTimeout(timerId);
-  }, [state.loading, credAlerts.loading, backfillHealth.loading]);
+  useHashScroll(
+    ["#trading-mode", "#credential-alerts", "#backfill-health"],
+    [state.loading, credAlerts.loading, backfillHealth.loading],
+  );
 
   async function handleChange(newMode: TradingMode) {
     setState((s) => ({ ...s, saving: true, error: null, saved: false }));
