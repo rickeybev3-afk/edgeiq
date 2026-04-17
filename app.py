@@ -17563,7 +17563,7 @@ def render_decision_log_tab():
     from backend import (
         ensure_decision_log_table, get_decisions,
         insert_decision, update_decision_outcome, seed_decisions_if_empty,
-        delete_decision,
+        delete_decision, update_decision,
     )
 
     st.markdown(
@@ -17790,6 +17790,33 @@ def render_decision_log_tab():
                     if st.button("Cancel", key=f"dl_reopen_cancel_{_dec_id}"):
                         st.session_state[_reopen_key] = False
                         st.rerun()
+
+        if _dec_id:
+            _dl_cats = ["System Design", "Market Thesis", "Filter", "Sizing", "Timing", "Other"]
+            with st.expander("✏️ Edit", expanded=False):
+                with st.form(f"dl_edit_form_{_dec_id}", clear_on_submit=False):
+                    try:
+                        _edit_date_val = date.fromisoformat(_dec_date) if _dec_date else date.today()
+                    except (ValueError, AttributeError):
+                        _edit_date_val = date.today()
+                    _edit_cat_idx = _dl_cats.index(_cat) if _cat in _dl_cats else 0
+                    _edc1, _edc2 = st.columns([1, 2])
+                    with _edc1:
+                        _edit_date = st.date_input("Date", value=_edit_date_val, key=f"dl_edit_date_{_dec_id}")
+                        _edit_cat  = st.selectbox("Category", _dl_cats, index=_edit_cat_idx, key=f"dl_edit_cat_{_dec_id}")
+                    with _edc2:
+                        _edit_call   = st.text_area("The Call", value=_call_txt, height=80, key=f"dl_edit_call_{_dec_id}")
+                        _edit_reason = st.text_area("Reasoning (optional)", value=_reason, height=80, key=f"dl_edit_reason_{_dec_id}")
+                    if st.form_submit_button("Save Changes", type="primary"):
+                        if not _edit_call.strip():
+                            st.error("The Call field is required.")
+                        else:
+                            _edit_ok = update_decision(_dec_id, _dl_uid, _edit_date, _edit_cat, _edit_call, _edit_reason)
+                            if _edit_ok:
+                                st.success("Decision updated.")
+                                st.rerun()
+                            else:
+                                st.error("Update failed. Check Supabase connection.")
 
         if _dec_id:
             _confirm_key = f"dl_del_confirm_{_dec_id}"

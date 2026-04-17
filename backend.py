@@ -10686,6 +10686,27 @@ def delete_decision(decision_id: str, user_id: str) -> bool:
         return False
 
 
+def update_decision(decision_id: str, user_id: str, decision_date, category: str, call: str, reasoning: str = "") -> bool:
+    """Update the core fields (date, category, call, reasoning) of an existing decision.
+
+    Filters by both ``id`` AND ``user_id`` so callers can only modify their own rows.
+    """
+    if not supabase:
+        return False
+    try:
+        patch = {
+            "decision_date": str(decision_date) if decision_date else None,
+            "category": category,
+            "call": call.strip(),
+            "reasoning": reasoning.strip() or None,
+        }
+        supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
+        return True
+    except Exception as e:
+        print(f"update_decision error: {e}")
+        return False
+
+
 def seed_decisions_if_empty(user_id: str) -> int:
     """If no decisions exist for this user, insert the seed set. Returns rows inserted."""
     if not supabase:
