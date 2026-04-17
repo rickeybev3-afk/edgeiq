@@ -18496,6 +18496,28 @@ ALTER TABLE backtest_sim_runs
                         ):
                             st.session_state["bt_rs_ticker"] = _rr_ticker
                             st.rerun()
+                    _rs_df = pd.DataFrame([
+                        {
+                            "Ticker": r["ticker"],
+                            "Sentinel Rows": r["count"],
+                            "Earliest Date": r.get("date_from") or "—",
+                            "Latest Date": r.get("date_to") or "—",
+                        }
+                        for r in _rs_tickers
+                    ])
+                    _rs_csv_parts = ["unavailable_backtest_tickers"]
+                    if _rs_from_str:
+                        _rs_csv_parts.append(_rs_from_str)
+                    if _rs_to_str:
+                        _rs_csv_parts.append(_rs_to_str)
+                    _rs_csv_filename = "_".join(_rs_csv_parts) + ".csv"
+                    st.download_button(
+                        label="⬇ Download CSV",
+                        data=_rs_df.to_csv(index=False),
+                        file_name=_rs_csv_filename,
+                        mime="text/csv",
+                        key="bt_rs_download_csv",
+                    )
                     if _rs_hidden > 0:
                         st.caption(
                             f"Showing top {_rs_shown} of {_rs_total_tickers} affected tickers. "
