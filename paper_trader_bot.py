@@ -80,6 +80,8 @@ _DEFAULT_TICKERS = (
 )
 
 # ── Configurable alert types (drives /settings display + command dispatch) ────
+# Add a new entry here to surface a new alert type in /settings and enable its
+# on/off toggle — no other changes required.
 # Each entry: key = /settings sub-command, pref_key = user_prefs field,
 #             default = value when unset, label + description shown in /settings.
 _ALERT_REGISTRY = [
