@@ -885,7 +885,8 @@ def telegram_listener() -> None:
                                     "or <code>/settings tcs_structures reset</code> to restore all structures"
                                 )
                                 valid_keys = ", ".join(
-                                    f"<code>{k}</code>" for k in sorted(WK_DISPLAY.keys())
+                                    f"<code>{k}</code> ({WK_DISPLAY_PLAIN.get(k, k)})"
+                                    for k in sorted(WK_DISPLAY.keys())
                                 )
                                 lines.append(f"  ↳ Valid keys: {valid_keys}")
                             toggle_cmds.append(
