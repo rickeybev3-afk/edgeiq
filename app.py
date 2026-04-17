@@ -14499,6 +14499,87 @@ ALTER TABLE backtest_sim_runs
                     unsafe_allow_html=True,
                 )
 
+                # ── Cumulative advantage over time ───────────────────────────
+                if not _bts_both.empty and "sim_date" in _bts_both.columns:
+                    import altair as _alt_cmp
+                    _bts_chart_df = _bts_both[["sim_date", "eod_pnl_r", "tiered_pnl_r"]].copy()
+                    _bts_chart_df["sim_date"] = pd.to_datetime(_bts_chart_df["sim_date"])
+                    _bts_chart_df = _bts_chart_df.sort_values("sim_date").reset_index(drop=True)
+                    _bts_chart_df["advantage"] = (
+                        _bts_chart_df["tiered_pnl_r"].astype(float)
+                        - _bts_chart_df["eod_pnl_r"].astype(float)
+                    )
+                    _bts_chart_df["cum_advantage"] = _bts_chart_df["advantage"].cumsum()
+                    _bts_chart_df["trade_num"] = range(1, len(_bts_chart_df) + 1)
+
+                    _cmp_zero = (
+                        _alt_cmp.Chart(pd.DataFrame({"y": [0]}))
+                        .mark_rule(color="#37474f", strokeDash=[4, 4])
+                        .encode(y=_alt_cmp.Y("y:Q"))
+                    )
+                    _cmp_area = (
+                        _alt_cmp.Chart(_bts_chart_df)
+                        .mark_area(opacity=0.10, color="#7986cb")
+                        .encode(
+                            x=_alt_cmp.X("sim_date:T"),
+                            y=_alt_cmp.Y("cum_advantage:Q"),
+                        )
+                    )
+                    _cmp_line = (
+                        _alt_cmp.Chart(_bts_chart_df)
+                        .mark_line(strokeWidth=2, color="#7986cb")
+                        .encode(
+                            x=_alt_cmp.X(
+                                "sim_date:T",
+                                title="Date",
+                                axis=_alt_cmp.Axis(
+                                    format="%b %Y",
+                                    labelColor="#90a4ae",
+                                    titleColor="#90a4ae",
+                                    gridColor="#1a2744",
+                                ),
+                            ),
+                            y=_alt_cmp.Y(
+                                "cum_advantage:Q",
+                                title="Cumulative R Advantage (Tiered − EOD)",
+                                axis=_alt_cmp.Axis(
+                                    labelColor="#90a4ae",
+                                    titleColor="#90a4ae",
+                                    gridColor="#1a2744",
+                                ),
+                            ),
+                            tooltip=[
+                                _alt_cmp.Tooltip("sim_date:T",       title="Date",            format="%Y-%m-%d"),
+                                _alt_cmp.Tooltip("trade_num:Q",      title="Trade #"),
+                                _alt_cmp.Tooltip("advantage:Q",      title="This Trade Δ (R)", format="+.3f"),
+                                _alt_cmp.Tooltip("cum_advantage:Q",  title="Cumul. Adv. (R)",  format="+.3f"),
+                            ],
+                        )
+                    )
+                    _cmp_chart = (
+                        (_cmp_area + _cmp_zero + _cmp_line)
+                        .properties(
+                            height=220,
+                            title=_alt_cmp.TitleParams(
+                                "Cumulative R Advantage — Tiered Exits vs EOD Hold (over time)",
+                                color="#90a4ae",
+                                fontSize=11,
+                                anchor="start",
+                                subtitle=(
+                                    "Rising = tiered exits outperforming  ·  "
+                                    "Falling = EOD hold winning  ·  "
+                                    f"{len(_bts_chart_df)} matched trades"
+                                ),
+                                subtitleColor="#546e7a",
+                                subtitleFontSize=10,
+                            ),
+                        )
+                        .configure_view(strokeWidth=0, fill="#020813")
+                        .configure_axis(domainColor="#1a2744", tickColor="#1a2744")
+                        .interactive()
+                    )
+                    st.altair_chart(_cmp_chart, use_container_width=True)
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
