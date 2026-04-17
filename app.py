@@ -8264,6 +8264,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         st.markdown("**Trade-by-Trade Log**")
 
+                        # Pre-compute marginal count for bot mode (used in checkbox label)
+                        if _rp_bot_mode and "TCS" in _rp_df.columns and "TCS Floor" in _rp_df.columns:
+                            _rp_marginal_mask_all = (
+                                (pd.to_numeric(_rp_df["TCS"], errors="coerce") -
+                                 pd.to_numeric(_rp_df["TCS Floor"], errors="coerce"))
+                                .between(0, 5)
+                            )
+                            _rp_marginal_count_all = int(_rp_marginal_mask_all.sum())
+                        else:
+                            _rp_marginal_count_all = 0
+
                         _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3 = st.columns([2, 1, 1])
                         with _rp_log_fcol1:
                             _rp_log_ticker_filter = st.text_input(
@@ -8288,6 +8299,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 key="rp_log_show_neutral",
                             )
 
+                        if _rp_bot_mode:
+                            _rp_marg_label = (
+                                f"Show only marginal entries (TCS ≤ Floor + 5)"
+                                f" — {_rp_marginal_count_all} marginal"
+                            )
+                            _rp_log_only_marginal = st.checkbox(
+                                _rp_marg_label,
+                                value=False,
+                                key="rp_log_only_marginal",
+                            )
+                        else:
+                            _rp_log_only_marginal = False
+
                         _rp_display_df = _rp_df.copy()
                         if _rp_log_ticker_filter.strip():
                             _rp_tickers_input = [
@@ -8307,6 +8331,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _rp_display_df = _rp_display_df[
                                 _rp_display_df["W/L"].isin(["Win", "Loss"])
                             ]
+                        if _rp_log_only_marginal and "TCS" in _rp_display_df.columns and "TCS Floor" in _rp_display_df.columns:
+                            _rp_marginal_mask = (
+                                (pd.to_numeric(_rp_display_df["TCS"], errors="coerce") -
+                                 pd.to_numeric(_rp_display_df["TCS Floor"], errors="coerce"))
+                                .between(0, 5)
+                            )
+                            _rp_display_df = _rp_display_df[_rp_marginal_mask]
 
                         if len(_rp_display_df) == 0:
                             st.info("No trades match the current filters.")
