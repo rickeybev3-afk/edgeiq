@@ -9982,6 +9982,56 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _tk_eod_num    = (sum(_tk_eod_vals) / len(_tk_eod_vals)) if _tk_eod_vals else float("-inf")
                 _tk_tiered_num = (sum(_tk_tiered_vals) / len(_tk_tiered_vals)) if _tk_tiered_vals else float("-inf")
 
+                # ── Per-ticker max-divergence (equity $ vs cumulative R) ───────
+                _tk_max_div_val = 0.0
+                _tk_div_label   = "—"
+                try:
+                    _ft_col_div = "follow_thru_pct" if "follow_thru_pct" in _tgrp.columns else "aft_move_pct"
+                    if _ft_col_div in _tgrp.columns and "win_loss" in _tgrp.columns:
+                        _ft_vals_div = _tgrp[_ft_col_div].fillna(0).astype(float).tolist()
+                        _wl_vals_div = _tgrp["win_loss"].tolist()
+                        # Build cumulative $ equity curve (starts at 0)
+                        _tk_eq_cum = [0.0]
+                        for _fv, _wv in zip(_ft_vals_div, _wl_vals_div):
+                            _tk_eq_cum.append(
+                                _tk_eq_cum[-1] + _tk_pos_size * abs(_fv) / 100 * (1 if _wv == "Win" else -1)
+                            )
+                        # Build cumulative R curve (starts at 0)
+                        if _tk_eod_vals:
+                            _tk_r_trades_div = _tk_eod_vals
+                        elif _tk_tiered_vals:
+                            _tk_r_trades_div = _tk_tiered_vals
+                        elif "stop_dist_pct" in _tgrp.columns:
+                            _sd_vals_div = _tgrp["stop_dist_pct"].fillna(0).astype(float).tolist()
+                            _tk_r_trades_div = [
+                                (abs(fv) / sd if sd > 0 else 0) * (1 if wv == "Win" else -1)
+                                for fv, sd, wv in zip(_ft_vals_div, _sd_vals_div, _wl_vals_div)
+                            ]
+                        else:
+                            _tk_r_trades_div = []
+                        if _tk_r_trades_div:
+                            _tk_r_cum = [0.0]
+                            for _rv in _tk_r_trades_div:
+                                _tk_r_cum.append(_tk_r_cum[-1] + _rv)
+                            _min_len_tk = min(len(_tk_eq_cum), len(_tk_r_cum))
+                            _eq_s_tk = pd.Series(_tk_eq_cum[:_min_len_tk], dtype=float)
+                            _r_s_tk  = pd.Series(_tk_r_cum[:_min_len_tk], dtype=float)
+                            _eq_rng_tk = _eq_s_tk.max() - _eq_s_tk.min()
+                            _r_rng_tk  = _r_s_tk.max()  - _r_s_tk.min()
+                            if _eq_rng_tk > 0 and _r_rng_tk > 0:
+                                _eq_norm_tk = (_eq_s_tk - _eq_s_tk.min()) / _eq_rng_tk
+                                _r_norm_tk  = (_r_s_tk  - _r_s_tk.min())  / _r_rng_tk
+                                _div_s_tk   = _eq_norm_tk - _r_norm_tk
+                                _div_abs_tk = _div_s_tk.abs()
+                                _max_div_idx_tk = int(_div_abs_tk.idxmax())
+                                _max_div_val_tk = float(_div_s_tk.iloc[_max_div_idx_tk])
+                                if abs(_max_div_val_tk) >= 0.02:
+                                    _tk_max_div_val = _max_div_val_tk
+                                    _dir_tk = "Amplified" if _max_div_val_tk > 0 else "Dampened"
+                                    _tk_div_label = f"Trade #{_max_div_idx_tk} ({_dir_tk})"
+                except Exception:
+                    pass
+
                 _tkr_persist_key   = f"_drill_tcs_persist_{_tk}"
                 _tkr_persisted_val = st.session_state.get(_tkr_persist_key)
                 if _best_tcs_pnl_val is not None:
@@ -10002,16 +10052,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Avg Follow-Thru": f"{'+' if _tft >= 0 else ''}{_tft}%",
                     "EOD Hold R":     _tk_eod_str,
                     "Tiered Exit R":  _tk_tiered_str,
+                    "Max Divergence": _tk_div_label,
                     "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
                     "_sort_win_pct":  _twr,
                     "_sort_eod_r":    _tk_eod_num,
                     "_sort_tiered_r": _tk_tiered_num,
+                    "_sort_div_mag":  abs(_tk_max_div_val),
                 })
             _sort_col_map = {
                 "Win %":         ("_sort_win_pct",  False),
                 "EOD Hold R":    ("_sort_eod_r",    False),
                 "Tiered Exit R": ("_sort_tiered_r", False),
+                "Divergence":    ("_sort_div_mag",  False),
             }
             _r_filter_col_map = {
                 "EOD Hold R":    "_sort_eod_r",
@@ -10101,7 +10154,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f"These rows are highlighted in grey below (or amber if also the top-ranked ticker). Collect more trade data or broaden the replay date range."
                 )
             _tkr_display_df = _tkr_summary_df.drop(
-                columns=["_sort_win_pct", "_sort_eod_r", "_sort_tiered_r"],
+                columns=["_sort_win_pct", "_sort_eod_r", "_sort_tiered_r", "_sort_div_mag"],
                 errors="ignore",
             )
             # Add medal badges to the top-3 tickers
@@ -10127,9 +10180,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _silver_row_idx = None
                 _bronze_row_idx = None
 
+            # Identify the ticker with the largest sizing divergence
+            _worst_div_row_idx = None
+            if "_sort_div_mag" in _tkr_summary_df.columns:
+                _div_mag_vals = _tkr_summary_df["_sort_div_mag"]
+                if _div_mag_vals.max() >= 0.02:
+                    _worst_div_row_idx = int(_div_mag_vals.idxmax())
+
             def _style_rows(row):
                 _is_best = _best_row_idx is not None and row.name == _best_row_idx
                 _is_insufficient = "insufficient" in str(row.get("Best TCS", ""))
+                _is_worst_div = _worst_div_row_idx is not None and row.name == _worst_div_row_idx
                 if _is_best and _is_insufficient:
                     return ["background-color: #fff3cd; color: #7a5700; font-weight: bold"] * len(row)
                 if _is_insufficient:
@@ -10140,6 +10201,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     return ["background-color: #f0f0f0; font-weight: bold"] * len(row)
                 if _bronze_row_idx is not None and row.name == _bronze_row_idx:
                     return ["background-color: #fde8cc; font-weight: bold"] * len(row)
+                if _is_worst_div:
+                    return ["background-color: #2a1a0a; color: #ffd600; font-weight: bold"] * len(row)
                 return [""] * len(row)
 
             _styled_summary = _tkr_display_df.style.apply(_style_rows, axis=1)
@@ -10170,8 +10233,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Different tickers may thrive at different TCS levels."
                         ),
                     ),
+                    "Max Divergence": st.column_config.TextColumn(
+                        "Max Divergence",
+                        help=(
+                            "The trade where position sizing most diverged from raw edge. "
+                            "Computed by normalising the cumulative $ equity curve and cumulative R curve "
+                            "for each ticker, then finding the point of maximum separation. "
+                            "'Amplified' means equity outpaced R (sizing boosted raw edge); "
+                            "'Dampened' means equity lagged R (sizing muted raw edge). "
+                            "'—' means the two curves tracked closely. "
+                            "Sort by Divergence to surface tickers with the worst sizing mismatches."
+                        ),
+                    ),
                 },
             )
+            if _worst_div_row_idx is not None:
+                _worst_div_tkr = _tkr_summary_df.loc[_worst_div_row_idx, "Ticker"] if _worst_div_row_idx in _tkr_summary_df.index else "—"
+                _worst_div_cell = _tkr_summary_df.loc[_worst_div_row_idx, "Max Divergence"] if _worst_div_row_idx in _tkr_summary_df.index else "—"
+                st.markdown(
+                    f'<div style="background:#1a0f00;border-left:3px solid #ffd600;padding:7px 14px;'
+                    f'border-radius:4px;margin-bottom:6px;font-size:13px;">'
+                    f'<span style="color:#ffd600;font-weight:700;">⚡ Worst sizing mismatch: '
+                    f'{_worst_div_tkr} — {_worst_div_cell}</span>'
+                    f'<span style="color:#aaa;margin-left:12px;">Sort by Divergence to rank all tickers by mismatch magnitude.</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             st.caption(
                 "🟢 Win % ≥ 60% — model reads this ticker well  · "
                 "🟡 45–60% — mixed signal, paper trade first  · "
@@ -10179,7 +10266,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "False Brk % = how often IB breakouts reversed within 30 min  · "
                 f"Best TCS = the TCS cutoff (≥{_MIN_TCS_TRADES} trades) that produced the highest net P&L for that ticker "
                 "(hover the column header for details)  · "
-                "✱ = custom TCS floor override is active for that ticker"
+                "✱ = custom TCS floor override is active for that ticker  · "
+                "Max Divergence = trade where position sizing most diverged from raw edge (Amplified/Dampened)"
             )
             if _best_tcs_options:
                 if _rp_bot_mode:
