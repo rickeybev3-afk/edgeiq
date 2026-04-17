@@ -347,3 +347,13 @@ if __name__ == "__main__":
         print_summary(uid)
 
     print(f"\n✅ Backfill complete for {len(user_ids)} user(s) in {elapsed:.0f}s")
+
+    # ── Context level backfill (S/R, VWAP, MACD for adaptive exit analysis) ──
+    print("\n" + "=" * 60)
+    print("  Context Level Backfill (S/R, VWAP, MACD)")
+    print("=" * 60)
+    try:
+        import backfill_context_levels as _ctx
+        _ctx.main()
+    except Exception as _ctx_err:
+        print(f"  Context backfill error (non-critical): {_ctx_err}")
