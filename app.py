@@ -13348,12 +13348,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 with _sw_hdr_col_cap:
                     st.caption("✱ = custom TCS floor override is active for that ticker")
                 with _sw_hdr_col_btn:
-                    _sw_has_overrides = any(
-                        k.startswith("opt_both_equity_") or k.startswith("opt_both_risk_")
-                        for k in st.session_state
+                    _sw_overridden_tickers = set()
+                    for _k in st.session_state:
+                        if _k.startswith("opt_both_equity_") and not _k.startswith("opt_both_equity_mem_"):
+                            _sw_overridden_tickers.add(_k[len("opt_both_equity_"):])
+                        elif _k.startswith("opt_both_risk_") and not _k.startswith("opt_both_risk_mem_"):
+                            _sw_overridden_tickers.add(_k[len("opt_both_risk_"):])
+                    _sw_has_overrides = bool(_sw_overridden_tickers)
+                    _sw_override_count = len(_sw_overridden_tickers)
+                    _sw_reset_label = (
+                        f"↺ Reset all ({_sw_override_count} ticker{'s' if _sw_override_count != 1 else ''} overridden)"
+                        if _sw_has_overrides
+                        else "↺ Reset all to MC defaults"
                     )
                     if st.button(
-                        "↺ Reset all to MC defaults",
+                        _sw_reset_label,
                         key="opt_both_reset_all",
                         disabled=not _sw_has_overrides,
                         help=(
