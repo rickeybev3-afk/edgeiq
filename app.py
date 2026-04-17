@@ -4687,6 +4687,22 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
                 st.session_state["bts_dr_end"] = _dt_bts.date.fromisoformat(str(_bts_d))
         except (ValueError, TypeError):
             pass
+    if "rp_start_date" in _prefs:
+        try:
+            import datetime as _dt_rp
+            _rp_d = _prefs["rp_start_date"]
+            if _rp_d:
+                st.session_state["rp_start_date"] = _dt_rp.date.fromisoformat(str(_rp_d))
+        except (ValueError, TypeError):
+            pass
+    if "rp_end_date" in _prefs:
+        try:
+            import datetime as _dt_rp
+            _rp_d = _prefs["rp_end_date"]
+            if _rp_d:
+                st.session_state["rp_end_date"] = _dt_rp.date.fromisoformat(str(_rp_d))
+        except (ValueError, TypeError):
+            pass
     if "trading_mode" in _prefs:
         _saved_is_paper = _prefs["trading_mode"] == "paper"
         set_trading_mode(_saved_is_paper)
@@ -7267,6 +7283,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
         ['rp_min_gap',       'rp_min_gap'],
         ['rp_min_gap_vs_ib', 'rp_min_gap_vs_ib'],
         ['rp_min_ft',        'rp_min_ft'],
+        ['rp_start_date',    'rp_start_date'],
+        ['rp_end_date',      'rp_end_date'],
     ];
     var changed = false;
     params.forEach(function(pair) {
@@ -7284,10 +7302,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         # Initialise date defaults before any widget renders so values are
         # available in session state for the stale-badge check below.
+        # Honour query_params (set by the localStorage restore snippet above)
+        # so the persisted date range is applied on first render.
         if "rp_start_date" not in st.session_state:
-            st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
+            _qp_rp_start = st.query_params.get("rp_start_date")
+            if _qp_rp_start:
+                try:
+                    from datetime import date as _date_cls
+                    st.session_state["rp_start_date"] = _date_cls.fromisoformat(_qp_rp_start)
+                except (ValueError, TypeError):
+                    st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
+            else:
+                st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
         if "rp_end_date" not in st.session_state:
-            st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
+            _qp_rp_end = st.query_params.get("rp_end_date")
+            if _qp_rp_end:
+                try:
+                    from datetime import date as _date_cls
+                    st.session_state["rp_end_date"] = _date_cls.fromisoformat(_qp_rp_end)
+                except (ValueError, TypeError):
+                    st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
+            else:
+                st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
 
         # Clear saved floor selections whenever any replay filter changes.
         # Streamlit writes widget values to session state before each rerun, so
@@ -7536,6 +7572,31 @@ Measures how accurately the 7-structure framework classified those days in hinds
         with _rp_date_col2:
             _rp_end = st.date_input("To", key="rp_end_date",
                                     min_value=date(2018, 1, 1))
+
+        # ── Persist date range to localStorage / query_params / user prefs ───
+        _rp_start_iso = _rp_start.isoformat()
+        _rp_end_iso   = _rp_end.isoformat()
+        if st.query_params.get("rp_start_date") != _rp_start_iso:
+            st.query_params["rp_start_date"] = _rp_start_iso
+        if st.query_params.get("rp_end_date") != _rp_end_iso:
+            st.query_params["rp_end_date"] = _rp_end_iso
+        _cmp_rp_filters.html(
+            f"<script>"
+            f"localStorage.setItem('rp_start_date', {repr(_rp_start_iso)});"
+            f"localStorage.setItem('rp_end_date',   {repr(_rp_end_iso)});"
+            f"</script>",
+            height=0,
+        )
+        if _AUTH_USER_ID:
+            _rp_cached = st.session_state.get("_cached_prefs", {})
+            _rp_prefs_changed = (
+                _rp_cached.get("rp_start_date") != _rp_start_iso
+                or _rp_cached.get("rp_end_date") != _rp_end_iso
+            )
+            if _rp_prefs_changed:
+                _rp_new_prefs = {**_rp_cached, "rp_start_date": _rp_start_iso, "rp_end_date": _rp_end_iso}
+                save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
+                st.session_state["_cached_prefs"] = _rp_new_prefs
 
         _rp_gap_col1, _rp_gap_col2, _rp_gap_col3 = st.columns([1, 1, 2])
         with _rp_gap_col1:
