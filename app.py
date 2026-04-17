@@ -3887,6 +3887,41 @@ if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
+    # ── Database connection status ─────────────────────────────────────────
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _cached_db_status() -> tuple[bool, str]:
+        return check_db_connection()
+
+    _db_ok, _db_err = _cached_db_status()
+    if _db_ok:
+        st.markdown(
+            '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
+            'padding:8px 12px; margin-bottom:8px;">'
+            '<span style="font-size:12px; font-weight:700; color:#66bb6a;">'
+            '🟢 Database: Connected</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    elif _db_err == "Credentials not configured":
+        st.markdown(
+            '<div style="background:#1a1a1a; border:1px solid #555; border-radius:8px; '
+            'padding:8px 12px; margin-bottom:8px;">'
+            '<span style="font-size:12px; font-weight:700; color:#aaa;">'
+            '⚪ Database: Not configured</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="background:#1a0a0a; border:1px solid #c62828; border-radius:8px; '
+            'padding:8px 12px; margin-bottom:8px;">'
+            f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
+            f'🔴 Database: Unreachable</span>'
+            f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
     st.header("🔑 Alpaca Credentials")
     api_key = st.text_input(
         "API Key", type="password", placeholder="Alpaca API Key",

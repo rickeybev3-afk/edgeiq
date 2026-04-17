@@ -230,6 +230,31 @@ else:
     supabase_anon = None
 
 
+def check_db_connection() -> tuple[bool, str]:
+    """Perform a lightweight check of Supabase reachability.
+
+    Returns (True, "") when the database is reachable and credentials are
+    accepted.  Returns (False, reason) for any failure, including missing
+    credentials or network/auth errors.  Uses a HEAD request to the REST
+    root so no table needs to exist and no rows are transferred.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY or _supabase_errors:
+        return False, "Credentials not configured"
+    try:
+        resp = requests.head(
+            f"{SUPABASE_URL}/rest/v1/",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            timeout=5,
+        )
+        if resp.status_code in (200, 404):
+            return True, ""
+        return False, f"HTTP {resp.status_code}"
+    except requests.exceptions.Timeout:
+        return False, "Timed out"
+    except Exception as exc:
+        return False, str(exc)[:80]
+
+
 def set_user_session(access_token: str, refresh_token: str) -> None:
     """Bind a logged-in user's JWT to the RLS-enforcing client.
 
