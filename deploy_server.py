@@ -20,6 +20,27 @@ STREAMLIT_PORT = 8501
 streamlit_ready = False
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+_DB_CACHE_TTL = 10
+_db_cache_lock = threading.Lock()
+_db_reachable_cache: bool = False
+
+
+def _refresh_db_cache() -> None:
+    """Background thread: refresh the DB reachability cache every _DB_CACHE_TTL seconds."""
+    global _db_reachable_cache
+    while True:
+        result = _check_db_reachable()
+        with _db_cache_lock:
+            _db_reachable_cache = result
+        time.sleep(_DB_CACHE_TTL)
+
+
+def _get_db_reachable() -> bool:
+    """Return the cached DB reachability result; never blocks on a network call."""
+    with _db_cache_lock:
+        return _db_reachable_cache
+
+
 LOADING_PAGE = b"""<html><head><title>EdgeIQ</title></head>
 <body style="background:#0e1117;color:#fafafa;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif">
 <div style="text-align:center"><h2>EdgeIQ is starting...</h2><p style="color:#888">Please wait a moment</p>
@@ -148,8 +169,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         backend.py writes /tmp/startup_health.json with {"ok": bool, "errors": [...]}
         when it is imported by the Streamlit process (app.py → backend.py).
         If the file is absent the server is still starting; 503 is returned.
-        A live db_reachable check is performed at request time so monitoring
-        tools can detect connectivity regressions without restarting the app.
+        The db_reachable field is served from a cached value maintained by the
+        _refresh_db_cache background thread (refreshed every _DB_CACHE_TTL seconds),
+        so this method never blocks on a network call.
         """
         health_path = "/tmp/startup_health.json"
         try:
@@ -159,7 +181,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = {"ok": False, "errors": ["Health status not yet available — server may still be starting."]}
         except Exception as e:
             data = {"ok": False, "errors": [f"Could not read health status: {e}"]}
-        data["db_reachable"] = _check_db_reachable()
+        data["db_reachable"] = _get_db_reachable()
         status = 200 if data.get("ok") else 503
         body = json.dumps(data).encode()
         self.send_response(status)
@@ -286,6 +308,7 @@ if __name__ == "__main__":
                      stdout=open("/tmp/kalshi_bot.log", "a"), stderr=subprocess.STDOUT)
 
     threading.Thread(target=start_streamlit, daemon=True).start()
+    threading.Thread(target=_refresh_db_cache, daemon=True, name="db-cache-refresher").start()
 
     print(f"[deploy_server] Proxy listening on port {PROXY_PORT}", flush=True)
     server = ThreadedServer(("0.0.0.0", PROXY_PORT), Handler)
