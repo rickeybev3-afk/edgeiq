@@ -2417,11 +2417,46 @@ def main():
     acct_label = "PAPER (Alpaca paper-api)" if IS_PAPER_ALPACA else "⚠️  LIVE (real money)"
     if LIVE_ORDERS_ENABLED:
         log.info(f"Alpaca order placement: ENABLED ✅  [{acct_label}]")
-        tg_send(
-            f"🟢 <b>EdgeIQ Paper Trader Bot started</b>\n"
-            f"Alpaca bracket orders: <b>ACTIVE [{acct_label}]</b>\n"
-            f"Next scan: 10:47 AM ET (morning IB close)"
-        )
+
+        # ── Startup cooldown: suppress notification if bot restarted recently ──
+        _start_flag = "/tmp/.edgeiq_last_start"
+        _now_ts     = time.time()
+        _last_ts    = 0.0
+        try:
+            if os.path.exists(_start_flag):
+                _last_ts = float(open(_start_flag).read().strip())
+        except Exception:
+            pass
+        _cooldown_secs = 600  # 10 minutes
+        _suppress_startup_tg = (_now_ts - _last_ts) < _cooldown_secs
+        try:
+            with open(_start_flag, "w") as _f:
+                _f.write(str(_now_ts))
+        except Exception:
+            pass
+
+        if _suppress_startup_tg:
+            log.info("[STARTUP] Recent restart detected — suppressing duplicate Telegram startup notification")
+        else:
+            # Compute the actual next scan time dynamically
+            _now_et    = datetime.now(EASTERN)
+            _hm        = _now_et.hour * 60 + _now_et.minute
+            _is_market = _now_et.weekday() < 5
+            if not _is_market or _hm >= 16 * 60:
+                _next_scan = "10:47 AM ET tomorrow (morning IB close)"
+            elif _hm < 10 * 60 + 47:
+                _next_scan = "10:47 AM ET (morning IB close)"
+            elif _hm < 14 * 60:
+                _next_scan = "2:00 PM ET (intraday)"
+            elif _hm < 15 * 60 + 45:
+                _next_scan = "3:45 PM ET (EOD)"
+            else:
+                _next_scan = "10:47 AM ET tomorrow (morning IB close)"
+            tg_send(
+                f"🟢 <b>EdgeIQ Paper Trader Bot started</b>\n"
+                f"Alpaca bracket orders: <b>ACTIVE [{acct_label}]</b>\n"
+                f"Next scan: {_next_scan}"
+            )
     else:
         log.info("Alpaca order placement: DISABLED (LIVE_ORDERS_ENABLED=false) — scanning/alerting only")
 
