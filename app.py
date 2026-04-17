@@ -10147,16 +10147,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _all_sweep_export_df = _all_sweep_df
                         _sweep_btn_label = "⬇️ Download All Tickers Sweep CSV"
                         _sweep_fname = "sweep_summary_all.csv"
-                    # ── Build combined CSV with per-ticker R-stats blocks ─────────
-                    _all_exp_cols = list(_all_sweep_export_df.columns)
-                    _all_lbl_col  = _all_exp_cols[0]
-                    _all_val_col  = _all_exp_cols[1] if len(_all_exp_cols) > 1 else _all_exp_cols[0]
-                    def _all_stat_r(_lbl, _val):
-                        _rx = {_c: "" for _c in _all_exp_cols}
-                        _rx[_all_lbl_col] = _lbl
-                        _rx[_all_val_col] = _val
-                        return _rx
-                    _all_csv_parts = []
+                    # ── Sort Detail rows: recommended floor first, then by P&L ─
+                    _detail_parts = []
                     for _exp_tk in _all_sweep_export_df["Ticker"].unique():
                         _tk_part = _all_sweep_export_df[_all_sweep_export_df["Ticker"] == _exp_tk].copy()
                         _tk_part["_rec_sort"] = (_tk_part["Recommended"] == "✓").astype(int)
@@ -10169,65 +10161,39 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         else:
                             _tk_part = _tk_part.sort_values("_rec_sort", ascending=False)
                         _tk_part = _tk_part.drop(columns=["_rec_sort"])
-                        _all_csv_parts.append(_tk_part)
-                        _sw_tgrp2 = _bt_df[_bt_df["ticker"] == _exp_tk]
-                        if "actual_outcome" in _sw_tgrp2.columns:
-                            _sw2_mask = (
-                                _sw_tgrp2["actual_outcome"].str.lower().str.contains("bullish|bearish", na=False)
-                                & _sw_tgrp2["win_loss"].str.strip().isin(["Win", "Loss"])
-                            )
-                        elif "win_loss" in _sw_tgrp2.columns:
-                            _sw2_mask = _sw_tgrp2["win_loss"].str.strip().isin(["Win", "Loss"])
-                        else:
-                            _sw2_mask = _pd_bt.Series([True] * len(_sw_tgrp2), index=_sw_tgrp2.index)
-                        _sw_tgrp2 = _sw_tgrp2[_sw2_mask]
-                        _sw2_r_col = (
-                            "eod_pnl_r" if "eod_pnl_r" in _sw_tgrp2.columns
-                            else ("tiered_pnl_r" if "tiered_pnl_r" in _sw_tgrp2.columns else None)
-                        )
-                        if _sw2_r_col is not None:
-                            _sw2_r_ser      = _pd_bt.to_numeric(_sw_tgrp2[_sw2_r_col], errors="coerce").dropna()
-                            _sw2_n          = len(_sw2_r_ser)
-                            _sw2_fb_n       = 0
-                            if "false_break_up" in _sw_tgrp2.columns:
-                                _sw2_fb_n = (
-                                    _sw_tgrp2["false_break_up"].fillna(False).astype(bool).sum()
-                                    + _sw_tgrp2.get("false_break_down", _pd_bt.Series(dtype=bool)).fillna(False).astype(bool).sum()
-                                )
-                            _sw2_fb_rate    = round(_sw2_fb_n / _sw2_n * 100, 1) if _sw2_n else 0
-                            _sw2_avg_win_r  = round(_sw2_r_ser[_sw2_r_ser > 0].mean(), 2) if (_sw2_r_ser > 0).any() else 0
-                            _sw2_avg_loss_r = round(_sw2_r_ser[_sw2_r_ser < 0].mean(), 2) if (_sw2_r_ser < 0).any() else 0
-                            _sw2_exp_r      = round(_sw2_r_ser.mean(), 3) if _sw2_n else 0
-                            _sw2_cum_r      = _sw2_r_ser.cumsum().reset_index(drop=True)
-                            _sw2_peak_r     = _sw2_cum_r.cummax()
-                            _sw2_max_dd_r   = round((_sw2_cum_r - _sw2_peak_r).min(), 2) if _sw2_n else 0
-                            _sw2_summ_rows  = [
-                                {_c: "" for _c in _all_exp_cols},
-                                _all_stat_r(f"--- R-STATS SUMMARY ({_exp_tk}) ---", ""),
-                                _all_stat_r("Stop-Out Rate",    f"{_sw2_fb_rate}%"),
-                                _all_stat_r("Avg Win (R)",      f"+{_sw2_avg_win_r}R"),
-                                _all_stat_r("Avg Loss (R)",     f"{_sw2_avg_loss_r}R"),
-                                _all_stat_r("Expectancy",       f"{_sw2_exp_r:+.3f}R/trade"),
-                                _all_stat_r("Max Drawdown (R)", f"{abs(_sw2_max_dd_r)}R"),
-                            ]
-                            _all_csv_parts.append(_pd_bt.DataFrame(_sw2_summ_rows))
-                        _all_csv_parts.append(_pd_bt.DataFrame([{_c: "" for _c in _all_exp_cols}]))
-                    _all_sweep_csv_data = (
-                        _pd_bt.concat(_all_csv_parts, ignore_index=True).to_csv(index=False)
-                        if _all_csv_parts
-                        else _all_sweep_export_df.to_csv(index=False)
+                        _detail_parts.append(_tk_part)
+                    _detail_df = (
+                        _pd_bt.concat(_detail_parts, ignore_index=True)
+                        if _detail_parts
+                        else _all_sweep_export_df
                     )
+                    # ── Build two-sheet XLSX (Detail + Summary) ───────────────
+                    import io as _io_bt
+                    _xlsx_buf = _io_bt.BytesIO()
+                    _summary_df = (
+                        _detail_df[_detail_df["Recommended"] == "✓"]
+                        .reset_index(drop=True)
+                    )
+                    with _pd_bt.ExcelWriter(_xlsx_buf, engine="openpyxl") as _xlsx_writer:
+                        _detail_df.to_excel(
+                            _xlsx_writer, sheet_name="Detail", index=False
+                        )
+                        _summary_df.to_excel(
+                            _xlsx_writer, sheet_name="Summary", index=False
+                        )
+                    _xlsx_bytes = _xlsx_buf.getvalue()
+                    _xlsx_btn_label = _sweep_btn_label.replace("CSV", "Excel (.xlsx)")
+                    _xlsx_fname     = _sweep_fname.replace(".csv", ".xlsx")
                     st.download_button(
-                        label=_sweep_btn_label,
-                        data=_all_sweep_csv_data,
-                        file_name=_sweep_fname,
-                        mime="text/csv",
+                        label=_xlsx_btn_label,
+                        data=_xlsx_bytes,
+                        file_name=_xlsx_fname,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="_dl_sweep_all_tickers",
                         help=(
-                            "Download a single combined CSV with every ticker's TCS sweep results. "
-                            "Includes 'Best TCS Floor' and 'Recommended' columns, plus a per-ticker "
-                            "R-stats summary block (Stop-Out Rate, Avg Win R, Avg Loss R, Expectancy, "
-                            "Max Drawdown R) appended after each ticker's rows."
+                            "Download an Excel workbook with two sheets: "
+                            "'Detail' (all TCS floor rows with Best TCS Floor and Recommended columns) "
+                            "and 'Summary' (one recommended row per ticker for quick reference)."
                         ),
                     )
 
