@@ -148,6 +148,7 @@ try:
         append_tcs_threshold_history,
         label_to_weight_key,
         WK_DISPLAY,
+        load_ib_range_pct_threshold,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -560,14 +561,15 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     if open_px > 0:
         ib_range_pct_val = (ib_high - ib_low) / open_px * 100
         r["ib_range_pct"] = round(ib_range_pct_val, 4)
-        if ib_range_pct_val >= 10.0:
+        _ib_threshold = load_ib_range_pct_threshold()
+        if ib_range_pct_val >= _ib_threshold:
             log.info(
                 f"  [{ticker}] skip order — IB range {ib_range_pct_val:.1f}% of price "
-                f"(>= 10% threshold, chaotic structure, hist WR 54-68%)"
+                f"(>= {_ib_threshold:.1f}% threshold, chaotic structure, hist WR 54-68%)"
             )
             tg_send(
                 f"⛔ <b>{ticker} Order blocked — IB too wide</b>\n"
-                f"IB range <b>{ib_range_pct_val:.1f}%</b> of price (≥ 10% threshold)\n"
+                f"IB range <b>{ib_range_pct_val:.1f}%</b> of price (≥ {_ib_threshold:.1f}% threshold)\n"
                 f"Chaotic structure — hist WR 54-68% vs 72-86% when narrow"
             )
             return
@@ -1039,8 +1041,9 @@ def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
 
     # IB range % quality filter display
     ib_range_pct = ((ib_high - ib_low) / open_px * 100) if open_px > 0 else None
+    _ib_disp_threshold = load_ib_range_pct_threshold()
     if ib_range_pct is not None:
-        ib_pct_icon = "✅" if ib_range_pct < 10.0 else "⚠️"
+        ib_pct_icon = "✅" if ib_range_pct < _ib_disp_threshold else "⚠️"
         ib_pct_str  = f"  ·  <b>{ib_range_pct:.1f}%</b> of price {ib_pct_icon}"
     else:
         ib_pct_str  = ""

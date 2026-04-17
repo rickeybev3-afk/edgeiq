@@ -2590,6 +2590,12 @@ _TCS_ALERT_CFG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tcs_alert_config.json"
 )
 
+_IB_RANGE_PCT_CONFIG_KEY = "ib_range_pct_config"
+_IB_RANGE_PCT_CFG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "ib_range_pct_config.json"
+)
+_IB_RANGE_PCT_DEFAULT = 10.0
+
 
 def _load_raw_tcs_alert_cfg() -> dict:
     """Return the parsed TCS alert config dict.
@@ -2726,6 +2732,120 @@ def save_tcs_alert_structures(structures) -> bool:
         logging.error(
             "[save_tcs_alert_structures] Both Supabase and local file writes failed. "
             "Alert preferences were NOT persisted."
+        )
+
+    return db_ok or file_ok
+
+
+_IB_RANGE_PCT_MIN = 1.0
+_IB_RANGE_PCT_MAX = 50.0
+
+
+def _clamp_ib_threshold(value) -> float | None:
+    """Return *value* clamped to [_IB_RANGE_PCT_MIN, _IB_RANGE_PCT_MAX] or None if invalid."""
+    if not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    if not (0 < v):
+        return None
+    return max(_IB_RANGE_PCT_MIN, min(_IB_RANGE_PCT_MAX, v))
+
+
+def load_ib_range_pct_threshold() -> float:
+    """Return the IB range % filter threshold (default 10.0).
+
+    Reads from the Supabase ``app_config`` table (key ``ib_range_pct_config``)
+    first, then falls back to a local ``ib_range_pct_config.json`` file.
+    Returns the compile-time default (10.0) when neither source has data.
+
+    Values are clamped to [1.0, 50.0] so a manually corrupted config cannot
+    break the dashboard ``st.number_input`` bounds or the bot filter.
+    """
+    import json as _json
+
+    if supabase is not None:
+        try:
+            resp = (
+                supabase.table(_APP_CONFIG_TABLE)
+                .select("value")
+                .eq("key", _IB_RANGE_PCT_CONFIG_KEY)
+                .limit(1)
+                .execute()
+            )
+            if resp.data:
+                val = resp.data[0].get("value")
+                if isinstance(val, dict) and "threshold" in val:
+                    clamped = _clamp_ib_threshold(val["threshold"])
+                    if clamped is not None:
+                        return clamped
+        except Exception:
+            pass
+
+    if os.path.exists(_IB_RANGE_PCT_CFG_PATH):
+        try:
+            with open(_IB_RANGE_PCT_CFG_PATH) as _f:
+                cfg = _json.load(_f)
+            if isinstance(cfg, dict) and "threshold" in cfg:
+                clamped = _clamp_ib_threshold(cfg["threshold"])
+                if clamped is not None:
+                    return clamped
+        except Exception:
+            pass
+
+    return _IB_RANGE_PCT_DEFAULT
+
+
+def save_ib_range_pct_threshold(value: float) -> bool:
+    """Persist *value* as the IB range % filter threshold.
+
+    Writes to Supabase (``app_config`` table) and falls back to a local JSON
+    file.  Returns ``True`` when at least one storage backend succeeds.
+    """
+    import json as _json
+    import datetime as _dt
+
+    if not isinstance(value, (int, float)) or value <= 0:
+        logging.warning(
+            "[save_ib_range_pct_threshold] Refusing to save non-positive value: %s", value
+        )
+        return False
+
+    db_value = {"threshold": round(float(value), 4)}
+
+    db_ok = False
+    if supabase is not None:
+        try:
+            supabase.table(_APP_CONFIG_TABLE).upsert(
+                {
+                    "key": _IB_RANGE_PCT_CONFIG_KEY,
+                    "value": db_value,
+                    "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                },
+                on_conflict="key",
+            ).execute()
+            db_ok = True
+        except Exception as _exc:
+            logging.warning(
+                "[save_ib_range_pct_threshold] Supabase write failed: %s. "
+                "Will attempt local JSON fallback.",
+                _exc,
+            )
+
+    file_ok = False
+    try:
+        file_cfg = {"threshold": round(float(value), 4)}
+        with open(_IB_RANGE_PCT_CFG_PATH, "w") as _f:
+            _json.dump(file_cfg, _f, indent=2)
+        file_ok = True
+    except Exception as _exc:
+        logging.warning(
+            "[save_ib_range_pct_threshold] Local JSON write failed: %s.", _exc
+        )
+
+    if not db_ok and not file_ok:
+        logging.error(
+            "[save_ib_range_pct_threshold] Both Supabase and local file writes failed. "
+            "IB range %% threshold was NOT persisted."
         )
 
     return db_ok or file_ok

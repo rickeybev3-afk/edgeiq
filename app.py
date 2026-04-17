@@ -58,6 +58,8 @@ from backend import (
     load_tcs_alert_thresholds,
     save_tcs_alert_thresholds,
     get_tcs_alert_config_last_saved,
+    load_ib_range_pct_threshold,
+    save_ib_range_pct_threshold,
     get_runtime_last_healthy_ts,
     get_runtime_first_check_done,
     compute_r_projection,
@@ -102,6 +104,10 @@ def _cached_load_tcs_alert_structures():
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_tcs_alert_thresholds():
     return load_tcs_alert_thresholds()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_ib_range_pct_threshold():
+    return load_ib_range_pct_threshold()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_tcs_threshold_history(days: int = 14):
@@ -4992,6 +4998,32 @@ with st.sidebar:
             st.success("Thresholds saved.", icon="✅")
         else:
             st.error("Could not save thresholds — database and local file both failed.", icon="⚠️")
+
+    st.markdown("---")
+    st.markdown("**IB Range % Filter Threshold**")
+    st.caption(
+        "Orders are blocked when the Initial Balance range is this wide relative to the "
+        "open price. Wide IBs signal chaotic, non-directional days (historical WR 54-68% "
+        "vs 72-86% when narrow). Default: 10%."
+    )
+    _ib_current = _cached_load_ib_range_pct_threshold()
+    _ib_new_val = st.number_input(
+        "Max IB range % (threshold)",
+        min_value=1.0,
+        max_value=50.0,
+        value=float(_ib_current),
+        step=0.5,
+        format="%.1f",
+        key="ib_range_pct_input",
+        help="Bot skips orders when IB range ÷ open price ≥ this value. Lower = stricter filter.",
+    )
+    if st.button("💾 Save IB range threshold", key="ib_range_pct_save_btn", use_container_width=True):
+        _ib_ok = save_ib_range_pct_threshold(_ib_new_val)
+        if _ib_ok:
+            _cached_load_ib_range_pct_threshold.clear()
+            st.success(f"IB range % threshold saved: {_ib_new_val:.1f}%", icon="✅")
+        else:
+            st.error("Could not save — database and local file both failed.", icon="⚠️")
 
     st.markdown("---")
     mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)
