@@ -3289,6 +3289,7 @@ def nightly_recalibration():
     # paper_trades rows so that close prices backfilled via the manual Retry
     # button (or any previous nightly run that lacked a close price) are
     # always picked up, not just those from the last 7 days.
+    pr_result: dict = {"written": 0, "skipped": 0}
     try:
         pr_result = _recalc_eod_pnl_r_recent()
         if pr_result["written"]:
@@ -3329,6 +3330,7 @@ def nightly_recalibration():
         log.warning(f"Stale backtest-row check failed: {exc}")
 
     # ── eod_pnl_r recalculation for newly-filled backtest close prices ─────────
+    bpr_result: dict = {"written": 0, "skipped": 0}
     try:
         bpr_result = _recalc_eod_pnl_r_recent_backtest()
         if bpr_result["written"]:
@@ -3339,6 +3341,34 @@ def nightly_recalibration():
             )
     except Exception as exc:
         log.warning(f"Nightly eod_pnl_r recalculation (backtest) failed: {exc}")
+
+    # ── Telegram summary: how many old paper trades had P&L healed overnight ──
+    try:
+        paper_written = pr_result.get("written", 0)
+        backtest_written = bpr_result.get("written", 0)
+        total_written = paper_written + backtest_written
+        if total_written:
+            log.info(
+                f"Nightly EOD P&L heal summary: "
+                f"{paper_written} paper-trade row(s) + "
+                f"{backtest_written} backtest row(s) = "
+                f"{total_written} total updated."
+            )
+            lines = ["🌙 <b>Nightly EOD P&amp;L Sweep</b>"]
+            if paper_written:
+                lines.append(f"  • Paper trades healed: <b>{paper_written}</b>")
+            if backtest_written:
+                lines.append(f"  • Backtest rows healed: <b>{backtest_written}</b>")
+            lines.append(f"  • Total rows updated: <b>{total_written}</b>")
+        else:
+            log.info("Nightly EOD P&L heal summary: no rows needed healing — all P&L already filled.")
+            lines = [
+                "🌙 <b>Nightly EOD P&amp;L Sweep</b>",
+                "  • No rows needed healing tonight — all P&amp;L already filled.",
+            ]
+        tg_send("\n".join(lines))
+    except Exception as exc:
+        log.warning(f"Nightly eod_pnl_r Telegram summary failed: {exc}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
