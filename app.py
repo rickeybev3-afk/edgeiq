@@ -11370,13 +11370,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _exp_df["Best TCS Floor"] = ""
                         _exp_df["Recommended"] = ""
                     _all_sweep_frames.append(_exp_df)
+                if "_sweep_export_sufficient_only" not in st.session_state:
+                    st.session_state["_sweep_export_sufficient_only"] = (
+                        st.query_params.get("sweep_suf_only", "0") == "1"
+                    )
                 if _all_sweep_frames:
                     _all_sweep_df = _pd_bt.concat(_all_sweep_frames, ignore_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
-                    if "_sweep_export_sufficient_only" not in st.session_state:
-                        st.session_state["_sweep_export_sufficient_only"] = (
-                            st.query_params.get("sweep_suf_only", "0") == "1"
-                        )
                     _sweep_suf_only = st.checkbox(
                         "Sufficient floors only",
                         key="_sweep_export_sufficient_only",
