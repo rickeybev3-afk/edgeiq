@@ -8519,6 +8519,65 @@ def count_backtest_tiered_pending(user_id: str = "") -> int:
         return 0
 
 
+def count_missing_close_price_in_range(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    user_id: str = "",
+    table: str | None = None,
+) -> int:
+    """Return the total number of rows with close_price IS NULL within the
+    given date range.  Used for the pre-flight check in the backfill UI.
+
+    Parameters
+    ----------
+    start_date : str or None
+        Lower bound (YYYY-MM-DD, inclusive).  None means no lower bound.
+    end_date : str or None
+        Upper bound (YYYY-MM-DD, inclusive).  None means no upper bound.
+    user_id : str
+        When non-empty only rows belonging to that user are counted.
+    table : str or None
+        When set to "backtest_sim_runs" or "paper_trades" only that table is
+        queried.  None (default) queries both tables.
+
+    Returns
+    -------
+    int
+        Total null-close_price row count across the selected table(s).
+        Returns 0 when Supabase is unavailable or an error occurs.
+    """
+    if not supabase:
+        return 0
+    try:
+        all_tables = [
+            ("backtest_sim_runs", "sim_date"),
+            ("paper_trades",      "trade_date"),
+        ]
+        tables_to_query = (
+            [(t, f) for t, f in all_tables if t == table]
+            if table else all_tables
+        )
+        total = 0
+        for tbl, date_field in tables_to_query:
+            q = (
+                supabase.table(tbl)
+                .select("id", count="exact")
+                .is_("close_price", "null")
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            if start_date:
+                q = q.gte(date_field, start_date)
+            if end_date:
+                q = q.lte(date_field, end_date)
+            resp = q.limit(1).execute()
+            total += resp.count or 0
+        return total
+    except Exception as e:
+        print(f"count_missing_close_price_in_range error: {e}")
+        return 0
+
+
 def get_missing_close_price_stats(user_id: str = "") -> dict:
     """Return stats on backtest_sim_runs rows that have no close_price.
 

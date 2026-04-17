@@ -5440,6 +5440,35 @@ with st.sidebar:
         )
         _bf_table_val = _BF_TABLE_MAP[_bf_table_label]
 
+        # ── Pre-flight: count null close_price rows in the chosen range ────────
+        # Only run when the date range is valid (or open-ended).
+        _bf_preflight_count: int | None = None
+        if not _bf_range_invalid:
+            try:
+                _bf_preflight_count = count_missing_close_price_in_range(
+                    start_date=_bf_start_str,
+                    end_date=_bf_end_str,
+                    user_id=_AUTH_USER_ID or "",
+                    table=_bf_table_val,
+                )
+            except Exception:
+                _bf_preflight_count = None  # Supabase unavailable — allow launch
+
+        _bf_nothing_to_do = _bf_preflight_count is not None and _bf_preflight_count == 0
+
+        if _bf_preflight_count is not None:
+            if _bf_preflight_count == 0:
+                st.warning(
+                    "No missing close prices found for this range — "
+                    "nothing to backfill.",
+                    icon="ℹ️",
+                )
+            else:
+                st.caption(
+                    f"🔍 **{_bf_preflight_count:,}** row{'s' if _bf_preflight_count != 1 else ''} "
+                    "with missing close prices in this range."
+                )
+
         # Derive current status from status file (persists across Streamlit re-runs).
         # The in-process _BACKFILL_LOCK is the authoritative concurrency guard;
         # the status file is used purely for UI display.
@@ -5545,7 +5574,12 @@ with st.sidebar:
                 'No backfill has been run yet.</div>',
                 unsafe_allow_html=True,
             )
-            if st.button("▶️ Start Backfill", use_container_width=True, key="bf_start_btn"):
+            if st.button(
+                "▶️ Start Backfill",
+                use_container_width=True,
+                key="bf_start_btn",
+                disabled=_bf_nothing_to_do,
+            ):
                 if _bf_launch():
                     st.rerun()
                 else:
@@ -5607,7 +5641,13 @@ with st.sidebar:
                     unsafe_allow_html=True,
                 )
 
-            if st.button("🔄 Run Again", use_container_width=True, key="bf_again_btn"):
+            if st.button(
+                "🔄 Run Again",
+                use_container_width=True,
+                key="bf_again_btn",
+                disabled=_bf_nothing_to_do,
+                help="No missing close prices in this range." if _bf_nothing_to_do else None,
+            ):
                 if _bf_launch():
                     st.rerun()
                 else:
@@ -5623,7 +5663,13 @@ with st.sidebar:
 
         elif _bf_file_status == "error":
             st.error("❌ Backfill encountered an error. Check the log below.")
-            if st.button("🔄 Retry", use_container_width=True, key="bf_retry_btn"):
+            if st.button(
+                "🔄 Retry",
+                use_container_width=True,
+                key="bf_retry_btn",
+                disabled=_bf_nothing_to_do,
+                help="No missing close prices in this range." if _bf_nothing_to_do else None,
+            ):
                 if _bf_launch():
                     st.rerun()
                 else:
