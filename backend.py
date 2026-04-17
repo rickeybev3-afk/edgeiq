@@ -11947,6 +11947,7 @@ def get_beta_chat_ids(
     tcs_alerts_only: bool = False,
     morning_alerts_only: bool = False,
     credential_alerts_only: bool = False,
+    eod_alerts_only: bool = False,
 ) -> list:
     """Return list of (user_id, chat_id) tuples for all beta subscribers.
 
@@ -11962,6 +11963,9 @@ def get_beta_chat_ids(
     When credential_alerts_only is True, subscribers who have opted out of
     credential failure/recovery alerts (credential_alerts_enabled == False)
     are excluded.
+
+    When eod_alerts_only is True, subscribers who have opted out of
+    end-of-day result summaries (eod_alerts_enabled == False) are excluded.
     """
     import json as _json
 
@@ -11972,6 +11976,8 @@ def get_beta_chat_ids(
         if morning_alerts_only and prefs.get("morning_alerts_enabled", True) is False:
             return False
         if credential_alerts_only and prefs.get("credential_alerts_enabled", True) is False:
+            return False
+        if eod_alerts_only and prefs.get("eod_alerts_enabled", True) is False:
             return False
         return True
 

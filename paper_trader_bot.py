@@ -75,19 +75,6 @@ PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# ── Configurable alert types (drives /settings display + command dispatch) ────
-# Each entry: key = /settings sub-command, pref_key = user_prefs field,
-#             default = value when unset, label + description shown in /settings.
-_ALERT_REGISTRY = [
-    {
-        "key":         "tcs_alerts",
-        "pref_key":    "tcs_alerts_enabled",
-        "default":     True,
-        "label":       "TCS threshold shift alerts",
-        "description": "Notifies you when a structure's TCS threshold crosses a significant level.",
-    },
-]
-
 _DEFAULT_TICKERS = (
     "SATL,UGRO,ANNA,VCX,CODX,ARTL,SWMR,FEED,RBNE,PAVS,LNKS,BIAF,ACXP,GOAI"
 )
@@ -102,6 +89,13 @@ _ALERT_REGISTRY = [
         "default":     True,
         "label":       "Morning setup alerts",
         "description": "Sends a pre-market summary of qualifying setups before the open.",
+    },
+    {
+        "key":         "eod_alerts",
+        "pref_key":    "eod_alerts_enabled",
+        "default":     True,
+        "label":       "End-of-day result summaries",
+        "description": "Sends a daily outcome recap after market close.",
     },
     {
         "key":         "tcs_alerts",
@@ -826,7 +820,7 @@ def telegram_listener() -> None:
                             "Check that the trade exists in your journal and the DB migration has been run.")
                     continue
 
-                # ── /settings [tcs_alerts on|off] [morning_alerts on|off] ──
+                # ── /settings [morning_alerts on|off] [eod_alerts on|off] [tcs_alerts on|off] [credential_alerts on|off] ──
                 if text.startswith("/settings"):
                     from backend import (
                         get_user_id_by_chat_id,
@@ -1515,7 +1509,7 @@ def _broadcast_morning_to_subscribers(results: list, today) -> None:
 
 
 def _broadcast_eod_to_subscribers(results: list, today) -> None:
-    """Send a clean EOD outcome summary to all beta subscribers."""
+    """Send a clean EOD outcome summary to opted-in beta subscribers."""
     if not results:
         return
     wins   = [r for r in results if (r.get("win_loss") or "").lower() == "win"]
@@ -1535,7 +1529,21 @@ def _broadcast_eod_to_subscribers(results: list, today) -> None:
             sign = "+" if pct >= 0 else ""
             mover_parts.append(f"{r.get('ticker','?')} {sign}{pct:.1f}%")
         lines.append("Top: " + " · ".join(mover_parts))
-    _broadcast_to_subscribers("\n".join(lines))
+    message = "\n".join(lines)
+    try:
+        pairs = get_beta_chat_ids(exclude_user_id=USER_ID, eod_alerts_only=True)
+    except Exception as exc:
+        log.warning(f"get_beta_chat_ids failed in EOD broadcast: {exc}")
+        return
+    sent = 0
+    for _uid, cid in pairs:
+        try:
+            tg_reply(cid, message)
+            sent += 1
+            time.sleep(0.1)
+        except Exception as exc:
+            log.warning(f"EOD broadcast send error chat_id={cid}: {exc}")
+    log.info(f"EOD broadcast sent to {sent} subscriber(s)")
 
 
 def morning_scan():
