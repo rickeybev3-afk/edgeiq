@@ -16913,6 +16913,14 @@ ALTER TABLE backtest_sim_runs
         ]:
             with _gcol:
                 st.markdown(f"**{_stitle}**")
+                if _tier_filter_label:
+                    st.markdown(
+                        f'<span style="display:inline-block;font-size:11px;'
+                        f'color:#5c6bc0;background:#0d1b2a;border:1px solid #1e3a5f;'
+                        f'border-radius:4px;padding:2px 8px;margin-bottom:6px;">'
+                        f'📅 Filtered: {_tier_filter_label}</span>',
+                        unsafe_allow_html=True,
+                    )
                 _rows = [r for r in _bt_grid if r["scan_type"] == _stype]
                 _rows_sorted = sorted(_rows, key=lambda x: x["tcs_lo"])
 
