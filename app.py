@@ -102,6 +102,10 @@ def _cached_load_tcs_alert_structures():
     return load_tcs_alert_structures()
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _cached_get_kalshi_performance_summary(user_id: str = "") -> dict:
+    return get_kalshi_performance_summary(user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_tcs_alert_thresholds():
     return load_tcs_alert_thresholds()
 
@@ -5184,7 +5188,7 @@ with st.sidebar:
             st.code(_KALSHI_PREDICTIONS_SQL, language="sql")
         else:
             _kalshi_uid = st.session_state.get("auth_user_id", "")
-            _kalshi_perf = get_kalshi_performance_summary(user_id=_kalshi_uid)
+            _kalshi_perf = _cached_get_kalshi_performance_summary(user_id=_kalshi_uid)
             _kt = _kalshi_perf["total"]
             if _kt == 0:
                 st.info(
