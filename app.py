@@ -15033,24 +15033,25 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         _pt_preview_df = _pt_preview_df.rename(columns={"aft_move_pct": "follow_thru_%"})
 
                     # Mark rows whose ticker was excluded from the sim due to missing price data
-                    _sim_failed_tickers = {f["ticker"] for f in _sim_failed} if _sim_failed else set()
+                    _sim_failed_reasons = {f["ticker"]: f.get("reason", "unknown reason") for f in _sim_failed} if _sim_failed else {}
+                    _sim_failed_tickers = set(_sim_failed_reasons.keys())
                     if _sim_failed_tickers and not _pt_preview_df.empty:
                         _pt_preview_df.insert(
                             1, "Sim",
                             _pt_preview_df["ticker"].apply(
-                                lambda t: "⚠ No sim" if t in _sim_failed_tickers else ""
+                                lambda t: f"⚠ No sim — {_sim_failed_reasons[t]}" if t in _sim_failed_tickers else ""
                             ),
                         )
 
                         def _preview_row_style(row):
-                            if row.get("Sim") == "⚠ No sim":
+                            if str(row.get("Sim", "")).startswith("⚠ No sim"):
                                 return ["background-color: rgba(255,152,0,0.15)"] * len(row)
                             return [""] * len(row)
 
                         st.dataframe(
                             _pt_preview_df.style.apply(_preview_row_style, axis=1)
                                 .map(
-                                    lambda v: "color: #e65100; font-weight:700" if v == "⚠ No sim" else "",
+                                    lambda v: "color: #e65100; font-weight:700" if str(v).startswith("⚠ No sim") else "",
                                     subset=["Sim"],
                                 ),
                             use_container_width=True,
