@@ -5038,6 +5038,46 @@ with st.sidebar:
 
         elif _bf_file_status == "done":
             st.success("✅ Backfill complete!")
+
+            # ── Parse summary numbers from the log ─────────────────────────
+            import re as _re
+            _bf_summary = {"prices_written": None, "rows_no_data": None, "rows_recomputed": None}
+            if os.path.exists(_BACKFILL_LOG):
+                try:
+                    with open(_BACKFILL_LOG) as _slf:
+                        _slog = _slf.read()
+                    _m = _re.search(r"close_price written\s*:\s*(\d+)", _slog)
+                    if _m:
+                        _bf_summary["prices_written"] = int(_m.group(1))
+                    _m = _re.search(r"rows without data\s*:\s*(\d+)", _slog)
+                    if _m:
+                        _bf_summary["rows_no_data"] = int(_m.group(1))
+                    # Sum all "Total: N updated" lines from run_sim_backfill
+                    _rc_matches = _re.findall(r"Total:\s*(\d+)\s*updated", _slog)
+                    if _rc_matches:
+                        _bf_summary["rows_recomputed"] = sum(int(x) for x in _rc_matches)
+                except Exception:
+                    pass
+
+            if any(v is not None for v in _bf_summary.values()):
+                _pw = _bf_summary["prices_written"]
+                _nd = _bf_summary["rows_no_data"]
+                _rc = _bf_summary["rows_recomputed"]
+                _summary_parts = []
+                if _pw is not None:
+                    _summary_parts.append(f"**{_pw:,}** close prices written")
+                if _nd is not None:
+                    _summary_parts.append(f"**{_nd:,}** rows skipped (no data)")
+                if _rc is not None:
+                    _summary_parts.append(f"**{_rc:,}** P&L rows recomputed")
+                st.markdown(
+                    '<div style="background:#1a2e1a;border:1px solid #2d5a2d;border-radius:6px;'
+                    'padding:8px 10px;margin:6px 0;font-size:12px;line-height:1.7;">'
+                    + "<br>".join(_summary_parts)
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+
             if st.button("🔄 Run Again", use_container_width=True, key="bf_again_btn"):
                 if _bf_launch():
                     st.rerun()
