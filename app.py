@@ -3963,6 +3963,16 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["rp_min_tcs_slider"] = int(_prefs["rp_min_tcs_slider"])
         except (ValueError, TypeError):
             pass
+    if "rp_min_gap" in _prefs:
+        try:
+            st.session_state["rp_min_gap"] = float(_prefs["rp_min_gap"])
+        except (ValueError, TypeError):
+            pass
+    if "rp_min_ft" in _prefs:
+        try:
+            st.session_state["rp_min_ft"] = float(_prefs["rp_min_ft"])
+        except (ValueError, TypeError):
+            pass
     if "pt_min_tcs" in _prefs:
         try:
             st.session_state["pt_min_tcs"] = int(_prefs["pt_min_tcs"])
@@ -5996,6 +6006,31 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _rp_bot_mode = "bot" in _rp_mode.lower()
 
+        # ── Restore numeric replay filters from localStorage (cross-session) ─────
+        import streamlit.components.v1 as _cmp_rp_filters
+        _cmp_rp_filters.html("""
+<script>
+(function() {
+    var url = new URL(window.parent.location.href);
+    var params = [
+        ['rp_min_tcs', 'rp_min_tcs_slider'],
+        ['rp_min_gap', 'rp_min_gap'],
+        ['rp_min_ft',  'rp_min_ft'],
+    ];
+    var changed = false;
+    params.forEach(function(pair) {
+        var qp = pair[0], lsKey = pair[1];
+        if (url.searchParams.has(qp)) return;
+        var saved = localStorage.getItem(lsKey);
+        if (saved === null) return;
+        url.searchParams.set(qp, saved);
+        changed = true;
+    });
+    if (changed) window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
         # Initialise date defaults before any widget renders so values are
         # available in session state for the stale-badge check below.
         if "rp_start_date" not in st.session_state:
@@ -6113,7 +6148,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     value=2.0, step=0.5, key="rp_risk_pct",
                 )
                 if "rp_min_tcs_slider" not in st.session_state:
-                    st.session_state["rp_min_tcs_slider"] = 0
+                    try:
+                        st.session_state["rp_min_tcs_slider"] = int(st.query_params.get("rp_min_tcs", 0))
+                    except (ValueError, TypeError):
+                        st.session_state["rp_min_tcs_slider"] = 0
                 else:
                     st.session_state["rp_min_tcs_slider"] = int(st.session_state["rp_min_tcs_slider"])
                 _rp_min_tcs = st.number_input(
@@ -6130,6 +6168,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f"📌 Using {_rp_best_tcs_src['ticker']}'s Best TCS"
                         f" ({_rp_best_tcs_src['floor']})"
                     )
+                # Sync rp_min_tcs to query params + localStorage
+                if st.query_params.get("rp_min_tcs") != str(_rp_min_tcs):
+                    st.query_params["rp_min_tcs"] = str(_rp_min_tcs)
+                _cmp_rp_filters.html(
+                    f"<script>localStorage.setItem('rp_min_tcs_slider', {repr(str(_rp_min_tcs))});</script>",
+                    height=0,
+                )
                 # Persist rp_min_tcs_slider to user prefs when it changes
                 if _AUTH_USER_ID:
                     _rp_cached = st.session_state.get("_cached_prefs", {})
@@ -6138,11 +6183,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
                         st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_col3:
+            if "rp_min_ft" not in st.session_state:
+                try:
+                    st.session_state["rp_min_ft"] = float(st.query_params.get("rp_min_ft", 0.0))
+                except (ValueError, TypeError):
+                    st.session_state["rp_min_ft"] = 0.0
             _rp_min_ft = st.slider(
                 "Min Follow-Through %", min_value=0.0, max_value=10.0,
                 value=0.0, step=0.5, key="rp_min_ft",
                 help="Only include trades where the stock moved at least this % past the IB.",
             )
+            if st.query_params.get("rp_min_ft") != str(_rp_min_ft):
+                st.query_params["rp_min_ft"] = str(_rp_min_ft)
+            _cmp_rp_filters.html(
+                f"<script>localStorage.setItem('rp_min_ft', {repr(str(_rp_min_ft))});</script>",
+                height=0,
+            )
+            if _AUTH_USER_ID:
+                _rp_cached = st.session_state.get("_cached_prefs", {})
+                if _rp_cached.get("rp_min_ft") != _rp_min_ft:
+                    _rp_new_prefs = {**_rp_cached, "rp_min_ft": _rp_min_ft}
+                    save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
+                    st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_col4:
             if not _rp_bot_mode:
                 _rp_max_move = st.slider(
@@ -6224,6 +6286,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _rp_gap_col1, _rp_gap_col2, _rp_gap_col3 = st.columns([1, 1, 2])
         with _rp_gap_col1:
+            if "rp_min_gap" not in st.session_state:
+                try:
+                    st.session_state["rp_min_gap"] = float(st.query_params.get("rp_min_gap", 0.0))
+                except (ValueError, TypeError):
+                    st.session_state["rp_min_gap"] = 0.0
             _rp_min_gap = st.number_input(
                 "Min Gap % (open vs prev close)",
                 min_value=0.0, max_value=50.0, value=0.0, step=0.5,
@@ -6234,6 +6301,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Records from before the migration will show gap_pct = 0 and will still appear."
                 ),
             )
+            if st.query_params.get("rp_min_gap") != str(_rp_min_gap):
+                st.query_params["rp_min_gap"] = str(_rp_min_gap)
+            _cmp_rp_filters.html(
+                f"<script>localStorage.setItem('rp_min_gap', {repr(str(_rp_min_gap))});</script>",
+                height=0,
+            )
+            if _AUTH_USER_ID:
+                _rp_cached = st.session_state.get("_cached_prefs", {})
+                if _rp_cached.get("rp_min_gap") != _rp_min_gap:
+                    _rp_new_prefs = {**_rp_cached, "rp_min_gap": _rp_min_gap}
+                    save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
+                    st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_gap_col2:
             _rp_min_gap_vs_ib = st.number_input(
                 "Min Gap vs IB (×)",
