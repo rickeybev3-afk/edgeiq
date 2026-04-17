@@ -14017,8 +14017,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     st.session_state["_csv_global_reset"] = True
                                     st.rerun()
                             if not _csv_just_reset:
-                                st.session_state["_csv_cols_pref"] = _csv_sel_cols
-                                _csv_cols_joined = ",".join(_csv_sel_cols)
+                                # Merge: keep any previously saved columns that are not
+                                # available for this ticker (e.g. R columns when the ticker
+                                # has no R data) so they survive ticker switches / reloads.
+                                _prev_full_pref = st.session_state.get("_csv_cols_pref", _csv_default_cols)
+                                _unavailable_saved = [c for c in _prev_full_pref if c not in _csv_all_cols]
+                                _merged_pref = _csv_sel_cols + [c for c in _unavailable_saved if c not in _csv_sel_cols]
+                                st.session_state["_csv_cols_pref"] = _merged_pref
+                                _csv_cols_joined = ",".join(_merged_pref)
                                 if st.query_params.get("csv_cols") != _csv_cols_joined:
                                     st.query_params["csv_cols"] = _csv_cols_joined
                                 _cmp_csv_write.html(
