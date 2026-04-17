@@ -7937,38 +7937,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
                     # only consider floors with sufficient trades for the highlighted best
                     _tk_sw_suff = _tk_sw_df[_tk_sw_df["Sufficient"] == "✓"]
-                    _tk_persist_key_pre = f"_drill_tcs_persist_{_tk_name}"
-                    _tk_persisted_val_pre = st.session_state.get(_tk_persist_key_pre)
+                    _tk_persist_key_hdr = f"_drill_tcs_persist_{_tk_name}"
+                    _tk_persisted_hdr   = st.session_state.get(_tk_persist_key_hdr)
                     if not _tk_sw_suff.empty:
                         _tk_best_pnl = _tk_sw_suff["Net P&L ($)"].max()
                         _tk_best_row = _tk_sw_suff[_tk_sw_suff["Net P&L ($)"] == _tk_best_pnl].iloc[0]
-                        _tk_drill_default_pre = int(_tk_best_row["TCS Floor"])
-                        _tk_override_active = (
-                            _tk_persisted_val_pre is not None
-                            and _tk_persisted_val_pre != _tk_drill_default_pre
+                        _tk_auto_floor = int(_tk_best_row["TCS Floor"])
+                        _tk_has_override = (
+                            _tk_persisted_hdr is not None
+                            and _tk_persisted_hdr != _tk_auto_floor
+                        )
+                        _tk_override_active = _tk_has_override
+                        _tk_override_badge = (
+                            f" · 🔵 custom floor (TCS ≥ {_tk_persisted_hdr})"
+                            if _tk_has_override else ""
                         )
                         _tk_expander_label = (
-                            f"📊 {_tk_name}{'  ✱' if _tk_override_active else ''} — Best: TCS ≥ {int(_tk_best_row['TCS Floor'])} "
+                            f"📊 {_tk_name}{'  ✱' if _tk_override_active else ''} — Best: TCS ≥ {_tk_auto_floor} "
                             f"(≥{_MIN_TCS_TRADES} trades) "
                             f"· {int(_tk_best_row['Trades'])} trades "
                             f"· {_tk_best_row['Win Rate']:.0f}% WR "
                             f"· ${_tk_best_pnl:,.0f} net P&L"
+                            f"{_tk_override_badge}"
                         )
                         _tk_has_best = True
                     else:
                         _tk_best_pnl = None
                         _tk_best_row = None
                         _tk_max_trades = int(_tk_sw_df["Trades"].max()) if not _tk_sw_df.empty else 0
-                        _tk_drill_floors_pre = sorted(_tk_sw_df["TCS Floor"].astype(int).unique().tolist())
-                        _tk_drill_default_pre = _tk_drill_floors_pre[0] if _tk_drill_floors_pre else None
-                        _tk_override_active = (
-                            _tk_persisted_val_pre is not None
-                            and _tk_drill_default_pre is not None
-                            and _tk_persisted_val_pre != _tk_drill_default_pre
+                        _tk_has_override = _tk_persisted_hdr is not None
+                        _tk_override_active = _tk_has_override
+                        _tk_override_badge = (
+                            f" · 🔵 custom floor (TCS ≥ {_tk_persisted_hdr})"
+                            if _tk_has_override else ""
                         )
                         _tk_expander_label = (
                             f"📊 {_tk_name}{'  ✱' if _tk_override_active else ''} — insufficient data "
                             f"({_tk_max_trades} of {_MIN_TCS_TRADES} trades at best floor)"
+                            f"{_tk_override_badge}"
                         )
                         _tk_has_best = False
                     with st.expander(_tk_expander_label, expanded=False):
