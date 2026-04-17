@@ -17,6 +17,10 @@ interface HealthState {
 }
 
 function AlpacaMismatchBanner({ message }: { message: string }) {
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed) return null;
+
   return (
     <div
       role="alert"
@@ -35,7 +39,7 @@ function AlpacaMismatchBanner({ message }: { message: string }) {
       }}
     >
       <AlertCircle style={{ color: "#fb923c", flexShrink: 0, width: "18px", height: "18px" }} />
-      <span style={{ color: "#fed7aa", fontSize: "13px", lineHeight: "1.5" }}>
+      <span style={{ color: "#fed7aa", fontSize: "13px", lineHeight: "1.5", flex: 1 }}>
         <strong style={{ color: "#fdba74" }}>⚠️ Alpaca credential mismatch:</strong>{" "}
         {message}{" "}
         <a
@@ -50,6 +54,25 @@ function AlpacaMismatchBanner({ message }: { message: string }) {
           Go to Trading Mode settings →
         </a>
       </span>
+      <button
+        onClick={() => setDismissed(true)}
+        aria-label="Dismiss"
+        style={{
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          color: "#fed7aa",
+          fontSize: "18px",
+          lineHeight: 1,
+          padding: "0 4px",
+          flexShrink: 0,
+          opacity: 0.8,
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.8"; }}
+      >
+        ×
+      </button>
     </div>
   );
 }
