@@ -75,6 +75,14 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: true,
       },
+      "/api/credential-alerts": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/api/db-events": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
     },
   },
   preview: {

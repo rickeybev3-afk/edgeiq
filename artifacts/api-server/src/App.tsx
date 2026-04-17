@@ -154,12 +154,252 @@ function ErrorBanner({ errors, dbCheckedAt }: { errors: string[]; dbCheckedAt?: 
   );
 }
 
+interface DbEvent {
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number | null;
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
+
+function formatUtc(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function DbEventsPanel() {
+  const [events, setEvents] = useState<DbEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/db-events");
+        const data = await res.json();
+        if (!cancelled) {
+          setEvents(data.events ?? []);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not load DB event history.");
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  return (
+    <div
+      style={{
+        background: "#1e2435",
+        border: "1px solid #2d3748",
+        borderRadius: "10px",
+        padding: "24px",
+        maxWidth: "640px",
+        width: "100%",
+      }}
+    >
+      <h2
+        style={{
+          fontSize: "15px",
+          fontWeight: 700,
+          color: "#cbd5e1",
+          marginBottom: "6px",
+          marginTop: 0,
+        }}
+      >
+        DB Connectivity
+      </h2>
+      <p
+        style={{
+          fontSize: "13px",
+          color: "#94a3b8",
+          marginBottom: "16px",
+          lineHeight: "1.6",
+          marginTop: 0,
+        }}
+      >
+        Recent database outage events (up to last 50), newest first. Refreshes every 30 s.
+      </p>
+
+      {loading && (
+        <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+      )}
+      {error && (
+        <p style={{ fontSize: "13px", color: "#f87171" }}>⚠ {error}</p>
+      )}
+      {!loading && !error && events.length === 0 && (
+        <div
+          style={{
+            padding: "16px",
+            background: "rgba(74,222,128,0.06)",
+            border: "1px solid #14532d",
+            borderRadius: "8px",
+            fontSize: "13px",
+            color: "#86efac",
+          }}
+        >
+          No outages recorded since server start.
+        </div>
+      )}
+      {!loading && !error && events.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {events.map((ev, i) => {
+            const ongoing = ev.ended_at === null;
+            return (
+              <div
+                key={i}
+                style={{
+                  padding: "12px 16px",
+                  background: ongoing
+                    ? "rgba(239,68,68,0.08)"
+                    : "rgba(255,255,255,0.03)",
+                  border: ongoing ? "1px solid #7f1d1d" : "1px solid #2d3748",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  color: "#e2e8f0",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "12px",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span
+                      style={{
+                        width: "8px",
+                        height: "8px",
+                        borderRadius: "50%",
+                        background: ongoing ? "#ef4444" : "#64748b",
+                        flexShrink: 0,
+                        ...(ongoing ? { boxShadow: "0 0 6px #ef4444" } : {}),
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        color: ongoing ? "#fca5a5" : "#94a3b8",
+                      }}
+                    >
+                      {ongoing ? "Ongoing outage" : "Outage"}
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      color: ongoing ? "#f87171" : "#94a3b8",
+                      background: ongoing
+                        ? "rgba(239,68,68,0.15)"
+                        : "rgba(255,255,255,0.05)",
+                      border: ongoing ? "1px solid #7f1d1d" : "1px solid #334155",
+                      borderRadius: "4px",
+                      padding: "2px 8px",
+                    }}
+                  >
+                    {ev.duration_seconds !== null
+                      ? formatDuration(ev.duration_seconds)
+                      : "—"}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    marginTop: "8px",
+                    display: "grid",
+                    gridTemplateColumns: "auto 1fr",
+                    gap: "4px 12px",
+                    fontSize: "12px",
+                    color: "#64748b",
+                  }}
+                >
+                  <span style={{ color: "#475569" }}>Started</span>
+                  <span style={{ fontFamily: "monospace", color: "#94a3b8" }}>
+                    {formatUtc(ev.started_at)}
+                  </span>
+                  <span style={{ color: "#475569" }}>Ended</span>
+                  <span style={{ fontFamily: "monospace", color: ongoing ? "#f87171" : "#94a3b8" }}>
+                    {ev.ended_at ? formatUtc(ev.ended_at) : "still down"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Home() {
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900">EdgeIQ Dashboard</h1>
-        <p className="mt-2 text-sm text-gray-600">Connected and ready.</p>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#0e1117",
+        color: "#fafafa",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        padding: "40px 24px",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "640px",
+          margin: "0 auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: "24px",
+        }}
+      >
+        <div>
+          <h1
+            style={{
+              fontSize: "22px",
+              fontWeight: 700,
+              color: "#f1f5f9",
+              marginBottom: "4px",
+              marginTop: 0,
+            }}
+          >
+            EdgeIQ Dashboard
+          </h1>
+          <p style={{ fontSize: "14px", color: "#64748b", marginTop: 0 }}>
+            Connected and ready.
+          </p>
+        </div>
+        <DbEventsPanel />
       </div>
     </div>
   );

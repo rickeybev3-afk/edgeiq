@@ -184,9 +184,13 @@ def _save_owner_prefs(prefs: dict) -> None:
 
 
 _DB_CACHE_TTL = 10
+_DB_EVENTS_MAX = 50
 _db_cache_lock = threading.Lock()
 _db_reachable_cache: Optional[bool] = None  # None until first check completes
 _db_cache_checked_at: Optional[datetime] = None
+# Each entry: {"started_at": str, "ended_at": str|None, "duration_seconds": int|None}
+_db_events: list = []
+_db_current_outage_start: Optional[datetime] = None
 
 
 def _send_db_alert(message: str) -> None:
@@ -209,30 +213,61 @@ def _send_db_alert(message: str) -> None:
 
 def _refresh_db_cache() -> None:
     """Background thread: refresh the DB reachability cache every _DB_CACHE_TTL seconds."""
-    global _db_reachable_cache, _db_cache_checked_at
+    global _db_reachable_cache, _db_cache_checked_at, _db_events, _db_current_outage_start
     while True:
         result = _check_db_reachable()
         with _db_cache_lock:
             previous = _db_reachable_cache
+            now = datetime.now(timezone.utc)
             if previous is not None and result != previous:
                 # Genuine transition — previous state was known, and it changed.
-                ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                 if result:
                     msg = f"[deploy_server] DB came back online at {ts}"
                     print(msg, flush=True)
                     _send_db_alert(f":white_check_mark: EdgeIQ DB recovery: database is back online at {ts}")
+                    if _db_current_outage_start is not None:
+                        duration = int((now - _db_current_outage_start).total_seconds())
+                        event = {
+                            "started_at": _db_current_outage_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "ended_at": ts,
+                            "duration_seconds": duration,
+                        }
+                        _db_events.append(event)
+                        if len(_db_events) > _DB_EVENTS_MAX:
+                            _db_events = _db_events[-_DB_EVENTS_MAX:]
+                        _db_current_outage_start = None
                 else:
                     msg = f"[deploy_server] DB became unreachable at {ts}"
                     print(msg, flush=True)
                     _send_db_alert(f":red_circle: EdgeIQ DB outage: database became unreachable at {ts}")
+                    _db_current_outage_start = now
             elif previous is None:
                 # First check — establish baseline, log but do not alert externally.
-                ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                 state = "reachable" if result else "unreachable"
                 print(f"[deploy_server] DB initial state at {ts}: {state}", flush=True)
+                if not result:
+                    _db_current_outage_start = now
             _db_reachable_cache = result
-            _db_cache_checked_at = datetime.now(timezone.utc)
+            _db_cache_checked_at = now
         time.sleep(_DB_CACHE_TTL)
+
+
+def _get_db_events() -> list:
+    """Return a copy of recent DB outage events (newest first)."""
+    with _db_cache_lock:
+        events = list(reversed(_db_events))
+        if _db_current_outage_start is not None:
+            now = datetime.now(timezone.utc)
+            duration = int((now - _db_current_outage_start).total_seconds())
+            ongoing = {
+                "started_at": _db_current_outage_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "ended_at": None,
+                "duration_seconds": duration,
+            }
+            events = [ongoing] + events
+        return events
 
 
 def _get_db_reachable() -> bool:
@@ -339,6 +374,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/credential-alerts":
             self._credential_alerts_get()
+            return
+        if path == "/api/db-events":
+            self._db_events_get()
             return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
@@ -490,6 +528,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
             self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _db_events_get(self):
+        """Return recent DB connectivity outage events as JSON."""
+        body = json.dumps({"events": _get_db_events()}).encode()
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
