@@ -7626,6 +7626,73 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm10.metric("Max Drawdown (R)", f"{abs(_max_dd_r)}R",
                                      help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim (shown as a positive magnitude)")
 
+                        # ── Marginal-trade summary (Bot Mode only) ────────────────────────
+                        if _rp_bot_mode and "TCS Floor" in _rp_df.columns and "TCS" in _rp_df.columns:
+                            _marginal_mask = (
+                                (_rp_df["TCS"] - _rp_df["TCS Floor"]).between(0, 5, inclusive="both")
+                            )
+                            _marg_df   = _rp_df[_marginal_mask]
+                            _comf_df   = _rp_df[~_marginal_mask]
+
+                            _marg_n    = len(_marg_df)
+                            _comf_n    = len(_comf_df)
+
+                            def _pct(wins, total):
+                                return round(wins / total * 100, 1) if total else None
+
+                            def _avgr(df):
+                                return round(df["R (MFE)"].mean(), 2) if len(df) else None
+
+                            _marg_wr   = _pct((_marg_df["P&L ($)"] > 0).sum(), _marg_n)
+                            _comf_wr   = _pct((_comf_df["P&L ($)"] > 0).sum(), _comf_n)
+                            _marg_avgr = _avgr(_marg_df)
+                            _comf_avgr = _avgr(_comf_df)
+
+                            _marg_pct_of_total = round(_marg_n / _total_trades * 100, 1) if _total_trades else 0
+
+                            st.markdown("---")
+                            st.markdown("#### 🟡 Marginal Entry Analysis *(TCS cleared floor by ≤ 5 pts)*")
+                            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                            _mc1.metric(
+                                "Marginal Trades",
+                                f"{_marg_n}  ({_marg_pct_of_total}%)",
+                                help="Trades where TCS − TCS Floor ≤ 5 (borderline entries)"
+                            )
+                            _mc2.metric(
+                                "Marginal Win Rate",
+                                f"{_marg_wr}%" if _marg_wr is not None else "—",
+                                delta=f"{round(_marg_wr - _comf_wr, 1):+.1f}pp vs comfortable" if (_marg_wr is not None and _comf_wr is not None) else None,
+                                delta_color="normal",
+                                help="Win rate for borderline entries only"
+                            )
+                            _mc3.metric(
+                                "Marginal Avg R",
+                                f"{_marg_avgr:+.2f}R" if _marg_avgr is not None else "—",
+                                delta=f"{round(_marg_avgr - _comf_avgr, 2):+.2f}R vs comfortable" if (_marg_avgr is not None and _comf_avgr is not None) else None,
+                                delta_color="normal",
+                                help="Average R (MFE) for borderline entries"
+                            )
+                            _mc4.metric(
+                                "Comfortable Trades",
+                                f"{_comf_n}  ({_comf_wr}%)" if _comf_wr is not None else f"{_comf_n}  (—)",
+                                help=f"Non-marginal trades (TCS cleared floor by > 5 pts) — count and win rate"
+                            )
+                            if _marg_n == 0:
+                                st.caption("No marginal entries in this sim — all trades cleared the TCS floor comfortably.")
+                            elif _comf_n == 0:
+                                st.caption(
+                                    "All trades in this sim are marginal (every entry cleared the floor by ≤ 5 pts). "
+                                    "There are no comfortable entries to compare against — consider raising the TCS floor."
+                                )
+                            elif _marg_wr is not None and _comf_wr is not None and _marg_wr < _comf_wr - 5:
+                                st.caption(
+                                    f"⚠️ Marginal entries underperform comfortable entries by "
+                                    f"**{round(_comf_wr - _marg_wr, 1)} pp** in win rate. "
+                                    "Consider raising the TCS floor to eliminate borderline trades."
+                                )
+                            else:
+                                st.caption("Marginal entries are performing in line with comfortable entries in this sim.")
+
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
 
                         _RP_CHART_OPTIONS = ["Equity ($)", "Cumulative R", "Both"]
