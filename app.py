@@ -311,6 +311,10 @@ _BACKFILL_STATUS = "/tmp/backfill_pipeline.status"
 # finally block, so even a UI "clear" during a run cannot start a second run.
 _BACKFILL_LOCK: threading.Lock = threading.Lock()
 
+# Cancel flag: set this event to request a graceful stop after the current
+# subprocess finishes its current batch iteration.
+_BACKFILL_CANCEL: threading.Event = threading.Event()
+
 
 def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | None = None, table: str | None = None):
     """Run backfill_close_prices.py then run_sim_backfill.py sequentially.
@@ -322,7 +326,42 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
     --start / --end so that only rows within the specified range are processed.
     table (None | "backtest_sim_runs" | "paper_trades") is forwarded as --table
     to limit processing to a single table; None means both tables are processed.
+
+    The _BACKFILL_CANCEL event can be set at any time to request a graceful
+    stop: the current subprocess is terminated and status is set to "cancelled".
     """
+    import time as _time_mod
+
+    def _run_step(cmd, label, log_fh, step_timeout: int = 7200):
+        """Launch *cmd*, stream output to *log_fh*, and honour cancel requests.
+
+        Returns the process exit code, or None if the step was cancelled.
+        Raises subprocess.TimeoutExpired (after killing the process) if the
+        step runs longer than *step_timeout* seconds.
+        """
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fh, stderr=subprocess.STDOUT,
+            cwd=script_dir,
+        )
+        _deadline = _time_mod.monotonic() + step_timeout
+        while proc.poll() is None:
+            if _BACKFILL_CANCEL.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                log_fh.write(f"\n[{label} — terminated by cancel request]\n")
+                log_fh.flush()
+                return None  # Signal: cancelled
+            if _time_mod.monotonic() > _deadline:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(cmd, step_timeout)
+            _time_mod.sleep(0.5)
+        return proc.returncode
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     backfill_cmd = [sys.executable, os.path.join(script_dir, "backfill_close_prices.py")]
     if start_date:
@@ -333,28 +372,47 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
         backfill_cmd += ["--table", table]
     try:
         with open(_BACKFILL_LOG, "w", buffering=1) as lf:
+            # ── Step 1 ────────────────────────────────────────────────────────
             lf.write("=== Step 1 of 2: Fetching EOD close prices from Alpaca ===\n\n")
             lf.flush()
-            r1 = subprocess.run(
-                backfill_cmd,
-                stdout=lf, stderr=subprocess.STDOUT,
-                cwd=script_dir, timeout=7200,
-            )
-            lf.write(f"\n[Step 1 complete — exit code {r1.returncode}]\n\n")
-            if r1.returncode != 0:
+            rc1 = _run_step(backfill_cmd, "Step 1", lf)
+            if rc1 is None:
+                # Cancelled during step 1
+                lf.write("\n=== Cancelled by operator ===\n")
+                lf.flush()
+                with open(_BACKFILL_STATUS, "w") as sf:
+                    sf.write("cancelled")
+                return
+            lf.write(f"\n[Step 1 complete — exit code {rc1}]\n\n")
+            if rc1 != 0:
                 lf.write("[Pipeline halted: step 1 exited with an error. See output above.]\n")
                 with open(_BACKFILL_STATUS, "w") as sf:
                     sf.write("error")
                 return
+
+            # ── Cancel check between steps ────────────────────────────────────
+            if _BACKFILL_CANCEL.is_set():
+                lf.write("\n=== Cancelled by operator ===\n")
+                lf.flush()
+                with open(_BACKFILL_STATUS, "w") as sf:
+                    sf.write("cancelled")
+                return
+
+            # ── Step 2 ────────────────────────────────────────────────────────
             lf.write("=== Step 2 of 2: Recomputing eod_pnl_r ===\n\n")
             lf.flush()
-            r2 = subprocess.run(
+            rc2 = _run_step(
                 [sys.executable, os.path.join(script_dir, "run_sim_backfill.py")],
-                stdout=lf, stderr=subprocess.STDOUT,
-                cwd=script_dir, timeout=7200,
+                "Step 2", lf,
             )
-            lf.write(f"\n[Step 2 complete — exit code {r2.returncode}]\n\n")
-            if r2.returncode != 0:
+            if rc2 is None:
+                lf.write("\n=== Cancelled by operator ===\n")
+                lf.flush()
+                with open(_BACKFILL_STATUS, "w") as sf:
+                    sf.write("cancelled")
+                return
+            lf.write(f"\n[Step 2 complete — exit code {rc2}]\n\n")
+            if rc2 != 0:
                 lf.write("[Pipeline halted: step 2 exited with an error. See output above.]\n")
                 with open(_BACKFILL_STATUS, "w") as sf:
                     sf.write("error")
@@ -5412,6 +5470,7 @@ with st.sidebar:
                     os.remove(_p)
                 except FileNotFoundError:
                     pass
+            _BACKFILL_CANCEL.clear()  # Reset any previous cancel request
             if _BACKFILL_LOCK.acquire(blocking=False):
                 with open(_BACKFILL_STATUS, "w") as _sf:
                     _sf.write("running")
@@ -5426,7 +5485,11 @@ with st.sidebar:
 
         if _bf_lock_held:
             # A pipeline is actively running (lock is held by the background thread)
-            st.info("⏳ Backfill is running in the background…")
+            _cancelling_requested = _BACKFILL_CANCEL.is_set()
+            if _cancelling_requested:
+                st.warning("⏹ Cancelling… waiting for the current step to stop.")
+            else:
+                st.info("⏳ Backfill is running in the background…")
             # Show a live tail of the log so operators can track progress without
             # manual clicking.  We read the log, display the last 30 lines + a line
             # count, then sleep briefly and trigger an automatic rerun.
@@ -5462,6 +5525,16 @@ with st.sidebar:
                     st.caption("Log not yet available — auto-refreshing…")
             else:
                 st.caption("Log not yet available — auto-refreshing…")
+            # Cancel button — only shown when a cancel has not already been requested
+            if not _cancelling_requested:
+                if st.button(
+                    "⏹ Cancel Backfill",
+                    use_container_width=True,
+                    key="bf_cancel_btn",
+                    type="secondary",
+                ):
+                    _BACKFILL_CANCEL.set()
+                    st.rerun()
             import time as _time
             _time.sleep(3)
             st.rerun()
@@ -5540,6 +5613,14 @@ with st.sidebar:
                 else:
                     st.warning("A backfill is already in progress — please wait.")
 
+        elif _bf_file_status == "cancelled":
+            st.warning("⏹ Backfill was cancelled by the operator.")
+            if st.button("▶️ Start New Run", use_container_width=True, key="bf_after_cancel_btn"):
+                if _bf_launch():
+                    st.rerun()
+                else:
+                    st.warning("A backfill is already in progress — please wait.")
+
         elif _bf_file_status == "error":
             st.error("❌ Backfill encountered an error. Check the log below.")
             if st.button("🔄 Retry", use_container_width=True, key="bf_retry_btn"):
@@ -5562,7 +5643,7 @@ with st.sidebar:
         if os.path.exists(_BACKFILL_LOG):
             with st.expander(
                 "📋 View Log",
-                expanded=(_bf_file_status in ("done", "error")),
+                expanded=(_bf_file_status in ("done", "error", "cancelled")),
             ):
                 try:
                     with open(_BACKFILL_LOG) as _lf:
