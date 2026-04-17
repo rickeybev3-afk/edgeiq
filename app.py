@@ -18100,14 +18100,51 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_log_base_cols = ["trade_date", "ticker", "tcs", "predicted",
                               "actual_outcome", "follow_thru_pct", "win_loss",
                               "mae", "mfe", "entry_time", "exit_trigger",
-                              "false_break_up", "false_break_down", "min_tcs_filter"]
+                              "false_break_up", "false_break_down", "min_tcs_filter",
+                              "ib_range_pct", "vwap_at_ib"]
         _pt_include_sim_outcome = "sim_outcome" in _pt_df.columns
         if _pt_include_sim_outcome:
             _pt_log_base_cols = _pt_log_base_cols + ["sim_outcome"]
-        _pt_log_cols = [c for c in _pt_log_base_cols if c in _pt_df.columns]
-        _pt_log_show = _pt_df[_pt_log_cols].sort_values(
+        # Also pull ib_high/ib_low temporarily to compute VWAP alignment
+        _pt_log_vwap_helpers = [c for c in ["ib_high", "ib_low"] if c in _pt_df.columns]
+        _pt_log_cols_all = list(dict.fromkeys(
+            [c for c in _pt_log_base_cols if c in _pt_df.columns] + _pt_log_vwap_helpers
+        ))
+        _pt_log_show = _pt_df[_pt_log_cols_all].sort_values(
             ["trade_date", "ticker"], ascending=[False, True]
         ).reset_index(drop=True)
+
+        # Compute VWAP alignment: True = aligned with predicted direction, False = misaligned.
+        # Rule: compare the IB midpoint ((ib_high + ib_low) / 2) to vwap_at_ib.
+        #   Long/Up predicted → aligned when IB midpoint > VWAP (price consolidated above VWAP)
+        #   Short/Down predicted → aligned when IB midpoint < VWAP (price consolidated below VWAP)
+        # ib_high/ib_low are pulled temporarily for this calculation then dropped from display.
+        # If either value is missing, returns None → rendered as a grey (neutral) cell.
+        def _compute_vwap_aligned(row):
+            vwap = row.get("vwap_at_ib")
+            ib_h = row.get("ib_high")
+            ib_l = row.get("ib_low")
+            pred = str(row.get("predicted", "")).lower()
+            try:
+                vwap = float(vwap)
+                ib_mid = (float(ib_h) + float(ib_l)) / 2
+            except (TypeError, ValueError):
+                return None
+            if "long" in pred or "up" in pred:
+                return ib_mid > vwap
+            if "short" in pred or "down" in pred:
+                return ib_mid < vwap
+            return None
+
+        if "vwap_at_ib" in _pt_log_show.columns:
+            _pt_log_show["_vwap_aligned"] = _pt_log_show.apply(_compute_vwap_aligned, axis=1)
+        else:
+            _pt_log_show["_vwap_aligned"] = None
+
+        # Drop the temporary IB helper columns (not shown in table)
+        _pt_log_show = _pt_log_show.drop(
+            columns=[c for c in _pt_log_vwap_helpers if c in _pt_log_show.columns]
+        )
 
         # Derive the human-readable "Sim" annotation from the sorted slice,
         # then drop the raw sim_outcome column so it doesn't appear in the table.
@@ -18123,6 +18160,12 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             _pt_log_show = _pt_log_show.drop(columns=["sim_outcome"])
 
         _pt_log_has_sim_col = "Sim" in _pt_log_show.columns
+        _pt_log_has_ib_pct   = "ib_range_pct" in _pt_log_show.columns
+        _pt_log_has_vwap     = "vwap_at_ib" in _pt_log_show.columns
+
+        _PT_GREEN_STRONG = "background-color:rgba(76,175,80,0.30);color:#66bb6a;font-weight:700"
+        _PT_RED_STRONG   = "background-color:rgba(239,83,80,0.30);color:#ef5350;font-weight:700"
+        _PT_GREY_CELL    = "background-color:rgba(144,164,174,0.12);color:#90a4ae"
 
         def _pt_row_color(row):
             if _pt_log_has_sim_col and str(row.get("Sim", "")).startswith("⚠ No sim"):
@@ -18140,15 +18183,53 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 base = "background-color: rgba(239,83,80,0.08)"
                 hi   = "background-color: rgba(239,83,80,0.18); color:#ef5350; font-weight:700"
             else:
-                grey = "background-color: rgba(144,164,174,0.08); color:#90a4ae"
-                return [grey] * len(row)
-            return [
-                hi if col == "win_loss" else base
-                for col in row.index
-            ]
+                base = "background-color: rgba(144,164,174,0.08); color:#90a4ae"
+                hi   = base
 
-        _pt_log_styled = _pt_log_show.style.apply(_pt_row_color, axis=1)
-        st.dataframe(_pt_log_styled, use_container_width=True, hide_index=True)
+            result = []
+            for col in row.index:
+                if col == "win_loss":
+                    result.append(hi)
+                elif col == "ib_range_pct" and _pt_log_has_ib_pct:
+                    try:
+                        v = float(row["ib_range_pct"])
+                        result.append(_PT_GREEN_STRONG if v < 10 else _PT_RED_STRONG)
+                    except (TypeError, ValueError):
+                        result.append(_PT_GREY_CELL)
+                elif col == "vwap_at_ib" and _pt_log_has_vwap:
+                    aligned = row.get("_vwap_aligned")
+                    if aligned is True:
+                        result.append(_PT_GREEN_STRONG)
+                    elif aligned is False:
+                        result.append(_PT_RED_STRONG)
+                    else:
+                        result.append(_PT_GREY_CELL)
+                elif col == "_vwap_aligned":
+                    result.append("")
+                else:
+                    result.append(base)
+            return result
+
+        _pt_col_cfg = {}
+        if _pt_log_has_ib_pct:
+            _pt_col_cfg["ib_range_pct"] = st.column_config.NumberColumn(
+                "IB Width %", format="%.2f%%", help="IB range as % of open price · green < 10% (pass)"
+            )
+        if _pt_log_has_vwap:
+            _pt_col_cfg["vwap_at_ib"] = st.column_config.NumberColumn(
+                "VWAP", format="$%.2f", help="VWAP at IB close · green = aligned with predicted direction"
+            )
+
+        _pt_log_styled = (
+            _pt_log_show.style.apply(_pt_row_color, axis=1)
+            .hide(subset=["_vwap_aligned"], axis="columns")
+        )
+        st.dataframe(
+            _pt_log_styled,
+            use_container_width=True,
+            hide_index=True,
+            column_config=_pt_col_cfg if _pt_col_cfg else None,
+        )
         st.caption(
             f"Showing {len(_pt_log_show)} paper trades from last 21 days · "
             "Only TCS-filtered qualifying setups are stored here"
