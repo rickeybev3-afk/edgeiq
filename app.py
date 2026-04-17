@@ -12813,8 +12813,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         unsafe_allow_html=True,
                     )
                     with st.expander(_tk_expander_label, expanded=bool(st.session_state.get(_tk_exp_key, False)), key=_tk_exp_key):
-                        if _tk_override_active:
-                            st.caption("✱ = custom TCS floor override is active for this ticker")
                         if _tk_has_best:
                             st.markdown(
                                 f'<div style="background:#1e3a2a;border-radius:8px;padding:8px 14px;'
