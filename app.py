@@ -13791,6 +13791,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f"green = pass (below threshold), orange = near threshold (within 20%), "
                                     f"red = filtered out (at or above threshold)"
                                 )
+                            # ── Delta R winner filter ─────────────────────────────────
+                            _dd_dr_filter_key = f"dd_delta_r_filter_{_tk_name}_{_tk_drill_floor}"
+                            _dd_dr_filter = "All"
+                            _dd_unfiltered_total = len(_tk_drill_display)
+                            if _dd_show_delta_r:
+                                _dd_dr_filter = st.radio(
+                                    "Filter rows:",
+                                    ["All", "Tiered won (ΔR > 0)", "EOD won (ΔR < 0)"],
+                                    horizontal=True,
+                                    key=_dd_dr_filter_key,
+                                    label_visibility="visible",
+                                )
+                                if _dd_dr_filter == "Tiered won (ΔR > 0)":
+                                    _dd_dr_mask = pd.to_numeric(
+                                        _tk_drill_display["Delta R"], errors="coerce"
+                                    ) > 0
+                                    _tk_drill_display = _tk_drill_display[_dd_dr_mask].copy()
+                                elif _dd_dr_filter == "EOD won (ΔR < 0)":
+                                    _dd_dr_mask = pd.to_numeric(
+                                        _tk_drill_display["Delta R"], errors="coerce"
+                                    ) < 0
+                                    _tk_drill_display = _tk_drill_display[_dd_dr_mask].copy()
                             _dd_rows_html = ""
                             for _, _dd_row in _tk_drill_display.iterrows():
                                 _dd_date   = str(_dd_row["Date"])
@@ -13895,13 +13917,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     else "#ef5350" if _dr_total > 0 and _dr_avg < 0
                                     else "#cfd8dc"
                                 )
-                                if _dr_total > 0:
+                                if _dr_total == 0 and _dd_dr_filter != "All":
+                                    _dr_zero_html = (
+                                        '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;'
+                                        'font-size:12px;font-family:monospace;color:#90caf9;'
+                                        'padding:6px 10px;margin-bottom:6px;'
+                                        'background:#0d2137;border-radius:6px;border-left:3px solid #546e7a;">'
+                                        f'<span style="color:#90caf9;font-weight:700;">Delta R summary</span>'
+                                        f' &nbsp;·&nbsp; '
+                                        f'<span style="color:#cfd8dc;">0 of {_dd_unfiltered_total} trade{"s" if _dd_unfiltered_total != 1 else ""} match this filter</span>'
+                                        '</div>'
+                                    )
+                                    st.markdown(_dr_zero_html, unsafe_allow_html=True)
+                                elif _dr_total > 0:
                                     _dr_pct = _dr_pos / _dr_total * 100
                                     _dr_pct_str = f"{_dr_pct:.0f}%"
+                                    _dr_count_label = (
+                                        f'{_dr_total} of {_dd_unfiltered_total} trade{"s" if _dd_unfiltered_total != 1 else ""}'
+                                        if _dd_dr_filter != "All"
+                                        else f'{_dr_total} trade{"s" if _dr_total != 1 else ""}'
+                                    )
                                     _dr_caption_parts = [
                                         f'<span style="color:#90caf9;font-weight:700;">'
                                         f'Delta R summary</span>',
-                                        f'<span style="color:#cfd8dc;">{_dr_total} trade{"s" if _dr_total != 1 else ""} with R data</span>',
+                                        f'<span style="color:#cfd8dc;">{_dr_count_label} with R data</span>',
                                         f'<span style="color:#66bb6a;">&#9650; Tiered won: {_dr_pos} ({_dr_pct_str})</span>',
                                         f'<span style="color:#ef5350;">&#9660; EOD won: {_dr_neg}</span>',
                                     ]
