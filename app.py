@@ -8196,6 +8196,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "'All' = include every trade regardless of floor."
                                 ),
                             )
+                            _rp_total_unfiltered = len(_rp_df)
                             if _rp_tcs_floor_filter != "All":
                                 _rp_floor_threshold = int(_rp_tcs_floor_filter)
                                 _rp_df = _rp_df[
@@ -8237,7 +8238,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             else:
                                 _rp_offset_sign_res = f"+{_rp_tcs_offset}" if _rp_tcs_offset > 0 else str(_rp_tcs_offset)
                                 _rp_floor_label = f"≈ TCS {_rp_effective_floor} (base 50 + offset {_rp_offset_sign_res})"
-                            st.caption(f"🤖 **Bot mode** · Effective TCS floor applied: **{_rp_floor_label}**")
+                            _rp_caption = f"🤖 **Bot mode** · Effective TCS floor applied: **{_rp_floor_label}**"
+                            if "TCS Floor" in _rp_df.columns and _rp_tcs_floor_filter != "All":
+                                _rp_caption += (
+                                    f" · Showing TCS Floor ≥ {_rp_tcs_floor_filter} only"
+                                    f" ({_total_trades} of {_rp_total_unfiltered} trades)"
+                                )
+                            st.caption(_rp_caption)
 
                         _sm1, _sm2, _sm3, _sm4, _sm5 = st.columns(5)
                         _sm1.metric("Net P&L", f"${_total_pnl:,.0f}", f"{_net_return:+.1f}%")
