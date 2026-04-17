@@ -11244,6 +11244,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 sign = "+" if avg >= 0 else ""
                 return f"{sign}{avg:.3f}R"
 
+            def _fmt_delta_r(eod_vals, tiered_vals):
+                if not eod_vals or not tiered_vals:
+                    return "—"
+                delta = (sum(tiered_vals) / len(tiered_vals)) - (sum(eod_vals) / len(eod_vals))
+                sign = "+" if delta >= 0 else ""
+                return f"{sign}{delta:.3f}R"
+
+            def _delta_num(eod_vals, tiered_vals):
+                if not eod_vals or not tiered_vals:
+                    return float("-inf")
+                return (sum(tiered_vals) / len(tiered_vals)) - (sum(eod_vals) / len(eod_vals))
+
             for _tk, _tgrp in _bt_df.groupby("ticker"):
                 _tw   = (_tgrp["win_loss"] == "Win").sum()
                 _tl   = (_tgrp["win_loss"] == "Loss").sum()
@@ -11364,6 +11376,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _tk_eod_intra_num   = (sum(_tk_eod_intra_vals)   / len(_tk_eod_intra_vals))   if _tk_eod_intra_vals   else float("-inf")
                 _tk_tiered_intra_num= (sum(_tk_tiered_intra_vals)/ len(_tk_tiered_intra_vals)) if _tk_tiered_intra_vals else float("-inf")
 
+                _tk_delta_morn_str  = _fmt_delta_r(_tk_eod_morn_vals,  _tk_tiered_morn_vals)
+                _tk_delta_intra_str = _fmt_delta_r(_tk_eod_intra_vals, _tk_tiered_intra_vals)
+                _tk_delta_morn_num  = _delta_num(_tk_eod_morn_vals,    _tk_tiered_morn_vals)
+                _tk_delta_intra_num = _delta_num(_tk_eod_intra_vals,   _tk_tiered_intra_vals)
+
                 # ── Per-ticker max-divergence (equity $ vs cumulative R) ───────
                 _tk_max_div_val = 0.0
                 _tk_div_label   = "—"
@@ -11450,29 +11467,35 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Tiered Exit R":  _tk_tiered_str,
                     "EOD R (Morn)":   _tk_eod_morn_str,
                     "Tiered R (Morn)":_tk_tiered_morn_str,
+                    "Δ Morn":         _tk_delta_morn_str,
                     "EOD R (Intra)":  _tk_eod_intra_str,
                     "Tiered R (Intra)":_tk_tiered_intra_str,
+                    "Δ Intra":        _tk_delta_intra_str,
                     "Max Divergence": _tk_div_label,
                     "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
-                    "_sort_win_pct":      _twr,
-                    "_sort_eod_r":        _tk_eod_num,
-                    "_sort_tiered_r":     _tk_tiered_num,
-                    "_sort_div_mag":      abs(_tk_max_div_val),
-                    "_sort_eod_morn_r":   _tk_eod_morn_num,
-                    "_sort_tiered_morn_r":_tk_tiered_morn_num,
-                    "_sort_eod_intra_r":  _tk_eod_intra_num,
+                    "_sort_win_pct":       _twr,
+                    "_sort_eod_r":         _tk_eod_num,
+                    "_sort_tiered_r":      _tk_tiered_num,
+                    "_sort_div_mag":       abs(_tk_max_div_val),
+                    "_sort_eod_morn_r":    _tk_eod_morn_num,
+                    "_sort_tiered_morn_r": _tk_tiered_morn_num,
+                    "_sort_eod_intra_r":   _tk_eod_intra_num,
                     "_sort_tiered_intra_r":_tk_tiered_intra_num,
+                    "_sort_delta_morn":    _tk_delta_morn_num,
+                    "_sort_delta_intra":   _tk_delta_intra_num,
                 })
             _sort_col_map = {
-                "Win %":            ("_sort_win_pct",       False),
-                "EOD Hold R":       ("_sort_eod_r",         False),
-                "Tiered Exit R":    ("_sort_tiered_r",      False),
-                "Divergence":       ("_sort_div_mag",       False),
-                "EOD R (Morn)":     ("_sort_eod_morn_r",    False),
-                "Tiered R (Morn)":  ("_sort_tiered_morn_r", False),
-                "EOD R (Intra)":    ("_sort_eod_intra_r",   False),
-                "Tiered R (Intra)": ("_sort_tiered_intra_r",False),
+                "Win %":            ("_sort_win_pct",        False),
+                "EOD Hold R":       ("_sort_eod_r",          False),
+                "Tiered Exit R":    ("_sort_tiered_r",       False),
+                "Divergence":       ("_sort_div_mag",        False),
+                "EOD R (Morn)":     ("_sort_eod_morn_r",     False),
+                "Tiered R (Morn)":  ("_sort_tiered_morn_r",  False),
+                "EOD R (Intra)":    ("_sort_eod_intra_r",    False),
+                "Tiered R (Intra)": ("_sort_tiered_intra_r", False),
+                "Δ Morn":           ("_sort_delta_morn",     False),
+                "Δ Intra":          ("_sort_delta_intra",    False),
             }
             _r_filter_col_map = {
                 "EOD Hold R":    "_sort_eod_r",
@@ -11609,6 +11632,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 columns=[
                     "_sort_win_pct", "_sort_eod_r", "_sort_tiered_r", "_sort_div_mag",
                     "_sort_eod_morn_r", "_sort_tiered_morn_r", "_sort_eod_intra_r", "_sort_tiered_intra_r",
+                    "_sort_delta_morn", "_sort_delta_intra",
                 ],
                 errors="ignore",
             )
@@ -11667,7 +11691,29 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     return ["background-color: #2a1a0a; color: #ffd600; font-weight: bold"] * len(row)
                 return [""] * len(row)
 
+            def _style_delta_cell(val):
+                if val == "—" or val is None:
+                    return ""
+                try:
+                    num = float(str(val).replace("R", "").replace("+", ""))
+                    if num >= 0:
+                        return "color:#66bb6a;font-weight:700"
+                    else:
+                        return "color:#ef5350;font-weight:700"
+                except (ValueError, TypeError):
+                    return ""
+
+            _delta_cols_present = [c for c in ["Δ Morn", "Δ Intra"] if c in _tkr_display_df.columns]
             _styled_summary = _tkr_display_df.style.apply(_style_rows, axis=1)
+            if _delta_cols_present:
+                try:
+                    _styled_summary = _styled_summary.map(
+                        _style_delta_cell, subset=_delta_cols_present
+                    )
+                except AttributeError:
+                    _styled_summary = _styled_summary.applymap(
+                        _style_delta_cell, subset=_delta_cols_present
+                    )
             if _r_filter_is_active:
                 st.markdown(
                     f'<div style="font-size:12px;color:#90a4ae;margin-bottom:4px;">'
@@ -11737,6 +11783,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "help or hurt specifically on intraday setups."
                         ),
                     ),
+                    "Δ Morn": st.column_config.TextColumn(
+                        "Δ Morn",
+                        help=(
+                            "Tiered R (Morn) − EOD R (Morn): how much tiered exits add or subtract "
+                            "versus holding to close on morning scan trades. "
+                            "Green = tiered exits win; red = EOD hold wins. "
+                            "'—' when either side has no data."
+                        ),
+                    ),
+                    "Δ Intra": st.column_config.TextColumn(
+                        "Δ Intra",
+                        help=(
+                            "Tiered R (Intra) − EOD R (Intra): how much tiered exits add or subtract "
+                            "versus holding to close on intraday scan trades. "
+                            "Green = tiered exits win; red = EOD hold wins. "
+                            "'—' when either side has no data."
+                        ),
+                    ),
                 },
             )
             if _div_thresh is not None and _flagged_div_indices:
@@ -11793,6 +11857,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "Max Divergence = trade where position sizing most diverged from raw edge (Amplified/Dampened)  · "
                 "EOD R (Morn) / Tiered R (Morn) = avg R for morning scan trades only  · "
                 "EOD R (Intra) / Tiered R (Intra) = avg R for intraday scan trades only  · "
+                "Δ Morn / Δ Intra = Tiered R − EOD R per scan type (green = tiered wins, red = EOD hold wins)  · "
                 "'—' = no trades of that scan type with R data for this ticker"
             )
             if _best_tcs_options:
