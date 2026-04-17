@@ -578,6 +578,33 @@ _cmp_feed_sync.html("""
 </script>
 """, height=0)
 
+# ── Global R-column sync listener (BroadcastChannel) ──────────────────────────
+# Installs a single BroadcastChannel listener on window.parent so that when the
+# R-column selection changes in any tab, all other open tabs update their URL
+# query param and reload — keeping the selection in sync across tabs instantly.
+import streamlit.components.v1 as _cmp_r_col_sync
+_cmp_r_col_sync.html("""
+<script>
+(function() {
+    var _p = window.parent;
+    if (_p._edgeiqRColSyncInstalled) return;
+    _p._edgeiqRColSyncInstalled = true;
+    try {
+        var _bc = new _p.BroadcastChannel('edgeiq_r_col_sync');
+        _bc.onmessage = function(e) {
+            var rCols = e.data && e.data.rCols;
+            if (typeof rCols !== 'string') return;
+            localStorage.setItem('rp_r_col_select', rCols);
+            var url = new URL(_p.location.href);
+            if (url.searchParams.get('rp_r_cols') === rCols) return;
+            url.searchParams.set('rp_r_cols', rCols);
+            _p.location.replace(url.toString());
+        };
+    } catch(e) {}
+})();
+</script>
+""", height=0)
+
 # ── Startup / configuration error banner ──────────────────────────────────────
 # _startup_errors is populated at import time in backend.py and surfaced here
 # so operators see misconfigured secrets immediately instead of silent failures.
@@ -10235,7 +10262,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         if st.query_params.get("rp_r_cols") != _r_cols_serialised:
                             st.query_params["rp_r_cols"] = _r_cols_serialised
                         _cmp_r_col.html(
-                            f"<script>localStorage.setItem('rp_r_col_select', {repr(_r_cols_serialised)});</script>",
+                            f"<script>(function(){{var _v={repr(_r_cols_serialised)};var _prev=localStorage.getItem('rp_r_col_select');localStorage.setItem('rp_r_col_select',_v);if(_prev!==_v){{try{{var _bc=new BroadcastChannel('edgeiq_r_col_sync');_bc.postMessage({{rCols:_v}});_bc.close();}}catch(e){{}}}}}})()</script>",
                             height=0,
                         )
                         # Drop unselected R columns from the export dataframe.
@@ -12713,7 +12740,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 if st.query_params.get("rp_r_cols") != _sw_r_serialised:
                     st.query_params["rp_r_cols"] = _sw_r_serialised
                 _cmp_sw_r.html(
-                    f"<script>localStorage.setItem('rp_r_col_select', {repr(_sw_r_serialised)});</script>",
+                    f"<script>(function(){{var _v={repr(_sw_r_serialised)};var _prev=localStorage.getItem('rp_r_col_select');localStorage.setItem('rp_r_col_select',_v);if(_prev!==_v){{try{{var _bc=new BroadcastChannel('edgeiq_r_col_sync');_bc.postMessage({{rCols:_v}});_bc.close();}}catch(e){{}}}}}})()</script>",
                     height=0,
                 )
 
