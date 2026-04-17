@@ -18621,6 +18621,59 @@ ALTER TABLE backtest_sim_runs
                 f"Click **Reset** to clear the sentinel and re-queue "
                 f"{'them' if _pt_rs_sentinel_count != 1 else 'it'} for backfill."
             )
+            # ── Per-ticker breakdown ──────────────────────────────────────────
+            _pt_rs_stats = get_paper_trades_tiered_sentinel_stats(
+                user_id=_AUTH_USER_ID,
+                ticker=_pt_rs_ticker_clean,
+                date_from=_pt_rs_from_str,
+                date_to=_pt_rs_to_str,
+            )
+            _pt_rs_top_tickers          = _pt_rs_stats.get("top_tickers", [])
+            _pt_rs_total_tickers        = _pt_rs_stats.get("total_tickers", len(_pt_rs_top_tickers))
+            _pt_rs_ticker_list_complete = _pt_rs_stats.get("ticker_list_complete", True)
+            if _pt_rs_top_tickers:
+                _pt_rs_ticker_badges = "".join(
+                    f'<span style="display:inline-block; background:#1a2744; border:1px solid #263260; '
+                    f'border-radius:4px; padding:2px 8px; margin:2px 4px 2px 0; font-family:monospace; '
+                    f'font-size:11px; color:#90a4ae;">'
+                    f'{t["ticker"]} <span style="color:#546e7a;">×{t["count"]}</span></span>'
+                    for t in _pt_rs_top_tickers
+                )
+                _pt_rs_shown_count = len(_pt_rs_top_tickers)
+                _pt_rs_more_hidden = _pt_rs_total_tickers - _pt_rs_shown_count
+                if _pt_rs_more_hidden > 0:
+                    _pt_rs_more_note = (
+                        f'<span style="font-size:10px; color:#37474f;">'
+                        f' + {_pt_rs_more_hidden} more ticker'
+                        f'{"s" if _pt_rs_more_hidden != 1 else ""} not shown</span>'
+                    )
+                elif not _pt_rs_ticker_list_complete:
+                    _pt_rs_more_note = (
+                        f'<span style="font-size:10px; color:#37474f;">'
+                        f' + additional tickers not shown</span>'
+                    )
+                else:
+                    _pt_rs_more_note = ""
+                if _pt_rs_ticker_list_complete:
+                    _pt_rs_tickers_label = (
+                        f'{_pt_rs_total_tickers} ticker'
+                        f'{"s" if _pt_rs_total_tickers != 1 else ""} affected'
+                    )
+                else:
+                    _pt_rs_tickers_label = (
+                        f'at least {_pt_rs_total_tickers} ticker'
+                        f'{"s" if _pt_rs_total_tickers != 1 else ""} affected'
+                    )
+                st.markdown(
+                    f'<div style="background:#020813; border:1px solid #263260; border-radius:8px; '
+                    f'padding:10px 16px; margin-bottom:12px;">'
+                    f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+                    f'letter-spacing:1.5px; font-weight:700; font-family:monospace; margin-bottom:6px;">'
+                    f'Tickers most affected · {_pt_rs_tickers_label}</div>'
+                    f'<div>{_pt_rs_ticker_badges}{_pt_rs_more_note}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
         else:
             st.success(f"No sentinel-stamped rows found{_pt_rs_scope}.")
 

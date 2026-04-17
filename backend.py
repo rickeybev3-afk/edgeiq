@@ -9037,6 +9037,94 @@ def reset_paper_trades_tiered_sentinel(
         return {"reset": 0, "error": str(e)}
 
 
+def get_paper_trades_tiered_sentinel_stats(
+    user_id: str = "",
+    ticker: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> dict:
+    """Return a per-ticker breakdown of paper_trades rows stamped with the unavailability sentinel.
+
+    Rows with tiered_pnl_r == TIERED_PNL_SENTINEL (-9999) were retired because
+    Alpaca returned no bar data at the time of the backfill.  This function lets
+    operators see which tickers are affected most, without transferring all rows.
+
+    Parameters
+    ----------
+    user_id   : Scope to a single user (empty = all users).
+    ticker    : Exact ticker symbol filter (empty = all tickers).
+    date_from : Lower bound on trade_date, inclusive (YYYY-MM-DD, empty = no lower bound).
+    date_to   : Upper bound on trade_date, inclusive (YYYY-MM-DD, empty = no upper bound).
+
+    Returns
+    -------
+    dict with keys:
+      total_sentinel       – int, exact count of sentinel-stamped rows
+      total_tickers        – int, number of distinct tickers affected
+      top_tickers          – list of {"ticker": str, "count": int} sorted descending (top 10)
+      ticker_list_complete – bool, True when all affected rows were seen during aggregation
+    """
+    if not supabase:
+        return {"total_sentinel": 0, "total_tickers": 0, "top_tickers": [],
+                "ticker_list_complete": True}
+    try:
+        def _base_q():
+            q = (
+                supabase.table("paper_trades")
+                .eq("tiered_pnl_r", TIERED_PNL_SENTINEL)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            if ticker:
+                q = q.eq("ticker", ticker.upper())
+            if date_from:
+                q = q.gte("trade_date", date_from)
+            if date_to:
+                q = q.lte("trade_date", date_to)
+            return q
+
+        # 1. Exact total count (server-side, no row data transferred)
+        count_resp = _base_q().select("id", count="exact").limit(1).execute()
+        total_sentinel = count_resp.count or 0
+        if total_sentinel == 0:
+            return {"total_sentinel": 0, "total_tickers": 0, "top_tickers": [],
+                    "ticker_list_complete": True}
+
+        # 2. Paginate ticker column to build per-ticker breakdown.
+        #    Page size 1000; stop after 20 pages (20 000 rows) to bound latency.
+        PAGE = 1000
+        MAX_PAGES = 20
+        counts: dict[str, int] = {}
+        rows_seen = 0
+        for page in range(MAX_PAGES):
+            chunk = (
+                _base_q()
+                .select("ticker")
+                .range(page * PAGE, page * PAGE + PAGE - 1)
+                .execute()
+                .data or []
+            )
+            for r in chunk:
+                t = r.get("ticker") or "UNKNOWN"
+                counts[t] = counts.get(t, 0) + 1
+            rows_seen += len(chunk)
+            if len(chunk) < PAGE:
+                break  # last page reached
+
+        ticker_list_complete = (rows_seen >= total_sentinel)
+        top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        return {
+            "total_sentinel": total_sentinel,
+            "total_tickers": len(counts),
+            "top_tickers": [{"ticker": t, "count": c} for t, c in top],
+            "ticker_list_complete": ticker_list_complete,
+        }
+    except Exception as e:
+        print(f"get_paper_trades_tiered_sentinel_stats error: {e}")
+        return {"total_sentinel": 0, "total_tickers": 0, "top_tickers": [],
+                "ticker_list_complete": True}
+
+
 def get_missing_close_price_stats(user_id: str = "") -> dict:
     """Return stats on backtest_sim_runs rows that have no close_price.
 
