@@ -403,8 +403,9 @@ if(p.get('key')===KEY){{document.getElementById('gate').style.display='none';doc
 _regenerate_notes_html()
 
 # ── Close-price backfill pipeline (background thread) ─────────────────────────
-_BACKFILL_LOG    = "/tmp/backfill_pipeline.log"
-_BACKFILL_STATUS = "/tmp/backfill_pipeline.status"
+_BACKFILL_LOG        = "/tmp/backfill_pipeline.log"
+_BACKFILL_STATUS     = "/tmp/backfill_pipeline.status"
+_BACKFILL_START_TIME = "/tmp/backfill_pipeline.start_time"
 
 # Module-level lock ensures only one pipeline thread runs at a time.
 # The lock is held for the entire duration of the run and released in the
@@ -5789,13 +5790,16 @@ with st.sidebar:
             """Clear old logs/status and start a new pipeline thread."""
             if _bf_range_invalid:
                 return False  # Blocked by invalid date range shown above
-            for _p in [_BACKFILL_LOG, _BACKFILL_STATUS]:
+            for _p in [_BACKFILL_LOG, _BACKFILL_STATUS, _BACKFILL_START_TIME]:
                 try:
                     os.remove(_p)
                 except FileNotFoundError:
                     pass
             _BACKFILL_CANCEL.clear()  # Reset any previous cancel request
             if _BACKFILL_LOCK.acquire(blocking=False):
+                import time as _launch_time
+                with open(_BACKFILL_START_TIME, "w") as _stf:
+                    _stf.write(str(_launch_time.time()))
                 with open(_BACKFILL_STATUS, "w") as _sf:
                     _sf.write("running")
                 _bt = threading.Thread(
@@ -5856,10 +5860,35 @@ with st.sidebar:
                     if _progress_current is not None and _progress_total and _progress_total > 0:
                         _pct = _progress_current / _progress_total
                         st.progress(_pct)
-                        st.caption(
+                        # ── ETA calculation ──────────────────────────────────
+                        _eta_str = ""
+                        try:
+                            import time as _eta_time
+                            _bf_start_ts: float | None = None
+                            if os.path.exists(_BACKFILL_START_TIME):
+                                with open(_BACKFILL_START_TIME) as _tsf:
+                                    _bf_start_ts = float(_tsf.read().strip())
+                            if _bf_start_ts and _pct > 0:
+                                _elapsed_s = _eta_time.time() - _bf_start_ts
+                                _total_est_s = _elapsed_s / _pct
+                                _remaining_s = max(0.0, _total_est_s - _elapsed_s)
+                                if _remaining_s < 60:
+                                    _eta_str = f"~{int(_remaining_s)}s remaining"
+                                elif _remaining_s < 3600:
+                                    _eta_str = f"~{int(_remaining_s / 60)}m remaining"
+                                else:
+                                    _eta_hr  = int(_remaining_s // 3600)
+                                    _eta_min = int((_remaining_s % 3600) // 60)
+                                    _eta_str = f"~{_eta_hr}h {_eta_min}m remaining"
+                        except Exception:
+                            _eta_str = ""
+                        _progress_caption = (
                             f"📈 Ticker {_progress_current:,} of {_progress_total:,} "
                             f"({_pct:.0%} complete)"
                         )
+                        if _eta_str:
+                            _progress_caption += f"  ·  ⏱ {_eta_str}"
+                        st.caption(_progress_caption)
                     st.caption(f"📄 {_total_lines} log line{'s' if _total_lines != 1 else ''} so far — auto-refreshing every 3 s")
                     st.code(_tail_text or "(log initialising…)", language="text")
                 except Exception:
