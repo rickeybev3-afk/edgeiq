@@ -9471,6 +9471,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     key="tkr_summary_sort_radio",
                 )
             with _ctrl_col_filter:
+                # Restore filter column from URL query params on first load
+                if "tkr_summary_r_filter_col" not in st.session_state:
+                    _qp_r_col = st.query_params.get("tkr_r_col", "")
+                    _r_col_opts = list(_r_filter_col_map.keys())
+                    st.session_state["tkr_summary_r_filter_col"] = (
+                        _qp_r_col if _qp_r_col in _r_col_opts else _r_col_opts[0]
+                    )
+                # Restore min-R value from URL query params on first load
+                if "tkr_summary_r_filter_min" not in st.session_state:
+                    _qp_r_min_str = st.query_params.get("tkr_r_min", "")
+                    try:
+                        st.session_state["tkr_summary_r_filter_min"] = (
+                            float(_qp_r_min_str) if _qp_r_min_str else None
+                        )
+                    except (ValueError, TypeError):
+                        st.session_state["tkr_summary_r_filter_min"] = None
                 _r_filter_col = st.radio(
                     "Min-R filter column",
                     list(_r_filter_col_map.keys()),
@@ -9478,6 +9494,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     horizontal=True,
                     key="tkr_summary_r_filter_col",
                 )
+                # Sync filter column selection to query params
+                if st.query_params.get("tkr_r_col") != _r_filter_col:
+                    st.query_params["tkr_r_col"] = _r_filter_col
                 _r_filter_min = st.number_input(
                     f"Min {_r_filter_col}",
                     value=None,
@@ -9491,6 +9510,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "Example: enter 0.5 to see only tickers averaging ≥ 0.5R."
                     ),
                 )
+                # Sync min-R threshold to query params (remove param when cleared)
+                _qp_r_min_cur = st.query_params.get("tkr_r_min", "")
+                _r_min_str = str(_r_filter_min) if _r_filter_min is not None else ""
+                if _qp_r_min_cur != _r_min_str:
+                    if _r_min_str:
+                        st.query_params["tkr_r_min"] = _r_min_str
+                    elif "tkr_r_min" in st.query_params:
+                        del st.query_params["tkr_r_min"]
                 if _r_filter_min is None:
                     _r_filter_min = float("-inf")
             _sort_key, _sort_asc = _sort_col_map[_sort_choice]
