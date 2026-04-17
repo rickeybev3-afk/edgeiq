@@ -6710,7 +6710,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 base = "background-color:rgba(239,83,80,0.08)"
                                 hi   = "background-color:rgba(239,83,80,0.18);color:#ef5350;font-weight:700"
                             else:
-                                return [""] * len(row)
+                                return ["background-color: rgba(144,164,174,0.08); color:#90a4ae"] * len(row)
                             return [hi if col == "W/L" else base for col in row.index]
 
                         _rp_styled_df = _rp_df.style.apply(_rp_row_style, axis=1)
