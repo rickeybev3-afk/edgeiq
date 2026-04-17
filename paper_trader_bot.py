@@ -1994,7 +1994,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
     written = 0
     skipped = 0
     patched: list[str] = []  # "TICKER (date) @ price" entries for the success alert
-    skipped_entries: list[str] = []  # "TICKER (date)" entries for the warning alert
+    skipped_by_date: dict[str, list[str]] = {}  # date → [ticker, …] for the warning alert
 
     for trade_date_str in sorted(by_date.keys(), reverse=True):
         date_rows = by_date[trade_date_str]
@@ -2012,7 +2012,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
             skipped += len(date_rows)
             for row in date_rows:
                 _t = row.get("ticker", "?")
-                skipped_entries.append(f"{_t} ({trade_date_str})")
+                skipped_by_date.setdefault(trade_date_str, []).append(_t)
             continue
 
         for row in date_rows:
@@ -2021,7 +2021,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
             if cp is None:
                 log.debug(f"    No Alpaca data for {ticker} on {trade_date_str} — skipping.")
                 skipped += 1
-                skipped_entries.append(f"{ticker} ({trade_date_str})")
+                skipped_by_date.setdefault(trade_date_str, []).append(ticker)
                 continue
             try:
                 _supabase_client.table("paper_trades").update(
@@ -2035,7 +2035,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
                     f"    DB update failed for {ticker} (id={row['id']}): {_ue}"
                 )
                 skipped += 1
-                skipped_entries.append(f"{ticker} ({trade_date_str})")
+                skipped_by_date.setdefault(trade_date_str, []).append(ticker)
 
     log.info(
         f"EOD close-price sweep done — {written} written, "
@@ -2059,7 +2059,10 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
             log.warning(f"_eod_collect_close_prices: Telegram alert failed: {_tge}")
 
     if skipped > 0:
-        _skipped_lines = "\n".join(f"  • {entry}" for entry in skipped_entries)
+        _skipped_lines = "\n".join(
+            f"  • {date}: {', '.join(sorted(set(tks)))}"
+            for date, tks in sorted(skipped_by_date.items(), reverse=True)
+        )
         _warn_msg = (
             f"⚠️ <b>Close-Price Sweep — {skipped} ticker(s) could not be filled</b>\n"
             f"{_skipped_lines}\n"
