@@ -12989,10 +12989,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f"""<script>
 (function() {{
     var _id = {repr(_safe_scroll_id)};
+    function _pulseHeader(anchorEl) {{
+        var targetDetails = null;
+        var node = anchorEl;
+        while (node && !targetDetails) {{
+            var sib = node.nextElementSibling;
+            while (sib) {{
+                if (sib.tagName === 'DETAILS') {{ targetDetails = sib; break; }}
+                var det = sib.querySelector('details');
+                if (det) {{ targetDetails = det; break; }}
+                sib = sib.nextElementSibling;
+            }}
+            if (!targetDetails) {{ node = node.parentElement; }}
+        }}
+        if (!targetDetails) return;
+        var summary = targetDetails.querySelector('summary');
+        if (!summary) return;
+        var styleId = '_eq_pulse_kf';
+        if (!window.parent.document.getElementById(styleId)) {{
+            var styleEl = window.parent.document.createElement('style');
+            styleEl.id = styleId;
+            styleEl.textContent = '@keyframes _eqPulseAmber {{' +
+                '0%,100%{{box-shadow:none;background:transparent}}' +
+                '30%{{box-shadow:0 0 0 3px rgba(255,179,0,0.55);background:rgba(255,179,0,0.18)}}' +
+                '}}';
+            window.parent.document.head.appendChild(styleEl);
+        }}
+        summary.style.borderRadius = '4px';
+        summary.style.animation = '_eqPulseAmber 1.5s ease-out';
+        setTimeout(function() {{ summary.style.animation = ''; }}, 1600);
+    }}
     function _doScroll() {{
         var el = window.parent.document.getElementById(_id);
-        if (el) {{ el.scrollIntoView({{behavior:'smooth', block:'start'}}); }}
-        else {{ setTimeout(_doScroll, 150); }}
+        if (el) {{
+            el.scrollIntoView({{behavior:'smooth', block:'start'}});
+            setTimeout(function() {{ _pulseHeader(el); }}, 900);
+        }} else {{
+            setTimeout(_doScroll, 150);
+        }}
     }}
     setTimeout(_doScroll, 200);
 }})();
@@ -13089,7 +13123,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         c if c.isalnum() or c in "-_." else "-" for c in _tk_name
                     )
                     st.markdown(
-                        f'<div id="{_tk_anchor_id}" style="scroll-margin-top:60px;"></div>',
+                        f'<div id="{_tk_anchor_id}" data-anchor-for="{_tk_name}" style="scroll-margin-top:60px;"></div>',
                         unsafe_allow_html=True,
                     )
                     with st.expander(_tk_expander_label, expanded=bool(st.session_state.get(_tk_exp_key, False)), key=_tk_exp_key):
