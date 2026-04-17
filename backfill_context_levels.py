@@ -312,6 +312,13 @@ def main():
             ]
             resistance, support = nearest_levels(key_levels, ib_break) if ib_break else (None, None)
 
+            vwap_stored       = round(vwap_val, 4)       if vwap_val is not None else None
+            macd_line_stored  = round(macd_line, 6)      if macd_line is not None else None
+            macd_sig_stored   = round(macd_sig, 6)       if macd_sig is not None else None
+            macd_hist_stored  = round(macd_hist, 6)      if macd_hist is not None else None
+            resist_stored     = round(resistance, 4)     if resistance is not None else None
+            support_stored    = round(support, 4)        if support is not None else None
+
             record = {
                 'ticker':             ticker,
                 'trade_date':         trade_date,
@@ -320,20 +327,21 @@ def main():
                 'prev_day_low':       prev.get('low'),
                 'premarket_high':     None,   # IEX feed: no pre-market data
                 'premarket_low':      None,
-                'vwap_at_signal':     round(vwap_val, 4) if vwap_val else None,
-                'macd_line':          round(macd_line, 6) if macd_line is not None else None,
-                'macd_signal_line':   round(macd_sig, 6) if macd_sig is not None else None,
-                'macd_histogram':     round(macd_hist, 6) if macd_hist is not None else None,
+                'vwap_at_signal':     vwap_stored,
+                'macd_line':          macd_line_stored,
+                'macd_signal_line':   macd_sig_stored,
+                'macd_histogram':     macd_hist_stored,
                 'macd_direction':     macd_dir,
-                'nearest_resistance': round(resistance, 4) if resistance else None,
-                'nearest_support':    round(support, 4) if support else None,
+                'nearest_resistance': resist_stored,
+                'nearest_support':    support_stored,
             }
 
             try:
                 SUPABASE.table('backtest_context_levels').upsert(record).execute()
                 total_saved += 1
-                _vwap_str = f"{vwap_val:.2f}" if vwap_val is not None else "N/A"
-                log.info(f'  ✓ {ticker} {trade_date} {scan_type} | VWAP={_vwap_str} | MACD={macd_dir}')
+                _vwap_str  = f"{vwap_val:.2f}"  if vwap_val is not None else "N/A"
+                _macd_str  = macd_dir            if macd_dir is not None else "N/A"
+                log.info(f'  ✓ {ticker} {trade_date} {scan_type} | VWAP={_vwap_str} | MACD={_macd_str}')
             except Exception as e:
                 log.warning(f'  ✗ {ticker} {trade_date} upsert error: {e}')
                 total_errors += 1
