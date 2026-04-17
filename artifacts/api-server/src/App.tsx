@@ -56,7 +56,7 @@ function AlpacaMismatchBanner({ message }: { message: string }) {
       </span>
       <button
         onClick={() => setDismissed(true)}
-        aria-label="Dismiss"
+        aria-label="Dismiss banner"
         style={{
           background: "none",
           border: "none",
