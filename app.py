@@ -10635,6 +10635,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         ):
             _tkr_rows = []
             _tkr_sweep_data = {}
+            _tkr_div_chart_data = {}
             _best_tcs_options = []
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
@@ -10831,6 +10832,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _div_abs_tk = _div_s_tk.abs()
                                 _max_div_idx_tk = int(_div_abs_tk.idxmax())
                                 _max_div_val_tk = float(_div_s_tk.iloc[_max_div_idx_tk])
+                                _tkr_div_chart_data[_tk] = {
+                                    "eq_curve":    _tk_eq_cum[:_min_len_tk],
+                                    "r_curve":     _tk_r_cum[:_min_len_tk],
+                                    "max_div_idx": _max_div_idx_tk,
+                                    "max_div_val": _max_div_val_tk,
+                                }
                                 if abs(_max_div_val_tk) >= 0.02:
                                     _tk_max_div_val = _max_div_val_tk
                                     _dir_tk = "Amplified" if _max_div_val_tk > 0 else "Dampened"
@@ -12147,6 +12154,118 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             mime="text/csv",
                             key=f"_dl_sweep_{_tk_name}",
                         )
+
+                        # ── Divergence mini-chart ────────────────────────────────
+                        _mini_div_data = _tkr_div_chart_data.get(_tk_name)
+                        if not _mini_div_data:
+                            st.markdown(
+                                '<div style="border-top:1px solid #1e2a3a;margin:12px 0 6px 0;"></div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.caption(
+                                "📉 Divergence chart not available — add an EOD exit or "
+                                "tiered exit column (and ensure trades have varying follow-thru %) "
+                                "to unlock the Equity vs R mini-chart."
+                            )
+                        if _mini_div_data:
+                            _mini_eq  = _mini_div_data["eq_curve"]
+                            _mini_r   = _mini_div_data["r_curve"]
+                            _mini_idx = _mini_div_data["max_div_idx"]
+                            _mini_val = _mini_div_data["max_div_val"]
+                            _mini_n   = len(_mini_eq)
+                            if abs(_mini_val) < 0.02:
+                                _mini_div_msg = "Equity and R track closely — position sizing matched raw edge well"
+                            elif _mini_val > 0:
+                                _mini_div_msg = "Position sizing amplified raw edge here (equity outpaced R)"
+                            else:
+                                _mini_div_msg = "Position sizing dampened raw edge here (equity lagged R)"
+                            _mini_band_half = max(1, round(_mini_n * 0.015))
+                            _mini_fig = go.Figure()
+                            _mini_fig.add_vrect(
+                                x0=max(0, _mini_idx - _mini_band_half),
+                                x1=min(_mini_n - 1, _mini_idx + _mini_band_half),
+                                fillcolor="rgba(255, 214, 0, 0.12)",
+                                layer="below",
+                                line_width=0,
+                            )
+                            _mini_fig.add_vline(
+                                x=_mini_idx,
+                                line=dict(color="rgba(255, 214, 0, 0.7)", width=1.5, dash="dot"),
+                                annotation_text=f"Max divergence (trade\u00a0#{_mini_idx})",
+                                annotation_position="top left",
+                                annotation_font=dict(color="#ffd600", size=10),
+                            )
+                            _mini_fig.add_trace(go.Scatter(
+                                x=list(range(_mini_n)),
+                                y=_mini_eq,
+                                name="Equity ($)",
+                                mode="lines",
+                                line=dict(color="#4fc3f7", width=1.5),
+                                yaxis="y1",
+                            ))
+                            _mini_fig.add_trace(go.Scatter(
+                                x=list(range(len(_mini_r))),
+                                y=_mini_r,
+                                name="Cumulative R",
+                                mode="lines",
+                                line=dict(color="#ef9a9a", width=1.5),
+                                yaxis="y2",
+                            ))
+                            _mini_fig.update_layout(
+                                height=240,
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                dragmode="zoom",
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom", y=1.02,
+                                    xanchor="right", x=1,
+                                    font=dict(color="#cccccc", size=10),
+                                ),
+                                xaxis=dict(
+                                    title=dict(text="Trade #", font=dict(size=10)),
+                                    gridcolor="#1a1a2e",
+                                    color="#cccccc",
+                                    zeroline=False,
+                                    tickfont=dict(size=9),
+                                ),
+                                yaxis=dict(
+                                    title=dict(text="Equity ($)", font=dict(color="#4fc3f7", size=10)),
+                                    tickfont=dict(color="#4fc3f7", size=9),
+                                    gridcolor="#1a1a2e",
+                                    zeroline=True,
+                                    zerolinecolor="#555",
+                                ),
+                                yaxis2=dict(
+                                    title=dict(text="Cumulative R", font=dict(color="#ef9a9a", size=10)),
+                                    tickfont=dict(color="#ef9a9a", size=9),
+                                    overlaying="y",
+                                    side="right",
+                                    gridcolor="rgba(0,0,0,0)",
+                                    zeroline=False,
+                                ),
+                            )
+                            st.markdown(
+                                '<div style="border-top:1px solid #1e2a3a;margin:12px 0 6px 0;"></div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                '<div style="font-size:12px;font-weight:700;color:#90caf9;'
+                                'margin-bottom:4px;">📉 Divergence: Equity ($) vs Cumulative R</div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.plotly_chart(
+                                _mini_fig,
+                                use_container_width=True,
+                                config={
+                                    "scrollZoom": True,
+                                    "displayModeBar": False,
+                                },
+                            )
+                            st.caption(
+                                f"🟡 **Trade\u00a0#{_mini_idx}**: {_mini_div_msg}"
+                            )
 
                         # ── Drill-down: trades at a selected TCS cutoff ──────────
                         st.markdown(
