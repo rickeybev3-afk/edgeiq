@@ -19911,6 +19911,16 @@ def render_decision_log_tab():
 
     _dl_rows = get_decisions(_dl_uid)
 
+    _dl_any_editing = any(
+        v for k, v in st.session_state.items() if k.startswith("dl_editing_")
+    )
+    if _dl_any_editing:
+        st.warning(
+            "⚠️ You have unsaved edits on a decision card. "
+            "Save or cancel your changes before leaving this tab.",
+            icon="⚠️",
+        )
+
     _dl_confirmed = [r for r in _dl_rows if r.get("outcome") == "Confirmed"]
     _dl_refuted   = [r for r in _dl_rows if r.get("outcome") == "Refuted"]
     _dl_pending   = [r for r in _dl_rows if r.get("outcome") == "Pending"]
@@ -20147,7 +20157,12 @@ def render_decision_log_tab():
 
         if _dec_id:
             _dl_cats = ["System Design", "Market Thesis", "Filter", "Sizing", "Timing", "Other"]
-            with st.expander("✏️ Edit", expanded=False):
+            _editing_key = f"dl_editing_{_dec_id}"
+            if not st.session_state.get(_editing_key, False):
+                if st.button("✏️ Edit", key=f"dl_edit_open_{_dec_id}"):
+                    st.session_state[_editing_key] = True
+                    st.rerun()
+            else:
                 with st.form(f"dl_edit_form_{_dec_id}", clear_on_submit=False):
                     try:
                         _edit_date_val = date.fromisoformat(_dec_date) if _dec_date else date.today()
@@ -20161,16 +20176,23 @@ def render_decision_log_tab():
                     with _edc2:
                         _edit_call   = st.text_area("The Call", value=_call_txt, height=80, key=f"dl_edit_call_{_dec_id}")
                         _edit_reason = st.text_area("Reasoning (optional)", value=_reason, height=80, key=f"dl_edit_reason_{_dec_id}")
-                    if st.form_submit_button("Save Changes", type="primary"):
-                        if not _edit_call.strip():
-                            st.error("The Call field is required.")
-                        else:
-                            _edit_ok = update_decision(_dec_id, _dl_uid, _edit_date, _edit_cat, _edit_call, _edit_reason)
-                            if _edit_ok:
-                                st.success("Decision updated.")
-                                st.rerun()
+                    _fsave, _fcancel = st.columns([1, 1])
+                    with _fsave:
+                        if st.form_submit_button("Save Changes", type="primary"):
+                            if not _edit_call.strip():
+                                st.error("The Call field is required.")
                             else:
-                                st.error("Update failed. Check Supabase connection.")
+                                _edit_ok = update_decision(_dec_id, _dl_uid, _edit_date, _edit_cat, _edit_call, _edit_reason)
+                                if _edit_ok:
+                                    st.session_state[_editing_key] = False
+                                    st.success("Decision updated.")
+                                    st.rerun()
+                                else:
+                                    st.error("Update failed. Check Supabase connection.")
+                    with _fcancel:
+                        if st.form_submit_button("Cancel"):
+                            st.session_state[_editing_key] = False
+                            st.rerun()
 
         if _dec_id:
             _confirm_key = f"dl_del_confirm_{_dec_id}"
@@ -20185,6 +20207,7 @@ def render_decision_log_tab():
                     if st.button("Yes, delete", key=f"dl_del_yes_{_dec_id}", type="primary"):
                         _del_ok = delete_decision(_dec_id, _dl_uid)
                         st.session_state[_confirm_key] = False
+                        st.session_state.pop(f"dl_editing_{_dec_id}", None)
                         if _del_ok:
                             st.rerun()
                         else:
