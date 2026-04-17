@@ -2376,7 +2376,11 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         "Trade Date", value=date.today(), key="sync_alpaca_date",
                     )
                 with _sc2:
-                    _sync_default_idx = 0 if st.session_state.get("_trading_mode", "paper") == "paper" else 1
+                    _cur_tm = st.session_state.get("_trading_mode", "paper")
+                    if st.session_state.get("_sync_alpaca_mode_last_tm") != _cur_tm:
+                        st.session_state["sync_alpaca_mode"] = "Paper" if _cur_tm == "paper" else "Live"
+                        st.session_state["_sync_alpaca_mode_last_tm"] = _cur_tm
+                    _sync_default_idx = 0 if _cur_tm == "paper" else 1
                     _is_paper = st.radio(
                         "Account", ["Paper", "Live"],
                         index=_sync_default_idx,
