@@ -416,6 +416,13 @@ function StatusDot({ ok }: { ok: boolean }) {
 function Home({ health }: { health: HealthState }) {
   const [credAlertsEnabled, setCredAlertsEnabled] = useState<boolean | null>(null);
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealthData>({ available: false, loading: true });
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!health.db_checked_at) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [health.db_checked_at]);
 
   useEffect(() => {
     let cancelled = false;
