@@ -547,19 +547,45 @@ st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layo
 # Installs a single BroadcastChannel listener on window.parent so that when any
 # section broadcasts a feed change, all other sections' URL params are updated
 # and the page reloads — keeping the choice in sync across sections and tabs.
+# The BroadcastChannel object is stored on window.parent (_edgeiqFeedSyncBC) so
+# it is not garbage-collected when Streamlit replaces the component iframe on
+# re-render. Badges carry data-feed-badge="1" so they can be patched in-place
+# the instant a cross-tab message arrives, before the page reload completes.
 import streamlit.components.v1 as _cmp_feed_sync
 _cmp_feed_sync.html("""
 <script>
 (function() {
     var _p = window.parent;
-    if (_p._edgeiqFeedSyncInstalled) return;
+    if (_p._edgeiqFeedSyncInstalled && _p._edgeiqFeedSyncBC) return;
     _p._edgeiqFeedSyncInstalled = true;
     try {
         var _bc = new _p.BroadcastChannel('edgeiq_feed_sync');
+        _p._edgeiqFeedSyncBC = _bc;
         _bc.onmessage = function(e) {
             var feed = e.data && e.data.feed;
             if (feed !== 'sip' && feed !== 'iex') return;
             var ptFeed = feed === 'sip' ? 'SIP (paid \u2014 accurate)' : 'IEX (free \u2014 limited)';
+            var ls = _p.localStorage;
+            ls.setItem('edgeiq_feed', feed);
+            ls.setItem('global_default_feed', feed);
+            ls.setItem('hist_scan_feed', feed);
+            ls.setItem('replay_feed_sel', feed);
+            ls.setItem('live_scan_feed', feed);
+            ls.setItem('scan_feed_select', feed);
+            ls.setItem('pat_scan_feed', feed);
+            ls.setItem('bt_feed_select', feed);
+            ls.setItem('wpe_feed_select', feed);
+            ls.setItem('pt_feed', ptFeed);
+            try {
+                var isSip = feed === 'sip';
+                var badges = _p.document.querySelectorAll('[data-feed-badge]');
+                for (var i = 0; i < badges.length; i++) {
+                    var b = badges[i];
+                    b.textContent = isSip ? 'SIP' : 'IEX';
+                    b.style.background = isSip ? '#1b5e20' : '#0d3b6e';
+                    b.style.color = isSip ? '#a5d6a7' : '#90caf9';
+                }
+            } catch(_e) {}
             var url = new URL(_p.location.href);
             url.searchParams.set('hist_scan_feed', feed);
             url.searchParams.set('replay_scan_feed', feed);
@@ -569,16 +595,7 @@ _cmp_feed_sync.html("""
             url.searchParams.set('bt_batch_feed', feed);
             url.searchParams.set('wpe_feed', feed);
             url.searchParams.set('pt_feed', ptFeed);
-            localStorage.setItem('edgeiq_feed', feed);
-            localStorage.setItem('global_default_feed', feed);
-            localStorage.setItem('hist_scan_feed', feed);
-            localStorage.setItem('replay_feed_sel', feed);
-            localStorage.setItem('live_scan_feed', feed);
-            localStorage.setItem('scan_feed_select', feed);
-            localStorage.setItem('pat_scan_feed', feed);
-            localStorage.setItem('bt_feed_select', feed);
-            localStorage.setItem('wpe_feed_select', feed);
-            localStorage.setItem('pt_feed', ptFeed);
+            url.searchParams.set('_feed_default', feed);
             _p.location.replace(url.toString());
         };
     } catch(e) {}
@@ -7017,12 +7034,12 @@ def _feed_badge_html(feed: str) -> str:
     _f = (feed or "").lower()
     if "sip" in _f:
         return (
-            '<span style="background:#1b5e20; color:#a5d6a7; font-size:10px; font-weight:700; '
+            '<span data-feed-badge="1" style="background:#1b5e20; color:#a5d6a7; font-size:10px; font-weight:700; '
             'padding:2px 8px; border-radius:10px; letter-spacing:1px; '
             'vertical-align:middle; margin-left:8px;">SIP</span>'
         )
     return (
-        '<span style="background:#0d3b6e; color:#90caf9; font-size:10px; font-weight:700; '
+        '<span data-feed-badge="1" style="background:#0d3b6e; color:#90caf9; font-size:10px; font-weight:700; '
         'padding:2px 8px; border-radius:10px; letter-spacing:1px; '
         'vertical-align:middle; margin-left:8px;">IEX</span>'
     )
