@@ -44,6 +44,11 @@ Re-run required after close_price historical backfill (run backfill_close_prices
     1. python backfill_close_prices.py
     2. python run_sim_backfill.py
 
+Related backfill scripts:
+  backfill_ib_vwap.py — backfills ib_range_pct and vwap_at_ib for paper_trades
+    rows inserted before those columns were added (2026-04-17).  Run once:
+      python backfill_ib_vwap.py
+
 Uses concurrent threads to run Supabase updates in parallel — much faster
 than sequential updates.
 
