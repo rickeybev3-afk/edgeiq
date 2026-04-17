@@ -58,7 +58,8 @@ FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
 PRICE_MIN               = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
 PRICE_MAX               = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
 SWEEP_ALERT_MAX_TICKERS      = int(os.getenv("SWEEP_ALERT_MAX_TICKERS", "10"))
-BACKTEST_CLOSE_LOOKBACK_DAYS = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
+BACKTEST_CLOSE_LOOKBACK_DAYS    = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
+BACKTEST_STALE_THRESHOLD_DAYS   = int(os.getenv("BACKTEST_STALE_THRESHOLD_DAYS", "3"))
 
 # ── Alpaca live execution config ───────────────────────────────────────────────
 # Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
@@ -2422,6 +2423,88 @@ def _eod_collect_close_prices_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKB
     return {"written": written, "skipped": skipped}
 
 
+def _check_stale_backtest_rows(threshold_days: int = BACKTEST_STALE_THRESHOLD_DAYS) -> None:
+    """After the nightly backtest close-price sweep, check whether any
+    ``backtest_sim_runs`` rows still have ``close_price IS NULL`` and are older
+    than ``threshold_days`` calendar days.  If any exist, log a warning and send
+    a Telegram alert listing the affected tickers and dates so traders know there
+    are permanent data gaps that the sweep cannot auto-heal.
+
+    ``threshold_days`` defaults to ``BACKTEST_STALE_THRESHOLD_DAYS`` (env var
+    ``BACKTEST_STALE_THRESHOLD_DAYS``, default 3).
+    """
+    from datetime import timedelta
+
+    if not _supabase_client:
+        log.warning("_check_stale_backtest_rows: No Supabase connection — skipping.")
+        return
+
+    stale_cutoff = str(date.today() - timedelta(days=threshold_days))
+    _PAGE = 1000
+    rows: list = []
+    offset = 0
+    try:
+        while True:
+            resp = (
+                _supabase_client.table("backtest_sim_runs")
+                .select("ticker,sim_date")
+                .eq("user_id", USER_ID)
+                .is_("close_price", "null")
+                .lt("sim_date", stale_cutoff)
+                .order("sim_date", desc=True)
+                .range(offset, offset + _PAGE - 1)
+                .execute()
+            )
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < _PAGE:
+                break
+            offset += _PAGE
+    except Exception as _qe:
+        log.warning(f"_check_stale_backtest_rows: DB query failed: {_qe}")
+        return
+
+    if not rows:
+        log.info(
+            f"_check_stale_backtest_rows: No stale NULL close_price rows older than "
+            f"{threshold_days} day(s) — all clear."
+        )
+        return
+
+    by_date: dict[str, list[str]] = {}
+    for r in rows:
+        sd = (r.get("sim_date") or "")[:10]
+        ticker = r.get("ticker", "?")
+        if sd:
+            by_date.setdefault(sd, []).append(ticker)
+
+    total = sum(len(tks) for tks in by_date.values())
+    log.warning(
+        f"_check_stale_backtest_rows: {total} backtest row(s) across "
+        f"{len(by_date)} date(s) still have NULL close_price after "
+        f"{threshold_days}+ day(s) — permanent data gap suspected."
+    )
+
+    _date_lines = "\n".join(
+        f"  • {d}: {', '.join(sorted(set(tks))[:SWEEP_ALERT_MAX_TICKERS])}"
+        + (f" …+{len(set(tks)) - SWEEP_ALERT_MAX_TICKERS} more" if len(set(tks)) > SWEEP_ALERT_MAX_TICKERS else "")
+        for d, tks in sorted(by_date.items(), reverse=True)
+    )
+    _msg = (
+        f"🚨 <b>Stale Backtest Close Prices</b>\n"
+        f"{total} row(s) across {len(by_date)} date(s) still have no close price "
+        f"after {threshold_days}+ day(s) — Alpaca data may be permanently unavailable "
+        f"for these entries:\n"
+        f"{_date_lines}\n"
+        f"<i>Set BACKTEST_STALE_THRESHOLD_DAYS to adjust the staleness window. "
+        f"Manual backfill or exclusion may be needed to avoid skewing R-stats.</i>"
+    )
+    try:
+        tg_send(_msg)
+    except Exception as _tge:
+        log.warning(f"_check_stale_backtest_rows: Telegram alert failed: {_tge}")
+
+
 def _recalc_eod_pnl_r_recent_backtest(lookback_days: int | None = None) -> dict:
     """Compute eod_pnl_r for backtest_sim_runs rows that now have close_price
     but still have NULL eod_pnl_r.
@@ -3234,6 +3317,16 @@ def nightly_recalibration():
         )
     except Exception as exc:
         log.warning(f"Nightly close-price catch-up sweep (backtest) failed: {exc}")
+
+    # ── Stale-row warning: flag any backtest rows that are still NULL after N days ─
+    # Rows that survive BACKTEST_STALE_THRESHOLD_DAYS without a close price are
+    # unlikely to self-heal (e.g. Alpaca data permanently absent for that date).
+    # This check runs after the sweep so the warning only fires for genuinely
+    # persistent gaps, not rows that were just collected above.
+    try:
+        _check_stale_backtest_rows(threshold_days=BACKTEST_STALE_THRESHOLD_DAYS)
+    except Exception as exc:
+        log.warning(f"Stale backtest-row check failed: {exc}")
 
     # ── eod_pnl_r recalculation for newly-filled backtest close prices ─────────
     try:
