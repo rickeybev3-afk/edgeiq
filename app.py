@@ -538,6 +538,51 @@ if _startup_errors:
             """,
             unsafe_allow_html=True,
         )
+
+        # ── "Recheck secrets" button ──────────────────────────────────────────
+        _recheck_col, _ = st.columns([1, 2])
+        with _recheck_col:
+            _do_recheck = st.button(
+                "🔄 Recheck secrets",
+                key="_welcome_recheck_btn",
+                use_container_width=True,
+                help="Re-reads your environment secrets without restarting the app",
+            )
+
+        if _do_recheck:
+            recheck_secret_statuses()
+
+        if _do_recheck or st.session_state.get("_welcome_recheck_done"):
+            st.session_state["_welcome_recheck_done"] = True
+            _REQUIRED_SECRETS_ORDERED = [
+                "SUPABASE_URL", "SUPABASE_KEY", "ALPACA_API_KEY", "ALPACA_SECRET_KEY",
+            ]
+            _now_all_set = all(
+                _secret_statuses.get(_n) == "set" for _n in _REQUIRED_SECRETS_ORDERED
+            )
+            if _now_all_set:
+                st.success(
+                    "✅ All four secrets are now detected!  "
+                    "Please **restart the app** (Stop ▶ Run) so the backend services "
+                    "can connect with the new credentials.",
+                    icon="🎉",
+                )
+            else:
+                _status_lines: list[str] = []
+                for _sn in _REQUIRED_SECRETS_ORDERED:
+                    _ss = _secret_statuses.get(_sn, "missing")
+                    if _ss == "set":
+                        _status_lines.append(f"✅ **{_sn}** — detected")
+                    elif _ss == "malformed":
+                        _status_lines.append(f"⚠️ **{_sn}** — malformed value")
+                    else:
+                        _status_lines.append(f"❌ **{_sn}** — still missing")
+                st.warning(
+                    "Some secrets are still missing or malformed:\n\n"
+                    + "\n\n".join(_status_lines),
+                    icon="🔍",
+                )
+
         st.stop()
     else:
         # ── Partial-configuration error banner (existing behaviour) ───────────
