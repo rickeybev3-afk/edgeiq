@@ -4975,6 +4975,11 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
                 st.session_state["bq_dr_end"] = _dt_bq.date.fromisoformat(str(_bq_d))
         except (ValueError, TypeError):
             pass
+    if "bq_link_date_filters" in _prefs:
+        try:
+            st.session_state["bq_link_date_filters"] = bool(_prefs["bq_link_date_filters"])
+        except (ValueError, TypeError):
+            pass
     if "rp_start_date" in _prefs:
         try:
             import datetime as _dt_rp
@@ -19807,6 +19812,10 @@ ALTER TABLE backtest_sim_runs
         var ldf = localStorage.getItem('link_date_filters');
         if (ldf === '1') { url.searchParams.set('link_filters', '1'); needRedirect = true; }
     }
+    if (!url.searchParams.has('bq_link_filters')) {
+        var bqldf = localStorage.getItem('bq_link_date_filters');
+        if (bqldf === '1') { url.searchParams.set('bq_link_filters', '1'); needRedirect = true; }
+    }
     if (needRedirect) window.parent.location.replace(url.toString());
 })();
 </script>
@@ -19836,6 +19845,9 @@ ALTER TABLE backtest_sim_runs
         if "link_date_filters" not in st.session_state:
             if st.query_params.get("link_filters") == "1":
                 st.session_state["link_date_filters"] = True
+        if "bq_link_date_filters" not in st.session_state:
+            if st.query_params.get("bq_link_filters") == "1":
+                st.session_state["bq_link_date_filters"] = True
 
         # Snapshot prev values BEFORE widgets render (used by link-filter sync below)
         _link_prev_bts  = st.session_state.get("_link_prev_bts",  {})
@@ -21585,7 +21597,12 @@ ALTER TABLE backtest_sim_runs
                         except (ValueError, TypeError):
                             pass
 
-                _bq_dr_cols = st.columns([1, 1, 2])
+                # Snapshot prev values BEFORE widgets render (used by bq link-filter sync below)
+                _bq_link_prev_bts = st.session_state.get("_bq_link_prev_bts", {})
+                _bq_link_prev_bq  = st.session_state.get("_bq_link_prev_bq",  {})
+
+                _bq_dr_cols = st.columns([1, 1, 1, 1])
+>>>>>>> e16197b (Add "🔗 Link filters" toggle to Screener × Outcome date filter (task #782))
                 with _bq_dr_cols[0]:
                     _bq_start = st.date_input(
                         "From",
@@ -21606,29 +21623,136 @@ ALTER TABLE backtest_sim_runs
                     )
                 with _bq_dr_cols[2]:
                     st.markdown("<br>", unsafe_allow_html=True)
-                    _bq_bts_sync_start = st.session_state.get("bts_dr_start")
-                    _bq_bts_sync_end   = st.session_state.get("bts_dr_end")
-                    _bq_sync_help = (
-                        f"Copy the Backtest P&L date range ({_bq_bts_sync_start or 'any'} → {_bq_bts_sync_end or 'any'}) into this filter"
-                        if (_bq_bts_sync_start or _bq_bts_sync_end)
-                        else "Copy the Backtest P&L date filter (currently unset) into this filter — shows all available data"
+                    st.toggle(
+                        "🔗 Link filters",
+                        key="bq_link_date_filters",
+                        help=(
+                            "Keep the Screener × Outcome dates permanently in sync with the "
+                            "Backtest P&L dates. Change either date range and the other mirrors "
+                            "it automatically."
+                        ),
                     )
-                    if st.button(
-                        "⇄ Sync from Backtest P&L",
-                        key="bq_sync_bts_dates",
-                        help=_bq_sync_help,
-                    ):
-                        def _clamp_bq(d):
-                            if d is None:
-                                return None
-                            if _bq_min_date and d < _bq_min_date:
-                                return _bq_min_date
-                            if _bq_max_date and d > _bq_max_date:
-                                return _bq_max_date
-                            return d
-                        st.session_state["bq_dr_start"] = _clamp_bq(_bq_bts_sync_start)
-                        st.session_state["bq_dr_end"]   = _clamp_bq(_bq_bts_sync_end)
+                with _bq_dr_cols[3]:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if not st.session_state.get("bq_link_date_filters", False):
+                        _bq_bts_sync_start = st.session_state.get("bts_dr_start")
+                        _bq_bts_sync_end   = st.session_state.get("bts_dr_end")
+                        _bq_sync_help = (
+                            f"Copy the Backtest P&L date range ({_bq_bts_sync_start or 'any'} → {_bq_bts_sync_end or 'any'}) into this filter"
+                            if (_bq_bts_sync_start or _bq_bts_sync_end)
+                            else "Copy the Backtest P&L date filter (currently unset) into this filter — shows all available data"
+                        )
+                        if st.button(
+                            "⇄ Sync from Backtest P&L",
+                            key="bq_sync_bts_dates",
+                            help=_bq_sync_help,
+                        ):
+                            def _clamp_bq(d):
+                                if d is None:
+                                    return None
+                                if _bq_min_date and d < _bq_min_date:
+                                    return _bq_min_date
+                                if _bq_max_date and d > _bq_max_date:
+                                    return _bq_max_date
+                                return d
+                            st.session_state["bq_dr_start"] = _clamp_bq(_bq_bts_sync_start)
+                            st.session_state["bq_dr_end"]   = _clamp_bq(_bq_bts_sync_end)
+                            st.rerun()
+
+                if st.session_state.get("bq_link_date_filters", False):
+                    st.caption(
+                        "🔗 Filters linked — Screener × Outcome dates stay in sync with "
+                        "Backtest P&L automatically. "
+                        "When both are edited simultaneously, the Backtest P&L dates take precedence."
+                    )
+
+                # ── Bq link-filter bidirectional sync ─────────────────────────
+                if st.session_state.get("bq_link_date_filters", False):
+                    _curr_bq_bts_s = str(st.session_state.get("bts_dr_start"))
+                    _curr_bq_bts_e = str(st.session_state.get("bts_dr_end"))
+                    _curr_bq_s     = str(_bq_start)
+                    _curr_bq_e     = str(_bq_end)
+                    _bq_bts_changed = (
+                        _curr_bq_bts_s != _bq_link_prev_bts.get("s", "None") or
+                        _curr_bq_bts_e != _bq_link_prev_bts.get("e", "None")
+                    )
+                    _bq_self_changed = (
+                        _curr_bq_s != _bq_link_prev_bq.get("s", "None") or
+                        _curr_bq_e != _bq_link_prev_bq.get("e", "None")
+                    )
+                    if _bq_self_changed and not _bq_bts_changed:
+                        # User edited the Screener × Outcome dates → mirror into bts
+                        import datetime as _dt_bq_link
+                        _bq2b_start = _bq_start
+                        _bq2b_end   = _bq_end
+                        st.session_state["bts_dr_start"] = _bq2b_start
+                        st.session_state["bts_dr_end"]   = _bq2b_end
+                        _synced_bq_s = str(_bq2b_start)
+                        _synced_bq_e = str(_bq2b_end)
+                        st.session_state["_bq_link_prev_bts"] = {"s": _synced_bq_s, "e": _synced_bq_e}
+                        st.session_state["_bq_link_prev_bq"]  = {"s": _synced_bq_s, "e": _synced_bq_e}
                         st.rerun()
+                    else:
+                        # bts changed (or both / first enable) → mirror into bq
+                        import datetime as _dt_bq_link
+                        _b2bq_start = st.session_state.get("bts_dr_start")
+                        _b2bq_end   = st.session_state.get("bts_dr_end")
+                        if _b2bq_start is not None and isinstance(_b2bq_start, _dt_bq_link.date):
+                            if _bq_min_date and _b2bq_start < _bq_min_date:
+                                _b2bq_start = _bq_min_date
+                            if _bq_max_date and _b2bq_start > _bq_max_date:
+                                _b2bq_start = _bq_max_date
+                        else:
+                            _b2bq_start = None
+                        if _b2bq_end is not None and isinstance(_b2bq_end, _dt_bq_link.date):
+                            if _bq_min_date and _b2bq_end < _bq_min_date:
+                                _b2bq_end = _bq_min_date
+                            if _bq_max_date and _b2bq_end > _bq_max_date:
+                                _b2bq_end = _bq_max_date
+                        else:
+                            _b2bq_end = None
+                        st.session_state["bq_dr_start"] = _b2bq_start
+                        st.session_state["bq_dr_end"]   = _b2bq_end
+                        _bq_start = _b2bq_start
+                        _bq_end   = _b2bq_end
+                        _synced_bq_s = str(_b2bq_start)
+                        _synced_bq_e = str(_b2bq_end)
+                        st.session_state["_bq_link_prev_bts"] = {"s": _synced_bq_s, "e": _synced_bq_e}
+                        st.session_state["_bq_link_prev_bq"]  = {"s": _synced_bq_s, "e": _synced_bq_e}
+                else:
+                    # Reset tracking when link is disabled
+                    st.session_state.pop("_bq_link_prev_bts", None)
+                    st.session_state.pop("_bq_link_prev_bq",  None)
+
+                # Persist bq link toggle to localStorage + URL
+                _bq_ldf_val = st.session_state.get("bq_link_date_filters", False)
+                _bq_ldf_js  = "1" if _bq_ldf_val else ""
+                import streamlit.components.v1 as _cmp_bq_dr
+                _cmp_bq_dr.html(
+                    f"<script>"
+                    f"(function(){{"
+                    f"  var bqldf = {repr(_bq_ldf_js)};"
+                    f"  if (bqldf) {{ localStorage.setItem('bq_link_date_filters', '1'); }}"
+                    f"  else {{ localStorage.removeItem('bq_link_date_filters'); }}"
+                    f"  var url = new URL(window.parent.location.href);"
+                    f"  if (bqldf) {{ url.searchParams.set('bq_link_filters', '1'); }}"
+                    f"  else {{ url.searchParams.delete('bq_link_filters'); }}"
+                    f"  window.parent.history.replaceState(null, '', url.toString());"
+                    f"}})();"
+                    f"</script>",
+                    height=0,
+                )
+
+                # Persist bq_link_date_filters to user prefs
+                if _AUTH_USER_ID:
+                    _bq_ldf_cached = st.session_state.get("_cached_prefs", {})
+                    if bool(_bq_ldf_cached.get("bq_link_date_filters")) != bool(_bq_ldf_val):
+                        _bq_ldf_new_prefs = {
+                            **_bq_ldf_cached,
+                            "bq_link_date_filters": bool(_bq_ldf_val),
+                        }
+                        save_user_prefs(_AUTH_USER_ID, _bq_ldf_new_prefs)
+                        st.session_state["_cached_prefs"] = _bq_ldf_new_prefs
 
                 # ── Sync bq date-range filter to URL params + localStorage (all users) ──
                 _bq_start_str = _bq_start.isoformat() if _bq_start else None
