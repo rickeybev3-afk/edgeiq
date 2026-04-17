@@ -4854,6 +4854,11 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["rp_min_ft"] = float(_prefs["rp_min_ft"])
         except (ValueError, TypeError):
             pass
+    if "rp_tcs_offset" in _prefs:
+        try:
+            st.session_state["rp_tcs_offset"] = int(_prefs["rp_tcs_offset"])
+        except (ValueError, TypeError):
+            pass
     if "rp_tcs_floor_filter" in _prefs:
         try:
             st.session_state["rp_tcs_floor_filter"] = str(_prefs["rp_tcs_floor_filter"])
@@ -7675,6 +7680,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         ['rp_start_date',    'rp_start_date'],
         ['rp_end_date',      'rp_end_date'],
         ['rp_tcs_floor',     'rp_tcs_floor_filter'],
+        ['rp_tcs_offset',    'rp_tcs_offset'],
     ];
     var changed = false;
     params.forEach(function(pair) {
@@ -7754,13 +7760,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.session_state["rp_min_gap_vs_ib"] = 0.0
                     st.session_state["rp_scan_type"] = "Morning (10:47 AM)"
                     st.session_state["rp_tcs_floor_filter"] = "All"
+                    st.session_state["rp_tcs_offset"] = 0
                     # Reflect all resets in the signature so the stored value
                     # matches actual session state and does not trigger a
                     # spurious extra clear on the very next rerun.
                     _rp_sig = (
                         _rp_sig[0], _rp_sig[1], _rp_sig[2],
                         0.0, 0.0,
-                        "Morning (10:47 AM)", _rp_sig[6],
+                        "Morning (10:47 AM)", 0,
                         0, _rp_sig[8],
                         0.0,
                     )
@@ -7806,6 +7813,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
             )
         with _rp_col2:
             if _rp_bot_mode:
+                if "rp_tcs_offset" not in st.session_state:
+                    try:
+                        st.session_state["rp_tcs_offset"] = int(st.query_params.get("rp_tcs_offset", 0))
+                    except (ValueError, TypeError):
+                        st.session_state["rp_tcs_offset"] = 0
                 _rp_tcs_offset = st.slider(
                     "TCS Adjustment", min_value=-20, max_value=20,
                     value=0, step=5, key="rp_tcs_offset",
@@ -7819,6 +7831,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rp_effective_floor = 50 + _rp_tcs_offset
                 _rp_offset_sign = f"+{_rp_tcs_offset}" if _rp_tcs_offset >= 0 else str(_rp_tcs_offset)
                 st.caption(f"≈ TCS {_rp_effective_floor} effective floor (base 50 + offset {_rp_offset_sign})")
+                if st.query_params.get("rp_tcs_offset") != str(_rp_tcs_offset):
+                    st.query_params["rp_tcs_offset"] = str(_rp_tcs_offset)
+                _cmp_rp_filters.html(
+                    f"<script>localStorage.setItem('rp_tcs_offset', {repr(str(_rp_tcs_offset))});</script>",
+                    height=0,
+                )
+                if _AUTH_USER_ID:
+                    _rp_cached = st.session_state.get("_cached_prefs", {})
+                    if _rp_cached.get("rp_tcs_offset") != _rp_tcs_offset:
+                        _rp_new_prefs = {**_rp_cached, "rp_tcs_offset": _rp_tcs_offset}
+                        save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
+                        st.session_state["_cached_prefs"] = _rp_new_prefs
                 _rp_min_tcs = 0
             else:
                 _rp_tcs_offset = 0
