@@ -10542,17 +10542,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _stat_row("Avg Loss (R)",               f"{_csv_al_r}R"),
                                     _stat_row("Expectancy",                 f"{_csv_exp_r:+.3f}R/trade"),
                                     _stat_row("Max Drawdown (R)",           f"{abs(_csv_mdd_r)}R"),
-                                    _stat_row("Win Rate (EOD)",             f"{_csv_bt_eod_wr}%"),
-                                    _stat_row("Avg Win (EOD R)",            f"+{_csv_bt_eod_aw}R"),
-                                    _stat_row("Avg Loss (EOD R)",           f"{_csv_bt_eod_al}R"),
-                                    _stat_row("Expectancy (EOD R)",         f"{_csv_bt_eod_exp:+.3f}R/trade"),
-                                    _stat_row("Max Drawdown (EOD R)",       f"{abs(_csv_bt_eod_mdd)}R"),
-                                    _stat_row("Win Rate (Tiered)",          f"{_csv_bt_tier_wr}%"),
-                                    _stat_row("Avg Win (Tiered R)",         f"+{_csv_bt_tier_aw}R"),
-                                    _stat_row("Avg Loss (Tiered R)",        f"{_csv_bt_tier_al}R"),
-                                    _stat_row("Expectancy (Tiered R)",      f"{_csv_bt_tier_exp:+.3f}R/trade"),
-                                    _stat_row("Max Drawdown (Tiered R)",    f"{abs(_csv_bt_tier_mdd)}R"),
                                 ])
+                                if _csv_bt_eod_n:
+                                    _summary_rows.extend([
+                                        _stat_row("Win Rate (EOD)",             f"{_csv_bt_eod_wr}%"),
+                                        _stat_row("Avg Win (EOD R)",            f"+{_csv_bt_eod_aw}R"),
+                                        _stat_row("Avg Loss (EOD R)",           f"{_csv_bt_eod_al}R"),
+                                        _stat_row("Expectancy (EOD R)",         f"{_csv_bt_eod_exp:+.3f}R/trade"),
+                                        _stat_row("Max Drawdown (EOD R)",       f"{abs(_csv_bt_eod_mdd)}R"),
+                                    ])
+                                if _csv_bt_tier_n:
+                                    _summary_rows.extend([
+                                        _stat_row("Win Rate (Tiered)",          f"{_csv_bt_tier_wr}%"),
+                                        _stat_row("Avg Win (Tiered R)",         f"+{_csv_bt_tier_aw}R"),
+                                        _stat_row("Avg Loss (Tiered R)",        f"{_csv_bt_tier_al}R"),
+                                        _stat_row("Expectancy (Tiered R)",      f"{_csv_bt_tier_exp:+.3f}R/trade"),
+                                        _stat_row("Max Drawdown (Tiered R)",    f"{abs(_csv_bt_tier_mdd)}R"),
+                                    ])
                                 if _has_marginal_data:
                                     _csv_bt_marg_mask = (
                                         (_csv_td["TCS"] - _csv_td["TCS Floor"]).between(0, 5, inclusive="both")
