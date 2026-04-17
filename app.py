@@ -4921,6 +4921,10 @@ with st.sidebar:
             _tcs_sel[_tcs_key] = st.checkbox(
                 _tcs_label, value=_tcs_default, key=f"tcs_alert_struct_{_tcs_key}"
             )
+    _tcs_opted_count = sum(1 for v in _tcs_sel.values() if v)
+    _tcs_total_count = len(_tcs_all_keys)
+    st.caption(f"**{_tcs_opted_count} / {_tcs_total_count}** structures enabled")
+
     if st.button("💾 Save alert preferences", key="tcs_alert_save_btn", use_container_width=True):
         _tcs_chosen = {k for k, v in _tcs_sel.items() if v}
         _tcs_ok = save_tcs_alert_structures(_tcs_chosen)
