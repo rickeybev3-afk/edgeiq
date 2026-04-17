@@ -2795,7 +2795,14 @@ def _load_tcs_alert_cache() -> dict:
         with open(_TCS_ALERT_CACHE_FILE) as _f:
             raw: dict = _json.load(_f)
         return {k: v for k, v in raw.items() if k.endswith(today)}
-    except Exception:
+    except FileNotFoundError:
+        return {}
+    except Exception as _exc:
+        logging.warning(
+            "[TCS] Failed to read alert cache from %s: %s — deduplication guard reset, duplicate alerts may fire",
+            _TCS_ALERT_CACHE_FILE,
+            _exc,
+        )
         return {}
 
 
