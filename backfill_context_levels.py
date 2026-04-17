@@ -299,6 +299,9 @@ def main():
     for trade_date, date_rows in sorted(by_date.items()):
         tickers = list({r['ticker'] for r in date_rows})
         log.info(f'[{trade_date}] {len(tickers)} tickers …')
+        date_saved   = 0
+        date_no_bars = 0
+        date_errors  = 0
 
         # ── Step 1: Prior day bars (batch) ───────────────────────────────────
         prev_date = (datetime.strptime(trade_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d')
@@ -333,11 +336,13 @@ def main():
                 continue
             except Exception as e:
                 log.warning(f'  {ticker} {trade_date} intraday error: {e}')
+                date_errors  += 1
                 total_errors += 1
                 continue
 
             if not intraday:
                 log.warning(f'  \u26a0 {ticker} {trade_date} no intraday bars \u2014 all context columns will be NULL')
+                date_no_bars  += 1
                 total_no_bars += 1
                 data_quality = 'no_bars'
             else:
@@ -384,15 +389,17 @@ def main():
 
             try:
                 SUPABASE.table('backtest_context_levels').upsert(record).execute()
+                date_saved  += 1
                 total_saved += 1
                 _vwap_str  = f"{vwap_val:.2f}"  if vwap_val is not None else "N/A"
                 _macd_str  = macd_dir            if macd_dir is not None else "N/A"
                 log.info(f'  ✓ {ticker} {trade_date} {scan_type} | VWAP={_vwap_str} | MACD={_macd_str}')
             except Exception as e:
                 log.warning(f'  ✗ {ticker} {trade_date} upsert error: {e}')
+                date_errors  += 1
                 total_errors += 1
 
-        log.info(f'  [{trade_date}] done — saved={total_saved} errors={total_errors}')
+        log.info(f'  [{trade_date}] done — saved={date_saved} no-bars={date_no_bars} errors={date_errors}')
 
     log.info('=' * 60)
     log.info(f'COMPLETE — {total_saved} rows saved, {total_no_bars} no-bars, {total_errors} errors')
