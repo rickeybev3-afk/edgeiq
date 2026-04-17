@@ -5035,6 +5035,93 @@ with st.sidebar:
             st.session_state["_pref_alpaca_key"]    = api_key
             st.session_state["_pref_alpaca_secret"] = secret_key
 
+    # ── Active Feed indicator ──────────────────────────────────────────────────
+    import streamlit.components.v1 as _cmp_feed_ind
+    _cmp_feed_ind.html("""
+<div id="_afi_wrap" style="
+    display:flex; align-items:center; justify-content:space-between;
+    background:#0d1117; border:1px solid #1f2937; border-radius:8px;
+    padding:8px 12px; margin:10px 0 4px 0; gap:10px;">
+  <span style="font-size:11px; font-weight:600; color:#9ca3af; white-space:nowrap; letter-spacing:0.03em;">
+    ACTIVE FEED
+  </span>
+  <div style="display:flex; gap:6px;">
+    <button id="_afi_sip" onclick="_afSwitch('sip')" style="
+      font-size:11px; font-weight:700; padding:3px 10px; border-radius:5px;
+      border:none; cursor:pointer; transition:all 0.15s; letter-spacing:0.04em;">
+      SIP
+    </button>
+    <button id="_afi_iex" onclick="_afSwitch('iex')" style="
+      font-size:11px; font-weight:700; padding:3px 10px; border-radius:5px;
+      border:none; cursor:pointer; transition:all 0.15s; letter-spacing:0.04em;">
+      IEX
+    </button>
+  </div>
+</div>
+<script>
+(function() {
+  function _afRender(feed) {
+    var sipBtn = document.getElementById('_afi_sip');
+    var iexBtn = document.getElementById('_afi_iex');
+    if (!sipBtn || !iexBtn) return;
+    var activeSip = (feed === 'sip');
+    sipBtn.style.background  = activeSip  ? '#16a34a' : '#1f2937';
+    sipBtn.style.color       = activeSip  ? '#ffffff' : '#6b7280';
+    sipBtn.style.boxShadow   = activeSip  ? '0 0 8px rgba(22,163,74,0.45)' : 'none';
+    iexBtn.style.background  = !activeSip ? '#0369a1' : '#1f2937';
+    iexBtn.style.color       = !activeSip ? '#ffffff' : '#6b7280';
+    iexBtn.style.boxShadow   = !activeSip ? '0 0 8px rgba(3,105,161,0.45)' : 'none';
+  }
+  function _afGetFeed() {
+    return (window.parent.localStorage.getItem('edgeiq_feed') ||
+            window.parent.localStorage.getItem('global_default_feed') || 'sip');
+  }
+  window._afSwitch = function(feed) {
+    if (feed !== 'sip' && feed !== 'iex') return;
+    var ptFeed = feed === 'sip' ? 'SIP (paid \u2014 accurate)' : 'IEX (free \u2014 limited)';
+    var ls = window.parent.localStorage;
+    ls.setItem('edgeiq_feed', feed);
+    ls.setItem('global_default_feed', feed);
+    ls.setItem('hist_scan_feed', feed);
+    ls.setItem('replay_feed_sel', feed);
+    ls.setItem('live_scan_feed', feed);
+    ls.setItem('scan_feed_select', feed);
+    ls.setItem('pat_scan_feed', feed);
+    ls.setItem('bt_feed_select', feed);
+    ls.setItem('wpe_feed_select', feed);
+    ls.setItem('pt_feed', ptFeed);
+    _afRender(feed);
+    try {
+      var bc = new window.parent.BroadcastChannel('edgeiq_feed_sync');
+      bc.postMessage({ feed: feed });
+    } catch(e) {}
+    var url = new URL(window.parent.location.href);
+    url.searchParams.set('hist_scan_feed', feed);
+    url.searchParams.set('replay_scan_feed', feed);
+    url.searchParams.set('live_scan_feed', feed);
+    url.searchParams.set('scan_feed', feed);
+    url.searchParams.set('pat_scan_feed', feed);
+    url.searchParams.set('bt_batch_feed', feed);
+    url.searchParams.set('wpe_feed', feed);
+    url.searchParams.set('pt_feed', ptFeed);
+    window.parent.location.replace(url.toString());
+  };
+  _afRender(_afGetFeed());
+  try {
+    var _bc2 = new window.parent.BroadcastChannel('edgeiq_feed_sync');
+    _bc2.onmessage = function(e) {
+      var feed = e.data && e.data.feed;
+      if (feed === 'sip' || feed === 'iex') _afRender(feed);
+    };
+  } catch(e) {}
+})();
+</script>
+""", height=52)
+    st.caption(
+        "SIP = full tape · IEX = free tier. "
+        "Click to switch the feed globally.",
+    )
+
     st.markdown("---")
     st.markdown(
         '<style>'
