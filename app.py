@@ -11859,6 +11859,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _best_tcs_options = []
             _tkr_max_div_data = {}
             _tkr_delta_data = {}
+            _tkr_ib_pass_data = {}
             _tkr_ib_threshold = _cached_load_ib_range_pct_threshold()
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
@@ -11937,6 +11938,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _ib_pass_pct = round(_ib_pass_n / len(_ib_valid) * 100, 1)
                         _ib_icon = "🟢" if _ib_pass_pct >= 70 else "🟡" if _ib_pass_pct >= 40 else "🔴"
                         _ib_pass_str = f"{_ib_icon} {_ib_pass_pct}%"
+                _tkr_ib_pass_data[str(_tk)] = (
+                    round(_ib_pass_pct / 100, 4) if _ib_pass_pct is not None else None
+                )
 
                 # ── Per-ticker TCS Optimizer sweep ────────────────────────────
                 _best_tcs_label = "—"
@@ -13957,6 +13961,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _tk_sw_csv_export["Δ Morn"]  = _tk_delta_morn_str
                         _tk_sw_csv_export["Δ Intra"] = _tk_delta_intra_str
 
+                        # ── Inject IB Pass % (decimal) ───────────────────────────
+                        _tk_ib_pass_decimal = _tkr_ib_pass_data.get(str(_tk_name))
+                        _tk_sw_csv_export["IB Pass %"] = (
+                            _tk_ib_pass_decimal if _tk_ib_pass_decimal is not None else ""
+                        )
+
                         st.download_button(
                             label="⬇️ Download Sweep Summary CSV",
                             data=_tk_sw_csv_export.to_csv(index=False),
@@ -15315,6 +15325,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _exp_delta = _tkr_delta_data.get(str(_exp_tk), {})
                     _exp_df["Δ Morn"]  = _exp_delta.get("delta_morn",  "—")
                     _exp_df["Δ Intra"] = _exp_delta.get("delta_intra", "—")
+                    _exp_ib_pass = _tkr_ib_pass_data.get(str(_exp_tk))
+                    _exp_df["IB Pass %"] = _exp_ib_pass if _exp_ib_pass is not None else ""
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
