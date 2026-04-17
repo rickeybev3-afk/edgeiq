@@ -355,6 +355,12 @@ Bearish Break = mirror image (sell short at IB low, stop at IB high, target = IB
 
 ---
 
+## User Preferences (Agent Notes)
+
+- **Timezone: EST always** — user is in Eastern Standard Time. All time references, scan schedules, and market hours must be in ET. Never say "UTC" or calculate wrong offsets.
+- Build mode only, concise replies, no "ready for review" sign-offs
+- Mobile-friendly communication style
+
 ## Stack
 
 - Python 3.11, Streamlit, Plotly, Pandas, NumPy, PyTZ, Alpaca-py, Supabase-py
