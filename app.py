@@ -8985,6 +8985,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
             else:
                 _verdict = f"EOD hold outperforms tiered exits by {abs(_diff):.3f}R per trade"
                 _verdict_clr = "#81c784"
+        elif _avg_eod is not None:
+            _verdict = "Tiered exit data not yet available — run the batch backtest to populate tiered_pnl_r"
+            _verdict_clr = "#78909c"
+        elif _avg_tiered is not None:
+            _verdict = "EOD close-price data not yet available — run the sim backfill to populate eod_pnl_r"
+            _verdict_clr = "#78909c"
         else:
             _verdict = "Run sim backfill to populate both metrics"
             _verdict_clr = "#546e7a"
@@ -14944,10 +14950,50 @@ ALTER TABLE backtest_sim_runs
             _bts_cmp_has_eod    = "eod_pnl_r"   in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
             _bts_cmp_has_tiered = "tiered_pnl_r" in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
 
-            if not _bts_cmp_has_eod or not _bts_cmp_has_tiered:
+            if not _bts_cmp_has_eod and not _bts_cmp_has_tiered:
                 st.info(
-                    "Both EOD and tiered R values are needed for this comparison.  \n"
+                    "Neither EOD nor tiered R values are populated yet.  \n"
                     "EOD data requires a close-price backfill; tiered data populates as new backtests run."
+                )
+            elif not _bts_cmp_has_eod or not _bts_cmp_has_tiered:
+                _bts_missing_label = (
+                    "Tiered exit data (tiered_pnl_r) is not yet populated — run the batch backtest to fill it in."
+                    if _bts_cmp_has_eod
+                    else "EOD close-price data (eod_pnl_r) is not yet populated — run the close-price backfill to fill it in."
+                )
+                st.info(_bts_missing_label)
+                # Show whichever single metric is available as a standalone summary
+                _bts_single_col   = "eod_pnl_r" if _bts_cmp_has_eod else "tiered_pnl_r"
+                _bts_single_label = "📅 Held to Close (EOD)" if _bts_cmp_has_eod else "🪜 50/25/25 Ladder (Tiered)"
+                _bts_single_clr   = "#81c784" if _bts_cmp_has_eod else "#ffb74d"
+                _bts_single_df    = _bts_df[_bts_df[_bts_single_col].notna()].copy()
+                _bts_single_df[_bts_single_col] = _bts_single_df[_bts_single_col].astype(float)
+                _bts_single_avg   = _bts_single_df[_bts_single_col].mean()
+                _bts_single_n     = len(_bts_single_df)
+                _bts_single_sign  = "+" if _bts_single_avg >= 0 else ""
+                _bts_single_val_c = "#4caf50" if _bts_single_avg >= 0 else "#ef5350"
+                st.markdown(
+                    f'<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+                    f'padding:14px 24px; margin-bottom:12px;">'
+                    f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+                    f'letter-spacing:1.5px; margin-bottom:10px; font-weight:700; font-family:monospace;">'
+                    f'📊 Strategy Comparison — Partial Data ({_bts_single_n} trades)</div>'
+                    f'<div style="display:flex; gap:32px; flex-wrap:wrap; align-items:center;">'
+                    f'<div>'
+                    f'<div style="font-size:9px; color:{_bts_single_clr}; text-transform:uppercase; '
+                    f'letter-spacing:1px; margin-bottom:2px;">{_bts_single_label}</div>'
+                    f'<div style="font-size:26px; font-weight:800; color:{_bts_single_val_c}; '
+                    f'font-family:monospace;">{_bts_single_sign}{_bts_single_avg:.3f}R ({_bts_single_n} trades)</div>'
+                    f'</div>'
+                    f'<div style="border-left:1px solid #1a2744; padding-left:24px; align-self:center;">'
+                    f'<div style="font-size:12px; font-weight:700; color:#78909c;">'
+                    f'{"Populate tiered_pnl_r to unlock the full comparison" if _bts_cmp_has_eod else "Populate eod_pnl_r to unlock the full comparison"}'
+                    f'</div>'
+                    f'<div style="font-size:10px; color:#37474f; margin-top:3px;">'
+                    f'Full head-to-head requires both metrics on matching trades</div>'
+                    f'</div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
                 )
             else:
                 _bts_cmp_scan_raw  = (
