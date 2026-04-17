@@ -6077,13 +6077,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.session_state["rp_min_ft"] = 0.0
                     st.session_state["rp_min_gap"] = 0.0
                     st.session_state["rp_min_gap_vs_ib"] = 0.0
+                    st.session_state["rp_scan_type"] = "Morning (10:47 AM)"
                     # Reflect all resets in the signature so the stored value
                     # matches actual session state and does not trigger a
                     # spurious extra clear on the very next rerun.
                     _rp_sig = (
                         _rp_sig[0], _rp_sig[1], _rp_sig[2],
                         0.0, 0.0,
-                        _rp_sig[5], _rp_sig[6],
+                        "Morning (10:47 AM)", _rp_sig[6],
                         0, _rp_sig[8],
                         0.0,
                     )
