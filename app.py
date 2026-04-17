@@ -10618,13 +10618,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
             }
             _ctrl_col_sort, _ctrl_col_filter = st.columns([3, 2])
             with _ctrl_col_sort:
+                # Restore sort choice from URL query params on first load
+                if "tkr_summary_sort_radio" not in st.session_state:
+                    _qp_sort = st.query_params.get("tkr_sort", "")
+                    _sort_opts = list(_sort_col_map.keys())
+                    st.session_state["tkr_summary_sort_radio"] = (
+                        _qp_sort if _qp_sort in _sort_opts else _sort_opts[0]
+                    )
                 _sort_choice = st.radio(
                     "Sort table by",
                     list(_sort_col_map.keys()),
-                    index=0,
                     horizontal=True,
                     key="tkr_summary_sort_radio",
                 )
+                # Sync sort choice to URL query params
+                if st.query_params.get("tkr_sort") != _sort_choice:
+                    st.query_params["tkr_sort"] = _sort_choice
             with _ctrl_col_filter:
                 # Restore filter column from URL query params on first load
                 if "tkr_summary_r_filter_col" not in st.session_state:
