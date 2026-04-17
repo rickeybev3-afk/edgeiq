@@ -7538,7 +7538,8 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
         }
         records, skipped = [], 0
         skipped_sim_rows = []
-        skipped_sim_failed = []  # tickers excluded due to missing/invalid sim data
+        skipped_sim_failed = []   # tickers excluded due to missing/invalid sim data (already-logged)
+        new_sim_failed = []       # tickers excluded due to missing/invalid sim data (newly inserted)
         _SIM_REASON_LABELS = {
             "missing_data": "missing IB data",
             "invalid_ib":   "invalid IB range",
@@ -7637,15 +7638,26 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["scan_type"] = r["scan_type"]
             # Auto-compute sim P&L on insert so backfill script is never needed
             _sim = compute_trade_sim(row_record)
-            if _sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
-                row_record["sim_outcome"]      = _sim["sim_outcome"]
+            _new_sim_outcome = _sim.get("sim_outcome")
+            if _new_sim_outcome not in ("no_trade", "missing_data", "invalid_ib", None):
+                row_record["sim_outcome"]      = _new_sim_outcome
                 row_record["pnl_r_sim"]        = _sim.get("pnl_r_sim")
                 row_record["pnl_pct_sim"]      = _sim.get("pnl_pct_sim")
                 row_record["entry_price_sim"]  = _sim.get("entry_price_sim")
                 row_record["stop_price_sim"]   = _sim.get("stop_price_sim")
                 row_record["stop_dist_pct"]    = _sim.get("stop_dist_pct")
                 row_record["target_price_sim"] = _sim.get("target_price_sim")
+            elif _new_sim_outcome in ("missing_data", "invalid_ib"):
+                # Sim could not be computed for this newly-inserted trade — warn the trader.
+                _new_reason = _SIM_REASON_LABELS.get(_new_sim_outcome, "unknown reason")
+                new_sim_failed.append({
+                    "ticker": row_record["ticker"],
+                    "reason": _new_reason,
+                })
             records.append(row_record)
+        # Only include records that have a valid sim_outcome so that the warning
+        # "excluded from the table below" is accurate for failed-sim tickers.
+        _failed_new_tickers = {entry["ticker"] for entry in new_sim_failed}
         sim_rows = [
             {
                 "ticker":           rec["ticker"],
@@ -7656,6 +7668,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 "target_price_sim": rec.get("target_price_sim"),
             }
             for rec in records
+            if rec["ticker"] not in _failed_new_tickers
         ]
         if records:
             try:
@@ -7679,7 +7692,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
             "saved":            len(records),
             "skipped":          skipped,
             "sim_rows":         sim_rows + skipped_sim_rows,
-            "sim_failed":       skipped_sim_failed,
+            "sim_failed":       new_sim_failed + skipped_sim_failed,
         }
     except Exception as e:
         return {"saved": 0, "skipped": 0, "error": str(e)}
