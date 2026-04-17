@@ -1572,7 +1572,10 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         st.info("No Unknown structures found — journal is fully enriched.")
     with colc:
         if not df.empty:
-            csv_bytes = df.to_csv(index=False).encode()
+            _journal_export = df.copy()
+            if "structure" in _journal_export.columns:
+                _journal_export["structure"] = _journal_export["structure"].apply(_clean_structure_label)
+            csv_bytes = _journal_export.to_csv(index=False).encode()
             st.download_button(
                 "⬇️ Download Journal (CSV)",
                 data=csv_bytes,
@@ -7843,6 +7846,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _rp_csv_df = _rp_csv_df.drop(columns=["EOD Hold R"], errors="ignore")
                         if "Tiered Exit R" not in _r_cols_selected:
                             _rp_csv_df = _rp_csv_df.drop(columns=["Tiered Exit R"], errors="ignore")
+
+                        if "Structure" in _rp_csv_df.columns:
+                            _rp_csv_df["Structure"] = _rp_csv_df["Structure"].apply(_clean_structure_label)
 
                         # Append a blank separator then a per-stat summary block
                         _csv_cols   = list(_rp_csv_df.columns)

@@ -884,6 +884,11 @@ WK_DISPLAY: dict[str, str] = {
     "ntrl_extreme":   "⚡ Ntrl Extreme",
     "nrml_variation": "〰️ Nrml Variation",
 }
+
+WK_DISPLAY_PLAIN: dict[str, str] = {
+    k: _re.sub(r"[^\w\s()/\-]", "", v).strip()
+    for k, v in WK_DISPLAY.items()
+}
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
 SA_JOURNAL_FILE  = "sa_journal.csv"
