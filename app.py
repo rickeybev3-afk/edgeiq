@@ -14060,6 +14060,71 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _dd_stat_r("Expectancy", f"{_dd_exp_r:+.3f}R/trade"),
                                         _dd_stat_r("Max Drawdown (R)", f"{abs(_dd_max_dd_r)}R"),
                                     ]
+                                    # ── Per-structure marginal breakdown ─────────
+                                    if "predicted" in _tk_drill_df.columns and _tk_drill_floor is not None:
+                                        _dd_marg_mask = _tk_drill_df["tcs"].astype(float) <= float(_tk_drill_floor) + 5
+                                        _dd_marg_df   = _tk_drill_df[_dd_marg_mask]
+                                        _dd_comf_df   = _tk_drill_df[~_dd_marg_mask]
+                                        _dd_marg_n    = len(_dd_marg_df)
+                                        if _dd_marg_n > 0:
+                                            _dd_summ_rows += [
+                                                {c: "" for c in _dd_csv_cols},
+                                                _dd_stat_r("--- MARGINAL BREAKDOWN BY STRUCTURE ---", ""),
+                                            ]
+                                            _dd_cs_fields = [
+                                                "Structure", "Marginal Trades", "Marg Win Rate",
+                                                "Comf Win Rate", "ΔWR", "Marg Avg R",
+                                            ]
+                                            _dd_cs_slots  = _dd_csv_cols[:len(_dd_cs_fields)]
+                                            _dd_cs_header = {c: "" for c in _dd_csv_cols}
+                                            for _dd_ci, _dd_cf in enumerate(_dd_cs_fields[:len(_dd_cs_slots)]):
+                                                _dd_cs_header[_dd_cs_slots[_dd_ci]] = _dd_cf
+                                            _dd_summ_rows.append(_dd_cs_header)
+                                            _dd_cs_rows = []
+                                            for _dd_cs_name, _dd_cs_marg in _dd_marg_df.groupby("predicted"):
+                                                _dd_cs_comf    = _dd_comf_df[_dd_comf_df["predicted"] == _dd_cs_name]
+                                                _dd_cs_marg_n  = len(_dd_cs_marg)
+                                                _dd_cs_comf_n  = len(_dd_cs_comf)
+                                                _dd_cs_marg_wr = (
+                                                    round((_dd_cs_marg["win_loss"] == "Win").sum() / _dd_cs_marg_n * 100, 1)
+                                                    if _dd_cs_marg_n else None
+                                                )
+                                                _dd_cs_comf_wr = (
+                                                    round((_dd_cs_comf["win_loss"] == "Win").sum() / _dd_cs_comf_n * 100, 1)
+                                                    if _dd_cs_comf_n else None
+                                                )
+                                                _dd_cs_marg_avgr = (
+                                                    round(pd.to_numeric(_dd_cs_marg[_dd_r_col], errors="coerce").mean(), 2)
+                                                    if (_dd_cs_marg_n and _dd_r_col in _dd_cs_marg.columns)
+                                                    else None
+                                                )
+                                                _dd_cs_delta_wr = (
+                                                    round(_dd_cs_marg_wr - _dd_cs_comf_wr, 1)
+                                                    if (_dd_cs_marg_wr is not None and _dd_cs_comf_wr is not None)
+                                                    else None
+                                                )
+                                                _dd_cs_rows.append({
+                                                    "Structure":       _clean_structure_label(_dd_cs_name),
+                                                    "Marginal Trades": _dd_cs_marg_n,
+                                                    "Marg Win Rate":   f"{_dd_cs_marg_wr}%" if _dd_cs_marg_wr is not None else "—",
+                                                    "Comf Win Rate":   f"{_dd_cs_comf_wr}%" if _dd_cs_comf_wr is not None else "—",
+                                                    "ΔWR":             f"{_dd_cs_delta_wr:+.1f}pp" if _dd_cs_delta_wr is not None else "—",
+                                                    "Marg Avg R":      f"{_dd_cs_marg_avgr:+.2f}R" if _dd_cs_marg_avgr is not None else "—",
+                                                })
+                                            _dd_cs_rows.sort(key=lambda _r: _r["Marginal Trades"], reverse=True)
+                                            for _dd_cs_row in _dd_cs_rows:
+                                                _dd_cs_data = {c: "" for c in _dd_csv_cols}
+                                                _dd_cs_vals = [
+                                                    _dd_cs_row["Structure"],
+                                                    str(_dd_cs_row["Marginal Trades"]),
+                                                    _dd_cs_row["Marg Win Rate"],
+                                                    _dd_cs_row["Comf Win Rate"],
+                                                    _dd_cs_row["ΔWR"],
+                                                    _dd_cs_row["Marg Avg R"],
+                                                ]
+                                                for _dd_ci, _dd_cv in enumerate(_dd_cs_vals[:len(_dd_cs_slots)]):
+                                                    _dd_cs_data[_dd_cs_slots[_dd_ci]] = _dd_cv
+                                                _dd_summ_rows.append(_dd_cs_data)
                                     _dd_csv_final  = pd.concat(
                                         [_tk_csv_export, pd.DataFrame(_dd_summ_rows)],
                                         ignore_index=True,
@@ -14073,7 +14138,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     file_name=f"{_tk_name}_TCS{_tk_drill_floor}_trades.csv",
                                     mime="text/csv",
                                     key=f"dl_csv_{_tk_name}_{_tk_drill_floor}",
-                                    help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file — includes R-stats summary block at the bottom",
+                                    help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file — includes R-stats summary and per-structure marginal breakdown at the bottom",
                                 )
 
                 # ── Sync open ticker detail expander to URL query param ───────
