@@ -949,6 +949,7 @@ def render_beta_portal(beta_user_id: str):
                                     _b_saved += 1
                                 except Exception:
                                     pass
+                            _cached_load_journal.clear()
                             st.success(f"✅ {_b_saved} trades uploaded successfully.")
                             st.balloons()
 
@@ -1215,6 +1216,7 @@ def render_trade_journal_page():
                         for _t in _tj_new:
                             _t["user_id"] = _tj_uid
                             save_journal_entry(_t)
+                        _cached_load_journal.clear()
                         st.success(f"Logged {len(_tj_new)} new trades! ({_tj_skipped} duplicates skipped)")
                     else:
                         st.info(f"All {_tj_skipped} trades already logged — nothing new to add.")
@@ -1407,6 +1409,7 @@ def render_log_entry_ui():
                 "social_msg_count": state.get("social_msg_count"),
             }
             save_journal_entry(entry, user_id=st.session_state.get("auth_user_id", ""))
+            _cached_load_journal.clear()
             # Clear fetched price state so next log starts fresh
             for _ck in ("_fetched_price", "_fetched_volume", "_fetched_symbol"):
                 st.session_state.pop(_ck, None)
@@ -1736,6 +1739,8 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         else:
                             _imported = 0
 
+                        _cached_load_journal.clear()
+                        _cached_load_accuracy_tracker.clear()
                         st.success(
                             f"Imported **{_imported} trades** into your journal"
                             + (f" ({_skipped} skipped as duplicates)" if _skipped else "")
@@ -2235,6 +2240,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                         mfe         = _t["pnl_dollars"],
                                         user_id     = _uid,
                                     )
+                                    _cached_load_accuracy_tracker.clear()
                                     st.session_state[f"_imported_{_imp_key}"] = True
                                     st.rerun()
     
@@ -2264,6 +2270,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                 st.session_state[f"_imported_import_alpaca_{_ti2}"] = True
                                 _saved += 1
                         if _saved > 0:
+                            _cached_load_accuracy_tracker.clear()
                             st.success(f"Saved {_saved} trade(s) to Accuracy Tracker.")
                             st.session_state["_alpaca_roundtrips"] = []
                             st.rerun()
@@ -4066,6 +4073,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
             log_accuracy_entry(ticker, brain.prediction, label,
                                compare_key=_compare_key,
                                user_id=st.session_state.get("auth_user_id", ""))
+            _cached_load_accuracy_tracker.clear()
             _brain_newly_logged = True
         elif st.session_state.brain_last_compared != _compare_key and _already_in_csv:
             # Already in CSV from a previous session — just sync the session key
@@ -10934,6 +10942,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                             _backfill_fail += 1
                     except Exception:
                         _backfill_fail += 1
+                _cached_load_accuracy_tracker.clear()
                 st.success(
                     f"Synced **{_backfill_count} trades** to analytics."
                     + (f" {_backfill_fail} entries skipped (missing P&L data)." if _backfill_fail else "")
@@ -16408,6 +16417,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             user_id=_AUTH_USER_ID,
                             min_tcs=_pt_min_tcs,
                         )
+                        _cached_load_paper_trades.clear()
                         st.session_state["_pt_last_scan"] = _pt_qualified
                         if _pt_log_result.get("error"):
                             st.error(f"Save error: {_pt_log_result['error']}")
@@ -18708,6 +18718,7 @@ if st.session_state.get("_pt_live_mode"):
                 ]
                 if _auto_q:
                     log_paper_trades(_auto_q, user_id=_AUTH_USER_ID, min_tcs=_pt_min)
+                    _cached_load_paper_trades.clear()
                 st.session_state["_pt_last_auto_scan"] = _pt_now.timestamp()
                 st.session_state.pop("pt_tracker_df", None)
         time.sleep(60)
