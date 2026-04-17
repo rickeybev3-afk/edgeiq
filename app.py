@@ -10637,6 +10637,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _tkr_sweep_data = {}
             _tkr_div_chart_data = {}
             _best_tcs_options = []
+            _tkr_max_div_data = {}
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
             # ── Min-trade-count slider ─────────────────────────────────────────
@@ -10792,6 +10793,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # ── Per-ticker max-divergence (equity $ vs cumulative R) ───────
                 _tk_max_div_val = 0.0
                 _tk_div_label   = "—"
+                _tk_max_div_idx = None
                 try:
                     _ft_col_div = "follow_thru_pct" if "follow_thru_pct" in _tgrp.columns else "aft_move_pct"
                     if _ft_col_div in _tgrp.columns and "win_loss" in _tgrp.columns:
@@ -10840,10 +10842,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 }
                                 if abs(_max_div_val_tk) >= 0.02:
                                     _tk_max_div_val = _max_div_val_tk
+                                    _tk_max_div_idx = _max_div_idx_tk
                                     _dir_tk = "Amplified" if _max_div_val_tk > 0 else "Dampened"
                                     _tk_div_label = f"Trade #{_max_div_idx_tk} ({_dir_tk})"
                 except Exception:
                     pass
+
+                _tkr_max_div_data[str(_tk)] = {
+                    "trade_num":  _tk_max_div_idx,
+                    "direction":  ("Amplified" if _tk_max_div_val > 0 else "Dampened") if _tk_max_div_idx is not None else None,
+                    "magnitude":  round(abs(_tk_max_div_val), 3) if _tk_max_div_idx is not None else None,
+                }
 
                 _tkr_persist_key   = f"_drill_tcs_persist_{_tk}"
                 _tkr_persisted_val = st.session_state.get(_tkr_persist_key)
@@ -12146,6 +12155,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         # trader has deselected both EOD Hold R and Tiered Exit R.
                         if not any(c in _sw_r_selected for c in ["EOD Hold R", "Tiered Exit R"]):
                             _tk_sw_csv_export = _tk_sw_df
+
+                        # ── Inject max-divergence columns into the CSV export ─────
+                        _sw_div_info = _tkr_max_div_data.get(str(_tk_name), {})
+                        _tk_sw_csv_export = _tk_sw_csv_export.copy()
+                        _tk_sw_csv_export["Max Div Trade #"]   = _sw_div_info.get("trade_num") if _sw_div_info.get("trade_num") is not None else "—"
+                        _tk_sw_csv_export["Max Div Direction"] = _sw_div_info.get("direction") if _sw_div_info.get("direction") is not None else "—"
+                        _tk_sw_csv_export["Max Div Magnitude"] = _sw_div_info.get("magnitude") if _sw_div_info.get("magnitude") is not None else "—"
 
                         st.download_button(
                             label="⬇️ Download Sweep Summary CSV",
