@@ -13878,6 +13878,45 @@ ALTER TABLE backtest_sim_runs
         _bts_min_date = _bts_valid_dates.min().date() if not _bts_valid_dates.empty else None
         _bts_max_date = _bts_valid_dates.max().date() if not _bts_valid_dates.empty else None
 
+        # ── Restore date-range filter from localStorage → URL params (unauthenticated users) ──
+        import streamlit.components.v1 as _cmp_bts_dr
+        _cmp_bts_dr.html("""
+<script>
+(function() {
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('bts_dr_start') || url.searchParams.has('bts_dr_end')) return;
+    var s = localStorage.getItem('bts_dr_start');
+    var e = localStorage.getItem('bts_dr_end');
+    if (!s && !e) return;
+    if (s) url.searchParams.set('bts_dr_start', s);
+    if (e) url.searchParams.set('bts_dr_end', e);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+        # ── Seed session state from URL params on first load (works for all users) ──
+        # Precedence (highest → lowest):
+        #   1. User prefs (auth users only, restored at ~line 4415 before this section runs)
+        #   2. URL query params (bts_dr_start / bts_dr_end) — set here only when key is absent
+        #   3. localStorage — JS above injects values into URL before Python renders, so by
+        #      the time Python runs the URL already carries them
+        import datetime as _dt_bts_qp
+        if "bts_dr_start" not in st.session_state:
+            _qp_bts_start = st.query_params.get("bts_dr_start")
+            if _qp_bts_start:
+                try:
+                    st.session_state["bts_dr_start"] = _dt_bts_qp.date.fromisoformat(_qp_bts_start)
+                except (ValueError, TypeError):
+                    pass
+        if "bts_dr_end" not in st.session_state:
+            _qp_bts_end = st.query_params.get("bts_dr_end")
+            if _qp_bts_end:
+                try:
+                    st.session_state["bts_dr_end"] = _dt_bts_qp.date.fromisoformat(_qp_bts_end)
+                except (ValueError, TypeError):
+                    pass
+
         _bts_dr_cols = st.columns([1, 1, 4])
         with _bts_dr_cols[0]:
             _bts_start = st.date_input(
@@ -13900,11 +13939,36 @@ ALTER TABLE backtest_sim_runs
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
 
+        # ── Sync date-range filter to URL params + localStorage (all users) ──
+        _bts_start_str = _bts_start.isoformat() if _bts_start else None
+        _bts_end_str   = _bts_end.isoformat()   if _bts_end   else None
+        if _bts_start_str:
+            if st.query_params.get("bts_dr_start") != _bts_start_str:
+                st.query_params["bts_dr_start"] = _bts_start_str
+        elif "bts_dr_start" in st.query_params:
+            del st.query_params["bts_dr_start"]
+        if _bts_end_str:
+            if st.query_params.get("bts_dr_end") != _bts_end_str:
+                st.query_params["bts_dr_end"] = _bts_end_str
+        elif "bts_dr_end" in st.query_params:
+            del st.query_params["bts_dr_end"]
+        _cmp_bts_dr.html(
+            f"<script>"
+            f"(function(){{"
+            f"  var s = {repr(_bts_start_str or '')};"
+            f"  var e = {repr(_bts_end_str or '')};"
+            f"  if (s) {{ localStorage.setItem('bts_dr_start', s); }}"
+            f"  else {{ localStorage.removeItem('bts_dr_start'); }}"
+            f"  if (e) {{ localStorage.setItem('bts_dr_end', e); }}"
+            f"  else {{ localStorage.removeItem('bts_dr_end'); }}"
+            f"}})();"
+            f"</script>",
+            height=0,
+        )
+
         # Persist bts date-range filter to user prefs so it survives page reloads
         if _AUTH_USER_ID:
             _bts_dr_cached = st.session_state.get("_cached_prefs", {})
-            _bts_start_str = _bts_start.isoformat() if _bts_start else None
-            _bts_end_str   = _bts_end.isoformat()   if _bts_end   else None
             if (
                 _bts_dr_cached.get("bts_dr_start") != _bts_start_str
                 or _bts_dr_cached.get("bts_dr_end") != _bts_end_str
