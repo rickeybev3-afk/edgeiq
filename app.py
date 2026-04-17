@@ -4724,6 +4724,10 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
         st.session_state["_trading_mode"] = _prefs["trading_mode"]
     else:
         st.session_state["_trading_mode"] = "paper" if get_trading_mode() else "live"
+    if "default_feed" in _prefs:
+        _df_val = str(_prefs["default_feed"])
+        if _df_val in ("sip", "iex"):
+            st.session_state["_global_default_feed"] = _df_val
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
@@ -4940,6 +4944,38 @@ with st.sidebar:
                 use_container_width=True,
                 hide_index=True,
             )
+
+    st.markdown("---")
+    st.header("⚡ Default Data Feed")
+    _GLOBAL_FEED_OPTS = ["sip", "iex"]
+    _gdf_cur = st.session_state.get("_global_default_feed", "sip")
+    _gdf_idx = _GLOBAL_FEED_OPTS.index(_gdf_cur) if _gdf_cur in _GLOBAL_FEED_OPTS else 0
+    _gdf = st.selectbox(
+        "Default feed for all sections",
+        _GLOBAL_FEED_OPTS,
+        index=_gdf_idx,
+        key="_sb_global_default_feed",
+        help=(
+            "Sections you haven't explicitly configured yet will inherit this feed. "
+            "Once you change a section's feed individually, that override is remembered separately."
+        ),
+    )
+    if _gdf != st.session_state.get("_global_default_feed"):
+        st.session_state["_global_default_feed"] = _gdf
+        _gdf_uid = st.session_state.get("auth_user_id", "")
+        if _gdf_uid:
+            _gdf_prefs = {**st.session_state.get("_cached_prefs", {}), "default_feed": _gdf}
+            save_user_prefs(_gdf_uid, _gdf_prefs)
+            st.session_state["_cached_prefs"] = _gdf_prefs
+    import streamlit.components.v1 as _cmp_gdf
+    _cmp_gdf.html(
+        f"<script>localStorage.setItem('global_default_feed', {repr(_gdf)});</script>",
+        height=0,
+    )
+    st.caption(
+        "**SIP** — full national tape, pre-market RVOL included (requires paid Alpaca subscription).  \n"
+        "**IEX** — free real-time tier, regular hours only."
+    )
 
     st.markdown("---")
     st.header("📱 Telegram Alerts")
@@ -5507,6 +5543,7 @@ with st.sidebar:
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('hist_scan_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
     if (!saved) return;
     url.searchParams.set('hist_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5515,9 +5552,10 @@ with st.sidebar:
 """, height=0)
         _HIST_FEED_OPTS = ["sip", "iex"]
         if "hist_scan_feed" not in st.session_state:
-            _qp_hist_feed = st.query_params.get("hist_scan_feed", "sip")
+            _gdf_hist = st.session_state.get("_global_default_feed", "sip")
+            _qp_hist_feed = st.query_params.get("hist_scan_feed", _gdf_hist)
             st.session_state["hist_scan_feed"] = (
-                _qp_hist_feed if _qp_hist_feed in _HIST_FEED_OPTS else "sip"
+                _qp_hist_feed if _qp_hist_feed in _HIST_FEED_OPTS else _gdf_hist
             )
         data_feed = st.selectbox("Data Feed", _HIST_FEED_OPTS, key="hist_scan_feed",
                                   help="SIP = full national tape (recommended). IEX = free tier, regular hours only.")
@@ -5547,6 +5585,7 @@ with st.sidebar:
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('replay_scan_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
     if (!saved) return;
     url.searchParams.set('replay_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5555,9 +5594,10 @@ with st.sidebar:
 """, height=0)
         _REPLAY_SCAN_FEED_OPTS = ["sip", "iex"]
         if "replay_feed_sel" not in st.session_state:
-            _qp_replay_scan_feed = st.query_params.get("replay_scan_feed", "sip")
+            _gdf_replay = st.session_state.get("_global_default_feed", "sip")
+            _qp_replay_scan_feed = st.query_params.get("replay_scan_feed", _gdf_replay)
             st.session_state["replay_feed_sel"] = (
-                _qp_replay_scan_feed if _qp_replay_scan_feed in _REPLAY_SCAN_FEED_OPTS else "sip"
+                _qp_replay_scan_feed if _qp_replay_scan_feed in _REPLAY_SCAN_FEED_OPTS else _gdf_replay
             )
         data_feed = st.selectbox("Data Feed", _REPLAY_SCAN_FEED_OPTS, key="replay_feed_sel",
                                   help="SIP = full national tape (recommended). IEX = free tier fallback.")
@@ -5641,6 +5681,7 @@ with st.sidebar:
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('live_scan_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
     if (!saved) return;
     url.searchParams.set('live_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5649,9 +5690,10 @@ with st.sidebar:
 """, height=0)
         _LIVE_FEED_OPTS = ["iex", "sip"]
         if "live_scan_feed" not in st.session_state:
-            _qp_live_feed = st.query_params.get("live_scan_feed", "iex")
+            _gdf_live = st.session_state.get("_global_default_feed", "iex")
+            _qp_live_feed = st.query_params.get("live_scan_feed", _gdf_live)
             st.session_state["live_scan_feed"] = (
-                _qp_live_feed if _qp_live_feed in _LIVE_FEED_OPTS else "iex"
+                _qp_live_feed if _qp_live_feed in _LIVE_FEED_OPTS else _gdf_live
             )
         live_feed = st.selectbox("Data Feed", _LIVE_FEED_OPTS, key="live_scan_feed",
                                   help="IEX = free real-time feed. SIP = full national tape (requires paid Alpaca subscription).")
@@ -5866,6 +5908,7 @@ with st.sidebar:
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('scan_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
     if (!saved) return;
     url.searchParams.set('scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5874,9 +5917,10 @@ with st.sidebar:
 """, height=0)
     _SCAN_FEED_OPTS = ["sip", "iex"]
     if "scan_feed_select" not in st.session_state:
-        _qp_scan_feed = st.query_params.get("scan_feed", "sip")
+        _gdf_scan = st.session_state.get("_global_default_feed", "sip")
+        _qp_scan_feed = st.query_params.get("scan_feed", _gdf_scan)
         st.session_state["scan_feed_select"] = (
-            _qp_scan_feed if _qp_scan_feed in _SCAN_FEED_OPTS else "sip"
+            _qp_scan_feed if _qp_scan_feed in _SCAN_FEED_OPTS else _gdf_scan
         )
     scan_feed = st.selectbox("Scanner Feed", _SCAN_FEED_OPTS, key="scan_feed_select",
                              help="SIP = full national tape with PM RVOL (recommended). IEX = free tier, regular hours only.")
@@ -13634,6 +13678,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('pat_scan_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
     if (!saved) return;
     url.searchParams.set('pat_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -13642,9 +13687,10 @@ Nothing here requires any input from you. All numbers update automatically as yo
 """, height=0)
     _PAT_FEED_OPTS = ["iex", "sip"]
     if "pat_scan_feed" not in st.session_state:
-        _qp_pat_feed = st.query_params.get("pat_scan_feed", "iex")
+        _gdf_pat = st.session_state.get("_global_default_feed", "iex")
+        _qp_pat_feed = st.query_params.get("pat_scan_feed", _gdf_pat)
         st.session_state["pat_scan_feed"] = (
-            _qp_pat_feed if _qp_pat_feed in _PAT_FEED_OPTS else "iex"
+            _qp_pat_feed if _qp_pat_feed in _PAT_FEED_OPTS else _gdf_pat
         )
     _pat_col1, _pat_col2 = st.columns([3, 1])
     _pat_scan_feed = _pat_col2.selectbox(
@@ -13889,6 +13935,7 @@ def render_tracker_tab():
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('bt_batch_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
     if (!saved) return;
     url.searchParams.set('bt_batch_feed', saved);
     window.parent.location.replace(url.toString());
@@ -13897,9 +13944,10 @@ def render_tracker_tab():
 """, height=0)
         _BT_BATCH_FEED_OPTS = ["iex", "sip"]
         if "bt_feed_select" not in st.session_state:
-            _qp_bt_batch_feed = st.query_params.get("bt_batch_feed", "iex")
+            _gdf_bt = st.session_state.get("_global_default_feed", "iex")
+            _qp_bt_batch_feed = st.query_params.get("bt_batch_feed", _gdf_bt)
             st.session_state["bt_feed_select"] = (
-                _qp_bt_batch_feed if _qp_bt_batch_feed in _BT_BATCH_FEED_OPTS else "iex"
+                _qp_bt_batch_feed if _qp_bt_batch_feed in _BT_BATCH_FEED_OPTS else _gdf_bt
             )
         _bt_feed = st.selectbox(
             "Data feed", _BT_BATCH_FEED_OPTS, key="bt_feed_select",
@@ -19036,6 +19084,10 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('pt_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) {
+        var gdf = localStorage.getItem('global_default_feed');
+        if (gdf) saved = (gdf === 'sip') ? 'SIP (paid \u2014 accurate)' : 'IEX (free \u2014 limited)';
+    }
     if (!saved) return;
     url.searchParams.set('pt_feed', saved);
     window.parent.location.replace(url.toString());
@@ -19044,9 +19096,11 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 """, height=0)
         _PT_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
         if "pt_feed" not in st.session_state:
-            _qp_pt_feed = st.query_params.get("pt_feed", "SIP (paid — accurate)")
+            _gdf_pt_raw = st.session_state.get("_global_default_feed", "sip")
+            _gdf_pt = "SIP (paid — accurate)" if _gdf_pt_raw == "sip" else "IEX (free — limited)"
+            _qp_pt_feed = st.query_params.get("pt_feed", _gdf_pt)
             st.session_state["pt_feed"] = (
-                _qp_pt_feed if _qp_pt_feed in _PT_FEED_OPTIONS else "SIP (paid — accurate)"
+                _qp_pt_feed if _qp_pt_feed in _PT_FEED_OPTIONS else _gdf_pt
             )
         _pt_feed = st.radio(
             "Bar Data Feed",
@@ -20765,6 +20819,7 @@ with tab_scan:
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('wpe_feed')) return;
     var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
     if (!saved) return;
     url.searchParams.set('wpe_feed', saved);
     window.parent.location.replace(url.toString());
@@ -20773,9 +20828,10 @@ with tab_scan:
 """, height=0)
     _WPE_FEED_OPTS = ["sip", "iex"]
     if "wpe_feed_select" not in st.session_state:
-        _qp_wpe_feed = st.query_params.get("wpe_feed", "sip")
+        _gdf_wpe = st.session_state.get("_global_default_feed", "sip")
+        _qp_wpe_feed = st.query_params.get("wpe_feed", _gdf_wpe)
         st.session_state["wpe_feed_select"] = (
-            _qp_wpe_feed if _qp_wpe_feed in _WPE_FEED_OPTS else "sip"
+            _qp_wpe_feed if _qp_wpe_feed in _WPE_FEED_OPTS else _gdf_wpe
         )
     _wpe_feed = st.selectbox("Feed", _WPE_FEED_OPTS, key="wpe_feed_select",
                              help="SIP = full national tape (recommended). IEX = free tier fallback.")
