@@ -4810,6 +4810,7 @@ with st.sidebar:
         else:
             # Live → Paper (or same): commit immediately, no confirmation needed
             set_trading_mode(_tm_is_paper)
+            log_mode_switch(_sb_uid, _tm_current, _tm_label)
             st.session_state["_trading_mode"] = _tm_label
             st.session_state.pop("_tm_pending_live", None)
             if _sb_uid:
@@ -4827,6 +4828,7 @@ with st.sidebar:
         with _conf_col1:
             if st.button("✅ Yes, switch to Live", use_container_width=True, type="primary"):
                 set_trading_mode(False)
+                log_mode_switch(_sb_uid, _tm_current, "live")
                 st.session_state["_trading_mode"] = "live"
                 st.session_state.pop("_tm_pending_live", None)
                 if _sb_uid:
@@ -4880,6 +4882,20 @@ with st.sidebar:
                 f"account but Trading Mode is set to **{_wanted}**. "
                 f"Switch the toggle or replace your keys.",
                 icon="⚠️",
+            )
+
+    # ── Mode-switch audit log ────────────────────────────────────────────────
+    _audit_df = load_mode_switch_log()
+    with st.expander("📋 Mode-switch audit log", expanded=False):
+        if _audit_df.empty:
+            st.caption("No mode switches recorded yet.")
+        else:
+            _audit_display = _audit_df.copy()
+            _audit_display.columns = ["Timestamp", "User ID", "From", "To"]
+            st.dataframe(
+                _audit_display,
+                use_container_width=True,
+                hide_index=True,
             )
 
     st.markdown("---")

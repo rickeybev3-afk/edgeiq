@@ -1033,6 +1033,7 @@ WK_DISPLAY_PLAIN: dict[str, str] = {
 }
 HICONS_FILE  = "high_conviction_log.csv"
 HICONS_THRESHOLD = 75.0
+MODE_SWITCH_AUDIT_FILE = "trading_mode_audit.csv"
 SA_JOURNAL_FILE  = "sa_journal.csv"
 JOURNAL_PATH = "trade_journal.csv"
 _JOURNAL_COLS = [
@@ -2045,6 +2046,39 @@ def load_high_conviction_log():
         if _df.empty:
             return _df
         return _df.sort_values("prob_pct", ascending=False).reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def log_mode_switch(user_id: str, previous_mode: str, new_mode: str) -> None:
+    """Append one row to the trading-mode audit log (append-only CSV)."""
+    _cols = ["timestamp", "user_id", "previous_mode", "new_mode"]
+    _row = {
+        "timestamp":     datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
+        "user_id":       user_id or "unknown",
+        "previous_mode": previous_mode,
+        "new_mode":      new_mode,
+    }
+    if os.path.exists(MODE_SWITCH_AUDIT_FILE):
+        try:
+            _df = pd.read_csv(MODE_SWITCH_AUDIT_FILE, encoding="utf-8")
+        except Exception:
+            _df = pd.DataFrame(columns=_cols)
+    else:
+        _df = pd.DataFrame(columns=_cols)
+    _df = pd.concat([_df, pd.DataFrame([_row])], ignore_index=True)
+    _df.to_csv(MODE_SWITCH_AUDIT_FILE, index=False, encoding="utf-8")
+
+
+def load_mode_switch_log() -> "pd.DataFrame":
+    """Return the trading-mode audit log as a DataFrame, newest entries first."""
+    if not os.path.exists(MODE_SWITCH_AUDIT_FILE):
+        return pd.DataFrame()
+    try:
+        _df = pd.read_csv(MODE_SWITCH_AUDIT_FILE, encoding="utf-8")
+        if _df.empty:
+            return _df
+        return _df.iloc[::-1].reset_index(drop=True)
     except Exception:
         return pd.DataFrame()
 
