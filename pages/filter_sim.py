@@ -402,12 +402,14 @@ if tcs_with_ib:
                 text=[f"{w:.0f}%<br>n={n}" for w, n in zip(bucket_wrs, bucket_ns)],
                 textposition="outside",
             ))
-            # Add cutoff line
-            fig_bucket.add_vline(
-                x=bucket_labels.index(f"0–{int(ib_max)}%") if f"0–{int(ib_max)}%" in bucket_labels else None,
-                line_dash="dash", line_color="#ef9a9a",
-                annotation_text=f"Cutoff: {ib_max:.1f}%", annotation_font_color="#ef9a9a",
-            ) if any(lo <= ib_max for lo, _ in buckets) else None
+            # Add cutoff line (only if the exact bucket label exists)
+            _cutoff_label = f"0–{int(ib_max)}%"
+            if _cutoff_label in bucket_labels:
+                fig_bucket.add_vline(
+                    x=bucket_labels.index(_cutoff_label),
+                    line_dash="dash", line_color="#ef9a9a",
+                    annotation_text=f"Cutoff: {ib_max:.1f}%", annotation_font_color="#ef9a9a",
+                )
             fig_bucket.update_layout(
                 plot_bgcolor="#0e0e1e", paper_bgcolor="#0e0e1e",
                 font=dict(color="#9fa8da"),
