@@ -619,6 +619,20 @@ else:
     supabase_anon = None
 
 
+_db_last_checked_ts: float = 0.0  # monotonic timestamp of last check_db_connection() call
+
+
+def get_db_last_checked_ts() -> float:
+    """Return the monotonic timestamp of the last check_db_connection() call.
+
+    Returns 0.0 if check_db_connection() has not been called yet this session.
+    This timestamp is updated every time the function actually runs (i.e. when
+    the Streamlit cache TTL expires or the retry button clears the cache), so
+    callers can show how fresh the cached status reading is.
+    """
+    return _db_last_checked_ts
+
+
 def check_db_connection() -> tuple[bool, str]:
     """Perform a lightweight check of Supabase reachability.
 
@@ -627,6 +641,8 @@ def check_db_connection() -> tuple[bool, str]:
     credentials or network/auth errors.  Uses a HEAD request to the REST
     root so no table needs to exist and no rows are transferred.
     """
+    global _db_last_checked_ts
+    _db_last_checked_ts = time.monotonic()
     if not SUPABASE_URL or not SUPABASE_KEY or _supabase_errors:
         return False, "Credentials not configured"
     try:

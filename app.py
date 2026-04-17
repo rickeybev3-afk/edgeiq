@@ -62,6 +62,7 @@ from backend import (
     save_ib_range_pct_threshold,
     get_runtime_last_healthy_ts,
     get_runtime_first_check_done,
+    get_db_last_checked_ts,
     compute_r_projection,
     R_PROJECTION_SCENARIOS,
     _RUNTIME_CHECK_INTERVAL_S,
@@ -231,13 +232,28 @@ def _db_status_widget() -> None:
     if _db_ok is None:
         return
 
+    # ── Last-checked freshness note ────────────────────────────────────────
+    _db_checked_ts = get_db_last_checked_ts()
+    if _db_checked_ts > 0.0:
+        _db_checked_elapsed = _now - _db_checked_ts
+        if _db_checked_elapsed < 60:
+            _db_checked_label = "just now"
+        elif _db_checked_elapsed < 3600:
+            _db_checked_label = f"{int(_db_checked_elapsed // 60)} min ago"
+        else:
+            _db_checked_label = f"{int(_db_checked_elapsed // 3600)} hr ago"
+        _db_checked_line = f'<br><span style="font-size:10px; color:#888; font-style:italic;">checked {_db_checked_label}</span>'
+    else:
+        _db_checked_line = ""
+
     # ── Render badge ───────────────────────────────────────────────────────
     if _db_ok:
         st.markdown(
             '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
             'padding:8px 12px; margin-bottom:8px;">'
             '<span style="font-size:12px; font-weight:700; color:#66bb6a;">'
-            '🟢 Database: Connected</span>'
+            f'🟢 Database: Connected</span>'
+            f'{_db_checked_line}'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -246,7 +262,8 @@ def _db_status_widget() -> None:
             '<div style="background:#1a1a1a; border:1px solid #555; border-radius:8px; '
             'padding:8px 12px; margin-bottom:8px;">'
             '<span style="font-size:12px; font-weight:700; color:#aaa;">'
-            '⚪ Database: Not configured</span>'
+            f'⚪ Database: Not configured</span>'
+            f'{_db_checked_line}'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -283,6 +300,7 @@ def _db_status_widget() -> None:
                 f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
                 f'{_db_last_line}'
                 f'{_retry_line}'
+                f'{_db_checked_line}'
                 '</div>',
                 unsafe_allow_html=True,
             )
