@@ -12666,6 +12666,70 @@ ALTER TABLE backtest_sim_runs
                     )
                     st.rerun()
 
+    # ── Missing EOD close price summary ─────────────────────────────────────────
+    _missing_cp = get_missing_close_price_stats(user_id=_AUTH_USER_ID)
+    _missing_cp_total = _missing_cp.get("total_missing", 0)
+    if _missing_cp_total > 0:
+        _top_tickers         = _missing_cp.get("top_tickers", [])
+        _total_tickers       = _missing_cp.get("total_tickers", len(_top_tickers))
+        _ticker_list_complete = _missing_cp.get("ticker_list_complete", True)
+        _ticker_badges = "".join(
+            f'<span style="display:inline-block; background:#1a2744; border:1px solid #263260; '
+            f'border-radius:4px; padding:2px 8px; margin:2px 4px 2px 0; font-family:monospace; '
+            f'font-size:11px; color:#90a4ae;">'
+            f'{t["ticker"]} <span style="color:#546e7a;">×{t["count"]}</span></span>'
+            for t in _top_tickers
+        )
+        # Show "+ N more" only when there are genuinely more distinct tickers than shown.
+        _shown_count = len(_top_tickers)
+        _more_hidden = _total_tickers - _shown_count
+        if _more_hidden > 0:
+            _more_note = (
+                f'<span style="font-size:10px; color:#37474f;">'
+                f' + {_more_hidden} more ticker{"s" if _more_hidden != 1 else ""} not shown</span>'
+            )
+        elif not _ticker_list_complete:
+            _more_note = (
+                f'<span style="font-size:10px; color:#37474f;"> + additional tickers not shown</span>'
+            )
+        else:
+            _more_note = ""
+        # When pagination cap was hit, present the ticker count as a lower bound.
+        if _ticker_list_complete:
+            _tickers_label = (
+                f'{_total_tickers} ticker{"s" if _total_tickers != 1 else ""} affected'
+            )
+        else:
+            _tickers_label = (
+                f'at least {_total_tickers} ticker{"s" if _total_tickers != 1 else ""} affected'
+            )
+        st.markdown(
+            f'<div style="background:#020813; border:1px solid #263260; border-radius:8px; '
+            f'padding:12px 20px; margin-bottom:16px;">'
+            f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1.5px; font-weight:700; font-family:monospace; margin-bottom:8px;">'
+            f'⚠ EOD Close Price — Missing Data</div>'
+            f'<div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">'
+            f'<div>'
+            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:2px;">Rows without close price</div>'
+            f'<div style="font-size:28px; font-weight:800; color:#ffa726; '
+            f'font-family:monospace;">{_missing_cp_total:,}</div>'
+            f'<div style="font-size:9px; color:#37474f; margin-top:2px;">'
+            f'no EOD P&amp;L possible · {_tickers_label}</div>'
+            f'</div>'
+            f'<div style="border-left:1px solid #1a2744; padding-left:20px; flex:1;">'
+            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:6px;">Tickers most affected</div>'
+            f'<div>{_ticker_badges}{_more_note}</div>'
+            f'<div style="font-size:9px; color:#37474f; margin-top:6px;">'
+            f'Typically delisted stocks, OTC tickers, or names with no IEX/Alpaca coverage. '
+            f'Run <code style="font-size:9px;">python backfill_close_prices.py</code> to retry.</div>'
+            f'</div>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
     _bt_sim_has_data = (
         not _bt_sim_df.empty
         and "pnl_r_sim" in _bt_sim_df.columns

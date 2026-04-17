@@ -7585,6 +7585,78 @@ def count_backtest_tiered_pending(user_id: str = "") -> int:
         return 0
 
 
+def get_missing_close_price_stats(user_id: str = "") -> dict:
+    """Return stats on backtest_sim_runs rows that have no close_price.
+
+    These are rows for Bullish/Bearish outcomes where EOD P&L cannot be computed
+    because the EOD close price was never fetched (delisted tickers, OTC names, etc.).
+
+    Uses two queries:
+      1. An exact server-side count (no row data transferred).
+      2. A paginated ticker fetch to build a full per-ticker breakdown.
+
+    Returns a dict:
+      total_missing        – int, exact count of qualifying rows with NULL close_price
+      total_tickers        – int, number of distinct tickers affected
+      top_tickers          – list of {"ticker": str, "count": int} sorted descending (top 10)
+      ticker_list_complete – bool, True when all affected rows were seen during aggregation
+    """
+    if not supabase:
+        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+                "ticker_list_complete": True}
+    try:
+        def _base_q():
+            q = (
+                supabase.table("backtest_sim_runs")
+                .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+                .is_("close_price", "null")
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            return q
+
+        # 1. Exact total count (server-side, no row data; head=True suppresses row payload)
+        count_resp = _base_q().select("id", count="exact").limit(1).execute()
+        total_missing = count_resp.count or 0
+        if total_missing == 0:
+            return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+                    "ticker_list_complete": True}
+
+        # 2. Paginate ticker column to build per-ticker breakdown.
+        #    Page size 1000; stop after 20 pages (20 000 rows) to bound latency.
+        PAGE = 1000
+        MAX_PAGES = 20
+        counts: dict[str, int] = {}
+        rows_seen = 0
+        for page in range(MAX_PAGES):
+            chunk = (
+                _base_q()
+                .select("ticker")
+                .range(page * PAGE, page * PAGE + PAGE - 1)
+                .execute()
+                .data or []
+            )
+            for r in chunk:
+                t = r.get("ticker") or "UNKNOWN"
+                counts[t] = counts.get(t, 0) + 1
+            rows_seen += len(chunk)
+            if len(chunk) < PAGE:
+                break  # last page reached
+
+        ticker_list_complete = (rows_seen >= total_missing)
+        top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        return {
+            "total_missing": total_missing,
+            "total_tickers": len(counts),
+            "top_tickers": [{"ticker": t, "count": c} for t, c in top],
+            "ticker_list_complete": ticker_list_complete,
+        }
+    except Exception as e:
+        print(f"get_missing_close_price_stats error: {e}")
+        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+                "ticker_list_complete": True}
+
+
 def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = False,
                                        user_id: str = "") -> dict:
     """Process one batch of backtest_sim_runs rows missing tiered_pnl_r.
