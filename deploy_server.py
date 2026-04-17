@@ -31,26 +31,43 @@ _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
 def _get_trading_mode() -> str:
     """Return the current trading mode ('paper' or 'live').
 
-    Reads from /tmp/trading_mode.json if it exists (written by this server or
-    by backend.py when the Streamlit sidebar toggle is used).  Falls back to
-    the IS_PAPER_ALPACA environment variable so the server's default always
-    matches the configured value.
+    Priority order:
+    1. Supabase-backed user_preferences (persists across restarts)
+    2. /tmp/trading_mode.json (written by this server or backend.py; volatile)
+    3. IS_PAPER_ALPACA environment variable (configured default)
     """
     try:
-        with open(_TRADING_MODE_FILE) as _f:
-            return _f.read().strip() or "paper"
-    except FileNotFoundError:
-        return "paper" if os.environ.get("IS_PAPER_ALPACA", "true").strip().lower() == "true" else "live"
+        prefs = _load_owner_prefs()
+        if "trading_mode" in prefs:
+            return prefs["trading_mode"]
     except Exception:
-        return "paper"
+        pass
+    try:
+        with open(_TRADING_MODE_FILE) as _f:
+            val = _f.read().strip()
+            if val:
+                return val
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return "paper" if os.environ.get("IS_PAPER_ALPACA", "true").strip().lower() == "true" else "live"
 
 
 def _set_trading_mode(mode: str) -> None:
-    """Persist a new trading mode to /tmp/trading_mode.json.
+    """Persist a new trading mode to Supabase user_preferences and /tmp/trading_mode.json.
 
-    Both deploy_server.py (React API) and backend.py (Streamlit) share this
-    file so a change made from either surface is visible to both.
+    Supabase is the durable store so the setting survives server restarts.
+    The /tmp file is still written for backend.py (Streamlit) compatibility —
+    both surfaces share it so a change from either is immediately visible to the
+    other without waiting for a Supabase round-trip.
     """
+    try:
+        prefs = _load_owner_prefs()
+        prefs["trading_mode"] = mode
+        _save_owner_prefs(prefs)
+    except Exception:
+        pass
     try:
         with open(_TRADING_MODE_FILE, "w") as _f:
             _f.write(mode)
