@@ -16045,7 +16045,11 @@ ALTER TABLE backtest_sim_runs
                 except (ValueError, TypeError):
                     pass
 
-        _bts_dr_cols = st.columns([1, 1, 4])
+        # Snapshot prev values BEFORE widgets render (used by link-filter sync below)
+        _link_prev_bts  = st.session_state.get("_link_prev_bts",  {})
+        _link_prev_grid = st.session_state.get("_link_prev_grid", {})
+
+        _bts_dr_cols = st.columns([1, 1, 1, 3])
         with _bts_dr_cols[0]:
             _bts_start = st.date_input(
                 "From",
@@ -16065,6 +16069,16 @@ ALTER TABLE backtest_sim_runs
                 help="Show backtest runs up to this date (inclusive). Leave blank for all time.",
             )
         with _bts_dr_cols[2]:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.toggle(
+                "🔗 Link filters",
+                key="link_date_filters",
+                help=(
+                    "Keep the Backtest P&L dates and the Edge Map dates permanently in sync. "
+                    "Change either date range and the other mirrors it automatically."
+                ),
+            )
+        with _bts_dr_cols[3]:
             # Sync button: copy the Edge Map date range into the Backtest P&L filter
             _grid_sync_start = st.session_state.get("grid_dr_start")
             _grid_sync_end   = st.session_state.get("grid_dr_end")
@@ -16074,25 +16088,85 @@ ALTER TABLE backtest_sim_runs
                 else "Copy the Edge Map date filter (currently unset — clears Backtest P&L dates to all time) into the Backtest P&L filter"
             )
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button(
-                "⇄ Sync from Edge Map",
-                key="bts_sync_grid_dates",
-                help=_bts_sync_help,
-            ):
-                # Clamp synced dates to the valid Backtest P&L date range
-                def _clamp_to_bts(d):
-                    if d is None:
-                        return None
-                    if _bts_min_date and d < _bts_min_date:
-                        return _bts_min_date
-                    if _bts_max_date and d > _bts_max_date:
-                        return _bts_max_date
-                    return d
-                st.session_state["bts_dr_start"] = _clamp_to_bts(_grid_sync_start)
-                st.session_state["bts_dr_end"]   = _clamp_to_bts(_grid_sync_end)
-                st.rerun()
+            if not st.session_state.get("link_date_filters", False):
+                if st.button(
+                    "⇄ Sync from Edge Map",
+                    key="bts_sync_grid_dates",
+                    help=_bts_sync_help,
+                ):
+                    # Clamp synced dates to the valid Backtest P&L date range
+                    def _clamp_to_bts(d):
+                        if d is None:
+                            return None
+                        if _bts_min_date and d < _bts_min_date:
+                            return _bts_min_date
+                        if _bts_max_date and d > _bts_max_date:
+                            return _bts_max_date
+                        return d
+                    st.session_state["bts_dr_start"] = _clamp_to_bts(_grid_sync_start)
+                    st.session_state["bts_dr_end"]   = _clamp_to_bts(_grid_sync_end)
+                    st.rerun()
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
+
+        if st.session_state.get("link_date_filters", False):
+            st.caption(
+                "🔗 Filters linked — both date ranges stay in sync automatically. "
+                "When both sections are edited simultaneously, the Backtest P&L dates take precedence."
+            )
+
+        # ── Link-filter bidirectional sync ────────────────────────────────────────
+        if st.session_state.get("link_date_filters", False):
+            _curr_bts_s  = str(_bts_start)
+            _curr_bts_e  = str(_bts_end)
+            _curr_grid_s = str(st.session_state.get("grid_dr_start"))
+            _curr_grid_e = str(st.session_state.get("grid_dr_end"))
+            _bts_changed  = (
+                _curr_bts_s != _link_prev_bts.get("s", "None") or
+                _curr_bts_e != _link_prev_bts.get("e", "None")
+            )
+            _grid_changed = (
+                _curr_grid_s != _link_prev_grid.get("s", "None") or
+                _curr_grid_e != _link_prev_grid.get("e", "None")
+            )
+            if _grid_changed and not _bts_changed:
+                # User edited the Edge Map section → clamp to valid bts range, then mirror
+                import datetime as _dt_link
+                _g2b_start = st.session_state.get("grid_dr_start")
+                _g2b_end   = st.session_state.get("grid_dr_end")
+                # Clamp start date to [_bts_min_date, _bts_max_date] if bounds exist
+                if _g2b_start is not None and isinstance(_g2b_start, _dt_link.date):
+                    if _bts_min_date and _g2b_start < _bts_min_date:
+                        _g2b_start = _bts_min_date
+                    if _bts_max_date and _g2b_start > _bts_max_date:
+                        _g2b_start = _bts_max_date
+                else:
+                    _g2b_start = None
+                # Clamp end date similarly
+                if _g2b_end is not None and isinstance(_g2b_end, _dt_link.date):
+                    if _bts_min_date and _g2b_end < _bts_min_date:
+                        _g2b_end = _bts_min_date
+                    if _bts_max_date and _g2b_end > _bts_max_date:
+                        _g2b_end = _bts_max_date
+                else:
+                    _g2b_end = None
+                st.session_state["bts_dr_start"] = _g2b_start
+                st.session_state["bts_dr_end"]   = _g2b_end
+                _synced_s = str(_g2b_start)
+                _synced_e = str(_g2b_end)
+                st.session_state["_link_prev_bts"]  = {"s": _synced_s, "e": _synced_e}
+                st.session_state["_link_prev_grid"] = {"s": _synced_s, "e": _synced_e}
+                st.rerun()
+            else:
+                # bts changed (or both / first enable) → mirror into grid immediately
+                st.session_state["grid_dr_start"] = _bts_start
+                st.session_state["grid_dr_end"]   = _bts_end
+                st.session_state["_link_prev_bts"]  = {"s": _curr_bts_s, "e": _curr_bts_e}
+                st.session_state["_link_prev_grid"] = {"s": _curr_bts_s, "e": _curr_bts_e}
+        else:
+            # Reset tracking when link is disabled so next enable does a fresh sync
+            st.session_state.pop("_link_prev_bts",  None)
+            st.session_state.pop("_link_prev_grid", None)
 
         # ── Sync date-range filter to URL params + localStorage (all users) ──
         _bts_start_str = _bts_start.isoformat() if _bts_start else None
