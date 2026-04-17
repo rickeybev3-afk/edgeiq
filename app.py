@@ -11527,6 +11527,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sweep_btn_label = "⬇️ Download All Tickers Sweep CSV"
                         _sweep_fname = "sweep_summary_all.csv"
                     # ── Sort Detail rows: recommended floor first, then by P&L ─
+                    # Pre-compute which tickers had a recommended floor before filtering
+                    _rec_tickers_before = set(
+                        _all_sweep_df[_all_sweep_df["Recommended"] == "✓"]["Ticker"].unique()
+                    )
                     _detail_parts = []
                     for _exp_tk in _all_sweep_export_df["Ticker"].unique():
                         _tk_part = _all_sweep_export_df[_all_sweep_export_df["Ticker"] == _exp_tk].copy()
@@ -11540,6 +11544,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         else:
                             _tk_part = _tk_part.sort_values("_rec_sort", ascending=False)
                         _tk_part = _tk_part.drop(columns=["_rec_sort"])
+                        # When "Sufficient floors only" is on, the recommended floor may have been
+                        # filtered out because it didn't have enough trades.  Insert a note row at
+                        # the top of this ticker's block so traders know what happened.
+                        _tk_has_rec_after = (_tk_part["Recommended"] == "✓").any()
+                        if _sweep_suf_only and _exp_tk in _rec_tickers_before and not _tk_has_rec_after:
+                            _note_row = {col: "" for col in _tk_part.columns}
+                            _note_row["Ticker"] = _exp_tk
+                            _note_row["Recommended"] = "⚠ Recommended floor excluded (insufficient trades)"
+                            _note_df = _pd_bt.DataFrame([_note_row])
+                            _tk_part = _pd_bt.concat([_note_df, _tk_part], ignore_index=True)
                         _detail_parts.append(_tk_part)
                     _detail_df = (
                         _pd_bt.concat(_detail_parts, ignore_index=True)
