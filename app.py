@@ -6706,7 +6706,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
 
-                        _RP_CHART_OPTIONS = ["Equity ($)", "Cumulative R"]
+                        _RP_CHART_OPTIONS = ["Equity ($)", "Cumulative R", "Both"]
 
                         # ── Restore chart view from localStorage (cross-session) ────────
                         import streamlit.components.v1 as _cmp_chart_view
@@ -6758,10 +6758,73 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             })
                             st.caption("**Equity Curve** — dollar P&L with position sizing applied")
                             st.line_chart(_eq_df.set_index("Day"), height=220, use_container_width=True)
-                        else:
+                        elif _chart_view == "Cumulative R":
                             _cum_r_df = pd.DataFrame({"Trade #": range(len(_cum_r)), "Cumulative R": _cum_r})
                             st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade, no position sizing or compounding")
                             st.line_chart(_cum_r_df.set_index("Trade #"), height=220, use_container_width=True)
+                        else:
+                            # ── Dual-axis: Equity ($) left, Cumulative R right ──────────
+                            # _rp_equity_curve has N+1 points (index 0 = starting capital).
+                            # _cum_r has N points (one per trade).  Prepend 0 to cum_r so
+                            # both series share the same x-axis: 0 = before any trades.
+                            _cum_r_both = pd.concat(
+                                [pd.Series([0.0]), _cum_r], ignore_index=True
+                            )
+                            _n_eq  = len(_rp_equity_curve)
+                            _x_eq  = list(range(_n_eq))
+                            _x_r   = list(range(len(_cum_r_both)))
+                            _fig_dual = go.Figure()
+                            _fig_dual.add_trace(go.Scatter(
+                                x=_x_eq,
+                                y=_rp_equity_curve,
+                                name="Equity ($)",
+                                mode="lines",
+                                line=dict(color="#4fc3f7", width=2),
+                                yaxis="y1",
+                            ))
+                            _fig_dual.add_trace(go.Scatter(
+                                x=_x_r,
+                                y=list(_cum_r_both),
+                                name="Cumulative R",
+                                mode="lines",
+                                line=dict(color="#ef9a9a", width=2),
+                                yaxis="y2",
+                            ))
+                            _fig_dual.update_layout(
+                                height=280,
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom", y=1.02,
+                                    xanchor="right", x=1,
+                                    font=dict(color="#cccccc"),
+                                ),
+                                xaxis=dict(
+                                    title="Trade #",
+                                    gridcolor="#1a1a2e",
+                                    color="#cccccc",
+                                    zeroline=False,
+                                ),
+                                yaxis=dict(
+                                    title=dict(text="Equity ($)", font=dict(color="#4fc3f7")),
+                                    tickfont=dict(color="#4fc3f7"),
+                                    gridcolor="#1a1a2e",
+                                    zeroline=True,
+                                    zerolinecolor="#555",
+                                ),
+                                yaxis2=dict(
+                                    title=dict(text="Cumulative R", font=dict(color="#ef9a9a")),
+                                    tickfont=dict(color="#ef9a9a"),
+                                    overlaying="y",
+                                    side="right",
+                                    gridcolor="rgba(0,0,0,0)",
+                                    zeroline=False,
+                                ),
+                            )
+                            st.caption("**Equity & R** — divergences reveal where position sizing amplifies or dampens raw edge")
+                            st.plotly_chart(_fig_dual, use_container_width=True)
 
                         # ── Replay CSV download ────────────────────────────────────────────
                         _rp_csv_df = _rp_df.copy()
