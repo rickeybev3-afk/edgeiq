@@ -17,6 +17,17 @@ interface HealthState {
   errors: string[];
   alpaca_mode_mismatch?: boolean;
   alpaca_mismatch_message?: string;
+  db_checked_at?: string;
+}
+
+function formatCheckedAgo(isoTimestamp: string): string {
+  const checkedAt = new Date(isoTimestamp);
+  if (isNaN(checkedAt.getTime())) return "DB check time unavailable";
+  const diffMs = Date.now() - checkedAt.getTime();
+  const diffSec = Math.round(diffMs / 1000);
+  if (diffSec < 60) return `DB checked ${diffSec} s ago`;
+  const diffMin = Math.round(diffSec / 60);
+  return `DB checked ${diffMin} min ago`;
 }
 
 function AlpacaMismatchBanner({
@@ -86,7 +97,7 @@ function AlpacaMismatchBanner({
   );
 }
 
-function ErrorBanner({ errors }: { errors: string[] }) {
+function ErrorBanner({ errors, dbCheckedAt }: { errors: string[]; dbCheckedAt?: string }) {
   return (
     <div
       role="alert"
@@ -133,6 +144,11 @@ function ErrorBanner({ errors }: { errors: string[] }) {
             </li>
           ))}
         </ul>
+        {dbCheckedAt && (
+          <p style={{ color: "#6b7280", fontSize: "12px", margin: "16px 0 0", fontFamily: "monospace" }}>
+            {formatCheckedAgo(dbCheckedAt)}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -188,6 +204,7 @@ function App() {
             errors: data.errors ?? [],
             alpaca_mode_mismatch: !!data.alpaca_mode_mismatch,
             alpaca_mismatch_message: data.alpaca_mismatch_message ?? "",
+            db_checked_at: data.db_checked_at ?? undefined,
           });
         }
       } catch {
@@ -219,7 +236,7 @@ function App() {
   }
 
   if (!health.ok) {
-    return <ErrorBanner errors={health.errors} />;
+    return <ErrorBanner errors={health.errors} dbCheckedAt={health.db_checked_at} />;
   }
 
   return (
