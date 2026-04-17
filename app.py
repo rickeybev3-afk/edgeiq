@@ -15238,6 +15238,24 @@ def render_decision_log_tab():
 
     st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
+    _dl_fc1, _dl_fc2 = st.columns(2)
+    with _dl_fc1:
+        _dl_filter_cats = st.multiselect(
+            "Filter by Category",
+            options=["System Design", "Market Thesis", "Filter", "Sizing", "Timing", "Other"],
+            key="dl_filter_cats",
+            placeholder="All categories",
+        )
+    with _dl_fc2:
+        _dl_filter_outcomes = st.multiselect(
+            "Filter by Outcome",
+            options=["Pending", "Confirmed", "Refuted", "Partial"],
+            key="dl_filter_outcomes",
+            placeholder="All outcomes",
+        )
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
     _dl_cat_colors = {
         "System Design": "#4fc3f7",
         "Market Thesis": "#ce93d8",
@@ -15286,6 +15304,16 @@ def render_decision_log_tab():
         st.info("No decisions logged yet. Add your first call above.")
         return
 
+    _dl_display = list(_dl_rows)
+    if _dl_filter_cats:
+        _dl_display = [r for r in _dl_display if r.get("category", "Other") in _dl_filter_cats]
+    if _dl_filter_outcomes:
+        _dl_display = [r for r in _dl_display if r.get("outcome", "Pending") in _dl_filter_outcomes]
+
+    if not _dl_display:
+        st.info("No decisions match the current filters.")
+        return
+
     _dl_outcome_border = {
         "Confirmed": "#81c784",
         "Refuted":   "#ef9a9a",
@@ -15299,7 +15327,7 @@ def render_decision_log_tab():
         "Pending":   '<span style="color:#78909c; font-weight:700;">⏳ Pending</span>',
     }
 
-    for _dlr in _dl_rows:
+    for _dlr in _dl_display:
         _outcome   = _dlr.get("outcome", "Pending")
         _border_c  = _dl_outcome_border.get(_outcome, "#555")
         _out_badge = _dl_outcome_badge.get(_outcome, "⏳ Pending")
