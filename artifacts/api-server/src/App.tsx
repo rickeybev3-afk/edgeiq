@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,6 +9,8 @@ import Settings from "@/pages/settings";
 
 const queryClient = new QueryClient();
 
+const MISMATCH_DISMISSED_KEY = "alpaca_mismatch_banner_dismissed";
+
 interface HealthState {
   checked: boolean;
   ok: boolean;
@@ -17,13 +19,15 @@ interface HealthState {
   alpaca_mismatch_message?: string;
 }
 
-const MISMATCH_DISMISSED_KEY = "alpaca_mismatch_banner_dismissed";
-
-function AlpacaMismatchBanner({ message }: { message: string }) {
-  const [dismissed, setDismissed] = useState(
-    () => sessionStorage.getItem(MISMATCH_DISMISSED_KEY) === "1"
-  );
-
+function AlpacaMismatchBanner({
+  message,
+  dismissed,
+  onDismiss,
+}: {
+  message: string;
+  dismissed: boolean;
+  onDismiss: () => void;
+}) {
   if (dismissed) return null;
 
   return (
@@ -60,7 +64,7 @@ function AlpacaMismatchBanner({ message }: { message: string }) {
         </a>
       </span>
       <button
-        onClick={() => { sessionStorage.setItem(MISMATCH_DISMISSED_KEY, "1"); setDismissed(true); }}
+        onClick={onDismiss}
         aria-label="Dismiss banner"
         style={{
           background: "none",
@@ -157,6 +161,19 @@ function Router() {
 
 function App() {
   const [health, setHealth] = useState<HealthState>({ checked: false, ok: true, errors: [] });
+  const [mismatchDismissed, setMismatchDismissed] = useState(
+    () => sessionStorage.getItem(MISMATCH_DISMISSED_KEY) === "1"
+  );
+  const prevMismatch = useRef(false);
+
+  useEffect(() => {
+    const current = !!health.alpaca_mode_mismatch;
+    if (current && !prevMismatch.current) {
+      sessionStorage.removeItem(MISMATCH_DISMISSED_KEY);
+      setMismatchDismissed(false);
+    }
+    prevMismatch.current = current;
+  }, [health.alpaca_mode_mismatch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -209,7 +226,14 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         {health.alpaca_mode_mismatch && health.alpaca_mismatch_message && (
-          <AlpacaMismatchBanner message={health.alpaca_mismatch_message} />
+          <AlpacaMismatchBanner
+            message={health.alpaca_mismatch_message}
+            dismissed={mismatchDismissed}
+            onDismiss={() => {
+              sessionStorage.setItem(MISMATCH_DISMISSED_KEY, "1");
+              setMismatchDismissed(true);
+            }}
+          />
         )}
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <Router />
