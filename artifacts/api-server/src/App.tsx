@@ -363,7 +363,42 @@ function DbEventsPanel() {
   );
 }
 
-function Home() {
+function StatusDot({ ok }: { ok: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        width: "8px",
+        height: "8px",
+        borderRadius: "50%",
+        background: ok ? "#22c55e" : "#ef4444",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+function Home({ health }: { health: HealthState }) {
+  const [credAlertsEnabled, setCredAlertsEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/credential-alerts")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) setCredAlertsEnabled(data.enabled !== false);
+      })
+      .catch(() => {
+        if (!cancelled) setCredAlertsEnabled(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const settingsBase = import.meta.env.BASE_URL.replace(/\/$/, "");
+
   return (
     <div
       style={{
@@ -399,16 +434,67 @@ function Home() {
             Connected and ready.
           </p>
         </div>
+
+        <div
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "20px 24px",
+          }}
+        >
+          <h2 style={{ fontSize: "13px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "16px", marginTop: 0 }}>
+            System Health
+          </h2>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <StatusDot ok={health.ok} />
+              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Database</span>
+              <span style={{ fontSize: "13px", color: health.ok ? "#86efac" : "#fca5a5", fontWeight: 600 }}>
+                {health.ok ? "Connected" : "Error"}
+              </span>
+            </div>
+
+            {health.db_checked_at && (
+              <div style={{ paddingLeft: "18px" }}>
+                <span style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace" }}>
+                  {formatCheckedAgo(health.db_checked_at)}
+                </span>
+              </div>
+            )}
+
+            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+              <StatusDot ok={credAlertsEnabled === true} />
+              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Credential Alerts</span>
+              <a
+                href={`${settingsBase}/settings#credential-alerts`}
+                style={{
+                  fontSize: "13px",
+                  color: credAlertsEnabled === true ? "#86efac" : credAlertsEnabled === false ? "#94a3b8" : "#475569",
+                  fontWeight: 600,
+                  textDecoration: "none",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
+                title="Go to credential-alerts settings"
+              >
+                {credAlertsEnabled === null ? "—" : credAlertsEnabled ? "On" : "Off"}
+              </a>
+            </div>
+          </div>
+        </div>
+
         <DbEventsPanel />
       </div>
     </div>
   );
 }
 
-function Router() {
+function Router({ health }: { health: HealthState }) {
   return (
     <Switch>
-      <Route path="/" component={Home} />
+      <Route path="/">{() => <Home health={health} />}</Route>
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
@@ -503,7 +589,7 @@ function App() {
           />
         )}
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
+          <Router health={health} />
         </WouterRouter>
         <Toaster />
       </TooltipProvider>
