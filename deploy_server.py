@@ -533,19 +533,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _backfill_health(self):
-        """Return the latest backfill run stats written by backfill_context_levels.py.
+        """Return backfill run stats written by backfill_context_levels.py.
 
-        The backfill script writes /tmp/backfill_health.json with keys:
-          completed_at, rows_saved, no_bars, errors
+        The backfill script appends each run to /tmp/backfill_history.json (a JSON
+        array capped at 10 entries).  The response includes the latest entry's fields
+        at the top level for backward compatibility, plus a 'history' array (newest
+        first) and 'available'.
         If the file is absent the endpoint returns {"available": false}.
         """
-        backfill_path = "/tmp/backfill_health.json"
+        history_path = "/tmp/backfill_history.json"
         try:
-            with open(backfill_path) as f:
-                data = json.load(f)
-            data["available"] = True
+            with open(history_path) as f:
+                history = json.load(f)
+            if not isinstance(history, list) or len(history) == 0:
+                data = {"available": False}
+            else:
+                latest = history[-1]
+                data = {
+                    "available": True,
+                    "completed_at": latest.get("completed_at"),
+                    "rows_saved": latest.get("rows_saved"),
+                    "no_bars": latest.get("no_bars"),
+                    "errors": latest.get("errors"),
+                    "history": list(reversed(history)),
+                }
         except FileNotFoundError:
             data = {"available": False}
+        except json.JSONDecodeError:
+            data = {"available": False, "error": "history file corrupt"}
         except Exception as e:
             data = {"available": False, "error": str(e)}
         body = json.dumps(data).encode()

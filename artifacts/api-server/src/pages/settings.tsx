@@ -30,6 +30,13 @@ interface SubscribersState {
   error: string | null;
 }
 
+interface BackfillRun {
+  completed_at: string;
+  rows_saved: number;
+  no_bars: number;
+  errors: number;
+}
+
 interface BackfillHealth {
   available: boolean;
   loading: boolean;
@@ -38,6 +45,7 @@ interface BackfillHealth {
   no_bars?: number;
   errors?: number;
   error?: string;
+  history?: BackfillRun[];
 }
 
 function formatRelativeTime(isoTimestamp: string): string {
@@ -490,6 +498,52 @@ export default function Settings() {
                   Completed {formatRelativeTime(backfillHealth.completed_at)} &nbsp;·&nbsp;{" "}
                   {new Date(backfillHealth.completed_at).toLocaleString()}
                 </p>
+              )}
+              {backfillHealth.history && backfillHealth.history.length > 1 && (
+                <div style={{ marginTop: "20px" }}>
+                  <p style={{ fontSize: "12px", fontWeight: 600, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Run History
+                  </p>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontFamily: "monospace" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #2d3748" }}>
+                          <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Completed</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Rows saved</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>No-bars</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Errors</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {backfillHealth.history.map((run, i) => (
+                          <tr
+                            key={run.completed_at}
+                            style={{
+                              borderBottom: "1px solid rgba(45,55,72,0.5)",
+                              background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent",
+                            }}
+                          >
+                            <td style={{ padding: "6px 10px", color: i === 0 ? "#cbd5e1" : "#64748b" }}>
+                              {formatRelativeTime(run.completed_at)}
+                              {i === 0 && (
+                                <span style={{ marginLeft: "6px", fontSize: "10px", color: "#4ade80", fontFamily: "sans-serif" }}>latest</span>
+                              )}
+                            </td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#4ade80" }}>
+                              {run.rows_saved.toLocaleString()}
+                            </td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: run.no_bars > 0 ? "#fbbf24" : "#64748b" }}>
+                              {run.no_bars.toLocaleString()}
+                            </td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: run.errors > 0 ? "#f87171" : "#4ade80" }}>
+                              {run.errors.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
             </div>
           )}

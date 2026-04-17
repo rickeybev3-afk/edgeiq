@@ -413,10 +413,23 @@ def main():
         'errors': total_errors,
     }
     try:
-        with open('/tmp/backfill_health.json', 'w') as _hf:
-            _json.dump(_health, _hf)
+        _history_path = '/tmp/backfill_history.json'
+        try:
+            with open(_history_path) as _hf:
+                _history = _json.load(_hf)
+            if not isinstance(_history, list):
+                _history = []
+        except FileNotFoundError:
+            _history = []
+        except _json.JSONDecodeError:
+            log.warning('backfill_history.json was corrupt — resetting history')
+            _history = []
+        _history.append(_health)
+        _history = _history[-10:]
+        with open(_history_path, 'w') as _hf:
+            _json.dump(_history, _hf)
     except Exception as _e:
-        log.warning(f'Could not write backfill health file: {_e}')
+        log.warning(f'Could not write backfill history file: {_e}')
 
 if __name__ == '__main__':
     main()
