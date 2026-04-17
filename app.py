@@ -9566,6 +9566,54 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
                                         'Best Edge ⭐</div>'
                                     ) if _bt_is_best else ""
+                                    # ── Per-tier EOD Hold R stats ─────────────────────────
+                                    _bt_eod_col = "R (EOD)" if "R (EOD)" in _bt_td.columns else None
+                                    _bt_eod_ser = pd.to_numeric(_bt_td[_bt_eod_col], errors="coerce").dropna() if _bt_eod_col else pd.Series(dtype=float)
+                                    _bt_eod_n   = len(_bt_eod_ser)
+                                    if _bt_eod_n:
+                                        _bt_eod_wr  = round((_bt_eod_ser > 0).sum() / _bt_eod_n * 100, 1)
+                                        _bt_eod_aw  = round(_bt_eod_ser[_bt_eod_ser > 0].mean(), 2) if (_bt_eod_ser > 0).any() else 0
+                                        _bt_eod_al  = round(_bt_eod_ser[_bt_eod_ser < 0].mean(), 2) if (_bt_eod_ser < 0).any() else 0
+                                        _bt_eod_exp = round(_bt_eod_ser.mean(), 3)
+                                        _bt_eod_wr_col  = "#2e7d32" if _bt_eod_wr >= 60 else ("#ef6c00" if _bt_eod_wr >= 50 else "#c62828")
+                                        _bt_eod_exp_col = "#2e7d32" if _bt_eod_exp > 0 else ("#ef6c00" if _bt_eod_exp == 0 else "#c62828")
+                                        _bt_eod_html = (
+                                            f'<div style="font-size:10px;color:#90a4ae;margin-top:6px;border-top:1px solid #263444;padding-top:5px;text-align:left;">'
+                                            f'<span style="color:#80cbc4;font-weight:600;">EOD Hold R</span>'
+                                            f'</div>'
+                                            f'<div style="font-size:11px;color:#cfd8dc;text-align:left;">'
+                                            f'WR: <span style="color:{_bt_eod_wr_col};font-weight:600;">{_bt_eod_wr}%</span>'
+                                            f'  ·  <span style="color:#4fc3f7;">+{_bt_eod_aw}R</span>'
+                                            f'  /  <span style="color:#ef9a9a;">{_bt_eod_al}R</span>'
+                                            f'  ·  Exp: <span style="color:{_bt_eod_exp_col};font-weight:600;">{_bt_eod_exp:+.3f}R</span>'
+                                            f'</div>'
+                                        )
+                                    else:
+                                        _bt_eod_html = ""
+                                    # ── Per-tier Tiered Exit R stats ──────────────────────
+                                    _bt_tier_col2 = "R (Tiered)" if "R (Tiered)" in _bt_td.columns else None
+                                    _bt_tier_ser2 = pd.to_numeric(_bt_td[_bt_tier_col2], errors="coerce").dropna() if _bt_tier_col2 else pd.Series(dtype=float)
+                                    _bt_tier_n2   = len(_bt_tier_ser2)
+                                    if _bt_tier_n2:
+                                        _bt_tier_wr2  = round((_bt_tier_ser2 > 0).sum() / _bt_tier_n2 * 100, 1)
+                                        _bt_tier_aw2  = round(_bt_tier_ser2[_bt_tier_ser2 > 0].mean(), 2) if (_bt_tier_ser2 > 0).any() else 0
+                                        _bt_tier_al2  = round(_bt_tier_ser2[_bt_tier_ser2 < 0].mean(), 2) if (_bt_tier_ser2 < 0).any() else 0
+                                        _bt_tier_exp2 = round(_bt_tier_ser2.mean(), 3)
+                                        _bt_tier_wr_col2  = "#2e7d32" if _bt_tier_wr2 >= 60 else ("#ef6c00" if _bt_tier_wr2 >= 50 else "#c62828")
+                                        _bt_tier_exp_col2 = "#2e7d32" if _bt_tier_exp2 > 0 else ("#ef6c00" if _bt_tier_exp2 == 0 else "#c62828")
+                                        _bt_tier_html = (
+                                            f'<div style="font-size:10px;color:#90a4ae;margin-top:4px;text-align:left;">'
+                                            f'<span style="color:#ce93d8;font-weight:600;">Tiered Exit R</span>'
+                                            f'</div>'
+                                            f'<div style="font-size:11px;color:#cfd8dc;text-align:left;">'
+                                            f'WR: <span style="color:{_bt_tier_wr_col2};font-weight:600;">{_bt_tier_wr2}%</span>'
+                                            f'  ·  <span style="color:#4fc3f7;">+{_bt_tier_aw2}R</span>'
+                                            f'  /  <span style="color:#ef9a9a;">{_bt_tier_al2}R</span>'
+                                            f'  ·  Exp: <span style="color:{_bt_tier_exp_col2};font-weight:600;">{_bt_tier_exp2:+.3f}R</span>'
+                                            f'</div>'
+                                        )
+                                    else:
+                                        _bt_tier_html = ""
                                     st.markdown(
                                         f'<div style="background:#1e2a3a;border:{_bt_card_border};'
                                         f'border-radius:8px;padding:12px;text-align:center;">'
@@ -9582,6 +9630,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         f'Exp: {_bt_exp_r_str} / trade</div>'
                                         f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">'
                                         f'Total: {"+" if _bttot >= 0 else ""}${_bttot:,.0f}</div>'
+                                        f'{_bt_eod_html}'
+                                        f'{_bt_tier_html}'
                                         f'</div>', unsafe_allow_html=True
                                     )
 
