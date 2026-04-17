@@ -7341,6 +7341,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         def _rp_row_style(row):
                             wl = str(row.get("W/L", "")).strip()
+                            # Detect marginal TCS (within 5 points of the floor)
+                            _marginal = False
+                            if "TCS" in row.index and "TCS Floor" in row.index:
+                                try:
+                                    _tcs_val   = float(row["TCS"])
+                                    _floor_val = float(row["TCS Floor"])
+                                    if 0 <= (_tcs_val - _floor_val) <= 5:
+                                        _marginal = True
+                                except (TypeError, ValueError):
+                                    pass
+                            if _marginal:
+                                amber_base = "background-color:rgba(255,167,38,0.14)"
+                                amber_hi   = "background-color:rgba(255,167,38,0.28);color:#ffb300;font-weight:700"
+                                return [amber_hi if col == "W/L" else amber_base for col in row.index]
                             if wl == "Win":
                                 base = "background-color:rgba(76,175,80,0.08)"
                                 hi   = "background-color:rgba(76,175,80,0.18);color:#66bb6a;font-weight:700"
@@ -7370,6 +7384,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                               help="Per-structure TCS threshold applied to this trade (base 50 + offset). Trade passed because TCS ≥ this value."),
                             }
                         )
+                        if _rp_bot_mode:
+                            st.caption(
+                                "🟡 **Amber rows** — TCS cleared the floor by ≤ 5 points (marginal entry). "
+                                "These trades passed the bot's threshold but only barely; review them carefully."
+                            )
 
     st.markdown("---")
 
