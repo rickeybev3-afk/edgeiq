@@ -158,6 +158,88 @@ _secret_statuses: dict[str, str] = {
     for _item in _SECRET_CATALOG
 }
 
+
+def recheck_secret_statuses() -> None:
+    """Re-read environment variables and update _startup_errors / _secret_statuses in-place.
+
+    Because Python caches module imports, the module-level validation code only
+    runs once at startup.  This function lets operators trigger a fresh check
+    (e.g. after adding a missing secret) without restarting the entire app.
+    Both ``_startup_errors`` and ``_secret_statuses`` are mutable objects shared
+    by reference with any importer, so clearing and repopulating them in-place
+    immediately reflects the new state everywhere they are read.
+    """
+    _fresh_supabase_errors: list[tuple[str, str]] = []
+    _fresh_startup_errors:  list[tuple[str, str]] = []
+
+    _fresh_url = (os.environ.get("SUPABASE_URL", "") or "").strip()
+    _url_m = _re.search(r"supabase\.com/dashboard/project/([a-z0-9]+)", _fresh_url)
+    if _url_m:
+        _fresh_url = f"https://{_url_m.group(1)}.supabase.co"
+    elif _fresh_url and ".supabase.co" in _fresh_url:
+        _fresh_url = f"https://{_fresh_url.split('.supabase.co')[0].split('https://')[-1]}.supabase.co"
+
+    _fresh_key = (
+        os.environ.get("SUPABASE_KEY") or
+        os.environ.get("SUPABASE_ANON_KEY") or
+        os.environ.get("VITE_SUPABASE_ANON_KEY") or
+        ""
+    )
+    _fresh_alpaca_api    = os.environ.get("ALPACA_API_KEY",    "").strip()
+    _fresh_alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+
+    if not _fresh_url:
+        _fresh_supabase_errors.append((
+            "SUPABASE_URL",
+            "SUPABASE_URL is missing. Set it to https://<project-ref>.supabase.co",
+        ))
+    elif not _SUPABASE_URL_PATTERN.match(_fresh_url):
+        _fresh_supabase_errors.append((
+            "SUPABASE_URL",
+            f"SUPABASE_URL is malformed: {_fresh_url!r}. "
+            "Expected format: https://<project-ref>.supabase.co",
+        ))
+
+    if not _fresh_key:
+        _fresh_supabase_errors.append((
+            "SUPABASE_KEY",
+            "SUPABASE_KEY (or SUPABASE_ANON_KEY / VITE_SUPABASE_ANON_KEY) is missing or empty.",
+        ))
+
+    _fresh_startup_errors.extend(_fresh_supabase_errors)
+
+    if not _fresh_alpaca_api:
+        _fresh_startup_errors.append((
+            "ALPACA_API_KEY",
+            "ALPACA_API_KEY is missing. Required for live and paper order placement.",
+        ))
+
+    if not _fresh_alpaca_secret:
+        _fresh_startup_errors.append((
+            "ALPACA_SECRET_KEY",
+            "ALPACA_SECRET_KEY is missing. Required for live and paper order placement.",
+        ))
+
+    _startup_errors.clear()
+    _startup_errors.extend(_fresh_startup_errors)
+
+    _fresh_error_names     = {_n for _n, _ in _fresh_startup_errors}
+    _fresh_malformed_names = {_n for _n, _m in _fresh_startup_errors if "malformed" in _m.lower()}
+
+    def _fresh_status(name: str) -> str:
+        if name in _fresh_malformed_names:
+            return "malformed"
+        if name in _fresh_error_names:
+            return "missing"
+        return "set"
+
+    _secret_statuses.clear()
+    _secret_statuses.update({
+        _item["name"]: _fresh_status(_item["name"])
+        for _item in _SECRET_CATALOG
+    })
+
+
 if _startup_errors:
     for _name, _err in _startup_errors:
         logging.error("[STARTUP] Required secret misconfigured — %s", _err)

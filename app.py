@@ -51,6 +51,7 @@ from backend import (
     _startup_errors,
     _SECRET_CATALOG,
     _secret_statuses,
+    recheck_secret_statuses,
     _alpaca_mismatch_status,
     load_tcs_alert_structures,
     save_tcs_alert_structures,
@@ -263,7 +264,17 @@ def _render_setup_checklist() -> None:
                 _summary_parts.append(f"{_n_malformed} malformed")
             _st.error(f"{', '.join(_summary_parts).capitalize()} — see details below.", icon="⚠️")
 
-        _st.caption("Set secrets in Replit → **Secrets** (lock icon), then restart the app.")
+        _col_caption, _col_btn = _st.columns([3, 1])
+        with _col_caption:
+            _st.caption(
+                "Set secrets in Replit → **Secrets** (lock icon), then click Re-check. "
+                "Re-check refreshes this checklist immediately; a full app restart is still "
+                "needed for backend services to reconnect with new credentials."
+            )
+        with _col_btn:
+            if _st.button("🔄 Re-check", key="_recheck_secrets_btn", use_container_width=True):
+                recheck_secret_statuses()
+                _st.rerun()
         _st.markdown("---")
 
         for _sc_item in _SECRET_CATALOG:
@@ -313,8 +324,8 @@ if _startup_errors:
     st.error(
         f"**⚠️ Configuration problem detected — {len(_startup_errors)} secret(s) need attention:**\n\n"
         f"{_err_lines}\n\n"
-        "Fix these in your environment **Secrets**, then restart the app. "
-        "See the **🔐 Setup Checklist** panel in the sidebar for step-by-step guidance."
+        "Fix these in your environment **Secrets**, then use the **🔄 Re-check** button "
+        "in the **🔐 Setup Checklist** sidebar panel to refresh without a full restart."
     )
     if any(_name in ("SUPABASE_URL", "SUPABASE_KEY") for _name, _ in _startup_errors):
         st.warning(
