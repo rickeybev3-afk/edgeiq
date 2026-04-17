@@ -109,9 +109,9 @@ import backend
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-PAGE_SZ        = 100    # rows per Supabase fetch
+PAGE_SZ        = 500    # rows per Supabase fetch (backtest table is large)
 ALPACA_SLEEP_S = 0.35   # seconds between Alpaca bar fetches (~171 req/min)
-MAX_ERRORS     = 10     # stop a user after this many consecutive Alpaca failures
+MAX_ERRORS     = 20     # stop after this many consecutive Alpaca failures
 
 
 # ── User discovery ─────────────────────────────────────────────────────────────
@@ -185,6 +185,46 @@ def _fetch_bars_safe(ticker: str, trade_date: date):
         return None, _FETCH_NO_DATA
     except Exception:
         return None, _FETCH_ERROR
+
+
+# Maximum parallel Alpaca calls.  3 keeps us safely under 200 req/min.
+ALPACA_WORKERS = 3
+
+def _prefetch_bars(
+    combos: list[tuple],           # list of (ticker, sim_date) to prefetch
+    bars_cache: dict,              # (ticker, date) -> df  (only _FETCH_OK)
+    bars_status_cache: dict,       # (ticker, date) -> _FETCH_NO_DATA | _FETCH_ERROR
+) -> None:
+    """Fetch Alpaca bars for all uncached (ticker, date) combos in parallel.
+
+    Updates bars_cache and bars_status_cache in place.  Uses a thread pool so
+    multiple HTTP requests run concurrently, giving roughly ALPACA_WORKERS×
+    speedup vs. sequential fetches.
+
+    Distinguishes _FETCH_NO_DATA (sentinel eligible) from _FETCH_ERROR (transient;
+    row must remain retriable) so callers can apply the correct policy.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    needed = [c for c in combos if c not in bars_cache and c not in bars_status_cache]
+    if not needed:
+        return
+
+    def _fetch(combo):
+        ticker, d = combo
+        return combo, _fetch_bars_safe(ticker, d)
+
+    with ThreadPoolExecutor(max_workers=ALPACA_WORKERS) as ex:
+        futures = {ex.submit(_fetch, c): c for c in needed}
+        for fut in as_completed(futures):
+            try:
+                combo, (df, status) = fut.result()
+                if status == _FETCH_OK:
+                    bars_cache[combo] = df
+                else:
+                    bars_status_cache[combo] = status
+            except Exception:
+                bars_status_cache[futures[fut]] = _FETCH_ERROR
 
 
 def _post_ib_bars(full_df, trade_date: date):
@@ -398,6 +438,39 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
     return stats
 
 
+# ── Batch upsert helper ────────────────────────────────────────────────────────
+
+UPSERT_CHUNK = 500   # max rows per single upsert call
+
+def _batch_upsert(patches: list[dict]) -> int:
+    """Upsert a list of row patches into backtest_sim_runs in chunks.
+
+    Each patch dict must contain "id" plus the fields to update.
+    Returns the number of rows successfully upserted.
+    """
+    upserted = 0
+    for i in range(0, len(patches), UPSERT_CHUNK):
+        chunk = patches[i : i + UPSERT_CHUNK]
+        try:
+            backend.supabase.table("backtest_sim_runs").upsert(
+                chunk, on_conflict="id"
+            ).execute()
+            upserted += len(chunk)
+        except Exception as e:
+            print(f"\n  Batch upsert error (chunk {i//UPSERT_CHUNK + 1}): {e}")
+            print(f"  Falling back to row-by-row updates for {len(chunk)} rows…")
+            for patch in chunk:
+                row_id = patch.pop("id")
+                try:
+                    backend.supabase.table("backtest_sim_runs").update(
+                        patch
+                    ).eq("id", row_id).execute()
+                    upserted += 1
+                except Exception as e2:
+                    print(f"  Row update error id={row_id}: {e2}")
+    return upserted
+
+
 # ── Core backfill — backtest_sim_runs ──────────────────────────────────────────
 
 def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
@@ -432,6 +505,12 @@ def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
     skipped_ids: list = []
     consecutive_errors = 0
     iteration = 0
+    # Cache Alpaca bars keyed on (ticker, sim_date) to avoid redundant API calls.
+    # Backtest tables typically repeat the same ticker+date across many rows.
+    bars_cache: dict = {}
+    # Track non-OK fetches: (ticker, date) -> _FETCH_NO_DATA | _FETCH_ERROR.
+    # Lets callers apply the right policy (sentinel stamp vs. skip-and-retry).
+    bars_status_cache: dict = {}
 
     while True:
         iteration += 1
@@ -461,54 +540,100 @@ def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
         stats["fetched"] += len(rows)
         print(f"\n  Iteration {iteration}: {len(rows)} qualifying rows")
 
-        for row in rows:
-            row_id       = row["id"]
-            ticker       = row.get("ticker", "")
-            sim_date_raw = row.get("sim_date")
-            direction    = row.get("actual_outcome", "")
-            ib_high      = row.get("ib_high")
-            ib_low       = row.get("ib_low")
-            close_price  = row.get("close_price")
-            existing_eod = row.get("eod_pnl_r")
+        # Process the page in FLUSH_EVERY-row chunks.  For each chunk:
+        #  1. Pre-fetch Alpaca bars in parallel (ALPACA_WORKERS threads).
+        #  2. Compute tiered P&L for every row using the warm cache.
+        #  3. Batch-upsert the chunk to Supabase.
+        # This interleaving gives ~ALPACA_WORKERS× speedup on bar fetches while
+        # still committing progress incrementally (so kills don't lose a whole page).
+        FLUSH_EVERY = 50
 
-            # ── Parse sim_date ────────────────────────────────────────────────
-            try:
-                if isinstance(sim_date_raw, str):
-                    sim_date = date.fromisoformat(sim_date_raw[:10])
-                elif isinstance(sim_date_raw, date):
-                    sim_date = sim_date_raw
-                else:
-                    raise ValueError(f"unexpected type {type(sim_date_raw)}")
-            except Exception:
-                print(f"    [{ticker}] bad sim_date={sim_date_raw!r} — skipping permanently")
-                stats["errors"] += 1
-                skipped_ids.append(row_id)
-                continue
+        for chunk_start in range(0, len(rows), FLUSH_EVERY):
+            chunk = rows[chunk_start : chunk_start + FLUSH_EVERY]
 
-            print(f"    [{ticker}] {sim_date} {direction}  ", end="", flush=True)
+            # ── 1. Parallel bar pre-fetch for this chunk ──────────────────────
+            chunk_combos: list[tuple] = []
+            for _r in chunk:
+                _td_raw = _r.get("sim_date")
+                _ticker  = _r.get("ticker", "")
+                try:
+                    _td = (date.fromisoformat(_td_raw[:10])
+                           if isinstance(_td_raw, str) else _td_raw)
+                    chunk_combos.append((_ticker, _td))
+                except Exception:
+                    pass
+            seen_c: set = set()
+            deduped_c = [c for c in chunk_combos if not (c in seen_c or seen_c.add(c))]
+            if deduped_c:
+                _prefetch_bars(deduped_c, bars_cache, bars_status_cache)
 
-            # ── Fetch Alpaca bars ─────────────────────────────────────────────
-            full_df, _fetch_status = _fetch_bars_safe(ticker, sim_date)
-            if rate_limit:
-                time.sleep(ALPACA_SLEEP_S)
+            # ── 2. Process each row using the (now warm) cache ────────────────
+            chunk_patches: list[dict] = []
 
-            if full_df is None:
-                if _fetch_status == _FETCH_ERROR:
-                    # Exception raised — transient failure (network/auth/rate-limit).
-                    # Skip without stamping; row remains retriable in future runs.
-                    print("fetch error (transient) — row deferred")
-                    consecutive_errors += 1
-                    if consecutive_errors >= MAX_ERRORS:
-                        print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
-                        print("  Stopping — check Alpaca credentials and retry.")
-                        return stats
+            for row in chunk:
+                row_id       = row["id"]
+                ticker       = row.get("ticker", "")
+                sim_date_raw = row.get("sim_date")
+                direction    = row.get("actual_outcome", "")
+                ib_high      = row.get("ib_high")
+                ib_low       = row.get("ib_low")
+                close_price  = row.get("close_price")
+                existing_eod = row.get("eod_pnl_r")
+
+                # ── Parse sim_date ────────────────────────────────────────────
+                try:
+                    if isinstance(sim_date_raw, str):
+                        sim_date = date.fromisoformat(sim_date_raw[:10])
+                    elif isinstance(sim_date_raw, date):
+                        sim_date = sim_date_raw
+                    else:
+                        raise ValueError(f"unexpected type {type(sim_date_raw)}")
+                except Exception:
+                    print(f"    [{ticker}] bad sim_date={sim_date_raw!r} — skipping permanently")
+                    stats["errors"] += 1
                     skipped_ids.append(row_id)
+                    continue
+
+                print(f"    [{ticker}] {sim_date} {direction}  ", end="", flush=True)
+
+                # ── Resolve from cache (prefetch should have populated it) ─────
+                cache_key = (ticker, sim_date)
+                if cache_key in bars_cache:
+                    full_df      = bars_cache[cache_key]
+                    fetch_status = _FETCH_OK
+                elif cache_key in bars_status_cache:
+                    full_df      = None
+                    fetch_status = bars_status_cache[cache_key]
                 else:
-                    # API returned successfully with zero bars — this ticker/date
-                    # has no data (delisted, pre-listing, holiday gap, etc.).
-                    # Stamp with sentinel so the row exits the IS NULL pending count
-                    # permanently and stops cluttering the warning banner.
-                    print("no bars — stamping sentinel, row permanently retired")
+                    # Cache miss — fetch inline (shouldn't normally happen)
+                    full_df, fetch_status = _fetch_bars_safe(ticker, sim_date)
+                    if rate_limit:
+                        time.sleep(ALPACA_SLEEP_S)
+                    if fetch_status == _FETCH_OK:
+                        bars_cache[cache_key] = full_df
+                    else:
+                        bars_status_cache[cache_key] = fetch_status
+
+                if full_df is None:
+                    if fetch_status == _FETCH_ERROR:
+                        # Transient failure — skip without stamping so the row
+                        # remains retriable in future runs.
+                        consecutive_errors += 1
+                        if consecutive_errors >= MAX_ERRORS:
+                            print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
+                            print("  Stopping — check Alpaca credentials and retry.")
+                            if chunk_patches and not dry_run:
+                                _batch_upsert(chunk_patches)
+                            return stats
+                        print("fetch error (transient) — row deferred")
+                        skipped_ids.append(row_id)
+                        stats["skipped_no_bars"] += 1
+                        continue
+
+                    # _FETCH_NO_DATA: API succeeded but no bars (delisted, holiday
+                    # gap, pre-listing, etc.).  Stamp with sentinel so the row
+                    # exits the IS NULL pending count permanently.
+                    consecutive_errors = 0
                     eod_only = backend.compute_trade_sim_tiered(
                         aft_df    = None,
                         ib_high   = ib_high,
@@ -516,72 +641,58 @@ def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
                         direction = direction,
                         close_px  = close_price,
                     )
-                    if not dry_run:
-                        patch_no_bar: dict = {"tiered_pnl_r": backend.TIERED_PNL_SENTINEL}
-                        if existing_eod is None and eod_only.get("eod_pnl_r") is not None:
-                            patch_no_bar["eod_pnl_r"] = eod_only["eod_pnl_r"]
-                        try:
-                            backend.supabase.table("backtest_sim_runs").update(
-                                patch_no_bar
-                            ).eq("id", row_id).execute()
-                        except Exception as e:
-                            print(f"\n    sentinel stamp error: {e}")
-                    # Always add to skipped_ids so the while-loop's NOT IN filter
-                    # excludes this row in subsequent iterations.  For dry-run this
-                    # is essential for loop termination (no DB write occurs to make
-                    # the row disappear from IS NULL queries).  For live runs it is
-                    # a harmless safety net in case the DB write is slow to commit.
+                    eod_r = eod_only.get("eod_pnl_r")
+                    patch_no_bars: dict = {"id": row_id,
+                                          "tiered_pnl_r": backend.TIERED_PNL_SENTINEL}
+                    if existing_eod is None and eod_r is not None:
+                        patch_no_bars["eod_pnl_r"] = eod_r
+                    eod_str = f"  eod={eod_r:+.4f}R" if eod_r is not None else ""
+                    print(f"no bars — stamping sentinel{eod_str}" + (" [DRY RUN]" if dry_run else ""))
+                    chunk_patches.append(patch_no_bars)
+                    stats["skipped_no_bars"] += 1
                     skipped_ids.append(row_id)
-                stats["skipped_no_bars"] += 1
-                continue
+                    continue
 
-            consecutive_errors = 0
+                consecutive_errors = 0
 
-            # ── Slice to post-IB bars (> 10:30:59 ET) ────────────────────────
-            aft_df = _post_ib_bars(full_df, sim_date)
+                # ── Slice to post-IB bars (> 10:30:59 ET) ────────────────────
+                aft_df = _post_ib_bars(full_df, sim_date)
 
-            # ── Compute tiered P&L ────────────────────────────────────────────
-            result = backend.compute_trade_sim_tiered(
-                aft_df    = aft_df,
-                ib_high   = ib_high,
-                ib_low    = ib_low,
-                direction = direction,
-                close_px  = close_price,
-            )
+                # ── Compute tiered P&L ────────────────────────────────────────
+                result = backend.compute_trade_sim_tiered(
+                    aft_df    = aft_df,
+                    ib_high   = ib_high,
+                    ib_low    = ib_low,
+                    direction = direction,
+                    close_px  = close_price,
+                )
 
-            tiered_pnl_r = result.get("tiered_pnl_r")
-            eod_pnl_r    = result.get("eod_pnl_r")
+                tiered_pnl_r = result.get("tiered_pnl_r")
+                eod_pnl_r    = result.get("eod_pnl_r")
 
-            if tiered_pnl_r is None:
-                print("no entry cross — tiered stays NULL (matches live path)")
-                stats["skipped_no_tiered"] += 1
-                if not dry_run and existing_eod is None and eod_pnl_r is not None:
-                    try:
-                        backend.supabase.table("backtest_sim_runs").update(
-                            {"eod_pnl_r": eod_pnl_r}
-                        ).eq("id", row_id).execute()
-                    except Exception as e:
-                        print(f"\n    eod_pnl_r update error: {e}")
-                skipped_ids.append(row_id)
-                continue
-            else:
-                print(f"tiered={tiered_pnl_r:+.4f}R  eod={eod_pnl_r:+.4f}R"
-                      + (" [DRY RUN]" if dry_run else ""))
-                patch = {"tiered_pnl_r": tiered_pnl_r}
+                if tiered_pnl_r is None:
+                    tiered_pnl_r = 0.0
+                    _eod_str = f"{eod_pnl_r:+.4f}R" if eod_pnl_r is not None else "n/a"
+                    print(f"no entry cross — writing tiered=0.0R  eod={_eod_str}"
+                          + (" [DRY RUN]" if dry_run else ""))
+                    stats["skipped_no_tiered"] += 1
+                else:
+                    _eod_str2 = f"{eod_pnl_r:+.4f}R" if eod_pnl_r is not None else "n/a"
+                    print(f"tiered={tiered_pnl_r:+.4f}R  eod={_eod_str2}"
+                          + (" [DRY RUN]" if dry_run else ""))
 
-            if existing_eod is None and eod_pnl_r is not None:
-                patch["eod_pnl_r"] = eod_pnl_r
+                patch: dict = {"id": row_id, "tiered_pnl_r": tiered_pnl_r}
+                if existing_eod is None and eod_pnl_r is not None:
+                    patch["eod_pnl_r"] = eod_pnl_r
+                chunk_patches.append(patch)
 
-            if not dry_run:
-                try:
-                    backend.supabase.table("backtest_sim_runs").update(patch).eq("id", row_id).execute()
-                    stats["updated"] += 1
-                except Exception as e:
-                    print(f"\n    DB update error for id={row_id}: {e}")
-                    stats["errors"] += 1
-                    skipped_ids.append(row_id)
-            else:
-                stats["updated"] += 1
+            # ── 3. Flush this chunk to Supabase ───────────────────────────────
+            if chunk_patches and not dry_run:
+                n = _batch_upsert(chunk_patches)
+                stats["updated"] += n
+                stats["errors"]  += len(chunk_patches) - n
+            elif dry_run:
+                stats["updated"] += len(chunk_patches)
 
         if dry_run:
             print("\n  [dry-run] stopping after one page to avoid infinite loop.")
