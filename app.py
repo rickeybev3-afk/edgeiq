@@ -6037,6 +6037,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _ls_col1, _ls_col2 = st.columns([1, 1])
         with _ls_col1:
             if st.button("🔄 Fetch My Saved Dates", use_container_width=True, key="bt_ls_fetch"):
+                _load_ls_bt_sim_history.clear()
                 _ls_hist = _load_ls_bt_sim_history(uid=_AUTH_USER_ID)
                 if _ls_hist.empty or "sim_date" not in _ls_hist.columns:
                     st.session_state["_bt_ls_dates"]   = []
