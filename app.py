@@ -21726,6 +21726,15 @@ def render_decision_log_tab():
         _out_notes = _dlr.get("outcome_notes") or ""
         _dec_date  = _dlr.get("decision_date", "")
         _dec_id    = _dlr.get("id", "")
+        _updated_at_raw = _dlr.get("updated_at") or ""
+        _edited_label = ""
+        if _outcome != "Pending" and _updated_at_raw:
+            try:
+                import datetime as _dt_mod
+                _upd_dt = _dt_mod.datetime.fromisoformat(_updated_at_raw.replace("Z", "+00:00"))
+                _edited_label = "edited " + _upd_dt.strftime("%b") + " " + str(_upd_dt.day)
+            except Exception:
+                _edited_label = "edited"
 
         _header_html = (
             f'<div style="border-left:3px solid {_border_c}; background:#12121e; '
@@ -21735,6 +21744,7 @@ def render_decision_log_tab():
             f'{_dl_cat_badge(_cat)}'
             f'{_out_badge}'
             f'{"" if not _out_date else f"<span style=&quot;font-size:11px; color:#546e7a;&quot;>→ {_out_date}</span>"}'
+            f'{"" if not _edited_label else f"<span style=&quot;font-size:10px; color:#546e7a; font-style:italic;&quot;>({_edited_label})</span>"}'
             f'</div>'
             f'<div style="font-size:14px; color:#e0e0e0; font-weight:600; line-height:1.4; margin-bottom:4px;">'
             f'{_call_txt}</div>'
@@ -21830,7 +21840,7 @@ def render_decision_log_tab():
                         key=f"dl_eo_on_{_dec_id}",
                     )
                 if st.button("Save Outcome", key=f"dl_eo_save_{_dec_id}", type="primary"):
-                    _eo_ok = update_decision_outcome(_dec_id, _dl_uid, _eo_new_oc, _eo_new_od, _eo_new_on)
+                    _eo_ok = update_decision_outcome(_dec_id, _dl_uid, _eo_new_oc, _eo_new_od, _eo_new_on, is_edit=True)
                     if _eo_ok:
                         st.success(f"Outcome updated to {_eo_new_oc}.")
                         st.rerun()

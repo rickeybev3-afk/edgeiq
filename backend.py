@@ -11224,7 +11224,8 @@ CREATE TABLE IF NOT EXISTS decision_log (
   outcome       TEXT NOT NULL DEFAULT 'Pending',
   outcome_notes TEXT,
   outcome_date  DATE,
-  created_at    TIMESTAMPTZ DEFAULT NOW()
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ
 );
 """.strip()
 
@@ -11348,6 +11349,15 @@ def ensure_decision_log_table() -> bool:
                 pass
             else:
                 print(f"ensure_decision_log_table RLS warning ({rls_sql[:40]}): {es[:120]}")
+
+    try:
+        supabase.rpc(
+            "exec_sql",
+            {"query": "ALTER TABLE decision_log ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ"},
+        ).execute()
+    except Exception as e:
+        print(f"ensure_decision_log_table migration (updated_at) warning: {e}")
+
     return True
 
 
@@ -11390,11 +11400,21 @@ def insert_decision(user_id: str, decision_date, category: str, call: str, reaso
         return False
 
 
-def update_decision_outcome(decision_id: str, user_id: str, outcome: str, outcome_date, outcome_notes: str = "") -> bool:
+def update_decision_outcome(
+    decision_id: str,
+    user_id: str,
+    outcome: str,
+    outcome_date,
+    outcome_notes: str = "",
+    is_edit: bool = False,
+) -> bool:
     """Update outcome fields for an existing decision.
 
     Filters by both `id` AND `user_id` so callers can only modify their own rows,
     even without relying solely on RLS.
+
+    When ``is_edit=True`` the ``updated_at`` column is stamped with the current
+    UTC time so the UI can display an "edited <date>" label.
     """
     if not supabase:
         return False
@@ -11404,6 +11424,10 @@ def update_decision_outcome(decision_id: str, user_id: str, outcome: str, outcom
             "outcome_date": str(outcome_date) if outcome_date else None,
             "outcome_notes": outcome_notes.strip() or None,
         }
+        if is_edit:
+            patch["updated_at"] = datetime.utcnow().isoformat()
+        elif outcome == "Pending":
+            patch["updated_at"] = None
         supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
         return True
     except Exception as e:
