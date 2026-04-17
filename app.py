@@ -19193,8 +19193,18 @@ ALTER TABLE backtest_sim_runs
         # URL is the authoritative source; honour it even in an active session
         st.session_state["tcs_hist_days"] = _qp_hist_int
     elif "tcs_hist_days" not in st.session_state:
-        # No (valid) URL param and no prior selection — use the default
-        st.session_state["tcs_hist_days"] = 30
+        # No (valid) URL param and no prior selection — check stored user preference
+        _hist_uid = st.session_state.get("auth_user_id", "")
+        _hist_pref_default = 30
+        if _hist_uid:
+            _hist_stored = load_user_prefs(_hist_uid).get("tcs_hist_window")
+            try:
+                _hist_stored = int(_hist_stored) if _hist_stored is not None else None
+            except (TypeError, ValueError):
+                _hist_stored = None
+            if _hist_stored in _HIST_WINDOW_OPTS:
+                _hist_pref_default = _hist_stored
+        st.session_state["tcs_hist_days"] = _hist_pref_default
     _bw_hist_days = st.radio(
         "History window",
         options=_HIST_WINDOW_OPTS,
@@ -19204,6 +19214,20 @@ ALTER TABLE backtest_sim_runs
     )
     if st.query_params.get("tcs_hist_window") != str(_bw_hist_days):
         st.query_params["tcs_hist_window"] = str(_bw_hist_days)
+    # Persist the selection to the user's profile so it survives URL changes
+    _hist_save_uid = st.session_state.get("auth_user_id", "")
+    if _hist_save_uid:
+        # Sentinel is user-scoped so auth-user switches reset it correctly
+        _hist_sentinel_key = f"_tcs_hist_days_saved_{_hist_save_uid}"
+        _hist_prev_saved = st.session_state.get(_hist_sentinel_key)
+        if _hist_prev_saved != _bw_hist_days:
+            # Merge into _cached_prefs so concurrent pref saves don't lose this key
+            _hist_prefs = {**st.session_state.get("_cached_prefs", {})}
+            if _hist_prefs.get("tcs_hist_window") != _bw_hist_days:
+                _hist_prefs["tcs_hist_window"] = _bw_hist_days
+                save_user_prefs(_hist_save_uid, _hist_prefs)
+                st.session_state["_cached_prefs"] = _hist_prefs
+            st.session_state[_hist_sentinel_key] = _bw_hist_days
     st.caption("This window controls the shift history table and drift chart below. The stability summary always looks back 90 days.")
     _bw_tcs_hist   = _cached_load_tcs_threshold_history(days=_bw_hist_days)
     _bw_cur_thresh = _cached_load_tcs_thresholds()
