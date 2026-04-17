@@ -10110,9 +10110,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 if _all_sweep_frames:
                     _all_sweep_df = _pd_bt.concat(_all_sweep_frames, ignore_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
+                    if "_sweep_export_sufficient_only" not in st.session_state:
+                        st.session_state["_sweep_export_sufficient_only"] = (
+                            st.query_params.get("sweep_suf_only", "0") == "1"
+                        )
                     _sweep_suf_only = st.checkbox(
                         "Sufficient floors only",
-                        value=False,
                         key="_sweep_export_sufficient_only",
                         help=(
                             "When checked, the exported CSV only includes rows marked ✓ "
@@ -10120,6 +10123,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Rows marked ✗ (insufficient trades) are excluded."
                         ),
                     )
+                    if st.query_params.get("sweep_suf_only") != ("1" if _sweep_suf_only else "0"):
+                        st.query_params["sweep_suf_only"] = "1" if _sweep_suf_only else "0"
                     if _sweep_suf_only:
                         _all_sweep_export_df = _all_sweep_df[
                             _all_sweep_df["Sufficient"] == "✓"
