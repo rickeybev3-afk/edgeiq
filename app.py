@@ -10033,7 +10033,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "🔴 < 45% — IB framework doesn't fit this ticker · "
                 "False Brk % = how often IB breakouts reversed within 30 min  · "
                 f"Best TCS = the TCS cutoff (≥{_MIN_TCS_TRADES} trades) that produced the highest net P&L for that ticker "
-                "(hover the column header for details)"
+                "(hover the column header for details)  · "
+                "✱ = custom TCS floor override is active for that ticker"
             )
             if _best_tcs_options:
                 if _rp_bot_mode:
