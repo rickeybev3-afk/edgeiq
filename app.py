@@ -6889,17 +6889,36 @@ def _structure_color(label_str):
     return "#5c6bc0"
 
 
+def _feed_badge_html(feed: str) -> str:
+    """Return an HTML snippet for a small SIP/IEX feed badge pill."""
+    _f = (feed or "").lower()
+    if "sip" in _f:
+        return (
+            '<span style="background:#1b5e20; color:#a5d6a7; font-size:10px; font-weight:700; '
+            'padding:2px 8px; border-radius:10px; letter-spacing:1px; '
+            'vertical-align:middle; margin-left:8px;">SIP</span>'
+        )
+    return (
+        '<span style="background:#0d3b6e; color:#90caf9; font-size:10px; font-weight:700; '
+        'padding:2px 8px; border-radius:10px; letter-spacing:1px; '
+        'vertical-align:middle; margin-left:8px;">IEX</span>'
+    )
+
+
 # ── Live Playbook Screener Tab ──────────────────────────────────────────────────
 def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     """Render the 📋 Playbook tab — live small-cap screener with one-click journal routing."""
 
     # ── Header ─────────────────────────────────────────────────────────────────
+    _pb_hdr_feed = st.session_state.get("playbook_feed_radio", "SIP (recommended)")
+    _pb_hdr_badge = _feed_badge_html("sip" if "SIP" in _pb_hdr_feed else "iex")
     st.markdown(
-        '<div style="margin-bottom:4px;">'
-        '<span style="font-size:22px; font-weight:800; color:#e0e0e0;">📋 Live Playbook</span>'
-        '<span style="font-size:12px; color:#5c6bc0; margin-left:14px; text-transform:uppercase; '
-        'letter-spacing:1px;">Small-Cap Screener · $2 – $20 · Alpaca Market Data</span>'
-        '</div>',
+        f'<div style="margin-bottom:4px;">'
+        f'<span style="font-size:22px; font-weight:800; color:#e0e0e0;">📋 Live Playbook</span>'
+        f'{_pb_hdr_badge}'
+        f'<span style="font-size:12px; color:#5c6bc0; margin-left:14px; text-transform:uppercase; '
+        f'letter-spacing:1px;">Small-Cap Screener · $2 – $20 · Alpaca Market Data</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -7360,18 +7379,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
 
     # ── Terminal header ─────────────────────────────────────────────────────────
+    _bt_hdr_feed = st.session_state.get("bt_feed_radio", "SIP (paid — accurate)")
+    _bt_hdr_badge = _feed_badge_html("sip" if "SIP" in _bt_hdr_feed else "iex")
     st.markdown(
-        '<div style="background:#020813; border:1px solid #0d2137; border-radius:10px; '
-        'padding:16px 22px; margin-bottom:18px;">'
-        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
-        'letter-spacing:2px; margin-bottom:4px;">QUANT RESEARCH TERMINAL v2</div>'
-        '<div style="font-size:24px; font-weight:900; color:#e0e0e0; '
-        'font-family:monospace;">🔬 Historical Backtest Engine</div>'
-        '<div style="font-size:12px; color:#455a64; margin-top:4px;">'
-        'Simulates your quant model on historical morning data → measures afternoon accuracy. '
-        'Engine sees only 9:30–10:30 AM, then we check what actually happened 10:30 AM–4:00 PM.'
-        '</div>'
-        '</div>',
+        f'<div style="background:#020813; border:1px solid #0d2137; border-radius:10px; '
+        f'padding:16px 22px; margin-bottom:18px;">'
+        f'<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        f'letter-spacing:2px; margin-bottom:4px;">QUANT RESEARCH TERMINAL v2</div>'
+        f'<div style="font-size:24px; font-weight:900; color:#e0e0e0; '
+        f'font-family:monospace;">🔬 Historical Backtest Engine{_bt_hdr_badge}</div>'
+        f'<div style="font-size:12px; color:#455a64; margin-top:4px;">'
+        f'Simulates your quant model on historical morning data → measures afternoon accuracy. '
+        f'Engine sees only 9:30–10:30 AM, then we check what actually happened 10:30 AM–4:00 PM.'
+        f'</div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
@@ -7454,11 +7475,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _cal_ticker_pool = _CALIBRATION_TICKERS
         _cal_source_label = f"default list ({len(_cal_ticker_pool)} tickers)"
 
+    _cal_hdr_feed = st.session_state.get("cal_feed_radio", "SIP (paid — accurate)")
+    _cal_hdr_badge = _feed_badge_html("sip" if "SIP" in _cal_hdr_feed else "iex")
     st.markdown(
         f'<div style="background:#0a1628; border:1px solid #1565c044; border-radius:10px; '
         f'padding:14px 20px; margin-bottom:14px;">'
         f'<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
-        f'letter-spacing:2px; margin-bottom:4px;">🧠 BRAIN CALIBRATION</div>'
+        f'letter-spacing:2px; margin-bottom:4px;">🧠 BRAIN CALIBRATION {_cal_hdr_badge}</div>'
         f'<div style="font-size:15px; font-weight:700; color:#e0e0e0; margin-bottom:4px;">'
         f'One-Click Calibration Run</div>'
         f'<div style="font-size:12px; color:#546e7a;">'
@@ -23177,12 +23200,15 @@ def render_decision_log_tab():
 
 
 def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
+    _pt_hdr_feed = st.session_state.get("pt_feed", "SIP (paid — accurate)")
+    _pt_hdr_badge = _feed_badge_html("sip" if "SIP" in _pt_hdr_feed else "iex")
     st.markdown(
-        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
-        'letter-spacing:2px; font-weight:700; margin-bottom:4px;">📄 AUTO PAPER TRADING</div>'
-        '<div style="font-size:12px; color:#546e7a; margin-bottom:18px;">'
-        'Run the IB engine on any date with a TCS ≥ filter. Results log automatically '
-        'so you build 3 weeks of calibrated paper data without touching Alpaca again.</div>',
+        f'<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        f'letter-spacing:2px; font-weight:700; margin-bottom:4px;">'
+        f'📄 AUTO PAPER TRADING{_pt_hdr_badge}</div>'
+        f'<div style="font-size:12px; color:#546e7a; margin-bottom:18px;">'
+        f'Run the IB engine on any date with a TCS ≥ filter. Results log automatically '
+        f'so you build 3 weeks of calibrated paper data without touching Alpaca again.</div>',
         unsafe_allow_html=True,
     )
 
@@ -25196,6 +25222,12 @@ tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
 with tab_scan:
+    _scan_feed_val = st.session_state.get("scan_feed_select", "sip")
+    st.markdown(
+        f'<div style="font-size:18px; font-weight:800; color:#e0e0e0; margin-bottom:10px;">'
+        f'🔍 Gap Scanner {_feed_badge_html(_scan_feed_val)}</div>',
+        unsafe_allow_html=True,
+    )
     # ── Run scanner if button clicked ──────────────────────────────────────────
     if scan_button:
         if not api_key or not secret_key:
@@ -26056,6 +26088,12 @@ if auto_trigger:
 with tab_chart:
     # ── Historical mode ────────────────────────────────────────────────────────
     if mode == "📅 Historical":
+        _hist_feed_val = st.session_state.get("hist_scan_feed", "sip")
+        st.markdown(
+            f'<div style="font-size:18px; font-weight:800; color:#e0e0e0; margin-bottom:10px;">'
+            f'📅 Historical Scan {_feed_badge_html(_hist_feed_val)}</div>',
+            unsafe_allow_html=True,
+        )
         if run_button or auto_trigger:
             if not api_key or not secret_key:
                 st.error("Enter your Alpaca credentials in the sidebar.")
@@ -26162,6 +26200,12 @@ with tab_chart:
 
     # ── Replay mode ────────────────────────────────────────────────────────────
     elif mode == "🎬 Replay":
+        _replay_feed_val = st.session_state.get("replay_feed_sel", "sip")
+        st.markdown(
+            f'<div style="font-size:18px; font-weight:800; color:#e0e0e0; margin-bottom:10px;">'
+            f'🎬 Replay {_feed_badge_html(_replay_feed_val)}</div>',
+            unsafe_allow_html=True,
+        )
         # ── Load full-day bars on demand ──────────────────────────────────────
         if replay_load:
             if not api_key or not secret_key:
@@ -26269,6 +26313,12 @@ with tab_chart:
 
     # ── Live mode ──────────────────────────────────────────────────────────────
     else:
+        _live_feed_val = st.session_state.get("live_scan_feed", "iex")
+        st.markdown(
+            f'<div style="font-size:18px; font-weight:800; color:#e0e0e0; margin-bottom:10px;">'
+            f'🔴 Live Stream {_feed_badge_html(_live_feed_val)}</div>',
+            unsafe_allow_html=True,
+        )
         if start_live:
             if not api_key or not secret_key:
                 st.error("Enter your Alpaca credentials first.")
