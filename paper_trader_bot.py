@@ -2272,6 +2272,8 @@ def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
 
     written = 0
     skipped = 0
+    patched: list[str] = []  # "TICKER (date) @ price" entries for the success alert
+    skipped_by_date: dict[str, list[str]] = {}  # date → [ticker, …] for the warning alert
 
     for sim_date_str in sorted(by_date.keys(), reverse=True):
         date_rows = by_date[sim_date_str]
@@ -2287,6 +2289,9 @@ def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
         except Exception as _fe:
             log.warning(f"  Alpaca fetch failed for {sim_date_str}: {_fe}")
             skipped += len(date_rows)
+            for row in date_rows:
+                _t = row.get("ticker", "?")
+                skipped_by_date.setdefault(sim_date_str, []).append(_t)
             continue
 
         for row in date_rows:
@@ -2295,6 +2300,7 @@ def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
             if cp is None:
                 log.debug(f"    No Alpaca data for {ticker} on {sim_date_str} — skipping.")
                 skipped += 1
+                skipped_by_date.setdefault(sim_date_str, []).append(ticker)
                 continue
             try:
                 _supabase_client.table("backtest_sim_runs").update(
@@ -2302,16 +2308,50 @@ def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
                 ).eq("id", row["id"]).execute()
                 log.info(f"    {ticker}: close_price → {cp:.4f}")
                 written += 1
+                patched.append(f"{ticker} ({sim_date_str}) @ ${cp:.2f}")
             except Exception as _ue:
                 log.warning(
                     f"    DB update failed for {ticker} (id={row['id']}): {_ue}"
                 )
                 skipped += 1
+                skipped_by_date.setdefault(sim_date_str, []).append(ticker)
 
     log.info(
         f"EOD close-price sweep (backtest) done — {written} written, "
         f"{skipped} skipped (no Alpaca data or update error)."
     )
+
+    if written > 0:
+        _display_entries = patched[:SWEEP_ALERT_MAX_TICKERS]
+        _overflow = len(patched) - len(_display_entries)
+        _ticker_lines = "\n".join(f"  • {entry}" for entry in _display_entries)
+        if _overflow > 0:
+            _ticker_lines += f"\n  …and {_overflow} more"
+        _sweep_msg = (
+            f"🔧 <b>Close-Price Sweep (Backtest)</b> — {written} row(s) backfilled\n"
+            f"{_ticker_lines}\n"
+            f"<i>Housekeeping: these backtest close prices were missing and have been patched automatically.</i>"
+        )
+        try:
+            tg_send(_sweep_msg)
+        except Exception as _tge:
+            log.warning(f"_eod_collect_close_prices_backtest: Telegram alert failed: {_tge}")
+
+    if skipped > 0:
+        _skipped_lines = "\n".join(
+            f"  • {date}: {', '.join(sorted(set(tks)))}"
+            for date, tks in sorted(skipped_by_date.items(), reverse=True)
+        )
+        _warn_msg = (
+            f"⚠️ <b>Close-Price Sweep (Backtest) — {skipped} ticker(s) could not be filled</b>\n"
+            f"{_skipped_lines}\n"
+            f"<i>These backtest close prices could not be filled automatically (no Alpaca data or update error). Manual investigation may be needed.</i>"
+        )
+        try:
+            tg_send(_warn_msg)
+        except Exception as _tge:
+            log.warning(f"_eod_collect_close_prices_backtest: Telegram warning failed: {_tge}")
+
     return {"written": written, "skipped": skipped}
 
 
