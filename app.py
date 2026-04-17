@@ -6788,6 +6788,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             r[_val_col]   = value
                             return r
 
+                        _bt_tier_defs = [
+                            ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
+                            ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
+                            ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                            ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
+                        ]
+
                         _summary_rows = [
                             {c: "" for c in _csv_cols},
                             _stat_row("--- R-STATS SUMMARY ---", ""),
@@ -6797,6 +6804,36 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _stat_row("Expectancy",      f"{_expectancy_r:+.3f}R/trade"),
                             _stat_row("Max Drawdown (R)",f"{abs(_max_dd_r)}R"),
                         ]
+
+                        for _csv_btl, _csv_bte, _csv_btst, _csv_btlo, _csv_bthi, _csv_btc, _csv_btd in _bt_tier_defs:
+                            _csv_tier_mask = (
+                                (_rp_df["Snapshot"].str.lower() == _csv_btst) &
+                                (_rp_df["TCS"] >= _csv_btlo) &
+                                (_rp_df["TCS"] <= _csv_bthi)
+                            )
+                            _csv_td = _rp_df[_csv_tier_mask]
+                            _summary_rows.append({c: "" for c in _csv_cols})
+                            _summary_rows.append(_stat_row(f"--- {_csv_btl} ({_csv_btd}) ---", ""))
+                            if _csv_td.empty:
+                                _summary_rows.append(_stat_row("(no trades in this tier)", ""))
+                            else:
+                                _csv_tr_ser = _csv_td["R (MFE)"]
+                                _csv_tr_n   = len(_csv_td)
+                                _csv_fb_n   = _csv_td["False Break"].sum()
+                                _csv_fb_rt  = round(_csv_fb_n / _csv_tr_n * 100, 1)
+                                _csv_aw_r   = round(_csv_tr_ser[_csv_tr_ser > 0].mean(), 2) if (_csv_tr_ser > 0).any() else 0
+                                _csv_al_r   = round(_csv_tr_ser[_csv_tr_ser < 0].mean(), 2) if (_csv_tr_ser < 0).any() else 0
+                                _csv_exp_r  = round(_csv_tr_ser.mean(), 3)
+                                _csv_cum_r  = _csv_tr_ser.cumsum().reset_index(drop=True)
+                                _csv_pk_r   = _csv_cum_r.cummax()
+                                _csv_mdd_r  = round((_csv_cum_r - _csv_pk_r).min(), 2)
+                                _summary_rows.extend([
+                                    _stat_row("Stop-Out Rate",   f"{_csv_fb_rt}%"),
+                                    _stat_row("Avg Win (R)",     f"+{_csv_aw_r}R"),
+                                    _stat_row("Avg Loss (R)",    f"{_csv_al_r}R"),
+                                    _stat_row("Expectancy",      f"{_csv_exp_r:+.3f}R/trade"),
+                                    _stat_row("Max Drawdown (R)",f"{abs(_csv_mdd_r)}R"),
+                                ])
                         _rp_csv_export = pd.concat(
                             [_rp_csv_df,
                              pd.DataFrame(_summary_rows)],
@@ -6808,7 +6845,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             file_name="replay_trades.csv",
                             mime="text/csv",
                             key="rp_dl_csv",
-                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes R-stats summary row at the bottom",
+                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes overall R-stats summary and per-tier (P1–P4) breakdown at the bottom",
                         )
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
@@ -6823,12 +6860,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
                             "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
                         )
-                        _bt_tier_defs = [
-                            ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                            ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
-                            ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
-                            ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
-                        ]
                         _bt_tier_cols = st.columns(4)
                         # Pre-compute expectancy R per tier for best-edge highlight
                         _bt_tier_exp_map: dict = {}
