@@ -18250,6 +18250,20 @@ ALTER TABLE backtest_sim_runs
 
     # ── Tiered P&L backfill warning ─────────────────────────────────────────────
     _tiered_pending_count = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
+
+    # ── paper_trades sentinel count (unavailable rows flagged with -9999) ────────
+    _pt_sentinel_total = count_paper_trades_tiered_sentinel(user_id=_AUTH_USER_ID)
+    if _pt_sentinel_total > 0:
+        st.markdown(
+            f'<p style="margin:0 0 6px 0; font-size:0.9em; color:#ef9a9a;">'
+            f'\u26a0 <strong>{_pt_sentinel_total:,} paper_trades row'
+            f'{"s" if _pt_sentinel_total != 1 else ""} flagged unavailable</strong>'
+            f' (sentinel <code>-9999</code>) \u2014 '
+            f'<a href="#pt-sentinel-reset" style="color:#90caf9; text-decoration:underline;">'
+            f'jump to reset tool \u2193</a></p>',
+            unsafe_allow_html=True,
+        )
+
     if _tiered_pending_count > 0:
         _tp_col_warn, _tp_col_btn, _tp_col_full = st.columns([3, 1, 1])
         with _tp_col_warn:
@@ -18555,6 +18569,7 @@ ALTER TABLE backtest_sim_runs
                 st.rerun()
 
     # ── Reset sentinel-stamped (unavailable) paper_trades rows ───────────────────
+    st.markdown('<a id="pt-sentinel-reset"></a>', unsafe_allow_html=True)
     with st.expander("🔄 Reset paper_trades Unavailable Rows (re-queue for backfill)", expanded=False):
         st.markdown(
             "Rows in **paper_trades** where Alpaca returned no bar data are permanently stamped "
