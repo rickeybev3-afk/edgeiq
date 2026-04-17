@@ -7897,25 +7897,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm4.metric("Avg Win", f"${_avg_win:,.0f}")
                         _sm5.metric("Profit Factor", _pf_str)
 
-                        # ── R-based stats row ─────────────────────────────────────────────
-                        _r_ser          = _rp_df["R (MFE)"]
-                        _false_brk_n    = _rp_df["False Break"].sum()
-                        _false_brk_rate = round(_false_brk_n / _total_trades * 100, 1) if _total_trades else 0
-                        _avg_win_r      = round(_r_ser[_r_ser > 0].mean(), 2) if (_r_ser > 0).any() else 0
-                        _avg_loss_r     = round(_r_ser[_r_ser < 0].mean(), 2) if (_r_ser < 0).any() else 0
-                        _expectancy_r   = round(_r_ser.mean(), 3) if _total_trades else 0
-                        _cum_r_vals     = _r_ser.cumsum().reset_index(drop=True)
-                        _peak_r         = _cum_r_vals.cummax()
-                        _max_dd_r       = round((_cum_r_vals - _peak_r).min(), 2) if _total_trades else 0
-                        _sm6, _sm7, _sm8, _sm9, _sm10 = st.columns(5)
-                        _sm6.metric("False-Break Rate",  f"{_false_brk_rate}%",
-                                    help="% of trades where false_break_up/false_break_down triggered a -1R stop-out")
-                        _sm7.metric("Avg Win (R)",    f"+{_avg_win_r}R")
-                        _sm8.metric("Avg Loss (R)",   f"{_avg_loss_r}R")
-                        _sm9.metric("Expectancy",     f"{_expectancy_r:+.3f}R / trade",
-                                    help="Average R gained per trade — the raw edge, independent of position size")
-                        _sm10.metric("Max Drawdown (R)", f"{abs(_max_dd_r)}R",
-                                     help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim (shown as a positive magnitude)")
+                        # ── R-based stats row (only when column is present) ───────────────
+                        _has_r_col = "R (MFE)" in _rp_df.columns
+                        _avg_win_r = _avg_loss_r = 0
+                        if _has_r_col:
+                            _r_ser          = _rp_df["R (MFE)"]
+                            _false_brk_n    = _rp_df["False Break"].sum()
+                            _false_brk_rate = round(_false_brk_n / _total_trades * 100, 1) if _total_trades else 0
+                            _avg_win_r      = round(_r_ser[_r_ser > 0].mean(), 2) if (_r_ser > 0).any() else 0
+                            _avg_loss_r     = round(_r_ser[_r_ser < 0].mean(), 2) if (_r_ser < 0).any() else 0
+                            _expectancy_r   = round(_r_ser.mean(), 3) if _total_trades else 0
+                            _cum_r_vals     = _r_ser.cumsum().reset_index(drop=True)
+                            _peak_r         = _cum_r_vals.cummax()
+                            _max_dd_r       = round((_cum_r_vals - _peak_r).min(), 2) if _total_trades else 0
+                            _sm6, _sm7, _sm8, _sm9, _sm10 = st.columns(5)
+                            _sm6.metric("False-Break Rate",  f"{_false_brk_rate}%",
+                                        help="% of trades where false_break_up/false_break_down triggered a -1R stop-out")
+                            _sm7.metric("Avg Win (R)",    f"+{_avg_win_r}R")
+                            _sm8.metric("Avg Loss (R)",   f"{_avg_loss_r}R")
+                            _sm9.metric("Expectancy",     f"{_expectancy_r:+.3f}R / trade",
+                                        help="Average R gained per trade — the raw edge, independent of position size")
+                            _sm10.metric("Max Drawdown (R)", f"{abs(_max_dd_r)}R",
+                                         help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim (shown as a positive magnitude)")
+
+                        # ── Win / Loss avg breakdown row ──────────────────────────────────────
+                        _avg_loss_display = f"${_avg_loss:,.0f}" if _pnl_losses else "—"
+                        _avg_win_display  = f"${_avg_win:,.0f}"  if _pnl_wins  else "—"
+                        if _has_r_col:
+                            _wb1, _wb2, _wb3, _wb4 = st.columns(4)
+                            _wb1.metric("Avg Win P&L",  _avg_win_display,
+                                        help=f"Average P&L across {_pnl_wins} winning trade(s)")
+                            _wb2.metric("Avg Loss P&L", _avg_loss_display,
+                                        help=f"Average P&L across {_pnl_losses} losing trade(s)")
+                            _wb3.metric("Avg Win R",    f"+{_avg_win_r}R",
+                                        help=f"Average R (MFE) across {_pnl_wins} winning trade(s)")
+                            _wb4.metric("Avg Loss R",   f"{_avg_loss_r}R",
+                                        help=f"Average R (MFE) across {_pnl_losses} losing trade(s)")
+                        else:
+                            _wb1, _wb2 = st.columns(2)
+                            _wb1.metric("Avg Win P&L",  _avg_win_display,
+                                        help=f"Average P&L across {_pnl_wins} winning trade(s)")
+                            _wb2.metric("Avg Loss P&L", _avg_loss_display,
+                                        help=f"Average P&L across {_pnl_losses} losing trade(s)")
 
                         # ── EOD Hold R and Tiered Exit R on-screen stats ──────────────────
                         _has_eod_col    = "R (EOD)"    in _rp_df.columns
