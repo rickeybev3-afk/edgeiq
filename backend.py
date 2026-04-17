@@ -2173,6 +2173,40 @@ def _load_tcs_alert_structures() -> set | None:
     return None
 
 
+def load_tcs_alert_structures() -> set | None:
+    """Public wrapper around ``_load_tcs_alert_structures`` for use by the UI layer."""
+    return _load_tcs_alert_structures()
+
+
+def save_tcs_alert_structures(structures) -> bool:
+    """Persist *structures* (any iterable of structure keys) to ``tcs_alert_config.json``.
+
+    Only recognised keys (those present in :data:`WK_DISPLAY`) are written;
+    unknown keys are silently discarded.  Overwrites the file while preserving
+    the comment key.  Returns ``True`` on success, ``False`` on any I/O failure.
+    """
+    import json as _json
+
+    valid = set(WK_DISPLAY.keys())
+    sanitised = sorted(k for k in structures if k in valid)
+    cfg_path = os.path.join(os.path.dirname(__file__) or ".", "tcs_alert_config.json")
+    cfg = {
+        "_comment": (
+            "List the structure keys you want TCS threshold-shift alerts for. "
+            "Remove a key to silence alerts for that structure. "
+            "Leave alert_structures as an empty list [] to silence ALL alerts, "
+            "or delete this file to receive alerts for every structure (default behaviour)."
+        ),
+        "alert_structures": sanitised,
+    }
+    try:
+        with open(cfg_path, "w") as _f:
+            _json.dump(cfg, _f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
 _tcs_alert_cache: dict = {}   # {structure_YYYY-MM-DD: True}
 
 

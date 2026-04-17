@@ -49,6 +49,8 @@ from backend import (
     _SECRET_CATALOG,
     _secret_statuses,
     _alpaca_mismatch_status,
+    load_tcs_alert_structures,
+    save_tcs_alert_structures,
 )
 
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
@@ -4140,6 +4142,31 @@ with st.sidebar:
         )
     else:
         st.warning("Telegram not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to Secrets.", icon="⚠️")
+
+    st.markdown("**TCS Threshold-Shift Alert Structures**")
+    st.caption(
+        "Choose which market structures trigger a Telegram alert when the TCS "
+        "threshold shifts ≥ 5 pts overnight. Untick all to silence every TCS shift alert."
+    )
+    _tcs_opted = load_tcs_alert_structures()
+    _tcs_all_keys = list(WK_DISPLAY.keys())
+    _tcs_sel: dict = {}
+    _tcs_col_a, _tcs_col_b = st.columns(2)
+    for _tcs_i, _tcs_key in enumerate(_tcs_all_keys):
+        _tcs_label = WK_DISPLAY[_tcs_key]
+        _tcs_default = (_tcs_opted is None) or (_tcs_key in _tcs_opted)
+        _tcs_col = _tcs_col_a if _tcs_i % 2 == 0 else _tcs_col_b
+        with _tcs_col:
+            _tcs_sel[_tcs_key] = st.checkbox(
+                _tcs_label, value=_tcs_default, key=f"tcs_alert_struct_{_tcs_key}"
+            )
+    if st.button("💾 Save alert preferences", key="tcs_alert_save_btn", use_container_width=True):
+        _tcs_chosen = {k for k, v in _tcs_sel.items() if v}
+        _tcs_ok = save_tcs_alert_structures(_tcs_chosen)
+        if _tcs_ok:
+            st.success("Alert preferences saved.", icon="✅")
+        else:
+            st.error("Could not save preferences — check file permissions.", icon="⚠️")
 
     st.markdown("---")
     mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)
