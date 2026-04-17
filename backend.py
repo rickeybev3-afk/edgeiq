@@ -319,6 +319,119 @@ def check_db_connection() -> tuple[bool, str]:
         return False, str(exc)[:80]
 
 
+# ── Runtime credential health monitoring ──────────────────────────────────────
+# Periodically re-validates Alpaca and Supabase credentials in the background
+# so that revoked or expired keys are surfaced as a dashboard banner rather
+# than cryptic per-trade errors buried in logs.
+_runtime_credential_errors: list[tuple[str, str]] = []
+_runtime_credential_lock = threading.Lock()
+_RUNTIME_CHECK_INTERVAL_S: float = 300.0   # 5 minutes between re-checks
+_runtime_last_check_ts: float = 0.0        # monotonic timestamp of last check
+
+# Tracks which credential providers have been confirmed working at least once.
+# A failure is only surfaced as a "runtime failure" (was working, now broken)
+# after the provider appears in this set, making the banner message accurate.
+_providers_confirmed_ok: set[str] = set()
+
+
+def _run_credential_check() -> None:
+    """Validate Alpaca and Supabase credentials and update _runtime_credential_errors.
+
+    Only credentials that were configured at startup are re-checked here; missing
+    secrets are already covered by _startup_errors and shown at startup.
+
+    A failure is only reported as a runtime failure once the provider has been
+    confirmed healthy at least once, ensuring "was working, now broken" is accurate.
+    """
+    global _runtime_last_check_ts
+    errors: list[tuple[str, str]] = []
+
+    # — Supabase —
+    # Only re-check if credentials were present and valid at startup.
+    if SUPABASE_URL and SUPABASE_KEY and not _supabase_errors:
+        ok, reason = check_db_connection()
+        if ok:
+            _providers_confirmed_ok.add("supabase")
+        elif "supabase" in _providers_confirmed_ok:
+            # Was working, now failing — surface as a runtime error.
+            errors.append((
+                "SUPABASE_KEY",
+                f"Supabase credentials are no longer accepted (were working earlier "
+                f"this session): {reason}. Check that SUPABASE_URL and SUPABASE_KEY "
+                f"have not expired or been revoked.",
+            ))
+        else:
+            # Never confirmed — log quietly; startup banner already covers missing creds.
+            logging.debug("[RUNTIME] Supabase connectivity check failed before first success: %s", reason)
+
+    # — Alpaca —
+    # Only re-check if both keys were present at startup.
+    if ALPACA_API_KEY and ALPACA_SECRET_KEY:
+        try:
+            _hdrs = {
+                "APCA-API-KEY-ID":     ALPACA_API_KEY,
+                "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+            }
+            _url = (
+                "https://paper-api.alpaca.markets/v2/account"
+                if IS_PAPER_ALPACA else
+                "https://api.alpaca.markets/v2/account"
+            )
+            _r = requests.get(_url, headers=_hdrs, timeout=8)
+            if _r.status_code == 200:
+                _providers_confirmed_ok.add("alpaca")
+            elif _r.status_code in (401, 403):
+                if "alpaca" in _providers_confirmed_ok:
+                    errors.append((
+                        "ALPACA_API_KEY",
+                        f"Alpaca credentials are no longer accepted by the API "
+                        f"(HTTP {_r.status_code}) — the key may have been revoked or "
+                        f"rotated since the app started. Update ALPACA_API_KEY and "
+                        f"ALPACA_SECRET_KEY, then restart the app.",
+                    ))
+                else:
+                    logging.debug(
+                        "[RUNTIME] Alpaca credential check failed before first success (HTTP %s)",
+                        _r.status_code,
+                    )
+        except Exception as _exc:
+            logging.debug("[RUNTIME] Alpaca credential re-check failed: %s", _exc)
+
+    with _runtime_credential_lock:
+        _runtime_credential_errors[:] = errors
+    _runtime_last_check_ts = time.monotonic()
+
+    if errors:
+        for _n, _m in errors:
+            logging.warning("[RUNTIME] Mid-session credential failure — %s: %s", _n, _m)
+    else:
+        logging.debug("[RUNTIME] Credential re-check passed — all secrets still valid.")
+
+
+def check_credentials_runtime(force: bool = False) -> list[tuple[str, str]]:
+    """Return any runtime credential failures detected since startup.
+
+    Spawns a background re-validation thread if the check interval has elapsed
+    (or *force* is True), then immediately returns the most recently cached
+    results so the UI is never blocked by a network call.
+
+    Returns an empty list when all credentials remain valid.
+    """
+    global _runtime_last_check_ts
+    elapsed = time.monotonic() - _runtime_last_check_ts
+    if force or elapsed >= _RUNTIME_CHECK_INTERVAL_S:
+        # Optimistically update the timestamp before spawning so that rapid
+        # reruns don't trigger a flood of parallel check threads.
+        _runtime_last_check_ts = time.monotonic()
+        threading.Thread(
+            target=_run_credential_check,
+            daemon=True,
+            name="runtime-cred-check",
+        ).start()
+    with _runtime_credential_lock:
+        return list(_runtime_credential_errors)
+
+
 def set_user_session(access_token: str, refresh_token: str) -> None:
     """Bind a logged-in user's JWT to the RLS-enforcing client.
 

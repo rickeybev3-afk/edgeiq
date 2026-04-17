@@ -192,6 +192,27 @@ if _startup_errors:
         _render_setup_checklist()
         st.stop()
 
+# ── Runtime credential failure banner ─────────────────────────────────────────
+# check_credentials_runtime() re-validates Alpaca and Supabase credentials in a
+# background thread (at most every 5 minutes) and returns any mid-session
+# failures.  Unlike _startup_errors above (never configured), these banners mean
+# the credentials were valid at launch but have since been revoked or expired.
+_runtime_errors = check_credentials_runtime()
+if _runtime_errors:
+    _rt_lines = "\n".join(f"• {_msg}" for _, _msg in _runtime_errors)
+    st.error(
+        f"**🔑 Credential failure detected mid-session — "
+        f"{len(_runtime_errors)} secret(s) stopped working after startup:**\n\n"
+        f"{_rt_lines}\n\n"
+        "These credentials were valid when the app launched but are no longer "
+        "accepted. Update the secrets and restart the app."
+    )
+    if any(_name in ("SUPABASE_KEY",) for _name, _ in _runtime_errors):
+        st.warning(
+            "Supabase credentials are no longer valid. Database queries may fail "
+            "until SUPABASE_URL and SUPABASE_KEY are updated and the app is restarted."
+        )
+
 # ── Session state ──────────────────────────────────────────────────────────────
 _DEFAULTS = {
     "live_active": False,
