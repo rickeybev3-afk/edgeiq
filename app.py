@@ -18928,6 +18928,11 @@ ALTER TABLE backtest_sim_runs
     ]
 
     _has_tcs = "tcs" in _sim_df.columns and _sim_df["tcs"].notna().any()
+    _has_marg_data_sweep = (
+        _has_tcs
+        and "tcs_floor" in _sim_df.columns
+        and _sim_df["tcs_floor"].notna().any()
+    )
     _tier_cols = st.columns(4)
 
     # Pre-compute expectancy R per tier to find best edge
@@ -19042,6 +19047,85 @@ ALTER TABLE backtest_sim_runs
                         )
                     else:
                         _t_tier_html = ""
+                    # ── Per-tier Marginal vs Comfortable breakdown ────────────
+                    _t_marg_html = ""
+                    if _has_marg_data_sweep and len(_tdf) > 0:
+                        _tdf_floor_valid = _tdf[_tdf["tcs_floor"].notna()]
+                        if _tdf_floor_valid.empty:
+                            _t_marg_mask2 = pd.Series(dtype=bool)
+                            _t_marg_df2 = _tdf_floor_valid
+                            _t_comf_df2 = _tdf_floor_valid
+                        else:
+                            _t_marg_mask2 = (
+                                (_tdf_floor_valid["tcs"] - _tdf_floor_valid["tcs_floor"]).between(0, 5, inclusive="both")
+                            )
+                            _t_marg_df2 = _tdf_floor_valid[_t_marg_mask2]
+                            _t_comf_df2 = _tdf_floor_valid[~_t_marg_mask2]
+                        _t_marg_n2  = len(_t_marg_df2)
+                        _t_comf_n2  = len(_t_comf_df2)
+                        if _t_marg_n2 > 0 or _t_comf_n2 > 0:
+                            _t_marg_wr2 = (
+                                round((_t_marg_df2["pnl_r_sim"] > 0).sum() / _t_marg_n2 * 100, 1)
+                                if _t_marg_n2 else None
+                            )
+                            _t_comf_wr2 = (
+                                round((_t_comf_df2["pnl_r_sim"] > 0).sum() / _t_comf_n2 * 100, 1)
+                                if _t_comf_n2 else None
+                            )
+                            _t_marg_avgr2 = (
+                                round(_t_marg_df2["pnl_r_sim"].mean(), 2)
+                                if _t_marg_n2 else None
+                            )
+                            _t_comf_avgr2 = (
+                                round(_t_comf_df2["pnl_r_sim"].mean(), 2)
+                                if _t_comf_n2 else None
+                            )
+                            _t_marg_wr_str2   = f"{_t_marg_wr2}%"        if _t_marg_wr2   is not None else "—"
+                            _t_comf_wr_str2   = f"{_t_comf_wr2}%"        if _t_comf_wr2   is not None else "—"
+                            _t_marg_avgr_str2 = f"{_t_marg_avgr2:+.2f}R" if _t_marg_avgr2 is not None else "—"
+                            _t_comf_avgr_str2 = f"{_t_comf_avgr2:+.2f}R" if _t_comf_avgr2 is not None else "—"
+                            _t_marg_wr_col2 = (
+                                "#2e7d32" if (_t_marg_wr2 is not None and _t_marg_wr2 >= 60)
+                                else ("#ef6c00" if (_t_marg_wr2 is not None and _t_marg_wr2 >= 50) else "#c62828")
+                                if _t_marg_wr2 is not None else "#90a4ae"
+                            )
+                            _t_comf_wr_col2 = (
+                                "#2e7d32" if (_t_comf_wr2 is not None and _t_comf_wr2 >= 60)
+                                else ("#ef6c00" if (_t_comf_wr2 is not None and _t_comf_wr2 >= 50) else "#c62828")
+                                if _t_comf_wr2 is not None else "#90a4ae"
+                            )
+                            _t_floor_valid_n = len(_tdf_floor_valid)
+                            _t_marg_pct2 = round(_t_marg_n2 / _t_floor_valid_n * 100, 1) if _t_floor_valid_n else 0
+                            _t_dwr2 = (
+                                f"{round(_t_marg_wr2 - _t_comf_wr2, 1):+.1f}pp"
+                                if (_t_marg_wr2 is not None and _t_comf_wr2 is not None) else None
+                            )
+                            _t_dwr_col2 = (
+                                "#2e7d32" if (_t_dwr2 is not None and float(_t_dwr2.replace("pp", "")) >= 0)
+                                else "#c62828"
+                            ) if _t_dwr2 is not None else "#90a4ae"
+                            _t_marg_html = (
+                                f'<div style="font-size:10px;color:#90a4ae;margin-top:6px;'
+                                f'border-top:1px solid #263444;padding-top:5px;text-align:left;">'
+                                f'<span style="color:#ffb74d;font-weight:600;">Marginal vs Comfortable</span>'
+                                f'</div>'
+                                f'<div style="font-size:10px;color:#cfd8dc;text-align:left;line-height:1.7;">'
+                                f'<span style="color:#90a4ae;">Marginal</span> ({_t_marg_n2}, {_t_marg_pct2}%):&nbsp;'
+                                f'WR <span style="color:{_t_marg_wr_col2};font-weight:600;">{_t_marg_wr_str2}</span>'
+                                f'&nbsp;·&nbsp;'
+                                f'Avg R <span style="color:#80cbc4;">{_t_marg_avgr_str2}</span>'
+                                f'<br>'
+                                f'<span style="color:#90a4ae;">Comfortable</span> ({_t_comf_n2}):&nbsp;'
+                                f'WR <span style="color:{_t_comf_wr_col2};font-weight:600;">{_t_comf_wr_str2}</span>'
+                                f'&nbsp;·&nbsp;'
+                                f'Avg R <span style="color:#80cbc4;">{_t_comf_avgr_str2}</span>'
+                                + (
+                                    f'<br><span style="color:#90a4ae;">ΔWR (marg−comf):</span>&nbsp;'
+                                    f'<span style="color:{_t_dwr_col2};font-weight:600;">{_t_dwr2}</span>'
+                                    if _t_dwr2 is not None else ""
+                                ) +
+                                f'</div>'
+                            )
                     st.markdown(
                         f'<div style="background:#1e2a3a;border-left:{_card_border};'
                         f'border-radius:8px;padding:12px;text-align:center;">'
@@ -19062,6 +19146,7 @@ ALTER TABLE backtest_sim_runs
                         f'{_pct_trades:.1f}% of trades · {_pct_r:.1f}% of R</div>'
                         f'{_t_eod_html}'
                         f'{_t_tier_html}'
+                        f'{_t_marg_html}'
                         f'</div>', unsafe_allow_html=True
                     )
 
