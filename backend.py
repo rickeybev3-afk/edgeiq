@@ -6819,6 +6819,11 @@ def run_pending_migrations() -> dict:
         # Tiered P&L columns for backtest_sim_runs (50/25/25 ladder backfill)
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS tiered_pnl_r NUMERIC",
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS eod_pnl_r NUMERIC",
+        # Entry quality filter metrics (IB range % and VWAP at IB close)
+        # ib_range_pct = (ib_high - ib_low) / open_price * 100; computed at insert time
+        # vwap_at_ib   = VWAP of 5-min bars up to IB close; injected by log_context_levels
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS ib_range_pct REAL",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS vwap_at_ib REAL",
     ]
 
     ran = 0
@@ -8031,6 +8036,16 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["regime_tag"] = r["regime_tag"]
             if r.get("scan_type"):
                 row_record["scan_type"] = r["scan_type"]
+            # ib_range_pct: computed from existing fields — persisted for filter auditing
+            _ib_h  = float(r.get("ib_high")  or 0)
+            _ib_l  = float(r.get("ib_low")   or 0)
+            _o_px  = float(r.get("open_price") or 0)
+            if _ib_h > _ib_l > 0 and _o_px > 0:
+                row_record["ib_range_pct"] = round((_ib_h - _ib_l) / _o_px * 100, 4)
+            # vwap_at_ib: populated by log_context_levels (which runs after log_paper_trades);
+            # if it's already in r (e.g. batch backfill path), include it now
+            if r.get("vwap_at_ib") is not None:
+                row_record["vwap_at_ib"] = r["vwap_at_ib"]
             # Auto-compute sim P&L on insert so backfill script is never needed
             _sim = compute_trade_sim(row_record)
             _new_sim_outcome = _sim.get("sim_outcome")
@@ -8074,7 +8089,8 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                                   "exit_trigger", "entry_ib_distance", "scan_type",
                                   "sim_outcome", "pnl_r_sim", "pnl_pct_sim",
                                   "entry_price_sim", "stop_price_sim",
-                                  "stop_dist_pct", "target_price_sim"]
+                                  "stop_dist_pct", "target_price_sim",
+                                  "ib_range_pct", "vwap_at_ib"]
                 if any(col in _err_s for col in _optional_cols):
                     for rec in records:
                         for col in _optional_cols:

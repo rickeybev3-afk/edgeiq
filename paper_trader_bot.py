@@ -297,6 +297,16 @@ def log_context_levels(results: list, trade_date_str: str) -> None:
             # Write VWAP back to r so _place_order_for_setup can use it as an
             # entry quality filter (VWAP directional alignment).
             r['vwap_at_ib'] = round(vwap, 4) if vwap else None
+            # Patch vwap_at_ib onto the paper_trades row (inserted before this
+            # function runs, so we update rather than insert).
+            if _supabase_client and r['vwap_at_ib'] is not None:
+                try:
+                    _supabase_client.table('paper_trades').update({
+                        'vwap_at_ib': r['vwap_at_ib'],
+                    }).eq('user_id', USER_ID).eq('trade_date', trade_date_str).eq(
+                        'ticker', ticker).eq('scan_type', scan_type).execute()
+                except Exception as _vwap_patch_err:
+                    log.warning(f'  context levels: {ticker} vwap_at_ib patch failed: {_vwap_patch_err}')
             rows_to_upsert.append({
                 'ticker':             ticker,
                 'trade_date':         trade_date_str,
