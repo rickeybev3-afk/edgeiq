@@ -8122,6 +8122,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     else:
                         st.session_state["_csv_cols_pref"] = _CSV_PREF_DEFAULTS
 
+                # ── Global CSV column reset (triggered by any expander's reset button) ──
+                _csv_just_reset = False
+                if st.session_state.pop("_csv_global_reset", False):
+                    _csv_stale_keys = [k for k in list(st.session_state) if k.startswith("csv_cols_")]
+                    for _csk in _csv_stale_keys:
+                        del st.session_state[_csk]
+                    st.session_state.pop("_csv_cols_pref", None)
+                    if "csv_cols" in st.query_params:
+                        del st.query_params["csv_cols"]
+                    import streamlit.components.v1 as _cmp_csv_global_rst
+                    _cmp_csv_global_rst.html(
+                        "<script>localStorage.removeItem('csv_cols_pref');</script>",
+                        height=0,
+                    )
+                    _csv_just_reset = True
+
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
@@ -8538,27 +8554,39 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                          "IB Low", "False Break Up", "False Break Down"]
                             ]
                             _csv_ms_key = f"csv_cols_{_tk_name}_{_tk_drill_floor}"
+                            import streamlit.components.v1 as _cmp_csv_write
                             if _csv_ms_key not in st.session_state:
                                 _saved_pref = st.session_state.get("_csv_cols_pref", _csv_default_cols)
                                 _restored = [c for c in _saved_pref if c in _csv_all_cols]
                                 st.session_state[_csv_ms_key] = _restored if _restored else _csv_default_cols
-                            _csv_sel_cols = st.multiselect(
-                                "Columns to include in CSV export",
-                                options=_csv_all_cols,
-                                default=_csv_default_cols,
-                                key=_csv_ms_key,
-                                help="Choose which columns appear in the downloaded CSV file.",
-                            )
-                            st.session_state["_csv_cols_pref"] = _csv_sel_cols
-                            _csv_cols_joined = ",".join(_csv_sel_cols)
-                            if st.query_params.get("csv_cols") != _csv_cols_joined:
-                                st.query_params["csv_cols"] = _csv_cols_joined
-                            import streamlit.components.v1 as _cmp_csv_write
-                            _cmp_csv_write.html(
-                                f"<script>localStorage.setItem('csv_cols_pref',"
-                                f" {repr(_csv_cols_joined)});</script>",
-                                height=0,
-                            )
+                            _csv_col_ms, _csv_col_rst = st.columns([5, 1])
+                            with _csv_col_ms:
+                                _csv_sel_cols = st.multiselect(
+                                    "Columns to include in CSV export",
+                                    options=_csv_all_cols,
+                                    default=_csv_default_cols,
+                                    key=_csv_ms_key,
+                                    help="Choose which columns appear in the downloaded CSV file.",
+                                )
+                            with _csv_col_rst:
+                                st.write("")
+                                if st.button(
+                                    "↩ Reset to defaults",
+                                    key=f"csv_reset_btn_{_tk_name}_{_tk_drill_floor}",
+                                    help="Clear the saved column preference and reset to the default 6 columns: Date, TCS, Prediction, EOD Reality, Follow-Thru %, Result.",
+                                ):
+                                    st.session_state["_csv_global_reset"] = True
+                                    st.rerun()
+                            if not _csv_just_reset:
+                                st.session_state["_csv_cols_pref"] = _csv_sel_cols
+                                _csv_cols_joined = ",".join(_csv_sel_cols)
+                                if st.query_params.get("csv_cols") != _csv_cols_joined:
+                                    st.query_params["csv_cols"] = _csv_cols_joined
+                                _cmp_csv_write.html(
+                                    f"<script>localStorage.setItem('csv_cols_pref',"
+                                    f" {repr(_csv_cols_joined)});</script>",
+                                    height=0,
+                                )
                             if not _csv_sel_cols:
                                 st.warning("Select at least one column to enable the download.", icon="⚠️")
                             else:
