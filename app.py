@@ -19001,14 +19001,47 @@ ALTER TABLE backtest_sim_runs
                             _bts_sc_trend_src["tiered_pnl_r"].astype(float)
                             - _bts_sc_trend_src["eod_pnl_r"].astype(float)
                         )
-                        _bts_sc_trend_src["_month"] = (
-                            _bts_sc_trend_src["_sd"].dt.to_period("M").dt.to_timestamp()
-                        )
+                        # ── Group-by toggle ──────────────────────────────────
+                        _sc_gb_col, _ = st.columns([2, 5])
+                        with _sc_gb_col:
+                            _sc_group_by = st.radio(
+                                "Group by",
+                                options=["Monthly", "Weekly"],
+                                horizontal=True,
+                                key="sc_trend_group_by",
+                                label_visibility="collapsed",
+                            )
+                        _sc_use_weekly = _sc_group_by == "Weekly"
+                        if _sc_use_weekly:
+                            # to_period("W") anchors on Monday (ISO 8601 week start)
+                            _bts_sc_trend_src["_period"] = (
+                                _bts_sc_trend_src["_sd"].dt.to_period("W").dt.start_time
+                            )
+                            _sc_period_col  = "_period"
+                            _sc_min_periods = 4
+                            _sc_x_title     = "Week"
+                            _sc_x_format    = "%d %b %Y"
+                            _sc_tt_format   = "%d %b %Y"
+                            _sc_label_word  = "weeks"
+                            _sc_chart_title = "Weekly Avg Tiered − EOD Advantage — Morning vs Intraday"
+                            _sc_header_text = "Weekly Avg Tiered − EOD Advantage by Scan Type"
+                        else:
+                            _bts_sc_trend_src["_period"] = (
+                                _bts_sc_trend_src["_sd"].dt.to_period("M").dt.to_timestamp()
+                            )
+                            _sc_period_col  = "_period"
+                            _sc_min_periods = 2
+                            _sc_x_title     = "Month"
+                            _sc_x_format    = "%b %Y"
+                            _sc_tt_format   = "%b %Y"
+                            _sc_label_word  = "months"
+                            _sc_chart_title = "Monthly Avg Tiered − EOD Advantage — Morning vs Intraday"
+                            _sc_header_text = "Monthly Avg Tiered − EOD Advantage by Scan Type"
                         _bts_sc_monthly = (
-                            _bts_sc_trend_src.groupby(["_month", "scan_type"])
+                            _bts_sc_trend_src.groupby([_sc_period_col, "scan_type"])
                             .agg(_avg_adv=("_adv", "mean"), _n=("_adv", "count"))
                             .reset_index()
-                            .rename(columns={"_month": "month", "_avg_adv": "avg_advantage", "_n": "count"})
+                            .rename(columns={_sc_period_col: "month", "_avg_adv": "avg_advantage", "_n": "count"})
                         )
                         _bts_sc_monthly["scan_label"] = _bts_sc_monthly["scan_type"].map(
                             {"morning": "🌅 Morning", "intraday": "⚡ Intraday"}
@@ -19018,16 +19051,16 @@ ALTER TABLE backtest_sim_runs
                             .nunique()
                         )
                         _sc_both_have_history = (
-                            (_sc_types_with_history.get("morning",   0) >= 2)
-                            and (_sc_types_with_history.get("intraday", 0) >= 2)
+                            (_sc_types_with_history.get("morning",   0) >= _sc_min_periods)
+                            and (_sc_types_with_history.get("intraday", 0) >= _sc_min_periods)
                         )
                         _sc_n_months = _bts_sc_monthly["month"].nunique()
                         if _sc_both_have_history:
                             import altair as _alt_sc
                             st.markdown(
-                                '<div style="font-size:11px;color:#546e7a;letter-spacing:1px;'
-                                'text-transform:uppercase;margin-top:14px;margin-bottom:6px;">'
-                                'Monthly Avg Tiered − EOD Advantage by Scan Type</div>',
+                                f'<div style="font-size:11px;color:#546e7a;letter-spacing:1px;'
+                                f'text-transform:uppercase;margin-top:14px;margin-bottom:6px;">'
+                                f'{_sc_header_text}</div>',
                                 unsafe_allow_html=True,
                             )
                             _sc_zero = (
@@ -19041,9 +19074,9 @@ ALTER TABLE backtest_sim_runs
                                 .encode(
                                     x=_alt_sc.X(
                                         "month:T",
-                                        title="Month",
+                                        title=_sc_x_title,
                                         axis=_alt_sc.Axis(
-                                            format="%b %Y",
+                                            format=_sc_x_format,
                                             labelColor="#90a4ae",
                                             titleColor="#90a4ae",
                                             gridColor="#1a2744",
@@ -19072,7 +19105,7 @@ ALTER TABLE backtest_sim_runs
                                         ),
                                     ),
                                     tooltip=[
-                                        _alt_sc.Tooltip("month:T",         title="Month",         format="%b %Y"),
+                                        _alt_sc.Tooltip("month:T",         title=_sc_x_title,     format=_sc_tt_format),
                                         _alt_sc.Tooltip("scan_label:N",    title="Scan Type"),
                                         _alt_sc.Tooltip("avg_advantage:Q", title="Avg Δ (R)",      format="+.3f"),
                                         _alt_sc.Tooltip("count:Q",         title="Matched Trades"),
@@ -19084,14 +19117,14 @@ ALTER TABLE backtest_sim_runs
                                 .properties(
                                     height=220,
                                     title=_alt_sc.TitleParams(
-                                        "Monthly Avg Tiered − EOD Advantage — Morning vs Intraday",
+                                        _sc_chart_title,
                                         color="#90a4ae",
                                         fontSize=11,
                                         anchor="start",
                                         subtitle=(
                                             "Rising = tiered exits outperforming  ·  "
                                             "Falling = EOD hold winning  ·  "
-                                            f"{_sc_n_months} months, "
+                                            f"{_sc_n_months} {_sc_label_word}, "
                                             f"{len(_bts_sc_trend_src)} matched trades"
                                         ),
                                         subtitleColor="#546e7a",
@@ -19111,8 +19144,8 @@ ALTER TABLE backtest_sim_runs
                             st.altair_chart(_sc_chart, use_container_width=True)
                         else:
                             st.caption(
-                                "Monthly Morning vs Intraday trend chart requires at least "
-                                "2 months of matched-row history for each scan type."
+                                f"Morning vs Intraday trend chart requires at least "
+                                f"{_sc_min_periods} {_sc_label_word} of matched-row history for each scan type."
                             )
 
             # ── P&L by Entry Quality — Screener × Outcome Direction ──────────
