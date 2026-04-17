@@ -14848,6 +14848,116 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                             use_container_width=True,
                                             key=f"dd_eq_{_tk_name}_{_tk_drill_floor}",
                                         )
+                            # ── Per-structure marginal breakdown (visual) ─────────
+                            if "predicted" in _tk_drill_df.columns and _tk_drill_floor is not None:
+                                _dd_vis_marg_mask = _tk_drill_df["tcs"].astype(float) <= float(_tk_drill_floor) + 5
+                                _dd_vis_marg_df   = _tk_drill_df[_dd_vis_marg_mask]
+                                _dd_vis_comf_df   = _tk_drill_df[~_dd_vis_marg_mask]
+                                _dd_vis_marg_n    = len(_dd_vis_marg_df)
+                                if _dd_vis_marg_n > 0:
+                                    with st.expander("📊 Marginal breakdown by structure type", expanded=False):
+                                        _dd_vis_rows = []
+                                        for _dd_vis_sname, _dd_vis_smarg in _dd_vis_marg_df.groupby("predicted"):
+                                            _dd_vis_scomf    = _dd_vis_comf_df[_dd_vis_comf_df["predicted"] == _dd_vis_sname]
+                                            _dd_vis_smarg_n  = len(_dd_vis_smarg)
+                                            _dd_vis_scomf_n  = len(_dd_vis_scomf)
+                                            _dd_vis_smarg_wr = (
+                                                round((_dd_vis_smarg["win_loss"] == "Win").sum() / _dd_vis_smarg_n * 100, 1)
+                                                if _dd_vis_smarg_n else None
+                                            )
+                                            _dd_vis_scomf_wr = (
+                                                round((_dd_vis_scomf["win_loss"] == "Win").sum() / _dd_vis_scomf_n * 100, 1)
+                                                if _dd_vis_scomf_n else None
+                                            )
+                                            _dd_vis_smarg_avgr = (
+                                                round(pd.to_numeric(_dd_vis_smarg[_dd_r_col], errors="coerce").mean(), 2)
+                                                if (_dd_vis_smarg_n and _dd_r_col is not None and _dd_r_col in _dd_vis_smarg.columns)
+                                                else None
+                                            )
+                                            _dd_vis_delta_wr = (
+                                                round(_dd_vis_smarg_wr - _dd_vis_scomf_wr, 1)
+                                                if (_dd_vis_smarg_wr is not None and _dd_vis_scomf_wr is not None)
+                                                else None
+                                            )
+                                            _dd_vis_rows.append({
+                                                "Structure":       _clean_structure_label(_dd_vis_sname),
+                                                "Marginal Trades": _dd_vis_smarg_n,
+                                                "Marg Win Rate":   f"{_dd_vis_smarg_wr}%" if _dd_vis_smarg_wr is not None else "—",
+                                                "Comf Win Rate":   f"{_dd_vis_scomf_wr}%" if _dd_vis_scomf_wr is not None else "—",
+                                                "ΔWR":             f"{_dd_vis_delta_wr:+.1f}pp" if _dd_vis_delta_wr is not None else "—",
+                                                "Marg Avg R":      f"{_dd_vis_smarg_avgr:+.2f}R" if _dd_vis_smarg_avgr is not None else "—",
+                                            })
+                                        if _dd_vis_rows:
+                                            _dd_vis_struct_df = pd.DataFrame(_dd_vis_rows)
+                                            def _dd_vis_parse_dwr(v):
+                                                try:
+                                                    return float(str(v).replace("pp", "").replace("+", ""))
+                                                except Exception:
+                                                    return float("inf")
+                                            _dd_vis_struct_df["_dwr_sort"] = _dd_vis_struct_df["ΔWR"].map(_dd_vis_parse_dwr)
+                                            _dd_vis_struct_df = (
+                                                _dd_vis_struct_df
+                                                .sort_values("_dwr_sort", ascending=True)
+                                                .drop(columns=["_dwr_sort"])
+                                                .reset_index(drop=True)
+                                            )
+                                            _dd_vis_warn_key = "dwr_warn_thresh_dd"
+                                            _dd_vis_crit_key = "dwr_crit_thresh_dd"
+                                            if _dd_vis_warn_key not in st.session_state:
+                                                st.session_state[_dd_vis_warn_key] = -5.0
+                                            if _dd_vis_crit_key not in st.session_state:
+                                                st.session_state[_dd_vis_crit_key] = -10.0
+                                            _dd_vis_tc1, _dd_vis_tc2, _dd_vis_tsp = st.columns([1, 1, 3])
+                                            with _dd_vis_tc1:
+                                                st.session_state[_dd_vis_warn_key] = st.number_input(
+                                                    "🟠 Amber threshold (pp)",
+                                                    min_value=-50.0,
+                                                    max_value=0.0,
+                                                    value=float(st.session_state[_dd_vis_warn_key]),
+                                                    step=1.0,
+                                                    help="ΔWR at or below this value turns the row amber (borderline underperformance).",
+                                                    key=f"dwr_warn_dd_{_tk_name}_{_tk_drill_floor}",
+                                                )
+                                            with _dd_vis_tc2:
+                                                st.session_state[_dd_vis_crit_key] = st.number_input(
+                                                    "🔴 Red threshold (pp)",
+                                                    min_value=-50.0,
+                                                    max_value=0.0,
+                                                    value=float(st.session_state[_dd_vis_crit_key]),
+                                                    step=1.0,
+                                                    help="ΔWR at or below this value turns the row red (significant underperformance).",
+                                                    key=f"dwr_crit_dd_{_tk_name}_{_tk_drill_floor}",
+                                                )
+                                            _DD_VIS_WARN = float(st.session_state[_dd_vis_warn_key])
+                                            _DD_VIS_CRIT = float(st.session_state[_dd_vis_crit_key])
+                                            if _DD_VIS_WARN <= _DD_VIS_CRIT:
+                                                st.warning(
+                                                    f"⚠️ Amber threshold ({_DD_VIS_WARN:+.1f} pp) must be less severe than "
+                                                    f"the red threshold ({_DD_VIS_CRIT:+.1f} pp). "
+                                                    "Set amber closer to 0 than red (e.g. amber −5, red −10).",
+                                                    icon=None,
+                                                )
+                                            def _dd_vis_row_style(row):
+                                                try:
+                                                    _dwr_v = float(str(row.get("ΔWR", "—")).replace("pp", "").replace("+", ""))
+                                                except Exception:
+                                                    return [""] * len(row)
+                                                if _dwr_v <= _DD_VIS_CRIT:
+                                                    return ["background-color:#3d1010;color:#ff5252;font-weight:600;"] * len(row)
+                                                if _dwr_v <= _DD_VIS_WARN:
+                                                    return ["background-color:#3d2a00;color:#ffab40;font-weight:600;"] * len(row)
+                                                return [""] * len(row)
+                                            st.dataframe(
+                                                _dd_vis_struct_df.style.apply(_dd_vis_row_style, axis=1),
+                                                use_container_width=True,
+                                                hide_index=True,
+                                            )
+                                            st.caption(
+                                                f"🟠 **Amber** — ΔWR ≤ {_DD_VIS_WARN:+.1f} pp and better than {_DD_VIS_CRIT:+.1f} pp (borderline)  |  "
+                                                f"🔴 **Red** — ΔWR ≤ {_DD_VIS_CRIT:+.1f} pp (underperforming).  "
+                                                "ΔWR compares each structure's marginal win rate to its own comfortable win rate. "
+                                                "A large negative value suggests that structure's TCS floor may need raising."
+                                            )
                             if not _csv_sel_cols:
                                 st.warning("Select at least one column to enable the download.", icon="⚠️")
                             else:
