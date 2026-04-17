@@ -19425,9 +19425,15 @@ ALTER TABLE backtest_sim_runs
             _bts_ldr_wr    = _bts_ldr_wins / _bts_ldr_tot * 100 if _bts_ldr_tot else 0.0
             _bts_ldr_tot_r = float(_bts_ldr_cache["sum_tiered_r"].sum())
             _bts_ldr_exp   = _bts_ldr_tot_r / _bts_ldr_tot if _bts_ldr_tot else 0.0
+            _bts_ldr_as_of = (
+                str(_bts_ldr_cache["month"].max())
+                if "month" in _bts_ldr_cache.columns and _bts_ldr_cache["month"].notna().any()
+                else ""
+            )
         else:
             _bts_ldr_tot = _bts_ldr_wins = _bts_ldr_loss = 0
             _bts_ldr_wr = _bts_ldr_tot_r = _bts_ldr_exp = 0.0
+            _bts_ldr_as_of = ""
 
         _ldr_refresh_ts = get_ladder_refresh_timestamp()
         if _ldr_refresh_ts:
@@ -19521,6 +19527,19 @@ ALTER TABLE backtest_sim_runs
                 _bsc_ex_c  = "#2e7d32" if _bsc_exp > 0 else "#c62828"
                 _bsc_tr_c  = "#2e7d32" if _bsc_total_r > 0 else "#c62828"
 
+                if _use_ldr_cache and _bts_ldr_as_of:
+                    _ldr_cache_age_html = (
+                        f'<div style="font-size:10px;color:#455a64;text-align:right;margin-top:2px;">'
+                        f'as of {_bts_ldr_as_of}</div>'
+                    )
+                elif _use_ldr_cache and _ldr_refresh_ts:
+                    _ldr_cache_age_html = (
+                        f'<div style="font-size:10px;color:#455a64;text-align:right;margin-top:2px;">'
+                        f'refreshed {_ldr_refresh_ts}</div>'
+                    )
+                else:
+                    _ldr_cache_age_html = ""
+
                 st.markdown(
                     f'<div style="background:#1e2a3a;border-radius:8px;padding:12px 10px;">'
                     f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
@@ -19544,6 +19563,7 @@ ALTER TABLE backtest_sim_runs
                     f'  <span style="font-size:13px;font-weight:600;color:{_bsc_tr_c};">{"+" if _bsc_total_r >= 0 else ""}{_bsc_total_r:.1f}R</span>'
                     f'</div>'
                     f'<div style="font-size:10px;color:#546e7a;text-align:right;margin-top:4px;">{_bsc_total} trades · {_bsc_wins_n}W / {_bsc_losses_n}L</div>'
+                    f'{_ldr_cache_age_html}'
                     f'</div>', unsafe_allow_html=True
                 )
                 _bts_cache[_bscol] = (_bsc_df, _bsclr, _bslabel.split(" ", 1)[-1].strip())
