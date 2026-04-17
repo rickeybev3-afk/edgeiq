@@ -10408,8 +10408,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _bt_eod_aw  = round(_bt_eod_ser[_bt_eod_ser > 0].mean(), 2) if (_bt_eod_ser > 0).any() else 0
                                         _bt_eod_al  = round(_bt_eod_ser[_bt_eod_ser < 0].mean(), 2) if (_bt_eod_ser < 0).any() else 0
                                         _bt_eod_exp = round(_bt_eod_ser.mean(), 3)
+                                        _bt_eod_cum = _bt_eod_ser.reset_index(drop=True).cumsum()
+                                        _bt_eod_mdd = round((_bt_eod_cum - _bt_eod_cum.cummax()).min(), 2)
                                         _bt_eod_wr_col  = "#2e7d32" if _bt_eod_wr >= 60 else ("#ef6c00" if _bt_eod_wr >= 50 else "#c62828")
                                         _bt_eod_exp_col = "#2e7d32" if _bt_eod_exp > 0 else ("#ef6c00" if _bt_eod_exp == 0 else "#c62828")
+                                        _bt_eod_mdd_str = f"{abs(_bt_eod_mdd)}R" if _bt_eod_mdd < 0 else "—"
                                         _bt_eod_html = (
                                             f'<div style="font-size:10px;color:#90a4ae;margin-top:6px;border-top:1px solid #263444;padding-top:5px;text-align:left;">'
                                             f'<span style="color:#80cbc4;font-weight:600;">EOD Hold R</span>'
@@ -10419,6 +10422,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                             f'  ·  <span style="color:#4fc3f7;">+{_bt_eod_aw}R</span>'
                                             f'  /  <span style="color:#ef9a9a;">{_bt_eod_al}R</span>'
                                             f'  ·  Exp: <span style="color:{_bt_eod_exp_col};font-weight:600;">{_bt_eod_exp:+.3f}R</span>'
+                                            f'  ·  MDD: <span style="color:#ef9a9a;">{_bt_eod_mdd_str}</span>'
                                             f'</div>'
                                         )
                                     else:
@@ -10432,8 +10436,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _bt_tier_aw2  = round(_bt_tier_ser2[_bt_tier_ser2 > 0].mean(), 2) if (_bt_tier_ser2 > 0).any() else 0
                                         _bt_tier_al2  = round(_bt_tier_ser2[_bt_tier_ser2 < 0].mean(), 2) if (_bt_tier_ser2 < 0).any() else 0
                                         _bt_tier_exp2 = round(_bt_tier_ser2.mean(), 3)
+                                        _bt_tier_cum2 = _bt_tier_ser2.reset_index(drop=True).cumsum()
+                                        _bt_tier_mdd2 = round((_bt_tier_cum2 - _bt_tier_cum2.cummax()).min(), 2)
                                         _bt_tier_wr_col2  = "#2e7d32" if _bt_tier_wr2 >= 60 else ("#ef6c00" if _bt_tier_wr2 >= 50 else "#c62828")
                                         _bt_tier_exp_col2 = "#2e7d32" if _bt_tier_exp2 > 0 else ("#ef6c00" if _bt_tier_exp2 == 0 else "#c62828")
+                                        _bt_tier_mdd_str2 = f"{abs(_bt_tier_mdd2)}R" if _bt_tier_mdd2 < 0 else "—"
                                         _bt_tier_html = (
                                             f'<div style="font-size:10px;color:#90a4ae;margin-top:4px;text-align:left;">'
                                             f'<span style="color:#ce93d8;font-weight:600;">Tiered Exit R</span>'
@@ -10443,6 +10450,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                             f'  ·  <span style="color:#4fc3f7;">+{_bt_tier_aw2}R</span>'
                                             f'  /  <span style="color:#ef9a9a;">{_bt_tier_al2}R</span>'
                                             f'  ·  Exp: <span style="color:{_bt_tier_exp_col2};font-weight:600;">{_bt_tier_exp2:+.3f}R</span>'
+                                            f'  ·  MDD: <span style="color:#ef9a9a;">{_bt_tier_mdd_str2}</span>'
                                             f'</div>'
                                         )
                                     else:
