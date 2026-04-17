@@ -5795,25 +5795,81 @@ with st.sidebar:
                     unsafe_allow_html=True,
                 )
 
-            if st.button(
-                "🔄 Run Again",
-                use_container_width=True,
-                key="bf_again_btn",
-                disabled=_bf_nothing_to_do,
-                help="No missing close prices in this range." if _bf_nothing_to_do else None,
-            ):
-                if _bf_launch():
+            if not st.session_state.get("_bf_confirm_rerun"):
+                if st.button(
+                    "🔄 Run Again",
+                    use_container_width=True,
+                    key="bf_again_btn",
+                    disabled=_bf_nothing_to_do,
+                    help="No missing close prices in this range." if _bf_nothing_to_do else None,
+                ):
+                    st.session_state["_bf_confirm_rerun"] = True
                     st.rerun()
-                else:
-                    st.warning("A backfill is already in progress — please wait.")
+            else:
+                st.warning(
+                    "⚠️ Re-running will overwrite the previous log and results. "
+                    "Are you sure?",
+                )
+                _bf_cfm_col1, _bf_cfm_col2 = st.columns(2)
+                with _bf_cfm_col1:
+                    if st.button(
+                        "✅ Confirm Re-run",
+                        use_container_width=True,
+                        key="bf_confirm_yes_btn",
+                        type="primary",
+                    ):
+                        st.session_state.pop("_bf_confirm_rerun", None)
+                        if _bf_launch():
+                            st.rerun()
+                        else:
+                            st.warning("A backfill is already in progress — please wait.")
+                with _bf_cfm_col2:
+                    if st.button(
+                        "✖ Cancel",
+                        use_container_width=True,
+                        key="bf_confirm_no_btn",
+                        type="secondary",
+                    ):
+                        st.session_state.pop("_bf_confirm_rerun", None)
+                        st.rerun()
 
         elif _bf_file_status == "cancelled":
             st.warning("⏹ Backfill was cancelled by the operator.")
-            if st.button("▶️ Start New Run", use_container_width=True, key="bf_after_cancel_btn"):
-                if _bf_launch():
+            if not st.session_state.get("_bf_confirm_after_cancel"):
+                if st.button(
+                    "▶️ Start New Run",
+                    use_container_width=True,
+                    key="bf_after_cancel_btn",
+                ):
+                    st.session_state["_bf_confirm_after_cancel"] = True
                     st.rerun()
-                else:
-                    st.warning("A backfill is already in progress — please wait.")
+            else:
+                st.warning(
+                    "⚠️ Starting a new run will overwrite the previous log. "
+                    "Are you sure?",
+                )
+                _bf_cc_col1, _bf_cc_col2 = st.columns(2)
+                with _bf_cc_col1:
+                    if st.button(
+                        "✅ Confirm Re-run",
+                        use_container_width=True,
+                        key="bf_cancel_confirm_yes_btn",
+                        type="primary",
+                    ):
+                        st.session_state.pop("_bf_confirm_after_cancel", None)
+                        if _bf_launch():
+                            st.rerun()
+                        else:
+                            st.warning("A backfill is already in progress — please wait.")
+                with _bf_cc_col2:
+                    if st.button(
+                        "✖ Cancel",
+                        use_container_width=True,
+                        key="bf_cancel_confirm_no_btn",
+                        type="secondary",
+                    ):
+                        st.session_state.pop("_bf_confirm_after_cancel", None)
+                        st.rerun()
 
         elif _bf_file_status == "error":
             st.error("❌ Backfill encountered an error. Check the log below.")
