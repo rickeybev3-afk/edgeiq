@@ -335,6 +335,9 @@ def main():
                 total_errors += 1
                 continue
 
+            if not intraday:
+                log.warning(f'  \u26a0 {ticker} {trade_date} no intraday bars \u2014 all context columns will be NULL')
+
             bars_at_signal = bars_up_to_signal(intraday, trade_date, scan_type)
 
             vwap_val                           = compute_vwap(bars_at_signal) if bars_at_signal else None
