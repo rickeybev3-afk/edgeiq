@@ -8681,10 +8681,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 )
 
                 # ── Export All Tickers Sweep CSV ──────────────────────────────────
+                # Build a ticker → best TCS floor lookup from the earlier sweep
+                _best_tcs_map = {_btk: _bfloor for _btk, _bfloor in _best_tcs_options}
                 _all_sweep_frames = []
                 for _exp_tk, _exp_rows in _tkr_sweep_data.items():
                     _exp_df = _pd_bt.DataFrame(_exp_rows)
                     _exp_df.insert(0, "Ticker", _exp_tk)
+                    _exp_best_floor = _best_tcs_map.get(_exp_tk)
+                    if _exp_best_floor is not None:
+                        _exp_df["Best TCS Floor"] = _exp_best_floor
+                        _exp_df["Recommended"] = _exp_df["TCS Floor"].apply(
+                            lambda _f: "✓" if int(_f) == _exp_best_floor else ""
+                        )
+                    else:
+                        _exp_df["Best TCS Floor"] = ""
+                        _exp_df["Recommended"] = ""
                     _all_sweep_frames.append(_exp_df)
                 if _all_sweep_frames:
                     _all_sweep_df = _pd_bt.concat(_all_sweep_frames, ignore_index=True)
@@ -8717,7 +8728,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         key="_dl_sweep_all_tickers",
                         help=(
                             "Download a single combined CSV with every ticker's TCS sweep results. "
-                            "Includes a leading 'Ticker' column so you can sort and filter by ticker offline."
+                            "Includes 'Best TCS Floor' and 'Recommended' columns so you can instantly "
+                            "spot the optimal floor for each ticker without pivot work."
                         ),
                     )
 
