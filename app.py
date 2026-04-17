@@ -12690,7 +12690,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _sw_risk_mem_key,
                                         float(st.session_state.get("bt_mc_risk", 2.0)),
                                     )
-                                _sw_ctrl_cols = st.columns([1, 1, 2])
+                                _sw_ctrl_cols = st.columns([1, 1, 1.5, 0.5])
                                 with _sw_ctrl_cols[0]:
                                     _sw_start_eq = float(st.number_input(
                                         "Starting equity ($)",
@@ -12724,6 +12724,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         f'<i>Backtest → Advanced settings</i>.</div>',
                                         unsafe_allow_html=True,
                                     )
+                                with _sw_ctrl_cols[3]:
+                                    st.markdown('<div style="margin-top:22px;"></div>', unsafe_allow_html=True)
+                                    if st.button(
+                                        "↺ Reset",
+                                        key=f"opt_both_reset_{_tk_name}",
+                                        help=(
+                                            "Reset to MC defaults: clears per-ticker overrides and reloads "
+                                            "Starting equity and Risk per trade from Backtest → Advanced settings."
+                                        ),
+                                        use_container_width=True,
+                                    ):
+                                        st.session_state.pop(_sw_eq_key, None)
+                                        st.session_state.pop(_sw_risk_key, None)
+                                        st.rerun()
                                 _sw_risk_frac  = _sw_risk_pct / 100.0
                                 _sw_risk_amt   = _sw_start_eq * _sw_risk_frac
                                 _sw_eq_curve: list = [_sw_start_eq]
