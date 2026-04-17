@@ -16,24 +16,38 @@ Run via: python filter_validation_backtest.py
 """
 
 import sys
+import argparse
 sys.path.insert(0, '.')
 import backend
 
-SUPABASE = backend.supabase
-USER_ID  = 'a5e1fcab-8369-42c4-8550-a8a19734510c'
+SUPABASE         = backend.supabase
+DEFAULT_USER_ID  = 'a5e1fcab-8369-42c4-8550-a8a19734510c'
+DEFAULT_MAX_ROWS = 0   # 0 = no cap (full history)
 
 PAGE = 1000   # rows per Supabase page
+
+def _parse_args():
+    p = argparse.ArgumentParser(
+        description='Validate IB range + VWAP alignment entry filters against historical breakout data.'
+    )
+    p.add_argument('--user-id',  default=DEFAULT_USER_ID,
+                   help='Supabase user_id to query (default: hard-coded account)')
+    p.add_argument('--max-rows', type=int, default=DEFAULT_MAX_ROWS,
+                   help='Cap total rows loaded (0 = full history, e.g. 1000 for quick sanity check)')
+    return p.parse_args()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Load (paginated — ~34k rows)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_rows():
+def load_rows(user_id: str, max_rows: int = 0):
     """
-    Fetch all settled breakout trades from backtest_sim_runs.
+    Fetch settled breakout trades from backtest_sim_runs.
     Filters:
       actual_outcome in ('Bullish Break', 'Bearish Break')
       pnl_r_sim is not null
+    user_id : Supabase user_id to filter by
+    max_rows: if > 0, cap total rows loaded (useful for quick sanity checks)
     """
     cols = (
         'actual_outcome,tcs,ib_range_pct,close_vs_vwap_pct,'
@@ -42,20 +56,23 @@ def load_rows():
     all_rows = []
     offset   = 0
     while True:
+        page_size = PAGE if (max_rows == 0) else min(PAGE, max_rows - len(all_rows))
+        if page_size <= 0:
+            break
         resp = (
             SUPABASE.table('backtest_sim_runs')
             .select(cols)
-            .eq('user_id', USER_ID)
+            .eq('user_id', user_id)
             .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
             .not_.is_('pnl_r_sim', 'null')
-            .range(offset, offset + PAGE - 1)
+            .range(offset, offset + page_size - 1)
             .execute()
         )
         batch = resp.data or []
         all_rows.extend(batch)
-        if len(batch) < PAGE:
+        if len(batch) < page_size or (max_rows > 0 and len(all_rows) >= max_rows):
             break
-        offset += PAGE
+        offset += page_size
     return all_rows
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,8 +128,13 @@ def vwap_aligned(row):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    print('Loading breakout trades from backtest_sim_runs…')
-    all_rows = load_rows()
+    args = _parse_args()
+    user_id  = args.user_id
+    max_rows = args.max_rows
+
+    cap_note = f' (capped at {max_rows})' if max_rows else ' (full history)'
+    print(f'Loading breakout trades from backtest_sim_runs{cap_note}…')
+    all_rows = load_rows(user_id=user_id, max_rows=max_rows)
     print(f'  → {len(all_rows)} settled breakout trades (actual_outcome = Bullish/Bearish Break, pnl_r_sim not null)')
 
     # ── Layer 0: no filters ───────────────────────────────────────────────────

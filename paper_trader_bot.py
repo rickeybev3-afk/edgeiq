@@ -364,6 +364,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     open_px = float(r.get("open_price") or 0)
     if open_px > 0:
         ib_range_pct_val = (ib_high - ib_low) / open_px * 100
+        r["ib_range_pct"] = round(ib_range_pct_val, 4)
         if ib_range_pct_val >= 10.0:
             log.info(
                 f"  [{ticker}] skip order — IB range {ib_range_pct_val:.1f}% of price "
