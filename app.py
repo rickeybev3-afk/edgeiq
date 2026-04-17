@@ -17716,6 +17716,54 @@ ALTER TABLE backtest_sim_runs
                 f"Click **Reset** to clear the sentinel and re-queue "
                 f"{'them' if _rs_sentinel_count != 1 else 'it'} for backfill."
             )
+            # Per-ticker breakdown (only when not filtered to a single ticker)
+            if not _rs_ticker_clean:
+                _rs_breakdown = list_backtest_tiered_sentinel_tickers(
+                    user_id=_AUTH_USER_ID,
+                    date_from=_rs_from_str,
+                    date_to=_rs_to_str,
+                )
+                _rs_tickers = _rs_breakdown.get("tickers", [])
+                _rs_total_tickers = _rs_breakdown.get("total_tickers", 0)
+                _rs_list_complete = _rs_breakdown.get("ticker_list_complete", True)
+                if _rs_tickers:
+                    _rs_shown = len(_rs_tickers)
+                    _rs_hidden = _rs_total_tickers - _rs_shown
+                    _rs_ticker_label = (
+                        f"**{_rs_total_tickers:,} ticker{'s' if _rs_total_tickers != 1 else ''}** affected"
+                        if _rs_list_complete
+                        else f"**at least {_rs_total_tickers:,} ticker{'s' if _rs_total_tickers != 1 else ''}** affected"
+                    )
+                    st.markdown(
+                        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+                        f'letter-spacing:1.2px; font-weight:700; font-family:monospace; '
+                        f'margin:12px 0 6px;">Affected tickers — {_rs_ticker_label}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _rs_df = pd.DataFrame([
+                        {
+                            "Ticker": r["ticker"],
+                            "Sentinel Rows": r["count"],
+                            "Earliest Date": r.get("date_from") or "—",
+                            "Latest Date": r.get("date_to") or "—",
+                        }
+                        for r in _rs_tickers
+                    ])
+                    st.dataframe(
+                        _rs_df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    if _rs_hidden > 0:
+                        st.caption(
+                            f"Showing top {_rs_shown} of {_rs_total_tickers} affected tickers. "
+                            f"Enter a ticker above to inspect a specific symbol."
+                        )
+                    elif not _rs_list_complete:
+                        st.caption(
+                            "Additional tickers may exist beyond those shown. "
+                            "Enter a ticker above to inspect a specific symbol."
+                        )
         else:
             st.success(f"No sentinel-stamped rows found{_rs_scope}.")
 
