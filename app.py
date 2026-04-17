@@ -19176,20 +19176,21 @@ ALTER TABLE backtest_sim_runs
         if (_bts_sync_start or _bts_sync_end)
         else "Copy the Backtest P&L date filter (currently unset — clears edge map dates to all time) into the edge map filter"
     )
-    if st.button(
-        "⇄ Sync from Backtest P&L",
-        key="grid_sync_bts_dates",
-        help=_sync_help,
-    ):
-        st.session_state["grid_dr_start"] = _bts_sync_start
-        st.session_state["grid_dr_end"]   = _bts_sync_end
-        st.rerun()
-    _grid_out_of_sync = (
-        st.session_state.get("grid_dr_start") != _bts_sync_start
-        or st.session_state.get("grid_dr_end") != _bts_sync_end
-    )
-    if _grid_out_of_sync:
-        st.caption("⚠️ Backtest P&L dates differ")
+    if not st.session_state.get("link_date_filters", False):
+        if st.button(
+            "⇄ Sync from Backtest P&L",
+            key="grid_sync_bts_dates",
+            help=_sync_help,
+        ):
+            st.session_state["grid_dr_start"] = _bts_sync_start
+            st.session_state["grid_dr_end"]   = _bts_sync_end
+            st.rerun()
+        _grid_out_of_sync = (
+            st.session_state.get("grid_dr_start") != _bts_sync_start
+            or st.session_state.get("grid_dr_end") != _bts_sync_end
+        )
+        if _grid_out_of_sync:
+            st.caption("⚠️ Backtest P&L dates differ")
 
     _grid_dr_cols = st.columns([1, 1, 4])
     with _grid_dr_cols[0]:
