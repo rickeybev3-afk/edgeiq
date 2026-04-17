@@ -12610,10 +12610,66 @@ ALTER TABLE backtest_sim_runs
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── TCS Threshold History (collapsible) ───────────────────────────────────
-    _bw_tcs_hist = load_tcs_threshold_history(days=30)
-    if _bw_tcs_hist:
-        with st.expander(f"📈 TCS Threshold Shift History — last {len(_bw_tcs_hist)} recalibrations (30 days)", expanded=False):
-            st.caption("Each row = one nightly recalibration where at least one structure's threshold moved by ≥ 3 pts.")
+    _bw_tcs_hist   = load_tcs_threshold_history(days=30)
+    _bw_cur_thresh = load_tcs_thresholds()
+    _bw_hist_90    = load_tcs_threshold_history(days=90)
+    _bw_expander_label = (
+        f"📈 TCS Threshold Shift History — last {len(_bw_tcs_hist)} recalibrations (30 days)"
+        if _bw_tcs_hist
+        else "📈 TCS Threshold Stability"
+    )
+    if _bw_cur_thresh or _bw_tcs_hist:
+        with st.expander(_bw_expander_label, expanded=False):
+
+            # ── Stability summary ───────────────────────────────────────────────
+            _bw_now       = datetime.utcnow()
+            _bw_stab_rows = []
+            for _bw_sk, _bw_sv in sorted(_bw_cur_thresh.items()):
+                _bw_last_change = None
+                for _bw_rec in reversed(_bw_hist_90):
+                    _bw_rec_prev = _bw_rec.get("previous", {})
+                    _bw_rec_new  = _bw_rec.get("thresholds", {})
+                    _bw_ov = _bw_rec_prev.get(_bw_sk)
+                    _bw_nv = _bw_rec_new.get(_bw_sk)
+                    if _bw_ov is not None and _bw_nv is not None:
+                        try:
+                            if int(_bw_ov) != int(_bw_nv):
+                                _bw_ts_str = _bw_rec.get("timestamp", "")
+                                _bw_last_change = datetime.fromisoformat(_bw_ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                                break
+                        except (TypeError, ValueError):
+                            pass
+                if _bw_last_change is not None:
+                    _bw_days_stable = (_bw_now - _bw_last_change).days
+                    _bw_stable_str  = f"{_bw_days_stable}d"
+                else:
+                    _bw_stable_str = "≥ 90d"
+                _bw_stab_rows.append({
+                    "Structure":         WK_DISPLAY.get(_bw_sk, _bw_sk),
+                    "Current Threshold": int(_bw_sv),
+                    "Stable For":        _bw_stable_str,
+                })
+            if _bw_stab_rows:
+                st.markdown("**Current Threshold Stability**")
+
+                def _bw_color_stable(val):
+                    try:
+                        _bw_d = int(str(val).replace("≥ ", "").replace("d", ""))
+                        if _bw_d >= 30:   return "color:#66bb6a;font-weight:700"
+                        if _bw_d >= 7:    return "color:#ffa726"
+                        return "color:#ef5350"
+                    except Exception:
+                        return "color:#66bb6a;font-weight:700"
+
+                st.dataframe(
+                    pd.DataFrame(_bw_stab_rows).style.map(_bw_color_stable, subset=["Stable For"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.markdown("---")
+
+            if _bw_tcs_hist:
+                st.caption("Each row = one nightly recalibration where at least one structure's threshold moved by ≥ 3 pts.")
             _bw_hist_rows = []
             for _bhr in _bw_tcs_hist:
                 _bh_ts    = _bhr.get("timestamp", "")[:16].replace("T", " ")
