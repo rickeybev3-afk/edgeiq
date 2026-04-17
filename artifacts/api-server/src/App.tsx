@@ -554,7 +554,7 @@ function App() {
       }
     };
     check();
-    const interval = setInterval(check, 30_000);
+    const interval = setInterval(check, 10_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
