@@ -5001,6 +5001,12 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
         _df_val = str(_prefs["default_feed"])
         if _df_val in ("sip", "iex"):
             st.session_state["_global_default_feed"] = _df_val
+    if "bts_sync_dismissed_at" in _prefs and "bts_sync_dismissed_at" not in st.session_state:
+        _bts_d = _prefs["bts_sync_dismissed_at"]
+        st.session_state["bts_sync_dismissed_at"] = tuple(_bts_d) if isinstance(_bts_d, list) else _bts_d
+    if "grid_sync_dismissed_at" in _prefs and "grid_sync_dismissed_at" not in st.session_state:
+        _grid_d = _prefs["grid_sync_dismissed_at"]
+        st.session_state["grid_sync_dismissed_at"] = tuple(_grid_d) if isinstance(_grid_d, list) else _grid_d
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
@@ -19435,6 +19441,10 @@ ALTER TABLE backtest_sim_runs
                             help="Hide this warning for the current date combination",
                         ):
                             st.session_state["bts_sync_dismissed_at"] = _bts_dismiss_key
+                            if _AUTH_USER_ID:
+                                _bts_d_prefs = {**st.session_state.get("_cached_prefs", {}), "bts_sync_dismissed_at": list(_bts_dismiss_key)}
+                                save_user_prefs(_AUTH_USER_ID, _bts_d_prefs)
+                                st.session_state["_cached_prefs"] = _bts_d_prefs
                             st.rerun()
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
@@ -21810,6 +21820,10 @@ ALTER TABLE backtest_sim_runs
                     help="Hide this warning for the current date combination",
                 ):
                     st.session_state["grid_sync_dismissed_at"] = _grid_dismiss_key
+                    if _AUTH_USER_ID:
+                        _grid_d_prefs = {**st.session_state.get("_cached_prefs", {}), "grid_sync_dismissed_at": list(_grid_dismiss_key)}
+                        save_user_prefs(_AUTH_USER_ID, _grid_d_prefs)
+                        st.session_state["_cached_prefs"] = _grid_d_prefs
                     st.rerun()
     else:
         st.caption("🔗 Date filters are linked — synced automatically")
