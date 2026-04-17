@@ -19947,6 +19947,15 @@ ALTER TABLE backtest_sim_runs
                         use_container_width=True,
                         hide_index=True,
                     )
+                    _bq_csv = _bq_tbl_df.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        label="⬇ Download CSV",
+                        data=_bq_csv,
+                        file_name="screener_outcome_pnl.csv",
+                        mime="text/csv",
+                        key="_dl_bq_screener_outcome",
+                        help="Download the Screener × Outcome P&L summary as a CSV file.",
+                    )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
