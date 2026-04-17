@@ -4960,6 +4960,23 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
+# Persist feed selection made via the ACTIVE FEED indicator (which triggers a page reload
+# with `_feed_default=sip/iex` in the URL) back to the user-prefs database.
+# The param is consumed and then removed from the URL so it doesn't linger in
+# bookmarks or shared links.
+_af_feed_param = st.query_params.get("_feed_default", "")
+if _af_feed_param in ("sip", "iex"):
+    _af_uid = st.session_state.get("auth_user_id", "")
+    if _af_uid:
+        _af_cur_prefs = st.session_state.get("_cached_prefs", {})
+        if _af_cur_prefs.get("default_feed") != _af_feed_param:
+            _af_new_prefs = {**_af_cur_prefs, "default_feed": _af_feed_param}
+            save_user_prefs(_af_uid, _af_new_prefs)
+            st.session_state["_cached_prefs"] = _af_new_prefs
+    st.session_state["_global_default_feed"] = _af_feed_param
+    # Remove the transient param so it doesn't pollute bookmarks or shared URLs.
+    del st.query_params["_feed_default"]
+
 # Seed localStorage with the DB-stored feed preference on first load (new device/browser).
 # This runs once per session when prefs are loaded and only touches localStorage if it is
 # empty — so it never overrides a choice the trader has already made in this browser.
@@ -5159,6 +5176,7 @@ with st.sidebar:
     url.searchParams.set('bt_batch_feed', feed);
     url.searchParams.set('wpe_feed', feed);
     url.searchParams.set('pt_feed', ptFeed);
+    url.searchParams.set('_feed_default', feed);
     window.parent.location.replace(url.toString());
   };
   _afRender(_afGetFeed());
@@ -5173,8 +5191,9 @@ with st.sidebar:
 </script>
 """, height=52)
     st.caption(
-        "SIP = full tape · IEX = free tier. "
-        "Click to switch the feed globally.",
+        "SIP = full national tape, pre-market RVOL included (paid Alpaca subscription).  \n"
+        "IEX = free real-time tier, regular hours only.  \n"
+        "Click to switch the default feed used across all sections.",
     )
 
     st.markdown("---")
@@ -5337,38 +5356,6 @@ with st.sidebar:
                 use_container_width=True,
                 hide_index=True,
             )
-
-    st.markdown("---")
-    st.header("⚡ Default Data Feed")
-    _GLOBAL_FEED_OPTS = ["sip", "iex"]
-    _gdf_cur = st.session_state.get("_global_default_feed", "sip")
-    _gdf_idx = _GLOBAL_FEED_OPTS.index(_gdf_cur) if _gdf_cur in _GLOBAL_FEED_OPTS else 0
-    _gdf = st.selectbox(
-        "Default feed for all sections",
-        _GLOBAL_FEED_OPTS,
-        index=_gdf_idx,
-        key="_sb_global_default_feed",
-        help=(
-            "Sections you haven't explicitly configured yet will inherit this feed. "
-            "Once you change a section's feed individually, that override is remembered separately."
-        ),
-    )
-    if _gdf != st.session_state.get("_global_default_feed"):
-        st.session_state["_global_default_feed"] = _gdf
-        _gdf_uid = st.session_state.get("auth_user_id", "")
-        if _gdf_uid:
-            _gdf_prefs = {**st.session_state.get("_cached_prefs", {}), "default_feed": _gdf}
-            save_user_prefs(_gdf_uid, _gdf_prefs)
-            st.session_state["_cached_prefs"] = _gdf_prefs
-    import streamlit.components.v1 as _cmp_gdf
-    _cmp_gdf.html(
-        f"<script>localStorage.setItem('global_default_feed', {repr(_gdf)});</script>",
-        height=0,
-    )
-    st.caption(
-        "**SIP** — full national tape, pre-market RVOL included (requires paid Alpaca subscription).  \n"
-        "**IEX** — free real-time tier, regular hours only."
-    )
 
     st.markdown("---")
     st.header("📱 Telegram Alerts")
