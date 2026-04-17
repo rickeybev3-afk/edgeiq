@@ -8543,15 +8543,29 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f"fewer than {_MIN_TCS_TRADES} trades exist at any single TCS floor. "
                     f"These rows are highlighted in grey below. Collect more trade data or broaden the replay date range."
                 )
-            def _style_insufficient_rows(row):
-                if "insufficient" in str(row["Best TCS"]):
-                    return ["background-color: #e8e8e8; color: #666666"] * len(row)
-                return [""] * len(row)
             _tkr_display_df = _tkr_summary_df.drop(
                 columns=["_sort_win_pct", "_sort_eod_r", "_sort_tiered_r"],
                 errors="ignore",
             )
-            _styled_summary = _tkr_display_df.style.apply(_style_insufficient_rows, axis=1)
+            # Add a gold medal badge to the best-performing ticker's cell
+            if len(_tkr_display_df) > 0 and "Ticker" in _tkr_display_df.columns:
+                _tkr_display_df = _tkr_display_df.copy()
+                _best_row_idx = _tkr_display_df.index[0]
+                _tkr_col_pos = _tkr_display_df.columns.get_loc("Ticker")
+                _tkr_display_df.iloc[0, _tkr_col_pos] = (
+                    "🥇 " + str(_tkr_display_df.iloc[0, _tkr_col_pos])
+                )
+            else:
+                _best_row_idx = None
+
+            def _style_rows(row):
+                if "insufficient" in str(row.get("Best TCS", "")):
+                    return ["background-color: #e8e8e8; color: #666666"] * len(row)
+                if _best_row_idx is not None and row.name == _best_row_idx:
+                    return ["background-color: #fffbcc; font-weight: bold"] * len(row)
+                return [""] * len(row)
+
+            _styled_summary = _tkr_display_df.style.apply(_style_rows, axis=1)
             st.dataframe(
                 _styled_summary,
                 use_container_width=True,
