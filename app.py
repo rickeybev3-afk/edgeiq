@@ -19981,15 +19981,23 @@ ALTER TABLE backtest_sim_runs
                             - _bts_sc_trend_src["eod_pnl_r"].astype(float)
                         )
                         # ── Group-by toggle ──────────────────────────────────
+                        _SC_GB_OPTS = ["Monthly", "Weekly"]
+                        if "sc_trend_group_by" not in st.session_state:
+                            _qp_sc_gb = st.query_params.get("sc_trend_group_by", "Monthly")
+                            st.session_state["sc_trend_group_by"] = (
+                                _qp_sc_gb if _qp_sc_gb in _SC_GB_OPTS else "Monthly"
+                            )
                         _sc_gb_col, _ = st.columns([2, 5])
                         with _sc_gb_col:
                             _sc_group_by = st.radio(
                                 "Group by",
-                                options=["Monthly", "Weekly"],
+                                options=_SC_GB_OPTS,
                                 horizontal=True,
                                 key="sc_trend_group_by",
                                 label_visibility="collapsed",
                             )
+                        if st.query_params.get("sc_trend_group_by") != _sc_group_by:
+                            st.query_params["sc_trend_group_by"] = _sc_group_by
                         _sc_use_weekly = _sc_group_by == "Weekly"
                         if _sc_use_weekly:
                             # to_period("W") anchors on Monday (ISO 8601 week start)
