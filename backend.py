@@ -516,6 +516,7 @@ _runtime_credential_errors: list[tuple[str, str]] = []
 _runtime_credential_lock = threading.Lock()
 _RUNTIME_CHECK_INTERVAL_S: float = 300.0   # 5 minutes between re-checks
 _runtime_last_check_ts: float = 0.0        # monotonic timestamp of last check
+_runtime_last_healthy_ts: float = 0.0      # monotonic timestamp of last fully-clean check
 
 # Tracks which credential providers have been confirmed working at least once.
 # A failure is only surfaced as a "runtime failure" (was working, now broken)
@@ -532,14 +533,22 @@ def _run_credential_check() -> None:
     A failure is only reported as a runtime failure once the provider has been
     confirmed healthy at least once, ensuring "was working, now broken" is accurate.
     """
-    global _runtime_last_check_ts
+    global _runtime_last_check_ts, _runtime_last_healthy_ts
     errors: list[tuple[str, str]] = []
+
+    # Per-run outcome flags — True only when the provider actively returned a
+    # positive (200-OK / db-ok) response in this specific run.
+    supabase_ok_this_run: bool = False
+    alpaca_ok_this_run: bool = False
+    supabase_configured: bool = bool(SUPABASE_URL and SUPABASE_KEY and not _supabase_errors)
+    alpaca_configured: bool = bool(ALPACA_API_KEY and ALPACA_SECRET_KEY)
 
     # — Supabase —
     # Only re-check if credentials were present and valid at startup.
-    if SUPABASE_URL and SUPABASE_KEY and not _supabase_errors:
+    if supabase_configured:
         ok, reason = check_db_connection()
         if ok:
+            supabase_ok_this_run = True
             _providers_confirmed_ok.add("supabase")
         elif "supabase" in _providers_confirmed_ok:
             # Was working, now failing — surface as a runtime error.
@@ -555,7 +564,7 @@ def _run_credential_check() -> None:
 
     # — Alpaca —
     # Only re-check if both keys were present at startup.
-    if ALPACA_API_KEY and ALPACA_SECRET_KEY:
+    if alpaca_configured:
         try:
             _hdrs = {
                 "APCA-API-KEY-ID":     ALPACA_API_KEY,
@@ -568,6 +577,7 @@ def _run_credential_check() -> None:
             )
             _r = requests.get(_url, headers=_hdrs, timeout=8)
             if _r.status_code == 200:
+                alpaca_ok_this_run = True
                 _providers_confirmed_ok.add("alpaca")
             elif _r.status_code in (401, 403):
                 if "alpaca" in _providers_confirmed_ok:
@@ -586,15 +596,48 @@ def _run_credential_check() -> None:
         except Exception as _exc:
             logging.debug("[RUNTIME] Alpaca credential re-check failed: %s", _exc)
 
+    _now = time.monotonic()
     with _runtime_credential_lock:
         _runtime_credential_errors[:] = errors
-    _runtime_last_check_ts = time.monotonic()
+    _runtime_last_check_ts = _now
+
+    # Only advance the "last confirmed healthy" timestamp when every configured
+    # provider actively returned a positive response in this run.  An empty
+    # errors list is not sufficient because failures can be silently suppressed
+    # (not-yet-confirmed providers, caught exceptions, unconfigured credentials).
+    configured_providers_all_ok = (
+        (not supabase_configured or supabase_ok_this_run) and
+        (not alpaca_configured or alpaca_ok_this_run) and
+        (supabase_configured or alpaca_configured)  # at least one was checked
+    )
+    if configured_providers_all_ok:
+        _runtime_last_healthy_ts = _now
 
     if errors:
         for _n, _m in errors:
             logging.warning("[RUNTIME] Mid-session credential failure — %s: %s", _n, _m)
     else:
         logging.debug("[RUNTIME] Credential re-check passed — all secrets still valid.")
+
+
+def get_runtime_last_check_ts() -> float:
+    """Return the monotonic timestamp of the most recent credential health check.
+
+    Returns 0.0 if no check has run yet since startup.
+    """
+    return _runtime_last_check_ts
+
+
+def get_runtime_last_healthy_ts() -> float:
+    """Return the monotonic timestamp of the last fully-clean credential check.
+
+    Only updated when _run_credential_check completes with zero errors, so
+    this timestamp accurately reflects the last time all credentials were
+    confirmed working — not merely the last time a check was attempted.
+
+    Returns 0.0 if credentials have not yet been confirmed healthy this session.
+    """
+    return _runtime_last_healthy_ts
 
 
 def check_credentials_runtime(force: bool = False) -> list[tuple[str, str]]:

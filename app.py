@@ -55,6 +55,7 @@ from backend import (
     _alpaca_mismatch_status,
     load_tcs_alert_structures,
     save_tcs_alert_structures,
+    get_runtime_last_healthy_ts,
 )
 
 # ── Cached DB-loader wrappers (ttl=300 s ≈ 5 min) ────────────────────────────
@@ -4443,6 +4444,25 @@ with st.sidebar:
                          help="Retry: clear cached status and recheck the database connection"):
                 _cached_db_status.clear()
                 st.rerun()
+
+    # ── Credential health indicator ────────────────────────────────────────
+    _cred_healthy_ts = get_runtime_last_healthy_ts()
+    if _cred_healthy_ts > 0.0:
+        _cred_elapsed_s = time.monotonic() - _cred_healthy_ts
+        if _cred_elapsed_s < 60:
+            _cred_age_label = "just now"
+        elif _cred_elapsed_s < 3600:
+            _cred_age_label = f"{int(_cred_elapsed_s // 60)} min ago"
+        else:
+            _cred_age_label = f"{int(_cred_elapsed_s // 3600)} hr ago"
+        st.markdown(
+            f'<div style="font-size:11px; color:#888; text-align:right; '
+            f'margin-bottom:6px;" '
+            f'title="All credentials last confirmed healthy {_cred_age_label}">'
+            f"🔒 Credentials healthy {_cred_age_label}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     st.header("🔑 Alpaca Credentials")
     api_key = st.text_input(
