@@ -5869,20 +5869,24 @@ st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
 _hdr_tm = st.session_state.get("_trading_mode", "paper" if get_trading_mode() else "live")
 if _hdr_tm == "paper":
     st.markdown(
+        '<a href="#trading-mode" style="text-decoration:none;" '
+        'title="Trading Mode: Paper — simulated orders only. Click to jump to the sidebar toggle.">'
         '<span style="display:inline-block; background:#0a1a2a; border:1px solid #1565c0; '
         'border-radius:6px; padding:3px 10px; font-size:12px; font-weight:700; '
-        'color:#90caf9; margin-bottom:8px;" '
-        'title="Trading Mode: Paper — simulated orders only. Switch in the sidebar.">'
-        '🔵 Paper</span>',
+        'color:#90caf9; margin-bottom:4px; cursor:pointer;">'
+        '🔵 Paper</span></a>'
+        '<span style="font-size:10px; color:#555; margin-left:6px;">↑ click to switch</span>',
         unsafe_allow_html=True,
     )
 else:
     st.markdown(
+        '<a href="#trading-mode" style="text-decoration:none;" '
+        'title="Trading Mode: Live — real orders will be routed to your brokerage. Click to jump to the sidebar toggle.">'
         '<span style="display:inline-block; background:#1a0a0a; border:1px solid #b71c1c; '
         'border-radius:6px; padding:3px 10px; font-size:12px; font-weight:700; '
-        'color:#ef5350; margin-bottom:8px;" '
-        'title="Trading Mode: Live — real orders will be routed to your brokerage. Switch in the sidebar.">'
-        '🔴 Live</span>',
+        'color:#ef5350; margin-bottom:4px; cursor:pointer;">'
+        '🔴 Live</span></a>'
+        '<span style="font-size:10px; color:#555; margin-left:6px;">↑ click to switch</span>',
         unsafe_allow_html=True,
     )
 
