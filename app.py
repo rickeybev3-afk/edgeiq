@@ -19443,7 +19443,12 @@ ALTER TABLE backtest_sim_runs
             _bw_display.style
                 .map(_color_delta, subset=["Δ Baseline"])
                 .map(_color_stable, subset=["Stable For"]),
-            use_container_width=True, hide_index=True, height="stretch"
+            use_container_width=True, hide_index=True, height="stretch",
+            column_config={
+                "Stable For": st.column_config.Column(
+                    help="Days since this structure's threshold last shifted, based on the 90-day history"
+                )
+            }
         )
     else:
         st.info("Brain weights not yet loaded.")
