@@ -21639,6 +21639,7 @@ ALTER TABLE backtest_sim_runs
                             except (ValueError, KeyError, TypeError) as _pt_eod_spk_err:
                                 import sys
                                 print(f"[EOD sparkline] {_pt_eod_scan}: {_pt_eod_spk_err}", file=sys.stderr)
+                        _pt_eod_spk_anchor = f"pt-eod-spk-{_pt_eod_scan}"
                         _pt_eod_arrow_html = ""
                         if _pt_eod_wkly_all is not None and len(_pt_eod_wkly_all) >= 2:
                             _pt_eod_last_wr  = _pt_eod_wkly_all["_wr"].iloc[-1]
@@ -21658,11 +21659,20 @@ ALTER TABLE backtest_sim_runs
                                 f"vs prior week: {_pt_eod_dsign}{_pt_eod_delta_wr:.1f}pp "
                                 f"({_pt_eod_prev_wr:.1f}% \u2192 {_pt_eod_last_wr:.1f}%)"
                             )
-                            _pt_eod_arrow_html = (
+                            _pt_eod_arrow_span = (
                                 f'<span title="{_pt_eod_tip}" style="font-size:18px; '
                                 f'color:{_pt_eod_arrow_c}; margin-left:8px; '
-                                f'vertical-align:middle; cursor:default;">{_pt_eod_arrow_ch}</span>'
+                                f'vertical-align:middle; '
+                                f'cursor:{"pointer" if _pt_eod_spk_data is not None else "default"};">'
+                                f'{_pt_eod_arrow_ch}</span>'
                             )
+                            if _pt_eod_spk_data is not None:
+                                _pt_eod_arrow_html = (
+                                    f'<a href="#{_pt_eod_spk_anchor}" style="text-decoration:none;">'
+                                    f'{_pt_eod_arrow_span}</a>'
+                                )
+                            else:
+                                _pt_eod_arrow_html = _pt_eod_arrow_span
                         st.markdown(
                             f'<div style="background:#020813; border:1px solid #1a2744; '
                             f'border-left:3px solid {_pt_eod_accent}; border-radius:8px; '
@@ -21683,6 +21693,7 @@ ALTER TABLE backtest_sim_runs
                             unsafe_allow_html=True,
                         )
                         if _pt_eod_spk_data is not None:
+                            st.markdown(f'<div id="{_pt_eod_spk_anchor}"></div>', unsafe_allow_html=True)
                             _pt_eod_sfig = go.Figure()
                             _pt_eod_sfig.add_trace(go.Scatter(
                                 x=[idx.strftime("w/e %b %d") for idx in _pt_eod_spk_data.index],
@@ -23972,6 +23983,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         except (ValueError, KeyError, TypeError) as _ptt_eod_spk_err:
                             import sys
                             print(f"[EOD sparkline] {_ptt_eod_scan}: {_ptt_eod_spk_err}", file=sys.stderr)
+                    _ptt_eod_spk_anchor = f"ptt-eod-spk-{_ptt_eod_scan}"
                     _ptt_eod_arrow_html = ""
                     if _ptt_eod_wkly_all is not None and len(_ptt_eod_wkly_all) >= 2:
                         _ptt_eod_last_wr  = _ptt_eod_wkly_all["_wr"].iloc[-1]
@@ -23991,11 +24003,20 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             f"vs prior week: {_ptt_eod_dsign}{_ptt_eod_delta_wr:.1f}pp "
                             f"({_ptt_eod_prev_wr:.1f}% \u2192 {_ptt_eod_last_wr:.1f}%)"
                         )
-                        _ptt_eod_arrow_html = (
+                        _ptt_eod_arrow_span = (
                             f'<span title="{_ptt_eod_tip}" style="font-size:18px; '
                             f'color:{_ptt_eod_arrow_c}; margin-left:8px; '
-                            f'vertical-align:middle; cursor:default;">{_ptt_eod_arrow_ch}</span>'
+                            f'vertical-align:middle; '
+                            f'cursor:{"pointer" if _ptt_eod_spk_data is not None else "default"};">'
+                            f'{_ptt_eod_arrow_ch}</span>'
                         )
+                        if _ptt_eod_spk_data is not None:
+                            _ptt_eod_arrow_html = (
+                                f'<a href="#{_ptt_eod_spk_anchor}" style="text-decoration:none;">'
+                                f'{_ptt_eod_arrow_span}</a>'
+                            )
+                        else:
+                            _ptt_eod_arrow_html = _ptt_eod_arrow_span
                     st.markdown(
                         f'<div style="background:#020813; border:1px solid #1a2744; '
                         f'border-left:3px solid {_ptt_eod_accent}; border-radius:8px; '
@@ -24016,6 +24037,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         unsafe_allow_html=True,
                     )
                     if _ptt_eod_spk_data is not None:
+                        st.markdown(f'<div id="{_ptt_eod_spk_anchor}"></div>', unsafe_allow_html=True)
                         _ptt_eod_sfig = go.Figure()
                         _ptt_eod_sfig.add_trace(go.Scatter(
                             x=[idx.strftime("w/e %b %d") for idx in _ptt_eod_spk_data.index],
