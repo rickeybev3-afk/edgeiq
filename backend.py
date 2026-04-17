@@ -7500,7 +7500,8 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 "false_break_up":   bool(r.get("false_break_up", False)),
                 "false_break_down": bool(r.get("false_break_down", False)),
             }
-            # Auto-compute sim P&L on insert so backfill script is never needed
+            # Auto-compute pnl_r_sim (simple sim P&L) on insert — no backfill needed for this field.
+            # NOTE: tiered_pnl_r is intentionally omitted here; see comment below.
             _sim = compute_trade_sim(rec)
             if _sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
                 rec["sim_outcome"]      = _sim["sim_outcome"]
@@ -7510,7 +7511,14 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 rec["stop_price_sim"]   = _sim.get("stop_price_sim")
                 rec["stop_dist_pct"]    = _sim.get("stop_dist_pct")
                 rec["target_price_sim"] = _sim.get("target_price_sim")
-                # Compute eod_pnl_r when close_price is available
+                # Compute eod_pnl_r when close_price is available.
+                # NOTE: tiered_pnl_r is intentionally NOT stored here because
+                # computing it requires bar-by-bar intraday data (aft_df) from
+                # Alpaca, which is too slow to fetch at batch-insert time.
+                # tiered_pnl_r will be NULL on every newly-inserted row until
+                # run_tiered_pnl_backfill.py (or the dashboard backfill trigger)
+                # is executed.  The count of pending rows is surfaced in the
+                # "Backtest Sim P&L — Historical" section of the Performance tab.
                 _close = r.get("close_price")
                 if (_close is not None and rec.get("ib_high") is not None
                         and rec.get("ib_low") is not None
@@ -7524,6 +7532,7 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                     )
                     if _tiered.get("eod_pnl_r") is not None:
                         rec["eod_pnl_r"] = _tiered["eod_pnl_r"]
+                    # tiered_pnl_r left NULL — backfill required (see above)
             records.append(rec)
         supabase.table("backtest_sim_runs").insert(records).execute()
     except Exception as e:
@@ -7543,6 +7552,181 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
     except Exception as e:
         print(f"Backtest load error: {e}")
         return pd.DataFrame()
+
+
+def count_backtest_tiered_pending(user_id: str = "") -> int:
+    """Return the count of backtest_sim_runs rows that qualify for tiered P&L backfill.
+
+    Qualifying rows have a Bullish/Bearish actual_outcome, NULL tiered_pnl_r,
+    and all three price fields (close_price, ib_high, ib_low) populated.
+
+    Pass *user_id* to scope the count to a single user (recommended for multi-tenant
+    deployments). An empty string skips the user filter and counts all rows —
+    appropriate for operator/admin use or single-tenant installations.
+    """
+    if not supabase:
+        return 0
+    try:
+        q = (
+            supabase.table("backtest_sim_runs")
+            .select("id", count="exact")
+            .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+            .is_("tiered_pnl_r", "null")
+            .not_.is_("close_price", "null")
+            .not_.is_("ib_high", "null")
+            .not_.is_("ib_low", "null")
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        resp = q.execute()
+        return resp.count or 0
+    except Exception as e:
+        print(f"count_backtest_tiered_pending error: {e}")
+        return 0
+
+
+def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = False,
+                                       user_id: str = "") -> dict:
+    """Process one batch of backtest_sim_runs rows missing tiered_pnl_r.
+
+    Fetches up to *batch_size* qualifying rows (oldest first by sim_date then id),
+    pulls 1-minute bars from Alpaca for each, computes tiered_pnl_r via the
+    50/25/25 ladder, and writes the result back to the DB.  Returns a summary
+    dict with keys: fetched, updated, skipped_no_bars, skipped_no_tiered, errors,
+    remaining.
+
+    Pass *user_id* to limit processing to one user's rows (recommended in
+    multi-tenant deployments). Empty string processes all users' rows.
+
+    Use this for the one-click dashboard trigger.  For large backlogs, run
+    ``python run_tiered_pnl_backfill.py --backtest-only`` from the shell.
+    """
+    from datetime import date as _date, datetime as _datetime
+    stats = {"fetched": 0, "updated": 0, "skipped_no_bars": 0,
+             "skipped_no_tiered": 0, "errors": 0, "remaining": 0}
+
+    if not supabase:
+        stats["errors"] = 1
+        return stats
+
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        stats["errors"] = 1
+        return stats
+
+    try:
+        q = (
+            supabase.table("backtest_sim_runs")
+            .select("id,ticker,sim_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r")
+            .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+            .is_("tiered_pnl_r", "null")
+            .not_.is_("close_price", "null")
+            .not_.is_("ib_high", "null")
+            .not_.is_("ib_low", "null")
+            .order("sim_date", desc=False)
+            .order("id", desc=False)
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        rows = q.limit(batch_size).execute().data or []
+    except Exception as e:
+        print(f"run_backtest_tiered_backfill_batch fetch error: {e}")
+        stats["errors"] = 1
+        return stats
+
+    stats["fetched"] = len(rows)
+
+    import pytz as _pytz
+
+    eastern = _pytz.timezone("US/Eastern")
+
+    for row in rows:
+        row_id       = row["id"]
+        ticker       = row.get("ticker", "")
+        sim_date_raw = row.get("sim_date")
+        direction    = row.get("actual_outcome", "")
+        ib_high      = row.get("ib_high")
+        ib_low       = row.get("ib_low")
+        close_price  = row.get("close_price")
+        existing_eod = row.get("eod_pnl_r")
+
+        try:
+            if isinstance(sim_date_raw, str):
+                sim_date = _date.fromisoformat(sim_date_raw[:10])
+            elif isinstance(sim_date_raw, _date):
+                sim_date = sim_date_raw
+            else:
+                raise ValueError(f"unexpected type {type(sim_date_raw)}")
+        except Exception:
+            stats["errors"] += 1
+            continue
+
+        try:
+            full_df = fetch_bars(ALPACA_API_KEY, ALPACA_SECRET_KEY, ticker, sim_date)
+        except Exception:
+            full_df = None
+
+        if full_df is None or len(full_df) == 0:
+            eod_only = compute_trade_sim_tiered(
+                aft_df=None, ib_high=ib_high, ib_low=ib_low,
+                direction=direction, close_px=close_price,
+            )
+            if not dry_run and existing_eod is None and eod_only.get("eod_pnl_r") is not None:
+                try:
+                    supabase.table("backtest_sim_runs").update(
+                        {"eod_pnl_r": eod_only["eod_pnl_r"]}
+                    ).eq("id", row_id).execute()
+                except Exception:
+                    pass
+            stats["skipped_no_bars"] += 1
+            continue
+
+        try:
+            cutoff_naive = _datetime(sim_date.year, sim_date.month, sim_date.day, 10, 30, 59)
+            tz = full_df.index.tz
+            if tz is not None:
+                cutoff = eastern.localize(cutoff_naive)
+            else:
+                cutoff = cutoff_naive
+            aft_df = full_df[full_df.index > cutoff]
+            aft_df = aft_df if not aft_df.empty else None
+        except Exception:
+            aft_df = None
+
+        result = compute_trade_sim_tiered(
+            aft_df=aft_df, ib_high=ib_high, ib_low=ib_low,
+            direction=direction, close_px=close_price,
+        )
+
+        tiered_pnl_r = result.get("tiered_pnl_r")
+        eod_pnl_r    = result.get("eod_pnl_r")
+
+        if tiered_pnl_r is None:
+            stats["skipped_no_tiered"] += 1
+            if not dry_run and existing_eod is None and eod_pnl_r is not None:
+                try:
+                    supabase.table("backtest_sim_runs").update(
+                        {"eod_pnl_r": eod_pnl_r}
+                    ).eq("id", row_id).execute()
+                except Exception:
+                    pass
+            continue
+
+        patch = {"tiered_pnl_r": tiered_pnl_r}
+        if existing_eod is None and eod_pnl_r is not None:
+            patch["eod_pnl_r"] = eod_pnl_r
+
+        if not dry_run:
+            try:
+                supabase.table("backtest_sim_runs").update(patch).eq("id", row_id).execute()
+                stats["updated"] += 1
+            except Exception as e:
+                print(f"run_backtest_tiered_backfill_batch update error id={row_id}: {e}")
+                stats["errors"] += 1
+        else:
+            stats["updated"] += 1
+
+    stats["remaining"] = max(0, count_backtest_tiered_pending(user_id=user_id))
+    return stats
 
 
 # ── Paper Trading ─────────────────────────────────────────────────────────────
@@ -8104,7 +8288,8 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
             # if it's already in r (e.g. batch backfill path), include it now
             if r.get("vwap_at_ib") is not None:
                 row_record["vwap_at_ib"] = r["vwap_at_ib"]
-            # Auto-compute sim P&L on insert so backfill script is never needed
+            # Auto-compute pnl_r_sim (simple sim P&L) on insert — no backfill needed for this field.
+            # tiered_pnl_r for paper_trades is populated by run_tiered_pnl_backfill.py.
             _sim = compute_trade_sim(row_record)
             _new_sim_outcome = _sim.get("sim_outcome")
             if _new_sim_outcome not in ("no_trade", "missing_data", "invalid_ib", None):

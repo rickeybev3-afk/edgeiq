@@ -5890,6 +5890,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _struct_parts = [f"{k}: {v}" for k, v in
                                      sorted(_cal_struct_counts.items(), key=lambda x: -x[1])]
                     st.caption("Structure distribution: " + " · ".join(_struct_parts))
+                    if _saved_ok:
+                        _cal_tiered_pending = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
+                        if _cal_tiered_pending > 0:
+                            st.caption(
+                                f"⚠️ {_cal_tiered_pending:,} backtest rows are missing tiered P&L "
+                                f"(50/25/25 ladder). Visit the **Performance tab → Backtest Sim P&L** "
+                                f"section to run the one-click backfill, or execute "
+                                f"`python run_tiered_pnl_backfill.py --backtest-only` from the shell."
+                            )
                 else:
                     st.warning("No results returned — check tickers or date range. "
                                "Tickers not in the price range or with no data are skipped.")
@@ -7686,10 +7695,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _rows_to_save = _results if _bt_is_range else [
                 dict(r, sim_date=str(_bt_date)) for r in _results
             ]
+            _bt_save_ok = False
             try:
                 save_backtest_sim_runs(_rows_to_save, user_id=_AUTH_USER_ID)
+                _bt_save_ok = True
             except Exception:
                 pass
+            if _bt_save_ok:
+                _bt_tiered_pending = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
+                if _bt_tiered_pending > 0:
+                    st.info(
+                        f"⚠️ **{_bt_tiered_pending:,} backtest rows are missing tiered P&L** "
+                        f"(50/25/25 ladder exit). Tiered P&L requires intraday bar data and cannot "
+                        f"be computed at save time.  \n"
+                        f"→ Use the one-click backfill in **Performance → Backtest Sim P&L**, "
+                        f"or run `python run_tiered_pnl_backfill.py --backtest-only` from the shell."
+                    )
 
         st.session_state[_bt_cache] = (
             _results, _summary, _date_label,
@@ -12422,6 +12443,45 @@ ALTER TABLE backtest_sim_runs
         "P&L scenarios across all saved batch-backtest runs (backtest_sim_runs). "
         "Use this for large-sample edge validation — thousands of historical setups."
     )
+
+    # ── Tiered P&L backfill warning ─────────────────────────────────────────────
+    _tiered_pending_count = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
+    if _tiered_pending_count > 0:
+        _tp_col_warn, _tp_col_btn = st.columns([3, 1])
+        with _tp_col_warn:
+            st.warning(
+                f"**{_tiered_pending_count:,} backtest rows are missing tiered P&L** "
+                f"(50/25/25 ladder exit). Tiered P&L requires intraday bar data from Alpaca "
+                f"and cannot be computed at save time. Click **Run Backfill (25 rows)** to "
+                f"process a batch, or run `python run_tiered_pnl_backfill.py --backtest-only` "
+                f"from the shell for the full backlog."
+            )
+        with _tp_col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("▶ Run Backfill (25 rows)", key="bt_tiered_backfill_btn",
+                         use_container_width=True):
+                with st.spinner("Running tiered P&L backfill — fetching Alpaca bars…"):
+                    _bf_result = run_backtest_tiered_backfill_batch(
+                        batch_size=25, user_id=_AUTH_USER_ID)
+                _bf_updated  = _bf_result.get("updated", 0)
+                _bf_fetched  = _bf_result.get("fetched", 0)
+                _bf_no_bars  = _bf_result.get("skipped_no_bars", 0)
+                _bf_no_cross = _bf_result.get("skipped_no_tiered", 0)
+                _bf_errors   = _bf_result.get("errors", 0)
+                _bf_remain   = _bf_result.get("remaining", 0)
+                if _bf_errors and not _bf_fetched:
+                    st.error(
+                        "Backfill failed — Alpaca credentials may be missing. "
+                        "Check that ALPACA_API_KEY and ALPACA_SECRET_KEY are set."
+                    )
+                else:
+                    st.success(
+                        f"Batch complete — {_bf_fetched} rows processed, "
+                        f"{_bf_updated} updated, {_bf_no_bars} deferred (no bars), "
+                        f"{_bf_no_cross} skipped (no entry cross). "
+                        f"{_bf_remain:,} rows still pending."
+                    )
+                    st.rerun()
 
     _bt_sim_has_data = (
         not _bt_sim_df.empty
