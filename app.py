@@ -12638,10 +12638,10 @@ ALTER TABLE backtest_sim_runs
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown(
                     '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
-                    'text-transform:uppercase;margin-bottom:6px;">Breakdown by Scan Type (MFE) · EOD Hold</div>',
+                    'text-transform:uppercase;margin-bottom:6px;">Breakdown by Scan Type — MFE Exit · EOD Hold</div>',
                     unsafe_allow_html=True,
                 )
-                _bts_scan_cols = st.columns(3)
+                _bts_scan_cols = st.columns(4)
                 for _bts_idx, _bts_stk in enumerate(["morning", "intraday"]):
                     _bts_stk_df = (
                         _bts_mfe_df[_bts_mfe_df["scan_type"] == _bts_stk]
@@ -12675,39 +12675,44 @@ ALTER TABLE backtest_sim_runs
                                 f'</div>',
                                 unsafe_allow_html=True,
                             )
-                with _bts_scan_cols[2]:
-                    _bts_eod_df = (
-                        _bt_sim_df[_bt_sim_df["eod_pnl_r"].notna()].copy()
-                        if "eod_pnl_r" in _bt_sim_df.columns
-                        else pd.DataFrame()
-                    )
-                    if _bts_eod_df.empty:
-                        st.markdown(
-                            '<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
-                            '<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">EOD</div>'
-                            '<div style="font-size:13px;color:#546e7a;margin-top:6px;">No data</div>'
-                            '</div>',
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        _bts_eod_df["eod_pnl_r"] = _bts_eod_df["eod_pnl_r"].astype(float)
-                        _bts_eod_w   = len(_bts_eod_df[_bts_eod_df["eod_pnl_r"] > 0])
-                        _bts_eod_l   = len(_bts_eod_df[_bts_eod_df["eod_pnl_r"] <= 0])
-                        _bts_eod_wr  = _bts_eod_w / len(_bts_eod_df) * 100 if len(_bts_eod_df) else 0
-                        _bts_eod_exp = _bts_eod_df["eod_pnl_r"].mean()
-                        _bts_eod_tot = _bts_eod_df["eod_pnl_r"].sum()
-                        _bts_eod_c   = "#2e7d32" if _bts_eod_wr >= 55 else ("#ef6c00" if _bts_eod_wr >= 45 else "#c62828")
-                        st.markdown(
-                            f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
-                            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">EOD</div>'
-                            f'<div style="font-size:22px;font-weight:700;color:{_bts_eod_c};margin-top:4px;">{_bts_eod_wr:.1f}%</div>'
-                            f'<div style="font-size:12px;color:#cfd8dc;">{_bts_eod_w}W / {_bts_eod_l}L  ·  '
-                            f'Exp: {"+" if _bts_eod_exp >= 0 else ""}{_bts_eod_exp:.3f}R</div>'
-                            f'<div style="font-size:12px;color:#90a4ae;">Total: {"+" if _bts_eod_tot >= 0 else ""}{_bts_eod_tot:.1f}R '
-                            f'({len(_bts_eod_df)} trades)</div>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
+                for _bts_eod_idx, _bts_eod_stk in enumerate(["morning", "intraday"]):
+                    with _bts_scan_cols[2 + _bts_eod_idx]:
+                        _bts_eod_df = pd.DataFrame()
+                        if "eod_pnl_r" in _bts_df.columns:
+                            _bts_eod_df = (
+                                _bts_df[
+                                    _bts_df["eod_pnl_r"].notna() &
+                                    (_bts_df["scan_type"] == _bts_eod_stk)
+                                ].copy()
+                            )
+                        _eod_label = f"{_bts_eod_stk.upper()} EOD"
+                        if _bts_eod_df.empty:
+                            st.markdown(
+                                f'<div style="background:#1a2535;border:1px solid #263248;border-radius:8px;padding:12px;text-align:center;">'
+                                f'<div style="font-size:11px;color:#7986cb;letter-spacing:1px;text-transform:uppercase;">{_eod_label}</div>'
+                                f'<div style="font-size:13px;color:#546e7a;margin-top:6px;">No data</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            _bts_eod_df["eod_pnl_r"] = _bts_eod_df["eod_pnl_r"].astype(float)
+                            _bts_eod_w   = len(_bts_eod_df[_bts_eod_df["eod_pnl_r"] > 0])
+                            _bts_eod_l   = len(_bts_eod_df[_bts_eod_df["eod_pnl_r"] <= 0])
+                            _bts_eod_wr  = _bts_eod_w / len(_bts_eod_df) * 100 if len(_bts_eod_df) else 0
+                            _bts_eod_exp = _bts_eod_df["eod_pnl_r"].mean()
+                            _bts_eod_tot = _bts_eod_df["eod_pnl_r"].sum()
+                            _bts_eod_c   = "#2e7d32" if _bts_eod_wr >= 55 else ("#ef6c00" if _bts_eod_wr >= 45 else "#c62828")
+                            st.markdown(
+                                f'<div style="background:#1a2535;border:1px solid #263248;border-radius:8px;padding:12px;text-align:center;">'
+                                f'<div style="font-size:11px;color:#7986cb;letter-spacing:1px;text-transform:uppercase;">{_eod_label}</div>'
+                                f'<div style="font-size:22px;font-weight:700;color:{_bts_eod_c};margin-top:4px;">{_bts_eod_wr:.1f}%</div>'
+                                f'<div style="font-size:12px;color:#cfd8dc;">{_bts_eod_w}W / {_bts_eod_l}L  ·  '
+                                f'Exp: {"+" if _bts_eod_exp >= 0 else ""}{_bts_eod_exp:.3f}R</div>'
+                                f'<div style="font-size:12px;color:#90a4ae;">Total: {"+" if _bts_eod_tot >= 0 else ""}{_bts_eod_tot:.1f}R '
+                                f'({len(_bts_eod_df)} trades)</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
