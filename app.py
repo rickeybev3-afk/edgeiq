@@ -7905,6 +7905,45 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         if len(_rp_display_df) == 0:
                             st.info("No trades match the current filters.")
 
+                        # ── Win/Loss summary bar ─────────────────────────────
+                        _rp_wl_col = _rp_display_df["W/L"].astype(str).str.strip() if "W/L" in _rp_display_df.columns else pd.Series(dtype=str)
+                        _rp_wins    = int((_rp_wl_col == "Win").sum())
+                        _rp_losses  = int((_rp_wl_col == "Loss").sum())
+                        _rp_neutral = int((~_rp_wl_col.isin(["Win", "Loss"])).sum())
+                        _rp_total   = _rp_wins + _rp_losses + _rp_neutral
+                        _rp_wr_pct  = (_rp_wins / (_rp_wins + _rp_losses) * 100) if (_rp_wins + _rp_losses) > 0 else 0.0
+                        st.markdown(
+                            f"""
+                            <div style="
+                                display:flex;gap:12px;align-items:center;
+                                padding:8px 12px;margin-bottom:6px;
+                                background:rgba(30,30,30,0.45);
+                                border-radius:8px;border:1px solid rgba(255,255,255,0.07);
+                                font-size:0.88rem;flex-wrap:wrap;
+                            ">
+                              <span style="color:#66bb6a;font-weight:700;">
+                                ✔ {_rp_wins} Win{"s" if _rp_wins != 1 else ""}
+                              </span>
+                              <span style="color:rgba(255,255,255,0.25);">|</span>
+                              <span style="color:#ef5350;font-weight:700;">
+                                ✘ {_rp_losses} Loss{"es" if _rp_losses != 1 else ""}
+                              </span>
+                              <span style="color:rgba(255,255,255,0.25);">|</span>
+                              <span style="color:#90a4ae;font-weight:700;">
+                                — {_rp_neutral} Neutral
+                              </span>
+                              <span style="color:rgba(255,255,255,0.25);">|</span>
+                              <span style="color:rgba(255,255,255,0.55);">
+                                {_rp_total} total &nbsp;·&nbsp;
+                                <span style="color:{'#66bb6a' if _rp_wr_pct >= 50 else '#ef5350'};font-weight:700;">
+                                  {_rp_wr_pct:.1f}% win rate
+                                </span>
+                              </span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
                         def _rp_row_style(row):
                             wl = str(row.get("W/L", "")).strip()
                             # Detect marginal TCS (within 5 points of the floor)
