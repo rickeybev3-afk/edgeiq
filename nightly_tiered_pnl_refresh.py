@@ -93,6 +93,36 @@ def _interruptible_sleep(seconds: float) -> bool:
     return False
 
 
+# ── Slack helper ──────────────────────────────────────────────────────────────
+
+
+def _send_slack(message: str) -> None:
+    """Send a plain-text message via a Slack incoming webhook.
+
+    Reads SLACK_WEBHOOK_URL from the environment.  Silently skips (log-only)
+    if the variable is absent or empty.
+    """
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        log.info("SLACK_WEBHOOK_URL not set — skipping Slack notification.")
+        return
+    try:
+        import urllib.request as _urllib_req
+        import json as _json
+        payload = _json.dumps({"text": message}).encode()
+        req = _urllib_req.Request(
+            webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _urllib_req.urlopen(req, timeout=10):
+            pass
+        log.info("Slack notification sent.")
+    except Exception as exc:
+        log.warning("Slack send error: %s", exc)
+
+
 # ── Telegram helper ───────────────────────────────────────────────────────────
 
 _STATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -129,6 +159,32 @@ def _send_telegram(message: str) -> None:
         log.warning("Telegram send error: %s", exc)
 
 
+# ── Cache-failure alert dispatcher ───────────────────────────────────────────
+
+
+def _send_cache_failure_alert(error_msg: str) -> None:
+    """Dispatch an operator alert when mv_tiered_pnl_summary refresh fails.
+
+    Tries both Slack (SLACK_WEBHOOK_URL) and Telegram (TELEGRAM_BOT_TOKEN +
+    TELEGRAM_CHAT_ID).  Each channel silently skips if its credentials are
+    absent, so operators only need to configure whichever channel they use.
+    """
+    timestamp = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
+    plain_msg = (
+        f"[EdgeIQ] Ladder cache refresh FAILED\n"
+        f"Time: {timestamp}\n"
+        f"Error: {error_msg}"
+    )
+    _send_slack(plain_msg)
+
+    html_msg = (
+        f"⚠️ <b>EdgeIQ — Ladder cache refresh FAILED</b>\n"
+        f"Time: {timestamp}\n"
+        f"<b>Error:</b> <code>{html.escape(error_msg[:400])}</code>"
+    )
+    _send_telegram(html_msg)
+
+
 # ── Logging setup ─────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -161,11 +217,13 @@ def refresh_summary_cache():
                 result.get("message", "ok"),
             )
         else:
+            failure_msg = result.get("message", "unknown error")
             log.warning(
                 "mv_tiered_pnl_summary refresh failed (%.1fs): %s",
                 elapsed,
-                result.get("message", "unknown error"),
+                failure_msg,
             )
+            _send_cache_failure_alert(failure_msg)
     except Exception as exc:
         elapsed = time.monotonic() - start
         log.error(
@@ -173,6 +231,7 @@ def refresh_summary_cache():
             elapsed,
             exc,
         )
+        _send_cache_failure_alert(f"Exception after {elapsed:.1f}s: {exc}")
 
 
 # ── Backfill runner ───────────────────────────────────────────────────────────
@@ -305,6 +364,24 @@ def main():
     log.info("Nightly Tiered P&L Refresh — started")
     log.info("Scheduled events (ET):  21:00 → cache refresh,  00:05 → backfill + cache refresh")
     log.info("=" * 60)
+
+    # Report which failure-alert channels are active so misconfiguration is visible immediately.
+    slack_active    = bool(os.getenv("SLACK_WEBHOOK_URL", "").strip())
+    telegram_active = (
+        bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
+        and bool(os.getenv("TELEGRAM_CHAT_ID", "").strip())
+    )
+    if slack_active or telegram_active:
+        channels = ", ".join(filter(None, [
+            "Slack" if slack_active else "",
+            "Telegram" if telegram_active else "",
+        ]))
+        log.info("Cache-failure alerts enabled via: %s", channels)
+    else:
+        log.warning(
+            "No alert channels configured — cache-refresh failures will only appear in logs. "
+            "Set SLACK_WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID to enable alerts."
+        )
 
     # Run backfill immediately on startup to catch any rows written since last run.
     log.info("─── Startup run ──────────────────────────────────────────────")
