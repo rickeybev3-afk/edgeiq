@@ -4959,6 +4959,22 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["link_date_filters"] = bool(_prefs["link_date_filters"])
         except (ValueError, TypeError):
             pass
+    if "bq_dr_start" in _prefs:
+        try:
+            import datetime as _dt_bq
+            _bq_d = _prefs["bq_dr_start"]
+            if _bq_d:
+                st.session_state["bq_dr_start"] = _dt_bq.date.fromisoformat(str(_bq_d))
+        except (ValueError, TypeError):
+            pass
+    if "bq_dr_end" in _prefs:
+        try:
+            import datetime as _dt_bq
+            _bq_d = _prefs["bq_dr_end"]
+            if _bq_d:
+                st.session_state["bq_dr_end"] = _dt_bq.date.fromisoformat(str(_bq_d))
+        except (ValueError, TypeError):
+            pass
     if "rp_start_date" in _prefs:
         try:
             import datetime as _dt_rp
@@ -20771,6 +20787,41 @@ ALTER TABLE backtest_sim_runs
                 _bq_min_date    = _bq_valid_dates.min().date() if not _bq_valid_dates.empty else None
                 _bq_max_date    = _bq_valid_dates.max().date() if not _bq_valid_dates.empty else None
 
+                # ── Restore bq date-range filter from localStorage → URL (unauthenticated users) ──
+                import streamlit.components.v1 as _cmp_bq_dr
+                _cmp_bq_dr.html("""
+<script>
+(function() {
+    var url = new URL(window.parent.location.href);
+    var needRedirect = false;
+    if (!url.searchParams.has('bq_dr_start') && !url.searchParams.has('bq_dr_end')) {
+        var s = localStorage.getItem('bq_dr_start');
+        var e = localStorage.getItem('bq_dr_end');
+        if (s) { url.searchParams.set('bq_dr_start', s); needRedirect = true; }
+        if (e) { url.searchParams.set('bq_dr_end', e); needRedirect = true; }
+    }
+    if (needRedirect) window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+
+                # ── Seed session state from URL params on first load ──────────
+                import datetime as _dt_bq_qp
+                if "bq_dr_start" not in st.session_state:
+                    _qp_bq_start = st.query_params.get("bq_dr_start")
+                    if _qp_bq_start:
+                        try:
+                            st.session_state["bq_dr_start"] = _dt_bq_qp.date.fromisoformat(_qp_bq_start)
+                        except (ValueError, TypeError):
+                            pass
+                if "bq_dr_end" not in st.session_state:
+                    _qp_bq_end = st.query_params.get("bq_dr_end")
+                    if _qp_bq_end:
+                        try:
+                            st.session_state["bq_dr_end"] = _dt_bq_qp.date.fromisoformat(_qp_bq_end)
+                        except (ValueError, TypeError):
+                            pass
+
                 _bq_dr_cols = st.columns([1, 1, 2])
                 with _bq_dr_cols[0]:
                     _bq_start = st.date_input(
@@ -20815,6 +20866,50 @@ ALTER TABLE backtest_sim_runs
                         st.session_state["bq_dr_start"] = _clamp_bq(_bq_bts_sync_start)
                         st.session_state["bq_dr_end"]   = _clamp_bq(_bq_bts_sync_end)
                         st.rerun()
+
+                # ── Sync bq date-range filter to URL params + localStorage (all users) ──
+                _bq_start_str = _bq_start.isoformat() if _bq_start else None
+                _bq_end_str   = _bq_end.isoformat()   if _bq_end   else None
+                if _bq_start_str:
+                    if st.query_params.get("bq_dr_start") != _bq_start_str:
+                        st.query_params["bq_dr_start"] = _bq_start_str
+                elif "bq_dr_start" in st.query_params:
+                    del st.query_params["bq_dr_start"]
+                if _bq_end_str:
+                    if st.query_params.get("bq_dr_end") != _bq_end_str:
+                        st.query_params["bq_dr_end"] = _bq_end_str
+                elif "bq_dr_end" in st.query_params:
+                    del st.query_params["bq_dr_end"]
+                _cmp_bq_dr.html(
+                    f"<script>"
+                    f"(function(){{"
+                    f"  var s = {repr(_bq_start_str or '')};"
+                    f"  var e = {repr(_bq_end_str or '')};"
+                    f"  if (s) {{ localStorage.setItem('bq_dr_start', s); }}"
+                    f"  else {{ localStorage.removeItem('bq_dr_start'); }}"
+                    f"  if (e) {{ localStorage.setItem('bq_dr_end', e); }}"
+                    f"  else {{ localStorage.removeItem('bq_dr_end'); }}"
+                    f"  var url = new URL(window.parent.location.href);"
+                    f"  window.parent.history.replaceState(null, '', url.toString());"
+                    f"}})();"
+                    f"</script>",
+                    height=0,
+                )
+
+                # Persist bq date-range filter to user prefs (authenticated users only)
+                if _AUTH_USER_ID:
+                    _bq_dr_cached = st.session_state.get("_cached_prefs", {})
+                    if (
+                        _bq_dr_cached.get("bq_dr_start") != _bq_start_str
+                        or _bq_dr_cached.get("bq_dr_end") != _bq_end_str
+                    ):
+                        _bq_dr_new_prefs = {
+                            **_bq_dr_cached,
+                            "bq_dr_start": _bq_start_str,
+                            "bq_dr_end":   _bq_end_str,
+                        }
+                        save_user_prefs(_AUTH_USER_ID, _bq_dr_new_prefs)
+                        st.session_state["_cached_prefs"] = _bq_dr_new_prefs
 
                 # Apply the independent date filter
                 _bq_df = _bts_df_unfiltered.copy()
