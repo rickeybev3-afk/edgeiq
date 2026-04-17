@@ -20260,6 +20260,48 @@ ALTER TABLE backtest_sim_runs
                         _pt_eod_expc = "#4caf50" if _pt_eod_exp >= 0 else "#ef5350"
                         _pt_eod_totc = "#4caf50" if _pt_eod_tot >= 0 else "#ef5350"
                         _pt_eod_exp_map[_pt_eod_scan] = _pt_eod_exp
+                        _pt_eod_wkly_all = None
+                        _pt_eod_spk_data = None
+                        if "trade_date" in _pt_eod_sub.columns:
+                            try:
+                                _pt_eod_spk = _pt_eod_sub.copy()
+                                _pt_eod_spk["_dt"] = pd.to_datetime(_pt_eod_spk["trade_date"], errors="coerce")
+                                _pt_eod_spk = _pt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
+                                _pt_eod_wkly_all = _pt_eod_spk.resample("W-FRI").agg(
+                                    _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
+                                    _tot=("eod_pnl_r", "count"),
+                                )
+                                _pt_eod_wkly_all = _pt_eod_wkly_all[_pt_eod_wkly_all["_tot"] > 0]
+                                _pt_eod_wkly_all["_wr"] = _pt_eod_wkly_all["_wins"] / _pt_eod_wkly_all["_tot"] * 100
+                                if len(_pt_eod_wkly_all) >= 3:
+                                    _pt_eod_spk_data = _pt_eod_wkly_all
+                            except (ValueError, KeyError, TypeError) as _pt_eod_spk_err:
+                                import sys
+                                print(f"[EOD sparkline] {_pt_eod_scan}: {_pt_eod_spk_err}", file=sys.stderr)
+                        _pt_eod_arrow_html = ""
+                        if _pt_eod_wkly_all is not None and len(_pt_eod_wkly_all) >= 2:
+                            _pt_eod_last_wr  = _pt_eod_wkly_all["_wr"].iloc[-1]
+                            _pt_eod_prev_wr  = _pt_eod_wkly_all["_wr"].iloc[-2]
+                            _pt_eod_delta_wr = _pt_eod_last_wr - _pt_eod_prev_wr
+                            if _pt_eod_delta_wr > 0:
+                                _pt_eod_arrow_ch = "↑"
+                                _pt_eod_arrow_c  = "#4caf50"
+                            elif _pt_eod_delta_wr < 0:
+                                _pt_eod_arrow_ch = "↓"
+                                _pt_eod_arrow_c  = "#ef5350"
+                            else:
+                                _pt_eod_arrow_ch = "→"
+                                _pt_eod_arrow_c  = "#90a4ae"
+                            _pt_eod_dsign = "+" if _pt_eod_delta_wr >= 0 else ""
+                            _pt_eod_tip   = (
+                                f"vs prior week: {_pt_eod_dsign}{_pt_eod_delta_wr:.1f}pp "
+                                f"({_pt_eod_prev_wr:.1f}% \u2192 {_pt_eod_last_wr:.1f}%)"
+                            )
+                            _pt_eod_arrow_html = (
+                                f'<span title="{_pt_eod_tip}" style="font-size:18px; '
+                                f'color:{_pt_eod_arrow_c}; margin-left:8px; '
+                                f'vertical-align:middle; cursor:default;">{_pt_eod_arrow_ch}</span>'
+                            )
                         st.markdown(
                             f'<div style="background:#020813; border:1px solid #1a2744; '
                             f'border-left:3px solid {_pt_eod_accent}; border-radius:8px; '
@@ -20267,7 +20309,7 @@ ALTER TABLE backtest_sim_runs
                             f'<div style="font-size:11px; color:{_pt_eod_accent}; '
                             f'font-weight:700; margin-bottom:8px;">{_pt_eod_label}</div>'
                             f'<div style="font-size:24px; font-weight:800; color:{_pt_eod_wrc}; '
-                            f'font-family:monospace;">{_pt_eod_wr:.1f}%</div>'
+                            f'font-family:monospace;">{_pt_eod_wr:.1f}%{_pt_eod_arrow_html}</div>'
                             f'<div style="font-size:12px; color:#cfd8dc; margin-bottom:6px;">'
                             f'{int(_pt_eod_w)}W / {int(_pt_eod_l)}L &nbsp;·&nbsp; {_pt_eod_n} trades</div>'
                             f'<div style="font-size:12px; color:#90a4ae;">'
@@ -20279,23 +20321,6 @@ ALTER TABLE backtest_sim_runs
                             f'</div>',
                             unsafe_allow_html=True,
                         )
-                        _pt_eod_spk_data = None
-                        if "trade_date" in _pt_eod_sub.columns:
-                            try:
-                                _pt_eod_spk = _pt_eod_sub.copy()
-                                _pt_eod_spk["_dt"] = pd.to_datetime(_pt_eod_spk["trade_date"], errors="coerce")
-                                _pt_eod_spk = _pt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
-                                _pt_eod_wkly = _pt_eod_spk.resample("W-FRI").agg(
-                                    _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
-                                    _tot=("eod_pnl_r", "count"),
-                                )
-                                _pt_eod_wkly = _pt_eod_wkly[_pt_eod_wkly["_tot"] > 0]
-                                _pt_eod_wkly["_wr"] = _pt_eod_wkly["_wins"] / _pt_eod_wkly["_tot"] * 100
-                                if len(_pt_eod_wkly) >= 3:
-                                    _pt_eod_spk_data = _pt_eod_wkly
-                            except (ValueError, KeyError, TypeError) as _pt_eod_spk_err:
-                                import sys
-                                print(f"[EOD sparkline] {_pt_eod_scan}: {_pt_eod_spk_err}", file=sys.stderr)
                         if _pt_eod_spk_data is not None:
                             _pt_eod_sfig = go.Figure()
                             _pt_eod_sfig.add_trace(go.Scatter(
@@ -22420,6 +22445,48 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     _ptt_eod_expc = "#4caf50" if _ptt_eod_exp >= 0 else "#ef5350"
                     _ptt_eod_totc = "#4caf50" if _ptt_eod_tot >= 0 else "#ef5350"
                     _ptt_eod_exp_map[_ptt_eod_scan] = _ptt_eod_exp
+                    _ptt_eod_wkly_all = None
+                    _ptt_eod_spk_data = None
+                    if "trade_date" in _ptt_eod_sub.columns:
+                        try:
+                            _ptt_eod_spk = _ptt_eod_sub.copy()
+                            _ptt_eod_spk["_dt"] = pd.to_datetime(_ptt_eod_spk["trade_date"], errors="coerce")
+                            _ptt_eod_spk = _ptt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
+                            _ptt_eod_wkly_all = _ptt_eod_spk.resample("W-FRI").agg(
+                                _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
+                                _tot=("eod_pnl_r", "count"),
+                            )
+                            _ptt_eod_wkly_all = _ptt_eod_wkly_all[_ptt_eod_wkly_all["_tot"] > 0]
+                            _ptt_eod_wkly_all["_wr"] = _ptt_eod_wkly_all["_wins"] / _ptt_eod_wkly_all["_tot"] * 100
+                            if len(_ptt_eod_wkly_all) >= 3:
+                                _ptt_eod_spk_data = _ptt_eod_wkly_all
+                        except (ValueError, KeyError, TypeError) as _ptt_eod_spk_err:
+                            import sys
+                            print(f"[EOD sparkline] {_ptt_eod_scan}: {_ptt_eod_spk_err}", file=sys.stderr)
+                    _ptt_eod_arrow_html = ""
+                    if _ptt_eod_wkly_all is not None and len(_ptt_eod_wkly_all) >= 2:
+                        _ptt_eod_last_wr  = _ptt_eod_wkly_all["_wr"].iloc[-1]
+                        _ptt_eod_prev_wr  = _ptt_eod_wkly_all["_wr"].iloc[-2]
+                        _ptt_eod_delta_wr = _ptt_eod_last_wr - _ptt_eod_prev_wr
+                        if _ptt_eod_delta_wr > 0:
+                            _ptt_eod_arrow_ch = "↑"
+                            _ptt_eod_arrow_c  = "#4caf50"
+                        elif _ptt_eod_delta_wr < 0:
+                            _ptt_eod_arrow_ch = "↓"
+                            _ptt_eod_arrow_c  = "#ef5350"
+                        else:
+                            _ptt_eod_arrow_ch = "→"
+                            _ptt_eod_arrow_c  = "#90a4ae"
+                        _ptt_eod_dsign = "+" if _ptt_eod_delta_wr >= 0 else ""
+                        _ptt_eod_tip   = (
+                            f"vs prior week: {_ptt_eod_dsign}{_ptt_eod_delta_wr:.1f}pp "
+                            f"({_ptt_eod_prev_wr:.1f}% \u2192 {_ptt_eod_last_wr:.1f}%)"
+                        )
+                        _ptt_eod_arrow_html = (
+                            f'<span title="{_ptt_eod_tip}" style="font-size:18px; '
+                            f'color:{_ptt_eod_arrow_c}; margin-left:8px; '
+                            f'vertical-align:middle; cursor:default;">{_ptt_eod_arrow_ch}</span>'
+                        )
                     st.markdown(
                         f'<div style="background:#020813; border:1px solid #1a2744; '
                         f'border-left:3px solid {_ptt_eod_accent}; border-radius:8px; '
@@ -22427,7 +22494,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         f'<div style="font-size:11px; color:{_ptt_eod_accent}; '
                         f'font-weight:700; margin-bottom:8px;">{_ptt_eod_label}</div>'
                         f'<div style="font-size:24px; font-weight:800; color:{_ptt_eod_wrc}; '
-                        f'font-family:monospace;">{_ptt_eod_wr:.1f}%</div>'
+                        f'font-family:monospace;">{_ptt_eod_wr:.1f}%{_ptt_eod_arrow_html}</div>'
                         f'<div style="font-size:12px; color:#cfd8dc; margin-bottom:6px;">'
                         f'{int(_ptt_eod_w)}W / {int(_ptt_eod_l)}L &nbsp;·&nbsp; {_ptt_eod_n} trades</div>'
                         f'<div style="font-size:12px; color:#90a4ae;">'
@@ -22439,23 +22506,6 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         f'</div>',
                         unsafe_allow_html=True,
                     )
-                    _ptt_eod_spk_data = None
-                    if "trade_date" in _ptt_eod_sub.columns:
-                        try:
-                            _ptt_eod_spk = _ptt_eod_sub.copy()
-                            _ptt_eod_spk["_dt"] = pd.to_datetime(_ptt_eod_spk["trade_date"], errors="coerce")
-                            _ptt_eod_spk = _ptt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
-                            _ptt_eod_wkly = _ptt_eod_spk.resample("W-FRI").agg(
-                                _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
-                                _tot=("eod_pnl_r", "count"),
-                            )
-                            _ptt_eod_wkly = _ptt_eod_wkly[_ptt_eod_wkly["_tot"] > 0]
-                            _ptt_eod_wkly["_wr"] = _ptt_eod_wkly["_wins"] / _ptt_eod_wkly["_tot"] * 100
-                            if len(_ptt_eod_wkly) >= 3:
-                                _ptt_eod_spk_data = _ptt_eod_wkly
-                        except (ValueError, KeyError, TypeError) as _ptt_eod_spk_err:
-                            import sys
-                            print(f"[EOD sparkline] {_ptt_eod_scan}: {_ptt_eod_spk_err}", file=sys.stderr)
                     if _ptt_eod_spk_data is not None:
                         _ptt_eod_sfig = go.Figure()
                         _ptt_eod_sfig.add_trace(go.Scatter(
