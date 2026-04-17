@@ -8896,7 +8896,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         while True:
                             _rp_q = (
                                 supabase.table("backtest_sim_runs")
-                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down,eod_pnl_r,tiered_pnl_r")
+                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down,eod_pnl_r,tiered_pnl_r,ib_range_pct")
                                 .eq("user_id", _rp_uid)
                                 .gte("sim_date", str(_rp_start))
                                 .lte("sim_date", str(_rp_end))
@@ -13343,6 +13343,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "open_price":      "Open Price",
                                 "ib_high":         "IB High",
                                 "ib_low":          "IB Low",
+                                "ib_range_pct":    "IB Width %",
                                 "false_break_up":  "False Break Up",
                                 "false_break_down":"False Break Down",
                                 "eod_pnl_r":       "EOD Hold R",
@@ -13377,6 +13378,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _dd_show_eod_r    = "EOD Hold R"    in _tk_drill_display.columns
                             _dd_show_tiered_r = "Tiered Exit R" in _tk_drill_display.columns
                             _dd_show_delta_r  = "Delta R"       in _tk_drill_display.columns
+                            _dd_show_ib_pct   = "IB Width %"    in _tk_drill_display.columns
+                            _dd_ib_threshold  = _cached_load_ib_range_pct_threshold()
+                            if _dd_show_ib_pct:
+                                st.caption(
+                                    f"IB range % active threshold: **{_dd_ib_threshold:.1f}%** — "
+                                    f"green = pass (below threshold), orange = near threshold (within 20%), "
+                                    f"red = filtered out (at or above threshold)"
+                                )
                             _dd_rows_html = ""
                             for _, _dd_row in _tk_drill_display.iterrows():
                                 _dd_date   = str(_dd_row["Date"])
@@ -13388,6 +13397,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _dd_wl     = str(_dd_row["Result"])
                                 _dd_wl_clr = "#4caf50" if _dd_wl == "Win" else "#ef5350"
                                 _dd_anchor = f"trade-{_tk_name.lower()}-{_dd_date}"
+                                # Optional IB Width % column
+                                _dd_ib_pct_cell = ""
+                                if _dd_show_ib_pct:
+                                    try:
+                                        _dd_ib_v = float(_dd_row["IB Width %"])
+                                        if _dd_ib_v < _dd_ib_threshold:
+                                            _dd_ib_clr = "#66bb6a"
+                                        elif _dd_ib_v < _dd_ib_threshold * 1.2:
+                                            _dd_ib_clr = "#ff9800"
+                                        else:
+                                            _dd_ib_clr = "#ef5350"
+                                        _dd_ib_str = f"{_dd_ib_v:.2f}%"
+                                    except (TypeError, ValueError):
+                                        _dd_ib_clr = "#90a4ae"
+                                        _dd_ib_str = "—"
+                                    _dd_ib_pct_cell = (
+                                        f'<td style="padding:6px 8px;font-family:monospace;'
+                                        f'color:{_dd_ib_clr};font-weight:700;">{_dd_ib_str}</td>'
+                                    )
                                 # Optional R columns
                                 _dd_eod_r_cell = ""
                                 if _dd_show_eod_r:
@@ -13426,6 +13454,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f'<td style="padding:6px 8px;">{_html.escape(_dd_eod)}</td>'
                                     f'<td style="padding:6px 8px;">{_html.escape(_dd_ft_str)}</td>'
                                     f'<td style="padding:6px 8px;color:{_dd_wl_clr};font-weight:700;">{_html.escape(_dd_wl)}</td>'
+                                    + _dd_ib_pct_cell
                                     + _dd_eod_r_cell
                                     + _dd_tiered_r_cell
                                     + _dd_delta_r_cell
@@ -13437,6 +13466,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f'</tr>'
                                 )
                             _dd_extra_headers = ""
+                            if _dd_show_ib_pct:
+                                _dd_extra_headers += '<th style="padding:4px 8px;text-align:left;">IB Width %</th>'
                             if _dd_show_eod_r:
                                 _dd_extra_headers += '<th style="padding:4px 8px;text-align:left;">EOD Hold R</th>'
                             if _dd_show_tiered_r:
@@ -13514,7 +13545,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 c for c in _tk_drill_display.columns
                                 if c in _csv_default_cols
                                 or c in ["Ticker", "Open Price", "IB High",
-                                         "IB Low", "False Break Up", "False Break Down"]
+                                         "IB Low", "IB Width %",
+                                         "False Break Up", "False Break Down"]
                             ]
                             _csv_ms_key = f"csv_cols_{_tk_name}_{_tk_drill_floor}"
                             import streamlit.components.v1 as _cmp_csv_write
@@ -13867,9 +13899,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
         unsafe_allow_html=True,
     )
 
-    _BT_COLS  = [0.55, 0.6, 0.65, 0.75, 0.55, 1.1, 1.2, 1.0, 0.75, 0.45, 0.55]
+    _bt_ib_threshold = _cached_load_ib_range_pct_threshold()
+    _bt_has_ib_pct = any(
+        _r.get("ib_range_pct") is not None
+        for _r in _results
+    )
+    if _bt_has_ib_pct:
+        st.caption(
+            f"IB range % active threshold: **{_bt_ib_threshold:.1f}%** — "
+            f"green = pass (below threshold), orange = near threshold (within 20%), "
+            f"red = filtered out (at or above threshold)"
+        )
+
+    _BT_COLS  = [0.55, 0.6, 0.65, 0.75, 0.55, 1.1, 1.2, 1.0, 0.75, 0.65, 0.45, 0.55]
     _BT_HDRS  = ["Date", "Ticker", "Open", "IB Range", "TCS", "Morning Prediction",
-                 "EOD Reality", "Close", "Follow-Thru", "⚠", "Result"]
+                 "EOD Reality", "Close", "Follow-Thru", "IB Width %", "⚠", "Result"]
+    if not _bt_has_ib_pct:
+        _BT_COLS = [0.55, 0.6, 0.65, 0.75, 0.55, 1.1, 1.2, 1.0, 0.75, 0.45, 0.55]
+        _BT_HDRS = ["Date", "Ticker", "Open", "IB Range", "TCS", "Morning Prediction",
+                    "EOD Reality", "Close", "Follow-Thru", "⚠", "Result"]
 
     _hdr_row = st.columns(_BT_COLS)
     for _col, _lbl in zip(_hdr_row, _BT_HDRS):
@@ -13965,19 +14013,55 @@ Measures how accurately the 7-structure framework classified those days in hinds
         elif _r.get("false_break_down"):
             _fb_icon = '<span title="False bearish break — reversed within 30 min" ' \
                        'style="color:#ffa726; font-size:14px;">⚠↓</span>'
-        _row[9].markdown(
-            f'<div style="background:{_row_bg}; padding:10px 4px; text-align:center;">'
-            f'{_fb_icon}</div>',
-            unsafe_allow_html=True,
-        )
-        _row[10].markdown(
-            f'<div style="background:{_row_bg}; padding:8px 6px;">'
-            f'<span style="background:{_wl_clr}22; color:{_wl_clr}; '
-            f'font-size:11px; font-weight:800; padding:3px 10px; border-radius:10px; '
-            f'border:1px solid {_wl_clr}55; text-transform:uppercase;">'
-            f'{_wl}</span></div>',
-            unsafe_allow_html=True,
-        )
+        if _bt_has_ib_pct:
+            _bt_ib_raw = _r.get("ib_range_pct")
+            try:
+                if _bt_ib_raw is None:
+                    raise ValueError("missing")
+                _bt_ib_val = float(_bt_ib_raw)
+                if _bt_ib_val < _bt_ib_threshold:
+                    _bt_ib_clr = "#66bb6a"
+                elif _bt_ib_val < _bt_ib_threshold * 1.2:
+                    _bt_ib_clr = "#ff9800"
+                else:
+                    _bt_ib_clr = "#ef5350"
+                _bt_ib_str = f"{_bt_ib_val:.2f}%"
+            except (TypeError, ValueError):
+                _bt_ib_clr = "#546e7a"
+                _bt_ib_str = "—"
+            _row[9].markdown(
+                f'<div style="background:{_row_bg}; padding:10px 6px; '
+                f'font-size:11px; font-weight:700; color:{_bt_ib_clr}; font-family:monospace;">'
+                f'{_bt_ib_str}</div>',
+                unsafe_allow_html=True,
+            )
+            _row[10].markdown(
+                f'<div style="background:{_row_bg}; padding:10px 4px; text-align:center;">'
+                f'{_fb_icon}</div>',
+                unsafe_allow_html=True,
+            )
+            _row[11].markdown(
+                f'<div style="background:{_row_bg}; padding:8px 6px;">'
+                f'<span style="background:{_wl_clr}22; color:{_wl_clr}; '
+                f'font-size:11px; font-weight:800; padding:3px 10px; border-radius:10px; '
+                f'border:1px solid {_wl_clr}55; text-transform:uppercase;">'
+                f'{_wl}</span></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            _row[9].markdown(
+                f'<div style="background:{_row_bg}; padding:10px 4px; text-align:center;">'
+                f'{_fb_icon}</div>',
+                unsafe_allow_html=True,
+            )
+            _row[10].markdown(
+                f'<div style="background:{_row_bg}; padding:8px 6px;">'
+                f'<span style="background:{_wl_clr}22; color:{_wl_clr}; '
+                f'font-size:11px; font-weight:800; padding:3px 10px; border-radius:10px; '
+                f'border:1px solid {_wl_clr}55; text-transform:uppercase;">'
+                f'{_wl}</span></div>',
+                unsafe_allow_html=True,
+            )
         st.markdown(
             '<div style="border-bottom:1px solid #060f18; margin:0;"></div>',
             unsafe_allow_html=True,
