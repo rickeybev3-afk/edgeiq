@@ -376,6 +376,49 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
 
 st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layout="wide")
 
+# ── Global feed-sync listener (BroadcastChannel) ──────────────────────────────
+# Installs a single BroadcastChannel listener on window.parent so that when any
+# section broadcasts a feed change, all other sections' URL params are updated
+# and the page reloads — keeping the choice in sync across sections and tabs.
+import streamlit.components.v1 as _cmp_feed_sync
+_cmp_feed_sync.html("""
+<script>
+(function() {
+    var _p = window.parent;
+    if (_p._edgeiqFeedSyncInstalled) return;
+    _p._edgeiqFeedSyncInstalled = true;
+    try {
+        var _bc = new _p.BroadcastChannel('edgeiq_feed_sync');
+        _bc.onmessage = function(e) {
+            var feed = e.data && e.data.feed;
+            if (feed !== 'sip' && feed !== 'iex') return;
+            var ptFeed = feed === 'sip' ? 'SIP (paid \u2014 accurate)' : 'IEX (free \u2014 limited)';
+            var url = new URL(_p.location.href);
+            url.searchParams.set('hist_scan_feed', feed);
+            url.searchParams.set('replay_scan_feed', feed);
+            url.searchParams.set('live_scan_feed', feed);
+            url.searchParams.set('scan_feed', feed);
+            url.searchParams.set('pat_scan_feed', feed);
+            url.searchParams.set('bt_batch_feed', feed);
+            url.searchParams.set('wpe_feed', feed);
+            url.searchParams.set('pt_feed', ptFeed);
+            localStorage.setItem('edgeiq_feed', feed);
+            localStorage.setItem('global_default_feed', feed);
+            localStorage.setItem('hist_scan_feed', feed);
+            localStorage.setItem('replay_feed_sel', feed);
+            localStorage.setItem('live_scan_feed', feed);
+            localStorage.setItem('scan_feed_select', feed);
+            localStorage.setItem('pat_scan_feed', feed);
+            localStorage.setItem('bt_feed_select', feed);
+            localStorage.setItem('wpe_feed_select', feed);
+            localStorage.setItem('pt_feed', ptFeed);
+            _p.location.replace(url.toString());
+        };
+    } catch(e) {}
+})();
+</script>
+""", height=0)
+
 # ── Startup / configuration error banner ──────────────────────────────────────
 # _startup_errors is populated at import time in backend.py and surfaced here
 # so operators see misconfigured secrets immediately instead of silent failures.
@@ -5562,8 +5605,7 @@ with st.sidebar:
     var _LS_KEY = 'hist_scan_feed';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('hist_scan_feed')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
+    var saved = localStorage.getItem(_LS_KEY) || localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
     if (!saved) return;
     url.searchParams.set('hist_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5582,7 +5624,7 @@ with st.sidebar:
         if st.query_params.get("hist_scan_feed") != data_feed:
             st.query_params["hist_scan_feed"] = data_feed
         _cmp_hist_feed.html(
-            f"<script>localStorage.setItem('hist_scan_feed', {repr(data_feed)});</script>",
+            f"<script>(function(){{var _f={repr(data_feed)};localStorage.setItem('hist_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
         run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
@@ -5604,8 +5646,7 @@ with st.sidebar:
     var _LS_KEY = 'replay_feed_sel';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('replay_scan_feed')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
+    var saved = localStorage.getItem(_LS_KEY) || localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
     if (!saved) return;
     url.searchParams.set('replay_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5624,7 +5665,7 @@ with st.sidebar:
         if st.query_params.get("replay_scan_feed") != data_feed:
             st.query_params["replay_scan_feed"] = data_feed
         _cmp_replay_scan_feed.html(
-            f"<script>localStorage.setItem('replay_feed_sel', {repr(data_feed)});</script>",
+            f"<script>(function(){{var _f={repr(data_feed)};localStorage.setItem('replay_feed_sel',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
         replay_load = st.button("📥 Load Day for Replay", use_container_width=True, type="primary")
@@ -5700,8 +5741,7 @@ with st.sidebar:
     var _LS_KEY = 'live_scan_feed';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('live_scan_feed')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
+    var saved = localStorage.getItem(_LS_KEY) || localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
     if (!saved) return;
     url.searchParams.set('live_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5720,7 +5760,7 @@ with st.sidebar:
         if st.query_params.get("live_scan_feed") != live_feed:
             st.query_params["live_scan_feed"] = live_feed
         _cmp_live_feed.html(
-            f"<script>localStorage.setItem('live_scan_feed', {repr(live_feed)});</script>",
+            f"<script>(function(){{var _f={repr(live_feed)};localStorage.setItem('live_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
         if not st.session_state.live_active:
@@ -5927,8 +5967,7 @@ with st.sidebar:
     var _LS_KEY = 'scan_feed_select';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('scan_feed')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
+    var saved = localStorage.getItem(_LS_KEY) || localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
     if (!saved) return;
     url.searchParams.set('scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -5947,7 +5986,7 @@ with st.sidebar:
     if st.query_params.get("scan_feed") != scan_feed:
         st.query_params["scan_feed"] = scan_feed
     _cmp_scan_feed.html(
-        f"<script>localStorage.setItem('scan_feed_select', {repr(scan_feed)});</script>",
+        f"<script>(function(){{var _f={repr(scan_feed)};localStorage.setItem('scan_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
     )
     if scan_feed == "iex":
@@ -13697,8 +13736,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
     var _LS_KEY = 'pat_scan_feed';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('pat_scan_feed')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
+    var saved = localStorage.getItem(_LS_KEY) || localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
     if (!saved) return;
     url.searchParams.set('pat_scan_feed', saved);
     window.parent.location.replace(url.toString());
@@ -13720,7 +13758,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
     if st.query_params.get("pat_scan_feed") != _pat_scan_feed:
         st.query_params["pat_scan_feed"] = _pat_scan_feed
     _cmp_pat_feed.html(
-        f"<script>localStorage.setItem('pat_scan_feed', {repr(_pat_scan_feed)});</script>",
+        f"<script>(function(){{var _f={repr(_pat_scan_feed)};localStorage.setItem('pat_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
     )
 
@@ -13954,8 +13992,7 @@ def render_tracker_tab():
     var _LS_KEY = 'bt_feed_select';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('bt_batch_feed')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
+    var saved = localStorage.getItem(_LS_KEY) || localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
     if (!saved) return;
     url.searchParams.set('bt_batch_feed', saved);
     window.parent.location.replace(url.toString());
@@ -13976,7 +14013,7 @@ def render_tracker_tab():
         if st.query_params.get("bt_batch_feed") != _bt_feed:
             st.query_params["bt_batch_feed"] = _bt_feed
         _cmp_bt_batch_feed.html(
-            f"<script>localStorage.setItem('bt_feed_select', {repr(_bt_feed)});</script>",
+            f"<script>(function(){{var _f={repr(_bt_feed)};localStorage.setItem('bt_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
         _bt_run = st.button("▶ Run Batch Backtest", type="primary",
@@ -19177,10 +19214,11 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     var _LS_KEY = 'pt_feed';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('pt_feed')) return;
+    var shared = localStorage.getItem('edgeiq_feed');
     var saved = localStorage.getItem(_LS_KEY);
     if (!saved) {
-        var gdf = localStorage.getItem('global_default_feed');
-        if (gdf) saved = (gdf === 'sip') ? 'SIP (paid \u2014 accurate)' : 'IEX (free \u2014 limited)';
+        var shared2 = localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
+        if (shared2) saved = (shared2 === 'sip') ? 'SIP (paid — accurate)' : 'IEX (free — limited)';
     }
     if (!saved) return;
     url.searchParams.set('pt_feed', saved);
@@ -19209,11 +19247,11 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         if st.query_params.get("pt_feed") != _pt_feed:
             st.query_params["pt_feed"] = _pt_feed
+        _pt_feed_str = "sip" if "SIP" in _pt_feed else "iex"
         _cmp_pt_feed.html(
-            f"<script>localStorage.setItem('pt_feed', {repr(_pt_feed)});</script>",
+            f"<script>(function(){{var _f={repr(_pt_feed_str)};localStorage.setItem('pt_feed',{repr(_pt_feed)});if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
-        _pt_feed_str = "sip" if "SIP" in _pt_feed else "iex"
     with _pt_c3:
         _pt_min_tcs = st.slider(
             "Min TCS Filter",
@@ -20916,8 +20954,7 @@ with tab_scan:
     var _LS_KEY = 'wpe_feed_select';
     var url = new URL(window.parent.location.href);
     if (url.searchParams.has('wpe_feed')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) { var gdf = localStorage.getItem('global_default_feed'); if (gdf) saved = gdf; }
+    var saved = localStorage.getItem(_LS_KEY) || localStorage.getItem('edgeiq_feed') || localStorage.getItem('global_default_feed');
     if (!saved) return;
     url.searchParams.set('wpe_feed', saved);
     window.parent.location.replace(url.toString());
@@ -20936,7 +20973,7 @@ with tab_scan:
     if st.query_params.get("wpe_feed") != _wpe_feed:
         st.query_params["wpe_feed"] = _wpe_feed
     _cmp_wpe_feed.html(
-        f"<script>localStorage.setItem('wpe_feed_select', {repr(_wpe_feed)});</script>",
+        f"<script>(function(){{var _f={repr(_wpe_feed)};localStorage.setItem('wpe_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
     )
     _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
