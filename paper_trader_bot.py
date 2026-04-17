@@ -2046,6 +2046,45 @@ def nightly_recalibration():
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
+def _ensure_alpaca_columns() -> bool:
+    """Add alpaca tracking columns to paper_trades if they are missing.
+
+    Uses a SELECT probe to detect missing columns; logs the migration SQL and
+    returns False if columns need to be added manually via Supabase SQL Editor.
+    Returns True if all columns are present (or on any unexpected error — don't
+    block startup over tracking columns).
+    """
+    if not _supabase_client:
+        return True
+    try:
+        _supabase_client.table("paper_trades").select(
+            "alpaca_order_id, alpaca_qty, order_placed_at, alpaca_fill_price"
+        ).limit(1).execute()
+        log.info("Alpaca order-tracking columns present ✅")
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if "column" in err or "does not exist" in err or "42703" in err:
+            log.warning(
+                "\n"
+                "══════════════════════════════════════════════════════════\n"
+                "  Alpaca tracking columns are MISSING in paper_trades.\n"
+                "  Orders will still be placed — tracking just won't be logged.\n"
+                "  To enable full tracking, go to Supabase → SQL Editor → run:\n\n"
+                "  ALTER TABLE paper_trades\n"
+                "    ADD COLUMN IF NOT EXISTS alpaca_order_id   TEXT,\n"
+                "    ADD COLUMN IF NOT EXISTS alpaca_qty        INTEGER,\n"
+                "    ADD COLUMN IF NOT EXISTS order_placed_at   TEXT,\n"
+                "    ADD COLUMN IF NOT EXISTS alpaca_fill_price REAL;\n\n"
+                "  Then restart the Paper Trader Bot workflow.\n"
+                "══════════════════════════════════════════════════════════"
+            )
+            return False
+        # Unknown error — don't block startup
+        log.debug(f"_ensure_alpaca_columns check: {e}")
+        return True
+
+
 def main():
     log.info("EdgeIQ Paper Trader Bot starting up...")
 
@@ -2092,6 +2131,21 @@ def main():
             "══════════════════════════════════════════════════════════"
         )
         return
+
+    # Ensure Alpaca order-tracking columns exist in paper_trades
+    _ensure_alpaca_columns()
+
+    # Log Alpaca activation status clearly
+    acct_label = "PAPER (Alpaca paper-api)" if IS_PAPER_ALPACA else "⚠️  LIVE (real money)"
+    if LIVE_ORDERS_ENABLED:
+        log.info(f"Alpaca order placement: ENABLED ✅  [{acct_label}]")
+        tg_send(
+            f"🟢 <b>EdgeIQ Paper Trader Bot started</b>\n"
+            f"Alpaca bracket orders: <b>ACTIVE [{acct_label}]</b>\n"
+            f"Next scan: 10:47 AM ET (morning IB close)"
+        )
+    else:
+        log.info("Alpaca order placement: DISABLED (LIVE_ORDERS_ENABLED=false) — scanning/alerting only")
 
     # Ensure trade_journal has Telegram-logging columns
     ensure_telegram_columns()
