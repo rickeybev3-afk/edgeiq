@@ -4963,6 +4963,24 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
+    _last_check_ts = get_runtime_last_check_ts()
+    if _last_check_ts > 0.0:
+        _lc_elapsed_s = time.monotonic() - _last_check_ts
+        if _lc_elapsed_s < 60:
+            _lc_age_label = "just now"
+        elif _lc_elapsed_s < 3600:
+            _lc_age_label = f"{int(_lc_elapsed_s // 60)} min ago"
+        else:
+            _lc_age_label = f"{int(_lc_elapsed_s // 3600)} hr ago"
+        if _runtime_credential_errors:
+            _lc_n_errs = len(_runtime_credential_errors)
+            _lc_err_word = "error" if _lc_n_errs == 1 else "errors"
+            st.caption(f"Last checked: {_lc_age_label} — {_lc_n_errs} {_lc_err_word}")
+        else:
+            st.caption(f"Last checked: {_lc_age_label} — all OK ✅")
+    else:
+        st.caption("Last checked: not yet run")
+
     st.header("🔑 Alpaca Credentials")
     api_key = st.text_input(
         "API Key", type="password", placeholder="Alpaca API Key",
