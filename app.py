@@ -17038,6 +17038,14 @@ ALTER TABLE backtest_sim_runs
                 "Stable For": _bw_stability_map.get(_k, "—"),
             })
 
+    def _bw_stable_sort_key(row):
+        try:
+            return int(str(row["Stable For"]).replace("≥", "").replace("d", "").strip())
+        except Exception:
+            return -1
+
+    _bw_rows.sort(key=_bw_stable_sort_key, reverse=True)
+
     if _bw_rows:
         _bw_display = pd.DataFrame(_bw_rows)
 
