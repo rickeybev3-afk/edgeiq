@@ -7815,6 +7815,8 @@ def run_pending_migrations() -> dict:
         # vwap_at_ib   = VWAP of 5-min bars up to IB close; injected by log_context_levels
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS ib_range_pct REAL",
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS vwap_at_ib REAL",
+        # Data quality flag — 'ok' when intraday bars were available, 'no_bars' when not
+        "ALTER TABLE backtest_context_levels ADD COLUMN IF NOT EXISTS data_quality TEXT DEFAULT 'ok'",
     ]
 
     ran = 0

@@ -339,6 +339,9 @@ def main():
             if not intraday:
                 log.warning(f'  \u26a0 {ticker} {trade_date} no intraday bars \u2014 all context columns will be NULL')
                 total_no_bars += 1
+                data_quality = 'no_bars'
+            else:
+                data_quality = 'ok'
 
             bars_at_signal = bars_up_to_signal(intraday, trade_date, scan_type)
 
@@ -365,6 +368,7 @@ def main():
                 'ticker':             ticker,
                 'trade_date':         trade_date,
                 'scan_type':          scan_type,
+                'data_quality':       data_quality,
                 'prev_day_high':      prev.get('high'),
                 'prev_day_low':       prev.get('low'),
                 'premarket_high':     None,   # IEX feed: no pre-market data
