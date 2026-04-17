@@ -4983,8 +4983,45 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     )
     _qs_c1, _qs_c2, _qs_c3 = st.columns([1.5, 1, 1])
     with _qs_c1:
-        _pb_feed = st.radio("Bar data feed", ["SIP (recommended)", "IEX (free)"],
-                            horizontal=True, key="playbook_feed_radio")
+        # ── Restore playbook feed from localStorage (cross-session) ───────────
+        import streamlit.components.v1 as _cmp_pb_feed
+        _cmp_pb_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'playbook_feed_radio';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('pb_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('pb_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _PB_FEED_OPTIONS = ["SIP (recommended)", "IEX (free)"]
+        if "playbook_feed_radio" not in st.session_state:
+            _qp_pb_feed = st.query_params.get("pb_feed", "SIP (recommended)")
+            st.session_state["playbook_feed_radio"] = (
+                _qp_pb_feed if _qp_pb_feed in _PB_FEED_OPTIONS else "SIP (recommended)"
+            )
+        _pb_feed = st.radio(
+            "Bar data feed",
+            _PB_FEED_OPTIONS,
+            index=_PB_FEED_OPTIONS.index(
+                st.session_state.get("playbook_feed_radio", "SIP (recommended)")
+                if st.session_state.get("playbook_feed_radio", "SIP (recommended)") in _PB_FEED_OPTIONS
+                else "SIP (recommended)"
+            ),
+            horizontal=True,
+            key="playbook_feed_radio",
+        )
+        _qp_pb_feed_cur = st.query_params.get("pb_feed")
+        if _qp_pb_feed_cur != _pb_feed:
+            st.query_params["pb_feed"] = _pb_feed
+        _cmp_pb_feed.html(
+            f"<script>localStorage.setItem('playbook_feed_radio', {repr(_pb_feed)});</script>",
+            height=0,
+        )
         _pb_feed_str = "iex" if "IEX" in _pb_feed else "sip"
     with _qs_c2:
         _pb_max_score = st.number_input("Max tickers to score", min_value=5, max_value=100,
@@ -5519,9 +5556,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
             value=5, step=1, key="cal_lookback_days",
             help="1 day = yesterday only. 5 = last full week. 22 = ~1 month."
         )
+        # ── Restore cal feed from localStorage (cross-session) ───────────────
+        import streamlit.components.v1 as _cmp_cal_feed
+        _cmp_cal_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'cal_feed_radio';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('cal_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('cal_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _CAL_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free)"]
+        if "cal_feed_radio" not in st.session_state:
+            _qp_cal_feed = st.query_params.get("cal_feed", "SIP (paid — accurate)")
+            st.session_state["cal_feed_radio"] = (
+                _qp_cal_feed if _qp_cal_feed in _CAL_FEED_OPTIONS else "SIP (paid — accurate)"
+            )
         _cal_feed = st.radio(
-            "Feed", ["SIP (paid — accurate)", "IEX (free)"],
-            key="cal_feed_radio", horizontal=True,
+            "Feed",
+            _CAL_FEED_OPTIONS,
+            index=_CAL_FEED_OPTIONS.index(
+                st.session_state.get("cal_feed_radio", "SIP (paid — accurate)")
+                if st.session_state.get("cal_feed_radio", "SIP (paid — accurate)") in _CAL_FEED_OPTIONS
+                else "SIP (paid — accurate)"
+            ),
+            key="cal_feed_radio",
+            horizontal=True,
+        )
+        _qp_cal_feed_cur = st.query_params.get("cal_feed")
+        if _qp_cal_feed_cur != _cal_feed:
+            st.query_params["cal_feed"] = _cal_feed
+        _cmp_cal_feed.html(
+            f"<script>localStorage.setItem('cal_feed_radio', {repr(_cal_feed)});</script>",
+            height=0,
         )
         _cal_feed_str = "sip" if "SIP" in _cal_feed else "iex"
         _cal_confirmed = st.checkbox(
@@ -5611,9 +5683,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
             help="Select any past trading day. Weekends/holidays will return no data.",
         )
     with _bt_col2:
+        # ── Restore backtest feed from localStorage (cross-session) ───────────
+        import streamlit.components.v1 as _cmp_bt_feed
+        _cmp_bt_feed.html("""
+<script>
+(function() {
+    var _LS_KEY = 'bt_feed_radio';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('bt_feed')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (!saved) return;
+    url.searchParams.set('bt_feed', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+        _BT_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
+        if "bt_feed_radio" not in st.session_state:
+            _qp_bt_feed = st.query_params.get("bt_feed", "SIP (paid — accurate)")
+            st.session_state["bt_feed_radio"] = (
+                _qp_bt_feed if _qp_bt_feed in _BT_FEED_OPTIONS else "SIP (paid — accurate)"
+            )
         _bt_feed = st.radio(
-            "Bar Data Feed", ["SIP (paid — accurate)", "IEX (free — limited)"],
-            key="bt_feed_radio", horizontal=True,
+            "Bar Data Feed",
+            _BT_FEED_OPTIONS,
+            index=_BT_FEED_OPTIONS.index(
+                st.session_state.get("bt_feed_radio", "SIP (paid — accurate)")
+                if st.session_state.get("bt_feed_radio", "SIP (paid — accurate)") in _BT_FEED_OPTIONS
+                else "SIP (paid — accurate)"
+            ),
+            key="bt_feed_radio",
+            horizontal=True,
+        )
+        _qp_bt_feed_cur = st.query_params.get("bt_feed")
+        if _qp_bt_feed_cur != _bt_feed:
+            st.query_params["bt_feed"] = _bt_feed
+        _cmp_bt_feed.html(
+            f"<script>localStorage.setItem('bt_feed_radio', {repr(_bt_feed)});</script>",
+            height=0,
         )
         _bt_feed_str = "sip" if "SIP" in _bt_feed else "iex"
     with _bt_col3:
