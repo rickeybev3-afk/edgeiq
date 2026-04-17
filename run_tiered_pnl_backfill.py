@@ -475,7 +475,12 @@ def _batch_upsert(patches: list[dict]) -> int:
 
 # ── Core backfill — backtest_sim_runs ──────────────────────────────────────────
 
-def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
+def backfill_backtest_sim_runs(
+    dry_run: bool,
+    rate_limit: bool,
+    date_from: str = "",
+    date_to: str = "",
+) -> dict:
     """Backfill tiered_pnl_r for all qualifying backtest_sim_runs rows.
 
     Unlike paper_trades this table has no meaningful user partitioning that
@@ -487,6 +492,11 @@ def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
     filter so the outer loop always terminates.
 
     Note: the date column is named sim_date (not trade_date) in this table.
+
+    date_from / date_to: optional ISO date strings (YYYY-MM-DD) that scope the
+    backfill to a specific sim_date window.  When supplied, only rows whose
+    sim_date falls within [date_from, date_to] are processed.  This avoids
+    scanning the entire table after a targeted batch backtest run.
     """
     stats = {
         "fetched": 0,
@@ -527,6 +537,10 @@ def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
                 .not_.is_("ib_high", "null")
                 .not_.is_("ib_low", "null")
             )
+            if date_from:
+                q = q.gte("sim_date", date_from)
+            if date_to:
+                q = q.lte("sim_date", date_to)
             if skipped_ids:
                 q = q.not_.in_("id", skipped_ids)
             resp = q.limit(PAGE_SZ).execute()

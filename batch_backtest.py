@@ -29,6 +29,7 @@ Usage:
   python batch_backtest.py --dry-run                      # skip Supabase save
   python batch_backtest.py --gap 5.0                      # 5% gap minimum
   python batch_backtest.py --user-id <supabase_id>        # scope to specific user
+  python batch_backtest.py --skip-post-backfill           # skip automatic tiered P&L backfill after save
 
 SQL required in Supabase (run once):
   ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS scan_type TEXT DEFAULT 'morning';
@@ -48,6 +49,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s  %(message)s")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
+from run_tiered_pnl_backfill import backfill_backtest_sim_runs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -893,6 +895,11 @@ def main():
     parser.add_argument("--batch",      type=int,   default=50,   help="Ticker batch size for daily bars (default: 50)")
     parser.add_argument("--dry-run",    action="store_true",      help="Skip Supabase save (test mode)")
     parser.add_argument("--user-id",    type=str,   default="",   help="Supabase user_id for data scoping")
+    parser.add_argument(
+        "--skip-post-backfill",
+        action="store_true",
+        help="Skip the automatic tiered P&L backfill that runs after rows are saved (use nightly refresh instead)",
+    )
     args = parser.parse_args()
 
     api_key    = os.environ.get("ALPACA_API_KEY", "")
@@ -1184,6 +1191,33 @@ def main():
             print("  ✓ tcs_thresholds.json updated — bot will use fresh cutoffs.\n")
         except Exception as _rc_err:
             print(f"  ⚠ Recalibration failed (non-fatal): {_rc_err}\n")
+
+        # ── Targeted tiered P&L backfill for the just-processed date window ──
+        # Rows inserted above may have tiered_pnl_r=NULL if the Alpaca bars
+        # fetch inside _analyze_at_cutoff returned fewer than 5 bars or the
+        # schema-error fallback path was triggered.  Running backfill_backtest_
+        # sim_runs() scoped to [start_date, end_date] closes this gap without
+        # rescanning the entire table.
+        if not args.skip_post_backfill:
+            print("  Running targeted tiered P&L backfill for this date window...")
+            try:
+                bstats = backfill_backtest_sim_runs(
+                    dry_run=False,
+                    rate_limit=True,
+                    date_from=str(start_date),
+                    date_to=str(end_date),
+                )
+                print(
+                    f"  ✓ Tiered P&L backfill complete — "
+                    f"{bstats['updated']} row(s) updated, "
+                    f"{bstats['skipped_no_bars']} skipped (no bars), "
+                    f"{bstats['errors']} error(s).\n"
+                )
+            except Exception as _bf_err:
+                print(f"  ⚠ Tiered P&L backfill failed (non-fatal): {_bf_err}\n")
+        else:
+            print("  Post-backfill skipped (--skip-post-backfill). "
+                  "Nightly refresh will handle any remaining NULLs.\n")
 
     print()
 
