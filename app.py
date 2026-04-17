@@ -8225,6 +8225,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 for _os_lbl, _os_val in _OPT_SCAN_BUCKETS:
                     for _ofloor in _OPT_TCS_FLOORS:
                         _combo_pnls: list = []
+                        _combo_marg_pnls: list = []
                         for _or in _opt_rows:
                             if _os_val and _or.get("scan_type") != _os_val:
                                 continue
@@ -8244,6 +8245,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             else:
                                 continue
                             _combo_pnls.append(_opnl)
+                            _otcs_val = float(_or.get("tcs") or 0)
+                            if _ofloor <= _otcs_val <= _ofloor + 5:
+                                _combo_marg_pnls.append(_opnl)
 
                         _on = len(_combo_pnls)
                         if _on < int(_opt_min_trades):
@@ -8255,6 +8259,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _oavgl   = sum(v for v in _combo_pnls if v < 0) / _olosses if _olosses else 0
                         _oexp    = sum(_combo_pnls) / _on
                         _ototr   = sum(_combo_pnls)
+                        _omarg_n    = len(_combo_marg_pnls)
+                        _omarg_wins = sum(1 for v in _combo_marg_pnls if v > 0)
+                        _omarg_wr   = round(_omarg_wins / _omarg_n * 100, 1) if _omarg_n else None
+                        _omarg_avgr = round(sum(_combo_marg_pnls) / _omarg_n, 2) if _omarg_n else None
                         _ocum    = 0.0
                         _opeak   = 0.0
                         _omaxdd  = 0.0
@@ -8275,6 +8283,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Expectancy":   round(_oexp, 3),
                             "Total R":      round(_ototr, 1),
                             "Max DD (R)":   round(_omaxdd, 2),
+                            "Marg Trades":  _omarg_n,
+                            "Marg WR %":    _omarg_wr,
+                            "Marg Avg R":   _omarg_avgr,
                         })
                         _combo_pnls_map[(_os_lbl, _ofloor)] = list(_combo_pnls)
 
@@ -8287,6 +8298,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _opt_all_cols = [
                         "Scan Type", "Min TCS", "Win Rate %", "Trades",
                         "Avg Win (R)", "Avg Loss (R)", "Expectancy", "Total R", "Max DD (R)",
+                        "Marg Trades", "Marg WR %", "Marg Avg R",
                     ]
                     _opt_asc_defaults = {"Max DD (R)", "Min TCS"}
 
@@ -8351,6 +8363,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         if _opt_sort_col == "Avg Loss (R)"
                         else f"TCS ≥ {_opt_best['Min TCS']}"
                         if _opt_sort_col == "Min TCS"
+                        else f"{int(_opt_best['Marg Trades'])} marginal trades"
+                        if _opt_sort_col == "Marg Trades"
+                        else (f"{_opt_best['Marg WR %']}% marginal WR" if _opt_best['Marg WR %'] is not None and str(_opt_best['Marg WR %']) != 'nan' else "— marginal WR")
+                        if _opt_sort_col == "Marg WR %"
+                        else (f"{_opt_best['Marg Avg R']:+.2f}R marginal avg R" if _opt_best['Marg Avg R'] is not None and str(_opt_best['Marg Avg R']) != 'nan' else "— marginal avg R")
+                        if _opt_sort_col == "Marg Avg R"
                         else f"{_opt_best['Scan Type']}"
                     )
                     st.markdown(
