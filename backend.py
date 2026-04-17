@@ -8871,6 +8871,80 @@ def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False) -> 
     return stats
 
 
+def recompute_eod_pnl_for_filled_rows(user_id: str = "") -> dict:
+    """Recompute eod_pnl_r for backtest_sim_runs rows that now have a close_price
+    but are still missing eod_pnl_r.
+
+    Called immediately after run_close_price_backfill_batch() fills in close prices
+    so the dashboard reflects up-to-date EOD P&L without requiring a separate
+    run_sim_backfill.py run.
+
+    Only processes rows with a known direction (Bullish/Bearish Break) and valid
+    IB range — the same prerequisites used by compute_trade_sim_tiered().
+
+    Returns a dict with keys:
+      recomputed – number of rows successfully updated with eod_pnl_r
+      skipped    – rows processed but not updated (bad data / compute returned None)
+      errors     – write errors encountered
+    """
+    PAGE_SZ = 1000
+    MAX_WORKERS = 20
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    stats = {"recomputed": 0, "skipped": 0, "errors": 0}
+
+    if not supabase:
+        stats["errors"] = 1
+        return stats
+
+    rows, offset = [], 0
+    while True:
+        q = (
+            supabase.table("backtest_sim_runs")
+            .select("id,actual_outcome,ib_high,ib_low,close_price")
+            .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+            .is_("eod_pnl_r", "null")
+            .not_.is_("close_price", "null")
+            .not_.is_("ib_high", "null")
+            .not_.is_("ib_low", "null")
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        chunk = q.range(offset, offset + PAGE_SZ - 1).execute().data or []
+        rows.extend(chunk)
+        if len(chunk) < PAGE_SZ:
+            break
+        offset += PAGE_SZ
+
+    def _compute_and_write(row):
+        result = compute_trade_sim_tiered(
+            aft_df=None,
+            ib_high=row.get("ib_high"),
+            ib_low=row.get("ib_low"),
+            direction=row.get("actual_outcome", ""),
+            close_px=row.get("close_price"),
+        )
+        eod = result.get("eod_pnl_r")
+        if eod is None:
+            return "skipped"
+        supabase.table("backtest_sim_runs").update(
+            {"eod_pnl_r": eod}
+        ).eq("id", row["id"]).execute()
+        return "recomputed"
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = {pool.submit(_compute_and_write, r): r["id"] for r in rows}
+        for fut in as_completed(futures):
+            try:
+                outcome = fut.result()
+                stats[outcome] += 1
+            except Exception as e:
+                print(f"recompute_eod_pnl_for_filled_rows write error: {e}")
+                stats["errors"] += 1
+
+    return stats
+
+
 def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = False,
                                        user_id: str = "",
                                        exclude_ids: list | None = None) -> dict:

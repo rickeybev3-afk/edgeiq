@@ -16259,14 +16259,30 @@ ALTER TABLE backtest_sim_runs
                         "Check that ALPACA_API_KEY and ALPACA_SECRET_KEY are set."
                     )
                 else:
+                    _eod_recomputed = 0
+                    _eod_errors = 0
+                    if _cp_filled > 0:
+                        with st.spinner("Recomputing EOD P&L for newly filled rows…"):
+                            _eod_result = recompute_eod_pnl_for_filled_rows(user_id=_AUTH_USER_ID)
+                        _eod_recomputed = _eod_result.get("recomputed", 0)
+                        _eod_errors = _eod_result.get("errors", 0)
                     _still_note = (
                         f"{_cp_still:,} still missing (delisted / no IEX coverage)."
                         if _cp_still else "All rows filled successfully."
                     )
+                    _eod_note = (
+                        f" EOD P&L recomputed for {_eod_recomputed:,} row{'s' if _eod_recomputed != 1 else ''}."
+                        if _eod_recomputed else ""
+                    )
                     st.success(
                         f"Done — {_cp_filled:,} row{'s' if _cp_filled != 1 else ''} filled. "
-                        f"{_still_note}"
+                        f"{_still_note}{_eod_note}"
                     )
+                    if _eod_errors:
+                        st.warning(
+                            f"{_eod_errors} EOD P&L row{'s' if _eod_errors != 1 else ''} could not be "
+                            f"written — check server logs for details."
+                        )
                     st.rerun()
 
     _bt_sim_has_data = (
