@@ -14453,6 +14453,23 @@ ALTER TABLE backtest_sim_runs
         return grid
 
     # ── Date-range filter for SECTION 1c ─────────────────────────────────────
+    # Sync button: copy the Backtest P&L date range into the edge map filter
+    _bts_sync_start = st.session_state.get("bts_dr_start")
+    _bts_sync_end   = st.session_state.get("bts_dr_end")
+    _sync_help = (
+        f"Copy the Backtest P&L date range ({_bts_sync_start or 'any'} → {_bts_sync_end or 'any'}) into the edge map filter"
+        if (_bts_sync_start or _bts_sync_end)
+        else "Copy the Backtest P&L date filter (currently unset — clears edge map dates to all time) into the edge map filter"
+    )
+    if st.button(
+        "⇄ Sync from Backtest P&L",
+        key="grid_sync_bts_dates",
+        help=_sync_help,
+    ):
+        st.session_state["grid_dr_start"] = _bts_sync_start
+        st.session_state["grid_dr_end"]   = _bts_sync_end
+        st.rerun()
+
     _grid_dr_cols = st.columns([1, 1, 4])
     with _grid_dr_cols[0]:
         _grid_start = st.date_input(
