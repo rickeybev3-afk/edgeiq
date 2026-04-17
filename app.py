@@ -59,6 +59,8 @@ from backend import (
     get_runtime_last_healthy_ts,
     compute_r_projection,
     R_PROJECTION_SCENARIOS,
+    _RUNTIME_CHECK_INTERVAL_S,
+    _providers_confirmed_ok,
 )
 
 # ── Cached DB-loader wrappers (ttl=300 s ≈ 5 min) ────────────────────────────
@@ -4649,11 +4651,19 @@ with st.sidebar:
             _cred_age_label = f"{int(_cred_elapsed_s // 60)} min ago"
         else:
             _cred_age_label = f"{int(_cred_elapsed_s // 3600)} hr ago"
+        _cred_interval_min = int(_RUNTIME_CHECK_INTERVAL_S // 60)
+        _cred_providers = sorted(_providers_confirmed_ok) or ["alpaca", "supabase"]
+        _cred_provider_labels = ", ".join(p.capitalize() for p in _cred_providers)
+        _cred_tooltip = (
+            f"Providers checked: {_cred_provider_labels} · "
+            f"Runs every {_cred_interval_min} min · "
+            f"Last healthy: {_cred_age_label}"
+        )
         st.markdown(
             f'<div style="font-size:11px; color:#888; text-align:right; '
-            f'margin-bottom:6px;" '
-            f'title="All credentials last confirmed healthy {_cred_age_label}">'
-            f"🔒 Credentials healthy {_cred_age_label}"
+            f'margin-bottom:6px; cursor:help;" '
+            f'title="{_cred_tooltip}">'
+            f"🔒 Credentials verified {_cred_age_label}"
             f"</div>",
             unsafe_allow_html=True,
         )
