@@ -195,7 +195,11 @@ def stat_card(label, s, active=False):
 # ═════════════════════════════════════════════════════════════════════════════
 
 st.markdown("# 🔬 Filter Simulation")
-st.caption("Historical breakout trades (backtest_sim_runs) — dial filters to see live WR & expectancy")
+st.caption(
+    "Dial the filters below and see instantly how Win Rate and expectancy change "
+    "across your full historical breakout dataset. "
+    "The rightmost card mirrors your live bot settings."
+)
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 all_rows = load_breakout_rows(USER_ID, MAX_ROWS)
@@ -209,22 +213,23 @@ ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1.5, 1.5])
 
 with ctrl_col1:
     tcs_min = st.slider(
-        "TCS minimum", min_value=30, max_value=85, value=50, step=5,
-        help="Minimum TCS score to include a trade"
+        "Min TCS score", min_value=30, max_value=85, value=50, step=5,
+        help="Trade Conviction Score — composite signal strength. 50 = solid floor, 70+ = high-conviction. Higher = fewer but cleaner trades."
     )
 
 with ctrl_col2:
     ib_max = st.slider(
-        "IB range % ceiling", min_value=3.0, max_value=25.0, value=10.0, step=0.5,
-        help="Skip trades where IB range ≥ this % of open price (wide/chaotic IB)"
+        "Max IB range %", min_value=3.0, max_value=25.0, value=10.0, step=0.5,
+        help="Initial Balance range as % of open price. Wide IBs = chaotic structure. 10% is the standard ceiling; lower = tighter, calmer setups."
     )
 
 with ctrl_col3:
-    use_vwap = st.toggle("VWAP alignment", value=True,
-                         help="Require close price on correct VWAP side at IB close")
+    use_vwap = st.toggle("Require VWAP side", value=True,
+                         help="Only take Bullish Breaks where close was above VWAP (and Bearish Breaks below). Removes setups fighting the intraday trend.")
 
 with ctrl_col4:
-    scan_type_filter = st.selectbox("Scan type", ["All", "morning", "intraday"])
+    scan_type_filter = st.selectbox("Scan type", ["All", "morning", "intraday"],
+                                    help="Filter to only morning (pre-10:30) or intraday scans, or show all.")
 
 st.divider()
 
@@ -276,7 +281,7 @@ with fc2:
 with fcc:
     st.markdown('<div class="funnel-arrow"><span>▶</span></div>', unsafe_allow_html=True)
 with fc3:
-    stat_card(f"{'+ VWAP aligned' if use_vwap else '(VWAP off)'} ← LIVE", s3, active=True)
+    stat_card(f"{'+ VWAP aligned' if use_vwap else '(VWAP off)'} — Live Settings", s3, active=True)
 
 # ── Rejection summary ─────────────────────────────────────────────────────────
 rj1 = s0["n"] - s1["n"]
@@ -317,10 +322,10 @@ chart_left, chart_right = st.columns(2)
 with chart_left:
     st.markdown("#### Win-Rate by Filter Layer")
     layers_labels = [
-        "All breakout",
-        f"TCS ≥ {tcs_min}",
+        "Unfiltered",
+        f"TCS >= {tcs_min}",
         f"+ IB < {ib_max:.1f}%",
-        f"{'+ VWAP' if use_vwap else '(VWAP off)'} [LIVE]",
+        f"{'+ VWAP' if use_vwap else '(no VWAP)'} [Live]",
     ]
     layers_wr  = [s0["wr"], s1["wr"], s2["wr"], s3["wr"]]
     layers_exp = [s0["exp"], s1["exp"], s2["exp"], s3["exp"]]
@@ -471,21 +476,21 @@ for tcs_val in [40, 50, 60, 70]:
         if sv["n"] > 0:
             is_current = (tcs_val == tcs_min and ib_val == ib_max)
             summary_data.append({
-                "TCS ≥":     tcs_val,
+                "TCS >=":    tcs_val,
                 "IB < %":    ib_val,
                 "VWAP":      "✅",
                 "WR %":      round(sv["wr"], 1),
                 "Exp R":     round(sv["exp"], 3),
                 "n":         sv["n"],
-                "Active":    "← current" if is_current else "",
+                "":          "▶ current" if is_current else "",
             })
 
 if summary_data:
     df_summary = pd.DataFrame(summary_data)
     st.dataframe(
         df_summary.style.applymap(
-            lambda v: "color: #66bb6a; font-weight:700;" if v == "← current" else "",
-            subset=["Active"]
+            lambda v: "color: #66bb6a; font-weight:700;" if v == "▶ current" else "",
+            subset=[""]
         ),
         use_container_width=True,
         hide_index=True,
