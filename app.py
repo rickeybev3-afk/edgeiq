@@ -10508,6 +10508,80 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         )
                                     else:
                                         _bt_tier_html = ""
+                                    # ── Per-tier Marginal vs Comfortable breakdown ────────
+                                    _bt_marg_html = ""
+                                    if _has_marginal_data and len(_bt_td) > 0:
+                                        _bt_marg_mask2 = (
+                                            (_bt_td["TCS"] - _bt_td["TCS Floor"]).between(0, 5, inclusive="both")
+                                        )
+                                        _bt_marg_df2 = _bt_td[_bt_marg_mask2]
+                                        _bt_comf_df2 = _bt_td[~_bt_marg_mask2]
+                                        _bt_marg_n2  = len(_bt_marg_df2)
+                                        _bt_comf_n2  = len(_bt_comf_df2)
+                                        if _bt_marg_n2 > 0 or _bt_comf_n2 > 0:
+                                            _bt_marg_wr2 = (
+                                                round((_bt_marg_df2["P&L ($)"] > 0).sum() / _bt_marg_n2 * 100, 1)
+                                                if _bt_marg_n2 else None
+                                            )
+                                            _bt_comf_wr2 = (
+                                                round((_bt_comf_df2["P&L ($)"] > 0).sum() / _bt_comf_n2 * 100, 1)
+                                                if _bt_comf_n2 else None
+                                            )
+                                            _bt_marg_avgr2 = (
+                                                round(_bt_marg_df2["R (MFE)"].mean(), 2)
+                                                if (_bt_marg_n2 and "R (MFE)" in _bt_marg_df2.columns)
+                                                else None
+                                            )
+                                            _bt_comf_avgr2 = (
+                                                round(_bt_comf_df2["R (MFE)"].mean(), 2)
+                                                if (_bt_comf_n2 and "R (MFE)" in _bt_comf_df2.columns)
+                                                else None
+                                            )
+                                            _bt_marg_wr_str2   = f"{_bt_marg_wr2}%"         if _bt_marg_wr2   is not None else "—"
+                                            _bt_comf_wr_str2   = f"{_bt_comf_wr2}%"         if _bt_comf_wr2   is not None else "—"
+                                            _bt_marg_avgr_str2 = f"{_bt_marg_avgr2:+.2f}R"  if _bt_marg_avgr2 is not None else "—"
+                                            _bt_comf_avgr_str2 = f"{_bt_comf_avgr2:+.2f}R"  if _bt_comf_avgr2 is not None else "—"
+                                            _bt_marg_wr_col2 = (
+                                                "#2e7d32" if (_bt_marg_wr2 is not None and _bt_marg_wr2 >= 60)
+                                                else ("#ef6c00" if (_bt_marg_wr2 is not None and _bt_marg_wr2 >= 50) else "#c62828")
+                                                if _bt_marg_wr2 is not None else "#90a4ae"
+                                            )
+                                            _bt_comf_wr_col2 = (
+                                                "#2e7d32" if (_bt_comf_wr2 is not None and _bt_comf_wr2 >= 60)
+                                                else ("#ef6c00" if (_bt_comf_wr2 is not None and _bt_comf_wr2 >= 50) else "#c62828")
+                                                if _bt_comf_wr2 is not None else "#90a4ae"
+                                            )
+                                            _bt_marg_pct2 = round(_bt_marg_n2 / len(_bt_td) * 100, 1) if len(_bt_td) else 0
+                                            _bt_dwr2 = (
+                                                f"{round(_bt_marg_wr2 - _bt_comf_wr2, 1):+.1f}pp"
+                                                if (_bt_marg_wr2 is not None and _bt_comf_wr2 is not None) else None
+                                            )
+                                            _bt_dwr_col2 = (
+                                                "#2e7d32" if (_bt_dwr2 is not None and float(_bt_dwr2.replace("pp","")) >= 0)
+                                                else "#c62828"
+                                            ) if _bt_dwr2 is not None else "#90a4ae"
+                                            _bt_marg_html = (
+                                                f'<div style="font-size:10px;color:#90a4ae;margin-top:6px;'
+                                                f'border-top:1px solid #263444;padding-top:5px;text-align:left;">'
+                                                f'<span style="color:#ffb74d;font-weight:600;">Marginal vs Comfortable</span>'
+                                                f'</div>'
+                                                f'<div style="font-size:10px;color:#cfd8dc;text-align:left;line-height:1.7;">'
+                                                f'<span style="color:#90a4ae;">Marginal</span> ({_bt_marg_n2}, {_bt_marg_pct2}%):&nbsp;'
+                                                f'WR <span style="color:{_bt_marg_wr_col2};font-weight:600;">{_bt_marg_wr_str2}</span>'
+                                                f'&nbsp;·&nbsp;'
+                                                f'Avg R <span style="color:#80cbc4;">{_bt_marg_avgr_str2}</span>'
+                                                f'<br>'
+                                                f'<span style="color:#90a4ae;">Comfortable</span> ({_bt_comf_n2}):&nbsp;'
+                                                f'WR <span style="color:{_bt_comf_wr_col2};font-weight:600;">{_bt_comf_wr_str2}</span>'
+                                                f'&nbsp;·&nbsp;'
+                                                f'Avg R <span style="color:#80cbc4;">{_bt_comf_avgr_str2}</span>'
+                                                + (
+                                                    f'<br><span style="color:#90a4ae;">ΔWR (marg−comf):</span>&nbsp;'
+                                                    f'<span style="color:{_bt_dwr_col2};font-weight:600;">{_bt_dwr2}</span>'
+                                                    if _bt_dwr2 is not None else ""
+                                                ) +
+                                                f'</div>'
+                                            )
                                     st.markdown(
                                         f'<div style="background:#1e2a3a;border:{_bt_card_border};'
                                         f'border-radius:8px;padding:12px;text-align:center;">'
@@ -10526,6 +10600,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         f'Total: {"+" if _bttot >= 0 else ""}${_bttot:,.0f}</div>'
                                         f'{_bt_eod_html}'
                                         f'{_bt_tier_html}'
+                                        f'{_bt_marg_html}'
                                         f'</div>', unsafe_allow_html=True
                                     )
 
