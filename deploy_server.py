@@ -19,6 +19,62 @@ PROXY_PORT = int(os.environ.get("PORT", "8080"))
 STREAMLIT_PORT = 8501
 streamlit_ready = False
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_TRADING_MODE_FILE = "/tmp/trading_mode.json"
+_TRADING_WRITE_SECRET = os.environ.get("DASHBOARD_WRITE_SECRET", "").strip()
+
+
+def _get_trading_mode() -> str:
+    """Return the current trading mode ('paper' or 'live').
+
+    Reads from /tmp/trading_mode.json if it exists (written by this server or
+    by backend.py when the Streamlit sidebar toggle is used).  Falls back to
+    the IS_PAPER_ALPACA environment variable so the server's default always
+    matches the configured value.
+    """
+    try:
+        with open(_TRADING_MODE_FILE) as _f:
+            return _f.read().strip() or "paper"
+    except FileNotFoundError:
+        return "paper" if os.environ.get("IS_PAPER_ALPACA", "true").strip().lower() == "true" else "live"
+    except Exception:
+        return "paper"
+
+
+def _set_trading_mode(mode: str) -> None:
+    """Persist a new trading mode to /tmp/trading_mode.json.
+
+    Both deploy_server.py (React API) and backend.py (Streamlit) share this
+    file so a change made from either surface is visible to both.
+    """
+    try:
+        with open(_TRADING_MODE_FILE, "w") as _f:
+            _f.write(mode)
+    except Exception:
+        pass
+
+
+def _clear_mismatch_in_health_file() -> None:
+    """Optimistically clear alpaca_mode_mismatch in the startup health file.
+
+    Called immediately after a successful POST /api/trading-mode so the React
+    dashboard's health poll clears the mismatch banner straight away — before
+    the Streamlit background thread finishes its re-check.  If the new mode
+    still mismatches the credentials, Streamlit will overwrite the file with
+    the correct mismatch state once its check completes.
+    """
+    _health_path = "/tmp/startup_health.json"
+    try:
+        try:
+            with open(_health_path) as _hf:
+                _data = json.load(_hf)
+        except (FileNotFoundError, ValueError):
+            _data = {}
+        _data["alpaca_mode_mismatch"] = False
+        _data["alpaca_mismatch_message"] = ""
+        with open(_health_path, "w") as _hf:
+            json.dump(_data, _hf)
+    except Exception:
+        pass
 
 _DB_CACHE_TTL = 10
 _db_cache_lock = threading.Lock()
@@ -126,6 +182,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/health":
             self._health()
             return
+        if path == "/api/trading-mode":
+            self._trading_mode_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -152,6 +211,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._proxy()
 
     def do_POST(self):
+        path = self.path.split("?")[0]
+        if path == "/api/trading-mode":
+            self._trading_mode_post()
+            return
         self._proxy() if streamlit_ready else self._loading()
 
     def do_PUT(self):
@@ -190,6 +253,73 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def _trading_mode_get(self):
+        """Return the current trading mode as JSON: {"mode": "paper"|"live"}."""
+        body = json.dumps({"mode": _get_trading_mode()}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _trading_mode_post(self):
+        """Accept {"mode": "paper"|"live"} and persist the new trading mode.
+
+        When the DASHBOARD_WRITE_SECRET environment variable is set the request
+        must include a matching X-Dashboard-Secret header, otherwise the server
+        returns 401 Unauthorized.  When the variable is absent the endpoint is
+        unprotected (consistent with the rest of this server's API surface) but
+        operators are strongly encouraged to set DASHBOARD_WRITE_SECRET in
+        production to prevent unauthenticated mode changes.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            mode = payload.get("mode", "").strip().lower()
+            if mode not in ("paper", "live"):
+                body = json.dumps({"error": "mode must be 'paper' or 'live'"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            _set_trading_mode(mode)
+            # Optimistically clear the mismatch banner so the React dashboard
+            # reflects the new choice immediately.  The Streamlit background
+            # thread will re-run the credential check and overwrite this with
+            # the authoritative result once it completes.
+            _clear_mismatch_in_health_file()
+            body = json.dumps({"mode": mode}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
 
     def _loading(self):
         self.send_response(200)

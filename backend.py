@@ -73,6 +73,10 @@ except (ValueError, TypeError):
 # IS_PAPER_ALPACA declares the intended trading mode: "true" = paper (default), "false" = live.
 # Set IS_PAPER_ALPACA=false in your environment when using live brokerage keys.
 IS_PAPER_ALPACA = os.environ.get("IS_PAPER_ALPACA", "true").strip().lower() == "true"
+# Shared file used as IPC between deploy_server.py (proxy process) and this
+# Streamlit process.  POST /api/trading-mode writes the file; get_trading_mode()
+# and _check_alpaca_account_type() read it to pick up changes without a restart.
+_TRADING_MODE_FILE = "/tmp/trading_mode.json"
 
 # Each entry is (secret_name, human_readable_message).
 # Validation is split into two sets:
@@ -358,6 +362,21 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
     def _check_alpaca_account_type() -> None:
         import threading as _threading
         def _run() -> None:
+            global IS_PAPER_ALPACA
+            # Sync IS_PAPER_ALPACA from the shared mode file so that changes made
+            # through the React dashboard's POST /api/trading-mode are reflected
+            # here before the credential check runs.  This ensures both the
+            # Streamlit sidebar and the React UI produce identical mismatch-check
+            # behaviour.
+            try:
+                with open(_TRADING_MODE_FILE) as _tmf_sync:
+                    _file_mode = _tmf_sync.read().strip()
+                if _file_mode in ("paper", "live"):
+                    IS_PAPER_ALPACA = (_file_mode == "paper")
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
             try:
                 import requests as _req
                 _hdrs = {
@@ -464,7 +483,9 @@ def set_trading_mode(is_paper: bool) -> None:
     dashboard so the new mode takes effect immediately without a restart.
     After updating the global, it re-runs the credential mismatch check
     in the background so _alpaca_mismatch_status stays consistent with the
-    newly selected mode.
+    newly selected mode.  The new value is also written to
+    /tmp/trading_mode.json so the proxy server can serve it via
+    GET /api/trading-mode without reading backend.py's in-memory state.
     """
     global IS_PAPER_ALPACA
     IS_PAPER_ALPACA = is_paper
@@ -472,12 +493,33 @@ def set_trading_mode(is_paper: bool) -> None:
         "[TRADING_MODE] Trading mode updated to %s",
         "PAPER" if is_paper else "LIVE",
     )
+    try:
+        import json as _json
+        with open(_TRADING_MODE_FILE, "w") as _tmf:
+            _tmf.write("paper" if is_paper else "live")
+    except Exception as _tme:
+        logging.debug("[TRADING_MODE] Could not write trading mode file: %s", _tme)
     if ALPACA_API_KEY and ALPACA_SECRET_KEY:
         _check_alpaca_account_type()
 
 
 def get_trading_mode() -> bool:
-    """Return the current IS_PAPER_ALPACA value (True = paper, False = live)."""
+    """Return the current IS_PAPER_ALPACA value (True = paper, False = live).
+
+    Also syncs IS_PAPER_ALPACA from /tmp/trading_mode.json if the file has
+    been updated by the React dashboard's POST /api/trading-mode endpoint so
+    that changes made through the React UI are picked up here automatically.
+    """
+    global IS_PAPER_ALPACA
+    try:
+        with open(_TRADING_MODE_FILE) as _tmf:
+            _mode = _tmf.read().strip()
+        if _mode in ("paper", "live"):
+            IS_PAPER_ALPACA = (_mode == "paper")
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
     return IS_PAPER_ALPACA
 
 

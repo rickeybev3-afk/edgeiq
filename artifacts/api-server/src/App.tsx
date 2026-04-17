@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AlertCircle } from "lucide-react";
 import NotFound from "@/pages/not-found";
+import Settings from "@/pages/settings";
 
 const queryClient = new QueryClient();
 
@@ -43,7 +44,7 @@ function AlpacaMismatchBanner({ message }: { message: string }) {
         <strong style={{ color: "#fdba74" }}>⚠️ Alpaca credential mismatch:</strong>{" "}
         {message}{" "}
         <a
-          href="/edgeiq/#trading-mode"
+          href={`${import.meta.env.BASE_URL}settings#trading-mode`}
           style={{
             color: "#fdba74",
             fontWeight: 700,
@@ -144,6 +145,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
   );
