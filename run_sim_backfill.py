@@ -66,6 +66,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 PAGE_SZ     = 1000
 MAX_WORKERS = 20   # concurrent update threads
 
+# Module-level progress tracking — updated by backfill_table(), read by __main__
+_PROGRESS = {"current": 0, "total": 0}
+
 BACKFILL_TABLES = [
     ("backtest_sim_runs", "id"),
     ("paper_trades",      "id"),
@@ -114,6 +117,35 @@ def discover_user_ids() -> list[str]:
         print(f" {rows_scanned} rows scanned.")
 
     return sorted(uid_set)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Pre-count helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def count_rows_to_process(user_ids: list[str]) -> int:
+    """Return total breakout rows across all users and tables that will be
+    processed.  Used to set _PROGRESS["total"] before the main loop starts.
+    Falls back to 0 on any error (progress will simply not be shown)."""
+    if not backend.supabase:
+        return 0
+    total = 0
+    for table, id_col in BACKFILL_TABLES:
+        for uid in user_ids:
+            for direction in ("Bullish Break", "Bearish Break"):
+                try:
+                    resp = (
+                        backend.supabase.table(table)
+                        .select(id_col, count="exact")
+                        .eq("user_id", uid)
+                        .eq("actual_outcome", direction)
+                        .limit(0)
+                        .execute()
+                    )
+                    total += resp.count or 0
+                except Exception:
+                    pass
+    return total
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -243,6 +275,12 @@ def backfill_table(table: str, id_col: str, user_id: str):
                                 print("  → Columns missing — run the SQL migrations first.")
                                 return 0
 
+            # Emit progress for the sidebar to parse
+            _PROGRESS["current"] += len(rows)
+            _prog_total = _PROGRESS["total"]
+            if _prog_total > 0:
+                print(f"PROGRESS: {min(_PROGRESS['current'], _prog_total)}/{_prog_total}", flush=True)
+
             print(f"  [{direction:15s}] +{offset:5d} | {len(rows):4d} rows | "
                   f"{len(updates)} updated | {skipped} skipped (no IB data)")
 
@@ -338,6 +376,17 @@ if __name__ == "__main__":
         print(f"Found {len(user_ids)} user(s): {user_ids}")
 
     t0 = time.time()
+
+    # Pre-count so the sidebar can display a meaningful progress bar
+    print("\nCounting rows to process…", flush=True)
+    _total = count_rows_to_process(user_ids)
+    _PROGRESS["total"]   = _total
+    _PROGRESS["current"] = 0
+    if _total > 0:
+        print(f"PROGRESS: 0/{_total}", flush=True)
+        print(f"Total rows to recompute: {_total:,}", flush=True)
+    else:
+        print("Could not determine row count — progress bar will be unavailable.", flush=True)
 
     for uid in user_ids:
         print(f"\n{'#'*60}")

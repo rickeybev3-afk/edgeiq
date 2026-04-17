@@ -5847,8 +5847,18 @@ with st.sidebar:
                     if _seek_pos > 0 and len(_tail_lines) > 1:
                         _tail_lines = _tail_lines[1:]
                     _tail_text = "\n".join(_tail_lines[-30:])
-                    # Parse the most-recent PROGRESS: N/M line from the tail
+                    # Detect which step is currently active by scanning the
+                    # full file for the Step 2 header (may not be in the tail).
                     import re as _re
+                    _in_step2 = False
+                    try:
+                        with open(_BACKFILL_LOG, "rb") as _hf:
+                            _in_step2 = b"Step 2 of 2" in _hf.read()
+                    except Exception:
+                        pass
+                    _current_step = 2 if _in_step2 else 1
+
+                    # Parse the most-recent PROGRESS: N/M line from the tail
                     _progress_current = None
                     _progress_total   = None
                     for _pl in reversed(_tail_lines):
@@ -5859,36 +5869,51 @@ with st.sidebar:
                             break
                     if _progress_current is not None and _progress_total and _progress_total > 0:
                         _pct = _progress_current / _progress_total
+                        st.caption(f"**Step {_current_step} of 2**")
                         st.progress(_pct)
-                        # ── ETA calculation ──────────────────────────────────
-                        _eta_str = ""
-                        try:
-                            import time as _eta_time
-                            _bf_start_ts: float | None = None
-                            if os.path.exists(_BACKFILL_START_TIME):
-                                with open(_BACKFILL_START_TIME) as _tsf:
-                                    _bf_start_ts = float(_tsf.read().strip())
-                            if _bf_start_ts and _pct > 0:
-                                _elapsed_s = _eta_time.time() - _bf_start_ts
-                                _total_est_s = _elapsed_s / _pct
-                                _remaining_s = max(0.0, _total_est_s - _elapsed_s)
-                                if _remaining_s < 60:
-                                    _eta_str = f"~{int(_remaining_s)}s remaining"
-                                elif _remaining_s < 3600:
-                                    _eta_str = f"~{int(_remaining_s / 60)}m remaining"
-                                else:
-                                    _eta_hr  = int(_remaining_s // 3600)
-                                    _eta_min = int((_remaining_s % 3600) // 60)
-                                    _eta_str = f"~{_eta_hr}h {_eta_min}m remaining"
-                        except Exception:
+                        if _current_step == 2:
+                            st.caption(
+                                f"⚙️ Row {_progress_current:,} of {_progress_total:,} "
+                                f"({_pct:.0%} complete)"
+                            )
+                        else:
+                            # ── ETA calculation (step 1 only) ────────────────
                             _eta_str = ""
-                        _progress_caption = (
-                            f"📈 Ticker {_progress_current:,} of {_progress_total:,} "
-                            f"({_pct:.0%} complete)"
-                        )
-                        if _eta_str:
-                            _progress_caption += f"  ·  ⏱ {_eta_str}"
-                        st.caption(_progress_caption)
+                            try:
+                                import time as _eta_time
+                                _bf_start_ts: float | None = None
+                                if os.path.exists(_BACKFILL_START_TIME):
+                                    with open(_BACKFILL_START_TIME) as _tsf:
+                                        _bf_start_ts = float(_tsf.read().strip())
+                                if _bf_start_ts and _pct > 0:
+                                    _elapsed_s = _eta_time.time() - _bf_start_ts
+                                    _total_est_s = _elapsed_s / _pct
+                                    _remaining_s = max(0.0, _total_est_s - _elapsed_s)
+                                    if _remaining_s < 60:
+                                        _eta_str = f"~{int(_remaining_s)}s remaining"
+                                    elif _remaining_s < 3600:
+                                        _eta_str = f"~{int(_remaining_s / 60)}m remaining"
+                                    else:
+                                        _eta_hr  = int(_remaining_s // 3600)
+                                        _eta_min = int((_remaining_s % 3600) // 60)
+                                        _eta_str = f"~{_eta_hr}h {_eta_min}m remaining"
+                            except Exception:
+                                _eta_str = ""
+                            _progress_caption = (
+                                f"📈 Ticker {_progress_current:,} of {_progress_total:,} "
+                                f"({_pct:.0%} complete)"
+                            )
+                            if _eta_str:
+                                _progress_caption += f"  ·  ⏱ {_eta_str}"
+                            st.caption(_progress_caption)
+                    elif _in_step2:
+                        # Step 2 has started but hasn't emitted a PROGRESS line yet
+                        st.caption("**Step 2 of 2**")
+                        st.progress(0.0)
+                        st.caption("⚙️ P&L recompute starting…")
+                    else:
+                        # Step 1 running but no PROGRESS line yet
+                        st.caption("**Step 1 of 2**")
                     st.caption(f"📄 {_total_lines} log line{'s' if _total_lines != 1 else ''} so far — auto-refreshing every 3 s")
                     st.code(_tail_text or "(log initialising…)", language="text")
                 except Exception:
