@@ -18503,9 +18503,11 @@ ALTER TABLE backtest_sim_runs
             st.plotly_chart(_fig_pnl, use_container_width=True, config={"displayModeBar": False})
 
         # Table
+        _ib_threshold = _cached_load_ib_range_pct_threshold()
         _display_cols = [c for c in ["trade_date", "ticker", "tcs", "predicted_structure",
                                       "actual_outcome", "win_loss", "follow_thru_pct",
                                       "mae", "mfe",
+                                      "ib_range_pct",
                                       "sim_pnl_100sh",
                                       "eod_pnl_r", "tiered_pnl_r"] if c in _verified.columns]
         _show = _verified[_display_cols].rename(columns={
@@ -18513,6 +18515,7 @@ ALTER TABLE backtest_sim_runs
             "predicted_structure": "Predicted", "actual_outcome": "Actual",
             "win_loss": "W/L", "follow_thru_pct": "FT %",
             "mae": "MAE %", "mfe": "MFE %",
+            "ib_range_pct": "IB Width %",
             "sim_pnl_100sh": "P&L (100sh)",
             "eod_pnl_r": "EOD Hold R", "tiered_pnl_r": "Tiered Exit R",
         }).reset_index(drop=True)
@@ -18562,6 +18565,18 @@ ALTER TABLE backtest_sim_runs
             except (ValueError, TypeError):
                 return ""
 
+        def _color_ib_pct(val):
+            try:
+                v = float(val)
+                if v < _ib_threshold:
+                    return "color: #66bb6a; font-weight:700"
+                near = _ib_threshold * 1.2
+                if v < near:
+                    return "color: #ff9800; font-weight:700"
+                return "color: #ef5350; font-weight:700"
+            except (ValueError, TypeError):
+                return ""
+
         _style_map = {}
         if "W/L" in _show.columns:
             _style_map["W/L"] = _color_wl
@@ -18569,6 +18584,8 @@ ALTER TABLE backtest_sim_runs
             _style_map["MAE %"] = _color_mae
         if "MFE %" in _show.columns:
             _style_map["MFE %"] = _color_mfe
+        if "IB Width %" in _show.columns:
+            _style_map["IB Width %"] = _color_ib_pct
         if "EOD Hold R" in _show.columns:
             _style_map["EOD Hold R"] = _color_r
         if "Tiered Exit R" in _show.columns:
@@ -18580,6 +18597,12 @@ ALTER TABLE backtest_sim_runs
         for _col_name, _fn in _style_map.items():
             _styled = _styled.map(_fn, subset=[_col_name])
 
+        if "IB Width %" in _show.columns:
+            st.caption(
+                f"IB range % threshold (active): {_ib_threshold:.1f}% — "
+                f"green = below threshold (pass), orange = within 20% of threshold (near), "
+                f"red = at or above threshold (would be filtered)"
+            )
         st.dataframe(_styled, use_container_width=True, height=280)
 
         # ── EOD Hold Performance — Morning / Intraday split
@@ -20936,6 +20959,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_log_has_ib_pct   = "ib_range_pct" in _pt_log_show.columns
         _pt_log_has_vwap     = "vwap_at_ib" in _pt_log_show.columns
 
+        _ib_threshold = _cached_load_ib_range_pct_threshold()
+
         _PT_GREEN_STRONG = "background-color:rgba(76,175,80,0.30);color:#66bb6a;font-weight:700"
         _PT_RED_STRONG   = "background-color:rgba(239,83,80,0.30);color:#ef5350;font-weight:700"
         _PT_GREY_CELL    = "background-color:rgba(144,164,174,0.12);color:#90a4ae"
@@ -20981,7 +21006,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 elif col == "ib_range_pct" and _pt_log_has_ib_pct:
                     try:
                         v = float(row["ib_range_pct"])
-                        result.append(_PT_GREEN_STRONG if v < 10 else _PT_RED_STRONG)
+                        result.append(_PT_GREEN_STRONG if v < _ib_threshold else _PT_RED_STRONG)
                     except (TypeError, ValueError):
                         result.append(_PT_GREY_CELL)
                 elif col == "vwap_at_ib" and _pt_log_has_vwap:
@@ -21014,7 +21039,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_col_cfg = {}
         if _pt_log_has_ib_pct:
             _pt_col_cfg["ib_range_pct"] = st.column_config.NumberColumn(
-                "IB Width %", format="%.2f%%", help="IB range as % of open price · green < 10% (pass)"
+                "IB Width %", format="%.2f%%", help=f"IB range as % of open price · green < {_ib_threshold:.1f}% (pass, active threshold)"
             )
         if _pt_log_has_vwap:
             _pt_col_cfg["vwap_at_ib"] = st.column_config.NumberColumn(
