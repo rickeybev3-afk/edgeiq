@@ -1736,6 +1736,7 @@ def _label_to_weight_key(label: str) -> str:
     """Map a raw structure label to one of the canonical weight keys."""
     s = label.lower()
     if "bear" in s or "down" in s:          return "trend_bear"
+    if "bull" in s:                          return "trend_bull"   # Bullish Break → trend_bull
     if "trend" in s:                         return "trend_bull"
     if "double" in s or "dbl" in s:         return "double_dist"
     if "non" in s:                           return "non_trend"
@@ -7074,14 +7075,17 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         probs = compute_structure_probabilities(
             pm_df, bin_centers, vap, ib_high, ib_low, poc_price
         )
-        predicted = max(probs, key=probs.get) if probs else "—"
-        confidence = round(probs.get(predicted, 0.0), 1)
+        predicted_struct = max(probs, key=probs.get) if probs else "—"
+        confidence = round(probs.get(predicted_struct, 0.0), 1)
+
+        # Close at prediction cutoff (IB close or current bar) — used for directional bias
+        pm_close = float(pm_df["close"].iloc[-1])
 
         # Afternoon reality — placeholder when afternoon bars not yet available
         if morning_only:
             aft_high       = ib_high
             aft_low        = ib_low
-            close_px       = float(pm_df["close"].iloc[-1])
+            close_px       = pm_close
             actual_outcome = "Pending"
             actual_icon    = "…"
             broke_up       = False
@@ -7092,6 +7096,21 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             close_px = float(aft_df["close"].iloc[-1])
             broke_up   = aft_high > ib_high
             broke_down = aft_low  < ib_low
+
+        # ── Directional resolution ────────────────────────────────────────────
+        # compute_structure_probabilities is non-directional ("Trend" not "Bullish
+        # Break") because when called with IB-only bars day_high ≈ ib_high and
+        # day_low ≈ ib_low, making both_hit always True and suppressing directional
+        # scores.  Resolve direction here using close-vs-IB-midpoint at cutoff —
+        # the standard Volume-Profile daily-bias anchor used by the framework.
+        # Structures that imply a break → Bullish/Bearish Break (tradeable).
+        # Range structures (Normal, Non-Trend) stay as-is (no order placed).
+        _ib_mid = (ib_high + ib_low) / 2.0
+        _ORDERABLE_STRUCTS = frozenset(("Trend", "Nrml Var", "Ntrl Extreme"))
+        if predicted_struct in _ORDERABLE_STRUCTS and _ib_mid > 0:
+            predicted = "Bullish Break" if pm_close > _ib_mid else "Bearish Break"
+        else:
+            predicted = predicted_struct
 
         if not morning_only:
             if broke_up and broke_down:
@@ -7112,28 +7131,32 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             win      = None
             aft_move = 0.0
         else:
-            is_dir      = any(k in predicted for k in _BACKTEST_DIRECTIONAL)
-            is_range    = any(k in predicted for k in _BACKTEST_RANGE)
-            is_neut_ext = any(k in predicted for k in _BACKTEST_NEUTRAL_EXT)
-            is_balanced = (not is_neut_ext and
-                           any(k in predicted for k in _BACKTEST_BALANCED))
-            is_bimodal  = any(k in predicted for k in _BACKTEST_BIMODAL)
-            is_normal   = (not is_dir and not is_range and not is_neut_ext
-                           and not is_balanced and not is_bimodal
-                           and "Normal" in predicted)
-
-            if is_dir:
-                win = actual_outcome in ("Bullish Break", "Bearish Break")
-            elif is_neut_ext:
-                win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
-            elif is_range or is_normal:
-                win = actual_outcome == "Range-Bound"
-            elif is_balanced:
-                win = actual_outcome in ("Both Sides", "Bullish Break", "Bearish Break")
-            elif is_bimodal:
-                win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+            if predicted in ("Bullish Break", "Bearish Break"):
+                # Directional predictions require exact direction match
+                win = actual_outcome == predicted
             else:
-                win = False
+                is_dir      = any(k in predicted for k in _BACKTEST_DIRECTIONAL)
+                is_range    = any(k in predicted for k in _BACKTEST_RANGE)
+                is_neut_ext = any(k in predicted for k in _BACKTEST_NEUTRAL_EXT)
+                is_balanced = (not is_neut_ext and
+                               any(k in predicted for k in _BACKTEST_BALANCED))
+                is_bimodal  = any(k in predicted for k in _BACKTEST_BIMODAL)
+                is_normal   = (not is_dir and not is_range and not is_neut_ext
+                               and not is_balanced and not is_bimodal
+                               and "Normal" in predicted)
+
+                if is_dir:
+                    win = actual_outcome in ("Bullish Break", "Bearish Break")
+                elif is_neut_ext:
+                    win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+                elif is_range or is_normal:
+                    win = actual_outcome == "Range-Bound"
+                elif is_balanced:
+                    win = actual_outcome in ("Both Sides", "Bullish Break", "Bearish Break")
+                elif is_bimodal:
+                    win = actual_outcome in ("Bullish Break", "Bearish Break", "Both Sides")
+                else:
+                    win = False
 
             if broke_up and broke_down:
                 _ft_up   = (aft_high - ib_high) / ib_high * 100
@@ -7194,7 +7217,8 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
         if not morning_only and _alert_px and _alert_px > 0 and not aft_df.empty:
             _aft_highest = float(aft_df["high"].max())
             _aft_lowest = float(aft_df["low"].min())
-            _is_bearish_pred = any(k in predicted for k in ("Trend Day Down", "Bearish"))
+            _is_bearish_pred = (predicted == "Bearish Break" or
+                                any(k in predicted for k in ("Trend Day Down", "Bearish")))
             if _is_bearish_pred:
                 _mfe_val = round((_alert_px - _aft_lowest) / _alert_px * 100, 2)
                 _mae_val = round((_aft_highest - _alert_px) / _alert_px * 100, 2)
@@ -7233,6 +7257,7 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             "tcs":              round(tcs, 1),
             "rvol":             _rvol_val,
             "predicted":        predicted,
+            "predicted_struct": predicted_struct,
             "confidence":       confidence,
             "actual_outcome":   actual_outcome,
             "actual_icon":      actual_icon,

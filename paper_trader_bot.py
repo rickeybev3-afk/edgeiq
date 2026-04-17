@@ -756,9 +756,9 @@ _WEIGHT_KEY_DISPLAY = {
 
 def _structure_emoji(predicted: str) -> str:
     p = (predicted or "").lower()
-    if "trend" in p and ("up" in p or "bull" in p):
+    if "bullish break" in p or ("trend" in p and ("up" in p or "bull" in p)):
         return "🟢"
-    if "trend" in p and ("down" in p or "bear" in p):
+    if "bearish break" in p or ("trend" in p and ("down" in p or "bear" in p)):
         return "🔴"
     if "double" in p:
         return "🟡"
@@ -801,9 +801,9 @@ def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
 
     # Entry logic hint based on structure
     p_lower = predicted.lower()
-    if "trend" in p_lower and ("up" in p_lower or "bull" in p_lower):
+    if "bullish break" in p_lower or ("trend" in p_lower and ("up" in p_lower or "bull" in p_lower)):
         entry_hint = f"🎯 <b>LONG</b> above IB high ${above_ib:.2f} | Target: IB extension"
-    elif "trend" in p_lower and ("down" in p_lower or "bear" in p_lower):
+    elif "bearish break" in p_lower or ("trend" in p_lower and ("down" in p_lower or "bear" in p_lower)):
         entry_hint = f"🎯 <b>SHORT</b> below IB low ${below_ib:.2f} | Target: IB extension"
     elif "double" in p_lower:
         entry_hint = f"🎯 Watch <b>both sides</b> — double distribution. Fade false breaks."
