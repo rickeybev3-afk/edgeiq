@@ -19748,6 +19748,49 @@ ALTER TABLE backtest_sim_runs
                                     f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
+                                _bts_lt_spk_data = None
+                                if "sim_date" in _bts_ltdf.columns:
+                                    try:
+                                        _bts_lt_spk = _bts_ltdf.copy()
+                                        _bts_lt_spk["_dt"] = pd.to_datetime(_bts_lt_spk["sim_date"], errors="coerce")
+                                        _bts_lt_spk = _bts_lt_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
+                                        _bts_lt_wkly = _bts_lt_spk.resample("W-FRI").agg(
+                                            _wins=("tiered_pnl_r", lambda x: (x > 0).sum()),
+                                            _tot=("tiered_pnl_r", "count"),
+                                        )
+                                        _bts_lt_wkly = _bts_lt_wkly[_bts_lt_wkly["_tot"] > 0]
+                                        _bts_lt_wkly["_wr"] = _bts_lt_wkly["_wins"] / _bts_lt_wkly["_tot"] * 100
+                                        if len(_bts_lt_wkly) >= 3:
+                                            _bts_lt_spk_data = _bts_lt_wkly
+                                    except (ValueError, KeyError, TypeError) as _bts_lt_spk_err:
+                                        import sys
+                                        print(f"[BTS Ladder sparkline] {_bts_ltl}: {_bts_lt_spk_err}", file=sys.stderr)
+                                if _bts_lt_spk_data is not None:
+                                    _bts_lt_sfig = go.Figure()
+                                    _bts_lt_sfig.add_trace(go.Scatter(
+                                        x=[idx.strftime("w/e %b %d") for idx in _bts_lt_spk_data.index],
+                                        y=_bts_lt_spk_data["_wr"].tolist(),
+                                        mode="lines+markers",
+                                        line=dict(color=_bts_ltc, width=1.5),
+                                        marker=dict(size=4, color=_bts_ltc),
+                                        hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
+                                    ))
+                                    _bts_lt_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                                    _bts_lt_sfig.update_layout(
+                                        height=70,
+                                        margin=dict(l=2, r=2, t=6, b=2),
+                                        paper_bgcolor="rgba(0,0,0,0)",
+                                        plot_bgcolor="rgba(0,0,0,0)",
+                                        xaxis=dict(visible=False, fixedrange=True),
+                                        yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
+                                        showlegend=False,
+                                    )
+                                    st.plotly_chart(
+                                        _bts_lt_sfig,
+                                        use_container_width=True,
+                                        config={"displayModeBar": False},
+                                    )
+                                    st.caption("Weekly Ladder win rate")
 
             # ── Row 4 — Tiered vs EOD Head-to-Head Comparison ────────────────
             st.markdown("<br>", unsafe_allow_html=True)
