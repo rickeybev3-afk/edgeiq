@@ -12951,6 +12951,191 @@ ALTER TABLE backtest_sim_runs
         st.info("No daily breakdown available yet.")
 
 
+def render_decision_log_tab():
+    """Decision Log — track macro calls right vs wrong over time."""
+    from backend import (
+        ensure_decision_log_table, get_decisions,
+        insert_decision, update_decision_outcome, seed_decisions_if_empty,
+    )
+
+    st.markdown(
+        '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
+        'letter-spacing:2px; font-weight:700; margin-bottom:4px;">🧠 DECISION LOG</div>'
+        '<div style="font-size:12px; color:#546e7a; margin-bottom:18px;">'
+        'Track your macro calls — system design, market thesis, filters, sizing. '
+        'Same discipline applied to trades, now applied to the builder.</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not supabase:
+        st.warning("Supabase not connected. Decision Log unavailable.")
+        return
+
+    _dl_uid = _AUTH_USER_ID
+
+    _dl_ok = ensure_decision_log_table()
+    if not _dl_ok:
+        st.error("Could not create decision_log table. Run `exec_sql` function in Supabase SQL Editor first.")
+        return
+
+    seed_decisions_if_empty(_dl_uid)
+
+    _dl_rows = get_decisions(_dl_uid)
+
+    _dl_confirmed = [r for r in _dl_rows if r.get("outcome") == "Confirmed"]
+    _dl_refuted   = [r for r in _dl_rows if r.get("outcome") == "Refuted"]
+    _dl_pending   = [r for r in _dl_rows if r.get("outcome") == "Pending"]
+    _dl_partial   = [r for r in _dl_rows if r.get("outcome") == "Partial"]
+    _dl_decided   = len(_dl_confirmed) + len(_dl_refuted)
+    _dl_wr        = round(len(_dl_confirmed) / _dl_decided * 100, 1) if _dl_decided else 0.0
+
+    _dl_c1, _dl_c2, _dl_c3, _dl_c4 = st.columns(4)
+
+    def _dl_metric(col, label, value, color="#e0e0e0", sub=""):
+        with col:
+            st.markdown(
+                f'<div style="background:#1a1a2e; border:1px solid #2a2a3e; border-radius:8px; '
+                f'padding:14px 16px; text-align:center;">'
+                f'<div style="font-size:11px; color:#78909c; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:4px;">{label}</div>'
+                f'<div style="font-size:26px; font-weight:700; color:{color}; line-height:1.1;">{value}</div>'
+                f'{"" if not sub else f"<div style=&quot;font-size:11px; color:#546e7a; margin-top:3px;&quot;>" + sub + "</div>"}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    _dl_metric(_dl_c1, "Total Decisions", len(_dl_rows), "#e0e0e0")
+    _dl_metric(_dl_c2, "Confirmed ✅", len(_dl_confirmed), "#81c784")
+    _dl_metric(_dl_c3, "Refuted ❌", len(_dl_refuted), "#ef9a9a")
+    _dl_metric(_dl_c4, "Decision Win Rate", f"{_dl_wr:.0f}%",
+               "#4fc3f7" if _dl_wr >= 70 else ("#ffd54f" if _dl_wr >= 50 else "#ef9a9a"),
+               f"{_dl_decided} decided")
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+    _dl_cat_colors = {
+        "System Design": "#4fc3f7",
+        "Market Thesis": "#ce93d8",
+        "Filter":        "#80cbc4",
+        "Sizing":        "#ffcc80",
+        "Timing":        "#f48fb1",
+        "Other":         "#90a4ae",
+    }
+
+    def _dl_cat_badge(cat: str) -> str:
+        c = _dl_cat_colors.get(cat, "#90a4ae")
+        return (
+            f'<span style="background:{c}22; color:{c}; border:1px solid {c}55; '
+            f'border-radius:4px; padding:1px 7px; font-size:10px; font-weight:700; '
+            f'letter-spacing:0.5px;">{cat}</span>'
+        )
+
+    with st.expander("➕ Add New Decision", expanded=False):
+        with st.form("dl_add_form", clear_on_submit=True):
+            _dlf_c1, _dlf_c2 = st.columns([1, 2])
+            with _dlf_c1:
+                _dlf_date = st.date_input("Date", value=date.today(), key="dl_date")
+                _dlf_cat  = st.selectbox(
+                    "Category",
+                    ["System Design", "Market Thesis", "Filter", "Sizing", "Timing", "Other"],
+                    key="dl_cat",
+                )
+            with _dlf_c2:
+                _dlf_call = st.text_area("The Call", placeholder="What are you predicting or deciding?", height=80, key="dl_call")
+                _dlf_reason = st.text_area("Reasoning (optional)", placeholder="Why? What's the evidence?", height=80, key="dl_reason")
+            _dlf_submit = st.form_submit_button("Log Decision", type="primary")
+            if _dlf_submit:
+                if not _dlf_call.strip():
+                    st.error("The Call field is required.")
+                else:
+                    _ok = insert_decision(_dl_uid, _dlf_date, _dlf_cat, _dlf_call, _dlf_reason)
+                    if _ok:
+                        st.success("Decision logged.")
+                        st.rerun()
+                    else:
+                        st.error("Failed to save. Check Supabase connection.")
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    if not _dl_rows:
+        st.info("No decisions logged yet. Add your first call above.")
+        return
+
+    _dl_outcome_border = {
+        "Confirmed": "#81c784",
+        "Refuted":   "#ef9a9a",
+        "Partial":   "#ffd54f",
+        "Pending":   "#555",
+    }
+    _dl_outcome_badge = {
+        "Confirmed": '<span style="color:#81c784; font-weight:700;">✅ Confirmed</span>',
+        "Refuted":   '<span style="color:#ef9a9a; font-weight:700;">❌ Refuted</span>',
+        "Partial":   '<span style="color:#ffd54f; font-weight:700;">⚡ Partial</span>',
+        "Pending":   '<span style="color:#78909c; font-weight:700;">⏳ Pending</span>',
+    }
+
+    for _dlr in _dl_rows:
+        _outcome   = _dlr.get("outcome", "Pending")
+        _border_c  = _dl_outcome_border.get(_outcome, "#555")
+        _out_badge = _dl_outcome_badge.get(_outcome, "⏳ Pending")
+        _cat       = _dlr.get("category", "Other")
+        _call_txt  = _dlr.get("call", "")
+        _reason    = _dlr.get("reasoning") or ""
+        _out_date  = _dlr.get("outcome_date") or ""
+        _out_notes = _dlr.get("outcome_notes") or ""
+        _dec_date  = _dlr.get("decision_date", "")
+        _dec_id    = _dlr.get("id", "")
+
+        _header_html = (
+            f'<div style="border-left:3px solid {_border_c}; background:#12121e; '
+            f'border-radius:0 8px 8px 0; padding:12px 16px; margin-bottom:4px;">'
+            f'<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">'
+            f'<span style="font-size:11px; color:#546e7a;">{_dec_date}</span>'
+            f'{_dl_cat_badge(_cat)}'
+            f'{_out_badge}'
+            f'{"" if not _out_date else f"<span style=&quot;font-size:11px; color:#546e7a;&quot;>→ {_out_date}</span>"}'
+            f'</div>'
+            f'<div style="font-size:14px; color:#e0e0e0; font-weight:600; line-height:1.4; margin-bottom:4px;">'
+            f'{_call_txt}</div>'
+        )
+        if _reason:
+            _header_html += (
+                f'<div style="font-size:12px; color:#78909c; margin-top:4px;">'
+                f'<em>{_reason}</em></div>'
+            )
+        if _out_notes:
+            _header_html += (
+                f'<div style="font-size:12px; color:#b0bec5; margin-top:6px; '
+                f'background:#0d1117; border-radius:4px; padding:6px 10px;">'
+                f'{_out_notes}</div>'
+            )
+        _header_html += '</div>'
+        st.markdown(_header_html, unsafe_allow_html=True)
+
+        if _outcome == "Pending" and _dec_id:
+            with st.expander("Mark outcome", expanded=False):
+                _oc1, _oc2, _oc3 = st.columns([1, 1, 2])
+                with _oc1:
+                    _new_oc = st.selectbox(
+                        "Outcome",
+                        ["Confirmed", "Refuted", "Partial"],
+                        key=f"dl_oc_{_dec_id}",
+                    )
+                with _oc2:
+                    _new_od = st.date_input("Outcome Date", value=date.today(), key=f"dl_od_{_dec_id}")
+                with _oc3:
+                    _new_on = st.text_input("Notes", placeholder="What actually happened?", key=f"dl_on_{_dec_id}")
+                if st.button("Save Outcome", key=f"dl_save_{_dec_id}", type="primary"):
+                    _upd_ok = update_decision_outcome(_dec_id, _new_oc, _new_od, _new_on)
+                    if _upd_ok:
+                        st.success(f"Marked as {_new_oc}.")
+                        st.rerun()
+                    else:
+                        st.error("Update failed.")
+
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+
 def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     st.markdown(
         '<div style="font-size:11px; color:#1565c0; text-transform:uppercase; '
@@ -14191,9 +14376,9 @@ if _active_regime and _active_regime.get("regime_tag", "unknown") != "unknown":
         unsafe_allow_html=True,
     )
 
-tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa, tab_paper, tab_perf = st.tabs(
+tab_chart, tab_scan, tab_playbook, tab_backtest, tab_journal, tab_analytics, tab_sa, tab_paper, tab_perf, tab_decision = st.tabs(
     ["📈 Main Chart", "🔍 Scanner", "📋 Playbook", "🔬 Backtest",
-     "📖 Journal", "📊 Analytics", "⚡ Small Account", "📄 Paper Trade", "📊 Performance"]
+     "📖 Journal", "📊 Analytics", "⚡ Small Account", "📄 Paper Trade", "📊 Performance", "🧠 Decision Log"]
 )
 
 # ── Scanner tab ────────────────────────────────────────────────────────────────
@@ -15390,6 +15575,10 @@ with tab_paper:
 # ── Performance tab ─────────────────────────────────────────────────────────────
 with tab_perf:
     render_performance_tab()
+
+# ── Decision Log tab ─────────────────────────────────────────────────────────────
+with tab_decision:
+    render_decision_log_tab()
 
 # ── Auto-refresh loop for live mode ───────────────────────────────────────────
 if mode == "🔴 Live Stream" and st.session_state.live_active:

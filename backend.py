@@ -8821,6 +8821,203 @@ def load_cognitive_delta_analysis(user_id: str) -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+# ── Decision Log ───────────────────────────────────────────────────────────────
+_DECISION_LOG_SQL = """
+CREATE TABLE IF NOT EXISTS decision_log (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL,
+  decision_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  category      TEXT NOT NULL,
+  call          TEXT NOT NULL,
+  reasoning     TEXT,
+  outcome       TEXT NOT NULL DEFAULT 'Pending',
+  outcome_notes TEXT,
+  outcome_date  DATE,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+""".strip()
+
+_DECISION_SEEDS = [
+    {
+        "decision_date": "2026-01-01",
+        "category": "System Design",
+        "call": "VP/IB structure has genuine alpha that can be systematized",
+        "reasoning": "Initial hypothesis based on manual backtesting of Volume Profile patterns.",
+        "outcome": "Confirmed",
+        "outcome_date": "2026-03-01",
+        "outcome_notes": "Live paper WR = 83.8% overall, 95.2% at TCS>=50. Edge confirmed.",
+    },
+    {
+        "decision_date": "2026-01-15",
+        "category": "Filter",
+        "call": "TCS scoring is the key filter — higher TCS = dramatically better WR",
+        "reasoning": "Hypothesis that a composite conviction score would separate signal from noise.",
+        "outcome": "Confirmed",
+        "outcome_date": "2026-02-15",
+        "outcome_notes": "TCS>=50 live WR 95.2% vs 83.8% overall — 11.4pp improvement confirmed.",
+    },
+    {
+        "decision_date": "2026-02-01",
+        "category": "System Design",
+        "call": "Intraday scan will outperform morning scan on WR",
+        "reasoning": "Intraday setups have more confirmation data (IB established, volume settled).",
+        "outcome": "Confirmed",
+        "outcome_date": "2026-04-01",
+        "outcome_notes": "Intraday WR 83.7%, avg win +1.07R vs morning 83.9% avg win +0.88R. Intraday edges on R.",
+    },
+    {
+        "decision_date": "2026-03-01",
+        "category": "Market Thesis",
+        "call": "Live paper WR will track backtest WR within 5%",
+        "reasoning": "If the edge is real and not overfit, live and backtest should converge.",
+        "outcome": "Confirmed",
+        "outcome_date": "2026-04-10",
+        "outcome_notes": "TCS>=50 live WR 84.6% vs backtest 85.2% — 0.6pp gap. Near-perfect tracking.",
+    },
+    {
+        "decision_date": "2026-03-15",
+        "category": "Filter",
+        "call": "Full combo filter (TCS>=50 + IB<10% + VWAP) will push live WR above 90%",
+        "reasoning": "Combining three independent confirmation signals should compound the edge.",
+        "outcome": "Confirmed",
+        "outcome_date": "2026-04-15",
+        "outcome_notes": "Full filter live WR = 93.3% on 15 trades (+1.343R expectancy). Target exceeded.",
+    },
+    {
+        "decision_date": "2026-04-01",
+        "category": "Timing",
+        "call": "Phase 2 gate (30 trades, 60% WR, 30 days) achievable by May 6, 2026",
+        "reasoning": "Gates 1+2 already passed. Gate 3 (days) is purely calendar — unlocks May 6.",
+        "outcome": "Pending",
+        "outcome_date": None,
+        "outcome_notes": None,
+    },
+    {
+        "decision_date": "2026-04-10",
+        "category": "Sizing",
+        "call": "Starting $7k compounded at 1.4 trades/day reaches $1M within 12 months at live WR",
+        "reasoning": "Geometric mean compounding: 92.3% WR, +1.54R avg win, 2.14% risk/trade.",
+        "outcome": "Pending",
+        "outcome_date": None,
+        "outcome_notes": None,
+    },
+    {
+        "decision_date": "2026-04-17",
+        "category": "System Design",
+        "call": "Brain not generating directional signals in live conditions — needs investigation",
+        "reasoning": "Bot showing 0 Alpaca bracket orders despite LIVE_ORDERS_ENABLED=true. All predictions are Neutral/Ntrl Extreme.",
+        "outcome": "Pending",
+        "outcome_date": None,
+        "outcome_notes": None,
+    },
+]
+
+
+def ensure_decision_log_table() -> bool:
+    """Create the decision_log table if it doesn't exist. Returns True if available."""
+    if not supabase:
+        return False
+    try:
+        supabase.table("decision_log").select("id").limit(1).execute()
+        return True
+    except Exception:
+        try:
+            supabase.rpc("exec_sql", {"query": _DECISION_LOG_SQL}).execute()
+            return True
+        except Exception as e:
+            print(f"ensure_decision_log_table error: {e}")
+            return False
+
+
+def get_decisions(user_id: str) -> list:
+    """Fetch all decision_log rows for user, newest first."""
+    if not supabase:
+        return []
+    try:
+        res = (
+            supabase.table("decision_log")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("decision_date", desc=True)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"get_decisions error: {e}")
+        return []
+
+
+def insert_decision(user_id: str, decision_date, category: str, call: str, reasoning: str = "") -> bool:
+    """Insert a new decision into decision_log."""
+    if not supabase:
+        return False
+    try:
+        row = {
+            "user_id": user_id,
+            "decision_date": str(decision_date),
+            "category": category,
+            "call": call.strip(),
+            "reasoning": reasoning.strip() or None,
+            "outcome": "Pending",
+        }
+        supabase.table("decision_log").insert(row).execute()
+        return True
+    except Exception as e:
+        print(f"insert_decision error: {e}")
+        return False
+
+
+def update_decision_outcome(decision_id: str, outcome: str, outcome_date, outcome_notes: str = "") -> bool:
+    """Update outcome fields for an existing decision."""
+    if not supabase:
+        return False
+    try:
+        patch = {
+            "outcome": outcome,
+            "outcome_date": str(outcome_date) if outcome_date else None,
+            "outcome_notes": outcome_notes.strip() or None,
+        }
+        supabase.table("decision_log").update(patch).eq("id", decision_id).execute()
+        return True
+    except Exception as e:
+        print(f"update_decision_outcome error: {e}")
+        return False
+
+
+def seed_decisions_if_empty(user_id: str) -> int:
+    """If no decisions exist for this user, insert the seed set. Returns rows inserted."""
+    if not supabase:
+        return 0
+    try:
+        check = (
+            supabase.table("decision_log")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if (check.count or 0) > 0:
+            return 0
+        inserted = 0
+        for seed in _DECISION_SEEDS:
+            row = {
+                "user_id": user_id,
+                "decision_date": seed["decision_date"],
+                "category": seed["category"],
+                "call": seed["call"],
+                "reasoning": seed.get("reasoning"),
+                "outcome": seed["outcome"],
+                "outcome_date": seed.get("outcome_date"),
+                "outcome_notes": seed.get("outcome_notes"),
+            }
+            supabase.table("decision_log").insert(row).execute()
+            inserted += 1
+        return inserted
+    except Exception as e:
+        print(f"seed_decisions_if_empty error: {e}")
+        return 0
+
+
 # ── Playbook Quant Scoring ──────────────────────────────────────────────────────
 def _score_single_ticker(api_key: str, secret_key: str, sym: str,
                          trade_date, feed: str = "iex"):
