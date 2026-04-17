@@ -5380,6 +5380,27 @@ if st.session_state.get("_migration_needed"):
 
 st.title("📊 Volume Profile Dashboard — Small Cap Stocks")
 
+# ── Trading Mode Badge ─────────────────────────────────────────────────────────
+_hdr_tm = st.session_state.get("_trading_mode", "paper" if get_trading_mode() else "live")
+if _hdr_tm == "paper":
+    st.markdown(
+        '<span style="display:inline-block; background:#0a1a2a; border:1px solid #1565c0; '
+        'border-radius:6px; padding:3px 10px; font-size:12px; font-weight:700; '
+        'color:#90caf9; margin-bottom:8px;" '
+        'title="Trading Mode: Paper — simulated orders only. Switch in the sidebar.">'
+        '🔵 Paper</span>',
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        '<span style="display:inline-block; background:#1a0a0a; border:1px solid #b71c1c; '
+        'border-radius:6px; padding:3px 10px; font-size:12px; font-weight:700; '
+        'color:#ef5350; margin-bottom:8px;" '
+        'title="Trading Mode: Live — real orders will be routed to your brokerage. Switch in the sidebar.">'
+        '🔴 Live</span>',
+        unsafe_allow_html=True,
+    )
+
 # ── Live Pulse Header ──────────────────────────────────────────────────────────
 _las = st.session_state.get("last_analysis_state")
 if _las:
