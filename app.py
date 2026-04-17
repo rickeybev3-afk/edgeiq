@@ -4898,6 +4898,11 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
                 st.session_state["bts_dr_end"] = _dt_bts.date.fromisoformat(str(_bts_d))
         except (ValueError, TypeError):
             pass
+    if "link_date_filters" in _prefs:
+        try:
+            st.session_state["link_date_filters"] = bool(_prefs["link_date_filters"])
+        except (ValueError, TypeError):
+            pass
     if "rp_start_date" in _prefs:
         try:
             import datetime as _dt_rp
@@ -17526,13 +17531,18 @@ ALTER TABLE backtest_sim_runs
 <script>
 (function() {
     var url = new URL(window.parent.location.href);
-    if (url.searchParams.has('bts_dr_start') || url.searchParams.has('bts_dr_end')) return;
-    var s = localStorage.getItem('bts_dr_start');
-    var e = localStorage.getItem('bts_dr_end');
-    if (!s && !e) return;
-    if (s) url.searchParams.set('bts_dr_start', s);
-    if (e) url.searchParams.set('bts_dr_end', e);
-    window.parent.location.replace(url.toString());
+    var needRedirect = false;
+    if (!url.searchParams.has('bts_dr_start') && !url.searchParams.has('bts_dr_end')) {
+        var s = localStorage.getItem('bts_dr_start');
+        var e = localStorage.getItem('bts_dr_end');
+        if (s) { url.searchParams.set('bts_dr_start', s); needRedirect = true; }
+        if (e) { url.searchParams.set('bts_dr_end', e); needRedirect = true; }
+    }
+    if (!url.searchParams.has('link_filters')) {
+        var ldf = localStorage.getItem('link_date_filters');
+        if (ldf === '1') { url.searchParams.set('link_filters', '1'); needRedirect = true; }
+    }
+    if (needRedirect) window.parent.location.replace(url.toString());
 })();
 </script>
 """, height=0)
@@ -17558,6 +17568,9 @@ ALTER TABLE backtest_sim_runs
                     st.session_state["bts_dr_end"] = _dt_bts_qp.date.fromisoformat(_qp_bts_end)
                 except (ValueError, TypeError):
                     pass
+        if "link_date_filters" not in st.session_state:
+            if st.query_params.get("link_filters") == "1":
+                st.session_state["link_date_filters"] = True
 
         # Snapshot prev values BEFORE widgets render (used by link-filter sync below)
         _link_prev_bts  = st.session_state.get("_link_prev_bts",  {})
@@ -17700,31 +17713,42 @@ ALTER TABLE backtest_sim_runs
                 st.query_params["bts_dr_end"] = _bts_end_str
         elif "bts_dr_end" in st.query_params:
             del st.query_params["bts_dr_end"]
+        _ldf_val = st.session_state.get("link_date_filters", False)
+        _ldf_js  = "1" if _ldf_val else ""
         _cmp_bts_dr.html(
             f"<script>"
             f"(function(){{"
             f"  var s = {repr(_bts_start_str or '')};"
             f"  var e = {repr(_bts_end_str or '')};"
+            f"  var ldf = {repr(_ldf_js)};"
             f"  if (s) {{ localStorage.setItem('bts_dr_start', s); }}"
             f"  else {{ localStorage.removeItem('bts_dr_start'); }}"
             f"  if (e) {{ localStorage.setItem('bts_dr_end', e); }}"
             f"  else {{ localStorage.removeItem('bts_dr_end'); }}"
+            f"  if (ldf) {{ localStorage.setItem('link_date_filters', '1'); }}"
+            f"  else {{ localStorage.removeItem('link_date_filters'); }}"
+            f"  var url = new URL(window.parent.location.href);"
+            f"  if (ldf) {{ url.searchParams.set('link_filters', '1'); }}"
+            f"  else {{ url.searchParams.delete('link_filters'); }}"
+            f"  window.parent.history.replaceState(null, '', url.toString());"
             f"}})();"
             f"</script>",
             height=0,
         )
 
-        # Persist bts date-range filter to user prefs so it survives page reloads
+        # Persist bts date-range filter and link_date_filters toggle to user prefs
         if _AUTH_USER_ID:
             _bts_dr_cached = st.session_state.get("_cached_prefs", {})
             if (
                 _bts_dr_cached.get("bts_dr_start") != _bts_start_str
                 or _bts_dr_cached.get("bts_dr_end") != _bts_end_str
+                or bool(_bts_dr_cached.get("link_date_filters")) != bool(_ldf_val)
             ):
                 _bts_dr_new_prefs = {
                     **_bts_dr_cached,
-                    "bts_dr_start": _bts_start_str,
-                    "bts_dr_end":   _bts_end_str,
+                    "bts_dr_start":    _bts_start_str,
+                    "bts_dr_end":      _bts_end_str,
+                    "link_date_filters": bool(_ldf_val),
                 }
                 save_user_prefs(_AUTH_USER_ID, _bts_dr_new_prefs)
                 st.session_state["_cached_prefs"] = _bts_dr_new_prefs
