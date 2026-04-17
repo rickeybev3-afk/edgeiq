@@ -742,9 +742,20 @@ def _run_credential_check() -> None:
                 _runtime_credential_alerted.add(_cred_name)
             else:
                 logging.warning("[RUNTIME] Telegram credential alert not delivered for %s", _cred_name)
-    # Always clear recovered credentials from the alerted set regardless of
-    # whether Telegram is configured — ensures a later re-failure always alerts.
-    for _recovered in _runtime_credential_alerted - _failed_names:
+    # Send "all clear" alerts for credentials that have recovered, then remove
+    # them from the alerted set so a later re-failure triggers a fresh alert.
+    for _recovered in list(_runtime_credential_alerted - _failed_names):
+        if _tg_token and _tg_chat_id:
+            _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _recovery_msg = (
+                f"✅ <b>Credential Recovered</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🟢 <b>{_recovered}</b> is valid again.\n"
+                f"⏰ Recovered at: <b>{_ts}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━"
+            )
+            if not _send_telegram_message(_tg_token, _tg_chat_id, _recovery_msg):
+                logging.warning("[RUNTIME] Telegram recovery alert not delivered for %s", _recovered)
         _runtime_credential_alerted.discard(_recovered)
 
 
