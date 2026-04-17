@@ -4889,10 +4889,10 @@ with st.sidebar:
         )
     else:
         st.markdown(
-            '<div style="font-size:11px; color:#888; text-align:right; '
-            'margin-bottom:6px;" '
-            'title="A credential check has run but credentials have not yet been confirmed healthy — check the fields below">'
-            "🔒 Credential check ran; not yet verified"
+            '<div style="font-size:11px; color:#e57373; text-align:right; '
+            'margin-bottom:6px; font-weight:600; cursor:help;" '
+            'title="A credential check completed but found invalid or missing credentials — review the API key and secret fields below">'
+            "⚠️ Credential check failed"
             "</div>",
             unsafe_allow_html=True,
         )
