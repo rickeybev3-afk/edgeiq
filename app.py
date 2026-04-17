@@ -8221,6 +8221,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 ]
 
                 _opt_table_rows = []
+                _combo_pnls_map: dict = {}
                 for _os_lbl, _os_val in _OPT_SCAN_BUCKETS:
                     for _ofloor in _OPT_TCS_FLOORS:
                         _combo_pnls: list = []
@@ -8275,6 +8276,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Total R":      round(_ototr, 1),
                             "Max DD (R)":   round(_omaxdd, 2),
                         })
+                        _combo_pnls_map[(_os_lbl, _ofloor)] = list(_combo_pnls)
 
                 if not _opt_table_rows:
                     st.warning(
@@ -8423,6 +8425,202 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _opt_tcs_val = int(_opt_best["Min TCS"]) if str(_opt_best["Min TCS"]).lstrip("-").isdigit() else 0
                         st.session_state["rp_min_tcs_slider"] = _opt_tcs_val
                         st.rerun()
+
+                    # ── Chart: best-combo performance ─────────────────────────────
+                    _best_floor_key = 0 if _opt_best["Min TCS"] == "Any" else int(_opt_best["Min TCS"])
+                    _best_pnls_raw  = _combo_pnls_map.get((_opt_best["Scan Type"], _best_floor_key), [])
+                    if _best_pnls_raw:
+                        _OPT_CHART_OPTS = ["Cumulative R", "Both"]
+                        _opt_chart_view = st.radio(
+                            "Chart view",
+                            options=_OPT_CHART_OPTS,
+                            index=0,
+                            horizontal=True,
+                            key="rp_opt_chart_view",
+                            label_visibility="collapsed",
+                        )
+
+                        _opt_r_ser    = pd.Series(_best_pnls_raw, dtype=float)
+                        _opt_cum_r    = _opt_r_ser.cumsum().reset_index(drop=True)
+                        _opt_peak_r   = _opt_cum_r.cummax()
+                        _opt_max_dd_r = round((_opt_cum_r - _opt_peak_r).min(), 2)
+                        _opt_dd_series = _opt_cum_r - _opt_peak_r
+                        if len(_opt_r_ser) and _opt_max_dd_r < 0:
+                            _opt_dd_trough_idx = int(_opt_dd_series.idxmin())
+                            _opt_dd_peak_idx   = int(_opt_cum_r.iloc[:_opt_dd_trough_idx + 1].idxmax())
+                        else:
+                            _opt_dd_trough_idx = None
+                            _opt_dd_peak_idx   = None
+
+                        if _opt_chart_view == "Cumulative R":
+                            _opt_fig_cum_r = go.Figure()
+                            _opt_fig_cum_r.add_trace(go.Scatter(
+                                x=list(range(len(_opt_cum_r))),
+                                y=_opt_cum_r.tolist(),
+                                mode="lines",
+                                name="Cumulative R",
+                                line=dict(color="#1f77b4", width=2),
+                            ))
+                            if _opt_dd_trough_idx is not None and _opt_dd_peak_idx is not None:
+                                _opt_fig_cum_r.add_vrect(
+                                    x0=_opt_dd_peak_idx, x1=_opt_dd_trough_idx,
+                                    fillcolor="rgba(220, 50, 50, 0.15)", layer="below", line_width=0,
+                                )
+                                _opt_fig_cum_r.add_trace(go.Scatter(
+                                    x=[_opt_dd_peak_idx],
+                                    y=[float(_opt_cum_r.iloc[_opt_dd_peak_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
+                                    name=f"DD Start (trade #{_opt_dd_peak_idx})",
+                                ))
+                                _opt_fig_cum_r.add_trace(go.Scatter(
+                                    x=[_opt_dd_trough_idx],
+                                    y=[float(_opt_cum_r.iloc[_opt_dd_trough_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#d62728", size=10, symbol="triangle-up"),
+                                    name=f"DD End (trade #{_opt_dd_trough_idx})",
+                                ))
+                            _opt_fig_cum_r.update_layout(
+                                height=240,
+                                margin=dict(l=0, r=0, t=10, b=30),
+                                xaxis_title="Trade #",
+                                yaxis_title="Cumulative R",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                            )
+                            _opt_fig_cum_r.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                            _opt_fig_cum_r.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                            st.caption(
+                                f"**Cumulative R** — best combo: {_opt_best['Scan Type']} · TCS ≥ {_opt_best['Min TCS']} · {int(_opt_best['Trades'])} trades"
+                            )
+                            st.plotly_chart(_opt_fig_cum_r, use_container_width=True)
+                            if _opt_dd_trough_idx is not None and _opt_dd_peak_idx is not None:
+                                st.caption(
+                                    f"🔴 Max drawdown period: trade\u00a0**#{_opt_dd_peak_idx}** → **#{_opt_dd_trough_idx}**"
+                                    f"\u2002({_opt_dd_trough_idx - _opt_dd_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_opt_max_dd_r)}R**"
+                                )
+                        else:
+                            # Dual-axis: Equity ($) left, Cumulative R right
+                            _opt_start_eq = float(_rp_equity)
+                            _opt_risk_amt = _opt_start_eq * (_rp_risk_pct / 100.0)
+                            _opt_eq_curve: list = [_opt_start_eq]
+                            for _opt_rv in _opt_r_ser:
+                                _opt_eq_curve.append(_opt_eq_curve[-1] + _opt_risk_amt * float(_opt_rv))
+
+                            _opt_cum_r_both = pd.concat(
+                                [pd.Series([0.0]), _opt_cum_r], ignore_index=True
+                            )
+                            _opt_x_eq  = list(range(len(_opt_eq_curve)))
+                            _opt_x_r   = list(range(len(_opt_cum_r_both)))
+
+                            _opt_eq_arr  = pd.Series(_opt_eq_curve, dtype=float)
+                            _opt_r_arr   = pd.Series(_opt_cum_r_both, dtype=float)
+                            _opt_min_len = min(len(_opt_eq_arr), len(_opt_r_arr))
+                            _opt_eq_arr  = _opt_eq_arr.iloc[:_opt_min_len]
+                            _opt_r_arr   = _opt_r_arr.iloc[:_opt_min_len]
+                            _opt_eq_rng  = _opt_eq_arr.max() - _opt_eq_arr.min()
+                            _opt_r_rng   = _opt_r_arr.max()  - _opt_r_arr.min()
+                            _opt_eq_norm = (_opt_eq_arr - _opt_eq_arr.min()) / _opt_eq_rng if _opt_eq_rng != 0 else _opt_eq_arr * 0
+                            _opt_r_norm  = (_opt_r_arr  - _opt_r_arr.min())  / _opt_r_rng  if _opt_r_rng  != 0 else _opt_r_arr  * 0
+                            _opt_div_arr = _opt_eq_norm - _opt_r_norm
+                            _opt_div_abs = _opt_div_arr.abs()
+                            _opt_max_div_idx = int(_opt_div_abs.idxmax())
+                            _opt_max_div_val = float(_opt_div_arr.iloc[_opt_max_div_idx])
+                            if abs(_opt_max_div_val) < 0.02:
+                                _opt_div_msg = "Equity and R track closely — position sizing matched raw edge well"
+                            elif _opt_max_div_val > 0:
+                                _opt_div_msg = "Position sizing amplified raw edge here (equity outpaced R)"
+                            else:
+                                _opt_div_msg = "Position sizing dampened raw edge here (equity lagged R)"
+
+                            _opt_band_half = max(1, round(_opt_min_len * 0.015))
+                            _opt_fig_dual  = go.Figure()
+                            _opt_fig_dual.add_vrect(
+                                x0=max(0, _opt_max_div_idx - _opt_band_half),
+                                x1=min(_opt_min_len - 1, _opt_max_div_idx + _opt_band_half),
+                                fillcolor="rgba(255, 214, 0, 0.12)",
+                                layer="below",
+                                line_width=0,
+                            )
+                            _opt_fig_dual.add_vline(
+                                x=_opt_max_div_idx,
+                                line=dict(color="rgba(255, 214, 0, 0.7)", width=1.5, dash="dot"),
+                                annotation_text=f"Max divergence (trade #{_opt_max_div_idx})",
+                                annotation_position="top left",
+                                annotation_font=dict(color="#ffd600", size=11),
+                            )
+                            if _opt_dd_trough_idx is not None and _opt_dd_peak_idx is not None:
+                                _opt_fig_dual.add_vrect(
+                                    x0=_opt_dd_peak_idx + 1,
+                                    x1=_opt_dd_trough_idx + 1,
+                                    fillcolor="rgba(220, 50, 50, 0.10)",
+                                    layer="below",
+                                    line_width=0,
+                                )
+                            _opt_fig_dual.add_trace(go.Scatter(
+                                x=_opt_x_eq,
+                                y=_opt_eq_curve,
+                                name="Equity ($)",
+                                mode="lines",
+                                line=dict(color="#4fc3f7", width=2),
+                                yaxis="y1",
+                            ))
+                            _opt_fig_dual.add_trace(go.Scatter(
+                                x=_opt_x_r,
+                                y=list(_opt_cum_r_both),
+                                name="Cumulative R",
+                                mode="lines",
+                                line=dict(color="#ef9a9a", width=2),
+                                yaxis="y2",
+                            ))
+                            _opt_fig_dual.update_layout(
+                                height=340,
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom", y=1.02,
+                                    xanchor="right", x=1,
+                                    font=dict(color="#cccccc"),
+                                ),
+                                xaxis=dict(title="Trade #", gridcolor="#1a1a2e", color="#cccccc", zeroline=False),
+                                yaxis=dict(
+                                    title=dict(text="Equity ($)", font=dict(color="#4fc3f7")),
+                                    tickfont=dict(color="#4fc3f7"),
+                                    gridcolor="#1a1a2e",
+                                    zeroline=True, zerolinecolor="#555",
+                                ),
+                                yaxis2=dict(
+                                    title=dict(text="Cumulative R", font=dict(color="#ef9a9a")),
+                                    tickfont=dict(color="#ef9a9a"),
+                                    overlaying="y",
+                                    side="right",
+                                    gridcolor="rgba(0,0,0,0)",
+                                    zeroline=False,
+                                ),
+                            )
+                            st.plotly_chart(
+                                _opt_fig_dual,
+                                use_container_width=True,
+                                config={
+                                    "scrollZoom": True,
+                                    "displayModeBar": True,
+                                    "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+                                },
+                            )
+                            st.caption(
+                                f"**Equity & R** — best combo: {_opt_best['Scan Type']} · TCS ≥ {_opt_best['Min TCS']} · {int(_opt_best['Trades'])} trades"
+                                f"\u2002|\u2002🟡 **Trade\u00a0#{_opt_max_div_idx}**: {_opt_div_msg}"
+                            )
+                            if _opt_dd_trough_idx is not None and _opt_dd_peak_idx is not None:
+                                _opt_dual_dd_dollars = float(_opt_eq_curve[_opt_dd_trough_idx + 1]) - float(_opt_eq_curve[_opt_dd_peak_idx + 1])
+                                st.caption(
+                                    f"🔴 Max drawdown period: trade\u00a0**#{_opt_dd_peak_idx}** → **#{_opt_dd_trough_idx}**"
+                                    f"\u2002({_opt_dd_trough_idx - _opt_dd_peak_idx} trades)\u2002|\u2002dollar magnitude\u00a0**${abs(_opt_dual_dd_dollars):,.0f}**"
+                                    f"\u2002|\u2002R magnitude\u00a0**{abs(_opt_max_dd_r)}R**"
+                                )
 
         if _rp_run:
             if not supabase or not _rp_uid:
