@@ -15637,6 +15637,9 @@ ALTER TABLE backtest_sim_runs
             _live_cal = recalibrate_from_supabase(user_id=_uid)
         with st.spinner("Calibrating historical brain from backtest data…"):
             _hist_cal = recalibrate_from_history(user_id=_uid)
+        _cached_load_tcs_thresholds.clear()
+        _cached_load_tcs_threshold_history.clear()
+        _cached_load_brain_weights.clear()
         _new_tcs = _cached_load_tcs_thresholds()
         _alert_tcs(_old_tcs, _new_tcs)
         # Persist one clean history event using the true before/after snapshots
@@ -16858,6 +16861,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
     _pt_reload = st.button("🔄 Refresh Tracker", key="pt_reload_btn")
     if _pt_reload or "pt_tracker_df" not in st.session_state:
+        if _pt_reload:
+            _cached_load_paper_trades.clear()
         _pt_df = _cached_load_paper_trades(user_id=_AUTH_USER_ID, days=21)
         st.session_state["pt_tracker_df"] = _pt_df
     else:
@@ -17553,6 +17558,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     st.warning(f"Verified 0, errors on {_vres['errors']} tickers")
                 else:
                     st.info("No rankings found for that date.")
+                _cached_load_ranking_accuracy.clear()
 
             st.markdown("")
             _acc_df = _cached_load_ranking_accuracy(user_id=_rk_uid)
