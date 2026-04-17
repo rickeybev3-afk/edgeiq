@@ -59,9 +59,13 @@ PRICE_MAX         = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
 # Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
 # IS_PAPER_ALPACA=true  → paper-api.alpaca.markets  (safe, simulated fills)
 # IS_PAPER_ALPACA=false → api.alpaca.markets        (real money — flip when ready)
-LIVE_ORDERS_ENABLED = os.getenv("LIVE_ORDERS_ENABLED", "false").lower() == "true"
-IS_PAPER_ALPACA     = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
-RISK_PER_TRADE      = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
+LIVE_ORDERS_ENABLED     = os.getenv("LIVE_ORDERS_ENABLED", "false").lower() == "true"
+IS_PAPER_ALPACA         = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
+RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
+# PDT guard: block new orders when day-trade count >= this limit (FINRA: 3 in rolling 5 days)
+PDT_MAX_DAY_TRADES      = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
+# Concurrent position cap: block new orders when open positions >= this limit
+MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", "2"))
 
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -367,6 +371,58 @@ def log_context_levels(results: list, trade_date_str: str) -> None:
 
 
 # ── Order placement ────────────────────────────────────────────────────────────
+def _alpaca_get(endpoint: str) -> dict:
+    """GET from Alpaca REST API, returns parsed JSON or {} on failure."""
+    import requests as _req
+    base    = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+    }
+    try:
+        r = _req.get(f"{base}{endpoint}", headers=headers, timeout=8)
+        return r.json() if r.content else {}
+    except Exception as _e:
+        log.warning(f"[Alpaca GET {endpoint}] failed: {_e}")
+        return {}
+
+
+def _check_pdt_guard() -> tuple[bool, int]:
+    """Return (blocked, daytrade_count).
+
+    Blocked = True when daytrade_count >= PDT_MAX_DAY_TRADES AND account
+    equity < $25,000 (PDT rule only applies below that threshold).
+    Paper accounts are never blocked — PDT is a real-money brokerage rule.
+    """
+    if IS_PAPER_ALPACA:
+        return False, 0
+    acct = _alpaca_get("/v2/account")
+    if not acct:
+        log.warning("[PDT guard] Could not fetch account info — allowing order through")
+        return False, 0
+    equity      = float(acct.get("equity", 0) or 0)
+    dt_count    = int(acct.get("daytrade_count", 0) or 0)
+    pdt_flagged = acct.get("pattern_day_trader", False)
+    if equity >= 25_000:
+        return False, dt_count   # above PDT threshold — no restriction
+    blocked = dt_count >= PDT_MAX_DAY_TRADES or pdt_flagged
+    return blocked, dt_count
+
+
+def _check_concurrent_positions_guard() -> tuple[bool, int]:
+    """Return (blocked, open_position_count).
+
+    Blocked = True when open positions >= MAX_CONCURRENT_POSITIONS.
+    Counts only real open equity positions (not cash or closed).
+    """
+    positions = _alpaca_get("/v2/positions")
+    if not isinstance(positions, list):
+        log.warning("[Concurrent guard] Could not fetch positions — allowing order through")
+        return False, 0
+    count = len(positions)
+    return count >= MAX_CONCURRENT_POSITIONS, count
+
+
 def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
 
@@ -395,13 +451,43 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         )
         return
 
+    ticker = r.get("ticker", "").upper()
+
+    # ── PDT guard (live accounts only, <$25k equity) ───────────────────────────
+    _pdt_blocked, _dt_count = _check_pdt_guard()
+    if _pdt_blocked:
+        log.warning(
+            f"  [{ticker}] ORDER BLOCKED — PDT limit reached "
+            f"({_dt_count} day trades in rolling 5 days, max {PDT_MAX_DAY_TRADES})"
+        )
+        tg_send(
+            f"🚫 <b>{ticker} Order Blocked — PDT Limit Reached</b>\n"
+            f"Day trades used: <b>{_dt_count}/{PDT_MAX_DAY_TRADES}</b> in rolling 5-day window\n"
+            f"No new orders will be placed until a trade day rolls off.\n"
+            f"<i>FINRA PDT rule: &lt;$25k accounts limited to 3 round-trips / 5 days.</i>"
+        )
+        return
+
+    # ── Concurrent position cap ────────────────────────────────────────────────
+    _pos_blocked, _pos_count = _check_concurrent_positions_guard()
+    if _pos_blocked:
+        log.warning(
+            f"  [{ticker}] ORDER BLOCKED — concurrent position cap reached "
+            f"({_pos_count} open positions, max {MAX_CONCURRENT_POSITIONS})"
+        )
+        tg_send(
+            f"🚫 <b>{ticker} Order Blocked — Max Positions Open</b>\n"
+            f"Open positions: <b>{_pos_count}/{MAX_CONCURRENT_POSITIONS}</b>\n"
+            f"Waiting for an existing position to close before adding new exposure."
+        )
+        return
+
     ib_high = float(r.get("ib_high") or 0)
     ib_low  = float(r.get("ib_low")  or 0)
     if ib_high <= 0 or ib_low <= 0 or ib_high <= ib_low:
-        log.warning(f"  [{r.get('ticker')}] skip order — invalid IB ({ib_low}–{ib_high})")
+        log.warning(f"  [{ticker}] skip order — invalid IB ({ib_low}–{ib_high})")
         return
 
-    ticker       = r.get("ticker", "").upper()
     risk_dollars = _compute_risk_dollars()
 
     # ── Entry quality filter 1: IB range % ────────────────────────────────────
@@ -2467,10 +2553,22 @@ def main():
                 _next_scan = "3:45 PM ET (EOD)"
             else:
                 _next_scan = "10:47 AM ET tomorrow (morning IB close)"
+            # For live accounts show live PDT + position status at startup
+            _startup_extra = ""
+            if not IS_PAPER_ALPACA:
+                _pdt_blk, _pdt_n = _check_pdt_guard()
+                _pos_blk, _pos_n = _check_concurrent_positions_guard()
+                _pdt_warn  = " 🚫 LIMIT REACHED" if _pdt_blk else ""
+                _pos_warn  = " 🚫 AT CAP" if _pos_blk else ""
+                _startup_extra = (
+                    f"\n📊 PDT: <b>{_pdt_n}/{PDT_MAX_DAY_TRADES}</b> day trades used{_pdt_warn}"
+                    f"\n📌 Positions: <b>{_pos_n}/{MAX_CONCURRENT_POSITIONS}</b> open{_pos_warn}"
+                )
             tg_send(
                 f"🟢 <b>EdgeIQ Paper Trader Bot started</b>\n"
                 f"Alpaca bracket orders: <b>ACTIVE [{acct_label}]</b>\n"
                 f"Next scan: {_next_scan}"
+                f"{_startup_extra}"
             )
     else:
         log.info("Alpaca order placement: DISABLED (LIVE_ORDERS_ENABLED=false) — scanning/alerting only")
