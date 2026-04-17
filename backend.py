@@ -690,6 +690,7 @@ def _parse_retention_days(env_val: str | None, default: int = 90) -> int:
         return default
 
 TCS_HISTORY_RETENTION_DAYS = _parse_retention_days(os.environ.get("TCS_HISTORY_RETENTION_DAYS"), 90)  # days of history to keep in the threshold history log
+TCS_BASE_SCORE = _parse_retention_days(os.environ.get("TCS_BASE_SCORE"), 65)  # baseline TCS gate used in compute_structure_tcs_thresholds(); override via env var
 
 # Canonical display-label mapping for TCS structure weight keys.
 # Single source of truth — imported by app.py and paper_trader_bot.py.
@@ -2614,7 +2615,7 @@ def compute_structure_tcs_thresholds() -> list[dict]:
       - Lower hit rate → higher TCS threshold (require more confirmation)
 
     Threshold formula:
-      base_tcs = 65 (default gate)
+      base_tcs = TCS_BASE_SCORE (default 65; override via TCS_BASE_SCORE env var)
       adjustment = (hit_rate - 60) * 0.5
       threshold = base_tcs - adjustment
       Clamped to [45, 85] range
@@ -2715,7 +2716,7 @@ def compute_structure_tcs_thresholds() -> list[dict]:
         "nrml_variation": "❓ Other",
     }
 
-    BASE_TCS = 65
+    BASE_TCS = TCS_BASE_SCORE
     results = []
 
     for wk, label in STRUCTURE_LABELS.items():
