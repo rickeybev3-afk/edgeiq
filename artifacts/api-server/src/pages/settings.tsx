@@ -10,9 +10,25 @@ interface TradingModeState {
   saved: boolean;
 }
 
+interface CredentialAlertsState {
+  enabled: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 export default function Settings() {
   const [state, setState] = useState<TradingModeState>({
     mode: "paper",
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
+  const [credAlerts, setCredAlerts] = useState<CredentialAlertsState>({
+    enabled: true,
     loading: true,
     saving: false,
     error: null,
@@ -43,6 +59,37 @@ export default function Settings() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    fetch("/api/credential-alerts")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setCredAlerts((s) => ({
+            ...s,
+            enabled: data.enabled !== false,
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load credential alert preference.";
+          setCredAlerts((s) => ({
+            ...s,
+            loading: false,
+            error: msg,
+          }));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const hash = window.location.hash;
     if (hash === "#trading-mode") {
       const el = document.getElementById("trading-mode");
@@ -50,7 +97,13 @@ export default function Settings() {
         el.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     }
-  }, [state.loading]);
+    if (hash === "#credential-alerts") {
+      const el = document.getElementById("credential-alerts");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+  }, [state.loading, credAlerts.loading]);
 
   async function handleChange(newMode: TradingMode) {
     setState((s) => ({ ...s, saving: true, error: null, saved: false }));
@@ -78,6 +131,32 @@ export default function Settings() {
     }
   }
 
+  async function handleCredAlertsToggle(newEnabled: boolean) {
+    setCredAlerts((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/credential-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setCredAlerts((s) => ({
+        ...s,
+        enabled: data.enabled !== false,
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setCredAlerts((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setCredAlerts((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
   return (
     <div
       style={{
@@ -101,6 +180,7 @@ export default function Settings() {
             borderRadius: "10px",
             padding: "24px",
             scrollMarginTop: "24px",
+            marginBottom: "20px",
           }}
         >
           <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
@@ -148,8 +228,120 @@ export default function Settings() {
             </p>
           )}
         </section>
+
+        <section
+          id="credential-alerts"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "24px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Subscriber Preferences
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            Control which alerts subscribers receive via Telegram.
+          </p>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "16px",
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid #2d3748",
+              borderRadius: "8px",
+            }}
+          >
+            <div style={{ flex: 1, marginRight: "16px" }}>
+              <div style={{ fontSize: "14px", fontWeight: 600, color: "#e2e8f0", marginBottom: "4px" }}>
+                Credential failure alerts
+              </div>
+              <div style={{ fontSize: "12px", color: "#64748b", lineHeight: "1.5" }}>
+                Send a Telegram message when broker credential errors are detected or resolved.
+              </div>
+            </div>
+
+            {credAlerts.loading ? (
+              <span style={{ fontSize: "12px", color: "#475569" }}>Loading…</span>
+            ) : (
+              <ToggleSwitch
+                enabled={credAlerts.enabled}
+                disabled={credAlerts.saving}
+                onChange={handleCredAlertsToggle}
+              />
+            )}
+          </div>
+
+          {credAlerts.saving && (
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "14px" }}>Saving…</p>
+          )}
+          {credAlerts.saved && (
+            <p style={{ fontSize: "13px", color: "#4ade80", marginTop: "14px" }}>
+              ✓ Preference saved.
+            </p>
+          )}
+          {credAlerts.error && (
+            <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
+              ⚠ {credAlerts.error}
+            </p>
+          )}
+        </section>
       </div>
     </div>
+  );
+}
+
+function ToggleSwitch({
+  enabled,
+  disabled,
+  onChange,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  const activeColor = "#22c55e";
+  const inactiveColor = "#475569";
+  return (
+    <button
+      role="switch"
+      aria-checked={enabled}
+      disabled={disabled}
+      onClick={() => onChange(!enabled)}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+        width: "44px",
+        height: "24px",
+        borderRadius: "9999px",
+        border: "none",
+        background: enabled ? activeColor : inactiveColor,
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.6 : 1,
+        transition: "background 0.2s",
+        flexShrink: 0,
+        padding: 0,
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          left: enabled ? "22px" : "2px",
+          width: "20px",
+          height: "20px",
+          borderRadius: "50%",
+          background: "#fff",
+          transition: "left 0.2s",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
+        }}
+      />
+    </button>
   );
 }
 

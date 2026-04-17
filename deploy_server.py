@@ -24,6 +24,8 @@ streamlit_ready = False
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 _TRADING_MODE_FILE = "/tmp/trading_mode.json"
 _TRADING_WRITE_SECRET = os.environ.get("DASHBOARD_WRITE_SECRET", "").strip()
+_USER_PREFS_FILE = ".local/user_prefs.json"
+_OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
 
 
 def _get_trading_mode() -> str:
@@ -78,6 +80,108 @@ def _clear_mismatch_in_health_file() -> None:
             json.dump(_data, _hf)
     except Exception:
         pass
+
+def _load_owner_prefs() -> dict:
+    """Load the owner's user preferences from local file + Supabase (same store as backend.py).
+
+    Reads .local/user_prefs.json first, then attempts a Supabase query using the
+    SUPABASE_URL / SUPABASE_KEY environment variables.  Returns an empty dict on
+    any failure so callers can safely use .get() with defaults.
+    """
+    uid = _OWNER_USER_ID
+    result: dict = {}
+
+    # Local file (always written by backend.py save_user_prefs)
+    try:
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                result = json.load(_f).get(uid, {})
+    except Exception:
+        pass
+
+    # Supabase takes precedence when available (mirrors backend.py load_user_prefs)
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_key = (
+        os.environ.get("SUPABASE_KEY") or
+        os.environ.get("SUPABASE_ANON_KEY") or
+        os.environ.get("VITE_SUPABASE_ANON_KEY") or
+        ""
+    )
+    if supabase_url and supabase_key:
+        try:
+            import urllib.request as _ur
+            req = _ur.Request(
+                f"{supabase_url}/rest/v1/user_preferences?user_id=eq.{uid}&select=prefs&limit=1",
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Accept": "application/json",
+                },
+            )
+            with _ur.urlopen(req, timeout=4) as resp:
+                rows = json.loads(resp.read())
+                if rows:
+                    raw = rows[0].get("prefs", "{}")
+                    result = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            pass
+
+    return result
+
+
+def _save_owner_prefs(prefs: dict) -> None:
+    """Persist the owner's user preferences to local file + Supabase.
+
+    Mirrors the write path used by backend.py save_user_prefs so the stored value
+    is immediately visible to get_beta_chat_ids and all backend logic.
+    """
+    import datetime as _dt
+    uid = _OWNER_USER_ID
+
+    # Local file first
+    try:
+        all_prefs: dict = {}
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                all_prefs = json.load(_f)
+        all_prefs[uid] = prefs
+        os.makedirs(os.path.dirname(_USER_PREFS_FILE), exist_ok=True)
+        with open(_USER_PREFS_FILE, "w") as _f:
+            json.dump(all_prefs, _f)
+    except Exception:
+        pass
+
+    # Supabase upsert
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_key = (
+        os.environ.get("SUPABASE_KEY") or
+        os.environ.get("SUPABASE_ANON_KEY") or
+        os.environ.get("VITE_SUPABASE_ANON_KEY") or
+        ""
+    )
+    if supabase_url and supabase_key:
+        try:
+            import urllib.request as _ur
+            payload = json.dumps({
+                "user_id": uid,
+                "prefs": json.dumps(prefs),
+                "updated_at": _dt.datetime.utcnow().isoformat(),
+            }).encode()
+            req = _ur.Request(
+                f"{supabase_url}/rest/v1/user_preferences",
+                data=payload,
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates",
+                },
+                method="POST",
+            )
+            _ur.urlopen(req, timeout=4)
+        except Exception:
+            pass
+
 
 _DB_CACHE_TTL = 10
 _db_cache_lock = threading.Lock()
@@ -205,6 +309,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/trading-mode":
             self._trading_mode_get()
             return
+        if path == "/api/credential-alerts":
+            self._credential_alerts_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -234,6 +341,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/trading-mode":
             self._trading_mode_post()
+            return
+        if path == "/api/credential-alerts":
+            self._credential_alerts_post()
             return
         self._proxy() if streamlit_ready else self._loading()
 
@@ -327,6 +437,72 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # the authoritative result once it completes.
             _clear_mismatch_in_health_file()
             body = json.dumps({"mode": mode}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+    def _credential_alerts_get(self):
+        """Return credential_alerts_enabled from owner's user prefs (default True)."""
+        try:
+            prefs = _load_owner_prefs()
+            enabled = prefs.get("credential_alerts_enabled", True)
+            body = json.dumps({"enabled": bool(enabled)}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _credential_alerts_post(self):
+        """Accept {"enabled": bool} and persist credential_alerts_enabled in owner's user prefs.
+
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set, matching
+        the same authz model used by POST /api/trading-mode.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "enabled" not in payload:
+                body = json.dumps({"error": "'enabled' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            enabled = bool(payload["enabled"])
+            prefs = _load_owner_prefs()
+            prefs["credential_alerts_enabled"] = enabled
+            _save_owner_prefs(prefs)
+            body = json.dumps({"enabled": enabled}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
