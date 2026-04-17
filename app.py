@@ -14203,6 +14203,38 @@ ALTER TABLE backtest_sim_runs
                                 f'</div>',
                                 unsafe_allow_html=True,
                             )
+                            # ── EOD vs Tiered delta badge ──────────────────
+                            _bts_delta_df = pd.DataFrame()
+                            if "tiered_pnl_r" in _bts_df.columns:
+                                _bts_delta_df = _bts_df[
+                                    _bts_df["eod_pnl_r"].notna() &
+                                    _bts_df["tiered_pnl_r"].notna() &
+                                    (_bts_df["scan_type"] == _bts_eod_stk)
+                                ].copy()
+                            if not _bts_delta_df.empty:
+                                _bts_delta_df["eod_pnl_r"]    = _bts_delta_df["eod_pnl_r"].astype(float)
+                                _bts_delta_df["tiered_pnl_r"] = _bts_delta_df["tiered_pnl_r"].astype(float)
+                                _bts_delta_val  = _bts_delta_df["eod_pnl_r"].mean() - _bts_delta_df["tiered_pnl_r"].mean()
+                                _bts_delta_sign = "+" if _bts_delta_val >= 0 else ""
+                                _bts_delta_n    = len(_bts_delta_df)
+                                if _bts_delta_val > 0.01:
+                                    _bts_delta_bg, _bts_delta_border, _bts_delta_col = "#0a1f10", "#2e7d32", "#66bb6a"
+                                    _bts_delta_lbl = f"EOD beats Tiered by {_bts_delta_sign}{_bts_delta_val:.3f}R avg"
+                                elif _bts_delta_val < -0.01:
+                                    _bts_delta_bg, _bts_delta_border, _bts_delta_col = "#1f0a0a", "#c62828", "#ef5350"
+                                    _bts_delta_lbl = f"Tiered beats EOD by {abs(_bts_delta_val):.3f}R avg"
+                                else:
+                                    _bts_delta_bg, _bts_delta_border, _bts_delta_col = "#111827", "#455a64", "#90a4ae"
+                                    _bts_delta_lbl = f"EOD ≈ Tiered ({_bts_delta_sign}{_bts_delta_val:.3f}R avg)"
+                                st.markdown(
+                                    f'<div style="background:{_bts_delta_bg};border:1px solid {_bts_delta_border};'
+                                    f'border-radius:6px;padding:6px 10px;margin-top:6px;text-align:center;">'
+                                    f'<div style="font-size:10px;color:#78909c;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:2px;">EOD vs Tiered</div>'
+                                    f'<div style="font-size:12px;font-weight:700;color:{_bts_delta_col};">{_bts_delta_lbl}</div>'
+                                    f'<div style="font-size:10px;color:#546e7a;margin-top:2px;">{_bts_delta_n} paired trades</div>'
+                                    f'</div>',
+                                    unsafe_allow_html=True,
+                                )
 
             # ── Row 3b — P1–P4 Priority Tier Breakdown ───────────────────────
             st.markdown("<br>", unsafe_allow_html=True)
