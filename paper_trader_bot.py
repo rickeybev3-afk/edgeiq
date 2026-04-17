@@ -1342,11 +1342,13 @@ def _alert_eod_summary(
     wins   = [r for r in results if r.get("win_loss") == "Win"]
     losses = [r for r in results if r.get("win_loss") == "Loss"]
     best   = max(results, key=lambda r: float(r.get("aft_move_pct", 0)), default=None)
+    _ib_threshold = load_ib_range_pct_threshold()
 
     lines = [
         f"📈 <b>EdgeIQ EOD Summary — {trade_date}</b>",
         f"━━━━━━━━━━━━━━━━━━━━━",
         f"✅ Wins: {len(wins)}   ❌ Losses: {len(losses)}   📋 Updated: {updated}",
+        f"📐 IB filter: < {_ib_threshold:.1f}% of open price",
     ]
     if best and best.get("aft_move_pct"):
         lines.append(
