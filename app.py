@@ -18413,6 +18413,257 @@ ALTER TABLE backtest_sim_runs
                                 "2 months of matched-row history for each scan type."
                             )
 
+            # ── P&L by Entry Quality — Screener × Outcome Direction ──────────
+            _bq_has_eod    = "eod_pnl_r"       in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
+            _bq_has_tiered = "tiered_pnl_r"    in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
+            _bq_has_outcome = "actual_outcome"  in _bts_df.columns
+            _bq_has_scan    = "scan_type"       in _bts_df.columns
+
+            if _bq_has_eod and _bq_has_tiered and _bq_has_outcome and _bq_has_scan:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-bottom:4px;">'
+                    '📊 Avg P&amp;L by Entry Quality — Screener × Outcome Direction</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Side-by-side avg R per trade for EOD hold vs 50/25/25 ladder exit, "
+                    "grouped by scan type (screener) and breakout direction. "
+                    "Only paired trades where both metrics are recorded are included."
+                )
+
+                _bq_src = _bts_df[
+                    _bts_df["eod_pnl_r"].notna()
+                    & _bts_df["tiered_pnl_r"].notna()
+                    & _bts_df["actual_outcome"].isin(["Bullish Break", "Bearish Break"])
+                ].copy()
+
+                if _bq_src.empty:
+                    st.info(
+                        "No paired trades with a Bullish or Bearish Break outcome found "
+                        "for the current date range — try widening the filter or running "
+                        "more backfills."
+                    )
+                else:
+                    _bq_src["eod_pnl_r"]    = _bq_src["eod_pnl_r"].astype(float)
+                    _bq_src["tiered_pnl_r"] = _bq_src["tiered_pnl_r"].astype(float)
+                    _bq_src["scan_label"]   = _bq_src["scan_type"].map(
+                        {"morning": "Morning", "intraday": "Intraday"}
+                    ).fillna(_bq_src["scan_type"].str.capitalize())
+                    _bq_src["outcome_dir"]  = _bq_src["actual_outcome"].map(
+                        {"Bullish Break": "Bullish Break", "Bearish Break": "Bearish Break"}
+                    )
+
+                    _bq_grouped = (
+                        _bq_src.groupby(["scan_label", "outcome_dir"])
+                        .agg(
+                            avg_eod    =("eod_pnl_r",    "mean"),
+                            avg_tiered =("tiered_pnl_r", "mean"),
+                            eod_wr     =("eod_pnl_r",    lambda x: (x > 0).mean() * 100),
+                            tiered_wr  =("tiered_pnl_r", lambda x: (x > 0).mean() * 100),
+                            n          =("eod_pnl_r",    "count"),
+                        )
+                        .reset_index()
+                    )
+                    _bq_grouped.columns = [
+                        "Screener", "Direction",
+                        "Avg EOD R", "Avg Tiered R",
+                        "EOD Win %", "Tiered Win %",
+                        "Trades",
+                    ]
+                    _bq_grouped = _bq_grouped.sort_values(
+                        ["Screener", "Direction"]
+                    ).reset_index(drop=True)
+
+                    # ── Stat cards per screener × direction ───────────────────
+                    _bq_n_groups = len(_bq_grouped)
+                    _bq_cols_per_row = min(4, max(1, _bq_n_groups))
+                    _bq_card_cols = st.columns(_bq_cols_per_row)
+                    for _bq_ci, _bq_row in enumerate(_bq_grouped.itertuples(index=False)):
+                        _bq_row = _bq_grouped.iloc[_bq_ci]
+                        with _bq_card_cols[_bq_ci % _bq_cols_per_row]:
+                            _bq_eod_c  = "#4caf50" if _bq_row["Avg EOD R"] >= 0 else "#ef5350"
+                            _bq_tier_c = "#4caf50" if _bq_row["Avg Tiered R"] >= 0 else "#ef5350"
+                            _bq_diff   = _bq_row["Avg Tiered R"] - _bq_row["Avg EOD R"]
+                            if abs(_bq_diff) < 0.001:
+                                _bq_verdict_lbl = "Tied"
+                                _bq_verdict_clr = "#90a4ae"
+                            elif _bq_diff > 0:
+                                _bq_verdict_lbl = f"Tiered +{_bq_diff:.3f}R"
+                                _bq_verdict_clr = "#ffb74d"
+                            else:
+                                _bq_verdict_lbl = f"EOD +{abs(_bq_diff):.3f}R"
+                                _bq_verdict_clr = "#81c784"
+                            _bq_dir_icon = (
+                                "📈" if "Bullish" in _bq_row["Direction"] else "📉"
+                            )
+                            st.markdown(
+                                f'<div style="background:#1a2535;border:1px solid #263248;'
+                                f'border-radius:8px;padding:12px 10px;text-align:center;">'
+                                f'<div style="font-size:11px;font-weight:700;color:#cfd8dc;margin-bottom:4px;">'
+                                f'{_bq_row["Screener"]}</div>'
+                                f'<div style="font-size:10px;color:#90a4ae;margin-bottom:6px;">'
+                                f'{_bq_dir_icon} {_bq_row["Direction"]}</div>'
+                                f'<div style="display:flex;justify-content:space-around;margin:6px 0;">'
+                                f'<div style="text-align:center;">'
+                                f'<div style="font-size:9px;color:#81c784;text-transform:uppercase;'
+                                f'letter-spacing:0.8px;margin-bottom:2px;">📅 EOD</div>'
+                                f'<div style="font-size:15px;font-weight:700;color:{_bq_eod_c};'
+                                f'font-family:monospace;">'
+                                f'{"+" if _bq_row["Avg EOD R"] >= 0 else ""}{_bq_row["Avg EOD R"]:.3f}R</div>'
+                                f'<div style="font-size:10px;color:#90a4ae;">'
+                                f'{_bq_row["EOD Win %"]:.0f}% win</div>'
+                                f'</div>'
+                                f'<div style="font-size:12px;color:#37474f;align-self:center;">vs</div>'
+                                f'<div style="text-align:center;">'
+                                f'<div style="font-size:9px;color:#ffb74d;text-transform:uppercase;'
+                                f'letter-spacing:0.8px;margin-bottom:2px;">🪜 Tiered</div>'
+                                f'<div style="font-size:15px;font-weight:700;color:{_bq_tier_c};'
+                                f'font-family:monospace;">'
+                                f'{"+" if _bq_row["Avg Tiered R"] >= 0 else ""}{_bq_row["Avg Tiered R"]:.3f}R</div>'
+                                f'<div style="font-size:10px;color:#90a4ae;">'
+                                f'{_bq_row["Tiered Win %"]:.0f}% win</div>'
+                                f'</div>'
+                                f'</div>'
+                                f'<div style="font-size:10px;font-weight:700;color:{_bq_verdict_clr};'
+                                f'margin-top:4px;">{_bq_verdict_lbl}</div>'
+                                f'<div style="font-size:9px;color:#455a64;margin-top:3px;">'
+                                f'{int(_bq_row["Trades"])} paired trades</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
+                    # ── Grouped bar chart (EOD vs Tiered per screener×direction) ─
+                    import altair as _alt_bq
+
+                    _bq_long = []
+                    for _, _bqr in _bq_grouped.iterrows():
+                        _bq_grp = f'{_bqr["Screener"]} · {_bqr["Direction"]}'
+                        _bq_long += [
+                            {
+                                "Group":    _bq_grp,
+                                "Strategy": "📅 EOD Hold",
+                                "Avg R":    round(float(_bqr["Avg EOD R"]),    4),
+                                "Win Rate": round(float(_bqr["EOD Win %"]),    1),
+                                "Trades":   int(_bqr["Trades"]),
+                            },
+                            {
+                                "Group":    _bq_grp,
+                                "Strategy": "🪜 Tiered Exit",
+                                "Avg R":    round(float(_bqr["Avg Tiered R"]), 4),
+                                "Win Rate": round(float(_bqr["Tiered Win %"]), 1),
+                                "Trades":   int(_bqr["Trades"]),
+                            },
+                        ]
+                    _bq_long_df = pd.DataFrame(_bq_long)
+
+                    _bq_zero_rule = (
+                        _alt_bq.Chart(pd.DataFrame({"y": [0]}))
+                        .mark_rule(color="#455a64", strokeDash=[4, 4], strokeWidth=1)
+                        .encode(y=_alt_bq.Y("y:Q"))
+                    )
+                    _bq_bars = (
+                        _alt_bq.Chart(_bq_long_df)
+                        .mark_bar(
+                            cornerRadiusTopLeft=3,
+                            cornerRadiusTopRight=3,
+                            size=22,
+                        )
+                        .encode(
+                            x=_alt_bq.X(
+                                "Group:N",
+                                title=None,
+                                axis=_alt_bq.Axis(
+                                    labelColor="#90a4ae",
+                                    labelFontSize=10,
+                                    labelAngle=-15,
+                                    ticks=False,
+                                ),
+                                sort=None,
+                            ),
+                            xOffset=_alt_bq.XOffset(
+                                "Strategy:N",
+                                sort=["📅 EOD Hold", "🪜 Tiered Exit"],
+                            ),
+                            y=_alt_bq.Y(
+                                "Avg R:Q",
+                                title="Avg R per Trade",
+                                scale=_alt_bq.Scale(zero=True),
+                                axis=_alt_bq.Axis(
+                                    labelColor="#90a4ae",
+                                    titleColor="#90a4ae",
+                                    gridColor="#263248",
+                                ),
+                            ),
+                            color=_alt_bq.Color(
+                                "Strategy:N",
+                                scale=_alt_bq.Scale(
+                                    domain=["📅 EOD Hold", "🪜 Tiered Exit"],
+                                    range=["#81c784", "#ffb74d"],
+                                ),
+                                legend=_alt_bq.Legend(
+                                    orient="top",
+                                    labelColor="#cfd8dc",
+                                    titleColor="#cfd8dc",
+                                    title="Strategy",
+                                ),
+                            ),
+                            tooltip=[
+                                _alt_bq.Tooltip("Group:N",    title="Screener · Direction"),
+                                _alt_bq.Tooltip("Strategy:N", title="Strategy"),
+                                _alt_bq.Tooltip("Avg R:Q",    title="Avg R / trade", format="+.3f"),
+                                _alt_bq.Tooltip("Win Rate:Q", title="Win Rate %",     format=".1f"),
+                                _alt_bq.Tooltip("Trades:Q",   title="Paired Trades"),
+                            ],
+                        )
+                        .properties(height=240)
+                    )
+                    _bq_chart = (
+                        (_bq_zero_rule + _bq_bars)
+                        .configure_view(fill="#141e2e", stroke=None)
+                        .configure_axis(
+                            labelColor="#90a4ae",
+                            titleColor="#90a4ae",
+                            gridColor="#263248",
+                        )
+                    )
+                    st.altair_chart(_bq_chart, use_container_width=True)
+
+                    # ── Win rate + expectancy summary table ───────────────────
+                    st.markdown(
+                        '<div style="font-size:11px;color:#546e7a;letter-spacing:1px;'
+                        'text-transform:uppercase;margin-top:10px;margin-bottom:6px;">'
+                        'Win Rate &amp; Expectancy — Both Styles</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _bq_tbl_rows = []
+                    for _, _bqtr in _bq_grouped.iterrows():
+                        _bq_dir_icon2 = "📈" if "Bullish" in _bqtr["Direction"] else "📉"
+                        _bq_tbl_rows.append({
+                            "Screener":        _bqtr["Screener"],
+                            "Direction":       f'{_bq_dir_icon2} {_bqtr["Direction"]}',
+                            "EOD Win %":       f'{_bqtr["EOD Win %"]:.1f}%',
+                            "EOD Exp (avg R)": (
+                                f'+{_bqtr["Avg EOD R"]:.3f}R'
+                                if _bqtr["Avg EOD R"] >= 0
+                                else f'{_bqtr["Avg EOD R"]:.3f}R'
+                            ),
+                            "Tiered Win %":       f'{_bqtr["Tiered Win %"]:.1f}%',
+                            "Tiered Exp (avg R)": (
+                                f'+{_bqtr["Avg Tiered R"]:.3f}R'
+                                if _bqtr["Avg Tiered R"] >= 0
+                                else f'{_bqtr["Avg Tiered R"]:.3f}R'
+                            ),
+                            "Trades": int(_bqtr["Trades"]),
+                        })
+                    _bq_tbl_df = pd.DataFrame(_bq_tbl_rows)
+                    st.dataframe(
+                        _bq_tbl_df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
