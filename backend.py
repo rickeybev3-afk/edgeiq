@@ -226,9 +226,9 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                             )
                         else:
                             _mismatch_msg = (
-                                "Paper keys detected but app is in live mode (IS_PAPER_ALPACA=false). "
+                                "Paper keys detected but Trading Mode is set to Live. "
                                 "Live orders will be rejected by Alpaca. "
-                                "Set IS_PAPER_ALPACA=true or switch to live brokerage keys."
+                                "Switch Trading Mode to Paper in the dashboard sidebar, or replace your keys with live brokerage keys."
                             )
                             logging.warning(
                                 "[STARTUP] ⚠️  ALPACA CREDENTIAL MISMATCH: keys belong to a "
@@ -254,9 +254,9 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                         if not _key_is_paper:
                             if IS_PAPER_ALPACA:
                                 _mismatch_msg = (
-                                    "Live keys detected but app is in paper mode (IS_PAPER_ALPACA=true). "
+                                    "Live keys detected but Trading Mode is set to Paper. "
                                     "Paper trading will fail or route real orders unexpectedly. "
-                                    "Set IS_PAPER_ALPACA=false or switch to paper trading keys."
+                                    "Switch Trading Mode to Live in the dashboard sidebar, or replace your keys with paper trading keys."
                                 )
                                 logging.warning(
                                     "[STARTUP] ⚠️  ALPACA CREDENTIAL MISMATCH: keys belong to a "
@@ -300,6 +300,84 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
                 _alpaca_mismatch_status["checked"] = True
         _threading.Thread(target=_run, daemon=True, name="alpaca-account-check").start()
     _check_alpaca_account_type()
+
+
+def set_trading_mode(is_paper: bool) -> None:
+    """Update the in-memory trading mode (IS_PAPER_ALPACA) at runtime.
+
+    This is called when a trader changes the Trading Mode toggle in the
+    dashboard so the new mode takes effect immediately without a restart.
+    After updating the global, it re-runs the credential mismatch check
+    in the background so _alpaca_mismatch_status stays consistent with the
+    newly selected mode.
+    """
+    global IS_PAPER_ALPACA
+    IS_PAPER_ALPACA = is_paper
+    logging.info(
+        "[TRADING_MODE] Trading mode updated to %s",
+        "PAPER" if is_paper else "LIVE",
+    )
+    if ALPACA_API_KEY and ALPACA_SECRET_KEY:
+        _check_alpaca_account_type()
+
+
+def get_trading_mode() -> bool:
+    """Return the current IS_PAPER_ALPACA value (True = paper, False = live)."""
+    return IS_PAPER_ALPACA
+
+
+def check_credential_match_sync(api_key: str, secret_key: str, is_paper: bool) -> dict:
+    """Synchronously check whether the given Alpaca credentials match the desired mode.
+
+    Returns a dict with keys:
+      matched      — True if the key type equals the intended mode
+      key_is_paper — True/False for the detected key type, None if unknown
+      error        — human-readable error string, or None on success
+    """
+    if not api_key or not secret_key:
+        return {"matched": True, "key_is_paper": None, "error": None}
+    try:
+        import requests as _req
+        _hdrs = {
+            "APCA-API-KEY-ID":     api_key,
+            "APCA-API-SECRET-KEY": secret_key,
+        }
+        _r_paper = _req.get(
+            "https://paper-api.alpaca.markets/v2/account",
+            headers=_hdrs, timeout=8,
+        )
+        if _r_paper.status_code == 200:
+            _key_is_paper = _r_paper.json().get("is_paper_account", True)
+            return {
+                "matched": _key_is_paper == is_paper,
+                "key_is_paper": _key_is_paper,
+                "error": None,
+            }
+        if _r_paper.status_code in (401, 403):
+            _r_live = _req.get(
+                "https://api.alpaca.markets/v2/account",
+                headers=_hdrs, timeout=8,
+            )
+            if _r_live.status_code == 200:
+                _key_is_paper = _r_live.json().get("is_paper_account", False)
+                return {
+                    "matched": _key_is_paper == is_paper,
+                    "key_is_paper": _key_is_paper,
+                    "error": None,
+                }
+            return {
+                "matched": False,
+                "key_is_paper": None,
+                "error": f"Could not verify credentials (HTTP {_r_live.status_code})",
+            }
+        return {
+            "matched": False,
+            "key_is_paper": None,
+            "error": f"Alpaca returned HTTP {_r_paper.status_code}",
+        }
+    except Exception as _ce:
+        return {"matched": False, "key_is_paper": None, "error": str(_ce)}
+
 
 # Supabase client creation is gated only on Supabase-specific secrets so that
 # missing Alpaca credentials do not prevent data/analysis features from working.

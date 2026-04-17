@@ -223,7 +223,7 @@ if _alpaca_mismatch_status["mismatch"]:
     st.warning(
         f"**⚠️ Alpaca credential mismatch detected**\n\n"
         f"{_alpaca_mismatch_status['message']}\n\n"
-        "Update **IS_PAPER_ALPACA** in your environment **Secrets**, then restart the app."
+        "Use the **Trading Mode** toggle in the sidebar to switch modes without restarting."
     )
 
 # ── Session state ──────────────────────────────────────────────────────────────
@@ -3973,6 +3973,12 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
                 st.session_state["pt_price_range"] = (float(_pr[0]), float(_pr[1]))
         except (ValueError, TypeError):
             pass
+    if "trading_mode" in _prefs:
+        _saved_is_paper = _prefs["trading_mode"] == "paper"
+        set_trading_mode(_saved_is_paper)
+        st.session_state["_trading_mode"] = _prefs["trading_mode"]
+    else:
+        st.session_state["_trading_mode"] = "paper" if get_trading_mode() else "live"
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
@@ -4047,6 +4053,71 @@ with st.sidebar:
             st.session_state["_cached_prefs"]       = _new_prefs
             st.session_state["_pref_alpaca_key"]    = api_key
             st.session_state["_pref_alpaca_secret"] = secret_key
+
+    st.markdown("---")
+    st.header("🔀 Trading Mode")
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _cached_cred_check(_key: str, _secret: str, _is_paper: bool) -> dict:
+        return check_credential_match_sync(_key, _secret, _is_paper)
+
+    _tm_current = st.session_state.get("_trading_mode", "paper" if get_trading_mode() else "live")
+    _tm_idx = 0 if _tm_current == "paper" else 1
+    _tm_choice = st.radio(
+        "Account type",
+        ["Paper", "Live"],
+        index=_tm_idx,
+        horizontal=True,
+        key="_tm_radio",
+        help=(
+            "Paper — simulated trades via paper-api.alpaca.markets.\n"
+            "Live — real orders via api.alpaca.markets."
+        ),
+    )
+    _tm_is_paper = _tm_choice == "Paper"
+    _tm_label = "paper" if _tm_is_paper else "live"
+
+    if _tm_label != _tm_current:
+        set_trading_mode(_tm_is_paper)
+        st.session_state["_trading_mode"] = _tm_label
+        if _sb_uid:
+            _tm_prefs = {**st.session_state.get("_cached_prefs", {}), "trading_mode": _tm_label}
+            save_user_prefs(_sb_uid, _tm_prefs)
+            st.session_state["_cached_prefs"] = _tm_prefs
+
+    if _tm_is_paper:
+        st.markdown(
+            '<div style="background:#0a1a2a; border:1px solid #1565c0; border-radius:8px; '
+            'padding:8px 12px; margin:4px 0;">'
+            '<span style="font-size:12px; font-weight:700; color:#90caf9;">🔵 Paper mode active</span><br>'
+            '<span style="font-size:11px; color:#64b5f6;">Orders go to the Alpaca paper endpoint. '
+            'No real money at risk.</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="background:#1a0a0a; border:1px solid #b71c1c; border-radius:8px; '
+            'padding:8px 12px; margin:4px 0;">'
+            '<span style="font-size:12px; font-weight:700; color:#ef5350;">🔴 Live mode active</span><br>'
+            '<span style="font-size:11px; color:#e57373;">Orders route to your real brokerage account.</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    if api_key and secret_key:
+        _cred_result = _cached_cred_check(api_key, secret_key, _tm_is_paper)
+        if _cred_result.get("error"):
+            st.caption(f"⚠️ Could not verify credentials: {_cred_result['error']}")
+        elif not _cred_result.get("matched"):
+            _key_type = "paper" if _cred_result.get("key_is_paper") else "live"
+            _wanted   = "paper" if _tm_is_paper else "live"
+            st.warning(
+                f"⚠️ **Credential mismatch:** your Alpaca keys belong to a **{_key_type}** "
+                f"account but Trading Mode is set to **{_wanted}**. "
+                f"Switch the toggle or replace your keys.",
+                icon="⚠️",
+            )
 
     st.markdown("---")
     st.header("📱 Telegram Alerts")
@@ -10616,8 +10687,10 @@ def render_sa_tab():
         )
 
     with _gm_c2:
+        _gm_default_idx = 0 if get_trading_mode() else 1
         _gm_env = st.selectbox(
-            "Environment", ["Paper Trading", "Live Trading"], key="gm_env",
+            "Environment", ["Paper Trading", "Live Trading"],
+            index=_gm_default_idx, key="gm_env",
         )
         _gm_is_paper = _gm_env == "Paper Trading"
         _gm_order_type = st.selectbox(
