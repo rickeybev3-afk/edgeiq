@@ -2422,9 +2422,13 @@ def _eod_collect_close_prices_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKB
     return {"written": written, "skipped": skipped}
 
 
-def _recalc_eod_pnl_r_recent_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKBACK_DAYS) -> dict:
+def _recalc_eod_pnl_r_recent_backtest(lookback_days: int | None = None) -> dict:
     """Compute eod_pnl_r for backtest_sim_runs rows that now have close_price
-    but still have NULL eod_pnl_r, covering the past ``lookback_days`` days.
+    but still have NULL eod_pnl_r.
+
+    When ``lookback_days`` is None (default) all historical rows are swept with
+    no date filter.  Pass an integer to restrict the sweep to the most recent N
+    days.
 
     Mirrors _recalc_eod_pnl_r_recent() but targets backtest_sim_runs (date
     field: sim_date).  Called immediately after
@@ -2444,7 +2448,7 @@ def _recalc_eod_pnl_r_recent_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKBA
         log.warning(f"_recalc_eod_pnl_r_recent_backtest: Cannot import compute_trade_sim_tiered: {_ie}")
         return {"written": 0, "skipped": 0}
 
-    cutoff = str(date.today() - timedelta(days=lookback_days))
+    cutoff = str(date.today() - timedelta(days=lookback_days)) if lookback_days is not None else None
     _PAGE = 1000
     rows: list = []
 
@@ -2452,14 +2456,18 @@ def _recalc_eod_pnl_r_recent_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKBA
         offset = 0
         while True:
             try:
-                resp = (
+                q = (
                     _supabase_client.table("backtest_sim_runs")
                     .select("id,actual_outcome,ib_high,ib_low,close_price")
                     .eq("user_id", USER_ID)
                     .eq("actual_outcome", direction)
                     .is_("eod_pnl_r", "null")
                     .not_.is_("close_price", "null")
-                    .gte("sim_date", cutoff)
+                )
+                if cutoff is not None:
+                    q = q.gte("sim_date", cutoff)
+                resp = (
+                    q
                     .order("id", desc=True)
                     .range(offset, offset + _PAGE - 1)
                     .execute()
@@ -2476,14 +2484,16 @@ def _recalc_eod_pnl_r_recent_backtest(lookback_days: int = BACKTEST_CLOSE_LOOKBA
             offset += _PAGE
 
     if not rows:
+        scope = f"last {lookback_days} days" if lookback_days is not None else "all-time"
         log.info(
             "Nightly close-price catch-up (backtest): no backtest_sim_runs rows need eod_pnl_r "
-            "recalculation (last %d days).", lookback_days
+            "recalculation (%s).", scope
         )
         return {"written": 0, "skipped": 0}
 
+    sweep_scope = f"last {lookback_days} days" if lookback_days is not None else "all-time"
     log.info(
-        f"Nightly eod_pnl_r recalc (backtest): {len(rows)} backtest_sim_runs row(s) have "
+        f"Nightly eod_pnl_r recalc (backtest, {sweep_scope}): {len(rows)} backtest_sim_runs row(s) have "
         f"close_price but NULL eod_pnl_r — computing now…"
     )
 
@@ -3203,7 +3213,7 @@ def nightly_recalibration():
 
     # ── eod_pnl_r recalculation for newly-filled backtest close prices ─────────
     try:
-        bpr_result = _recalc_eod_pnl_r_recent_backtest(lookback_days=BACKTEST_CLOSE_LOOKBACK_DAYS)
+        bpr_result = _recalc_eod_pnl_r_recent_backtest()
         if bpr_result["written"]:
             log.info(
                 f"Nightly eod_pnl_r recalc (backtest): "
