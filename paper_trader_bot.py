@@ -349,6 +349,19 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         log.info(f"  [{r.get('ticker')}] skip order — prediction is '{direction}' (not directional)")
         return
 
+    # ── Universe-alignment filter ─────────────────────────────────────────────
+    # Our screener is a gap-UP universe (Finviz gap ≥ 3%, trend continuation).
+    # Backtest of 111 settled trades shows:
+    #   Bullish Break on gap-up stock → 71%+ WR (80.8% at TCS ≥ 50)
+    #   Bearish Break on gap-up stock →  40% WR  (below random, do not trade)
+    # Skip all Bearish Break signals until we build a dedicated gap-down universe.
+    if direction == "Bearish Break":
+        log.info(
+            f"  [{r.get('ticker')}] skip order — Bearish Break filtered: "
+            f"gap-up universe hist WR 40% (vs 71% Bullish). Re-enable with gap-down screener."
+        )
+        return
+
     ib_high = float(r.get("ib_high") or 0)
     ib_low  = float(r.get("ib_low")  or 0)
     if ib_high <= 0 or ib_low <= 0 or ib_high <= ib_low:

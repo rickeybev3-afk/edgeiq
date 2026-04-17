@@ -55,10 +55,10 @@ Alpaca bracket orders live on paper account (`paper-api.alpaca.markets`) — zer
 `LIVE_ORDERS_ENABLED=true` set in Replit Secrets. Bot placing real bracket orders each scan.
 
 **Phase Gate to Phase 2 (Live Money):**
-- 30 settled paper trades ✅ PASSED (111/30 as of April 17)
-- 60% win rate ✅ PASSED (67.6% as of April 17)
-- 30 days of operation 🔴 IN PROGRESS (11/30 days — unlocks May 6, 2026)
-- Target: May 6, 2026 (on track)
+- 30 settled trades ✅ PASSED (111/30 as of April 17)
+- 60% directional WR ✅ PASSED — **80.8% at TCS≥50** (measured April 17 after fixing directional resolution bug; old 67.6% was a loose "any break wins" metric, not directional accuracy)
+- 30 days of paper execution 🟡 IN PROGRESS — bot execution bug fixed April 17 (predicted→"Neutral" always, orders never fired); first real Alpaca order attempt April 18
+- Target: May 6, 2026 — use remaining time to validate Alpaca bracket execution end-to-end
 
 ### Phase 2 — Live Execution 🔲 NEXT
 One config change: `IS_PAPER_ALPACA=false` in Replit Secrets.
@@ -206,7 +206,7 @@ Built in `compute_trade_sim()` and `compute_trade_sim_tiered()` in backend.py.
 **Live counts (as of April 17, 2026):**
 - `backtest_sim_runs`: 33,776+ rows | 16,766 Bullish/Bearish Break with pnl_r_sim
 - `paper_trades`: 143 total rows | 111 settled (win_loss set) | 74 with pnl_r_sim
-- Paper trade WR (all settled): **67.6%** | TCS≥50: **84.6%** | Full filter intraday: **92.3%**
+- Paper trade WR — OLD loose metric (any break): 67.6% | **DIRECTIONAL WR (correct metric): 65.8% overall → 80.8% at TCS≥50 → 100% at TCS≥70** (measured April 17)
 - Full filter backtest target: **95.7% WR, +2.46R expectancy** (TCS≥50 + IB<10% + VWAP)
 - Total R logged live (74 priced trades): **+58.6R** avg **+0.79R/trade**
 
