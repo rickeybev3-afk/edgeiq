@@ -885,14 +885,15 @@ def telegram_listener() -> None:
                                         watched = load_tcs_alert_structures()
                                 else:
                                     watched = load_tcs_alert_structures()
-                                if watched is None:
-                                    struct_summary = "all structures"
-                                elif len(watched) == 0:
-                                    struct_summary = "none (all alerts silenced)"
-                                else:
-                                    names = [WK_DISPLAY_PLAIN.get(k, k) for k in sorted(watched)]
-                                    struct_summary = ", ".join(names)
-                                lines.append(f"  ↳ Watching: {struct_summary}")
+                                lines.append("  ↳ Active structures:")
+                                for sk in sorted(WK_DISPLAY.keys()):
+                                    struct_on = (
+                                        watched is None or sk in watched
+                                    )
+                                    struct_icon = "✅" if struct_on else "❌"
+                                    lines.append(
+                                        f"    {struct_icon} {WK_DISPLAY.get(sk, sk)}"
+                                    )
                                 lines.append(
                                     "  ↳ Use <code>/settings tcs_structures KEY1 KEY2 ... on|off</code> to toggle one or more structures "
                                     "(e.g. <code>/settings tcs_structures trend_bull trend_bear off</code>), "
