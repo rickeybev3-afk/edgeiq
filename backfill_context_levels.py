@@ -413,7 +413,16 @@ def main():
         'errors': total_errors,
     }
     try:
-        _history_path = '/tmp/backfill_history.json'
+        _default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backfill_history.json')
+        _history_path = os.environ.get('BACKFILL_HISTORY_PATH', _default_path)
+        _legacy_path = '/tmp/backfill_history.json'
+        if not os.path.exists(_history_path) and os.path.exists(_legacy_path):
+            try:
+                import shutil as _shutil
+                _shutil.copy2(_legacy_path, _history_path)
+                log.info(f'Migrated backfill history from {_legacy_path} to {_history_path}')
+            except Exception as _me:
+                log.warning(f'Could not migrate backfill history from /tmp: {_me}')
         try:
             with open(_history_path) as _hf:
                 _history = _json.load(_hf)

@@ -13,6 +13,7 @@ import hashlib
 import base64
 import json
 import datetime
+import logging
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -639,13 +640,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _backfill_health(self):
         """Return backfill run stats written by backfill_context_levels.py.
 
-        The backfill script appends each run to /tmp/backfill_history.json (a JSON
-        array capped at 10 entries).  The response includes the latest entry's fields
-        at the top level for backward compatibility, plus a 'history' array (newest
-        first) and 'available'.
+        The backfill script appends each run to the path set by the
+        BACKFILL_HISTORY_PATH env variable (default: backfill_history.json
+        next to this file).  The response includes the latest entry's fields
+        at the top level for backward compatibility, plus a 'history' array
+        (newest first) and 'available'.
         If the file is absent the endpoint returns {"available": false}.
         """
-        history_path = "/tmp/backfill_history.json"
+        _default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backfill_history.json')
+        history_path = os.environ.get('BACKFILL_HISTORY_PATH', _default_path)
+        _legacy_path = '/tmp/backfill_history.json'
+        if not os.path.exists(history_path) and os.path.exists(_legacy_path):
+            try:
+                import shutil as _shutil
+                _shutil.copy2(_legacy_path, history_path)
+            except Exception as _me:
+                logging.warning(f'Could not migrate backfill history from {_legacy_path} to {history_path}: {_me}')
         try:
             with open(history_path) as f:
                 history = json.load(f)
