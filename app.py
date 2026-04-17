@@ -8359,6 +8359,38 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _profit_factor = (_gross_wins / _gross_losses) if _gross_losses > 0 else float("inf")
                         _pf_str        = f"{_profit_factor:.2f}x" if _profit_factor != float("inf") else "∞"
 
+                        # ── Pre-compute marginal-trade stats (used by both summary row and detailed analysis) ──
+                        _has_marginal_data = (
+                            _rp_bot_mode
+                            and "TCS Floor" in _rp_df.columns
+                            and "TCS" in _rp_df.columns
+                        )
+                        if _has_marginal_data:
+                            _marg_mask_pre  = (_rp_df["TCS"] - _rp_df["TCS Floor"]).between(0, 5, inclusive="both")
+                            _marg_df_pre    = _rp_df[_marg_mask_pre]
+                            _comf_df_pre    = _rp_df[~_marg_mask_pre]
+                            _marg_n_pre     = len(_marg_df_pre)
+                            _comf_n_pre     = len(_comf_df_pre)
+                            _marg_pct_pre   = round(_marg_n_pre / _total_trades * 100, 1) if _total_trades else 0
+                            _marg_wr_pre    = (
+                                round((_marg_df_pre["P&L ($)"] > 0).sum() / _marg_n_pre * 100, 1)
+                                if _marg_n_pre else None
+                            )
+                            _comf_wr_pre    = (
+                                round((_comf_df_pre["P&L ($)"] > 0).sum() / _comf_n_pre * 100, 1)
+                                if _comf_n_pre else None
+                            )
+                            _marg_avgr_pre  = (
+                                round(_marg_df_pre["R (MFE)"].mean(), 2)
+                                if (_marg_n_pre and "R (MFE)" in _marg_df_pre.columns)
+                                else None
+                            )
+                            _comf_avgr_pre  = (
+                                round(_comf_df_pre["R (MFE)"].mean(), 2)
+                                if (_comf_n_pre and "R (MFE)" in _comf_df_pre.columns)
+                                else None
+                            )
+
                         if _rp_bot_mode:
                             if _rp_tcs_offset == 0:
                                 _rp_floor_label = f"≈ TCS {_rp_effective_floor}"
@@ -8424,6 +8456,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _wb2.metric("Avg Loss P&L", _avg_loss_display,
                                         help=f"Average P&L across {_pnl_losses} losing trade(s)")
 
+                        # ── Marginal trades summary row (Bot Mode, in stats summary) ─────
+                        if _has_marginal_data:
+                            st.markdown("---")
+                            st.markdown("**🟡 Marginal Trades** *(TCS cleared floor by ≤ 5 pts)*")
+                            _ms1, _ms2, _ms3 = st.columns(3)
+                            _ms1.metric(
+                                "Count",
+                                f"{_marg_n_pre}  ({_marg_pct_pre}%)" if _total_trades else "—",
+                                help="Number of trades where TCS − TCS Floor ≤ 5 (borderline entries), and their share of all trades"
+                            )
+                            _ms2.metric(
+                                "Win Rate",
+                                f"{_marg_wr_pre}%" if _marg_wr_pre is not None else "—",
+                                help="Win rate across borderline entries only — compare to the overall win rate above"
+                            )
+                            _ms3.metric(
+                                "Avg R",
+                                f"{_marg_avgr_pre:+.2f}R" if _marg_avgr_pre is not None else "—",
+                                help="Average R (MFE) for borderline entries — see the Marginal Entry Analysis section below for a full comfortable vs marginal comparison"
+                            )
+
                         # ── EOD Hold R and Tiered Exit R on-screen stats ──────────────────
                         _has_eod_col    = "R (EOD)"    in _rp_df.columns
                         _has_tiered_col = "R (Tiered)" in _rp_df.columns
@@ -8462,84 +8515,62 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _tier4.metric("Expectancy (Tiered R)", f"{_csv_ov_tier_exp:+.3f}R/trade" if _csv_ov_tier_n else "N/A",
                                       help="Average R per trade using tiered scaled exits")
 
-                        # ── Marginal-trade summary (Bot Mode only) ────────────────────────
-                        if _rp_bot_mode and "TCS Floor" in _rp_df.columns and "TCS" in _rp_df.columns:
-                            _marginal_mask = (
-                                (_rp_df["TCS"] - _rp_df["TCS Floor"]).between(0, 5, inclusive="both")
-                            )
-                            _marg_df   = _rp_df[_marginal_mask]
-                            _comf_df   = _rp_df[~_marginal_mask]
-
-                            _marg_n    = len(_marg_df)
-                            _comf_n    = len(_comf_df)
-
-                            def _pct(wins, total):
-                                return round(wins / total * 100, 1) if total else None
-
-                            def _avgr(df):
-                                return round(df["R (MFE)"].mean(), 2) if len(df) else None
-
-                            _marg_wr   = _pct((_marg_df["P&L ($)"] > 0).sum(), _marg_n)
-                            _comf_wr   = _pct((_comf_df["P&L ($)"] > 0).sum(), _comf_n)
-                            _marg_avgr = _avgr(_marg_df)
-                            _comf_avgr = _avgr(_comf_df)
-
-                            _marg_pct_of_total = round(_marg_n / _total_trades * 100, 1) if _total_trades else 0
-
+                        # ── Marginal-trade detailed analysis (Bot Mode only) ─────────────
+                        if _has_marginal_data:
                             st.markdown("---")
                             st.markdown("#### 🟡 Marginal Entry Analysis *(TCS cleared floor by ≤ 5 pts)*")
                             _mc1, _mc2, _mc3, _mc4 = st.columns(4)
                             _mc1.metric(
                                 "Marginal Trades",
-                                f"{_marg_n}  ({_marg_pct_of_total}%)",
+                                f"{_marg_n_pre}  ({_marg_pct_pre}%)",
                                 help="Trades where TCS − TCS Floor ≤ 5 (borderline entries)"
                             )
                             _mc2.metric(
                                 "Marginal Win Rate",
-                                f"{_marg_wr}%" if _marg_wr is not None else "—",
-                                delta=f"{round(_marg_wr - _comf_wr, 1):+.1f}pp vs comfortable" if (_marg_wr is not None and _comf_wr is not None) else None,
+                                f"{_marg_wr_pre}%" if _marg_wr_pre is not None else "—",
+                                delta=f"{round(_marg_wr_pre - _comf_wr_pre, 1):+.1f}pp vs comfortable" if (_marg_wr_pre is not None and _comf_wr_pre is not None) else None,
                                 delta_color="normal",
                                 help="Win rate for borderline entries only"
                             )
                             _mc3.metric(
                                 "Marginal Avg R",
-                                f"{_marg_avgr:+.2f}R" if _marg_avgr is not None else "—",
-                                delta=f"{round(_marg_avgr - _comf_avgr, 2):+.2f}R vs comfortable" if (_marg_avgr is not None and _comf_avgr is not None) else None,
+                                f"{_marg_avgr_pre:+.2f}R" if _marg_avgr_pre is not None else "—",
+                                delta=f"{round(_marg_avgr_pre - _comf_avgr_pre, 2):+.2f}R vs comfortable" if (_marg_avgr_pre is not None and _comf_avgr_pre is not None) else None,
                                 delta_color="normal",
                                 help="Average R (MFE) for borderline entries"
                             )
                             _mc4.metric(
                                 "Comfortable Trades",
-                                f"{_comf_n}  ({_comf_wr}%)" if _comf_wr is not None else f"{_comf_n}  (—)",
-                                help=f"Non-marginal trades (TCS cleared floor by > 5 pts) — count and win rate"
+                                f"{_comf_n_pre}  ({_comf_wr_pre}%)" if _comf_wr_pre is not None else f"{_comf_n_pre}  (—)",
+                                help="Non-marginal trades (TCS cleared floor by > 5 pts) — count and win rate"
                             )
-                            if _marg_n == 0:
+                            if _marg_n_pre == 0:
                                 st.caption("No marginal entries in this sim — all trades cleared the TCS floor comfortably.")
-                            elif _comf_n == 0:
+                            elif _comf_n_pre == 0:
                                 st.caption(
                                     "All trades in this sim are marginal (every entry cleared the floor by ≤ 5 pts). "
                                     "There are no comfortable entries to compare against — consider raising the TCS floor."
                                 )
-                            elif _marg_wr is not None and _comf_wr is not None and _marg_wr < _comf_wr - 5:
+                            elif _marg_wr_pre is not None and _comf_wr_pre is not None and _marg_wr_pre < _comf_wr_pre - 5:
                                 st.caption(
                                     f"⚠️ Marginal entries underperform comfortable entries by "
-                                    f"**{round(_comf_wr - _marg_wr, 1)} pp** in win rate. "
+                                    f"**{round(_comf_wr_pre - _marg_wr_pre, 1)} pp** in win rate. "
                                     "Consider raising the TCS floor to eliminate borderline trades."
                                 )
                             else:
                                 st.caption("Marginal entries are performing in line with comfortable entries in this sim.")
 
                             # ── Per-structure breakdown ────────────────────────────────────
-                            if _marg_n > 0 and "Structure" in _rp_df.columns:
+                            if _marg_n_pre > 0 and "Structure" in _rp_df.columns:
                                 with st.expander("📊 Marginal breakdown by structure type", expanded=False):
                                     _struct_rows = []
-                                    for _struct_name, _s_marg in _marg_df.groupby("Structure"):
-                                        _s_comf = _comf_df[_comf_df["Structure"] == _struct_name] if "Structure" in _comf_df.columns else _comf_df.iloc[0:0]
+                                    for _struct_name, _s_marg in _marg_df_pre.groupby("Structure"):
+                                        _s_comf = _comf_df_pre[_comf_df_pre["Structure"] == _struct_name] if "Structure" in _comf_df_pre.columns else _comf_df_pre.iloc[0:0]
                                         _s_marg_n   = len(_s_marg)
                                         _s_comf_n   = len(_s_comf)
-                                        _s_marg_wr  = _pct((_s_marg["P&L ($)"] > 0).sum(), _s_marg_n)
-                                        _s_comf_wr  = _pct((_s_comf["P&L ($)"] > 0).sum(), _s_comf_n)
-                                        _s_marg_avgr = _avgr(_s_marg)
+                                        _s_marg_wr  = round((_s_marg["P&L ($)"] > 0).sum() / _s_marg_n * 100, 1) if _s_marg_n else None
+                                        _s_comf_wr  = round((_s_comf["P&L ($)"] > 0).sum() / _s_comf_n * 100, 1) if _s_comf_n else None
+                                        _s_marg_avgr = round(_s_marg["R (MFE)"].mean(), 2) if (_s_marg_n and "R (MFE)" in _s_marg.columns) else None
                                         _s_delta_wr  = (
                                             round(_s_marg_wr - _s_comf_wr, 1)
                                             if (_s_marg_wr is not None and _s_comf_wr is not None)
@@ -9124,25 +9155,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _stat_row("Expectancy (Tiered R)",      f"{_csv_bt_tier_exp:+.3f}R/trade"),
                                     _stat_row("Max Drawdown (Tiered R)",    f"{abs(_csv_bt_tier_mdd)}R"),
                                 ])
-                        if _rp_bot_mode and "TCS Floor" in _rp_df.columns and "TCS" in _rp_df.columns:
-                            _csv_marg_pct = round(_marg_n / _total_trades * 100, 1) if _total_trades else 0
-                            _csv_marg_wr_str   = f"{_marg_wr}%" if _marg_wr is not None else "N/A"
-                            _csv_comf_wr_str   = f"{_comf_wr}%" if _comf_wr is not None else "N/A"
-                            _csv_marg_avgr_str = f"{_marg_avgr:+.2f}R" if _marg_avgr is not None else "N/A"
-                            _csv_comf_avgr_str = f"{_comf_avgr:+.2f}R" if _comf_avgr is not None else "N/A"
+                        if _has_marginal_data:
+                            _csv_marg_wr_str   = f"{_marg_wr_pre}%" if _marg_wr_pre is not None else "N/A"
+                            _csv_comf_wr_str   = f"{_comf_wr_pre}%" if _comf_wr_pre is not None else "N/A"
+                            _csv_marg_avgr_str = f"{_marg_avgr_pre:+.2f}R" if _marg_avgr_pre is not None else "N/A"
+                            _csv_comf_avgr_str = f"{_comf_avgr_pre:+.2f}R" if _comf_avgr_pre is not None else "N/A"
                             _csv_marg_wr_delta = (
-                                f"{round(_marg_wr - _comf_wr, 1):+.1f}pp vs comfortable"
-                                if (_marg_wr is not None and _comf_wr is not None) else "N/A"
+                                f"{round(_marg_wr_pre - _comf_wr_pre, 1):+.1f}pp vs comfortable"
+                                if (_marg_wr_pre is not None and _comf_wr_pre is not None) else "N/A"
                             )
                             _csv_marg_avgr_delta = (
-                                f"{round(_marg_avgr - _comf_avgr, 2):+.2f}R vs comfortable"
-                                if (_marg_avgr is not None and _comf_avgr is not None) else "N/A"
+                                f"{round(_marg_avgr_pre - _comf_avgr_pre, 2):+.2f}R vs comfortable"
+                                if (_marg_avgr_pre is not None and _comf_avgr_pre is not None) else "N/A"
                             )
                             _summary_rows += [
                                 {c: "" for c in _csv_cols},
                                 _stat_row("--- MARGINAL ENTRY ANALYSIS (TCS cleared floor by ≤ 5 pts) ---", ""),
-                                _stat_row("Marginal Trades",         f"{_marg_n}  ({_csv_marg_pct}% of total)"),
-                                _stat_row("Comfortable Trades",      f"{_comf_n}"),
+                                _stat_row("Marginal Trades",         f"{_marg_n_pre}  ({_marg_pct_pre}% of total)"),
+                                _stat_row("Comfortable Trades",      f"{_comf_n_pre}"),
                                 _stat_row("Marginal Win Rate",        _csv_marg_wr_str),
                                 _stat_row("Comfortable Win Rate",     _csv_comf_wr_str),
                                 _stat_row("Marginal vs Comfortable WR", _csv_marg_wr_delta),
