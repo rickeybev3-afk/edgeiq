@@ -18,6 +18,10 @@ from collections import defaultdict
 import requests
 import pytz
 
+
+class RateLimitExhausted(Exception):
+    """Raised when all retry attempts for an Alpaca 429 response are exhausted."""
+
 sys.path.insert(0, '.')
 import backend
 
@@ -35,7 +39,13 @@ MORNING_SIGNAL_ET  = '09:35:00'
 INTRADAY_SIGNAL_ET = '10:47:00'
 
 BATCH_SIZE    = 10   # tickers per Alpaca multi-symbol request
-SLEEP_BETWEEN = 0.4  # seconds between API calls
+# Recommended sleep between Alpaca API calls:
+#   Free IEX feed  → 0.4 s (≈ 150 req/min, well under the 200 req/min limit)
+#   Paid IEX feed  → 0.1 s (higher rate-limit allowance)
+SLEEP_BETWEEN = 0.4
+
+RETRY_ATTEMPTS    = 3   # number of retries on HTTP 429
+RETRY_BASE_DELAY  = 2   # initial back-off in seconds; doubles each attempt (2 s, 4 s, 8 s)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Alpaca helpers
@@ -47,6 +57,29 @@ def _headers():
         'APCA-API-SECRET-KEY': ALPACA_SECRET,
     }
 
+def _get_with_retry(url, **kwargs):
+    """
+    GET *url* with exponential back-off on HTTP 429 (Too Many Requests).
+    Raises RateLimitExhausted after RETRY_ATTEMPTS unsuccessful attempts.
+    All other non-2xx responses are propagated immediately via raise_for_status.
+    """
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        r = requests.get(url, **kwargs)
+        if r.status_code == 429:
+            delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            log.warning(
+                f'Alpaca 429 rate-limit on {url!r} '
+                f'(attempt {attempt}/{RETRY_ATTEMPTS}) — sleeping {delay}s …'
+            )
+            time.sleep(delay)
+            if attempt == RETRY_ATTEMPTS:
+                raise RateLimitExhausted(
+                    f'HTTP 429 persisted after {RETRY_ATTEMPTS} retries for {url!r}'
+                )
+            continue
+        return r
+    raise RateLimitExhausted(f'HTTP 429 persisted after {RETRY_ATTEMPTS} retries for {url!r}')
+
 def get_daily_bars(symbols, start, end):
     """Return dict[ticker] = list of daily bar dicts."""
     params = {
@@ -57,14 +90,14 @@ def get_daily_bars(symbols, start, end):
         'feed':      'iex',
         'limit':     10000,
     }
-    r = requests.get(f'{DATA_BASE}/v2/stocks/bars', headers=_headers(), params=params, timeout=30)
+    r = _get_with_retry(f'{DATA_BASE}/v2/stocks/bars', headers=_headers(), params=params, timeout=30)
     r.raise_for_status()
     data = r.json()
     out = data.get('bars', {}) or {}
     # handle pagination (next_page_token)
     while data.get('next_page_token'):
         params['page_token'] = data['next_page_token']
-        r = requests.get(f'{DATA_BASE}/v2/stocks/bars', headers=_headers(), params=params, timeout=30)
+        r = _get_with_retry(f'{DATA_BASE}/v2/stocks/bars', headers=_headers(), params=params, timeout=30)
         r.raise_for_status()
         data = r.json()
         for sym, bars in (data.get('bars') or {}).items():
@@ -75,6 +108,7 @@ def get_intraday_bars(symbol, trade_date_str, timeframe='5Min'):
     """
     Return list of intraday bar dicts for one ticker on one date.
     Covers 9:30 AM – 4:00 PM ET (regular session) using IEX feed.
+    Raises RateLimitExhausted if Alpaca returns HTTP 429 on all retry attempts.
     """
     dt = datetime.strptime(trade_date_str, '%Y-%m-%d')
     start_utc = ET.localize(dt.replace(hour=9, minute=30)).isoformat()
@@ -86,8 +120,8 @@ def get_intraday_bars(symbol, trade_date_str, timeframe='5Min'):
         'feed':      'iex',
         'limit':     10000,
     }
-    r = requests.get(f'{DATA_BASE}/v2/stocks/{symbol}/bars',
-                     headers=_headers(), params=params, timeout=30)
+    r = _get_with_retry(f'{DATA_BASE}/v2/stocks/{symbol}/bars',
+                        headers=_headers(), params=params, timeout=30)
     if r.status_code == 422:
         return []
     r.raise_for_status()
@@ -95,8 +129,8 @@ def get_intraday_bars(symbol, trade_date_str, timeframe='5Min'):
     bars = data.get('bars') or []
     while data.get('next_page_token'):
         params['page_token'] = data['next_page_token']
-        r = requests.get(f'{DATA_BASE}/v2/stocks/{symbol}/bars',
-                         headers=_headers(), params=params, timeout=30)
+        r = _get_with_retry(f'{DATA_BASE}/v2/stocks/{symbol}/bars',
+                            headers=_headers(), params=params, timeout=30)
         r.raise_for_status()
         data = r.json()
         bars.extend(data.get('bars') or [])
@@ -293,6 +327,9 @@ def main():
             try:
                 intraday = get_intraday_bars(ticker, trade_date, timeframe='5Min')
                 time.sleep(SLEEP_BETWEEN)
+            except RateLimitExhausted as e:
+                log.warning(f'  {ticker} {trade_date} skipped — rate-limit retries exhausted: {e}')
+                continue
             except Exception as e:
                 log.warning(f'  {ticker} {trade_date} intraday error: {e}')
                 total_errors += 1
