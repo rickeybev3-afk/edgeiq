@@ -20965,7 +20965,13 @@ ALTER TABLE backtest_sim_runs
                         use_container_width=True,
                         hide_index=True,
                     )
-                    _bq_csv = _bq_tbl_df.to_csv(index=False).encode("utf-8")
+                    _bq_export_df = _bq_grouped[
+                        ["Screener", "Direction",
+                         "Avg EOD R", "Avg Tiered R",
+                         "EOD Win %", "Tiered Win %",
+                         "Trades"]
+                    ].copy()
+                    _bq_csv = _bq_export_df.to_csv(index=False).encode("utf-8")
                     st.download_button(
                         label="⬇ Download CSV",
                         data=_bq_csv,
