@@ -11567,6 +11567,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         )
                         _tk_has_best = False
                     with st.expander(_tk_expander_label, expanded=False, key=f"_tk_exp_{_tk_name}"):
+                        if _tk_override_active:
+                            st.caption("✱ = custom TCS floor override is active for this ticker")
                         if _tk_has_best:
                             st.markdown(
                                 f'<div style="background:#1e3a2a;border-radius:8px;padding:8px 14px;'
