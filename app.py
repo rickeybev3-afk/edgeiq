@@ -6296,6 +6296,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _oavgl   = sum(v for v in _combo_pnls if v < 0) / _olosses if _olosses else 0
                         _oexp    = sum(_combo_pnls) / _on
                         _ototr   = sum(_combo_pnls)
+                        _ocum    = 0.0
+                        _opeak   = 0.0
+                        _omaxdd  = 0.0
+                        for _ov in _combo_pnls:
+                            _ocum  += _ov
+                            if _ocum > _opeak:
+                                _opeak = _ocum
+                            _odd = _opeak - _ocum
+                            if _odd > _omaxdd:
+                                _omaxdd = _odd
                         _opt_table_rows.append({
                             "Scan Type":    _os_lbl,
                             "Min TCS":      _ofloor if _ofloor > 0 else "Any",
@@ -6305,6 +6315,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Avg Loss (R)": round(_oavgl, 3),
                             "Expectancy":   round(_oexp, 3),
                             "Total R":      round(_ototr, 1),
+                            "Max DD (R)":   round(_omaxdd, 2),
                         })
 
                 if not _opt_table_rows:
@@ -6322,7 +6333,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f'<span style="color:#00e676;font-weight:700;">🏆 Best combo: '
                         f'{_opt_best["Scan Type"]} · TCS ≥ {_opt_best["Min TCS"]} — '
                         f'{_opt_best["Expectancy"]:+.3f}R expectancy · '
-                        f'{_opt_best["Win Rate %"]}% WR · {int(_opt_best["Trades"])} trades</span>'
+                        f'{_opt_best["Win Rate %"]}% WR · {int(_opt_best["Trades"])} trades · '
+                        f'Max DD {_opt_best["Max DD (R)"]:.2f}R</span>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
