@@ -943,12 +943,25 @@ _cred_interval_min = st.session_state.get("_cred_check_interval_min", 5)
 _runtime_errors = check_credentials_runtime(interval_s=float(_cred_interval_min) * 60)
 if _runtime_errors:
     _rt_lines = "\n".join(f"• {_msg}" for _, _msg in _runtime_errors)
+    _rt_last_ts = get_runtime_last_check_ts()
+    if _rt_last_ts > 0.0:
+        _rt_elapsed_s = time.monotonic() - _rt_last_ts
+        if _rt_elapsed_s < 60:
+            _rt_age_label = "just now"
+        elif _rt_elapsed_s < 3600:
+            _rt_age_label = f"{int(_rt_elapsed_s // 60)} min ago"
+        else:
+            _rt_age_label = f"{int(_rt_elapsed_s // 3600)} hr ago"
+        _rt_checked_note = f"\n\n*Last checked: {_rt_age_label}*"
+    else:
+        _rt_checked_note = ""
     st.error(
         f"**🔑 Credential failure detected mid-session — "
         f"{len(_runtime_errors)} secret(s) stopped working after startup:**\n\n"
         f"{_rt_lines}\n\n"
         "These credentials were valid when the app launched but are no longer "
-        "accepted. Update the secrets and restart the app."
+        f"accepted. Update the secrets and restart the app."
+        f"{_rt_checked_note}"
     )
     if any(_name in ("SUPABASE_KEY",) for _name, _ in _runtime_errors):
         st.warning(
