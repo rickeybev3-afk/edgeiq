@@ -6766,6 +6766,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.session_state["rp_min_gap"] = 0.0
                     st.session_state["rp_min_gap_vs_ib"] = 0.0
                     st.session_state["rp_scan_type"] = "Morning (10:47 AM)"
+                    st.session_state["rp_tcs_floor_filter"] = "All"
                     # Reflect all resets in the signature so the stored value
                     # matches actual session state and does not trigger a
                     # spurious extra clear on the very next rerun.
@@ -7575,9 +7576,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _rp_df = pd.DataFrame(_rp_trades)
                         if not _rp_bot_mode and "TCS Floor" in _rp_df.columns:
                             _rp_df = _rp_df.drop(columns=["TCS Floor"])
+
+                        # ── Bot-mode TCS Floor filter ────────────────────────────────────
+                        if _rp_bot_mode and "TCS Floor" in _rp_df.columns:
+                            _floor_vals_raw = sorted(
+                                [v for v in _rp_df["TCS Floor"].dropna().unique() if v is not None],
+                                key=lambda x: int(x),
+                            )
+                            _floor_options = ["All"] + [str(int(v)) for v in _floor_vals_raw]
+                            if "rp_tcs_floor_filter" not in st.session_state:
+                                st.session_state["rp_tcs_floor_filter"] = "All"
+                            _rp_tcs_floor_filter = st.selectbox(
+                                "Filter by TCS Floor (≥)",
+                                options=_floor_options,
+                                key="rp_tcs_floor_filter",
+                                help=(
+                                    "Show only trades where the bot's required TCS floor was at least this value. "
+                                    "'All' = include every trade regardless of floor."
+                                ),
+                            )
+                            if _rp_tcs_floor_filter != "All":
+                                _rp_floor_threshold = int(_rp_tcs_floor_filter)
+                                _rp_df = _rp_df[
+                                    _rp_df["TCS Floor"].apply(
+                                        lambda x: int(x) if x is not None else -1
+                                    ) >= _rp_floor_threshold
+                                ]
+                            if _rp_df.empty:
+                                st.warning(
+                                    f"No trades found with TCS Floor ≥ {_rp_tcs_floor_filter}. "
+                                    "Try selecting a lower floor or 'All'."
+                                )
+                                st.stop()
+
                         _total_trades  = len(_rp_df)
                         _total_pnl     = _rp_df["P&L ($)"].sum()
-                        _net_return    = round((_rp_equity_cur - float(_rp_equity)) / float(_rp_equity) * 100, 2)
+                        # In bot mode, derive net return from the (potentially filtered) P&L sum
+                        # so it stays consistent with whichever TCS Floor subset is active.
+                        # In non-bot mode, keep the original equity-cursor formula for parity.
+                        if _rp_bot_mode:
+                            _net_return = round(_rp_df["P&L ($)"].sum() / float(_rp_equity) * 100, 2)
+                        else:
+                            _net_return = round((_rp_equity_cur - float(_rp_equity)) / float(_rp_equity) * 100, 2)
 
                         # Win/loss based on P&L sign (correct for both long and short)
                         _pnl_wins      = (_rp_df["P&L ($)"] > 0).sum()
