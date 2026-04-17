@@ -10380,6 +10380,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _tk_eod_num    = (sum(_tk_eod_vals) / len(_tk_eod_vals)) if _tk_eod_vals else float("-inf")
                 _tk_tiered_num = (sum(_tk_tiered_vals) / len(_tk_tiered_vals)) if _tk_tiered_vals else float("-inf")
 
+                # ── Per-scan-type EOD vs Tiered R (Morning / Intraday) ────────
+                def _tk_scan_vals(scan_key, col):
+                    if "scan_type" not in _tgrp.columns or col not in _tgrp.columns:
+                        return []
+                    _mask = _tgrp["scan_type"].str.lower().str.startswith(scan_key, na=False)
+                    return _pd_bt.to_numeric(_tgrp.loc[_mask, col], errors="coerce").dropna().tolist()
+
+                _tk_eod_morn_vals    = _tk_scan_vals("morning",  "eod_pnl_r")
+                _tk_tiered_morn_vals = _tk_scan_vals("morning",  "tiered_pnl_r")
+                _tk_eod_intra_vals   = _tk_scan_vals("intraday", "eod_pnl_r")
+                _tk_tiered_intra_vals= _tk_scan_vals("intraday", "tiered_pnl_r")
+
+                _tk_eod_morn_str    = _fmt_avg_r(_tk_eod_morn_vals)
+                _tk_tiered_morn_str = _fmt_avg_r(_tk_tiered_morn_vals)
+                _tk_eod_intra_str   = _fmt_avg_r(_tk_eod_intra_vals)
+                _tk_tiered_intra_str= _fmt_avg_r(_tk_tiered_intra_vals)
+
                 # ── Per-ticker max-divergence (equity $ vs cumulative R) ───────
                 _tk_max_div_val = 0.0
                 _tk_div_label   = "—"
@@ -10450,6 +10467,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Avg Follow-Thru": f"{'+' if _tft >= 0 else ''}{_tft}%",
                     "EOD Hold R":     _tk_eod_str,
                     "Tiered Exit R":  _tk_tiered_str,
+                    "EOD R (Morn)":   _tk_eod_morn_str,
+                    "Tiered R (Morn)":_tk_tiered_morn_str,
+                    "EOD R (Intra)":  _tk_eod_intra_str,
+                    "Tiered R (Intra)":_tk_tiered_intra_str,
                     "Max Divergence": _tk_div_label,
                     "False Brk %":    f"{'🔴' if _fb_rate > 35 else '🟡' if _fb_rate > 20 else '🟢'} {_fb_rate}%",
                     "Dates Seen":     ", ".join(d[:5] for d in _dates[-3:]) + ("…" if len(_dates) > 3 else ""),
@@ -10643,6 +10664,36 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Sort by Divergence to surface tickers with the worst sizing mismatches."
                         ),
                     ),
+                    "EOD R (Morn)": st.column_config.TextColumn(
+                        "EOD R (Morn)",
+                        help=(
+                            "Average EOD Hold R across Morning scan trades only. "
+                            "'—' means no morning trades have EOD R data for this ticker."
+                        ),
+                    ),
+                    "Tiered R (Morn)": st.column_config.TextColumn(
+                        "Tiered R (Morn)",
+                        help=(
+                            "Average Tiered Exit R across Morning scan trades only. "
+                            "Compare with EOD R (Morn) to see whether tiered exits "
+                            "help or hurt specifically on morning setups."
+                        ),
+                    ),
+                    "EOD R (Intra)": st.column_config.TextColumn(
+                        "EOD R (Intra)",
+                        help=(
+                            "Average EOD Hold R across Intraday scan trades only. "
+                            "'—' means no intraday trades have EOD R data for this ticker."
+                        ),
+                    ),
+                    "Tiered R (Intra)": st.column_config.TextColumn(
+                        "Tiered R (Intra)",
+                        help=(
+                            "Average Tiered Exit R across Intraday scan trades only. "
+                            "Compare with EOD R (Intra) to see whether tiered exits "
+                            "help or hurt specifically on intraday setups."
+                        ),
+                    ),
                 },
             )
             if _worst_div_row_idx is not None:
@@ -10665,7 +10716,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 f"Best TCS = the TCS cutoff (≥{_MIN_TCS_TRADES} trades) that produced the highest net P&L for that ticker "
                 "(hover the column header for details)  · "
                 "✱ = custom TCS floor override is active for that ticker  · "
-                "Max Divergence = trade where position sizing most diverged from raw edge (Amplified/Dampened)"
+                "Max Divergence = trade where position sizing most diverged from raw edge (Amplified/Dampened)  · "
+                "EOD R (Morn) / Tiered R (Morn) = avg R for morning scan trades only  · "
+                "EOD R (Intra) / Tiered R (Intra) = avg R for intraday scan trades only  · "
+                "'—' = no trades of that scan type with R data for this ticker"
             )
             if _best_tcs_options:
                 if _rp_bot_mode:
