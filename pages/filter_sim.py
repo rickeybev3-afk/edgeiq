@@ -537,53 +537,60 @@ st.caption(
     "live-filter set**, in chronological order. Adjust sizing below."
 )
 
-pnl_c1, pnl_c2, pnl_c3 = st.columns(3)
-with pnl_c1:
+# ── Primary sizing inputs (plain English) ─────────────────────────────────────
+_r1c1, _r1c2, _r1c3, _r1c4 = st.columns([1.2, 1.2, 1, 1])
+with _r1c1:
     pnl_equity = st.number_input(
-        "Starting equity ($)", min_value=1000, max_value=500_000,
+        "Account size ($)", min_value=1000, max_value=500_000,
         value=7000, step=500, key="fs_pnl_equity",
+        help="Your total trading account balance.",
     )
-with pnl_c2:
-    pnl_risk_mode = st.radio(
-        "Risk sizing",
-        ["Fixed position size ($)", "Fixed risk $ per trade", "% of equity (compounding)"],
-        horizontal=False, key="fs_pnl_mode",
+with _r1c2:
+    pnl_pos_size = st.number_input(
+        "Trade size ($)", min_value=100, max_value=500_000,
+        value=1500, step=100, key="fs_pnl_pos_size",
+        help="How much you put into each trade (e.g. $1,500).",
     )
-with pnl_c3:
-    if pnl_risk_mode == "Fixed position size ($)":
-        pnl_pos_size = st.number_input(
-            "Position size ($)", min_value=100, max_value=500_000,
-            value=1500, step=100, key="fs_pnl_pos_size",
-            help="Total dollars put into each trade (e.g. $1,500).",
-        )
-        pnl_stop_pct = st.number_input(
-            "Avg stop % (of position)", min_value=1.0, max_value=50.0,
-            value=10.0, step=0.5, key="fs_pnl_stop_pct",
-            help="Your typical stop-loss as a % of position size. 10% stop on $1,500 = $150 risk (1R).",
-        )
-        pnl_fixed_risk = round(float(pnl_pos_size) * float(pnl_stop_pct) / 100.0, 2)
-        pnl_risk_pct = None
-        pnl_pos_compound = st.checkbox(
-            "Compound position size", value=False, key="fs_pnl_pos_compound",
-            help="Scale position size as account grows (same cap as % mode).",
-        )
-        st.caption(f"→ 1R = **${pnl_fixed_risk:,.0f}** per trade")
-    elif pnl_risk_mode == "Fixed risk $ per trade":
-        pnl_fixed_risk = st.number_input(
-            "Risk $ per trade (1R)", min_value=10, max_value=50_000,
-            value=150, step=10, key="fs_pnl_risk",
-            help="Dollar amount you lose when stopped out (1R). E.g. $150 = 2.1% of a $7k account.",
-        )
-        pnl_risk_pct = None
-        pnl_pos_compound = False
-    else:
-        pnl_risk_pct = st.number_input(
+with _r1c3:
+    pnl_stop_pct = st.number_input(
+        "Stop loss %", min_value=1.0, max_value=50.0,
+        value=10.0, step=0.5, key="fs_pnl_stop_pct",
+        help="How far your stop is from entry, as a % of trade size. "
+             "10% stop on a $1,500 trade = $150 max loss.",
+    )
+with _r1c4:
+    pnl_fixed_risk = round(float(pnl_pos_size) * float(pnl_stop_pct) / 100.0, 2)
+    st.metric("Max loss per trade", f"${pnl_fixed_risk:,.0f}",
+              help="This is your 1R — the most you lose on a stopped-out trade.")
+
+pnl_pos_compound = st.checkbox(
+    "📈 Grow trade size as account grows",
+    value=False, key="fs_pnl_pos_compound",
+    help="When checked: if your account doubles, your trade size doubles too "
+         "(capped at 20× to keep numbers realistic). "
+         "When unchecked: always the same trade size regardless of P&L.",
+)
+
+pnl_risk_mode = "Fixed position size ($)"
+pnl_risk_pct  = None
+
+with st.expander("⚙️ Advanced sizing"):
+    _adv_mode = st.radio(
+        "Override with",
+        ["Use settings above", "% of equity per trade (pure compounding)"],
+        horizontal=True, key="fs_pnl_adv_mode",
+    )
+    if _adv_mode == "% of equity per trade (pure compounding)":
+        pnl_risk_pct  = st.number_input(
             "Risk % per trade", min_value=0.5, max_value=10.0,
             value=2.1, step=0.1, key="fs_pnl_risk_pct",
-            help="% of current equity risked per trade (1R = this amount). Compounds as equity grows.",
+            help="Each trade risks this % of your current account balance. "
+                 "Grows automatically as your account grows.",
         )
-        pnl_fixed_risk = None
+        pnl_fixed_risk   = None
         pnl_pos_compound = False
+        st.caption(f"At ${pnl_equity:,} account → 1R = "
+                   f"**${pnl_equity * pnl_risk_pct / 100:,.0f}** to start")
 
 # ── Date range filter ──────────────────────────────────────────────────────────
 _all_sorted = sorted(final, key=lambda r: r.get("sim_date") or "")
