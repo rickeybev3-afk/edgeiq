@@ -10019,6 +10019,63 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _stat_row("Comfortable Avg R (MFE)",  _csv_comf_avgr_str),
                                 _stat_row("Marginal vs Comfortable Avg R", _csv_marg_avgr_delta),
                             ]
+                            if _marg_n_pre > 0 and "Structure" in _marg_df_pre.columns:
+                                _summary_rows += [
+                                    {c: "" for c in _csv_cols},
+                                    _stat_row("--- MARGINAL BREAKDOWN BY STRUCTURE ---", ""),
+                                ]
+                                _cs_field_names = [
+                                    "Structure", "Marginal Trades", "Marg Win Rate",
+                                    "Comf Win Rate", "ΔWR (marg−comf)", "Marg Avg R",
+                                ]
+                                _cs_col_slots = _csv_cols[:len(_cs_field_names)]
+                                _cs_header = {c: "" for c in _csv_cols}
+                                for _ci, _cf in enumerate(_cs_field_names[:len(_cs_col_slots)]):
+                                    _cs_header[_cs_col_slots[_ci]] = _cf
+                                _summary_rows.append(_cs_header)
+                                _cs_struct_rows = []
+                                for _cs_name, _cs_marg in _marg_df_pre.groupby("Structure"):
+                                    _cs_comf      = (
+                                        _comf_df_pre[_comf_df_pre["Structure"] == _cs_name]
+                                        if "Structure" in _comf_df_pre.columns
+                                        else _comf_df_pre.iloc[0:0]
+                                    )
+                                    _cs_marg_n    = len(_cs_marg)
+                                    _cs_comf_n    = len(_cs_comf)
+                                    _cs_marg_wr   = round((_cs_marg["P&L ($)"] > 0).sum() / _cs_marg_n * 100, 1) if _cs_marg_n else None
+                                    _cs_comf_wr   = round((_cs_comf["P&L ($)"] > 0).sum() / _cs_comf_n * 100, 1) if _cs_comf_n else None
+                                    _cs_marg_avgr = (
+                                        round(_cs_marg["R (MFE)"].mean(), 2)
+                                        if (_cs_marg_n and "R (MFE)" in _cs_marg.columns)
+                                        else None
+                                    )
+                                    _cs_delta_wr  = (
+                                        round(_cs_marg_wr - _cs_comf_wr, 1)
+                                        if (_cs_marg_wr is not None and _cs_comf_wr is not None)
+                                        else None
+                                    )
+                                    _cs_struct_rows.append({
+                                        "Structure":        _cs_name,
+                                        "Marginal Trades":  _cs_marg_n,
+                                        "Marg Win Rate":    f"{_cs_marg_wr}%" if _cs_marg_wr is not None else "—",
+                                        "Comf Win Rate":    f"{_cs_comf_wr}%" if _cs_comf_wr is not None else "—",
+                                        "ΔWR (marg−comf)":  f"{_cs_delta_wr:+.1f}pp" if _cs_delta_wr is not None else "—",
+                                        "Marg Avg R":       f"{_cs_marg_avgr:+.2f}R" if _cs_marg_avgr is not None else "—",
+                                    })
+                                _cs_struct_rows.sort(key=lambda _r: _r["Marginal Trades"], reverse=True)
+                                for _cs_row in _cs_struct_rows:
+                                    _cs_data = {c: "" for c in _csv_cols}
+                                    _cs_values = [
+                                        _cs_row["Structure"],
+                                        str(_cs_row["Marginal Trades"]),
+                                        _cs_row["Marg Win Rate"],
+                                        _cs_row["Comf Win Rate"],
+                                        _cs_row["ΔWR (marg−comf)"],
+                                        _cs_row["Marg Avg R"],
+                                    ]
+                                    for _ci, _cv in enumerate(_cs_values[:len(_cs_col_slots)]):
+                                        _cs_data[_cs_col_slots[_ci]] = _cv
+                                    _summary_rows.append(_cs_data)
 
                         _rp_csv_export = pd.concat(
                             [_rp_csv_df,
@@ -10031,7 +10088,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             file_name="replay_trades.csv",
                             mime="text/csv",
                             key="rp_dl_csv",
-                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes overall R-stats summary, per-tier (P1–P4) breakdown, and marginal entry analysis at the bottom",
+                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes overall R-stats summary, per-tier (P1–P4) breakdown, marginal entry analysis, and per-structure marginal breakdown at the bottom",
                         )
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
