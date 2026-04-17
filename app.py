@@ -55,6 +55,7 @@ from backend import (
     _alpaca_mismatch_status,
     load_tcs_alert_structures,
     save_tcs_alert_structures,
+    get_tcs_alert_config_last_saved,
     get_runtime_last_healthy_ts,
 )
 
@@ -4691,15 +4692,13 @@ with st.sidebar:
         _tcs_chosen = {k for k, v in _tcs_sel.items() if v}
         _tcs_ok = save_tcs_alert_structures(_tcs_chosen)
         if _tcs_ok:
+            _cached_load_tcs_alert_structures.clear()
             st.success("Alert preferences saved.", icon="✅")
         else:
-            st.error("Could not save preferences — check file permissions.", icon="⚠️")
+            st.error("Could not save preferences — database and local file both failed.", icon="⚠️")
 
-    import os as _os_alert, datetime as _dt_alert
-    _tcs_cfg_path = _os_alert.path.join(_os_alert.path.dirname(__file__) or ".", "tcs_alert_config.json")
-    if _os_alert.path.exists(_tcs_cfg_path):
-        _tcs_mtime = _os_alert.path.getmtime(_tcs_cfg_path)
-        _tcs_saved_str = _dt_alert.datetime.fromtimestamp(_tcs_mtime).strftime("%b %d, %Y at %I:%M %p")
+    _tcs_saved_str = get_tcs_alert_config_last_saved()
+    if _tcs_saved_str:
         st.caption(f"Last saved: {_tcs_saved_str}")
     else:
         st.caption("Preferences not yet saved — defaulting to all structures opted in.")

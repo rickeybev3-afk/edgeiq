@@ -2331,32 +2331,79 @@ def append_tcs_threshold_history(previous: dict, current: dict, min_delta: int =
     _notify_tcs_threshold_shift(previous, current)
 
 
+# ── TCS alert config: Supabase-backed with local JSON fallback ────────────────
+#
+# Required Supabase table — see migrations/create_app_config.sql.
+# Run that script once in the Supabase SQL editor to create app_config:
+#
+#   CREATE TABLE IF NOT EXISTS app_config (
+#       key        TEXT PRIMARY KEY,
+#       value      JSONB NOT NULL,
+#       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+#   );
+#
+# The table stores arbitrary app-level config blobs keyed by a string.
+# The TCS alert preferences are stored under key = 'tcs_alert_config'.
+
+_APP_CONFIG_TABLE = "app_config"
+_TCS_ALERT_CONFIG_KEY = "tcs_alert_config"
+_TCS_ALERT_CFG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "tcs_alert_config.json"
+)
+
+
+def _load_raw_tcs_alert_cfg() -> dict:
+    """Return the parsed TCS alert config dict.
+
+    Tries Supabase first.  Falls back to the local ``tcs_alert_config.json``
+    file when Supabase is unavailable or the row doesn't exist yet.  Returns an
+    empty dict when neither source has data.
+    """
+    import json as _json
+
+    if supabase is not None:
+        try:
+            resp = (
+                supabase.table(_APP_CONFIG_TABLE)
+                .select("value")
+                .eq("key", _TCS_ALERT_CONFIG_KEY)
+                .limit(1)
+                .execute()
+            )
+            if resp.data:
+                val = resp.data[0].get("value")
+                if isinstance(val, dict):
+                    return val
+        except Exception:
+            pass
+
+    if os.path.exists(_TCS_ALERT_CFG_PATH):
+        try:
+            with open(_TCS_ALERT_CFG_PATH) as _f:
+                cfg = _json.load(_f)
+            if isinstance(cfg, dict):
+                return cfg
+        except Exception:
+            pass
+
+    return {}
+
+
 def _load_tcs_alert_structures() -> set | None:
     """Return the set of structure keys opted in for Telegram alerts.
 
-    Reads ``tcs_alert_config.json`` from the project root.  The file is
-    expected to have an ``alert_structures`` list, e.g.::
-
-        {"alert_structures": ["neutral", "double_dist"]}
+    Reads config from Supabase (``app_config`` table, key ``tcs_alert_config``),
+    falling back to ``tcs_alert_config.json`` when the DB is unavailable.
 
     Returns:
-        * ``None``  – file absent or ``alert_structures`` key missing → alert
+        * ``None``  – no config found or ``alert_structures`` key missing → alert
           on *all* structures (default / backwards-compatible behaviour).
         * A ``set`` of strings – alert only on those keys (may be empty, which
           silences every alert).
     """
-    import json as _json
-
-    cfg_path = os.path.join(os.path.dirname(__file__) or ".", "tcs_alert_config.json")
-    if not os.path.exists(cfg_path):
-        return None
-    try:
-        with open(cfg_path) as _f:
-            cfg = _json.load(_f)
-        if "alert_structures" in cfg:
-            return set(cfg["alert_structures"])
-    except Exception:
-        pass
+    cfg = _load_raw_tcs_alert_cfg()
+    if "alert_structures" in cfg:
+        return set(cfg["alert_structures"])
     return None
 
 
@@ -2366,32 +2413,50 @@ def load_tcs_alert_structures() -> set | None:
 
 
 def save_tcs_alert_structures(structures) -> bool:
-    """Persist *structures* (any iterable of structure keys) to ``tcs_alert_config.json``.
+    """Persist *structures* (any iterable of structure keys) durably.
 
-    Only recognised keys (those present in :data:`WK_DISPLAY`) are written;
-    unknown keys are silently discarded.  Overwrites the file while preserving
-    the comment key and any existing ``thresholds`` map.  Returns ``True`` on
-    success, ``False`` on any I/O failure.
+    Writes to Supabase (``app_config`` table) as the primary store and also
+    updates the local ``tcs_alert_config.json`` as a fallback cache.  Only
+    recognised keys (those present in :data:`WK_DISPLAY`) are written; unknown
+    keys are silently discarded.  Preserves any existing ``thresholds`` map.
+    Returns ``True`` when at least one storage backend succeeds.
     """
     import json as _json
 
     valid = set(WK_DISPLAY.keys())
     sanitised = sorted(k for k in structures if k in valid)
-    cfg_path = os.path.join(os.path.dirname(__file__) or ".", "tcs_alert_config.json")
 
-    # Preserve any existing thresholds map so a save_tcs_alert_structures call
-    # does not silently wipe per-structure threshold overrides.
     existing_thresholds: dict = {}
-    if os.path.exists(cfg_path):
-        try:
-            with open(cfg_path) as _f:
-                _existing = _json.load(_f)
-            if isinstance(_existing.get("thresholds"), dict):
-                existing_thresholds = _existing["thresholds"]
-        except Exception:
-            pass
+    try:
+        existing_thresholds = _load_tcs_alert_thresholds()
+    except Exception:
+        pass
 
-    cfg: dict = {
+    db_value: dict = {"alert_structures": sanitised}
+    if existing_thresholds:
+        db_value["thresholds"] = existing_thresholds
+
+    db_ok = False
+    if supabase is not None:
+        try:
+            import datetime as _dt
+            supabase.table(_APP_CONFIG_TABLE).upsert(
+                {
+                    "key": _TCS_ALERT_CONFIG_KEY,
+                    "value": db_value,
+                    "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                },
+                on_conflict="key",
+            ).execute()
+            db_ok = True
+        except Exception as _exc:
+            logging.warning(
+                "[save_tcs_alert_structures] Supabase write failed: %s. "
+                "Will attempt local JSON fallback.",
+                _exc,
+            )
+
+    file_cfg: dict = {
         "_comment": (
             "Controls which TCS structures trigger Telegram threshold-shift alerts and "
             "what delta (in points) must be exceeded before an alert fires. "
@@ -2406,39 +2471,138 @@ def save_tcs_alert_structures(structures) -> bool:
         "alert_structures": sanitised,
     }
     if existing_thresholds:
-        cfg["thresholds"] = existing_thresholds
+        file_cfg["thresholds"] = existing_thresholds
+
+    file_ok = False
     try:
-        with open(cfg_path, "w") as _f:
-            _json.dump(cfg, _f, indent=2)
-        return True
-    except Exception:
-        return False
+        with open(_TCS_ALERT_CFG_PATH, "w") as _f:
+            _json.dump(file_cfg, _f, indent=2)
+        file_ok = True
+    except Exception as _exc:
+        logging.warning(
+            "[save_tcs_alert_structures] Local JSON write failed: %s.", _exc
+        )
+
+    if not db_ok and not file_ok:
+        logging.error(
+            "[save_tcs_alert_structures] Both Supabase and local file writes failed. "
+            "Alert preferences were NOT persisted."
+        )
+
+    return db_ok or file_ok
 
 
 def _load_tcs_alert_thresholds() -> dict:
     """Return a map of structure_key → minimum delta required to fire an alert.
 
-    Reads the optional ``thresholds`` map from ``tcs_alert_config.json``.  Any
+    Reads from Supabase first, falling back to ``tcs_alert_config.json``.  Any
     structure *not* present in the map will use the global default of 5 points.
+    Entries with non-numeric values are skipped silently.
 
-    Returns an empty dict when the file is absent or the key is missing,
-    causing all structures to use the global default.
+    Returns an empty dict when neither source has threshold data.
     """
-    import json as _json
-
-    cfg_path = os.path.join(os.path.dirname(__file__) or ".", "tcs_alert_config.json")
-    if not os.path.exists(cfg_path):
+    cfg = _load_raw_tcs_alert_cfg()
+    raw = cfg.get("thresholds", {})
+    if not isinstance(raw, dict):
         return {}
-    try:
-        with open(cfg_path) as _f:
-            cfg = _json.load(_f)
-        raw = cfg.get("thresholds", {})
-        if isinstance(raw, dict):
-            return {str(k): float(v) for k, v in raw.items()}
-    except Exception:
-        pass
-    return {}
+    result: dict = {}
+    for k, v in raw.items():
+        try:
+            result[str(k)] = float(v)
+        except (TypeError, ValueError):
+            logging.warning(
+                "[_load_tcs_alert_thresholds] Skipping invalid threshold value for %r: %r",
+                k, v,
+            )
+    return result
 
+
+def get_tcs_alert_config_last_saved() -> str | None:
+    """Return a human-readable 'last saved' string for the TCS alert config.
+
+    Checks Supabase ``app_config`` for the ``updated_at`` timestamp first;
+    falls back to the local ``tcs_alert_config.json`` file mtime.  Returns
+    ``None`` when no saved config can be found at all.
+
+    The returned string is localised to the server's timezone.
+    """
+    import datetime as _dt
+
+    if supabase is not None:
+        try:
+            resp = (
+                supabase.table(_APP_CONFIG_TABLE)
+                .select("updated_at")
+                .eq("key", _TCS_ALERT_CONFIG_KEY)
+                .limit(1)
+                .execute()
+            )
+            if resp.data:
+                raw_ts = resp.data[0].get("updated_at", "")
+                if raw_ts:
+                    parsed = _dt.datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                    local = parsed.astimezone().replace(tzinfo=None)
+                    return local.strftime("%b %d, %Y at %I:%M %p") + " (database)"
+        except Exception:
+            pass
+
+    if os.path.exists(_TCS_ALERT_CFG_PATH):
+        try:
+            mtime = os.path.getmtime(_TCS_ALERT_CFG_PATH)
+            local = _dt.datetime.fromtimestamp(mtime)
+            return local.strftime("%b %d, %Y at %I:%M %p") + " (local file)"
+        except Exception:
+            pass
+
+    return None
+
+
+def _ensure_app_config_table_exists() -> None:
+    """Warn at startup if the ``app_config`` Supabase table has not been created.
+
+    The table is required for durable alert preference storage.  If it is
+    absent the code falls back to the local JSON file automatically, but
+    operators should create it once via the Supabase SQL editor::
+
+        CREATE TABLE IF NOT EXISTS app_config (
+            key        TEXT PRIMARY KEY,
+            value      JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+    Only emits a warning when the error message contains PostgreSQL error code
+    42P01 ("undefined_table") to avoid spurious warnings during transient
+    network/auth issues.
+    """
+    if supabase is None:
+        return
+    try:
+        supabase.table(_APP_CONFIG_TABLE).select("key").limit(1).execute()
+    except Exception as _exc:
+        _is_missing_table = False
+        _code = getattr(_exc, "code", None)
+        if _code is not None:
+            _is_missing_table = str(_code) == "42P01"
+        if not _is_missing_table:
+            _msg = str(_exc)
+            _is_missing_table = (
+                "42P01" in _msg
+                or "undefined_table" in _msg
+                or "does not exist" in _msg.lower()
+            )
+        if _is_missing_table:
+            logging.warning(
+                "[STARTUP] app_config table not found in Supabase. "
+                "Alert preferences will fall back to tcs_alert_config.json until the table is created. "
+                "Run migrations/create_app_config.sql in the Supabase SQL editor to fix this."
+            )
+        else:
+            logging.debug(
+                "[STARTUP] Could not verify app_config table existence (transient error): %s", _exc
+            )
+
+
+_ensure_app_config_table_exists()
 
 _TCS_ALERT_CACHE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tcs_alert_cache.json"
