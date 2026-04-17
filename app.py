@@ -10146,7 +10146,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         return _rx
                     _all_csv_parts = []
                     for _exp_tk in _all_sweep_export_df["Ticker"].unique():
-                        _tk_part = _all_sweep_export_df[_all_sweep_export_df["Ticker"] == _exp_tk]
+                        _tk_part = _all_sweep_export_df[_all_sweep_export_df["Ticker"] == _exp_tk].copy()
+                        _tk_part["_rec_sort"] = (_tk_part["Recommended"] == "✓").astype(int)
+                        _tk_pnl_col = "Net P&L ($)" if "Net P&L ($)" in _tk_part.columns else None
+                        if _tk_pnl_col:
+                            _tk_part = _tk_part.sort_values(
+                                ["_rec_sort", _tk_pnl_col],
+                                ascending=[False, False],
+                            )
+                        else:
+                            _tk_part = _tk_part.sort_values("_rec_sort", ascending=False)
+                        _tk_part = _tk_part.drop(columns=["_rec_sort"])
                         _all_csv_parts.append(_tk_part)
                         _sw_tgrp2 = _bt_df[_bt_df["ticker"] == _exp_tk]
                         if "actual_outcome" in _sw_tgrp2.columns:
