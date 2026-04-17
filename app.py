@@ -18611,6 +18611,9 @@ ALTER TABLE backtest_sim_runs
                 save_user_prefs(_AUTH_USER_ID, _bts_dr_new_prefs)
                 st.session_state["_cached_prefs"] = _bts_dr_new_prefs
 
+        # Save pre-filter snapshot so the _bq_ section can apply its own independent date range
+        _bts_df_unfiltered = _bts_df.copy()
+
         if _bts_start and _bts_end and _bts_start > _bts_end:
             st.error("'From' date must be on or before the 'To' date — no results shown.")
             _bts_df = _bts_df.iloc[0:0].copy()  # empty but preserve columns
@@ -19884,10 +19887,12 @@ ALTER TABLE backtest_sim_runs
                             )
 
             # ── P&L by Entry Quality — Screener × Outcome Direction ──────────
-            _bq_has_eod    = "eod_pnl_r"       in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
-            _bq_has_tiered = "tiered_pnl_r"    in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
-            _bq_has_outcome = "actual_outcome"  in _bts_df.columns
-            _bq_has_scan    = "scan_type"       in _bts_df.columns
+            # Use the unfiltered snapshot for column checks so the section renders
+            # even when the main BTS date filter returns an empty slice.
+            _bq_has_eod    = "eod_pnl_r"       in _bts_df_unfiltered.columns and _bts_df_unfiltered["eod_pnl_r"].notna().any()
+            _bq_has_tiered = "tiered_pnl_r"    in _bts_df_unfiltered.columns and _bts_df_unfiltered["tiered_pnl_r"].notna().any()
+            _bq_has_outcome = "actual_outcome"  in _bts_df_unfiltered.columns
+            _bq_has_scan    = "scan_type"       in _bts_df_unfiltered.columns
 
             if _bq_has_eod and _bq_has_tiered and _bq_has_outcome and _bq_has_scan:
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -19903,10 +19908,76 @@ ALTER TABLE backtest_sim_runs
                     "Only paired trades where both metrics are recorded are included."
                 )
 
-                _bq_src = _bts_df[
-                    _bts_df["eod_pnl_r"].notna()
-                    & _bts_df["tiered_pnl_r"].notna()
-                    & _bts_df["actual_outcome"].isin(["Bullish Break", "Bearish Break"])
+                # ── Independent date-range filter ─────────────────────────────
+                _bq_td_col      = pd.to_datetime(_bts_df_unfiltered["trade_date"], errors="coerce")
+                _bq_valid_dates = _bq_td_col.dropna()
+                _bq_min_date    = _bq_valid_dates.min().date() if not _bq_valid_dates.empty else None
+                _bq_max_date    = _bq_valid_dates.max().date() if not _bq_valid_dates.empty else None
+
+                _bq_dr_cols = st.columns([1, 1, 2])
+                with _bq_dr_cols[0]:
+                    _bq_start = st.date_input(
+                        "From",
+                        value=None,
+                        min_value=_bq_min_date,
+                        max_value=_bq_max_date,
+                        key="bq_dr_start",
+                        help="Show Screener × Outcome data from this date (inclusive). Leave blank to use all available data.",
+                    )
+                with _bq_dr_cols[1]:
+                    _bq_end = st.date_input(
+                        "To",
+                        value=None,
+                        min_value=_bq_min_date,
+                        max_value=_bq_max_date,
+                        key="bq_dr_end",
+                        help="Show Screener × Outcome data up to this date (inclusive). Leave blank to use all available data.",
+                    )
+                with _bq_dr_cols[2]:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    _bq_bts_sync_start = st.session_state.get("bts_dr_start")
+                    _bq_bts_sync_end   = st.session_state.get("bts_dr_end")
+                    _bq_sync_help = (
+                        f"Copy the Backtest P&L date range ({_bq_bts_sync_start or 'any'} → {_bq_bts_sync_end or 'any'}) into this filter"
+                        if (_bq_bts_sync_start or _bq_bts_sync_end)
+                        else "Copy the Backtest P&L date filter (currently unset) into this filter — shows all available data"
+                    )
+                    if st.button(
+                        "⇄ Sync from Backtest P&L",
+                        key="bq_sync_bts_dates",
+                        help=_bq_sync_help,
+                    ):
+                        def _clamp_bq(d):
+                            if d is None:
+                                return None
+                            if _bq_min_date and d < _bq_min_date:
+                                return _bq_min_date
+                            if _bq_max_date and d > _bq_max_date:
+                                return _bq_max_date
+                            return d
+                        st.session_state["bq_dr_start"] = _clamp_bq(_bq_bts_sync_start)
+                        st.session_state["bq_dr_end"]   = _clamp_bq(_bq_bts_sync_end)
+                        st.rerun()
+
+                # Apply the independent date filter
+                _bq_df = _bts_df_unfiltered.copy()
+                if _bq_start and _bq_end and _bq_start > _bq_end:
+                    st.error("'From' date must be on or before the 'To' date — no results shown.")
+                    _bq_df = _bq_df.iloc[0:0].copy()
+                elif _bq_start or _bq_end:
+                    _bq_td_mask2 = pd.to_datetime(_bq_df["trade_date"], errors="coerce")
+                    if _bq_start:
+                        _bq_df = _bq_df[_bq_td_mask2 >= pd.Timestamp(_bq_start)]
+                    if _bq_end:
+                        _bq_df = _bq_df[_bq_td_mask2 <= pd.Timestamp(_bq_end)]
+                    _bq_df = _bq_df.reset_index(drop=True)
+                    if _bq_df.empty:
+                        st.warning("No backtest runs found in the selected date range — try widening the filter.")
+
+                _bq_src = _bq_df[
+                    _bq_df["eod_pnl_r"].notna()
+                    & _bq_df["tiered_pnl_r"].notna()
+                    & _bq_df["actual_outcome"].isin(["Bullish Break", "Bearish Break"])
                 ].copy()
 
                 if _bq_src.empty:
