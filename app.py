@@ -8395,6 +8395,41 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             else:
                                 st.caption("Marginal entries are performing in line with comfortable entries in this sim.")
 
+                            # ── Per-structure breakdown ────────────────────────────────────
+                            if _marg_n > 0 and "Structure" in _rp_df.columns:
+                                with st.expander("📊 Marginal breakdown by structure type", expanded=False):
+                                    _struct_rows = []
+                                    for _struct_name, _s_marg in _marg_df.groupby("Structure"):
+                                        _s_comf = _comf_df[_comf_df["Structure"] == _struct_name] if "Structure" in _comf_df.columns else _comf_df.iloc[0:0]
+                                        _s_marg_n   = len(_s_marg)
+                                        _s_comf_n   = len(_s_comf)
+                                        _s_marg_wr  = _pct((_s_marg["P&L ($)"] > 0).sum(), _s_marg_n)
+                                        _s_comf_wr  = _pct((_s_comf["P&L ($)"] > 0).sum(), _s_comf_n)
+                                        _s_marg_avgr = _avgr(_s_marg)
+                                        _s_delta_wr  = (
+                                            round(_s_marg_wr - _s_comf_wr, 1)
+                                            if (_s_marg_wr is not None and _s_comf_wr is not None)
+                                            else None
+                                        )
+                                        _struct_rows.append({
+                                            "Structure":        _struct_name,
+                                            "Marginal Trades":  _s_marg_n,
+                                            "Marg Win Rate":    f"{_s_marg_wr}%" if _s_marg_wr is not None else "—",
+                                            "Comf Win Rate":    f"{_s_comf_wr}%" if _s_comf_wr is not None else "—",
+                                            "ΔWR (marg−comf)":  f"{_s_delta_wr:+.1f}pp" if _s_delta_wr is not None else "—",
+                                            "Marg Avg R":       f"{_s_marg_avgr:+.2f}R" if _s_marg_avgr is not None else "—",
+                                        })
+                                    if _struct_rows:
+                                        import pandas as _pd_ma
+                                        _struct_df = _pd_ma.DataFrame(_struct_rows).sort_values(
+                                            "Marginal Trades", ascending=False
+                                        ).reset_index(drop=True)
+                                        st.dataframe(_struct_df, use_container_width=True, hide_index=True)
+                                        st.caption(
+                                            "ΔWR shows how each structure's marginal win rate compares to its own comfortable "
+                                            "win rate. A large negative value suggests that structure's TCS floor may need raising."
+                                        )
+
                         _cum_r = _r_ser.cumsum().reset_index(drop=True)
 
                         _RP_CHART_OPTIONS = ["Equity ($)", "Cumulative R", "Both"]
