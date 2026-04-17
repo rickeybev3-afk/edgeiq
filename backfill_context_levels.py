@@ -332,7 +332,8 @@ def main():
             try:
                 SUPABASE.table('backtest_context_levels').upsert(record).execute()
                 total_saved += 1
-                log.info(f'  ✓ {ticker} {trade_date} {scan_type} | VWAP={vwap_val:.2f if vwap_val else "N/A"} | MACD={macd_dir}')
+                _vwap_str = f"{vwap_val:.2f}" if vwap_val is not None else "N/A"
+                log.info(f'  ✓ {ticker} {trade_date} {scan_type} | VWAP={_vwap_str} | MACD={macd_dir}')
             except Exception as e:
                 log.warning(f'  ✗ {ticker} {trade_date} upsert error: {e}')
                 total_errors += 1

@@ -667,8 +667,13 @@ def _structure_emoji(predicted: str) -> str:
     return "⚫"
 
 
-def _alert_setup(r: dict, trade_date: date):
-    """Send a Telegram alert for a single qualifying setup."""
+def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
+    """Send a Telegram alert for a single qualifying setup.
+
+    context (optional): {prev_high, prev_low} from a batch prev-day fetch.
+    When provided a '📡 Context:' section is appended with S/R distance,
+    RVOL, and gap data so the recipient has actionable edge info at a glance.
+    """
     now_et    = datetime.now(EASTERN)
     scan_time = now_et.strftime("%I:%M %p ET").lstrip("0")
 
@@ -720,6 +725,33 @@ def _alert_setup(r: dict, trade_date: date):
     else:
         tcs_line = f"⚡ TCS Score: <b>{tcs:.0f} / 100</b>"
 
+    # ── Context block (S/R, RVOL, gap) ────────────────────────────────────────
+    context_lines = ""
+    try:
+        _rvol    = r.get("rvol")
+        _gap_pct = r.get("gap_pct")
+        _rvol_str = f"{float(_rvol):.1f}x" if _rvol not in (None, "") else "—"
+        _gap_str  = f"{float(_gap_pct):+.1f}%" if _gap_pct not in (None, "") else "—"
+
+        _ctx_parts = [f"📈 RVOL: <b>{_rvol_str}</b>  ·  Gap: <b>{_gap_str}</b>"]
+
+        if context:
+            _ph = context.get("high")
+            _pl = context.get("low")
+            if _ph and _pl:
+                _ctx_parts.append(f"🏗 Prev Day: H <b>${_ph:.2f}</b>  /  L <b>${_pl:.2f}</b>")
+            if _ph and cur_px:
+                _r_pct = (_ph - cur_px) / cur_px * 100
+                _s_pct = (cur_px - _pl) / cur_px * 100 if _pl else None
+                _r_str = f"${_ph:.2f} ({_r_pct:+.1f}%)" if _r_pct > 0 else f"${_ph:.2f} (below — broken out)"
+                _s_str = f"${_pl:.2f} (-{_s_pct:.1f}%)" if (_pl and _s_pct and _s_pct > 0) else (f"${_pl:.2f}" if _pl else "—")
+                _ctx_parts.append(f"🎯 R: <b>{_r_str}</b>  ·  S: <b>{_s_str}</b>")
+
+        if _ctx_parts:
+            context_lines = "\n━━━━━━━━━━━━━━━━━━━━━\n📡 Context:\n  " + "\n  ".join(_ctx_parts)
+    except Exception:
+        context_lines = ""
+
     msg = (
         f"{emoji} <b>EdgeIQ Setup — {ticker}</b>\n"
         f"⏰ {scan_time}  ·  📅 {trade_date}\n"
@@ -736,6 +768,7 @@ def _alert_setup(r: dict, trade_date: date):
         f"  Break above → ${above_ib:.2f}\n"
         f"  IB Mid      → ${ib_mid:.2f}\n"
         f"  Break below → ${below_ib:.2f}"
+        f"{context_lines}"
     )
     sent = tg_send(msg)
     if sent:
@@ -1190,6 +1223,15 @@ def morning_scan():
         # Sort by tier priority: P3 first → P4.  Within tier: higher TCS first.
         qualified = sorted(qualified, key=_tier_priority_key)
         log.info(f"Sending {len(qualified)} Telegram setup alerts (P3 first, then P4)...")
+
+        # Batch-fetch prev-day levels for S/R context in alerts (one call for all tickers)
+        _alert_tickers = [r.get("ticker") for r in qualified if r.get("ticker")]
+        try:
+            _prev_day_map = _fetch_prev_day_bars(_alert_tickers, str(today))
+        except Exception as _pde:
+            log.warning(f"Prev-day context fetch failed (alerts will send without S/R): {_pde}")
+            _prev_day_map = {}
+
         for r in qualified:
             tcs_val = float(r.get("tcs", 0))
             if tcs_val >= 70:
@@ -1203,7 +1245,8 @@ def morning_scan():
                 f"predicted: {r.get('predicted', '—'):20s} | "
                 f"IB {r.get('ib_low', 0):.2f}–{r.get('ib_high', 0):.2f}"
             )
-            _alert_setup(r, today)
+            _ctx = _prev_day_map.get(r.get("ticker"), {})
+            _alert_setup(r, today, context=_ctx if _ctx else None)
             _place_order_for_setup(r, "morning")
             time.sleep(0.3)  # Telegram rate limit buffer
     else:
@@ -1282,6 +1325,15 @@ def intraday_scan():
             f"<b>{len(qualified)} setup(s)</b> still active/developing:"
             + _threshold_legend
         )
+
+        # Batch-fetch prev-day levels for S/R context in alerts (one call for all tickers)
+        _alert_tickers = [r.get("ticker") for r in qualified if r.get("ticker")]
+        try:
+            _prev_day_map = _fetch_prev_day_bars(_alert_tickers, str(today))
+        except Exception as _pde:
+            log.warning(f"Prev-day context fetch failed (alerts will send without S/R): {_pde}")
+            _prev_day_map = {}
+
         for r in qualified:
             r["_struct_tcs_floor"] = _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
             tcs_val = float(r.get("tcs", 0))
@@ -1292,7 +1344,8 @@ def intraday_scan():
             else:
                 tier = "⚪ Watch Only"
             r["_priority_tier"] = tier
-            _alert_setup(r, today)
+            _ctx = _prev_day_map.get(r.get("ticker"), {})
+            _alert_setup(r, today, context=_ctx if _ctx else None)
             _place_order_for_setup(r, "intraday")
             time.sleep(0.3)
     else:
