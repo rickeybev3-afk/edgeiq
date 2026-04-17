@@ -134,6 +134,10 @@ def _cached_load_cognitive_delta_analysis(user_id: str = ""):
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _cached_check_db_connection() -> tuple[bool, str]:
+    # Equivalent to the db_reachable field in /api/health: both perform a HEAD
+    # request to {SUPABASE_URL}/rest/v1/ and treat HTTP 200/404 as reachable.
+    # Using a direct call here (rather than hitting /api/health over HTTP) avoids
+    # a loopback round-trip while keeping the same reachability semantics.
     return check_db_connection()
 
 @st.cache_data(ttl=300, show_spinner=False)
