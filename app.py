@@ -8575,6 +8575,34 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 annotation_font=dict(color="#ffd600", size=11),
                             )
 
+                            # ── Drawdown highlight (red vrect, same +1 offset as Equity view) ──
+                            if _dd_trough_idx is not None and _dd_peak_idx is not None:
+                                _dual_peak_idx   = _dd_peak_idx + 1
+                                _dual_trough_idx = _dd_trough_idx + 1
+                                _fig_dual.add_vrect(
+                                    x0=_dual_peak_idx,
+                                    x1=_dual_trough_idx,
+                                    fillcolor="rgba(220, 50, 50, 0.15)",
+                                    layer="below",
+                                    line_width=0,
+                                )
+                                _fig_dual.add_trace(go.Scatter(
+                                    x=[_dual_peak_idx],
+                                    y=[float(_rp_equity_curve[_dual_peak_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
+                                    name=f"DD Start (trade #{_dd_peak_idx})",
+                                    yaxis="y1",
+                                ))
+                                _fig_dual.add_trace(go.Scatter(
+                                    x=[_dual_trough_idx],
+                                    y=[float(_rp_equity_curve[_dual_trough_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#d62728", size=10, symbol="triangle-up"),
+                                    name=f"DD End (trade #{_dd_trough_idx})",
+                                    yaxis="y1",
+                                ))
+
                             _fig_dual.add_trace(go.Scatter(
                                 x=_x_eq,
                                 y=_rp_equity_curve,
@@ -8640,6 +8668,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"**Equity & R** — divergences reveal where position sizing amplifies or dampens raw edge"
                                 f"\u2002|\u2002🟡 **Trade\u00a0#{_max_div_idx}**: {_div_msg}"
                             )
+                            if _dd_trough_idx is not None and _dd_peak_idx is not None:
+                                _dual_dd_dollars = float(_rp_equity_curve[_dual_trough_idx]) - float(_rp_equity_curve[_dual_peak_idx])
+                                st.caption(
+                                    f"🔴 Max drawdown period: trade\u00a0**#{_dd_peak_idx}** → **#{_dd_trough_idx}**"
+                                    f"\u2002({_dd_trough_idx - _dd_peak_idx} trades)\u2002|\u2002dollar magnitude\u00a0**${abs(_dual_dd_dollars):,.0f}**"
+                                    f"\u2002|\u2002R magnitude\u00a0**{abs(_max_dd_r)}R**"
+                                )
 
                         # ── Replay CSV download ────────────────────────────────────────────
                         _rp_csv_df = _rp_df.copy()
