@@ -18271,6 +18271,49 @@ ALTER TABLE backtest_sim_runs
                             f'</div>',
                             unsafe_allow_html=True,
                         )
+                        _pt_eod_spk_data = None
+                        if "trade_date" in _pt_eod_sub.columns:
+                            try:
+                                _pt_eod_spk = _pt_eod_sub.copy()
+                                _pt_eod_spk["_dt"] = pd.to_datetime(_pt_eod_spk["trade_date"], errors="coerce")
+                                _pt_eod_spk = _pt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
+                                _pt_eod_wkly = _pt_eod_spk.resample("W-FRI").agg(
+                                    _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
+                                    _tot=("eod_pnl_r", "count"),
+                                )
+                                _pt_eod_wkly = _pt_eod_wkly[_pt_eod_wkly["_tot"] > 0]
+                                _pt_eod_wkly["_wr"] = _pt_eod_wkly["_wins"] / _pt_eod_wkly["_tot"] * 100
+                                if len(_pt_eod_wkly) >= 3:
+                                    _pt_eod_spk_data = _pt_eod_wkly
+                            except (ValueError, KeyError, TypeError) as _pt_eod_spk_err:
+                                import sys
+                                print(f"[EOD sparkline] {_pt_eod_scan}: {_pt_eod_spk_err}", file=sys.stderr)
+                        if _pt_eod_spk_data is not None:
+                            _pt_eod_sfig = go.Figure()
+                            _pt_eod_sfig.add_trace(go.Scatter(
+                                x=[idx.strftime("w/e %b %d") for idx in _pt_eod_spk_data.index],
+                                y=_pt_eod_spk_data["_wr"].tolist(),
+                                mode="lines+markers",
+                                line=dict(color=_pt_eod_accent, width=1.5),
+                                marker=dict(size=4, color=_pt_eod_accent),
+                                hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
+                            ))
+                            _pt_eod_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                            _pt_eod_sfig.update_layout(
+                                height=70,
+                                margin=dict(l=2, r=2, t=6, b=2),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                xaxis=dict(visible=False, fixedrange=True),
+                                yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
+                                showlegend=False,
+                            )
+                            st.plotly_chart(
+                                _pt_eod_sfig,
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                            )
+                            st.caption("Weekly EOD win rate")
             if "morning" in _pt_eod_exp_map and "intraday" in _pt_eod_exp_map:
                 _pt_eod_m_exp = _pt_eod_exp_map["morning"]
                 _pt_eod_i_exp = _pt_eod_exp_map["intraday"]
@@ -20221,6 +20264,49 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         f'</div>',
                         unsafe_allow_html=True,
                     )
+                    _ptt_eod_spk_data = None
+                    if "trade_date" in _ptt_eod_sub.columns:
+                        try:
+                            _ptt_eod_spk = _ptt_eod_sub.copy()
+                            _ptt_eod_spk["_dt"] = pd.to_datetime(_ptt_eod_spk["trade_date"], errors="coerce")
+                            _ptt_eod_spk = _ptt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
+                            _ptt_eod_wkly = _ptt_eod_spk.resample("W-FRI").agg(
+                                _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
+                                _tot=("eod_pnl_r", "count"),
+                            )
+                            _ptt_eod_wkly = _ptt_eod_wkly[_ptt_eod_wkly["_tot"] > 0]
+                            _ptt_eod_wkly["_wr"] = _ptt_eod_wkly["_wins"] / _ptt_eod_wkly["_tot"] * 100
+                            if len(_ptt_eod_wkly) >= 3:
+                                _ptt_eod_spk_data = _ptt_eod_wkly
+                        except (ValueError, KeyError, TypeError) as _ptt_eod_spk_err:
+                            import sys
+                            print(f"[EOD sparkline] {_ptt_eod_scan}: {_ptt_eod_spk_err}", file=sys.stderr)
+                    if _ptt_eod_spk_data is not None:
+                        _ptt_eod_sfig = go.Figure()
+                        _ptt_eod_sfig.add_trace(go.Scatter(
+                            x=[idx.strftime("w/e %b %d") for idx in _ptt_eod_spk_data.index],
+                            y=_ptt_eod_spk_data["_wr"].tolist(),
+                            mode="lines+markers",
+                            line=dict(color=_ptt_eod_accent, width=1.5),
+                            marker=dict(size=4, color=_ptt_eod_accent),
+                            hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
+                        ))
+                        _ptt_eod_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                        _ptt_eod_sfig.update_layout(
+                            height=70,
+                            margin=dict(l=2, r=2, t=6, b=2),
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            xaxis=dict(visible=False, fixedrange=True),
+                            yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
+                            showlegend=False,
+                        )
+                        st.plotly_chart(
+                            _ptt_eod_sfig,
+                            use_container_width=True,
+                            config={"displayModeBar": False},
+                        )
+                        st.caption("Weekly EOD win rate")
         if "morning" in _ptt_eod_exp_map and "intraday" in _ptt_eod_exp_map:
             _ptt_eod_m_exp = _ptt_eod_exp_map["morning"]
             _ptt_eod_i_exp = _ptt_eod_exp_map["intraday"]
