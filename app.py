@@ -9800,9 +9800,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                   display:flex;width:100%;height:6px;border-radius:3px;overflow:hidden;
                                   background:rgba(255,255,255,0.06);
                               ">
-                                <div style="width:{_rp_bar_win_pct:.2f}%;background:#66bb6a;"></div>
-                                <div style="width:{_rp_bar_loss_pct:.2f}%;background:#ef5350;"></div>
-                                <div style="width:{_rp_bar_neut_pct:.2f}%;background:#546e7a;"></div>
+                                <div title="Wins: {_rp_wins} / {_rp_total} ({_rp_bar_win_pct:.1f}%)" style="width:{_rp_bar_win_pct:.2f}%;background:#66bb6a;"></div>
+                                <div title="Losses: {_rp_losses} / {_rp_total} ({_rp_bar_loss_pct:.1f}%)" style="width:{_rp_bar_loss_pct:.2f}%;background:#ef5350;"></div>
+                                <div title="Neutral: {_rp_neutral} / {_rp_total} ({_rp_bar_neut_pct:.1f}%)" style="width:{_rp_bar_neut_pct:.2f}%;background:#546e7a;"></div>
                               </div>
                             </div>
                             """,
