@@ -415,6 +415,7 @@ function StatusDot({ ok }: { ok: boolean }) {
 
 function Home({ health }: { health: HealthState }) {
   const [credAlertsEnabled, setCredAlertsEnabled] = useState<boolean | null>(null);
+  const [backfillErrorAlertsEnabled, setBackfillErrorAlertsEnabled] = useState<boolean | null>(null);
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealthData>({ available: false, loading: true });
   const [, setTick] = useState(0);
 
@@ -436,6 +437,22 @@ function Home({ health }: { health: HealthState }) {
       })
       .catch(() => {
         if (!cancelled) setCredAlertsEnabled(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/backfill-error-alerts")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) setBackfillErrorAlertsEnabled(data.enabled !== false);
+      })
+      .catch(() => {
+        if (!cancelled) setBackfillErrorAlertsEnabled(null);
       });
     return () => { cancelled = true; };
   }, []);
@@ -540,6 +557,25 @@ function Home({ health }: { health: HealthState }) {
                 title="Go to credential-alerts settings"
               >
                 {credAlertsEnabled === null ? "—" : credAlertsEnabled ? "On" : "Off"}
+              </a>
+            </div>
+
+            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+              <StatusDot ok={backfillErrorAlertsEnabled === true} />
+              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Backfill Error Alerts</span>
+              <a
+                href={`${settingsBase}/settings#credential-alerts`}
+                style={{
+                  fontSize: "13px",
+                  color: backfillErrorAlertsEnabled === true ? "#86efac" : backfillErrorAlertsEnabled === false ? "#94a3b8" : "#475569",
+                  fontWeight: 600,
+                  textDecoration: "none",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
+                title="Go to backfill error alerts settings"
+              >
+                {backfillErrorAlertsEnabled === null ? "—" : backfillErrorAlertsEnabled ? "On" : "Off"}
               </a>
             </div>
 
