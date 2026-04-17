@@ -15394,6 +15394,68 @@ ALTER TABLE backtest_sim_runs
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### 📄 Paper Trade History")
 
+    # ── Missing EOD close price summary (paper trades) ───────────────────────
+    _pt_missing_cp = get_paper_trade_missing_close_price_stats(user_id=_AUTH_USER_ID)
+    _pt_missing_cp_total = _pt_missing_cp.get("total_missing", 0)
+    if _pt_missing_cp_total > 0:
+        _pt_top_tickers          = _pt_missing_cp.get("top_tickers", [])
+        _pt_total_tickers        = _pt_missing_cp.get("total_tickers", len(_pt_top_tickers))
+        _pt_ticker_list_complete = _pt_missing_cp.get("ticker_list_complete", True)
+        _pt_ticker_badges = "".join(
+            f'<span style="display:inline-block; background:#1a2744; border:1px solid #263260; '
+            f'border-radius:4px; padding:2px 8px; margin:2px 4px 2px 0; font-family:monospace; '
+            f'font-size:11px; color:#90a4ae;">'
+            f'{t["ticker"]} <span style="color:#546e7a;">×{t["count"]}</span></span>'
+            for t in _pt_top_tickers
+        )
+        _pt_shown_count = len(_pt_top_tickers)
+        _pt_more_hidden = _pt_total_tickers - _pt_shown_count
+        if _pt_more_hidden > 0:
+            _pt_more_note = (
+                f'<span style="font-size:10px; color:#37474f;">'
+                f' + {_pt_more_hidden} more ticker{"s" if _pt_more_hidden != 1 else ""} not shown</span>'
+            )
+        elif not _pt_ticker_list_complete:
+            _pt_more_note = (
+                f'<span style="font-size:10px; color:#37474f;"> + additional tickers not shown</span>'
+            )
+        else:
+            _pt_more_note = ""
+        if _pt_ticker_list_complete:
+            _pt_tickers_label = (
+                f'{_pt_total_tickers} ticker{"s" if _pt_total_tickers != 1 else ""} affected'
+            )
+        else:
+            _pt_tickers_label = (
+                f'at least {_pt_total_tickers} ticker{"s" if _pt_total_tickers != 1 else ""} affected'
+            )
+        st.markdown(
+            f'<div style="background:#020813; border:1px solid #263260; border-radius:8px; '
+            f'padding:12px 20px; margin-bottom:16px;">'
+            f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1.5px; font-weight:700; font-family:monospace; margin-bottom:8px;">'
+            f'⚠ EOD Close Price — Missing Data</div>'
+            f'<div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">'
+            f'<div>'
+            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:2px;">Rows without close price</div>'
+            f'<div style="font-size:28px; font-weight:800; color:#ffa726; '
+            f'font-family:monospace;">{_pt_missing_cp_total:,}</div>'
+            f'<div style="font-size:9px; color:#37474f; margin-top:2px;">'
+            f'no EOD P&amp;L possible · {_pt_tickers_label}</div>'
+            f'</div>'
+            f'<div style="border-left:1px solid #1a2744; padding-left:20px; flex:1;">'
+            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:6px;">Tickers most affected</div>'
+            f'<div>{_pt_ticker_badges}{_pt_more_note}</div>'
+            f'<div style="font-size:9px; color:#37474f; margin-top:6px;">'
+            f'Typically delisted stocks, OTC tickers, or names with no IEX/Alpaca coverage. '
+            f'Run <code style="font-size:9px;">python backfill_close_prices.py</code> to retry.</div>'
+            f'</div>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
     _verified = pd.DataFrame()
     if _pt_df.empty or _total_trades == 0:
         st.info("No verified paper trades yet. Trades are logged and auto-verified by the bot each day.")

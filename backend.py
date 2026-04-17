@@ -8010,6 +8010,74 @@ def get_missing_close_price_stats(user_id: str = "") -> dict:
                 "ticker_list_complete": True}
 
 
+def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
+    """Return stats on paper_trades rows that are resolved but have no close_price.
+
+    Resolved trades are those with win_loss in ('W', 'L', 'Win', 'Loss').
+    A missing close_price means EOD P&L (eod_pnl_r) cannot be computed for those
+    rows — typically caused by delisted tickers, OTC names, or failed EOD fetches.
+
+    Returns a dict:
+      total_missing        – int, exact count of qualifying rows with NULL close_price
+      total_tickers        – int, number of distinct tickers affected
+      top_tickers          – list of {"ticker": str, "count": int} sorted descending (top 10)
+      ticker_list_complete – bool, True when all affected rows were seen during aggregation
+    """
+    if not supabase:
+        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+                "ticker_list_complete": True}
+    try:
+        def _base_q():
+            q = (
+                supabase.table("paper_trades")
+                .in_("win_loss", ["W", "L", "Win", "Loss"])
+                .is_("close_price", "null")
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            return q
+
+        # 1. Exact total count (server-side, no row data)
+        count_resp = _base_q().select("id", count="exact").limit(1).execute()
+        total_missing = count_resp.count or 0
+        if total_missing == 0:
+            return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+                    "ticker_list_complete": True}
+
+        # 2. Paginate ticker column to build per-ticker breakdown.
+        PAGE = 1000
+        MAX_PAGES = 20
+        counts: dict[str, int] = {}
+        rows_seen = 0
+        for page in range(MAX_PAGES):
+            chunk = (
+                _base_q()
+                .select("ticker")
+                .range(page * PAGE, page * PAGE + PAGE - 1)
+                .execute()
+                .data or []
+            )
+            for r in chunk:
+                t = r.get("ticker") or "UNKNOWN"
+                counts[t] = counts.get(t, 0) + 1
+            rows_seen += len(chunk)
+            if len(chunk) < PAGE:
+                break
+
+        ticker_list_complete = (rows_seen >= total_missing)
+        top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        return {
+            "total_missing": total_missing,
+            "total_tickers": len(counts),
+            "top_tickers": [{"ticker": t, "count": c} for t, c in top],
+            "ticker_list_complete": ticker_list_complete,
+        }
+    except Exception as e:
+        print(f"get_paper_trade_missing_close_price_stats error: {e}")
+        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+                "ticker_list_complete": True}
+
+
 def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = False,
                                        user_id: str = "") -> dict:
     """Process one batch of backtest_sim_runs rows missing tiered_pnl_r.
