@@ -17305,6 +17305,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 st.error("No valid tickers found.")
             else:
                 _pt_pmin, _pt_pmax = float(_pt_price_range[0]), float(_pt_price_range[1])
+                st.session_state.pop("_pt_preview_df", None)
+                st.session_state.pop("_pt_sim_failed", None)
                 with st.spinner(
                     f"Fetching bars for {len(_pt_tickers)} tickers on {_pt_date} · "
                     f"filtering TCS ≥ {_pt_min_tcs}…"
