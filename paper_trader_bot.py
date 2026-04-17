@@ -30,7 +30,9 @@ Optional env vars:
   PAPER_TRADE_PRICE_MAX      — max price filter (default: 20.0)
   SWEEP_ALERT_MAX_TICKERS    — max tickers shown in the close-price sweep Telegram alert (default: 10)
   BACKTEST_CLOSE_LOOKBACK_DAYS — how many calendar days the nightly backtest close-price sweep
-                                 covers (default: 60, matching the paper-trades sweep)
+                                 covers (default: 60)
+  PAPER_CLOSE_LOOKBACK_DAYS    — how many calendar days the nightly paper-trades close-price sweep
+                                 covers (default: 60); tune independently of the backtest sweep
 """
 
 import os
@@ -60,6 +62,7 @@ PRICE_MAX               = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
 SWEEP_ALERT_MAX_TICKERS      = int(os.getenv("SWEEP_ALERT_MAX_TICKERS", "10"))
 BACKTEST_CLOSE_LOOKBACK_DAYS    = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 BACKTEST_STALE_THRESHOLD_DAYS   = int(os.getenv("BACKTEST_STALE_THRESHOLD_DAYS", "3"))
+PAPER_CLOSE_LOOKBACK_DAYS       = int(os.getenv("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
 
 # ── Alpaca live execution config ───────────────────────────────────────────────
 # Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
@@ -1966,7 +1969,7 @@ def intraday_scan():
         log.info("No intraday setups above threshold.")
 
 
-def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
+def _eod_collect_close_prices(lookback_days: int = PAPER_CLOSE_LOOKBACK_DAYS) -> dict:
     """Fetch and store EOD close prices for all paper_trades rows that still
     have NULL close_price, covering today's trades and any recent missed days.
 
@@ -3269,13 +3272,17 @@ def nightly_recalibration():
     except Exception as exc:
         log.warning(f"TCS threshold change alert/history failed: {exc}")
 
-    # ── Close-price catch-up sweep (last 7 days) ──────────────────────────────
+    # ── Close-price catch-up sweep (PAPER_CLOSE_LOOKBACK_DAYS) ───────────────
     # The 4:20 PM eod_update() sweep covers today's rows.  Any day the bot was
     # down or the sweep itself failed will leave NULLs behind.  Re-running with
-    # a 7-day window here heals those stragglers automatically every evening.
+    # a look-back window here heals those stragglers automatically every evening.
+    # Window is controlled by PAPER_CLOSE_LOOKBACK_DAYS (default 60).
     try:
-        log.info("Nightly close-price catch-up sweep: checking last 7 days…")
-        cp_result = _eod_collect_close_prices(lookback_days=7)
+        log.info(
+            f"Nightly close-price catch-up sweep: "
+            f"checking last {PAPER_CLOSE_LOOKBACK_DAYS} days…"
+        )
+        cp_result = _eod_collect_close_prices(lookback_days=PAPER_CLOSE_LOOKBACK_DAYS)
         log.info(
             f"Nightly close-price catch-up: "
             f"{cp_result['written']} filled, {cp_result['skipped']} skipped."
