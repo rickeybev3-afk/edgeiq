@@ -100,11 +100,12 @@ _ALERT_REGISTRY = [
         "description": "Sends a daily outcome recap after market close.",
     },
     {
-        "key":         "tcs_alerts",
-        "pref_key":    "tcs_alerts_enabled",
-        "default":     True,
-        "label":       "TCS threshold shift alerts",
-        "description": "Notifies you when a structure's TCS threshold crosses a significant level.",
+        "key":            "tcs_alerts",
+        "pref_key":       "tcs_alerts_enabled",
+        "default":        True,
+        "label":          "TCS threshold shift alerts",
+        "description":    "Notifies you when a structure's TCS threshold crosses a significant level.",
+        "show_structures": True,
     },
     {
         "key":         "credential_alerts",
@@ -840,6 +841,10 @@ def telegram_listener() -> None:
                     sub_prefs = load_user_prefs(sub_uid)
 
                     if len(parts) == 1:
+                        from backend import (
+                            load_tcs_alert_structures,
+                            WK_DISPLAY_PLAIN,
+                        )
                         lines = [
                             "⚙️ <b>Your EdgeIQ Alert Settings</b>",
                             "━━━━━━━━━━━━━━━━━━━━━",
@@ -850,6 +855,23 @@ def telegram_listener() -> None:
                             status_icon = "✅ On" if is_on else "❌ Off"
                             lines.append(f"<b>{a['label']}</b>: {status_icon}")
                             lines.append(f"  ↳ {a['description']}")
+                            if a.get("show_structures"):
+                                user_structs = sub_prefs.get("tcs_alert_structures")
+                                if user_structs is not None:
+                                    try:
+                                        watched: set | None = set(user_structs)
+                                    except (TypeError, ValueError):
+                                        watched = load_tcs_alert_structures()
+                                else:
+                                    watched = load_tcs_alert_structures()
+                                if watched is None:
+                                    struct_summary = "all structures"
+                                elif len(watched) == 0:
+                                    struct_summary = "none (all alerts silenced)"
+                                else:
+                                    names = [WK_DISPLAY_PLAIN.get(k, k) for k in sorted(watched)]
+                                    struct_summary = ", ".join(names)
+                                lines.append(f"  ↳ Watching: {struct_summary}")
                             toggle_cmds.append(
                                 f"  <code>/settings {a['key']} on</code> | "
                                 f"<code>/settings {a['key']} off</code>"
