@@ -20116,7 +20116,7 @@ ALTER TABLE backtest_sim_runs
                                 subtitleFontSize=10,
                             )
                             if _sc_chart_type == "Bar":
-                                _sc_mark = (
+                                _sc_bar_base = (
                                     _alt_sc.Chart(_bts_sc_monthly)
                                     .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                                     .encode(
@@ -20135,10 +20135,28 @@ ALTER TABLE backtest_sim_runs
                                         tooltip=_sc_tooltips,
                                     )
                                 )
-                            else:
-                                _sc_mark = (
+                                _sc_bar_labels = (
                                     _alt_sc.Chart(_bts_sc_monthly)
-                                    .mark_line(strokeWidth=2, point=True)
+                                    .mark_text(
+                                        fontSize=9,
+                                        fontWeight="bold",
+                                        opacity=0.85,
+                                        baseline="bottom",
+                                        dy=-3,
+                                    )
+                                    .encode(
+                                        x=_alt_sc.X("month:T"),
+                                        xOffset=_alt_sc.XOffset("scan_label:N"),
+                                        y=_alt_sc.Y("avg_advantage:Q"),
+                                        text=_alt_sc.Text("count:Q", format="d"),
+                                        color=_sc_color_enc,
+                                    )
+                                )
+                                _sc_mark = _alt_sc.layer(_sc_bar_base, _sc_bar_labels)
+                            else:
+                                _sc_line_base = (
+                                    _alt_sc.Chart(_bts_sc_monthly)
+                                    .mark_line(strokeWidth=2)
                                     .encode(
                                         x=_alt_sc.X(
                                             "month:T",
@@ -20154,6 +20172,37 @@ ALTER TABLE backtest_sim_runs
                                         tooltip=_sc_tooltips,
                                     )
                                 )
+                                _sc_line_points = (
+                                    _alt_sc.Chart(_bts_sc_monthly)
+                                    .mark_point(filled=True, opacity=1.0)
+                                    .encode(
+                                        x=_alt_sc.X("month:T"),
+                                        y=_alt_sc.Y("avg_advantage:Q"),
+                                        color=_sc_color_enc,
+                                        size=_alt_sc.Size(
+                                            "count:Q",
+                                            scale=_alt_sc.Scale(range=[25, 180]),
+                                            legend=None,
+                                        ),
+                                        tooltip=_sc_tooltips,
+                                    )
+                                )
+                                _sc_line_labels = (
+                                    _alt_sc.Chart(_bts_sc_monthly)
+                                    .mark_text(
+                                        fontSize=9,
+                                        fontWeight="bold",
+                                        opacity=0.8,
+                                        dy=-12,
+                                    )
+                                    .encode(
+                                        x=_alt_sc.X("month:T"),
+                                        y=_alt_sc.Y("avg_advantage:Q"),
+                                        text=_alt_sc.Text("count:Q", format="d"),
+                                        color=_sc_color_enc,
+                                    )
+                                )
+                                _sc_mark = _alt_sc.layer(_sc_line_base, _sc_line_points, _sc_line_labels)
                             _sc_chart = (
                                 (_sc_zero + _sc_mark)
                                 .properties(
