@@ -4971,9 +4971,44 @@ with st.sidebar:
         if _bf_lock_held:
             # A pipeline is actively running (lock is held by the background thread)
             st.info("⏳ Backfill is running in the background…")
-            st.caption("Click Refresh to see the latest log output.")
-            if st.button("🔄 Refresh Status", use_container_width=True, key="bf_refresh_btn"):
-                st.rerun()
+            # Show a live tail of the log so operators can track progress without
+            # manual clicking.  We read the log, display the last 30 lines + a line
+            # count, then sleep briefly and trigger an automatic rerun.
+            if os.path.exists(_BACKFILL_LOG):
+                try:
+                    # Read only the tail of the log file so large runs don't
+                    # load the whole file into memory on every 3-second poll.
+                    # Strategy: seek to the last ~8 KB, split into lines, and
+                    # keep the final 30.  A separate small scan counts newlines
+                    # in chunks to get the total line count cheaply.
+                    _TAIL_BYTES = 8192
+                    _total_lines = 0
+                    _tail_text   = ""
+                    with open(_BACKFILL_LOG, "rb") as _lf:
+                        # Count total lines via chunked read
+                        for _chunk in iter(lambda: _lf.read(65536), b""):
+                            _total_lines += _chunk.count(b"\n")
+                        # Seek back to read the tail
+                        _file_size = _lf.tell()
+                        _seek_pos  = max(0, _file_size - _TAIL_BYTES)
+                        _lf.seek(_seek_pos)
+                        _raw = _lf.read()
+                    _decoded = _raw.decode("utf-8", errors="replace")
+                    # Drop the first (potentially partial) line if we didn't
+                    # start at the beginning of the file.
+                    _tail_lines = _decoded.splitlines()
+                    if _seek_pos > 0 and len(_tail_lines) > 1:
+                        _tail_lines = _tail_lines[1:]
+                    _tail_text = "\n".join(_tail_lines[-30:])
+                    st.caption(f"📄 {_total_lines} log line{'s' if _total_lines != 1 else ''} so far — auto-refreshing every 3 s")
+                    st.code(_tail_text or "(log initialising…)", language="text")
+                except Exception:
+                    st.caption("Log not yet available — auto-refreshing…")
+            else:
+                st.caption("Log not yet available — auto-refreshing…")
+            import time as _time
+            _time.sleep(3)
+            st.rerun()
 
         elif _bf_file_status == "idle":
             st.markdown(
