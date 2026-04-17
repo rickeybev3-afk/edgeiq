@@ -9561,9 +9561,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         })
                                     if _struct_rows:
                                         import pandas as _pd_ma
-                                        _struct_df = _pd_ma.DataFrame(_struct_rows).sort_values(
-                                            "Marginal Trades", ascending=False
-                                        ).reset_index(drop=True)
+                                        _struct_df = _pd_ma.DataFrame(_struct_rows)
+                                        def _parse_dwr(v):
+                                            try:
+                                                return float(str(v).replace("pp", "").replace("+", ""))
+                                            except Exception:
+                                                return float("inf")
+                                        _struct_df["_dwr_sort"] = _struct_df["ΔWR (marg−comf)"].map(_parse_dwr)
+                                        _struct_df = _struct_df.sort_values("_dwr_sort", ascending=True).drop(columns=["_dwr_sort"]).reset_index(drop=True)
 
                                         _DWR_WARN_THRESH = -5.0   # amber: ΔWR ≤ −5 pp
                                         _DWR_CRIT_THRESH = -10.0  # red:   ΔWR ≤ −10 pp
