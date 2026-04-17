@@ -8920,8 +8920,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _tk_eod_num    = (sum(_tk_eod_vals) / len(_tk_eod_vals)) if _tk_eod_vals else float("-inf")
                 _tk_tiered_num = (sum(_tk_tiered_vals) / len(_tk_tiered_vals)) if _tk_tiered_vals else float("-inf")
 
+                _tkr_persist_key   = f"_drill_tcs_persist_{_tk}"
+                _tkr_persisted_val = st.session_state.get(_tkr_persist_key)
+                if _best_tcs_pnl_val is not None:
+                    _tkr_has_override = (
+                        _tkr_persisted_val is not None
+                        and _tkr_persisted_val != _best_tcs_floor
+                    )
+                else:
+                    _tkr_has_override = _tkr_persisted_val is not None
                 _tkr_rows.append({
-                    "Ticker":         _tk,
+                    "Ticker":         f"{_tk}  ✱" if _tkr_has_override else _tk,
                     "Setups":         len(_tgrp),
                     "Win %":          f"{'🟢' if _twr >= 60 else '🟡' if _twr >= 45 else '🔴'} {_twr}%",
                     "W/L":            f"{_tw}/{_tl}",
