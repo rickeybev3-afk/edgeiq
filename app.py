@@ -16933,6 +16933,24 @@ ALTER TABLE backtest_sim_runs
                         else:
                             _sp_line_color = "#42a5f5"
                             _sp_fill_color = "rgba(66,165,245,0.07)"
+                        # Compute per-point deltas for hover + change annotations
+                        _sp_deltas: list = [None]
+                        _sp_change_idxs: list = []
+                        for _sp_i in range(1, len(_sp_vals)):
+                            _sp_d = _sp_vals[_sp_i] - _sp_vals[_sp_i - 1]
+                            _sp_deltas.append(_sp_d)
+                            if _sp_d != 0:
+                                _sp_change_idxs.append(_sp_i)
+
+                        # Build customdata for hover: delta string per point
+                        _sp_custom = []
+                        for _sp_d in _sp_deltas:
+                            if _sp_d is None or _sp_d == 0:
+                                _sp_custom.append("")
+                            else:
+                                _sp_ds = f"+{_sp_d}" if _sp_d > 0 else str(_sp_d)
+                                _sp_custom.append(f" ({_sp_ds})")
+
                         _sp_fig = _go.Figure()
                         _sp_fig.add_trace(_go.Scatter(
                             x=_sp_dates,
@@ -16943,9 +16961,43 @@ ALTER TABLE backtest_sim_runs
                             fill="tozeroy",
                             fillcolor=_sp_fill_color,
                             showlegend=False,
-                            hovertemplate="%{x}: <b>%{y}</b><extra></extra>",
+                            customdata=_sp_custom,
+                            hovertemplate="%{x}: <b>%{y}</b>%{customdata}<extra></extra>",
                         ))
                         _sp_y_pad = max(2, (_sp_max_v - _sp_min_v) * 0.2) if _sp_max_v != _sp_min_v else 5
+
+                        # Add vertical dashed lines + delta labels at each change event.
+                        # Suppress text labels when events are dense (>6) to prevent crowding;
+                        # vertical lines and hover deltas remain visible regardless.
+                        _sp_show_labels = len(_sp_change_idxs) <= 6
+                        _sp_annotations = []
+                        for _sp_ci in _sp_change_idxs:
+                            _sp_cx = _sp_dates[_sp_ci]
+                            _sp_raw_d = _sp_deltas[_sp_ci]
+                            _sp_is_pos = _sp_raw_d > 0
+                            _sp_ann_color = "#ef5350" if _sp_is_pos else "#66bb6a"
+                            _sp_ann_text = f"+{_sp_raw_d}" if _sp_is_pos else str(_sp_raw_d)
+                            _sp_fig.add_shape(
+                                type="line",
+                                x0=_sp_cx, x1=_sp_cx,
+                                y0=0, y1=1,
+                                xref="x", yref="paper",
+                                line=dict(color=_sp_ann_color, width=1, dash="dot"),
+                            )
+                            if _sp_show_labels:
+                                _sp_annotations.append(dict(
+                                    x=_sp_cx,
+                                    y=1.0,
+                                    xref="x",
+                                    yref="paper",
+                                    text=f"<b>{_sp_ann_text}</b>",
+                                    showarrow=False,
+                                    font=dict(size=8, color=_sp_ann_color),
+                                    xanchor="center",
+                                    yanchor="top",
+                                    bgcolor="rgba(0,0,0,0)",
+                                ))
+
                         _sp_fig.update_layout(
                             title=dict(
                                 text=f"{_sp_label} <span style='color:#90a4ae;font-size:11px'>({_sp_cur_v})</span>",
@@ -16965,6 +17017,7 @@ ALTER TABLE backtest_sim_runs
                             ),
                             plot_bgcolor="rgba(0,0,0,0)",
                             paper_bgcolor="rgba(0,0,0,0)",
+                            annotations=_sp_annotations,
                         )
                         with _sp_cols[_sp_col_i]:
                             st.plotly_chart(
