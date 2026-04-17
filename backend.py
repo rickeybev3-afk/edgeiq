@@ -779,18 +779,25 @@ def get_runtime_last_healthy_ts() -> float:
     return _runtime_last_healthy_ts
 
 
-def check_credentials_runtime(force: bool = False) -> list[tuple[str, str]]:
+def check_credentials_runtime(
+    force: bool = False,
+    interval_s: float | None = None,
+) -> list[tuple[str, str]]:
     """Return any runtime credential failures detected since startup.
 
     Spawns a background re-validation thread if the check interval has elapsed
     (or *force* is True), then immediately returns the most recently cached
     results so the UI is never blocked by a network call.
 
+    *interval_s* overrides the module-level ``_RUNTIME_CHECK_INTERVAL_S``
+    default when provided (e.g. a value stored in Streamlit session state).
+
     Returns an empty list when all credentials remain valid.
     """
     global _runtime_last_check_ts
+    effective_interval = interval_s if interval_s is not None else _RUNTIME_CHECK_INTERVAL_S
     elapsed = time.monotonic() - _runtime_last_check_ts
-    if force or elapsed >= _RUNTIME_CHECK_INTERVAL_S:
+    if force or elapsed >= effective_interval:
         # Optimistically update the timestamp before spawning so that rapid
         # reruns don't trigger a flood of parallel check threads.
         _runtime_last_check_ts = time.monotonic()

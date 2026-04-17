@@ -322,11 +322,21 @@ def _render_setup_checklist() -> None:
             _st.toast("Credential re-check requested — results will appear momentarily.", icon="🔑")
             _st.session_state["_runtime_recheck_requested"] = False
 
+        if "_cred_check_interval_min" not in _st.session_state:
+            _st.session_state["_cred_check_interval_min"] = 5
+        _st.number_input(
+            "Auto-check interval (minutes)",
+            min_value=1,
+            max_value=60,
+            step=1,
+            help="How often the background thread re-validates Alpaca & Supabase credentials. Changes take effect on the next app rerun.",
+            key="_cred_check_interval_min",
+        )
         _col_rt_caption, _col_rt_btn = _st.columns([3, 1])
         with _col_rt_caption:
             _st.caption(
                 "**Force a live credential validation** against Alpaca & Supabase right now, "
-                "without waiting for the 5-minute background cycle."
+                "without waiting for the background cycle."
             )
         with _col_rt_btn:
             if _st.button(
@@ -611,10 +621,12 @@ if _startup_errors:
 
 # ── Runtime credential failure banner ─────────────────────────────────────────
 # check_credentials_runtime() re-validates Alpaca and Supabase credentials in a
-# background thread (at most every 5 minutes) and returns any mid-session
-# failures.  Unlike _startup_errors above (never configured), these banners mean
-# the credentials were valid at launch but have since been revoked or expired.
-_runtime_errors = check_credentials_runtime()
+# background thread and returns any mid-session failures.  Unlike _startup_errors
+# above (never configured), these banners mean the credentials were valid at
+# launch but have since been revoked or expired.  The check interval is read from
+# session state so traders can tune it from the Setup Checklist expander.
+_cred_interval_min = st.session_state.get("_cred_check_interval_min", 5)
+_runtime_errors = check_credentials_runtime(interval_s=float(_cred_interval_min) * 60)
 if _runtime_errors:
     _rt_lines = "\n".join(f"• {_msg}" for _, _msg in _runtime_errors)
     st.error(
