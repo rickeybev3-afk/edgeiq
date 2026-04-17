@@ -2461,8 +2461,12 @@ def _save_tcs_alert_cache(cache: dict) -> None:
     try:
         with open(_TCS_ALERT_CACHE_FILE, "w") as _f:
             _json.dump(cache, _f)
-    except Exception:
-        pass
+    except Exception as _exc:
+        logging.warning(
+            "[TCS] Failed to write alert cache to %s: %s — duplicate-alert guard may not persist across restarts",
+            _TCS_ALERT_CACHE_FILE,
+            _exc,
+        )
 
 
 _tcs_alert_cache: dict = _load_tcs_alert_cache()  # {structure_YYYY-MM-DD: True}
