@@ -3985,6 +3985,8 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
                 st.session_state["pt_price_range"] = (float(_pr[0]), float(_pr[1]))
         except (ValueError, TypeError):
             pass
+    if "pt_extra_tickers" in _prefs:
+        st.session_state["pt_extra_tickers"] = str(_prefs["pt_extra_tickers"])
     if "trading_mode" in _prefs:
         _saved_is_paper = _prefs["trading_mode"] == "paper"
         set_trading_mode(_saved_is_paper)
@@ -13952,6 +13954,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         key="pt_extra_tickers",
         placeholder="e.g. RENX, PFSA, VRAX",
     )
+    # Persist pt_extra_tickers to user prefs when it changes
+    if _AUTH_USER_ID:
+        _pt_et_cached = st.session_state.get("_cached_prefs", {})
+        if _pt_et_cached.get("pt_extra_tickers") != _pt_extra_raw:
+            _pt_et_new_prefs = {**_pt_et_cached, "pt_extra_tickers": _pt_extra_raw}
+            save_user_prefs(_AUTH_USER_ID, _pt_et_new_prefs)
+            st.session_state["_cached_prefs"] = _pt_et_new_prefs
     _pt_extra = [t.strip().upper() for t in _pt_extra_raw.split(",") if t.strip() and t.strip().isalpha()]
     _pt_combined = _pt_auto_wl + [t for t in _pt_extra if t not in _pt_auto_wl]
     _pt_tickers_raw = ", ".join(_pt_combined)
