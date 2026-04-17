@@ -17456,10 +17456,21 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     # survives reruns (e.g. sidebar interactions) without re-scanning.
                     st.session_state["_pt_sim_failed"] = _sim_failed
                     st.session_state["_pt_preview_df"] = _pt_preview_df
+                    st.session_state["_pt_preview_date"] = str(_pt_date)
+                    st.session_state["_pt_preview_min_tcs"] = _pt_min_tcs
 
     # Render the scan preview table from session_state so it persists across reruns
     # (sidebar interactions, widget changes, etc.) without requiring a re-scan.
     if "_pt_preview_df" in st.session_state and not st.session_state["_pt_preview_df"].empty:
+        _preview_label_date = st.session_state.get("_pt_preview_date", "")
+        _preview_label_tcs = st.session_state.get("_pt_preview_min_tcs", "")
+        if _preview_label_date or (_preview_label_tcs != "" and _preview_label_tcs is not None):
+            _preview_label_parts = []
+            if _preview_label_date:
+                _preview_label_parts.append(_preview_label_date)
+            if _preview_label_tcs != "" and _preview_label_tcs is not None:
+                _preview_label_parts.append(f"TCS ≥ {_preview_label_tcs}")
+            st.caption("Scan results for " + " · ".join(_preview_label_parts))
         _ss_preview_df = st.session_state["_pt_preview_df"]
         if "Sim" in _ss_preview_df.columns:
             def _preview_row_style(row):
