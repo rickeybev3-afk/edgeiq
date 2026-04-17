@@ -185,8 +185,26 @@ def _save_owner_prefs(prefs: dict) -> None:
 
 _DB_CACHE_TTL = 10
 _db_cache_lock = threading.Lock()
-_db_reachable_cache: bool = False
+_db_reachable_cache: Optional[bool] = None  # None until first check completes
 _db_cache_checked_at: Optional[datetime] = None
+
+
+def _send_db_alert(message: str) -> None:
+    """Post a DB state-change alert to ALERT_WEBHOOK_URL; silently skipped if not configured."""
+    webhook_url = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return
+    try:
+        payload = json.dumps({"text": message}).encode()
+        req = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
 
 
 def _refresh_db_cache() -> None:
@@ -196,12 +214,22 @@ def _refresh_db_cache() -> None:
         result = _check_db_reachable()
         with _db_cache_lock:
             previous = _db_reachable_cache
-            if result != previous:
+            if previous is not None and result != previous:
+                # Genuine transition — previous state was known, and it changed.
                 ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 if result:
-                    print(f"[deploy_server] DB came back online at {ts}", flush=True)
+                    msg = f"[deploy_server] DB came back online at {ts}"
+                    print(msg, flush=True)
+                    _send_db_alert(f":white_check_mark: EdgeIQ DB recovery: database is back online at {ts}")
                 else:
-                    print(f"[deploy_server] DB became unreachable at {ts}", flush=True)
+                    msg = f"[deploy_server] DB became unreachable at {ts}"
+                    print(msg, flush=True)
+                    _send_db_alert(f":red_circle: EdgeIQ DB outage: database became unreachable at {ts}")
+            elif previous is None:
+                # First check — establish baseline, log but do not alert externally.
+                ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                state = "reachable" if result else "unreachable"
+                print(f"[deploy_server] DB initial state at {ts}: {state}", flush=True)
             _db_reachable_cache = result
             _db_cache_checked_at = datetime.now(timezone.utc)
         time.sleep(_DB_CACHE_TTL)
@@ -210,7 +238,7 @@ def _refresh_db_cache() -> None:
 def _get_db_reachable() -> bool:
     """Return the cached DB reachability result; never blocks on a network call."""
     with _db_cache_lock:
-        return _db_reachable_cache
+        return bool(_db_reachable_cache)
 
 
 def _get_db_checked_at() -> Optional[str]:
