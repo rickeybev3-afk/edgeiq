@@ -9,7 +9,7 @@ live WR / expectancy changes against the full historical breakout dataset.
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import sys, os
+import sys, os, time
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -116,15 +116,25 @@ def load_breakout_rows(user_id: str, max_rows: int = 0):
         page = PAGE_SIZE if max_rows == 0 else min(PAGE_SIZE, max_rows - len(all_rows))
         if page <= 0:
             break
-        resp = (
-            SUPABASE.table("backtest_sim_runs")
-            .select(cols)
-            .eq("user_id", user_id)
-            .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
-            .not_.is_("pnl_r_sim", "null")
-            .range(offset, offset + page - 1)
-            .execute()
-        )
+        last_exc = None
+        for _attempt in range(3):
+            try:
+                resp = (
+                    SUPABASE.table("backtest_sim_runs")
+                    .select(cols)
+                    .eq("user_id", user_id)
+                    .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+                    .not_.is_("pnl_r_sim", "null")
+                    .range(offset, offset + page - 1)
+                    .execute()
+                )
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(1.5 * (_attempt + 1))
+        if last_exc is not None:
+            raise last_exc
         batch = resp.data or []
         all_rows.extend(batch)
         if len(batch) < page or (max_rows > 0 and len(all_rows) >= max_rows):
@@ -216,7 +226,14 @@ st.caption(
 )
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-all_rows = load_breakout_rows(USER_ID, MAX_ROWS)
+try:
+    all_rows = load_breakout_rows(USER_ID, MAX_ROWS)
+except Exception as _load_err:
+    st.error(
+        f"⚠️ Could not load backtest data — database connection dropped. "
+        f"Refresh the page to retry. (Detail: {type(_load_err).__name__})"
+    )
+    st.stop()
 if not all_rows:
     st.error("No historical breakout data found. Run a batch backtest first.")
     st.stop()
