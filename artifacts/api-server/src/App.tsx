@@ -178,18 +178,28 @@ function Router() {
 function App() {
   const [health, setHealth] = useState<HealthState>({ checked: false, ok: true, errors: [] });
   const [mismatchDismissed, setMismatchDismissed] = useState(
-    () => sessionStorage.getItem(MISMATCH_DISMISSED_KEY) === "1"
+    () => localStorage.getItem(MISMATCH_DISMISSED_KEY) === "1"
   );
   const prevMismatch = useRef(false);
 
   useEffect(() => {
     const current = !!health.alpaca_mode_mismatch;
     if (current && !prevMismatch.current) {
-      sessionStorage.removeItem(MISMATCH_DISMISSED_KEY);
+      localStorage.removeItem(MISMATCH_DISMISSED_KEY);
       setMismatchDismissed(false);
     }
     prevMismatch.current = current;
   }, [health.alpaca_mode_mismatch]);
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === MISMATCH_DISMISSED_KEY) {
+        setMismatchDismissed(e.newValue === "1");
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,7 +237,7 @@ function App() {
 
   useEffect(() => {
     if (health.checked && !health.alpaca_mode_mismatch) {
-      sessionStorage.removeItem(MISMATCH_DISMISSED_KEY);
+      localStorage.removeItem(MISMATCH_DISMISSED_KEY);
     }
   }, [health.checked, health.alpaca_mode_mismatch]);
 
@@ -247,7 +257,7 @@ function App() {
             message={health.alpaca_mismatch_message}
             dismissed={mismatchDismissed}
             onDismiss={() => {
-              sessionStorage.setItem(MISMATCH_DISMISSED_KEY, "1");
+              localStorage.setItem(MISMATCH_DISMISSED_KEY, "1");
               setMismatchDismissed(true);
             }}
           />
