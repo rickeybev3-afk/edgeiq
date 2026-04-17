@@ -66,9 +66,42 @@ RISK_PER_TRADE      = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risk
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
+# ── Configurable alert types (drives /settings display + command dispatch) ────
+# Each entry: key = /settings sub-command, pref_key = user_prefs field,
+#             default = value when unset, label + description shown in /settings.
+_ALERT_REGISTRY = [
+    {
+        "key":         "tcs_alerts",
+        "pref_key":    "tcs_alerts_enabled",
+        "default":     True,
+        "label":       "TCS threshold shift alerts",
+        "description": "Notifies you when a structure's TCS threshold crosses a significant level.",
+    },
+]
+
 _DEFAULT_TICKERS = (
     "SATL,UGRO,ANNA,VCX,CODX,ARTL,SWMR,FEED,RBNE,PAVS,LNKS,BIAF,ACXP,GOAI"
 )
+
+# ── Configurable alert types (drives /settings display + command dispatch) ────
+# Each entry: key = /settings sub-command, pref_key = user_prefs field,
+#             default = value when unset, label + description shown in /settings.
+_ALERT_REGISTRY = [
+    {
+        "key":         "morning_alerts",
+        "pref_key":    "morning_alerts_enabled",
+        "default":     True,
+        "label":       "Morning setup alerts",
+        "description": "Sends a pre-market summary of qualifying setups before the open.",
+    },
+    {
+        "key":         "tcs_alerts",
+        "pref_key":    "tcs_alerts_enabled",
+        "default":     True,
+        "label":       "TCS threshold shift alerts",
+        "description": "Notifies you when a structure's TCS threshold crosses a significant level.",
+    },
+]
 
 # ── Import backend functions ──────────────────────────────────────────────────
 try:
@@ -659,53 +692,47 @@ def telegram_listener() -> None:
                     sub_prefs = load_user_prefs(sub_uid)
 
                     if len(parts) == 1:
-                        tcs_on = sub_prefs.get("tcs_alerts_enabled", True) is not False
-                        morning_on = sub_prefs.get("morning_alerts_enabled", True) is not False
-                        tg_reply(chat_id,
-                            "⚙️ <b>Your EdgeIQ Alert Settings</b>\n"
-                            "━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"Morning setup alerts:       {'✅ On' if morning_on else '❌ Off'}\n"
-                            f"TCS threshold shift alerts: {'✅ On' if tcs_on else '❌ Off'}\n"
-                            "━━━━━━━━━━━━━━━━━━━━━\n"
-                            "To change:\n"
-                            "  <code>/settings morning_alerts on|off</code>\n"
-                            "  <code>/settings tcs_alerts on|off</code>")
-                    elif len(parts) == 3 and parts[1] == "tcs_alerts" and parts[2].lower() in ("on", "off"):
+                        lines = [
+                            "⚙️ <b>Your EdgeIQ Alert Settings</b>",
+                            "━━━━━━━━━━━━━━━━━━━━━",
+                        ]
+                        toggle_cmds = []
+                        for a in _ALERT_REGISTRY:
+                            is_on = sub_prefs.get(a["pref_key"], a["default"]) is not False
+                            status_icon = "✅ On" if is_on else "❌ Off"
+                            lines.append(f"<b>{a['label']}</b>: {status_icon}")
+                            lines.append(f"  ↳ {a['description']}")
+                            toggle_cmds.append(
+                                f"  <code>/settings {a['key']} on</code> | "
+                                f"<code>/settings {a['key']} off</code>"
+                            )
+                        lines.append("━━━━━━━━━━━━━━━━━━━━━")
+                        lines.append("To change:")
+                        lines.extend(toggle_cmds)
+                        tg_reply(chat_id, "\n".join(lines))
+                    elif (
+                        len(parts) == 3
+                        and parts[2].lower() in ("on", "off")
+                        and any(a["key"] == parts[1] for a in _ALERT_REGISTRY)
+                    ):
+                        alert_def = next(a for a in _ALERT_REGISTRY if a["key"] == parts[1])
                         enabled = parts[2].lower() == "on"
-                        sub_prefs["tcs_alerts_enabled"] = enabled
+                        sub_prefs[alert_def["pref_key"]] = enabled
                         saved = save_user_prefs(sub_uid, sub_prefs)
                         if saved:
                             status = "✅ enabled" if enabled else "❌ disabled"
                             tg_reply(chat_id,
-                                f"⚙️ TCS threshold shift alerts {status}.\n"
+                                f"⚙️ {alert_def['label']} {status}.\n"
                                 "You can change this any time with <code>/settings</code>.")
-                            log.info(f"settings: user_id={sub_uid} tcs_alerts_enabled={enabled}")
-                        else:
-                            tg_reply(chat_id,
-                                "❌ Couldn't save your preference. Please try again later.")
-                            log.warning(f"settings: save_user_prefs failed for user_id={sub_uid}")
-                    elif len(parts) == 3 and parts[1] == "morning_alerts" and parts[2].lower() in ("on", "off"):
-                        enabled = parts[2].lower() == "on"
-                        sub_prefs["morning_alerts_enabled"] = enabled
-                        saved = save_user_prefs(sub_uid, sub_prefs)
-                        if saved:
-                            status = "✅ enabled" if enabled else "❌ disabled"
-                            tg_reply(chat_id,
-                                f"⚙️ Morning setup alerts {status}.\n"
-                                "You can change this any time with <code>/settings</code>.")
-                            log.info(f"settings: user_id={sub_uid} morning_alerts_enabled={enabled}")
+                            log.info(f"settings: user_id={sub_uid} {alert_def['pref_key']}={enabled}")
                         else:
                             tg_reply(chat_id,
                                 "❌ Couldn't save your preference. Please try again later.")
                             log.warning(f"settings: save_user_prefs failed for user_id={sub_uid}")
                     else:
                         tg_reply(chat_id,
-                            "⚠️ Unknown setting. Available commands:\n"
-                            "  <code>/settings</code> — show current preferences\n"
-                            "  <code>/settings morning_alerts on</code>\n"
-                            "  <code>/settings morning_alerts off</code>\n"
-                            "  <code>/settings tcs_alerts on</code>\n"
-                            "  <code>/settings tcs_alerts off</code>")
+                            "⚠️ Unknown setting.\n"
+                            "Use <code>/settings</code> to see all available preferences and toggle commands.")
                     continue
 
                 parsed = _parse_log_command(text)
