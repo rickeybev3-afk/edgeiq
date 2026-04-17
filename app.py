@@ -46,6 +46,8 @@ from backend import (
     run_pending_migrations,
     _ALL_PENDING_MIGRATIONS,
     _startup_errors,
+    _SECRET_CATALOG,
+    _secret_statuses,
 )
 
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
@@ -110,18 +112,84 @@ st.set_page_config(page_title="Volume Profile Dashboard", page_icon="📊", layo
 # ── Startup / configuration error banner ──────────────────────────────────────
 # _startup_errors is populated at import time in backend.py and surfaced here
 # so operators see misconfigured secrets immediately instead of silent failures.
+def _render_setup_checklist() -> None:
+    """Render the 🔐 Setup Checklist content (sidebar expander body)."""
+    import streamlit as _st
+    _checklist_has_errors = bool(_startup_errors)
+    with _st.sidebar.expander("🔐 Setup Checklist", expanded=_checklist_has_errors):
+        if not _checklist_has_errors:
+            _st.success("All required secrets are configured.", icon="✅")
+        else:
+            _n_missing   = sum(1 for s in _secret_statuses.values() if s == "missing")
+            _n_malformed = sum(1 for s in _secret_statuses.values() if s == "malformed")
+            _summary_parts: list[str] = []
+            if _n_missing:
+                _summary_parts.append(f"{_n_missing} missing")
+            if _n_malformed:
+                _summary_parts.append(f"{_n_malformed} malformed")
+            _st.error(f"{', '.join(_summary_parts).capitalize()} — see details below.", icon="⚠️")
+
+        _st.caption("Set secrets in Replit → **Secrets** (lock icon), then restart the app.")
+        _st.markdown("---")
+
+        for _sc_item in _SECRET_CATALOG:
+            _sc_name   = _sc_item["name"]
+            _sc_status = _secret_statuses.get(_sc_name, "missing")
+            if _sc_status == "set":
+                _st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+                    f'<span style="font-size:16px;">✅</span>'
+                    f'<span style="font-weight:600;font-size:13px;">{_sc_item["label"]}</span>'
+                    f'<code style="font-size:11px;color:#888;">{_sc_name}</code>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            elif _sc_status == "malformed":
+                _st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">'
+                    f'<span style="font-size:16px;">⚠️</span>'
+                    f'<span style="font-weight:600;font-size:13px;color:#ffb74d;">{_sc_item["label"]}</span>'
+                    f'<code style="font-size:11px;color:#888;">{_sc_name}</code>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                _st.caption(f"Value is malformed. {_sc_item['description']}")
+                _st.markdown(
+                    f'[📎 {_sc_item["obtain_label"]}]({_sc_item["obtain_url"]})',
+                )
+                _st.markdown("")
+            else:
+                _st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">'
+                    f'<span style="font-size:16px;">❌</span>'
+                    f'<span style="font-weight:600;font-size:13px;color:#ef5350;">{_sc_item["label"]}</span>'
+                    f'<code style="font-size:11px;color:#888;">{_sc_name}</code>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                _st.caption(_sc_item["description"])
+                _st.markdown(
+                    f'[📎 {_sc_item["obtain_label"]}]({_sc_item["obtain_url"]})',
+                )
+                _st.markdown("")
+
+
 if _startup_errors:
     _err_lines = "\n".join(f"• {_msg}" for _, _msg in _startup_errors)
     st.error(
         f"**⚠️ Configuration problem detected — {len(_startup_errors)} secret(s) need attention:**\n\n"
         f"{_err_lines}\n\n"
-        "Fix these in your environment secrets, then restart the app."
+        "Fix these in your environment **Secrets**, then restart the app. "
+        "See the **🔐 Setup Checklist** panel in the sidebar for step-by-step guidance."
     )
     if any(_name in ("SUPABASE_URL", "SUPABASE_KEY") for _name, _ in _startup_errors):
         st.warning(
             "Database credentials are missing. Most features will show empty data until "
             "SUPABASE_URL and SUPABASE_KEY are correctly set."
         )
+        # Render the checklist in the sidebar BEFORE stopping so operators can see
+        # which secrets are missing and where to get them even in the halted state.
+        _render_setup_checklist()
         st.stop()
 
 # ── Session state ──────────────────────────────────────────────────────────────
@@ -4151,6 +4219,9 @@ with st.sidebar:
                 st.error(f"Migration errors: {_mig_res['errors']}")
         with st.expander("📋 View SQL", expanded=False):
             st.code(_ALL_PENDING_MIGRATIONS, language="sql")
+
+    # ── Setup Checklist ────────────────────────────────────────────────────────
+    _render_setup_checklist()
 
     run_button = start_live = stop_live = scan_button = replay_load = False
     selected_date = date.today()

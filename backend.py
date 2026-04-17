@@ -94,6 +94,70 @@ if not ALPACA_SECRET_KEY:
         "ALPACA_SECRET_KEY is missing. Required for live and paper order placement.",
     ))
 
+# ── Setup Checklist catalog ───────────────────────────────────────────────────
+# Describes every required secret so the Setup Checklist page can show operators
+# exactly what is missing and where to get it.
+_SECRET_CATALOG: list[dict] = [
+    {
+        "name": "SUPABASE_URL",
+        "label": "Supabase Project URL",
+        "description": (
+            "The API endpoint for your Supabase project. Used for all database reads and writes. "
+            "Must be in the form https://<project-ref>.supabase.co"
+        ),
+        "obtain_url": "https://supabase.com/dashboard/project/_/settings/api",
+        "obtain_label": "Supabase Dashboard → Settings → API → Project URL",
+    },
+    {
+        "name": "SUPABASE_KEY",
+        "label": "Supabase Anon Key",
+        "description": (
+            "The public anon/service key for your Supabase project. "
+            "Also accepted as SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY."
+        ),
+        "obtain_url": "https://supabase.com/dashboard/project/_/settings/api",
+        "obtain_label": "Supabase Dashboard → Settings → API → Project API Keys → anon / public",
+    },
+    {
+        "name": "ALPACA_API_KEY",
+        "label": "Alpaca API Key",
+        "description": (
+            "Your Alpaca brokerage API key. Required for live and paper order placement "
+            "and for fetching market data bars."
+        ),
+        "obtain_url": "https://app.alpaca.markets/paper/dashboard/overview",
+        "obtain_label": "Alpaca Dashboard → Paper (or Live) → API Keys → Generate New Key",
+    },
+    {
+        "name": "ALPACA_SECRET_KEY",
+        "label": "Alpaca Secret Key",
+        "description": (
+            "Your Alpaca brokerage secret key. Paired with ALPACA_API_KEY; "
+            "shown only once at creation time."
+        ),
+        "obtain_url": "https://app.alpaca.markets/paper/dashboard/overview",
+        "obtain_label": "Alpaca Dashboard → Paper (or Live) → API Keys → Generate New Key",
+    },
+]
+
+_error_names     = {_n for _n, _ in _startup_errors}
+_malformed_names = {_n for _n, _m in _startup_errors if "malformed" in _m.lower()}
+
+
+def _resolve_secret_status(name: str) -> str:
+    """Return 'set', 'malformed', or 'missing' for a given secret name."""
+    if name in _malformed_names:
+        return "malformed"
+    if name in _error_names:
+        return "missing"
+    return "set"
+
+
+_secret_statuses: dict[str, str] = {
+    _item["name"]: _resolve_secret_status(_item["name"])
+    for _item in _SECRET_CATALOG
+}
+
 if _startup_errors:
     for _name, _err in _startup_errors:
         logging.error("[STARTUP] Required secret misconfigured — %s", _err)
