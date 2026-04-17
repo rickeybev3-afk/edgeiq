@@ -12397,14 +12397,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if _div_thresh is not None and _flagged_div_indices:
                 # Threshold is set — list every ticker that exceeds it
                 _flagged_tkrs = []
+                _flagged_clean_names = []
                 _flagged_csv_rows = []
                 for _fi in sorted(_flagged_div_indices):
                     if _fi in _tkr_summary_df.index:
-                        _ft_name = _html.escape(str(_tkr_summary_df.loc[_fi, "Ticker"]))
+                        _ft_raw  = str(_tkr_summary_df.loc[_fi, "Ticker"])
+                        _ft_clean = _ft_raw.replace("  ✱", "").replace(" ✱", "").strip()
                         _ft_div  = _html.escape(str(_tkr_summary_df.loc[_fi, "Max Divergence"]))
                         _ft_mag  = _tkr_summary_df.loc[_fi, "_sort_div_mag"] if "_sort_div_mag" in _tkr_summary_df.columns else None
                         _ft_mag_str = f" ({_ft_mag:.2f})" if _ft_mag is not None else ""
-                        _flagged_tkrs.append(f"{_ft_name}{_ft_mag_str} — {_ft_div}")
+                        _flagged_tkrs.append(f"{_html.escape(_ft_clean)}{_ft_mag_str} — {_ft_div}")
+                        _flagged_clean_names.append(_ft_clean)
                         _flagged_csv_rows.append({
                             "Ticker": str(_tkr_summary_df.loc[_fi, "Ticker"]),
                             "Divergence Magnitude": f"{_ft_mag:.2f}" if _ft_mag is not None else "",
@@ -12421,6 +12424,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+                # Jump links — one button per flagged ticker
+                if _flagged_clean_names:
+                    _jmp_cols = st.columns(min(len(_flagged_clean_names), 8))
+                    for _jci, _jt in enumerate(_flagged_clean_names):
+                        if _jt in _tkr_sweep_data:
+                            with _jmp_cols[_jci % 8]:
+                                if st.button(
+                                    f"↓ {_jt}",
+                                    key=f"_jump_div_flag_{_jt}",
+                                    help=f"Open and scroll to {_jt}'s TCS sweep chart",
+                                    use_container_width=True,
+                                ):
+                                    st.session_state[f"_tk_exp_{_jt}"] = True
+                                    st.session_state["_scroll_to_worst_div"] = _jt
+                                    st.rerun()
                 _flagged_csv_df = pd.DataFrame(_flagged_csv_rows, columns=["Ticker", "Divergence Magnitude", "Max Divergence label"])
                 _div_alert_dl_col, _div_alert_send_col = st.columns([1, 1])
                 with _div_alert_dl_col:
