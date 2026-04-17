@@ -18040,6 +18040,45 @@ ALTER TABLE backtest_sim_runs
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Overall EOD Hold R & Tiered Exit R summary (above tier cards) ────────
+    _ov_eod_ser    = pd.to_numeric(_sim_df.get("eod_pnl_r",    pd.Series(dtype=float)), errors="coerce").dropna() if not _sim_df.empty else pd.Series(dtype=float)
+    _ov_tiered_ser = pd.to_numeric(_sim_df.get("tiered_pnl_r", pd.Series(dtype=float)), errors="coerce").dropna() if not _sim_df.empty else pd.Series(dtype=float)
+    _ov_eod_n    = len(_ov_eod_ser)
+    _ov_tiered_n = len(_ov_tiered_ser)
+    if _ov_eod_n or _ov_tiered_n:
+        st.markdown(
+            '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+            'text-transform:uppercase;margin-bottom:6px;">Overall R Summary — All Tiers</div>',
+            unsafe_allow_html=True,
+        )
+        if _ov_eod_n:
+            _ov_eod_wr  = round((_ov_eod_ser > 0).sum() / _ov_eod_n * 100, 1)
+            _ov_eod_aw  = round(_ov_eod_ser[_ov_eod_ser > 0].mean(), 2) if (_ov_eod_ser > 0).any() else 0
+            _ov_eod_al  = round(_ov_eod_ser[_ov_eod_ser < 0].mean(), 2) if (_ov_eod_ser < 0).any() else 0
+            _ov_eod_exp = round(_ov_eod_ser.mean(), 3)
+            st.markdown("**📅 EOD Hold R**")
+            _oeod1, _oeod2, _oeod3, _oeod4 = st.columns(4)
+            _oeod1.metric("Win Rate (EOD)", f"{_ov_eod_wr}%",
+                          help="Win rate if every position was held to end of day")
+            _oeod2.metric("Avg Win (EOD R)", f"+{_ov_eod_aw}R")
+            _oeod3.metric("Avg Loss (EOD R)", f"{_ov_eod_al}R")
+            _oeod4.metric("Expectancy (EOD R)", f"{_ov_eod_exp:+.3f}R/trade",
+                          help="Average R per trade holding to end of day")
+        if _ov_tiered_n:
+            _ov_tier_wr  = round((_ov_tiered_ser > 0).sum() / _ov_tiered_n * 100, 1)
+            _ov_tier_aw  = round(_ov_tiered_ser[_ov_tiered_ser > 0].mean(), 2) if (_ov_tiered_ser > 0).any() else 0
+            _ov_tier_al  = round(_ov_tiered_ser[_ov_tiered_ser < 0].mean(), 2) if (_ov_tiered_ser < 0).any() else 0
+            _ov_tier_exp = round(_ov_tiered_ser.mean(), 3)
+            st.markdown("**🪜 Tiered Exit R**")
+            _otier1, _otier2, _otier3, _otier4 = st.columns(4)
+            _otier1.metric("Win Rate (Tiered)", f"{_ov_tier_wr}%",
+                           help="Win rate using 50/25/25 scaled tiered exits")
+            _otier2.metric("Avg Win (Tiered R)", f"+{_ov_tier_aw}R")
+            _otier3.metric("Avg Loss (Tiered R)", f"{_ov_tier_al}R")
+            _otier4.metric("Expectancy (Tiered R)", f"{_ov_tier_exp:+.3f}R/trade",
+                           help="Average R per trade using tiered scaled exits")
+        st.markdown("<br>", unsafe_allow_html=True)
+
     # ── P1–P4 Priority Tier Breakdown ────────────────────────────────────────
     st.markdown(
         '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
