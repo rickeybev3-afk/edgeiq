@@ -23417,6 +23417,54 @@ ALTER TABLE backtest_sim_runs
                                 config={"displayModeBar": False},
                             )
                             st.caption("Weekly EOD win rate")
+                            with st.expander("📈 Expand full chart"):
+                                _pt_eod_full = go.Figure()
+                                _pt_eod_full.add_trace(go.Scatter(
+                                    x=[idx.strftime("w/e %b %d") for idx in _pt_eod_spk_data.index],
+                                    y=_pt_eod_spk_data["_wr"].tolist(),
+                                    mode="lines+markers",
+                                    line=dict(color=_pt_eod_accent, width=2),
+                                    marker=dict(size=7, color=_pt_eod_accent),
+                                    hovertemplate="%{x}: <b>%{y:.1f}%</b><extra></extra>",
+                                    name=_pt_eod_label,
+                                ))
+                                _pt_eod_full.add_hline(
+                                    y=50, line_dash="dot", line_color="#546e7a", line_width=1,
+                                    annotation_text="50%", annotation_position="right",
+                                    annotation_font=dict(size=10, color="#546e7a"),
+                                )
+                                _pt_eod_full.update_layout(
+                                    height=320,
+                                    margin=dict(l=8, r=40, t=36, b=8),
+                                    paper_bgcolor="rgba(0,0,0,0)",
+                                    plot_bgcolor="rgba(2,8,19,0.6)",
+                                    title=dict(
+                                        text=f"{_pt_eod_label} — Weekly EOD Win Rate",
+                                        font=dict(size=13, color="#cfd8dc"),
+                                        x=0, xanchor="left",
+                                    ),
+                                    xaxis=dict(
+                                        visible=True,
+                                        tickfont=dict(size=10, color="#90a4ae"),
+                                        gridcolor="#1a2744",
+                                        showgrid=True,
+                                        tickangle=-30,
+                                    ),
+                                    yaxis=dict(
+                                        visible=True,
+                                        tickfont=dict(size=10, color="#90a4ae"),
+                                        gridcolor="#1a2744",
+                                        showgrid=True,
+                                        range=[0, 100],
+                                        ticksuffix="%",
+                                    ),
+                                    showlegend=False,
+                                )
+                                st.plotly_chart(
+                                    _pt_eod_full,
+                                    use_container_width=True,
+                                    config={"displayModeBar": False},
+                                )
             if "morning" in _pt_eod_exp_map and "intraday" in _pt_eod_exp_map:
                 _pt_eod_m_exp = _pt_eod_exp_map["morning"]
                 _pt_eod_i_exp = _pt_eod_exp_map["intraday"]
@@ -25836,6 +25884,54 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             config={"displayModeBar": False},
                         )
                         st.caption("Weekly EOD win rate")
+                        with st.expander("📈 Expand full chart"):
+                            _ptt_eod_full = go.Figure()
+                            _ptt_eod_full.add_trace(go.Scatter(
+                                x=[idx.strftime("w/e %b %d") for idx in _ptt_eod_spk_data.index],
+                                y=_ptt_eod_spk_data["_wr"].tolist(),
+                                mode="lines+markers",
+                                line=dict(color=_ptt_eod_accent, width=2),
+                                marker=dict(size=7, color=_ptt_eod_accent),
+                                hovertemplate="%{x}: <b>%{y:.1f}%</b><extra></extra>",
+                                name=_ptt_eod_label,
+                            ))
+                            _ptt_eod_full.add_hline(
+                                y=50, line_dash="dot", line_color="#546e7a", line_width=1,
+                                annotation_text="50%", annotation_position="right",
+                                annotation_font=dict(size=10, color="#546e7a"),
+                            )
+                            _ptt_eod_full.update_layout(
+                                height=320,
+                                margin=dict(l=8, r=40, t=36, b=8),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(2,8,19,0.6)",
+                                title=dict(
+                                    text=f"{_ptt_eod_label} — Weekly EOD Win Rate",
+                                    font=dict(size=13, color="#cfd8dc"),
+                                    x=0, xanchor="left",
+                                ),
+                                xaxis=dict(
+                                    visible=True,
+                                    tickfont=dict(size=10, color="#90a4ae"),
+                                    gridcolor="#1a2744",
+                                    showgrid=True,
+                                    tickangle=-30,
+                                ),
+                                yaxis=dict(
+                                    visible=True,
+                                    tickfont=dict(size=10, color="#90a4ae"),
+                                    gridcolor="#1a2744",
+                                    showgrid=True,
+                                    range=[0, 100],
+                                    ticksuffix="%",
+                                ),
+                                showlegend=False,
+                            )
+                            st.plotly_chart(
+                                _ptt_eod_full,
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                            )
         if "morning" in _ptt_eod_exp_map and "intraday" in _ptt_eod_exp_map:
             _ptt_eod_m_exp = _ptt_eod_exp_map["morning"]
             _ptt_eod_i_exp = _ptt_eod_exp_map["intraday"]
