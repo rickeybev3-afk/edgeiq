@@ -8389,6 +8389,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _csv_ov_eod_aw   = round(_csv_ov_eod_ser[_csv_ov_eod_ser > 0].mean(), 2) if (_csv_ov_eod_ser > 0).any() else 0
                         _csv_ov_eod_al   = round(_csv_ov_eod_ser[_csv_ov_eod_ser < 0].mean(), 2) if (_csv_ov_eod_ser < 0).any() else 0
                         _csv_ov_eod_exp  = round(_csv_ov_eod_ser.mean(), 3) if _csv_ov_eod_n else 0
+                        _csv_ov_eod_cum  = _csv_ov_eod_ser.cumsum().reset_index(drop=True)
+                        _csv_ov_eod_mdd  = round((_csv_ov_eod_cum - _csv_ov_eod_cum.cummax()).min(), 2) if _csv_ov_eod_n else 0
 
                         # Overall Tiered Exit R stats
                         _csv_ov_tier_ser = pd.to_numeric(_rp_df["R (Tiered)"], errors="coerce").dropna() if _has_tiered_col else pd.Series(dtype=float)
@@ -8397,6 +8399,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _csv_ov_tier_aw  = round(_csv_ov_tier_ser[_csv_ov_tier_ser > 0].mean(), 2) if (_csv_ov_tier_ser > 0).any() else 0
                         _csv_ov_tier_al  = round(_csv_ov_tier_ser[_csv_ov_tier_ser < 0].mean(), 2) if (_csv_ov_tier_ser < 0).any() else 0
                         _csv_ov_tier_exp = round(_csv_ov_tier_ser.mean(), 3) if _csv_ov_tier_n else 0
+                        _csv_ov_tier_cum = _csv_ov_tier_ser.cumsum().reset_index(drop=True)
+                        _csv_ov_tier_mdd = round((_csv_ov_tier_cum - _csv_ov_tier_cum.cummax()).min(), 2) if _csv_ov_tier_n else 0
 
                         _summary_rows = [
                             {c: "" for c in _csv_cols},
@@ -8415,6 +8419,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _stat_row("Avg Win (EOD R)",       f"+{_csv_ov_eod_aw}R"),
                                 _stat_row("Avg Loss (EOD R)",      f"{_csv_ov_eod_al}R"),
                                 _stat_row("Expectancy (EOD R)",    f"{_csv_ov_eod_exp:+.3f}R/trade"),
+                                _stat_row("Max Drawdown (EOD R)",  f"{abs(_csv_ov_eod_mdd)}R"),
                             ]
                         if _has_tiered_col and _csv_ov_tier_n:
                             _summary_rows += [
@@ -8424,6 +8429,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _stat_row("Avg Win (Tiered R)",    f"+{_csv_ov_tier_aw}R"),
                                 _stat_row("Avg Loss (Tiered R)",   f"{_csv_ov_tier_al}R"),
                                 _stat_row("Expectancy (Tiered R)", f"{_csv_ov_tier_exp:+.3f}R/trade"),
+                                _stat_row("Max Drawdown (Tiered R)", f"{abs(_csv_ov_tier_mdd)}R"),
                             ]
 
                         for _csv_btl, _csv_bte, _csv_btst, _csv_btlo, _csv_bthi, _csv_btc, _csv_btd in _bt_tier_defs:
@@ -8455,6 +8461,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _csv_bt_eod_aw   = round(_csv_bt_eod_ser[_csv_bt_eod_ser > 0].mean(), 2) if (_csv_bt_eod_ser > 0).any() else 0
                                 _csv_bt_eod_al   = round(_csv_bt_eod_ser[_csv_bt_eod_ser < 0].mean(), 2) if (_csv_bt_eod_ser < 0).any() else 0
                                 _csv_bt_eod_exp  = round(_csv_bt_eod_ser.mean(), 3) if _csv_bt_eod_n else 0
+                                _csv_bt_eod_cum  = _csv_bt_eod_ser.cumsum().reset_index(drop=True)
+                                _csv_bt_eod_mdd  = round((_csv_bt_eod_cum - _csv_bt_eod_cum.cummax()).min(), 2) if _csv_bt_eod_n else 0
                                 # Tiered Exit R per-tier stats
                                 _csv_bt_tier_ser = pd.to_numeric(_csv_td.get("R (Tiered)", pd.Series(dtype=float)), errors="coerce").dropna()
                                 _csv_bt_tier_n   = len(_csv_bt_tier_ser)
@@ -8462,20 +8470,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _csv_bt_tier_aw  = round(_csv_bt_tier_ser[_csv_bt_tier_ser > 0].mean(), 2) if (_csv_bt_tier_ser > 0).any() else 0
                                 _csv_bt_tier_al  = round(_csv_bt_tier_ser[_csv_bt_tier_ser < 0].mean(), 2) if (_csv_bt_tier_ser < 0).any() else 0
                                 _csv_bt_tier_exp = round(_csv_bt_tier_ser.mean(), 3) if _csv_bt_tier_n else 0
+                                _csv_bt_tier_cum = _csv_bt_tier_ser.cumsum().reset_index(drop=True)
+                                _csv_bt_tier_mdd = round((_csv_bt_tier_cum - _csv_bt_tier_cum.cummax()).min(), 2) if _csv_bt_tier_n else 0
                                 _summary_rows.extend([
-                                    _stat_row("Stop-Out Rate",          f"{_csv_fb_rt}%"),
-                                    _stat_row("Avg Win (R)",            f"+{_csv_aw_r}R"),
-                                    _stat_row("Avg Loss (R)",           f"{_csv_al_r}R"),
-                                    _stat_row("Expectancy",             f"{_csv_exp_r:+.3f}R/trade"),
-                                    _stat_row("Max Drawdown (R)",       f"{abs(_csv_mdd_r)}R"),
-                                    _stat_row("Win Rate (EOD)",         f"{_csv_bt_eod_wr}%"),
-                                    _stat_row("Avg Win (EOD R)",        f"+{_csv_bt_eod_aw}R"),
-                                    _stat_row("Avg Loss (EOD R)",       f"{_csv_bt_eod_al}R"),
-                                    _stat_row("Expectancy (EOD R)",     f"{_csv_bt_eod_exp:+.3f}R/trade"),
-                                    _stat_row("Win Rate (Tiered)",      f"{_csv_bt_tier_wr}%"),
-                                    _stat_row("Avg Win (Tiered R)",     f"+{_csv_bt_tier_aw}R"),
-                                    _stat_row("Avg Loss (Tiered R)",    f"{_csv_bt_tier_al}R"),
-                                    _stat_row("Expectancy (Tiered R)",  f"{_csv_bt_tier_exp:+.3f}R/trade"),
+                                    _stat_row("Stop-Out Rate",              f"{_csv_fb_rt}%"),
+                                    _stat_row("Avg Win (R)",                f"+{_csv_aw_r}R"),
+                                    _stat_row("Avg Loss (R)",               f"{_csv_al_r}R"),
+                                    _stat_row("Expectancy",                 f"{_csv_exp_r:+.3f}R/trade"),
+                                    _stat_row("Max Drawdown (R)",           f"{abs(_csv_mdd_r)}R"),
+                                    _stat_row("Win Rate (EOD)",             f"{_csv_bt_eod_wr}%"),
+                                    _stat_row("Avg Win (EOD R)",            f"+{_csv_bt_eod_aw}R"),
+                                    _stat_row("Avg Loss (EOD R)",           f"{_csv_bt_eod_al}R"),
+                                    _stat_row("Expectancy (EOD R)",         f"{_csv_bt_eod_exp:+.3f}R/trade"),
+                                    _stat_row("Max Drawdown (EOD R)",       f"{abs(_csv_bt_eod_mdd)}R"),
+                                    _stat_row("Win Rate (Tiered)",          f"{_csv_bt_tier_wr}%"),
+                                    _stat_row("Avg Win (Tiered R)",         f"+{_csv_bt_tier_aw}R"),
+                                    _stat_row("Avg Loss (Tiered R)",        f"{_csv_bt_tier_al}R"),
+                                    _stat_row("Expectancy (Tiered R)",      f"{_csv_bt_tier_exp:+.3f}R/trade"),
+                                    _stat_row("Max Drawdown (Tiered R)",    f"{abs(_csv_bt_tier_mdd)}R"),
                                 ])
                         _rp_csv_export = pd.concat(
                             [_rp_csv_df,
