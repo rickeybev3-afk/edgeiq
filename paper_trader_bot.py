@@ -23,11 +23,12 @@ Required environment secrets:
   TELEGRAM_CHAT_ID      — your chat ID from @userinfobot
 
 Optional env vars:
-  PAPER_TRADE_USER_ID   — EdgeIQ user ID (defaults below)
-  PAPER_TRADE_MIN_TCS   — minimum TCS threshold (default: 50)
-  PAPER_TRADE_FEED      — sip or iex (default: sip)
-  PAPER_TRADE_PRICE_MIN — min price filter (default: 1.0)
-  PAPER_TRADE_PRICE_MAX — max price filter (default: 20.0)
+  PAPER_TRADE_USER_ID      — EdgeIQ user ID (defaults below)
+  PAPER_TRADE_MIN_TCS      — minimum TCS threshold (default: 50)
+  PAPER_TRADE_FEED         — sip or iex (default: sip)
+  PAPER_TRADE_PRICE_MIN    — min price filter (default: 1.0)
+  PAPER_TRADE_PRICE_MAX    — max price filter (default: 20.0)
+  SWEEP_ALERT_MAX_TICKERS  — max tickers shown in the close-price sweep Telegram alert (default: 10)
 """
 
 import os
@@ -52,8 +53,9 @@ ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
 USER_ID           = os.getenv("PAPER_TRADE_USER_ID", "a5e1fcab-8369-42c4-8550-a8a19734510c")
 MIN_TCS           = int(os.getenv("PAPER_TRADE_MIN_TCS", "50"))
 FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
-PRICE_MIN         = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
-PRICE_MAX         = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
+PRICE_MIN               = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
+PRICE_MAX               = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
+SWEEP_ALERT_MAX_TICKERS = int(os.getenv("SWEEP_ALERT_MAX_TICKERS", "10"))
 
 # ── Alpaca live execution config ───────────────────────────────────────────────
 # Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
@@ -2043,7 +2045,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
     )
 
     if written > 0:
-        _display_entries = patched[:10]
+        _display_entries = patched[:SWEEP_ALERT_MAX_TICKERS]
         _overflow = len(patched) - len(_display_entries)
         _ticker_lines = "\n".join(f"  • {entry}" for entry in _display_entries)
         if _overflow > 0:
