@@ -1164,9 +1164,43 @@ def _build_threshold_legend(tcs_thresholds: dict, tcs_threshold: int) -> str:
     return "\n📐 " + " · ".join(_parts)
 
 
+def _count_filter_blocks(qualified: list) -> dict:
+    """Count how many qualified setups are blocked by quality filters.
+
+    Returns dict with keys:
+      ib_wide          — IB range >= 10% of open price
+      vwap_misaligned  — close price is on the wrong side of VWAP at IB close
+    """
+    ib_wide = 0
+    vwap_misaligned = 0
+    for r in qualified:
+        open_px  = float(r.get("open_price") or 0)
+        ib_high  = float(r.get("ib_high")    or 0)
+        ib_low   = float(r.get("ib_low")     or 0)
+        if open_px > 0 and ib_high > ib_low:
+            ib_range_pct = (ib_high - ib_low) / open_px * 100
+            if ib_range_pct >= 10.0:
+                ib_wide += 1
+                continue  # no point checking VWAP if already blocked
+
+        vwap_val  = float(r.get("vwap_at_ib")   or 0)
+        close_val = float(r.get("close_price")   or 0)
+        direction = r.get("predicted", "")
+        if vwap_val > 0 and close_val > 0 and direction in ("Bullish Break", "Bearish Break"):
+            aligned = (
+                (direction == "Bullish Break" and close_val >= vwap_val) or
+                (direction == "Bearish Break" and close_val <= vwap_val)
+            )
+            if not aligned:
+                vwap_misaligned += 1
+
+    return {"ib_wide": ib_wide, "vwap_misaligned": vwap_misaligned}
+
+
 def _alert_morning_summary(
     qualified: list, total_scanned: int, trade_date: date,
     effective_tcs: int = None, tcs_thresholds: dict = None,
+    filter_blocks: dict = None,
 ):
     """Send a summary header before individual setup alerts."""
     tcs_threshold = effective_tcs if effective_tcs is not None else MIN_TCS
@@ -1186,6 +1220,20 @@ def _alert_morning_summary(
 
     _threshold_legend = _build_threshold_legend(tcs_thresholds, tcs_threshold)
 
+    # Build filter summary line
+    _fb = filter_blocks or {}
+    _ib_wide         = _fb.get("ib_wide", 0)
+    _vwap_misaligned = _fb.get("vwap_misaligned", 0)
+    if _ib_wide or _vwap_misaligned:
+        _filter_parts = []
+        if _ib_wide:
+            _filter_parts.append(f"{_ib_wide} IB-wide")
+        if _vwap_misaligned:
+            _filter_parts.append(f"{_vwap_misaligned} VWAP-misaligned")
+        _filter_line = "\n🔍 Filters blocked: " + ", ".join(_filter_parts)
+    else:
+        _filter_line = "\n🔍 Filters: all passed ✅" if qualified else ""
+
     if not qualified:
         tg_send(
             f"🔍 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
@@ -1193,6 +1241,7 @@ def _alert_morning_summary(
             f"Watching for intraday opportunities..."
             + _threshold_legend
             + _regime_line
+            + _filter_line
         )
         return
     tg_send(
@@ -1202,6 +1251,7 @@ def _alert_morning_summary(
         f"📋 Scanned {total_scanned} tickers from your Finviz watchlist"
         + _threshold_legend
         + _regime_line
+        + _filter_line
         + "\nSending individual alerts now..."
     )
 
@@ -1633,11 +1683,19 @@ def morning_scan():
         f"of {len(results)} scanned"
     )
 
+    # Count how many qualified setups are blocked by quality filters
+    _filter_blocks = _count_filter_blocks(qualified)
+    log.info(
+        f"Filter blocks: {_filter_blocks['ib_wide']} IB-wide, "
+        f"{_filter_blocks['vwap_misaligned']} VWAP-misaligned"
+    )
+
     # Telegram: summary header
     _alert_morning_summary(
         qualified, len(results), today,
         effective_tcs=effective_min_tcs,
         tcs_thresholds=_tcs_thresholds,
+        filter_blocks=_filter_blocks,
     )
 
     if qualified:
