@@ -9620,13 +9620,13 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
 
 # ── R/Trade Projection Scenarios ────────────────────────────────────────────
 # Centralized scenario constants used by compute_r_projection() and the Analytics UI.
-# "Expected" anchor ($51,400) is from Phase 1 verified projections.
-# Conservative and Stretch are proportionally derived from the same underlying model.
+# All three dec2026 targets are from the Phase 1 financial projection model
+# ($7k start, $1,500 position, 2.14% risk/trade, 202 trades/yr, May 2026 start).
 # Boundaries are threshold-based: a trader is "at" a scenario when they've reached its R target.
 R_PROJECTION_SCENARIOS = [
-    {"name": "Conservative", "r": 0.50, "dec2026": 32_500},
+    {"name": "Conservative", "r": 0.50, "dec2026": 25_800},
     {"name": "Expected",     "r": 0.79, "dec2026": 51_400},
-    {"name": "Stretch",      "r": 1.20, "dec2026": 78_000},
+    {"name": "Stretch",      "r": 1.20, "dec2026": 80_000},
 ]
 
 

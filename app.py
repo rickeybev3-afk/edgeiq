@@ -12309,9 +12309,9 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
     _SCENARIO_META = {
         "Below Conservative": {"color": "#ef5350", "icon": "⚠️", "desc": "Below all targets"},
-        "Conservative":       {"color": "#ffa726", "icon": "🟡", "desc": "0.5R target · $32,500 by Dec 2026"},
+        "Conservative":       {"color": "#ffa726", "icon": "🟡", "desc": "0.5R target · $25,800 by Dec 2026"},
         "Expected":           {"color": "#4caf50", "icon": "✅", "desc": "0.79R target · $51,400 by Dec 2026"},
-        "Stretch":            {"color": "#29b6f6", "icon": "🚀", "desc": "1.2R target · $78,000 by Dec 2026"},
+        "Stretch":            {"color": "#29b6f6", "icon": "🚀", "desc": "1.2R target · $80,000 by Dec 2026"},
     }
     _SCENARIO_COLORS = {
         "Conservative": "#ffa726",
@@ -12490,8 +12490,8 @@ Nothing here requires any input from you. All numbers update automatically as yo
         _r_source_label = "tiered 50/25/25 R" if _r_source == "tiered_pnl_r" else "sim R (MFE)"
         st.caption(
             f"Based on {_tc} settled paper trades ({_r_source_label}) · "
-            f"Scenarios: Conservative ≥0.50R → $32,500 | Expected ≥0.79R → $51,400 | "
-            f"Stretch ≥1.20R → $78,000 · {_mo_left} months to Dec 2026"
+            f"Scenarios: Conservative ≥0.50R → $25,800 | Expected ≥0.79R → $51,400 | "
+            f"Stretch ≥1.20R → $80,000 · {_mo_left} months to Dec 2026"
         )
 
     # ── JOURNAL × MODEL CROSS-REFERENCE (runs regardless of tracker state) ────
