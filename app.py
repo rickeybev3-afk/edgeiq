@@ -21191,25 +21191,38 @@ ALTER TABLE backtest_sim_runs
                             "P3 🟡 = Morning 70+  ·  P4 🟢 = Morning 50–69. "
                             "Reveals whether the EOD vs Tiered gap is driven by high- or low-confidence setups."
                         )
+                        _bq_dir_filter = st.radio(
+                            "Breakout direction",
+                            options=["All", "📈 Bullish Break", "📉 Bearish Break"],
+                            index=0,
+                            horizontal=True,
+                            key="bq_tcs_dir_filter",
+                            help="Filter the TCS tier cards and chart to show only Bullish breaks, only Bearish breaks, or both.",
+                        )
+                        _bq_tcs_src = _bq_src.copy()
+                        if _bq_dir_filter == "📈 Bullish Break":
+                            _bq_tcs_src = _bq_tcs_src[_bq_tcs_src["actual_outcome"] == "Bullish Break"]
+                        elif _bq_dir_filter == "📉 Bearish Break":
+                            _bq_tcs_src = _bq_tcs_src[_bq_tcs_src["actual_outcome"] == "Bearish Break"]
                         _bq_tier_defs = [
                             ("P1", "🔴", "intraday", 70, 999, "#ef5350",  "Intraday 70+"),
                             ("P2", "🟠", "intraday", 50,  69, "#ef6c00",  "Intraday 50–69"),
                             ("P3", "🟡", "morning",  70, 999, "#f9a825",  "Morning 70+"),
                             ("P4", "🟢", "morning",  50,  69, "#66bb6a",  "Morning 50–69"),
                         ]
-                        _bq_src["_tcs_num"] = pd.to_numeric(
-                            _bq_src["tcs"], errors="coerce"
+                        _bq_tcs_src["_tcs_num"] = pd.to_numeric(
+                            _bq_tcs_src["tcs"], errors="coerce"
                         ).fillna(0)
 
                         # Compute per-tier stats
                         _bq_tier_rows = []
                         for _bqt_label, _bqt_emoji, _bqt_st, _bqt_lo, _bqt_hi, _bqt_clr, _bqt_desc in _bq_tier_defs:
                             _bqt_mask = (
-                                (_bq_src["scan_type"].fillna("morning") == _bqt_st)
-                                & (_bq_src["_tcs_num"] >= _bqt_lo)
-                                & (_bq_src["_tcs_num"] <= _bqt_hi)
+                                (_bq_tcs_src["scan_type"].fillna("morning") == _bqt_st)
+                                & (_bq_tcs_src["_tcs_num"] >= _bqt_lo)
+                                & (_bq_tcs_src["_tcs_num"] <= _bqt_hi)
                             )
-                            _bqt_df = _bq_src[_bqt_mask]
+                            _bqt_df = _bq_tcs_src[_bqt_mask]
                             if _bqt_df.empty:
                                 _bq_tier_rows.append({
                                     "tier": _bqt_label,
