@@ -897,6 +897,7 @@ def telegram_listener() -> None:
                                 lines.append(
                                     "  ↳ Use <code>/settings tcs_structures KEY1 KEY2 ... on|off</code> to toggle one or more structures "
                                     "(e.g. <code>/settings tcs_structures trend_bull trend_bear off</code>), "
+                                    "<code>/settings tcs_structures all on|off</code> to toggle all at once, "
                                     "or <code>/settings tcs_structures reset</code> to restore all structures"
                                 )
                                 valid_keys = ", ".join(
@@ -944,61 +945,81 @@ def telegram_listener() -> None:
                         )
                         requested_keys = [p.lower() for p in parts[2:-1]]
                         enable = parts[-1].lower() == "on"
-                        unknown_keys = [k for k in requested_keys if k not in WK_DISPLAY]
-                        valid_requested = [k for k in requested_keys if k in WK_DISPLAY]
-                        if unknown_keys:
-                            valid_keys = ", ".join(
-                                f"<code>{k}</code> ({WK_DISPLAY_PLAIN.get(k, k)})"
-                                for k in sorted(WK_DISPLAY.keys())
-                            )
-                            unknown_fmt = ", ".join(
-                                f"<code>{k}</code>" for k in unknown_keys
-                            )
-                            tg_reply(chat_id,
-                                f"⚠️ Unknown structure(s): {unknown_fmt}. No changes were made.\n"
-                                f"Valid keys: {valid_keys}")
-                        elif valid_requested:
-                            current = load_tcs_alert_structures()
-                            if current is None:
-                                current = set(WK_DISPLAY.keys())
-                            for struct_key in valid_requested:
-                                if enable:
-                                    current.add(struct_key)
-                                else:
-                                    current.discard(struct_key)
-                            saved = save_tcs_alert_structures(current)
+                        if requested_keys == ["all"]:
+                            all_keys = list(WK_DISPLAY.keys())
+                            new_set = set(all_keys) if enable else set()
+                            saved = save_tcs_alert_structures(new_set)
                             if saved:
-                                # Clear any per-user override so the /settings display
-                                # reads from the app-level config we just wrote.
                                 if "tcs_alert_structures" in sub_prefs:
                                     sub_prefs.pop("tcs_alert_structures")
                                     save_user_prefs(sub_uid, sub_prefs)
                                 icon = "✅" if enable else "❌"
-                                action = "added to" if enable else "removed from"
-                                if len(valid_requested) == 1:
-                                    struct_label = WK_DISPLAY_PLAIN.get(valid_requested[0], valid_requested[0])
-                                    changed_summary = f"<b>{struct_label}</b> {action} TCS watching list."
-                                else:
-                                    labels = ", ".join(
-                                        f"<b>{WK_DISPLAY_PLAIN.get(k, k)}</b>"
-                                        for k in valid_requested
-                                    )
-                                    changed_summary = f"{labels} — all {action} TCS watching list."
-                                if current:
-                                    now_watching = ", ".join(
-                                        WK_DISPLAY_PLAIN.get(k, k) for k in sorted(current)
-                                    )
-                                else:
-                                    now_watching = "none (all alerts silenced)"
+                                action = "enabled" if enable else "disabled"
                                 tg_reply(chat_id,
-                                    f"{icon} {changed_summary}\n"
-                                    f"Now watching: {now_watching}\n"
+                                    f"{icon} All structures {action}.\n"
                                     "Use <code>/settings</code> to review all preferences.")
                                 log.info(
-                                    f"settings: tcs_structures "
-                                    f"{','.join(valid_requested)}="
-                                    f"{'on' if enable else 'off'}"
+                                    f"settings: tcs_structures all={'on' if enable else 'off'}"
                                 )
+                            else:
+                                tg_reply(chat_id,
+                                    "❌ Couldn't save your change. Please try again later.")
+                                log.warning("settings: save_tcs_alert_structures failed for all")
+                        else:
+                            unknown_keys = [k for k in requested_keys if k not in WK_DISPLAY]
+                            valid_requested = [k for k in requested_keys if k in WK_DISPLAY]
+                            if unknown_keys:
+                                valid_keys = ", ".join(
+                                    f"<code>{k}</code>" for k in sorted(WK_DISPLAY.keys())
+                                )
+                                unknown_fmt = ", ".join(
+                                    f"<code>{k}</code>" for k in unknown_keys
+                                )
+                                tg_reply(chat_id,
+                                    f"⚠️ Unknown structure(s): {unknown_fmt}. No changes were made.\n"
+                                    f"Valid keys: {valid_keys}")
+                            elif valid_requested:
+                                current = load_tcs_alert_structures()
+                                if current is None:
+                                    current = set(WK_DISPLAY.keys())
+                                for struct_key in valid_requested:
+                                    if enable:
+                                        current.add(struct_key)
+                                    else:
+                                        current.discard(struct_key)
+                                saved = save_tcs_alert_structures(current)
+                                if saved:
+                                    # Clear any per-user override so the /settings display
+                                    # reads from the app-level config we just wrote.
+                                    if "tcs_alert_structures" in sub_prefs:
+                                        sub_prefs.pop("tcs_alert_structures")
+                                        save_user_prefs(sub_uid, sub_prefs)
+                                    icon = "✅" if enable else "❌"
+                                    action = "added to" if enable else "removed from"
+                                    if len(valid_requested) == 1:
+                                        struct_label = WK_DISPLAY_PLAIN.get(valid_requested[0], valid_requested[0])
+                                        changed_summary = f"<b>{struct_label}</b> {action} TCS watching list."
+                                    else:
+                                        labels = ", ".join(
+                                            f"<b>{WK_DISPLAY_PLAIN.get(k, k)}</b>"
+                                            for k in valid_requested
+                                        )
+                                        changed_summary = f"{labels} — all {action} TCS watching list."
+                                    if current:
+                                        now_watching = ", ".join(
+                                            WK_DISPLAY_PLAIN.get(k, k) for k in sorted(current)
+                                        )
+                                    else:
+                                        now_watching = "none (all alerts silenced)"
+                                    tg_reply(chat_id,
+                                        f"{icon} {changed_summary}\n"
+                                        f"Now watching: {now_watching}\n"
+                                        "Use <code>/settings</code> to review all preferences.")
+                                    log.info(
+                                        f"settings: tcs_structures "
+                                        f"{','.join(valid_requested)}="
+                                        f"{'on' if enable else 'off'}"
+                                    )
                             else:
                                 tg_reply(chat_id,
                                     "❌ Couldn't save your change. Please try again later.")
