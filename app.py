@@ -614,18 +614,27 @@ _cmp_r_col_sync.html("""
     var _p = window.parent;
     if (_p._edgeiqRColSyncInstalled) return;
     _p._edgeiqRColSyncInstalled = true;
+    function _applyRColSync(rCols) {
+        if (typeof rCols !== 'string') return;
+        var url = new URL(_p.location.href);
+        if (url.searchParams.get('rp_r_cols') === rCols) return;
+        url.searchParams.set('rp_r_cols', rCols);
+        _p.location.replace(url.toString());
+    }
     try {
         var _bc = new _p.BroadcastChannel('edgeiq_r_col_sync');
         _bc.onmessage = function(e) {
             var rCols = e.data && e.data.rCols;
             if (typeof rCols !== 'string') return;
             localStorage.setItem('rp_r_col_select', rCols);
-            var url = new URL(_p.location.href);
-            if (url.searchParams.get('rp_r_cols') === rCols) return;
-            url.searchParams.set('rp_r_cols', rCols);
-            _p.location.replace(url.toString());
+            _applyRColSync(rCols);
         };
     } catch(e) {}
+    _p.addEventListener('storage', function(e) {
+        if (e.key === 'rp_r_col_select' && e.newValue !== null) {
+            _applyRColSync(e.newValue);
+        }
+    });
 })();
 </script>
 """, height=0)
