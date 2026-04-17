@@ -8486,15 +8486,54 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "EOD Hold R":    ("_sort_eod_r",    False),
                 "Tiered Exit R": ("_sort_tiered_r", False),
             }
-            _sort_choice = st.radio(
-                "Sort table by",
-                list(_sort_col_map.keys()),
-                index=0,
-                horizontal=True,
-                key="tkr_summary_sort_radio",
-            )
+            _r_filter_col_map = {
+                "EOD Hold R":    "_sort_eod_r",
+                "Tiered Exit R": "_sort_tiered_r",
+            }
+            _ctrl_col_sort, _ctrl_col_filter = st.columns([3, 2])
+            with _ctrl_col_sort:
+                _sort_choice = st.radio(
+                    "Sort table by",
+                    list(_sort_col_map.keys()),
+                    index=0,
+                    horizontal=True,
+                    key="tkr_summary_sort_radio",
+                )
+            with _ctrl_col_filter:
+                _r_filter_col = st.radio(
+                    "Min-R filter column",
+                    list(_r_filter_col_map.keys()),
+                    index=0,
+                    horizontal=True,
+                    key="tkr_summary_r_filter_col",
+                )
+                _r_filter_min = st.number_input(
+                    f"Min {_r_filter_col}",
+                    value=None,
+                    placeholder="No filter (show all)",
+                    step=0.1,
+                    format="%.2f",
+                    key="tkr_summary_r_filter_min",
+                    help=(
+                        "Hide tickers whose selected R column is below this value. "
+                        "Leave blank (or clear the field) to show all tickers. "
+                        "Example: enter 0.5 to see only tickers averaging ≥ 0.5R."
+                    ),
+                )
+                if _r_filter_min is None:
+                    _r_filter_min = float("-inf")
             _sort_key, _sort_asc = _sort_col_map[_sort_choice]
+            _r_filter_key = _r_filter_col_map[_r_filter_col]
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
+            _r_filter_mask = _tkr_summary_df[_r_filter_key].isna() | (_tkr_summary_df[_r_filter_key] >= _r_filter_min)
+            _tkr_summary_df = _tkr_summary_df[_r_filter_mask]
+            _filtered_count = int((~_r_filter_mask).sum())
+            if _filtered_count > 0:
+                st.info(
+                    f"ℹ️ **{_filtered_count} ticker{'s' if _filtered_count != 1 else ''} hidden** — "
+                    f"{_r_filter_col} below {_r_filter_min:.2f}R. "
+                    "Lower the threshold to show more tickers."
+                )
             _insuff_mask = _tkr_summary_df["Best TCS"].str.contains("insufficient", na=False)
             _insuff_count = int(_insuff_mask.sum())
             if _insuff_count > 0:
@@ -13155,8 +13194,8 @@ ALTER TABLE backtest_sim_runs
 
                     f'<div style="border-left:1px solid #1a2744; padding-left:24px; align-self:center;">'
                     f'<div style="font-size:12px; font-weight:700; color:{_bts_verdict_clr};">{_bts_verdict}</div>'
-                    f'{"<div style=\\"font-size:11px; color:#ffb74d; margin-top:2px;\\">" + _bts_pct_label + "</div>" if _bts_pct_label else ""}'
-                    f'<div style="font-size:10px; color:#37474f; margin-top:3px;">'
+                    + (f'<div style="font-size:11px; color:#ffb74d; margin-top:2px;">{_bts_pct_label}</div>' if _bts_pct_label else '')
+                    + f'<div style="font-size:10px; color:#37474f; margin-top:3px;">'
                     f'Avg R computed on matched rows only · % vs EOD baseline</div>'
                     f'</div>'
 
