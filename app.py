@@ -13034,6 +13034,172 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         height=0,
                     )
 
+                # ── Divergence full-screen dialog (defined once, shared across tickers) ─
+                @st.dialog("📉 Divergence — Full Screen", width="large")
+                def _div_fullscreen_dlg():
+                    _d = st.session_state.get("_div_modal_data")
+                    if not _d:
+                        st.error("No chart data available.")
+                        return
+                    _dlg_tk        = _d["tk_name"]
+                    _dlg_eq        = _d["eq"]
+                    _dlg_r         = _d.get("r")
+                    _dlg_eq_only   = _d.get("eq_only", False)
+                    _dlg_idx       = _d.get("idx")
+                    _dlg_val       = _d.get("val", 0.0)
+                    _dlg_n         = _d["n"]
+                    _dlg_msg       = _d.get("msg", "")
+                    _dlg_band_half = _d.get("band_half", 1)
+
+                    st.markdown(
+                        f'<div style="font-size:13px;font-weight:700;color:#90caf9;margin-bottom:8px;">'
+                        f'{"📈 Equity Curve" if _dlg_eq_only else "📉 Divergence: Equity ($) vs Cumulative R"}'
+                        f' — <span style="color:#ffd600;">{_dlg_tk}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    _dlg_fig = go.Figure()
+                    if not _dlg_eq_only and _dlg_idx is not None:
+                        _dlg_band_half = max(1, round(_dlg_n * 0.015))
+                        _dlg_fig.add_vrect(
+                            x0=max(0, _dlg_idx - _dlg_band_half),
+                            x1=min(_dlg_n - 1, _dlg_idx + _dlg_band_half),
+                            fillcolor="rgba(255, 214, 0, 0.12)",
+                            layer="below",
+                            line_width=0,
+                        )
+                        _dlg_fig.add_vline(
+                            x=_dlg_idx,
+                            line=dict(color="rgba(255, 214, 0, 0.7)", width=1.5, dash="dot"),
+                            annotation_text=f"Max divergence (trade\u00a0#{_dlg_idx})",
+                            annotation_position="top left",
+                            annotation_font=dict(color="#ffd600", size=11),
+                        )
+
+                    _dlg_fig.add_trace(go.Scatter(
+                        x=list(range(_dlg_n)),
+                        y=_dlg_eq,
+                        name="Equity ($)",
+                        mode="lines",
+                        line=dict(color="#4fc3f7", width=2),
+                        yaxis="y1",
+                    ))
+
+                    if not _dlg_eq_only and _dlg_r is not None:
+                        _dlg_fig.add_trace(go.Scatter(
+                            x=list(range(len(_dlg_r))),
+                            y=_dlg_r,
+                            name="Cumulative R",
+                            mode="lines",
+                            line=dict(color="#ef9a9a", width=2),
+                            yaxis="y2",
+                        ))
+
+                    _dlg_layout = dict(
+                        height=560,
+                        margin=dict(l=10, r=10, t=20, b=40),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        dragmode="zoom",
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom", y=1.02,
+                            xanchor="right", x=1,
+                            font=dict(color="#cccccc", size=11),
+                        ),
+                        xaxis=dict(
+                            title=dict(text="Trade #", font=dict(size=11)),
+                            gridcolor="#1a1a2e",
+                            color="#cccccc",
+                            zeroline=False,
+                            tickfont=dict(size=10),
+                        ),
+                        yaxis=dict(
+                            title=dict(text="Equity ($)", font=dict(color="#4fc3f7", size=11)),
+                            tickfont=dict(color="#4fc3f7", size=10),
+                            gridcolor="#1a1a2e",
+                            zeroline=True,
+                            zerolinecolor="#555",
+                        ),
+                    )
+                    if not _dlg_eq_only and _dlg_r is not None:
+                        _dlg_layout["showlegend"] = True
+                        _dlg_layout["yaxis2"] = dict(
+                            title=dict(text="Cumulative R", font=dict(color="#ef9a9a", size=11)),
+                            tickfont=dict(color="#ef9a9a", size=10),
+                            overlaying="y",
+                            side="right",
+                            gridcolor="rgba(0,0,0,0)",
+                            zeroline=False,
+                        )
+                    else:
+                        _dlg_layout["showlegend"] = False
+
+                    _dlg_fig.update_layout(**_dlg_layout)
+
+                    import streamlit.components.v1 as _cmp_dlg_zoom
+                    # Use the ls_key passed from the mini-chart (respects eq-only prefix)
+                    _dlg_ls_key = _d.get("ls_key") or ("div_zoom_eq_" if _dlg_eq_only else "div_zoom_") + "".join(c if c.isalnum() else "_" for c in _dlg_tk)
+                    _dlg_sentinel_id = "div-dlg-sentinel-" + "".join(c if c.isalnum() else "-" for c in _dlg_tk)
+
+                    # Sentinel element: lets JS find the chart that appears immediately after it
+                    st.markdown(
+                        f'<div id="{_dlg_sentinel_id}" style="height:0;overflow:hidden;"></div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.plotly_chart(
+                        _dlg_fig,
+                        use_container_width=True,
+                        config={
+                            "scrollZoom": True,
+                            "displayModeBar": True,
+                            "modeBarButtonsToRemove": ["sendDataToCloud"],
+                            "displaylogo": False,
+                        },
+                    )
+
+                    if not _dlg_eq_only and _dlg_msg:
+                        st.caption(f"🟡 **Trade\u00a0#{_dlg_idx}**: {_dlg_msg}")
+                    elif _dlg_eq_only:
+                        st.caption("ℹ️ Divergence analysis requires an EOD or tiered-exit R column — showing equity curve only.")
+
+                    # ── JS: restore saved zoom range from localStorage ──────────
+                    # Uses the sentinel element to find the dialog's specific chart div
+                    _cmp_dlg_zoom.html(f"""
+<script>
+(function() {{
+    var _LS_KEY = {repr(_dlg_ls_key)};
+    var _SENTINEL_ID = {repr(_dlg_sentinel_id)};
+    function _findDlgChart() {{
+        var sentinel = window.parent.document.getElementById(_SENTINEL_ID);
+        if (!sentinel) return null;
+        var allPlotly = Array.from(window.parent.document.querySelectorAll('.js-plotly-plot'));
+        var sTop = sentinel.getBoundingClientRect().top;
+        for (var i = 0; i < allPlotly.length; i++) {{
+            if (allPlotly[i].getBoundingClientRect().top >= sTop) return allPlotly[i];
+        }}
+        return null;
+    }}
+    function _applyZoom() {{
+        var saved = localStorage.getItem(_LS_KEY);
+        if (!saved) return;
+        try {{
+            var range = JSON.parse(saved);
+            var _pDiv = _findDlgChart();
+            if (!_pDiv || !_pDiv._fullLayout) {{ setTimeout(_applyZoom, 250); return; }}
+            var update = {{'xaxis.range[0]': range.xmin, 'xaxis.range[1]': range.xmax}};
+            if (range.ymin !== null && range.ymin !== undefined) {{
+                update['yaxis.range[0]'] = range.ymin;
+                update['yaxis.range[1]'] = range.ymax;
+            }}
+            window.parent.Plotly.relayout(_pDiv, update);
+        }} catch(e) {{ console.warn('div zoom restore failed', e); }}
+    }}
+    setTimeout(_applyZoom, 600);
+}})();
+</script>
+""", height=0)
+
                 # ── Per-ticker expanders ──────────────────────────────────────
                 _sw_hdr_col_cap, _sw_hdr_col_btn = st.columns([3, 1])
                 with _sw_hdr_col_cap:
@@ -13712,14 +13878,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 '<div style="border-top:1px solid #1e2a3a;margin:12px 0 6px 0;"></div>',
                                 unsafe_allow_html=True,
                             )
+                            _mini_eq_ls_key = "div_zoom_eq_" + "".join(
+                                c if c.isalnum() else "_" for c in _tk_name
+                            )
+                            _mini_eq_sentinel_id = "div-eq-sentinel-" + "".join(
+                                c if c.isalnum() else "-" for c in _tk_name
+                            )
+                            _mini_eq_hdr_c1, _mini_eq_hdr_c2 = st.columns([0.87, 0.13])
+                            with _mini_eq_hdr_c1:
+                                st.markdown(
+                                    '<div style="font-size:12px;font-weight:700;color:#90caf9;'
+                                    'margin-bottom:4px;">📈 Equity Curve</div>',
+                                    unsafe_allow_html=True,
+                                )
+                            with _mini_eq_hdr_c2:
+                                if st.button(
+                                    "⛶",
+                                    key=f"_div_expand_eq_{_tk_name}",
+                                    help="Open full-screen chart",
+                                    use_container_width=True,
+                                ):
+                                    st.session_state["_div_modal_data"] = {
+                                        "tk_name": _tk_name,
+                                        "eq": list(_mini_eq),
+                                        "r": None,
+                                        "eq_only": True,
+                                        "idx": None,
+                                        "val": 0.0,
+                                        "n": _mini_n,
+                                        "msg": "",
+                                        "band_half": 1,
+                                        "ls_key": _mini_eq_ls_key,
+                                    }
+                                    _div_fullscreen_dlg()
+                            # Sentinel for deterministic Plotly div lookup
                             st.markdown(
-                                '<div style="font-size:12px;font-weight:700;color:#90caf9;'
-                                'margin-bottom:4px;">📈 Equity Curve</div>',
+                                f'<div id="{_mini_eq_sentinel_id}" style="height:0;overflow:hidden;"></div>',
                                 unsafe_allow_html=True,
                             )
                             st.plotly_chart(
                                 _mini_fig,
                                 use_container_width=True,
+                                key=f"_mini_eq_chart_{_tk_name}",
                                 config={
                                     "scrollZoom": True,
                                     "displayModeBar": False,
@@ -13740,6 +13940,47 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 mime="text/csv",
                                 key=f"_dl_mini_eq_{_tk_name}",
                             )
+                            # ── JS: capture equity-only chart zoom range ───────────────
+                            import streamlit.components.v1 as _cmp_eq_zoom
+                            _cmp_eq_zoom.html(f"""
+<script>
+(function() {{
+    var _LS_KEY = {repr(_mini_eq_ls_key)};
+    var _SENTINEL_ID = {repr(_mini_eq_sentinel_id)};
+    function _findEqChart() {{
+        var sentinel = window.parent.document.getElementById(_SENTINEL_ID);
+        if (!sentinel) return null;
+        var allPlotly = Array.from(window.parent.document.querySelectorAll('.js-plotly-plot'));
+        var sTop = sentinel.getBoundingClientRect().top;
+        for (var i = 0; i < allPlotly.length; i++) {{
+            if (allPlotly[i].getBoundingClientRect().top >= sTop) return allPlotly[i];
+        }}
+        return null;
+    }}
+    function _attachListener() {{
+        var _pDiv = _findEqChart();
+        if (!_pDiv || !_pDiv.on) {{ setTimeout(_attachListener, 400); return; }}
+        _pDiv.on('plotly_relayout', function(ev) {{
+            if (ev['xaxis.autorange'] === true || ev['autosize'] === true) {{
+                try {{ localStorage.removeItem(_LS_KEY); }} catch(e) {{}}
+                return;
+            }}
+            if (ev['xaxis.range[0]'] !== undefined) {{
+                try {{
+                    localStorage.setItem(_LS_KEY, JSON.stringify({{
+                        xmin: ev['xaxis.range[0]'],
+                        xmax: ev['xaxis.range[1]'],
+                        ymin: (ev['yaxis.range[0]'] !== undefined ? ev['yaxis.range[0]'] : null),
+                        ymax: (ev['yaxis.range[1]'] !== undefined ? ev['yaxis.range[1]'] : null),
+                    }}));
+                }} catch(e) {{}}
+            }}
+        }});
+    }}
+    setTimeout(_attachListener, 600);
+}})();
+</script>
+""", height=0)
                         if _mini_div_data and not _mini_eq_only:
                             _mini_eq  = _mini_div_data["eq_curve"]
                             _mini_r   = _mini_div_data["r_curve"]
@@ -13824,14 +14065,49 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 '<div style="border-top:1px solid #1e2a3a;margin:12px 0 6px 0;"></div>',
                                 unsafe_allow_html=True,
                             )
+                            # Per-ticker keys — defined before columns so they're reusable below
+                            _mini_div_ls_key = "div_zoom_" + "".join(
+                                c if c.isalnum() else "_" for c in _tk_name
+                            )
+                            _mini_div_sentinel_id = "div-mini-sentinel-" + "".join(
+                                c if c.isalnum() else "-" for c in _tk_name
+                            )
+                            _mini_div_hdr_c1, _mini_div_hdr_c2 = st.columns([0.87, 0.13])
+                            with _mini_div_hdr_c1:
+                                st.markdown(
+                                    '<div style="font-size:12px;font-weight:700;color:#90caf9;'
+                                    'margin-bottom:4px;">📉 Divergence: Equity ($) vs Cumulative R</div>',
+                                    unsafe_allow_html=True,
+                                )
+                            with _mini_div_hdr_c2:
+                                if st.button(
+                                    "⛶",
+                                    key=f"_div_expand_{_tk_name}",
+                                    help="Open full-screen chart",
+                                    use_container_width=True,
+                                ):
+                                    st.session_state["_div_modal_data"] = {
+                                        "tk_name": _tk_name,
+                                        "eq": list(_mini_eq),
+                                        "r": list(_mini_r),
+                                        "eq_only": False,
+                                        "idx": _mini_idx,
+                                        "val": _mini_val,
+                                        "n": _mini_n,
+                                        "msg": _mini_div_msg,
+                                        "band_half": _mini_band_half,
+                                    }
+                                    _div_fullscreen_dlg()
+                            # Sentinel: zero-height marker used by JS to locate this chart's Plotly div
                             st.markdown(
-                                '<div style="font-size:12px;font-weight:700;color:#90caf9;'
-                                'margin-bottom:4px;">📉 Divergence: Equity ($) vs Cumulative R</div>',
+                                f'<div id="{_mini_div_sentinel_id}" style="height:0;overflow:hidden;"></div>',
                                 unsafe_allow_html=True,
                             )
+                            _mini_div_chart_key = f"_mini_div_chart_{_tk_name}"
                             st.plotly_chart(
                                 _mini_fig,
                                 use_container_width=True,
+                                key=_mini_div_chart_key,
                                 config={
                                     "scrollZoom": True,
                                     "displayModeBar": "hover",
@@ -13860,6 +14136,49 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 mime="text/csv",
                                 key=f"_dl_mini_div_{_tk_name}",
                             )
+                            # ── JS: attach relayout listener to this ticker's specific chart div ──
+                            # Uses the sentinel element to find the correct Plotly div deterministically,
+                            # even when multiple ticker expanders are open simultaneously.
+                            import streamlit.components.v1 as _cmp_div_zoom
+                            _cmp_div_zoom.html(f"""
+<script>
+(function() {{
+    var _LS_KEY = {repr(_mini_div_ls_key)};
+    var _SENTINEL_ID = {repr(_mini_div_sentinel_id)};
+    function _findMiniChart() {{
+        var sentinel = window.parent.document.getElementById(_SENTINEL_ID);
+        if (!sentinel) return null;
+        var allPlotly = Array.from(window.parent.document.querySelectorAll('.js-plotly-plot'));
+        var sTop = sentinel.getBoundingClientRect().top;
+        for (var i = 0; i < allPlotly.length; i++) {{
+            if (allPlotly[i].getBoundingClientRect().top >= sTop) return allPlotly[i];
+        }}
+        return null;
+    }}
+    function _attachListener() {{
+        var _pDiv = _findMiniChart();
+        if (!_pDiv || !_pDiv.on) {{ setTimeout(_attachListener, 400); return; }}
+        _pDiv.on('plotly_relayout', function(ev) {{
+            if (ev['xaxis.autorange'] === true || ev['autosize'] === true) {{
+                try {{ localStorage.removeItem(_LS_KEY); }} catch(e) {{}}
+                return;
+            }}
+            if (ev['xaxis.range[0]'] !== undefined) {{
+                try {{
+                    localStorage.setItem(_LS_KEY, JSON.stringify({{
+                        xmin: ev['xaxis.range[0]'],
+                        xmax: ev['xaxis.range[1]'],
+                        ymin: (ev['yaxis.range[0]'] !== undefined ? ev['yaxis.range[0]'] : null),
+                        ymax: (ev['yaxis.range[1]'] !== undefined ? ev['yaxis.range[1]'] : null),
+                    }}));
+                }} catch(e) {{}}
+            }}
+        }});
+    }}
+    setTimeout(_attachListener, 600);
+}})();
+</script>
+""", height=0)
 
                         # ── Drill-down: trades at a selected TCS cutoff ──────────
                         st.markdown(
