@@ -630,7 +630,7 @@ def telegram_listener() -> None:
                             "Check that the trade exists in your journal and the DB migration has been run.")
                     continue
 
-                # ── /settings [tcs_alerts on|off] ──
+                # ── /settings [tcs_alerts on|off] [morning_alerts on|off] ──
                 if text.startswith("/settings"):
                     from backend import (
                         get_user_id_by_chat_id,
@@ -649,15 +649,16 @@ def telegram_listener() -> None:
 
                     if len(parts) == 1:
                         tcs_on = sub_prefs.get("tcs_alerts_enabled", True) is not False
-                        status = "✅ On" if tcs_on else "❌ Off"
+                        morning_on = sub_prefs.get("morning_alerts_enabled", True) is not False
                         tg_reply(chat_id,
                             "⚙️ <b>Your EdgeIQ Alert Settings</b>\n"
                             "━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"TCS threshold shift alerts: {status}\n"
+                            f"Morning setup alerts:       {'✅ On' if morning_on else '❌ Off'}\n"
+                            f"TCS threshold shift alerts: {'✅ On' if tcs_on else '❌ Off'}\n"
                             "━━━━━━━━━━━━━━━━━━━━━\n"
                             "To change:\n"
-                            "  <code>/settings tcs_alerts on</code>\n"
-                            "  <code>/settings tcs_alerts off</code>")
+                            "  <code>/settings morning_alerts on|off</code>\n"
+                            "  <code>/settings tcs_alerts on|off</code>")
                     elif len(parts) == 3 and parts[1] == "tcs_alerts" and parts[2].lower() in ("on", "off"):
                         enabled = parts[2].lower() == "on"
                         sub_prefs["tcs_alerts_enabled"] = enabled
@@ -672,10 +673,26 @@ def telegram_listener() -> None:
                             tg_reply(chat_id,
                                 "❌ Couldn't save your preference. Please try again later.")
                             log.warning(f"settings: save_user_prefs failed for user_id={sub_uid}")
+                    elif len(parts) == 3 and parts[1] == "morning_alerts" and parts[2].lower() in ("on", "off"):
+                        enabled = parts[2].lower() == "on"
+                        sub_prefs["morning_alerts_enabled"] = enabled
+                        saved = save_user_prefs(sub_uid, sub_prefs)
+                        if saved:
+                            status = "✅ enabled" if enabled else "❌ disabled"
+                            tg_reply(chat_id,
+                                f"⚙️ Morning setup alerts {status}.\n"
+                                "You can change this any time with <code>/settings</code>.")
+                            log.info(f"settings: user_id={sub_uid} morning_alerts_enabled={enabled}")
+                        else:
+                            tg_reply(chat_id,
+                                "❌ Couldn't save your preference. Please try again later.")
+                            log.warning(f"settings: save_user_prefs failed for user_id={sub_uid}")
                     else:
                         tg_reply(chat_id,
                             "⚠️ Unknown setting. Available commands:\n"
                             "  <code>/settings</code> — show current preferences\n"
+                            "  <code>/settings morning_alerts on</code>\n"
+                            "  <code>/settings morning_alerts off</code>\n"
                             "  <code>/settings tcs_alerts on</code>\n"
                             "  <code>/settings tcs_alerts off</code>")
                     continue
@@ -1244,7 +1261,7 @@ def _run_scan(trade_date: date, cutoff_h: int = 10, cutoff_m: int = 30) -> list:
 
 
 def _broadcast_morning_to_subscribers(results: list, today) -> None:
-    """Send a clean morning setup list to all beta subscribers."""
+    """Send a clean morning setup list to beta subscribers who have not opted out."""
     if not results:
         return
     sorted_r = sorted(results, key=lambda x: float(x.get("tcs", 0)), reverse=True)
@@ -1260,7 +1277,21 @@ def _broadcast_morning_to_subscribers(results: list, today) -> None:
         lines.append(f"+ {remaining} more on radar")
     lines.append("")
     lines.append("Log your best trade today via your portal.")
-    _broadcast_to_subscribers("\n".join(lines))
+    message = "\n".join(lines)
+    try:
+        pairs = get_beta_chat_ids(exclude_user_id=USER_ID, morning_alerts_only=True)
+    except Exception as exc:
+        log.warning(f"get_beta_chat_ids failed in morning broadcast: {exc}")
+        return
+    sent = 0
+    for _uid, cid in pairs:
+        try:
+            tg_reply(cid, message)
+            sent += 1
+            time.sleep(0.1)
+        except Exception as exc:
+            log.warning(f"morning broadcast send error chat_id={cid}: {exc}")
+    log.info(f"morning broadcast sent to {sent} subscriber(s)")
 
 
 def _broadcast_eod_to_subscribers(results: list, today) -> None:

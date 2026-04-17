@@ -11203,7 +11203,11 @@ def save_beta_chat_id(user_id: str, chat_id) -> bool:
     return save_user_prefs(user_id, prefs)
 
 
-def get_beta_chat_ids(exclude_user_id: str = "", tcs_alerts_only: bool = False) -> list:
+def get_beta_chat_ids(
+    exclude_user_id: str = "",
+    tcs_alerts_only: bool = False,
+    morning_alerts_only: bool = False,
+) -> list:
     """Return list of (user_id, chat_id) tuples for all beta subscribers.
 
     Skips exclude_user_id (the owner) so they don't get duplicate messages.
@@ -11211,14 +11215,19 @@ def get_beta_chat_ids(exclude_user_id: str = "", tcs_alerts_only: bool = False) 
 
     When tcs_alerts_only is True, subscribers who have opted out of TCS
     threshold shift alerts (tcs_alerts_enabled == False) are excluded.
+
+    When morning_alerts_only is True, subscribers who have opted out of
+    morning setup alerts (morning_alerts_enabled == False) are excluded.
     """
     import json as _json
 
     def _keep(prefs: dict) -> bool:
-        """Return True if the subscriber should receive TCS alerts."""
-        if not tcs_alerts_only:
-            return True
-        return prefs.get("tcs_alerts_enabled", True) is not False
+        """Return True if the subscriber should receive this alert type."""
+        if tcs_alerts_only and prefs.get("tcs_alerts_enabled", True) is False:
+            return False
+        if morning_alerts_only and prefs.get("morning_alerts_enabled", True) is False:
+            return False
+        return True
 
     def _extract_pairs(rows_dict: dict) -> list:
         found = []
