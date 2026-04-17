@@ -128,6 +128,26 @@ def _cached_load_cognitive_delta_today(user_id: str = "", trade_date=None):
 def _cached_load_cognitive_delta_analysis(user_id: str = ""):
     return load_cognitive_delta_analysis(user_id=user_id)
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_check_db_connection() -> tuple[bool, str]:
+    return check_db_connection()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_get_breadth_regime_history(days: int = 30, user_id: str = "") -> list:
+    return get_breadth_regime_history(days=days, user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_get_tcs_alert_config_last_saved() -> str | None:
+    return get_tcs_alert_config_last_saved()
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_get_lunar_phase(today: "date" = None) -> dict:
+    return get_lunar_phase(today)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_get_recent_env_stats(user_id: str = "", days: int = 5) -> dict:
+    return get_recent_env_stats(user_id=user_id, days=days)
+
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
 def _regenerate_notes_html():
     import json as _json
@@ -3804,7 +3824,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     _top_struct_conf = round(float(probs.get(_top_struct_key, 0.0)), 1) if probs else 0.0
     try:
         _chart_weights  = compute_adaptive_weights(_AUTH_USER_ID)
-        _chart_env      = get_recent_env_stats(_AUTH_USER_ID, days=5)
+        _chart_env      = _cached_get_recent_env_stats(_AUTH_USER_ID, days=5)
         _chart_edge, _chart_edge_bkd = compute_edge_score(
             tcs=tcs,
             structure_conf=_top_struct_conf,
@@ -4459,11 +4479,7 @@ if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
 
 with st.sidebar:
     # ── Database connection status ─────────────────────────────────────────
-    @st.cache_data(ttl=30, show_spinner=False)
-    def _cached_db_status() -> tuple[bool, str]:
-        return check_db_connection()
-
-    _db_ok, _db_err = _cached_db_status()
+    _db_ok, _db_err = _cached_check_db_connection()
     if _db_ok:
         st.markdown(
             '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
@@ -4498,7 +4514,7 @@ with st.sidebar:
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
             if st.button("↩", key="_db_retry_btn",
                          help="Retry: clear cached status and recheck the database connection"):
-                _cached_db_status.clear()
+                _cached_check_db_connection.clear()
                 st.rerun()
 
     # ── Credential health indicator ────────────────────────────────────────
@@ -4701,11 +4717,12 @@ with st.sidebar:
         _tcs_ok = save_tcs_alert_structures(_tcs_chosen)
         if _tcs_ok:
             _cached_load_tcs_alert_structures.clear()
+            _cached_get_tcs_alert_config_last_saved.clear()
             st.success("Alert preferences saved.", icon="✅")
         else:
             st.error("Could not save preferences — database and local file both failed.", icon="⚠️")
 
-    _tcs_saved_str = get_tcs_alert_config_last_saved()
+    _tcs_saved_str = _cached_get_tcs_alert_config_last_saved()
     if _tcs_saved_str:
         st.caption(f"Last saved: {_tcs_saved_str}")
     else:
@@ -4735,7 +4752,7 @@ with st.sidebar:
 
     st.markdown("---")
     # ── Lunar Cycle ─────────────────────────────────────────────────────────
-    _lunar = get_lunar_phase()
+    _lunar = _cached_get_lunar_phase(date.today())
     _lunar_color = "#ff6b35" if _lunar["retail_mania"] else "#888"
     st.markdown(
         f'<div style="font-size:13px; padding:4px 0 2px 0;">'
@@ -11840,7 +11857,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
     st.caption("Last 30 days of tape regime — track how breadth conditions have shifted over time.")
     try:
         _rh_uid = st.session_state.get("auth_user_id", "")
-        _rh = get_breadth_regime_history(days=30, user_id=_rh_uid)
+        _rh = _cached_get_breadth_regime_history(days=30, user_id=_rh_uid)
         if _rh:
             import plotly.graph_objects as _pgo
             _rh_sorted = sorted(_rh, key=lambda x: x.get("trade_date", ""))
