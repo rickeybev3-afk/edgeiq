@@ -4492,6 +4492,7 @@ with st.sidebar:
     # ── Database connection status ─────────────────────────────────────────
     _db_ok, _db_err = _cached_check_db_connection()
     if _db_ok:
+        st.session_state["_db_last_connected_ts"] = time.monotonic()
         st.markdown(
             '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
             'padding:8px 12px; margin-bottom:8px;">'
@@ -4510,6 +4511,18 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     else:
+        _db_last_ts = st.session_state.get("_db_last_connected_ts")
+        if _db_last_ts is not None:
+            _db_elapsed_s = time.monotonic() - _db_last_ts
+            if _db_elapsed_s < 60:
+                _db_last_label = "just now"
+            elif _db_elapsed_s < 3600:
+                _db_last_label = f"{int(_db_elapsed_s // 60)} min ago"
+            else:
+                _db_last_label = f"{int(_db_elapsed_s // 3600)} hr ago"
+            _db_last_line = f'<br><span style="font-size:10px; color:#ef9a9a;">Last connected: {_db_last_label}</span>'
+        else:
+            _db_last_line = '<br><span style="font-size:10px; color:#ef9a9a;">Never connected this session</span>'
         _db_badge_col, _db_btn_col = st.columns([3, 1])
         with _db_badge_col:
             st.markdown(
@@ -4518,6 +4531,7 @@ with st.sidebar:
                 f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
                 f'🔴 Database: Unreachable</span>'
                 f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
+                f'{_db_last_line}'
                 '</div>',
                 unsafe_allow_html=True,
             )
