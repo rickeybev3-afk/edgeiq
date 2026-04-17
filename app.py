@@ -22164,7 +22164,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         if float(r.get("tcs", 0)) >= _pt_min_tcs
                     ]
                     _pt_total_scanned = len(_pt_results)
-                    _sim_failed = []  # populated after logging; used by preview table below
+                    _sim_failed = []   # populated after logging; used by preview table below
+                    _sim_rows = []    # populated after logging; used by preview table below
                     if not _pt_qualified:
                         st.warning(
                             f"Scanned {_pt_total_scanned} setups — none passed TCS ≥ {_pt_min_tcs}. "
@@ -22276,16 +22277,27 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     if not _pt_preview_df.empty and "aft_move_pct" in _pt_preview_df.columns:
                         _pt_preview_df = _pt_preview_df.rename(columns={"aft_move_pct": "follow_thru_%"})
 
-                    # Mark rows whose ticker was excluded from the sim due to missing price data
+                    # Add Sim Outcome and Sim P&L (R) columns from sim results
                     _sim_failed_reasons = {f["ticker"]: f.get("reason", "unknown reason") for f in _sim_failed} if _sim_failed else {}
                     _sim_failed_tickers = set(_sim_failed_reasons.keys())
-                    if _sim_failed_tickers and not _pt_preview_df.empty:
-                        _pt_preview_df.insert(
-                            1, "Sim",
-                            _pt_preview_df["ticker"].apply(
-                                lambda t: f"⚠ No sim — {_sim_failed_reasons[t]}" if t in _sim_failed_tickers else ""
-                            ),
-                        )
+                    _sim_lookup = {r["ticker"]: r for r in _sim_rows} if _sim_rows else {}
+                    if (_sim_lookup or _sim_failed_tickers) and not _pt_preview_df.empty:
+                        def _get_sim_outcome(t):
+                            if t in _sim_failed_tickers:
+                                return f"⚠ No sim — {_sim_failed_reasons[t]}"
+                            if t in _sim_lookup:
+                                return _sim_lookup[t].get("sim_outcome") or ""
+                            return ""
+                        def _get_sim_pnl(t):
+                            if t in _sim_lookup:
+                                v = _sim_lookup[t].get("pnl_r_sim")
+                                try:
+                                    return float(v) if v is not None else None
+                                except (TypeError, ValueError):
+                                    return None
+                            return None
+                        _pt_preview_df.insert(1, "Sim Outcome", _pt_preview_df["ticker"].apply(_get_sim_outcome))
+                        _pt_preview_df.insert(2, "Sim P&L (R)", _pt_preview_df["ticker"].apply(_get_sim_pnl))
 
                     # Persist preview table and sim_failed in session_state so the table
                     # survives reruns (e.g. sidebar interactions) without re-scanning.
@@ -22307,20 +22319,69 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 _preview_label_parts.append(f"TCS ≥ {_preview_label_tcs}")
             st.caption("Scan results for " + " · ".join(_preview_label_parts))
         _ss_preview_df = st.session_state["_pt_preview_df"]
-        if "Sim" in _ss_preview_df.columns:
+        if "Sim Outcome" in _ss_preview_df.columns:
+            import math as _preview_math
+
+            _sim_outcome_col = "Sim Outcome"
+            _sim_pnl_col = "Sim P&L (R)"
+            _has_pnl_col = _sim_pnl_col in _ss_preview_df.columns
+
+            def _preview_pnl_float(row):
+                if not _has_pnl_col:
+                    return None
+                v = row.get(_sim_pnl_col)
+                try:
+                    f = float(v) if v is not None else None
+                    return None if (f is None or _preview_math.isnan(f)) else f
+                except (TypeError, ValueError):
+                    return None
+
             def _preview_row_style(row):
-                if str(row.get("Sim", "")).startswith("⚠ No sim"):
-                    return ["background-color: rgba(255,152,0,0.15)"] * len(row)
-                return [""] * len(row)
-            st.dataframe(
-                _ss_preview_df.style.apply(_preview_row_style, axis=1)
-                    .map(
-                        lambda v: "color: #e65100; font-weight:700" if str(v).startswith("⚠ No sim") else "",
-                        subset=["Sim"],
-                    ),
-                use_container_width=True,
-                hide_index=True,
-            )
+                sim_outcome = str(row.get(_sim_outcome_col, ""))
+                cols = list(row.index)
+                pnl_f = _preview_pnl_float(row)
+
+                if sim_outcome.startswith("⚠ No sim"):
+                    bg = "background-color: rgba(255,152,0,0.10)"
+                    outcome_fg = "color: #e65100; font-weight:700"
+                    pnl_fg = "color: #e65100"
+                elif pnl_f is not None and pnl_f > 0:
+                    bg = "background-color: rgba(102,187,106,0.10)"
+                    outcome_fg = "color: #66bb6a; font-weight:600"
+                    pnl_fg = "color: #66bb6a; font-weight:700"
+                elif pnl_f is not None and pnl_f < 0:
+                    bg = "background-color: rgba(239,83,80,0.10)"
+                    outcome_fg = "color: #ef5350; font-weight:600"
+                    pnl_fg = "color: #ef5350; font-weight:700"
+                else:
+                    bg = ""
+                    outcome_fg = "color: #9e9e9e; font-weight:600" if sim_outcome else ""
+                    pnl_fg = "color: #9e9e9e; font-weight:600"
+
+                styles = []
+                for col in cols:
+                    if col == _sim_outcome_col:
+                        styles.append(outcome_fg)
+                    elif col == _sim_pnl_col:
+                        styles.append(pnl_fg)
+                    else:
+                        styles.append(bg)
+                return styles
+
+            def _fmt_pnl_r(v):
+                try:
+                    f = float(v)
+                    if _preview_math.isnan(f):
+                        return "—"
+                    return f"{f:+.2f}R"
+                except (TypeError, ValueError):
+                    return "—"
+
+            _styled = _ss_preview_df.style.apply(_preview_row_style, axis=1)
+            if _has_pnl_col:
+                _styled = _styled.format({_sim_pnl_col: _fmt_pnl_r})
+
+            st.dataframe(_styled, use_container_width=True, hide_index=True)
         else:
             st.dataframe(_ss_preview_df, use_container_width=True, hide_index=True)
 
