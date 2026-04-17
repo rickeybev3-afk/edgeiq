@@ -8120,13 +8120,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _cmp_opt_sort.html("""
 <script>
 (function() {
-    var _LS_KEY = 'opt_sort_col';
     var url = new URL(window.parent.location.href);
-    if (url.searchParams.has('opt_sort_col')) return;
-    var saved = localStorage.getItem(_LS_KEY);
-    if (!saved) return;
-    url.searchParams.set('opt_sort_col', saved);
-    window.parent.location.replace(url.toString());
+    var needReplace = false;
+    if (!url.searchParams.has('opt_sort_col')) {
+        var savedCol = localStorage.getItem('opt_sort_col');
+        if (savedCol) { url.searchParams.set('opt_sort_col', savedCol); needReplace = true; }
+    }
+    if (!url.searchParams.has('opt_sort_asc')) {
+        var savedAsc = localStorage.getItem('opt_sort_asc');
+        if (savedAsc !== null) { url.searchParams.set('opt_sort_asc', savedAsc); needReplace = true; }
+    }
+    if (needReplace) window.parent.location.replace(url.toString());
 })();
 </script>
 """, height=0)
@@ -8267,17 +8271,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _seed if _seed in _opt_all_cols else "Expectancy"
                         )
                     if "opt_hdr_sort_asc" not in st.session_state:
-                        st.session_state["opt_hdr_sort_asc"] = (
-                            st.session_state["opt_hdr_sort_col"] in _opt_asc_defaults
-                        )
+                        _qp_asc = st.query_params.get("opt_sort_asc")
+                        if _qp_asc is not None:
+                            st.session_state["opt_hdr_sort_asc"] = _qp_asc.lower() == "true"
+                        else:
+                            st.session_state["opt_hdr_sort_asc"] = (
+                                st.session_state["opt_hdr_sort_col"] in _opt_asc_defaults
+                            )
 
                     _opt_sort_col = st.session_state["opt_hdr_sort_col"]
                     _opt_sort_asc = st.session_state["opt_hdr_sort_asc"]
-                    # Persist sort column in URL + localStorage for cross-session restore
+                    # Persist sort column + direction in URL + localStorage for cross-session restore
                     if st.query_params.get("opt_sort_col") != _opt_sort_col:
                         st.query_params["opt_sort_col"] = _opt_sort_col
+                    _opt_sort_asc_str = "true" if _opt_sort_asc else "false"
+                    if st.query_params.get("opt_sort_asc") != _opt_sort_asc_str:
+                        st.query_params["opt_sort_asc"] = _opt_sort_asc_str
                     _cmp_opt_sort.html(
-                        f"<script>localStorage.setItem('opt_sort_col', {repr(_opt_sort_col)});</script>",
+                        f"<script>"
+                        f"localStorage.setItem('opt_sort_col', {repr(_opt_sort_col)});"
+                        f"localStorage.setItem('opt_sort_asc', {repr(_opt_sort_asc_str)});"
+                        f"</script>",
                         height=0,
                     )
                     # Use a numeric shadow key for Min TCS to avoid mixed int/str sort errors
