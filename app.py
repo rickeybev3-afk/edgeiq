@@ -9300,6 +9300,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 if _rp_tiered_r is not None and float(_rp_tiered_r) != TIERED_PNL_SENTINEL
                                 else None
                             )
+                            _rp_ib_raw = _rp_r.get("ib_range_pct")
                             _rp_trades.append({
                                 "Priority":    _rp_priority,
                                 "Date":        _rp_date_str,
@@ -9318,6 +9319,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "R (EOD)":     round(float(_rp_eod_r), 2) if _rp_eod_r is not None else None,
                                 "R (Tiered)":  _rp_tiered_display,
                                 "Move %":      round(_ft, 2),
+                                "IB Width %":  round(float(_rp_ib_raw), 2) if _rp_ib_raw is not None else None,
                                 "P&L ($)":     round(_trade_pnl, 2),
                                 "Equity":      round(_rp_equity_cur, 2),
                             })
@@ -11055,6 +11057,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             unsafe_allow_html=True,
                         )
 
+                        _rp_ib_threshold = _cached_load_ib_range_pct_threshold()
+                        _rp_has_ib_pct = (
+                            "IB Width %" in _rp_display_df.columns
+                            and _rp_display_df["IB Width %"].notna().any()
+                        )
+                        if _rp_has_ib_pct:
+                            st.caption(
+                                f"IB range % active threshold: **{_rp_ib_threshold:.1f}%** — "
+                                f"green = pass (below threshold), orange = near threshold (within 20%), "
+                                f"red = filtered out (at or above threshold)"
+                            )
+
                         def _rp_row_style(row):
                             wl = str(row.get("W/L", "")).strip()
                             # Detect marginal TCS (within 5 points of the floor)
@@ -11070,16 +11084,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _marginal:
                                 amber_base = "background-color:rgba(255,167,38,0.14)"
                                 amber_hi   = "background-color:rgba(255,167,38,0.28);color:#ffb300;font-weight:700"
-                                return [amber_hi if col == "W/L" else amber_base for col in row.index]
-                            if wl == "Win":
+                                styles = [amber_hi if col == "W/L" else amber_base for col in row.index]
+                            elif wl == "Win":
                                 base = "background-color:rgba(76,175,80,0.08)"
                                 hi   = "background-color:rgba(76,175,80,0.18);color:#66bb6a;font-weight:700"
+                                styles = [hi if col == "W/L" else base for col in row.index]
                             elif wl == "Loss":
                                 base = "background-color:rgba(239,83,80,0.08)"
                                 hi   = "background-color:rgba(239,83,80,0.18);color:#ef5350;font-weight:700"
+                                styles = [hi if col == "W/L" else base for col in row.index]
                             else:
-                                return ["background-color: rgba(144,164,174,0.08); color:#90a4ae"] * len(row)
-                            return [hi if col == "W/L" else base for col in row.index]
+                                styles = ["background-color: rgba(144,164,174,0.08); color:#90a4ae"] * len(row)
+                            # Override IB Width % cell with threshold-based color
+                            if "IB Width %" in row.index:
+                                _ib_col_idx = list(row.index).index("IB Width %")
+                                try:
+                                    _ib_v = float(row["IB Width %"])
+                                    if _ib_v < _rp_ib_threshold:
+                                        _ib_cell_style = "color:#66bb6a;font-weight:700"
+                                    elif _ib_v < _rp_ib_threshold * 1.2:
+                                        _ib_cell_style = "color:#ff9800;font-weight:700"
+                                    else:
+                                        _ib_cell_style = "color:#ef5350;font-weight:700"
+                                except (TypeError, ValueError):
+                                    _ib_cell_style = "color:#90a4ae"
+                                styles[_ib_col_idx] = _ib_cell_style
+                            return styles
 
                         _rp_styled_df = _rp_display_df.style.apply(_rp_row_style, axis=1)
                         st.dataframe(
@@ -11098,6 +11128,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "TCS Floor":  st.column_config.NumberColumn(
                                               format="%d",
                                               help="Per-structure TCS threshold applied to this trade (base 50 + offset). Trade passed because TCS ≥ this value."),
+                                "IB Width %": st.column_config.NumberColumn(
+                                              format="%.2f%%",
+                                              help="Initial Balance range as a % of open price. Green = below threshold, orange = near threshold (within 20%), red = at or above threshold."),
                             }
                         )
                         if _rp_bot_mode:
