@@ -126,6 +126,10 @@ def _cached_load_brain_weights(user_id: str = ""):
     return load_brain_weights(user_id=user_id)
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _cached_compute_adaptive_weights(user_id: str = ""):
+    return compute_adaptive_weights(user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_sa_journal():
     return load_sa_journal()
 
@@ -4054,7 +4058,7 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     _top_struct_key  = max(probs, key=probs.get) if probs else ""
     _top_struct_conf = round(float(probs.get(_top_struct_key, 0.0)), 1) if probs else 0.0
     try:
-        _chart_weights  = compute_adaptive_weights(_AUTH_USER_ID)
+        _chart_weights  = _cached_compute_adaptive_weights(_AUTH_USER_ID)
         _chart_env      = _cached_get_recent_env_stats(_AUTH_USER_ID, days=5)
         _chart_edge, _chart_edge_bkd = compute_edge_score(
             tcs=tcs,
@@ -6417,7 +6421,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     # ── Column layout ───────────────────────────────────────────────────────────
     # ── Calibration status banner ────────────────────────────────────────────────
     if _scores_loaded:
-        _w_info = compute_adaptive_weights(_AUTH_USER_ID)
+        _w_info = _cached_compute_adaptive_weights(_AUTH_USER_ID)
         _rows_used = _w_info.get("rows_used", 0)
         if _w_info.get("calibrated"):
             st.markdown(
@@ -17721,6 +17725,7 @@ ALTER TABLE backtest_sim_runs
         _cached_load_tcs_thresholds.clear()
         _cached_load_tcs_threshold_history.clear()
         _cached_load_brain_weights.clear()
+        _cached_compute_adaptive_weights.clear()
         _new_tcs = _cached_load_tcs_thresholds()
         _alert_tcs(_old_tcs, _new_tcs)
         # Persist one clean history event using the true before/after snapshots
