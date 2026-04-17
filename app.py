@@ -10700,7 +10700,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             f"{_tk_override_badge}"
                         )
                         _tk_has_best = False
-                    with st.expander(_tk_expander_label, expanded=False):
+                    with st.expander(_tk_expander_label, expanded=False, key=f"_tk_exp_{_tk_name}"):
                         if _tk_has_best:
                             st.markdown(
                                 f'<div style="background:#1e3a2a;border-radius:8px;padding:8px 14px;'
