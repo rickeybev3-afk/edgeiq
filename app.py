@@ -17038,6 +17038,40 @@ ALTER TABLE backtest_sim_runs
                                 config={"displayModeBar": False},
                             )
 
+            # ── Download threshold history (CSV — full 90-day window) ────────────
+            _dl_csv_rows = []
+            for _dl_rec in _bw_hist_90:
+                _dl_ts  = _dl_rec.get("timestamp", "")[:10]
+                _dl_old = _dl_rec.get("previous", {})
+                _dl_new = _dl_rec.get("thresholds", {})
+                for _dl_k, _dl_nv in _dl_new.items():
+                    try:
+                        _dl_thresh = int(_dl_nv)
+                    except (TypeError, ValueError):
+                        continue
+                    _dl_ov = _dl_old.get(_dl_k)
+                    try:
+                        _dl_delta = _dl_thresh - int(_dl_ov) if _dl_ov is not None else ""
+                    except (TypeError, ValueError):
+                        _dl_delta = ""
+                    _dl_csv_rows.append({
+                        "date":               _dl_ts,
+                        "structure":          WK_DISPLAY.get(_dl_k, _dl_k),
+                        "threshold value":    _dl_thresh,
+                        "delta from previous": _dl_delta,
+                    })
+            if _dl_csv_rows:
+                _dl_df  = pd.DataFrame(_dl_csv_rows)
+                _dl_csv = _dl_df.to_csv(index=False)
+                st.markdown("---")
+                st.download_button(
+                    label="⬇ Download threshold history (CSV)",
+                    data=_dl_csv,
+                    file_name="tcs_threshold_history_90d.csv",
+                    mime="text/csv",
+                    key="tcs_hist_dl_btn",
+                )
+
     _bw_rows = []
     for _k, _v in _bw.items():
         if isinstance(_v, (int, float)):
