@@ -523,6 +523,34 @@ _runtime_last_healthy_ts: float = 0.0      # monotonic timestamp of last fully-c
 # after the provider appears in this set, making the banner message accurate.
 _providers_confirmed_ok: set[str] = set()
 
+# Tracks which credential names have already triggered a Telegram alert this
+# session so we don't re-alert on every 5-minute check cycle.
+_runtime_credential_alerted: set[str] = set()
+
+
+def _send_telegram_message(token: str, chat_id: str, text: str) -> bool:
+    """Send a single Telegram message via the Bot API.
+
+    Returns True on success (HTTP 200), False otherwise.  All network errors
+    are caught and logged so callers never need to guard against exceptions.
+    """
+    import requests as _req_tg
+    try:
+        _resp = _req_tg.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=8,
+        )
+        if _resp.status_code == 200:
+            return True
+        logging.warning(
+            "[TG] sendMessage failed: HTTP %s — %s", _resp.status_code, _resp.text[:120]
+        )
+        return False
+    except Exception as _exc:
+        logging.warning("[TG] sendMessage error: %s", _exc)
+        return False
+
 
 def _run_credential_check() -> None:
     """Validate Alpaca and Supabase credentials and update _runtime_credential_errors.
@@ -618,6 +646,33 @@ def _run_credential_check() -> None:
             logging.warning("[RUNTIME] Mid-session credential failure — %s: %s", _n, _m)
     else:
         logging.debug("[RUNTIME] Credential re-check passed — all secrets still valid.")
+
+    # ── Telegram alert for newly detected credential failures ─────────────────
+    # Only fire once per credential per session (not on every 5-minute cycle).
+    import os as _os_cred
+    _tg_token   = _os_cred.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    _tg_chat_id = _os_cred.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    _failed_names = {_n for _n, _ in errors}
+    if _tg_token and _tg_chat_id:
+        _new_failures = [(_n, _m) for _n, _m in errors if _n not in _runtime_credential_alerted]
+        for _cred_name, _cred_msg in _new_failures:
+            _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _alert_msg = (
+                f"🔑 <b>Credential Failure Detected</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🚨 <b>{_cred_name}</b> is no longer valid.\n"
+                f"⏰ Detected at: <b>{_ts}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"{_cred_msg}"
+            )
+            if _send_telegram_message(_tg_token, _tg_chat_id, _alert_msg):
+                _runtime_credential_alerted.add(_cred_name)
+            else:
+                logging.warning("[RUNTIME] Telegram credential alert not delivered for %s", _cred_name)
+    # Always clear recovered credentials from the alerted set regardless of
+    # whether Telegram is configured — ensures a later re-failure always alerts.
+    for _recovered in _runtime_credential_alerted - _failed_names:
+        _runtime_credential_alerted.discard(_recovered)
 
 
 def get_runtime_last_check_ts() -> float:
