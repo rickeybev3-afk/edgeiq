@@ -6524,6 +6524,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _cum_r.values,
                         ) if "R (MFE)" in _rp_csv_df.columns else None
 
+                        # Rename R columns to human-readable headers for the spreadsheet
+                        _rp_csv_df = _rp_csv_df.rename(columns={
+                            "R (EOD)":    "EOD Hold R",
+                            "R (Tiered)": "Tiered Exit R",
+                        })
+
                         # Append a blank separator then a per-stat summary block
                         _csv_cols   = list(_rp_csv_df.columns)
                         _label_col  = _csv_cols[0]
