@@ -3696,6 +3696,30 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
             f'</div>',
             unsafe_allow_html=True,
         )
+    # ── Round Number Magnetism ─────────────────────────────────────────────────
+    if price_now > 0:
+        _rn_ceil = (int(price_now) + 1) if price_now % 1.0 != 0 else price_now
+        _rn_half_ceil = (int(price_now * 2) + 1) / 2.0
+        _dist_whole = abs(_rn_ceil - price_now) / price_now * 100
+        _dist_half  = abs(_rn_half_ceil - price_now) / price_now * 100
+        _nearest_dist   = min(_dist_whole, _dist_half)
+        _nearest_level  = _rn_ceil if _dist_whole <= _dist_half else _rn_half_ceil
+        if _nearest_dist < 3.0:
+            if _nearest_dist < 0.5:
+                _mag_label, _mag_col, _mag_e = "Strong", "#ef5350", "🔴"
+            elif _nearest_dist < 1.5:
+                _mag_label, _mag_col, _mag_e = "Moderate", "#ff9800", "🟡"
+            else:
+                _mag_label, _mag_col, _mag_e = "Weak", "#9e9e9e", "⚪"
+            _rn_type = "whole dollar" if _dist_whole <= _dist_half else "half dollar"
+            st.markdown(
+                f'<div style="background:#1a1a2e; border:1px solid {_mag_col}55; '
+                f'border-radius:6px; padding:6px 14px; margin:4px 0 6px 0; '
+                f'font-size:12px; color:{_mag_col}; font-weight:600;">'
+                f'🧲 ${_nearest_level:.2f} {_rn_type} ceiling — {_nearest_dist:.1f}% away '
+                f'({_mag_e} {_mag_label} Magnetism)</div>',
+                unsafe_allow_html=True,
+            )
     render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=is_runner, sector_bonus=sector_bonus,
                             insight=insight)

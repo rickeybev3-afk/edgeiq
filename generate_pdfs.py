@@ -2,7 +2,13 @@
 """
 generate_pdfs.py — Converts EdgeIQ markdown files to PDFs.
 Runs automatically at 11:59 PM ET via the Paper Trader Bot scheduler.
-Regenerates: EdgeIQ_Private_Build_Notes.pdf, EdgeIQ_IP_Documentation.pdf
+
+PDFs generated:
+  EdgeIQ_Public_Build_Notes.pdf    <- build_notes.md
+  EdgeIQ_Private_Build_Notes.pdf   <- build_notes_private.md
+  EdgeIQ_IP_Documentation.pdf      <- ip_documentation.md
+  EdgeIQ_Study_Notes.pdf           <- edgeiq_study_notes.md  (if present)
+  EdgeIQ_System_Documentation.pdf  <- replit.md              (if present)
 """
 
 import re
@@ -11,7 +17,8 @@ from datetime import datetime
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
-DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.local')
+DOCS_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.local')
+PROJ_ROOT  = os.path.dirname(os.path.abspath(__file__))
 
 _UNICODE_MAP = str.maketrans({
     '\u2014': '--',
@@ -38,14 +45,31 @@ def _sanitize(text: str) -> str:
 
 def _strip_inline(text: str) -> str:
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'\*(.+?)\*',     r'\1', text)
+    text = re.sub(r'`(.+?)`',       r'\1', text)
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
     return _sanitize(text)
 
 
 def _t(text: str) -> str:
     return _strip_inline(text)
+
+
+# ── Position-aware spacer ───────────────────────────────────────────────────
+# Skip the spacer when we're already near the top of a fresh page (Y < 40mm)
+# or within 25mm of the auto-page-break margin — avoids near-blank page tops
+# and orphaned headings.
+def _ln(pdf: FPDF, n: float) -> None:
+    """Add vertical space only when we're far enough from page edges."""
+    page_h   = pdf.h                        # e.g. 297mm for A4
+    margin   = 20                           # auto_page_break margin
+    cur_y    = pdf.get_y()
+    near_top = cur_y < 42                   # just past the cover / top margin
+    near_end = cur_y > (page_h - margin - 25)
+
+    if near_top or near_end:
+        return
+    pdf.ln(n)
 
 
 def render_markdown_to_pdf(md_path: str, pdf_path: str, title: str):
@@ -59,18 +83,21 @@ def render_markdown_to_pdf(md_path: str, pdf_path: str, title: str):
     # Cover block
     pdf.set_font('Helvetica', 'B', 20)
     pdf.set_text_color(15, 15, 15)
-    pdf.multi_cell(0, 12, _sanitize(title), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.multi_cell(0, 12, _sanitize(title), align='L',
+                   new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font('Helvetica', '', 10)
     pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 7, f'Generated: {_sanitize(ts)}', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 7, f'Generated: {_sanitize(ts)}',
+             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(180, 180, 180)
-    pdf.cell(0, 7, 'EDGEIQ -- CONFIDENTIAL / TRADE SECRET', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(3)
+    pdf.cell(0, 7, 'EDGEIQ -- CONFIDENTIAL / TRADE SECRET',
+             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(2)
     pdf.set_draw_color(80, 80, 80)
     pdf.set_line_width(0.4)
     pdf.line(18, pdf.get_y(), 192, pdf.get_y())
     pdf.set_line_width(0.2)
-    pdf.ln(7)
+    pdf.ln(5)
     pdf.set_text_color(30, 30, 30)
 
     with open(md_path, 'r', encoding='utf-8') as f:
@@ -79,105 +106,114 @@ def render_markdown_to_pdf(md_path: str, pdf_path: str, title: str):
     in_code = False
 
     for line in lines:
-        raw = _sanitize(line.rstrip('\n'))
+        raw     = _sanitize(line.rstrip('\n'))
         stripped = raw.strip()
 
         # Code block fence
         if stripped.startswith('```'):
             in_code = not in_code
             if in_code:
-                pdf.ln(2)
+                _ln(pdf, 1)
             else:
-                pdf.ln(3)
+                _ln(pdf, 2)
             continue
 
         if in_code:
             pdf.set_font('Courier', '', 8)
             pdf.set_text_color(50, 50, 50)
             pdf.set_fill_color(248, 248, 248)
-            pdf.multi_cell(0, 5, raw, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(0, 4.5, raw, fill=True,
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             continue
 
         text = _t(raw)
 
         # Horizontal rule
         if re.match(r'^-{3,}$', stripped):
-            pdf.ln(3)
+            _ln(pdf, 2)
             pdf.set_draw_color(200, 200, 200)
             pdf.line(18, pdf.get_y(), 192, pdf.get_y())
-            pdf.set_draw_color(200, 200, 200)
-            pdf.ln(5)
+            _ln(pdf, 3)
             continue
 
         # H1
         if re.match(r'^# [^#]', raw):
+            _ln(pdf, 3)
             pdf.set_font('Helvetica', 'B', 16)
             pdf.set_text_color(15, 15, 15)
-            pdf.ln(5)
-            pdf.multi_cell(0, 10, _t(raw[2:]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(1)
+            pdf.multi_cell(0, 10, _t(raw[2:]),
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             continue
 
         # H2
         if re.match(r'^## ', raw):
+            _ln(pdf, 2)
             pdf.set_font('Helvetica', 'B', 13)
             pdf.set_text_color(25, 25, 25)
-            pdf.ln(4)
-            pdf.multi_cell(0, 9, _t(raw[3:]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(1)
+            pdf.multi_cell(0, 9, _t(raw[3:]),
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             continue
 
         # H3
         if re.match(r'^### ', raw):
+            _ln(pdf, 2)
             pdf.set_font('Helvetica', 'B', 11)
             pdf.set_text_color(40, 40, 40)
-            pdf.ln(3)
-            pdf.multi_cell(0, 8, _t(raw[4:]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(0, 8, _t(raw[4:]),
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             continue
 
         # H4
         if re.match(r'^#### ', raw):
+            _ln(pdf, 1)
             pdf.set_font('Helvetica', 'B', 10)
             pdf.set_text_color(55, 55, 55)
-            pdf.ln(2)
-            pdf.multi_cell(0, 7, _t(raw[5:]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(0, 7, _t(raw[5:]),
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             continue
 
         # Bullet / numbered list
         m = re.match(r'^(\s*)([-*+]|\d+\.)\s+(.*)', raw)
         if m:
-            indent = len(m.group(1))
+            indent  = len(m.group(1))
             content = _t(m.group(3))
-            left = 18 + (indent * 2.5) + 4
+            left    = 18 + (indent * 2.5) + 4
             pdf.set_font('Helvetica', '', 9.5)
             pdf.set_text_color(40, 40, 40)
             pdf.set_x(left)
             pdf.cell(4, 5.5, '-')
-            pdf.multi_cell(0, 5.5, content, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(0, 5.5, content,
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             continue
 
         # Table row
         if stripped.startswith('|'):
             pdf.set_font('Courier', '', 8.5)
             pdf.set_text_color(50, 50, 50)
-            pdf.multi_cell(0, 5.5, _t(stripped), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(0, 5, _t(stripped),
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             continue
 
-        # Blank line
+        # Blank line — use smart spacer (single small gap, not 3pt)
         if stripped == '':
-            pdf.ln(3)
+            _ln(pdf, 2)
             continue
 
         # Regular paragraph
         pdf.set_font('Helvetica', '', 10)
         pdf.set_text_color(40, 40, 40)
-        pdf.multi_cell(0, 6, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.multi_cell(0, 6, text,
+                       new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     # Footer on last page
     pdf.set_y(-14)
     pdf.set_font('Helvetica', '', 8)
     pdf.set_text_color(160, 160, 160)
-    pdf.cell(0, 8, f'Page {pdf.page} | Auto-generated {_sanitize(ts)} | EDGEIQ CONFIDENTIAL', align='C')
+    pdf.cell(
+        0, 8,
+        f'Page {pdf.page} | Auto-generated {_sanitize(ts)} | EDGEIQ CONFIDENTIAL',
+        align='C',
+    )
 
     pdf.output(pdf_path)
     size_kb = os.path.getsize(pdf_path) // 1024
@@ -186,16 +222,35 @@ def render_markdown_to_pdf(md_path: str, pdf_path: str, title: str):
 
 
 def generate_all_pdfs() -> list[str]:
+    """
+    Build all PDFs from their markdown sources.
+    Sources without a matching .md file are skipped gracefully.
+    """
     tasks = [
         (
             os.path.join(DOCS_DIR, 'build_notes.md'),
+            os.path.join(DOCS_DIR, 'EdgeIQ_Public_Build_Notes.pdf'),
+            'EdgeIQ -- Public Build Notes',
+        ),
+        (
+            os.path.join(DOCS_DIR, 'build_notes_private.md'),
             os.path.join(DOCS_DIR, 'EdgeIQ_Private_Build_Notes.pdf'),
-            'EdgeIQ -- Private Build Notes',
+            'EdgeIQ -- Private Build Notes (Confidential)',
         ),
         (
             os.path.join(DOCS_DIR, 'ip_documentation.md'),
             os.path.join(DOCS_DIR, 'EdgeIQ_IP_Documentation.pdf'),
             'EdgeIQ -- Intellectual Property Documentation',
+        ),
+        (
+            os.path.join(DOCS_DIR, 'edgeiq_study_notes.md'),
+            os.path.join(DOCS_DIR, 'EdgeIQ_Study_Notes.pdf'),
+            'EdgeIQ -- Study Notes',
+        ),
+        (
+            os.path.join(PROJ_ROOT, 'replit.md'),
+            os.path.join(DOCS_DIR, 'EdgeIQ_System_Documentation.pdf'),
+            'EdgeIQ -- System Documentation',
         ),
     ]
 
