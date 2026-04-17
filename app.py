@@ -8125,9 +8125,65 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 ),
                             },
                         )
+                        # ── R-stats summary block for sweep summary CSV ──────────
+                        _sw_sum_cols   = list(_tk_sw_df.columns)
+                        _sw_lbl_col    = _sw_sum_cols[0]
+                        _sw_val_col    = _sw_sum_cols[1] if len(_sw_sum_cols) > 1 else _sw_sum_cols[0]
+                        # Filter to only valid Win/Loss trades, matching the sweep eligibility logic
+                        _sw_tgrp       = _bt_df[_bt_df["ticker"] == _tk_name]
+                        if "actual_outcome" in _sw_tgrp.columns:
+                            _sw_valid_mask = (
+                                _sw_tgrp["actual_outcome"].str.lower().str.contains("bullish|bearish", na=False)
+                                & _sw_tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                            )
+                        elif "win_loss" in _sw_tgrp.columns:
+                            _sw_valid_mask = _sw_tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                        else:
+                            _sw_valid_mask = _pd_bt.Series([True] * len(_sw_tgrp), index=_sw_tgrp.index)
+                        _sw_tgrp       = _sw_tgrp[_sw_valid_mask]
+                        _sw_r_col      = (
+                            "eod_pnl_r" if "eod_pnl_r" in _sw_tgrp.columns
+                            else ("tiered_pnl_r" if "tiered_pnl_r" in _sw_tgrp.columns else None)
+                        )
+                        if _sw_r_col is not None:
+                            _sw_r_ser       = _pd_bt.to_numeric(_sw_tgrp[_sw_r_col], errors="coerce").dropna()
+                            _sw_n           = len(_sw_r_ser)
+                            _sw_fb_n        = 0
+                            if "false_break_up" in _sw_tgrp.columns:
+                                _sw_fb_n = (
+                                    _sw_tgrp["false_break_up"].fillna(False).astype(bool).sum()
+                                    + _sw_tgrp.get("false_break_down", _pd_bt.Series(dtype=bool)).fillna(False).astype(bool).sum()
+                                )
+                            _sw_fb_rate     = round(_sw_fb_n / _sw_n * 100, 1) if _sw_n else 0
+                            _sw_avg_win_r   = round(_sw_r_ser[_sw_r_ser > 0].mean(), 2) if (_sw_r_ser > 0).any() else 0
+                            _sw_avg_loss_r  = round(_sw_r_ser[_sw_r_ser < 0].mean(), 2) if (_sw_r_ser < 0).any() else 0
+                            _sw_exp_r       = round(_sw_r_ser.mean(), 3) if _sw_n else 0
+                            _sw_cum_r_vals  = _sw_r_ser.cumsum().reset_index(drop=True)
+                            _sw_peak_r      = _sw_cum_r_vals.cummax()
+                            _sw_max_dd_r    = round((_sw_cum_r_vals - _sw_peak_r).min(), 2) if _sw_n else 0
+                            def _sw_stat_r(lbl, val):
+                                _rx = {c: "" for c in _sw_sum_cols}
+                                _rx[_sw_lbl_col] = lbl
+                                _rx[_sw_val_col] = val
+                                return _rx
+                            _sw_summ_rows = [
+                                {c: "" for c in _sw_sum_cols},
+                                _sw_stat_r("--- R-STATS SUMMARY ---", ""),
+                                _sw_stat_r("Stop-Out Rate", f"{_sw_fb_rate}%"),
+                                _sw_stat_r("Avg Win (R)", f"+{_sw_avg_win_r}R"),
+                                _sw_stat_r("Avg Loss (R)", f"{_sw_avg_loss_r}R"),
+                                _sw_stat_r("Expectancy", f"{_sw_exp_r:+.3f}R/trade"),
+                                _sw_stat_r("Max Drawdown (R)", f"{abs(_sw_max_dd_r)}R"),
+                            ]
+                            _tk_sw_csv_export = _pd_bt.concat(
+                                [_tk_sw_df, _pd_bt.DataFrame(_sw_summ_rows)],
+                                ignore_index=True,
+                            )
+                        else:
+                            _tk_sw_csv_export = _tk_sw_df
                         st.download_button(
                             label="⬇️ Download Sweep Summary CSV",
-                            data=_tk_sw_df.to_csv(index=False),
+                            data=_tk_sw_csv_export.to_csv(index=False),
                             file_name=f"{_tk_name}_sweep_summary.csv",
                             mime="text/csv",
                             key=f"_dl_sweep_{_tk_name}",
@@ -8394,14 +8450,58 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                             pd.to_numeric(_tk_csv_export[_ccol], errors="coerce")
                                             .astype("Int64")
                                         )
-                                _tk_csv_bytes = _tk_csv_export.to_csv(index=False).encode("utf-8")
+                                # ── R-stats summary block for drill-down CSV ─────────
+                                _dd_csv_cols  = list(_tk_csv_export.columns)
+                                _dd_lbl_col   = _dd_csv_cols[0]
+                                _dd_val_col   = _dd_csv_cols[1] if len(_dd_csv_cols) > 1 else _dd_csv_cols[0]
+                                _dd_r_col     = (
+                                    "eod_pnl_r" if "eod_pnl_r" in _tk_drill_df.columns
+                                    else ("tiered_pnl_r" if "tiered_pnl_r" in _tk_drill_df.columns else None)
+                                )
+                                if _dd_r_col is not None:
+                                    _dd_r_ser      = pd.to_numeric(_tk_drill_df[_dd_r_col], errors="coerce").dropna()
+                                    _dd_n          = len(_dd_r_ser)
+                                    _dd_fb_n       = 0
+                                    if "false_break_up" in _tk_drill_df.columns:
+                                        _dd_fb_n = (
+                                            _tk_drill_df["false_break_up"].fillna(False).astype(bool).sum()
+                                            + _tk_drill_df.get("false_break_down", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()
+                                        )
+                                    _dd_fb_rate    = round(_dd_fb_n / _dd_n * 100, 1) if _dd_n else 0
+                                    _dd_avg_win_r  = round(_dd_r_ser[_dd_r_ser > 0].mean(), 2) if (_dd_r_ser > 0).any() else 0
+                                    _dd_avg_loss_r = round(_dd_r_ser[_dd_r_ser < 0].mean(), 2) if (_dd_r_ser < 0).any() else 0
+                                    _dd_exp_r      = round(_dd_r_ser.mean(), 3) if _dd_n else 0
+                                    _dd_cum_r_v    = _dd_r_ser.cumsum().reset_index(drop=True)
+                                    _dd_peak_r     = _dd_cum_r_v.cummax()
+                                    _dd_max_dd_r   = round((_dd_cum_r_v - _dd_peak_r).min(), 2) if _dd_n else 0
+                                    def _dd_stat_r(lbl, val):
+                                        _rx = {c: "" for c in _dd_csv_cols}
+                                        _rx[_dd_lbl_col] = lbl
+                                        _rx[_dd_val_col] = val
+                                        return _rx
+                                    _dd_summ_rows = [
+                                        {c: "" for c in _dd_csv_cols},
+                                        _dd_stat_r("--- R-STATS SUMMARY ---", ""),
+                                        _dd_stat_r("Stop-Out Rate", f"{_dd_fb_rate}%"),
+                                        _dd_stat_r("Avg Win (R)", f"+{_dd_avg_win_r}R"),
+                                        _dd_stat_r("Avg Loss (R)", f"{_dd_avg_loss_r}R"),
+                                        _dd_stat_r("Expectancy", f"{_dd_exp_r:+.3f}R/trade"),
+                                        _dd_stat_r("Max Drawdown (R)", f"{abs(_dd_max_dd_r)}R"),
+                                    ]
+                                    _dd_csv_final  = pd.concat(
+                                        [_tk_csv_export, pd.DataFrame(_dd_summ_rows)],
+                                        ignore_index=True,
+                                    )
+                                    _tk_csv_bytes  = _dd_csv_final.to_csv(index=False).encode("utf-8")
+                                else:
+                                    _tk_csv_bytes  = _tk_csv_export.to_csv(index=False).encode("utf-8")
                                 st.download_button(
                                     label="⬇ Download CSV",
                                     data=_tk_csv_bytes,
                                     file_name=f"{_tk_name}_TCS{_tk_drill_floor}_trades.csv",
                                     mime="text/csv",
                                     key=f"dl_csv_{_tk_name}_{_tk_drill_floor}",
-                                    help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file",
+                                    help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file — includes R-stats summary block at the bottom",
                                 )
 
                 # ── Export All Tickers Sweep CSV ──────────────────────────────────
