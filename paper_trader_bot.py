@@ -383,6 +383,11 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"  [{ticker}] skip order — IB range {ib_range_pct_val:.1f}% of price "
                 f"(>= 10% threshold, chaotic structure, hist WR 54-68%)"
             )
+            tg_send(
+                f"⛔ <b>{ticker} Order blocked — IB too wide</b>\n"
+                f"IB range <b>{ib_range_pct_val:.1f}%</b> of price (≥ 10% threshold)\n"
+                f"Chaotic structure — hist WR 54-68% vs 72-86% when narrow"
+            )
             return
 
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
@@ -404,6 +409,12 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"  [{ticker}] skip order — VWAP misaligned: {direction} "
                 f"but close {close_val:.2f} {_side} VWAP {vwap_val:.2f} "
                 f"(hist WR 71.8% vs 97.6% when aligned)"
+            )
+            _side_word = "below" if direction == "Bullish Break" else "above"
+            tg_send(
+                f"⛔ <b>{ticker} Order blocked — VWAP misaligned</b>\n"
+                f"{direction}: close <b>${close_val:.2f}</b> is {_side_word} VWAP <b>${vwap_val:.2f}</b>\n"
+                f"Hist WR 71.8% misaligned vs 97.6% aligned — skipping"
             )
             return
 
@@ -829,6 +840,35 @@ def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
     above_ib = round(ib_high * 1.005, 2)
     below_ib = round(ib_low  * 0.995, 2)
 
+    # IB range % quality filter display
+    ib_range_pct = ((ib_high - ib_low) / open_px * 100) if open_px > 0 else None
+    if ib_range_pct is not None:
+        ib_pct_icon = "✅" if ib_range_pct < 10.0 else "⚠️"
+        ib_pct_str  = f"  ·  <b>{ib_range_pct:.1f}%</b> of price {ib_pct_icon}"
+    else:
+        ib_pct_str  = ""
+
+    # VWAP alignment quality filter display
+    # Use close_price specifically (same basis as the order gate), not the cur_px
+    # fallback that substitutes ib_high when close_price is missing.
+    vwap_at_ib = float(r.get("vwap_at_ib") or 0)
+    close_px   = float(r.get("close_price") or 0)
+    vwap_line  = ""
+    if vwap_at_ib > 0:
+        _pl = predicted.lower()
+        if "bullish break" in _pl and close_px > 0:
+            _vwap_aligned = close_px >= vwap_at_ib
+            _vwap_side    = "above" if close_px >= vwap_at_ib else "below"
+            _vwap_icon    = "✅" if _vwap_aligned else "⛔"
+            vwap_line = f"\n📐 VWAP at IB: <b>${vwap_at_ib:.2f}</b> — close {_vwap_side} {_vwap_icon}"
+        elif "bearish break" in _pl and close_px > 0:
+            _vwap_aligned = close_px <= vwap_at_ib
+            _vwap_side    = "below" if close_px <= vwap_at_ib else "above"
+            _vwap_icon    = "✅" if _vwap_aligned else "⛔"
+            vwap_line = f"\n📐 VWAP at IB: <b>${vwap_at_ib:.2f}</b> — close {_vwap_side} {_vwap_icon}"
+        else:
+            vwap_line = f"\n📐 VWAP at IB: <b>${vwap_at_ib:.2f}</b> — n/a for non-directional"
+
     # Entry logic hint based on structure
     p_lower = predicted.lower()
     if "bullish break" in p_lower or ("trend" in p_lower and ("up" in p_lower or "bull" in p_lower)):
@@ -893,7 +933,8 @@ def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
         f"({chg_arrow}{abs(chg_pct):.1f}% from open ${open_px:.2f})\n"
         f"📊 Structure: <b>{predicted}</b>  ({conf:.0f}% conf)\n"
         f"{tcs_line}\n"
-        f"📦 IB Range:  ${ib_low:.2f} – ${ib_high:.2f}  (mid ${ib_mid:.2f})\n"
+        f"📦 IB Range:  ${ib_low:.2f} – ${ib_high:.2f}  (mid ${ib_mid:.2f}){ib_pct_str}"
+        f"{vwap_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{entry_hint}\n"
         f"🔑 Key levels:\n"
