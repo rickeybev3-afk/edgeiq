@@ -2118,6 +2118,238 @@ def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
     return {"written": written, "skipped": skipped}
 
 
+def _eod_collect_close_prices_backtest(lookback_days: int = 7) -> dict:
+    """Fetch and store EOD close prices for backtest_sim_runs rows that still
+    have NULL close_price, covering the past ``lookback_days`` calendar days.
+
+    Mirrors _eod_collect_close_prices() but targets the backtest_sim_runs table
+    (date field: sim_date).  Called during nightly_recalibration() so the
+    backtest history self-heals without manual backfill_close_prices.py runs.
+
+    Returns {"written": N, "skipped": M}.
+    """
+    from collections import defaultdict
+    from datetime import timedelta
+
+    if not _supabase_client:
+        log.warning("_eod_collect_close_prices_backtest: No Supabase connection — skipping.")
+        return {"written": 0, "skipped": 0}
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        log.warning("_eod_collect_close_prices_backtest: Alpaca keys not set — skipping.")
+        return {"written": 0, "skipped": 0}
+
+    log.info(
+        f"EOD close-price sweep (backtest): querying backtest_sim_runs with NULL close_price "
+        f"(last {lookback_days} days, user {USER_ID})…"
+    )
+
+    cutoff = str(date.today() - timedelta(days=lookback_days))
+    _PAGE = 1000
+    rows: list = []
+    offset = 0
+    try:
+        while True:
+            resp = (
+                _supabase_client.table("backtest_sim_runs")
+                .select("id,ticker,sim_date")
+                .eq("user_id", USER_ID)
+                .is_("close_price", "null")
+                .gte("sim_date", cutoff)
+                .order("sim_date", desc=True)
+                .order("id", desc=True)
+                .range(offset, offset + _PAGE - 1)
+                .execute()
+            )
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < _PAGE:
+                break
+            offset += _PAGE
+    except Exception as _qe:
+        log.warning(f"_eod_collect_close_prices_backtest: DB query failed: {_qe}")
+        return {"written": 0, "skipped": 0}
+
+    if not rows:
+        log.info(
+            "No backtest_sim_runs rows with NULL close_price in the look-back window — nothing to collect."
+        )
+        return {"written": 0, "skipped": 0}
+
+    by_date: dict[str, list] = defaultdict(list)
+    for r in rows:
+        sd = (r.get("sim_date") or "")[:10]
+        if sd:
+            by_date[sd].append(r)
+
+    log.info(
+        f"  Found {len(rows)} backtest row(s) across {len(by_date)} date(s) "
+        f"with NULL close_price."
+    )
+
+    try:
+        from backfill_close_prices import fetch_closes_for_date
+    except Exception as _ie:
+        log.warning(f"_eod_collect_close_prices_backtest: Cannot import fetch_closes_for_date: {_ie}")
+        return {"written": 0, "skipped": 0}
+
+    written = 0
+    skipped = 0
+
+    for sim_date_str in sorted(by_date.keys(), reverse=True):
+        date_rows = by_date[sim_date_str]
+        tickers = sorted({r["ticker"] for r in date_rows if r.get("ticker")})
+
+        log.info(
+            f"  {sim_date_str}: {len(tickers)} ticker(s) — "
+            f"{', '.join(tickers[:10])}{'…' if len(tickers) > 10 else ''}"
+        )
+
+        try:
+            closes = fetch_closes_for_date(sim_date_str, tickers)
+        except Exception as _fe:
+            log.warning(f"  Alpaca fetch failed for {sim_date_str}: {_fe}")
+            skipped += len(date_rows)
+            continue
+
+        for row in date_rows:
+            ticker = row.get("ticker", "")
+            cp = closes.get(ticker)
+            if cp is None:
+                log.debug(f"    No Alpaca data for {ticker} on {sim_date_str} — skipping.")
+                skipped += 1
+                continue
+            try:
+                _supabase_client.table("backtest_sim_runs").update(
+                    {"close_price": round(float(cp), 4)}
+                ).eq("id", row["id"]).execute()
+                log.info(f"    {ticker}: close_price → {cp:.4f}")
+                written += 1
+            except Exception as _ue:
+                log.warning(
+                    f"    DB update failed for {ticker} (id={row['id']}): {_ue}"
+                )
+                skipped += 1
+
+    log.info(
+        f"EOD close-price sweep (backtest) done — {written} written, "
+        f"{skipped} skipped (no Alpaca data or update error)."
+    )
+    return {"written": written, "skipped": skipped}
+
+
+def _recalc_eod_pnl_r_recent_backtest(lookback_days: int = 7) -> dict:
+    """Compute eod_pnl_r for backtest_sim_runs rows that now have close_price
+    but still have NULL eod_pnl_r, covering the past ``lookback_days`` days.
+
+    Mirrors _recalc_eod_pnl_r_recent() but targets backtest_sim_runs (date
+    field: sim_date).  Called immediately after
+    _eod_collect_close_prices_backtest() during nightly recalibration.
+
+    Returns {"written": N, "skipped": M}.
+    """
+    from datetime import timedelta
+
+    if not _supabase_client:
+        log.warning("_recalc_eod_pnl_r_recent_backtest: No Supabase connection — skipping.")
+        return {"written": 0, "skipped": 0}
+
+    try:
+        from backend import compute_trade_sim_tiered as _compute_tiered
+    except Exception as _ie:
+        log.warning(f"_recalc_eod_pnl_r_recent_backtest: Cannot import compute_trade_sim_tiered: {_ie}")
+        return {"written": 0, "skipped": 0}
+
+    cutoff = str(date.today() - timedelta(days=lookback_days))
+    _PAGE = 1000
+    rows: list = []
+
+    for direction in ("Bullish Break", "Bearish Break"):
+        offset = 0
+        while True:
+            try:
+                resp = (
+                    _supabase_client.table("backtest_sim_runs")
+                    .select("id,actual_outcome,ib_high,ib_low,close_price")
+                    .eq("user_id", USER_ID)
+                    .eq("actual_outcome", direction)
+                    .is_("eod_pnl_r", "null")
+                    .not_.is_("close_price", "null")
+                    .gte("sim_date", cutoff)
+                    .order("id", desc=True)
+                    .range(offset, offset + _PAGE - 1)
+                    .execute()
+                )
+            except Exception as _qe:
+                log.warning(
+                    f"_recalc_eod_pnl_r_recent_backtest: DB query failed ({direction}): {_qe}"
+                )
+                break
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < _PAGE:
+                break
+            offset += _PAGE
+
+    if not rows:
+        log.info(
+            "Nightly close-price catch-up (backtest): no backtest_sim_runs rows need eod_pnl_r "
+            "recalculation (last %d days).", lookback_days
+        )
+        return {"written": 0, "skipped": 0}
+
+    log.info(
+        f"Nightly eod_pnl_r recalc (backtest): {len(rows)} backtest_sim_runs row(s) have "
+        f"close_price but NULL eod_pnl_r — computing now…"
+    )
+
+    written = 0
+    skipped = 0
+
+    for row in rows:
+        close_price = row.get("close_price")
+        ib_high = row.get("ib_high")
+        ib_low = row.get("ib_low")
+        direction = (row.get("actual_outcome") or "").strip()
+        row_id = row.get("id")
+
+        if close_price is None or ib_high is None or ib_low is None:
+            skipped += 1
+            continue
+
+        try:
+            tiered = _compute_tiered(
+                aft_df=None,
+                ib_high=ib_high,
+                ib_low=ib_low,
+                direction=direction,
+                close_px=close_price,
+            )
+        except Exception as _te:
+            log.debug(f"  compute_trade_sim_tiered failed for id={row_id}: {_te}")
+            skipped += 1
+            continue
+
+        eod_pnl_r = tiered.get("eod_pnl_r")
+        if eod_pnl_r is None:
+            skipped += 1
+            continue
+
+        try:
+            _supabase_client.table("backtest_sim_runs").update(
+                {"eod_pnl_r": round(float(eod_pnl_r), 6)}
+            ).eq("id", row_id).execute()
+            log.info(f"    id={row_id}: eod_pnl_r → {eod_pnl_r:.4f}R")
+            written += 1
+        except Exception as _ue:
+            log.warning(f"    DB update failed for id={row_id}: {_ue}")
+            skipped += 1
+
+    log.info(
+        f"Nightly eod_pnl_r recalc (backtest) done — {written} written, {skipped} skipped."
+    )
+    return {"written": written, "skipped": skipped}
+
+
 def eod_update():
     """4:20 PM ET — update paper trades with full-day outcomes + send EOD summary."""
     today = date.today()
@@ -2749,6 +2981,33 @@ def nightly_recalibration():
             )
     except Exception as exc:
         log.warning(f"Nightly eod_pnl_r recalculation failed: {exc}")
+
+    # ── Backtest close-price catch-up sweep (last 7 days) ─────────────────────
+    # backtest_sim_runs can also accumulate NULL close_price rows when the bot
+    # was down or Alpaca data was unavailable.  Running the same 7-day sweep
+    # here keeps both tables self-healing without manual backfill_close_prices.py
+    # invocations.
+    try:
+        log.info("Nightly close-price catch-up sweep (backtest): checking last 7 days…")
+        bcp_result = _eod_collect_close_prices_backtest(lookback_days=7)
+        log.info(
+            f"Nightly close-price catch-up (backtest): "
+            f"{bcp_result['written']} filled, {bcp_result['skipped']} skipped."
+        )
+    except Exception as exc:
+        log.warning(f"Nightly close-price catch-up sweep (backtest) failed: {exc}")
+
+    # ── eod_pnl_r recalculation for newly-filled backtest close prices ─────────
+    try:
+        bpr_result = _recalc_eod_pnl_r_recent_backtest(lookback_days=7)
+        if bpr_result["written"]:
+            log.info(
+                f"Nightly eod_pnl_r recalc (backtest): "
+                f"{bpr_result['written']} row(s) updated, "
+                f"{bpr_result['skipped']} skipped."
+            )
+    except Exception as exc:
+        log.warning(f"Nightly eod_pnl_r recalculation (backtest) failed: {exc}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
