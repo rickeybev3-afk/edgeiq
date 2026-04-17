@@ -150,7 +150,7 @@ def _load_all_subscriber_prefs() -> list:
     """Return a list of all subscribers with their credential_alerts_enabled status.
 
     Queries user_preferences from Supabase (all rows) or local file fallback.
-    Each entry:  {"user_id": str, "credential_alerts_enabled": bool}
+    Each entry:  {"user_id": str, "credential_alerts_enabled": bool, "tg_name": str}
     """
     result = []
 
@@ -181,6 +181,7 @@ def _load_all_subscriber_prefs() -> list:
                     result.append({
                         "user_id": uid,
                         "credential_alerts_enabled": prefs.get("credential_alerts_enabled", True) is not False,
+                        "tg_name": prefs.get("tg_name", ""),
                     })
             return result
         except Exception:
@@ -197,6 +198,7 @@ def _load_all_subscriber_prefs() -> list:
                 result.append({
                     "user_id": uid,
                     "credential_alerts_enabled": prefs.get("credential_alerts_enabled", True) is not False,
+                    "tg_name": prefs.get("tg_name", ""),
                 })
     except Exception:
         pass

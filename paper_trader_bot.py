@@ -787,9 +787,19 @@ def telegram_listener() -> None:
                         # Save chat_id linked to the user_id from the deep link.
                         # Portal links are personally distributed by the owner, so
                         # possession of a valid link is treated as authorization.
+                        from_user = msg.get("from", {})
+                        _tg_username = from_user.get("username", "")
+                        _tg_first = from_user.get("first_name", "")
+                        _tg_last = from_user.get("last_name", "")
+                        if _tg_username:
+                            _tg_name = f"@{_tg_username}"
+                        elif _tg_first or _tg_last:
+                            _tg_name = f"{_tg_first} {_tg_last}".strip()
+                        else:
+                            _tg_name = ""
                         _saved = False
                         try:
-                            _saved = save_beta_chat_id(payload, chat_id)
+                            _saved = save_beta_chat_id(payload, chat_id, tg_name=_tg_name)
                         except Exception as _se:
                             log.warning(f"save_beta_chat_id failed: {_se}")
                         if _saved:

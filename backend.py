@@ -13635,12 +13635,14 @@ def load_user_prefs(user_id: str) -> dict:
     return {}
 
 
-def save_beta_chat_id(user_id: str, chat_id) -> bool:
-    """Store a beta tester's Telegram chat ID in their user prefs."""
+def save_beta_chat_id(user_id: str, chat_id, tg_name: str = "") -> bool:
+    """Store a beta tester's Telegram chat ID (and optional display name) in their user prefs."""
     if not user_id:
         return False
     prefs = load_user_prefs(user_id)
     prefs["tg_chat_id"] = str(chat_id)
+    if tg_name:
+        prefs["tg_name"] = tg_name
     return save_user_prefs(user_id, prefs)
 
 

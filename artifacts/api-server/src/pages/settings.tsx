@@ -22,6 +22,7 @@ interface CredentialAlertsState {
 interface SubscriberCredentialStatus {
   user_id: string;
   credential_alerts_enabled: boolean;
+  tg_name?: string;
 }
 
 interface SubscribersState {
@@ -799,6 +800,8 @@ function ModeButton({
 
 function SubscriberRow({ subscriber }: { subscriber: SubscriberCredentialStatus }) {
   const enabled = subscriber.credential_alerts_enabled;
+  const displayName = subscriber.tg_name || subscriber.user_id;
+  const hasName = Boolean(subscriber.tg_name);
   return (
     <div
       style={{
@@ -815,15 +818,30 @@ function SubscriberRow({ subscriber }: { subscriber: SubscriberCredentialStatus 
         <div
           style={{
             fontSize: "13px",
-            fontFamily: "monospace",
             color: "#cbd5e1",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
+            fontFamily: hasName ? "inherit" : "monospace",
           }}
         >
-          {subscriber.user_id}
+          {displayName}
         </div>
+        {hasName && (
+          <div
+            style={{
+              fontSize: "11px",
+              fontFamily: "monospace",
+              color: "#475569",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              marginTop: "2px",
+            }}
+          >
+            {subscriber.user_id}
+          </div>
+        )}
       </div>
       <div
         style={{
