@@ -44,90 +44,92 @@ def load_context_levels():
 
 def simulate_adaptive_exit(trade_row, ctx_row):
     """
-    Returns adaptive_pnl_r for one trade given context levels.
-    
-    Logic:
-    1. Compute entry, stop, bracket target from IB levels + follow_thru_pct
-    2. Find nearest S/R level between entry and bracket target
-    3. If MACD direction MATCHES trade direction → use nearest S/R as target
-       Otherwise → stick with bracket target (MACD not confirming, be conservative)
-    4. Apply same stop (-1R)
-    5. Compute P&L in R
-    """
-    outcome = trade_row.get('actual_outcome', '')
-    ib_high = trade_row.get('ib_high')
-    ib_low  = trade_row.get('ib_low')
-    ftp     = trade_row.get('follow_thru_pct')  # follow-through %
+    Returns bracket vs adaptive P&L in R for one trade.
 
-    if not all([ib_high, ib_low, ftp is not None]):
+    Bracket baseline  → pnl_r_sim from DB (already computed by compute_trade_sim).
+    Adaptive exit     → exit at nearest S/R level if it falls between entry and
+                        the actual MFE (follow_thru_pct).  If no S/R is in that
+                        range, falls back to bracket.  Stop logic is unchanged.
+
+    MACD direction is stored for informational segmentation but is NOT a hard gate
+    here — we test the pure S/R effect first.  When MACD data is available the
+    breakdown-by-MACD table will show whether confirmation helps further.
+    """
+    bracket_pnl_r = trade_row.get('pnl_r_sim')
+    if bracket_pnl_r is None:
         return None
 
+    outcome  = trade_row.get('actual_outcome', '')
+    ib_high  = trade_row.get('ib_high')
+    ib_low   = trade_row.get('ib_low')
+    ftp      = trade_row.get('follow_thru_pct')  # MFE %; always + for Bullish, − for Bearish
+
+    if not (ib_high and ib_low):
+        return None
     ib_range = ib_high - ib_low
     if ib_range <= 0:
         return None
 
     is_bullish = outcome == 'Bullish Break'
     entry      = ib_high if is_bullish else ib_low
-    stop       = entry - ib_range if is_bullish else entry + ib_range  # -1R
-    tgt_2r     = entry + 2 * ib_range if is_bullish else entry - 2 * ib_range  # +2R
 
-    # Actual follow-through price
-    actual_exit = entry + (ftp / 100.0) * ib_range if is_bullish else entry - (ftp / 100.0) * ib_range
+    # ── Stopped out → both exits are the same ─────────────────────────────
+    if bracket_pnl_r <= -1.0:
+        return {
+            'bracket_pnl_r':   bracket_pnl_r,
+            'adaptive_pnl_r':  bracket_pnl_r,
+            'had_better_level': False,
+            'macd_confirmed':   False,
+        }
 
-    # Was the stop hit before target? Simple check: did follow_thru go negative?
-    stopped_out = (ftp < 0) if is_bullish else (ftp > 0)
-
-    # Context levels
-    macd_dir    = ctx_row.get('macd_direction')
-    resistance  = ctx_row.get('nearest_resistance')
-    support     = ctx_row.get('nearest_support')
-    vwap        = ctx_row.get('vwap_at_signal')
-    prev_h      = ctx_row.get('prev_day_high')
-    prev_l      = ctx_row.get('prev_day_low')
-
-    # Collect candidate adaptive targets
-    if is_bullish:
-        candidates = [r for r in [resistance, vwap, prev_h] if r and entry < r < tgt_2r]
-        macd_confirms = (macd_dir == 'bullish')
+    # ── MFE price from follow_thru_pct ────────────────────────────────────
+    # follow_thru_pct is ALWAYS positive for Bullish, negative for Bearish (hard rule).
+    # We take abs() so the direction is applied correctly.
+    if ftp is not None:
+        ftp_abs   = abs(ftp)
+        mfe_price = (entry + (ftp_abs / 100.0) * ib_range if is_bullish
+                     else entry - (ftp_abs / 100.0) * ib_range)
     else:
-        candidates = [s for s in [support, vwap, prev_l] if s and tgt_2r < s < entry]
-        macd_confirms = (macd_dir == 'bearish')
+        mfe_price = None
 
+    # ── Context levels ────────────────────────────────────────────────────
+    resistance = ctx_row.get('nearest_resistance')
+    support    = ctx_row.get('nearest_support')
+    vwap       = ctx_row.get('vwap_at_signal')
+    prev_h     = ctx_row.get('prev_day_high')
+    prev_l     = ctx_row.get('prev_day_low')
+    macd_dir   = ctx_row.get('macd_direction')
+
+    macd_confirms = (
+        (is_bullish  and macd_dir == 'bullish') or
+        (not is_bullish and macd_dir == 'bearish')
+    )
+
+    # ── Find S/R levels stock actually passed through (entry → MFE) ───────
     adaptive_target = None
-    if candidates and macd_confirms:
-        # Use nearest level to entry (conservative)
-        adaptive_target = min(candidates, key=lambda x: abs(x - entry))
-
-    # ── Simulate bracket exit ──────────────────────────────────────────────
-    if stopped_out:
-        bracket_pnl_r = -1.0
-    else:
-        mfe_price = entry + (ftp / 100.0) * ib_range if is_bullish else entry - (ftp / 100.0) * ib_range
-        hit_target = (mfe_price >= tgt_2r) if is_bullish else (mfe_price <= tgt_2r)
-        if hit_target:
-            bracket_pnl_r = 2.0
+    if mfe_price:
+        if is_bullish:
+            # Resistance levels between IB break and actual MFE
+            candidates = [l for l in [resistance, vwap, prev_h]
+                          if l and entry < l <= mfe_price]
         else:
-            # Partial — closed somewhere between entry and target
-            bracket_pnl_r = (mfe_price - entry) / ib_range if is_bullish else (entry - mfe_price) / ib_range
+            # Support levels between IB break and actual MFE
+            candidates = [l for l in [support, vwap, prev_l]
+                          if l and mfe_price <= l < entry]
 
-    # ── Simulate adaptive exit ─────────────────────────────────────────────
-    if stopped_out:
-        adaptive_pnl_r = -1.0
-    elif adaptive_target:
-        # Check if actual price reached adaptive target
-        hit_adaptive = (actual_exit >= adaptive_target) if is_bullish else (actual_exit <= adaptive_target)
-        if hit_adaptive:
-            adaptive_pnl_r = abs(adaptive_target - entry) / ib_range
-        else:
-            # Closed before adaptive target — same as bracket partial
-            adaptive_pnl_r = bracket_pnl_r
+        if candidates:
+            # Lock in gains at the NEAREST S/R level (closest to entry = most reachable)
+            adaptive_target = min(candidates, key=lambda x: abs(x - entry))
+
+    # ── Compute adaptive P&L ──────────────────────────────────────────────
+    if adaptive_target:
+        adaptive_pnl_r = abs(adaptive_target - entry) / ib_range
     else:
-        # No better level found — same as bracket
         adaptive_pnl_r = bracket_pnl_r
 
     return {
-        'bracket_pnl_r':  round(bracket_pnl_r, 4),
-        'adaptive_pnl_r': round(adaptive_pnl_r, 4),
+        'bracket_pnl_r':    round(bracket_pnl_r, 4),
+        'adaptive_pnl_r':   round(adaptive_pnl_r, 4),
         'had_better_level': adaptive_target is not None,
         'macd_confirmed':   macd_confirms,
     }
@@ -238,14 +240,15 @@ def main():
             print(f'  {st:15s}: bracket {b_wr:.1f}% WR {b_exp:+.3f}R  →  adaptive {a_wr:.1f}% WR {a_exp:+.3f}R  ({a_exp-b_exp:+.3f}R delta)')
 
     print(f'\n  ── BY MACD DIRECTION AT SIGNAL ──')
-    for direction, d in sorted(by_macd.items()):
+    for direction, d in sorted(by_macd.items(), key=lambda x: (x[0] is None, x[0])):
         if d['bracket']:
-            b_exp = sum(d['bracket']) / len(d['bracket'])
-            a_exp = sum(d['adaptive']) / len(d['adaptive'])
-            b_wr  = sum(1 for x in d['bracket'] if x > 0) / len(d['bracket']) * 100
-            a_wr  = sum(1 for x in d['adaptive'] if x > 0) / len(d['adaptive']) * 100
-            n     = len(d['bracket'])
-            print(f'  MACD {direction:8s} (n={n:4d}): bracket {b_wr:.1f}% WR {b_exp:+.3f}R  →  adaptive {a_wr:.1f}% WR {a_exp:+.3f}R')
+            b_exp  = sum(d['bracket']) / len(d['bracket'])
+            a_exp  = sum(d['adaptive']) / len(d['adaptive'])
+            b_wr   = sum(1 for x in d['bracket'] if x > 0) / len(d['bracket']) * 100
+            a_wr   = sum(1 for x in d['adaptive'] if x > 0) / len(d['adaptive']) * 100
+            n      = len(d['bracket'])
+            dir_lbl = str(direction) if direction is not None else "none"
+            print(f'  MACD {dir_lbl:8s} (n={n:4d}): bracket {b_wr:.1f}% WR {b_exp:+.3f}R  →  adaptive {a_wr:.1f}% WR {a_exp:+.3f}R')
 
     verdict = 'ADAPTIVE EXITS ARE BETTER' if exp_delta > 0.05 else (
               'NO MEANINGFUL DIFFERENCE'   if abs(exp_delta) <= 0.05 else

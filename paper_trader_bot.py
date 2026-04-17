@@ -641,14 +641,16 @@ def _broadcast_to_subscribers(message: str) -> int:
 
 
 # ── Human-readable labels for each weight key in tcs_thresholds.json ──────────
+# Keep in sync with WK_DISPLAY in backend.py
 _WEIGHT_KEY_DISPLAY = {
-    "ntrl_extreme":   "Ntrl Extreme",
-    "double_dist":    "Double Dist",
-    "nrml_variation": "Nrml Variation",
-    "neutral":        "Neutral",
-    "trend_bull":     "Trend Bull",
-    "non_trend":      "Non-Trend",
-    "normal":         "Normal",
+    "trend_bull":     "📈 Trend Bull",
+    "trend_bear":     "📉 Trend Bear",
+    "double_dist":    "🔀 Double Dist",
+    "non_trend":      "➡️ Non-Trend",
+    "normal":         "🔔 Normal",
+    "neutral":        "⚖️ Neutral",
+    "ntrl_extreme":   "⚡ Ntrl Extreme",
+    "nrml_variation": "〰️ Nrml Variation",
 }
 
 
