@@ -14361,6 +14361,19 @@ ALTER TABLE backtest_sim_runs
             key=lambda x: x["true_exp"], reverse=True
         )
 
+        # Build date-range label for filtered-view badge on tier cards
+        _tier_date_parts = []
+        if _grid_start:
+            _tier_date_parts.append(_grid_start.strftime("%b %Y"))
+        if _grid_end:
+            _tier_date_parts.append(_grid_end.strftime("%b %Y"))
+        if len(_tier_date_parts) == 2:
+            _tier_filter_label = f"{_tier_date_parts[0]} – {_tier_date_parts[1]}"
+        elif len(_tier_date_parts) == 1:
+            _tier_filter_label = ("from " if _grid_start else "to ") + _tier_date_parts[0]
+        else:
+            _tier_filter_label = ""
+
         st.markdown("**Priority Tiers — ranked by true expectancy per setup (5-yr backtest)**")
         _tier_cols = st.columns(4)
         _tier_defs = [
@@ -14376,11 +14389,17 @@ ALTER TABLE backtest_sim_runs
         for _col, (_badge, _label, _color, _rd) in zip(_tier_cols, _tier_defs):
             if _rd:
                 with _col:
+                    _filter_badge_html = (
+                        f'<div style="font-size:10px;color:#5c6bc0;margin-top:5px;'
+                        f'background:#0d1b2a;border-radius:4px;padding:2px 6px;display:inline-block;">'
+                        f'📅 {_tier_filter_label}</div>'
+                    ) if _tier_filter_label else ""
                     st.markdown(
                         f'<div style="background:#1e2a3a;border-radius:10px;padding:14px 12px;">'
                         f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;text-transform:uppercase;">{_badge} {_label}</div>'
                         f'<div style="font-size:24px;font-weight:700;color:{_color};margin:6px 0;">+{_rd["true_exp"]:.2f}R</div>'
                         f'<div style="font-size:12px;color:#cfd8dc;">per setup</div>'
+                        f'{_filter_badge_html}'
                         f'<div style="font-size:11px;color:#90a4ae;margin-top:4px;">'
                         f'{_rd["p_break_pct"]}% break rate · +{_rd["avg_r"]:.2f}R avg · {_rd["setups"]:,} setups</div>'
                         f'</div>', unsafe_allow_html=True
