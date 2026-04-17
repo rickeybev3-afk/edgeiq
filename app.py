@@ -5535,7 +5535,15 @@ with st.sidebar:
             st.error("Could not save — database and local file both failed.", icon="⚠️")
 
     st.markdown("---")
-    mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)
+    _MODE_OPTS = ["📅 Historical", "🎬 Replay", "🔴 Live Stream"]
+    if "dash_mode" not in st.session_state:
+        _qp_dash_mode = st.query_params.get("dash_mode", "📅 Historical")
+        st.session_state["dash_mode"] = (
+            _qp_dash_mode if _qp_dash_mode in _MODE_OPTS else "📅 Historical"
+        )
+    mode = st.radio("Mode", _MODE_OPTS, key="dash_mode")
+    if st.query_params.get("dash_mode") != mode:
+        st.query_params["dash_mode"] = mode
 
     st.markdown("---")
     st.header("📈 Settings")
@@ -21367,6 +21375,11 @@ ALTER TABLE backtest_sim_runs
                         _sc_n_months = _bts_sc_monthly["month"].nunique()
                         if _sc_both_have_history:
                             import altair as _alt_sc
+                            if "sc_chart_type" not in st.session_state:
+                                _qp_sc_ct = st.query_params.get("sc_chart_type", "Line")
+                                st.session_state["sc_chart_type"] = (
+                                    _qp_sc_ct if _qp_sc_ct in ["Line", "Bar"] else "Line"
+                                )
                             _sc_hdr_col, _sc_tog_col = st.columns([4, 1])
                             with _sc_hdr_col:
                                 st.markdown(
@@ -21386,9 +21399,11 @@ ALTER TABLE backtest_sim_runs
                                     "Chart type",
                                     ["Line", "Bar"],
                                     horizontal=True,
-                                    key="row4c_chart_type",
+                                    key="sc_chart_type",
                                     label_visibility="collapsed",
                                 )
+                            if st.query_params.get("sc_chart_type") != _sc_chart_type:
+                                st.query_params["sc_chart_type"] = _sc_chart_type
                             _sc_zero = (
                                 _alt_sc.Chart(pd.DataFrame({"y": [0]}))
                                 .mark_rule(color="#37474f", strokeDash=[4, 4])
