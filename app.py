@@ -17530,6 +17530,11 @@ ALTER TABLE backtest_sim_runs
                     st.session_state["bts_dr_start"] = _clamp_to_bts(_grid_sync_start)
                     st.session_state["bts_dr_end"]   = _clamp_to_bts(_grid_sync_end)
                     st.rerun()
+                _bts_out_of_sync = (
+                    _bts_start != _grid_sync_start or _bts_end != _grid_sync_end
+                )
+                if _bts_out_of_sync:
+                    st.caption("⚠️ Edge Map dates differ")
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
 
@@ -19104,6 +19109,12 @@ ALTER TABLE backtest_sim_runs
         st.session_state["grid_dr_start"] = _bts_sync_start
         st.session_state["grid_dr_end"]   = _bts_sync_end
         st.rerun()
+    _grid_out_of_sync = (
+        st.session_state.get("grid_dr_start") != _bts_sync_start
+        or st.session_state.get("grid_dr_end") != _bts_sync_end
+    )
+    if _grid_out_of_sync:
+        st.caption("⚠️ Backtest P&L dates differ")
 
     _grid_dr_cols = st.columns([1, 1, 4])
     with _grid_dr_cols[0]:
