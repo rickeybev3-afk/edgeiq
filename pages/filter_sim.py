@@ -107,7 +107,7 @@ MAX_ROWS     = 0  # 0 = full history
 def load_breakout_rows(user_id: str, max_rows: int = 0):
     cols = (
         "actual_outcome,tcs,ib_range_pct,close_vs_vwap_pct,"
-        "pnl_r_sim,scan_type"
+        "pnl_r_sim,scan_type,sim_date"
     )
     all_rows = []
     offset   = 0
@@ -489,6 +489,145 @@ if summary_data:
         use_container_width=True,
         hide_index=True,
         height=280,
+    )
+
+st.divider()
+
+# ── Projected P&L ─────────────────────────────────────────────────────────────
+st.markdown("### 💰 Projected P&L — Current Filter Settings")
+st.caption(
+    f"Simulates your account running through every trade in the **{s3['n']:,}-trade "
+    "live-filter set**, in chronological order. Adjust sizing below."
+)
+
+pnl_c1, pnl_c2, pnl_c3 = st.columns(3)
+with pnl_c1:
+    pnl_equity = st.number_input(
+        "Starting equity ($)", min_value=1000, max_value=500_000,
+        value=7000, step=500, key="fs_pnl_equity",
+    )
+with pnl_c2:
+    pnl_risk_mode = st.radio(
+        "Risk sizing", ["Fixed $ per trade", "% of equity (compounding)"],
+        horizontal=True, key="fs_pnl_mode",
+    )
+with pnl_c3:
+    if pnl_risk_mode == "Fixed $ per trade":
+        pnl_fixed_risk = st.number_input(
+            "Risk $ per trade", min_value=50, max_value=50_000,
+            value=300, step=50, key="fs_pnl_risk",
+        )
+        pnl_risk_pct = None
+    else:
+        pnl_risk_pct = st.number_input(
+            "Risk % per trade", min_value=0.5, max_value=10.0,
+            value=4.3, step=0.1, key="fs_pnl_risk_pct",
+            help="% of current equity risked per trade (1R = this amount)",
+        )
+        pnl_fixed_risk = None
+
+if s3["n"] == 0:
+    st.info("No trades pass the current filters. Adjust sliders above.")
+else:
+    # Sort filtered trades chronologically
+    sorted_trades = sorted(final, key=lambda r: r.get("sim_date") or "")
+
+    eq = float(pnl_equity)
+    curve = [eq]
+    peak = eq
+    drawdowns = [0.0]
+
+    for trade in sorted_trades:
+        r_val = trade.get("pnl_r_sim") or 0.0
+        if pnl_risk_mode == "Fixed $ per trade":
+            risk_$ = float(pnl_fixed_risk)
+        else:
+            risk_$ = eq * (float(pnl_risk_pct) / 100.0)
+        eq += r_val * risk_$
+        eq = max(eq, 0.0)
+        curve.append(eq)
+        if eq > peak:
+            peak = eq
+        dd = (peak - eq) / peak * 100 if peak > 0 else 0.0
+        drawdowns.append(dd)
+
+    final_equity   = curve[-1]
+    net_return_pct = (final_equity - float(pnl_equity)) / float(pnl_equity) * 100
+    max_dd         = max(drawdowns)
+    avg_trade_$    = (final_equity - float(pnl_equity)) / s3["n"] if s3["n"] else 0
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Final Equity", f"${final_equity:,.0f}",
+              delta=f"{net_return_pct:+.1f}%")
+    m2.metric("Net Return", f"{net_return_pct:+.1f}%",
+              delta=f"${final_equity - float(pnl_equity):+,.0f}")
+    m3.metric("Max Drawdown", f"{max_dd:.1f}%",
+              delta=None)
+    m4.metric("Avg $ / Trade", f"${avg_trade_$:+,.0f}",
+              delta=f"{s3['exp']:+.3f}R avg")
+
+    # ── Equity curve chart ────────────────────────────────────────────────────
+    fig_eq = go.Figure()
+    fig_eq.add_trace(go.Scatter(
+        x=list(range(len(curve))),
+        y=curve,
+        mode="lines",
+        line=dict(color="#80cbc4", width=2),
+        name="Equity",
+        fill="tozeroy",
+        fillcolor="rgba(128,203,196,0.08)",
+    ))
+    fig_eq.add_hline(
+        y=float(pnl_equity),
+        line_dash="dot", line_color="#546e7a",
+        annotation_text=f"Start ${pnl_equity:,}",
+        annotation_font_color="#546e7a",
+    )
+    fig_eq.update_layout(
+        plot_bgcolor="#0e0e1e", paper_bgcolor="#0e0e1e",
+        font=dict(color="#9fa8da"),
+        xaxis=dict(title="Trade #", gridcolor="#1e1e3a"),
+        yaxis=dict(title="Account ($)", gridcolor="#1e1e3a",
+                   tickprefix="$", tickformat=",.0f"),
+        margin=dict(t=20, b=30, l=10, r=10),
+        height=320,
+        showlegend=False,
+    )
+    st.plotly_chart(fig_eq, use_container_width=True)
+
+    # ── Drawdown chart ────────────────────────────────────────────────────────
+    with st.expander("Show Drawdown Chart"):
+        fig_dd = go.Figure()
+        fig_dd.add_trace(go.Scatter(
+            x=list(range(len(drawdowns))),
+            y=[-d for d in drawdowns],
+            mode="lines",
+            fill="tozeroy",
+            line=dict(color="#ef9a9a", width=1.5),
+            fillcolor="rgba(239,154,154,0.12)",
+            name="Drawdown %",
+        ))
+        fig_dd.update_layout(
+            plot_bgcolor="#0e0e1e", paper_bgcolor="#0e0e1e",
+            font=dict(color="#9fa8da"),
+            xaxis=dict(title="Trade #", gridcolor="#1e1e3a"),
+            yaxis=dict(title="Drawdown (%)", gridcolor="#1e1e3a",
+                       ticksuffix="%"),
+            margin=dict(t=10, b=30, l=10, r=10),
+            height=220, showlegend=False,
+        )
+        st.plotly_chart(fig_dd, use_container_width=True)
+
+    sizing_label = (
+        f"${pnl_fixed_risk}/trade fixed risk"
+        if pnl_risk_mode == "Fixed $ per trade"
+        else f"{pnl_risk_pct}% compounding"
+    )
+    st.caption(
+        f"Simulation: {s3['n']:,} trades · {sizing_label} · "
+        f"trades sorted by sim_date. "
+        "Past performance of backtested data does not guarantee future results."
     )
 
 st.divider()
