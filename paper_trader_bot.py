@@ -294,6 +294,9 @@ def log_context_levels(results: list, trade_date_str: str) -> None:
             key_lvls = [l for l in [pd.get('high'), pd.get('low'), vwap] if l]
             above    = [l for l in key_lvls if ib_break and l > ib_break]
             below    = [l for l in key_lvls if ib_break and l <= ib_break]
+            # Write VWAP back to r so _place_order_for_setup can use it as an
+            # entry quality filter (VWAP directional alignment).
+            r['vwap_at_ib'] = round(vwap, 4) if vwap else None
             rows_to_upsert.append({
                 'ticker':             ticker,
                 'trade_date':         trade_date_str,
@@ -344,6 +347,41 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
 
     ticker       = r.get("ticker", "").upper()
     risk_dollars = _compute_risk_dollars()
+
+    # ── Entry quality filter 1: IB range % ────────────────────────────────────
+    # Wide IBs (>= 10% of open price) signal chaotic, non-directional days.
+    # Historical: IB >= 10% → 54-68% WR; IB < 10% → 72-86% WR (at TCS >= 50).
+    open_px = float(r.get("open_price") or 0)
+    if open_px > 0:
+        ib_range_pct_val = (ib_high - ib_low) / open_px * 100
+        if ib_range_pct_val >= 10.0:
+            log.info(
+                f"  [{ticker}] skip order — IB range {ib_range_pct_val:.1f}% of price "
+                f"(>= 10% threshold, chaotic structure, hist WR 54-68%)"
+            )
+            return
+
+    # ── Entry quality filter 2: VWAP directional alignment ────────────────────
+    # close_price must be on the correct side of VWAP at IB close for the
+    # breakout direction.  vwap_at_ib is populated by log_context_levels()
+    # (which always runs before this function in both morning and intraday flows).
+    # Historical (TCS>=50, IB<10%): aligned → 97.6% WR +2.42R; misaligned → 71.8% WR.
+    # If vwap_at_ib is missing (context logging failed), allow the trade through.
+    vwap_val  = float(r.get("vwap_at_ib") or 0)
+    close_val = float(r.get("close_price") or 0)
+    if vwap_val > 0 and close_val > 0:
+        aligned = (
+            (direction == "Bullish Break" and close_val >= vwap_val) or
+            (direction == "Bearish Break" and close_val <= vwap_val)
+        )
+        if not aligned:
+            _side = "<" if direction == "Bullish Break" else ">"
+            log.info(
+                f"  [{ticker}] skip order — VWAP misaligned: {direction} "
+                f"but close {close_val:.2f} {_side} VWAP {vwap_val:.2f} "
+                f"(hist WR 71.8% vs 97.6% when aligned)"
+            )
+            return
 
     result = place_alpaca_bracket_order(
         ticker       = ticker,
