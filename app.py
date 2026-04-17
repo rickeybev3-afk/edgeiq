@@ -5798,6 +5798,8 @@ with st.sidebar:
                 return True
             return False  # Lock unexpectedly held
 
+        _BF_CONFIRM_TTL = 60  # seconds — stale confirmation flags auto-expire
+
         if _bf_lock_held:
             # A pipeline is actively running (lock is held by the background thread)
             _cancelling_requested = _BACKFILL_CANCEL.is_set()
@@ -5953,6 +5955,14 @@ with st.sidebar:
                     st.warning("Could not acquire lock — please try again.")
 
         elif _bf_file_status == "done":
+            # Clear stale confirmation flag — if the panel was closed before the
+            # operator confirmed, the flag lingers in session state.  Any flag
+            # older than _BF_CONFIRM_TTL seconds is considered stale (the panel
+            # was almost certainly closed in the interim).
+            _bf_rerun_ts = st.session_state.get("_bf_confirm_rerun")
+            if _bf_rerun_ts and (time.time() - _bf_rerun_ts) > _BF_CONFIRM_TTL:
+                st.session_state.pop("_bf_confirm_rerun", None)
+
             st.success("✅ Backfill complete!")
 
             # ── Parse summary numbers from the log ─────────────────────────
@@ -6002,7 +6012,7 @@ with st.sidebar:
                     disabled=_bf_nothing_to_do,
                     help="No missing close prices in this range." if _bf_nothing_to_do else None,
                 ):
-                    st.session_state["_bf_confirm_rerun"] = True
+                    st.session_state["_bf_confirm_rerun"] = time.time()
                     st.rerun()
             else:
                 st.warning(
@@ -6033,6 +6043,11 @@ with st.sidebar:
                         st.rerun()
 
         elif _bf_file_status == "cancelled":
+            # Clear stale confirmation flag (same TTL logic as the done branch).
+            _bf_cancel_ts = st.session_state.get("_bf_confirm_after_cancel")
+            if _bf_cancel_ts and (time.time() - _bf_cancel_ts) > _BF_CONFIRM_TTL:
+                st.session_state.pop("_bf_confirm_after_cancel", None)
+
             st.warning("⏹ Backfill was cancelled by the operator.")
             if not st.session_state.get("_bf_confirm_after_cancel"):
                 if st.button(
@@ -6040,7 +6055,7 @@ with st.sidebar:
                     use_container_width=True,
                     key="bf_after_cancel_btn",
                 ):
-                    st.session_state["_bf_confirm_after_cancel"] = True
+                    st.session_state["_bf_confirm_after_cancel"] = time.time()
                     st.rerun()
             else:
                 st.warning(
