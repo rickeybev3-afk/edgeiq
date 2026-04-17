@@ -554,7 +554,7 @@ else:
     final_equity   = curve[-1]
     net_return_pct = (final_equity - float(pnl_equity)) / float(pnl_equity) * 100
     max_dd         = max(drawdowns)
-    avg_trade_$    = (final_equity - float(pnl_equity)) / s3["n"] if s3["n"] else 0
+    avg_trade_amt  = (final_equity - float(pnl_equity)) / s3["n"] if s3["n"] else 0
 
     # ── Summary metrics ───────────────────────────────────────────────────────
     m1, m2, m3, m4 = st.columns(4)
@@ -564,7 +564,7 @@ else:
               delta=f"${final_equity - float(pnl_equity):+,.0f}")
     m3.metric("Max Drawdown", f"{max_dd:.1f}%",
               delta=None)
-    m4.metric("Avg $ / Trade", f"${avg_trade_$:+,.0f}",
+    m4.metric("Avg $ / Trade", f"${avg_trade_amt:+,.0f}",
               delta=f"{s3['exp']:+.3f}R avg")
 
     # ── Equity curve chart ────────────────────────────────────────────────────
