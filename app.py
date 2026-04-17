@@ -20769,6 +20769,19 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     result.append(base)
             return result
 
+        _pt_sim_filter = False
+        if _pt_log_has_sim_col:
+            _pt_sim_filter = st.checkbox(
+                "⚠ Show sim failures only",
+                value=False,
+                key="pt_log_sim_filter",
+                help="When checked, only rows with a missing-sim annotation are shown",
+            )
+            if _pt_sim_filter:
+                _pt_log_show = _pt_log_show[
+                    _pt_log_show["Sim"].str.startswith("⚠ No sim")
+                ].reset_index(drop=True)
+
         _pt_col_cfg = {}
         if _pt_log_has_ib_pct:
             _pt_col_cfg["ib_range_pct"] = st.column_config.NumberColumn(
@@ -20793,9 +20806,11 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             hide_index=True,
             column_config=_pt_col_cfg if _pt_col_cfg else None,
         )
+        _pt_caption_suffix = " · ⚠ Sim-failure filter active" if (_pt_log_has_sim_col and _pt_sim_filter) else ""
         st.caption(
             f"Showing {len(_pt_log_show)} paper trades from last 21 days · "
             "Only TCS-filtered qualifying setups are stored here"
+            + _pt_caption_suffix
         )
 
     # ── Exit Observation Logger ──────────────────────────────────────────────
