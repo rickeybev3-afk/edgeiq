@@ -13082,7 +13082,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 use_container_width=True,
                                 config={
                                     "scrollZoom": True,
-                                    "displayModeBar": False,
+                                    "displayModeBar": "hover",
+                                    "modeBarButtons": [["zoomIn2d", "zoomOut2d", "resetScale2d"]],
                                 },
                             )
                             st.caption(
