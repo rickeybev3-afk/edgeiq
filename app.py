@@ -13343,6 +13343,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _dd_extra_headers += '<th style="padding:4px 8px;text-align:left;">Tiered Exit R</th>'
                             if _dd_show_delta_r:
                                 _dd_extra_headers += '<th style="padding:4px 8px;text-align:left;">Delta R</th>'
+                            # ── Delta R win-rate summary ──────────────────────────────────
+                            if _dd_show_delta_r:
+                                _dr_series = pd.to_numeric(
+                                    _tk_drill_display["Delta R"], errors="coerce"
+                                ).dropna()
+                                _dr_total   = len(_dr_series)
+                                _dr_pos     = int((_dr_series > 0).sum())   # Tiered won
+                                _dr_neg     = int((_dr_series < 0).sum())   # EOD won
+                                _dr_flat    = _dr_total - _dr_pos - _dr_neg
+                                _dr_avg     = _dr_series.mean() if _dr_total > 0 else float("nan")
+                                _dr_avg_str = f"{_dr_avg:+.2f}R" if _dr_total > 0 else "—"
+                                _dr_avg_clr = (
+                                    "#66bb6a" if _dr_total > 0 and _dr_avg > 0
+                                    else "#ef5350" if _dr_total > 0 and _dr_avg < 0
+                                    else "#cfd8dc"
+                                )
+                                if _dr_total > 0:
+                                    _dr_pct = _dr_pos / _dr_total * 100
+                                    _dr_pct_str = f"{_dr_pct:.0f}%"
+                                    _dr_caption_parts = [
+                                        f'<span style="color:#90caf9;font-weight:700;">'
+                                        f'Delta R summary</span>',
+                                        f'<span style="color:#cfd8dc;">{_dr_total} trade{"s" if _dr_total != 1 else ""} with R data</span>',
+                                        f'<span style="color:#66bb6a;">&#9650; Tiered won: {_dr_pos} ({_dr_pct_str})</span>',
+                                        f'<span style="color:#ef5350;">&#9660; EOD won: {_dr_neg}</span>',
+                                    ]
+                                    if _dr_flat:
+                                        _dr_caption_parts.append(
+                                            f'<span style="color:#78909c;">Flat: {_dr_flat}</span>'
+                                        )
+                                    _dr_caption_parts.append(
+                                        f'<span>Avg Delta R: <span style="color:{_dr_avg_clr};font-weight:700;">{_dr_avg_str}</span></span>'
+                                    )
+                                    _dr_caption_html = (
+                                        '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;'
+                                        'font-size:12px;font-family:monospace;color:#90caf9;'
+                                        'padding:6px 10px;margin-bottom:6px;'
+                                        'background:#0d2137;border-radius:6px;border-left:3px solid #1565c0;">'
+                                        + " &nbsp;·&nbsp; ".join(_dr_caption_parts)
+                                        + "</div>"
+                                    )
+                                    st.markdown(_dr_caption_html, unsafe_allow_html=True)
                             st.markdown(
                                 f'<div style="overflow-x:auto;">'
                                 f'<table style="width:100%;border-collapse:collapse;'
