@@ -6759,9 +6759,67 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             st.caption("**Equity Curve** — dollar P&L with position sizing applied")
                             st.line_chart(_eq_df.set_index("Day"), height=220, use_container_width=True)
                         elif _chart_view == "Cumulative R":
-                            _cum_r_df = pd.DataFrame({"Trade #": range(len(_cum_r)), "Cumulative R": _cum_r})
                             st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade, no position sizing or compounding")
-                            st.line_chart(_cum_r_df.set_index("Trade #"), height=220, use_container_width=True)
+
+                            # ── Compute max-drawdown period indices ────────────────────────
+                            _dd_series = _cum_r_vals - _peak_r
+                            if _total_trades and _max_dd_r < 0:
+                                _dd_trough_idx = int(_dd_series.idxmin())
+                                _dd_peak_idx   = int(_cum_r_vals.iloc[:_dd_trough_idx + 1].idxmax())
+                            else:
+                                _dd_trough_idx = None
+                                _dd_peak_idx   = None
+
+                            _fig_cum_r = go.Figure()
+                            _fig_cum_r.add_trace(go.Scatter(
+                                x=list(range(len(_cum_r))),
+                                y=_cum_r.tolist(),
+                                mode="lines",
+                                name="Cumulative R",
+                                line=dict(color="#1f77b4", width=2),
+                            ))
+
+                            if _dd_trough_idx is not None and _dd_peak_idx is not None:
+                                _fig_cum_r.add_vrect(
+                                    x0=_dd_peak_idx,
+                                    x1=_dd_trough_idx,
+                                    fillcolor="rgba(220, 50, 50, 0.15)",
+                                    layer="below",
+                                    line_width=0,
+                                )
+                                _fig_cum_r.add_trace(go.Scatter(
+                                    x=[_dd_peak_idx],
+                                    y=[float(_cum_r_vals.iloc[_dd_peak_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
+                                    name=f"DD Start (trade #{_dd_peak_idx})",
+                                ))
+                                _fig_cum_r.add_trace(go.Scatter(
+                                    x=[_dd_trough_idx],
+                                    y=[float(_cum_r_vals.iloc[_dd_trough_idx])],
+                                    mode="markers",
+                                    marker=dict(color="#d62728", size=10, symbol="triangle-up"),
+                                    name=f"DD End (trade #{_dd_trough_idx})",
+                                ))
+
+                            _fig_cum_r.update_layout(
+                                height=240,
+                                margin=dict(l=0, r=0, t=10, b=30),
+                                xaxis_title="Trade #",
+                                yaxis_title="Cumulative R",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                            )
+                            _fig_cum_r.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                            _fig_cum_r.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                            st.plotly_chart(_fig_cum_r, use_container_width=True)
+
+                            if _dd_trough_idx is not None and _dd_peak_idx is not None:
+                                st.caption(
+                                    f"🔴 Max drawdown period: trade \u00a0**#{_dd_peak_idx}** → **#{_dd_trough_idx}**"
+                                    f"\u2002({_dd_trough_idx - _dd_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_max_dd_r)}R**"
+                                )
                         else:
                             # ── Dual-axis: Equity ($) left, Cumulative R right ──────────
                             # _rp_equity_curve has N+1 points (index 0 = starting capital).
