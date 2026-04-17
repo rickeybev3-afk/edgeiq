@@ -4692,6 +4692,15 @@ with st.sidebar:
         else:
             st.error("Could not save preferences — check file permissions.", icon="⚠️")
 
+    import os as _os_alert, datetime as _dt_alert
+    _tcs_cfg_path = _os_alert.path.join(_os_alert.path.dirname(__file__) or ".", "tcs_alert_config.json")
+    if _os_alert.path.exists(_tcs_cfg_path):
+        _tcs_mtime = _os_alert.path.getmtime(_tcs_cfg_path)
+        _tcs_saved_str = _dt_alert.datetime.fromtimestamp(_tcs_mtime).strftime("%b %d, %Y at %I:%M %p")
+        st.caption(f"Last saved: {_tcs_saved_str}")
+    else:
+        st.caption("Preferences not yet saved — defaulting to all structures opted in.")
+
     st.markdown("---")
     mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)
 
