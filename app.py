@@ -320,22 +320,134 @@ def _render_setup_checklist() -> None:
 
 
 if _startup_errors:
-    _err_lines = "\n".join(f"• {_msg}" for _, _msg in _startup_errors)
-    st.error(
-        f"**⚠️ Configuration problem detected — {len(_startup_errors)} secret(s) need attention:**\n\n"
-        f"{_err_lines}\n\n"
-        "Fix these in your environment **Secrets**, then use the **🔄 Re-check** button "
-        "in the **🔐 Setup Checklist** sidebar panel to refresh without a full restart."
-    )
-    if any(_name in ("SUPABASE_URL", "SUPABASE_KEY") for _name, _ in _startup_errors):
-        st.warning(
-            "Database credentials are missing. Most features will show empty data until "
-            "SUPABASE_URL and SUPABASE_KEY are correctly set."
+    _REQUIRED_SECRETS = {"SUPABASE_URL", "SUPABASE_KEY", "ALPACA_API_KEY", "ALPACA_SECRET_KEY"}
+    _missing_names = {_n for _n, _ in _startup_errors if _secret_statuses.get(_n) == "missing"}
+    _all_missing   = _REQUIRED_SECRETS == _missing_names
+
+    if _all_missing:
+        # ── Welcome / onboarding screen for brand-new (unconfigured) instances ──
+        st.markdown(
+            """
+            <div style="
+                max-width:680px;
+                margin:3rem auto;
+                padding:2.5rem 2rem;
+                border:1px solid #334155;
+                border-radius:12px;
+                background:#0f172a;
+                color:#e2e8f0;
+                font-family:sans-serif;
+            ">
+            <h1 style="margin-top:0;font-size:1.8rem;color:#f8fafc;">
+                👋 Welcome to EdgeIQ
+            </h1>
+            <p style="color:#94a3b8;font-size:1rem;margin-bottom:1.5rem;">
+                This looks like a fresh instance — no secrets have been configured yet.
+                Follow the steps below to get up and running in a few minutes.
+            </p>
+
+            <hr style="border-color:#1e293b;margin-bottom:1.5rem;" />
+
+            <h3 style="color:#f8fafc;font-size:1.05rem;margin-bottom:0.3rem;">
+                Step 1 — Fork this project
+            </h3>
+            <p style="color:#94a3b8;font-size:0.92rem;margin-bottom:1.4rem;">
+                In Replit, click <strong style="color:#e2e8f0;">Fork</strong> to create your own
+                private copy. All secrets are stored per-fork, so never share your fork URL
+                with anyone who shouldn't have access.
+            </p>
+
+            <h3 style="color:#f8fafc;font-size:1.05rem;margin-bottom:0.3rem;">
+                Step 2 — Add your secrets
+            </h3>
+            <p style="color:#94a3b8;font-size:0.92rem;margin-bottom:0.6rem;">
+                Open <strong style="color:#e2e8f0;">Secrets</strong> (🔒 lock icon in the
+                left sidebar) and add each of the four keys below.
+            </p>
+            <table style="
+                width:100%;
+                border-collapse:collapse;
+                font-size:0.88rem;
+                margin-bottom:1.4rem;
+            ">
+              <thead>
+                <tr style="border-bottom:1px solid #1e293b;">
+                  <th style="text-align:left;padding:6px 8px;color:#64748b;">Secret name</th>
+                  <th style="text-align:left;padding:6px 8px;color:#64748b;">Where to find it</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="border-bottom:1px solid #1e293b;">
+                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">SUPABASE_URL</code></td>
+                  <td style="padding:7px 8px;">
+                    <a href="https://supabase.com/dashboard/project/_/settings/api"
+                       target="_blank" style="color:#38bdf8;">
+                      Supabase → Settings → API → Project URL
+                    </a>
+                  </td>
+                </tr>
+                <tr style="border-bottom:1px solid #1e293b;">
+                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">SUPABASE_KEY</code></td>
+                  <td style="padding:7px 8px;">
+                    <a href="https://supabase.com/dashboard/project/_/settings/api"
+                       target="_blank" style="color:#38bdf8;">
+                      Supabase → Settings → API → anon / public key
+                    </a>
+                  </td>
+                </tr>
+                <tr style="border-bottom:1px solid #1e293b;">
+                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">ALPACA_API_KEY</code></td>
+                  <td style="padding:7px 8px;">
+                    <a href="https://app.alpaca.markets/paper/dashboard/overview"
+                       target="_blank" style="color:#38bdf8;">
+                      Alpaca → Paper Dashboard → API Keys → Generate
+                    </a>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">ALPACA_SECRET_KEY</code></td>
+                  <td style="padding:7px 8px;">
+                    <a href="https://app.alpaca.markets/paper/dashboard/overview"
+                       target="_blank" style="color:#38bdf8;">
+                      Alpaca → Paper Dashboard → API Keys → Generate
+                    </a>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h3 style="color:#f8fafc;font-size:1.05rem;margin-bottom:0.3rem;">
+                Step 3 — Restart the app
+            </h3>
+            <p style="color:#94a3b8;font-size:0.92rem;margin-bottom:0;">
+                After saving all four secrets, click the <strong style="color:#e2e8f0;">Stop ▶ Run</strong>
+                button (or use the <strong style="color:#e2e8f0;">Restart</strong> option) to reboot
+                the app. This screen will be replaced by the full dashboard once the secrets are
+                detected.
+            </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        # Render the checklist in the sidebar BEFORE stopping so operators can see
-        # which secrets are missing and where to get them even in the halted state.
-        _render_setup_checklist()
         st.stop()
+    else:
+        # ── Partial-configuration error banner (existing behaviour) ───────────
+        _err_lines = "\n".join(f"• {_msg}" for _, _msg in _startup_errors)
+        st.error(
+            f"**⚠️ Configuration problem detected — {len(_startup_errors)} secret(s) need attention:**\n\n"
+            f"{_err_lines}\n\n"
+            "Fix these in your environment **Secrets**, then use the **🔄 Re-check** button "
+            "in the **🔐 Setup Checklist** sidebar panel to refresh without a full restart."
+        )
+        if any(_name in ("SUPABASE_URL", "SUPABASE_KEY") for _name, _ in _startup_errors):
+            st.warning(
+                "Database credentials are missing. Most features will show empty data until "
+                "SUPABASE_URL and SUPABASE_KEY are correctly set."
+            )
+            # Render the checklist in the sidebar BEFORE stopping so operators can see
+            # which secrets are missing and where to get them even in the halted state.
+            _render_setup_checklist()
+            st.stop()
 
 # ── Runtime credential failure banner ─────────────────────────────────────────
 # check_credentials_runtime() re-validates Alpaca and Supabase credentials in a
