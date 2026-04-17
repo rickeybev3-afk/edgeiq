@@ -217,18 +217,27 @@ _BACKFILL_STATUS = "/tmp/backfill_pipeline.status"
 _BACKFILL_LOCK: threading.Lock = threading.Lock()
 
 
-def _backfill_pipeline_thread():
+def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | None = None):
     """Run backfill_close_prices.py then run_sim_backfill.py sequentially.
     Progress is written to _BACKFILL_LOG; final status to _BACKFILL_STATUS.
     The module-level _BACKFILL_LOCK is held for the full duration and released
-    in the finally block, preventing concurrent runs."""
+    in the finally block, preventing concurrent runs.
+
+    start_date / end_date (YYYY-MM-DD strings) are forwarded to the script as
+    --start / --end so that only rows within the specified range are processed.
+    """
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    backfill_cmd = [sys.executable, os.path.join(script_dir, "backfill_close_prices.py")]
+    if start_date:
+        backfill_cmd += ["--start", start_date]
+    if end_date:
+        backfill_cmd += ["--end", end_date]
     try:
         with open(_BACKFILL_LOG, "w", buffering=1) as lf:
             lf.write("=== Step 1 of 2: Fetching EOD close prices from Alpaca ===\n\n")
             lf.flush()
             r1 = subprocess.run(
-                [sys.executable, os.path.join(script_dir, "backfill_close_prices.py")],
+                backfill_cmd,
                 stdout=lf, stderr=subprocess.STDOUT,
                 cwd=script_dir, timeout=7200,
             )
@@ -4932,6 +4941,31 @@ with st.sidebar:
             "Fetches missing EOD close prices from Alpaca for all historical trades, "
             "then recomputes P&L. Runs in the background — may take several minutes."
         )
+
+        # ── Optional date-range filter ────────────────────────────────────────
+        _bf_col1, _bf_col2 = st.columns(2)
+        with _bf_col1:
+            _bf_start = st.date_input(
+                "Start Date",
+                value=None,
+                help="Leave blank to include all history",
+                key="bf_start_date",
+            )
+        with _bf_col2:
+            _bf_end = st.date_input(
+                "End Date",
+                value=None,
+                help="Leave blank to include all history",
+                key="bf_end_date",
+            )
+        _bf_start_str = _bf_start.strftime("%Y-%m-%d") if _bf_start else None
+        _bf_end_str   = _bf_end.strftime("%Y-%m-%d")   if _bf_end   else None
+        _bf_range_invalid = bool(
+            _bf_start_str and _bf_end_str and _bf_start_str > _bf_end_str
+        )
+        if _bf_range_invalid:
+            st.error("⚠️ Start Date must be on or before End Date.", icon="⚠️")
+
         # Derive current status from status file (persists across Streamlit re-runs).
         # The in-process _BACKFILL_LOCK is the authoritative concurrency guard;
         # the status file is used purely for UI display.
@@ -4955,6 +4989,8 @@ with st.sidebar:
         # ── Helper: clear temp files and launch a new pipeline run ───────────
         def _bf_launch():
             """Clear old logs/status and start a new pipeline thread."""
+            if _bf_range_invalid:
+                return False  # Blocked by invalid date range shown above
             for _p in [_BACKFILL_LOG, _BACKFILL_STATUS]:
                 try:
                     os.remove(_p)
@@ -4963,7 +4999,11 @@ with st.sidebar:
             if _BACKFILL_LOCK.acquire(blocking=False):
                 with open(_BACKFILL_STATUS, "w") as _sf:
                     _sf.write("running")
-                _bt = threading.Thread(target=_backfill_pipeline_thread, daemon=True)
+                _bt = threading.Thread(
+                    target=_backfill_pipeline_thread,
+                    args=(_bf_start_str, _bf_end_str),
+                    daemon=True,
+                )
                 _bt.start()
                 return True
             return False  # Lock unexpectedly held

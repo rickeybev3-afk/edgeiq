@@ -52,28 +52,48 @@ def parse_args():
                    help="Print plan without writing anything to Supabase")
     p.add_argument("--table", choices=["backtest_sim_runs", "paper_trades"],
                    help="Process only one table instead of both")
+    p.add_argument("--start", metavar="YYYY-MM-DD",
+                   help="Only process rows on or after this date")
+    p.add_argument("--end", metavar="YYYY-MM-DD",
+                   help="Only process rows on or before this date")
     return p.parse_args()
 
 
 # ── Step 1: fetch all (id, ticker, date) rows where close_price IS NULL ───────
 
-def fetch_null_rows(table: str, date_field: str) -> list[dict]:
-    """Return all rows in `table` with close_price IS NULL."""
+def fetch_null_rows(table: str, date_field: str,
+                    start_date: str | None = None,
+                    end_date: str | None = None) -> list[dict]:
+    """Return all rows in `table` with close_price IS NULL.
+
+    If start_date / end_date are given (YYYY-MM-DD), only rows whose
+    date_field falls within [start_date, end_date] are returned.
+    """
     if not backend.supabase:
         print("No Supabase connection — aborting.")
         sys.exit(1)
 
     rows   = []
     offset = 0
-    print(f"  Fetching null close_price rows from {table}…", end="", flush=True)
+    range_note = ""
+    if start_date and end_date:
+        range_note = f" ({start_date} → {end_date})"
+    elif start_date:
+        range_note = f" (from {start_date})"
+    elif end_date:
+        range_note = f" (through {end_date})"
+    print(f"  Fetching null close_price rows from {table}{range_note}…", end="", flush=True)
     while True:
-        resp = (
+        q = (
             backend.supabase.table(table)
             .select(f"id,ticker,{date_field},actual_outcome")
             .is_("close_price", "null")
-            .range(offset, offset + PAGE_SZ - 1)
-            .execute()
         )
+        if start_date:
+            q = q.gte(date_field, start_date)
+        if end_date:
+            q = q.lte(date_field, end_date)
+        resp = q.range(offset, offset + PAGE_SZ - 1).execute()
         batch = resp.data or []
         rows.extend(batch)
         if len(batch) < PAGE_SZ:
@@ -196,13 +216,17 @@ def write_closes(table: str, rows_for_date: list[dict], closes: dict[str, float]
 
 # ── Per-table processing ──────────────────────────────────────────────────────
 
-def process_table(table: str, date_field: str, dry_run: bool) -> tuple[int, int]:
+def process_table(table: str, date_field: str, dry_run: bool,
+                  start_date: str | None = None,
+                  end_date: str | None = None) -> tuple[int, int]:
     """Backfill close_price for one table. Returns (total_updated, total_skipped)."""
     print(f"\n{'─'*64}")
     print(f"  Table: {table}  (date field: {date_field})")
+    if start_date or end_date:
+        print(f"  Date range: {start_date or 'beginning'} → {end_date or 'end'}")
     print(f"{'─'*64}")
 
-    rows = fetch_null_rows(table, date_field)
+    rows = fetch_null_rows(table, date_field, start_date=start_date, end_date=end_date)
     if not rows:
         print(f"  Nothing to backfill — all {table} rows already have a close_price.")
         return 0, 0
@@ -236,10 +260,17 @@ def process_table(table: str, date_field: str, dry_run: bool) -> tuple[int, int]
 def main():
     args = parse_args()
 
+    if args.start and args.end and args.start > args.end:
+        print(f"ERROR: --start ({args.start}) is after --end ({args.end}). "
+              "Please swap the dates.", file=sys.stderr)
+        sys.exit(1)
+
     print("=" * 64)
     print("  EdgeIQ — Close Price Backfill")
     if args.dry_run:
         print("  *** DRY RUN — no writes ***")
+    if args.start or args.end:
+        print(f"  Date range : {args.start or 'beginning'} → {args.end or 'end'}")
     print("=" * 64)
 
     tables_to_process = [
@@ -252,7 +283,12 @@ def main():
     t0 = time.time()
 
     for table, date_field in tables_to_process:
-        updated, skipped = process_table(table, date_field, dry_run=args.dry_run)
+        updated, skipped = process_table(
+            table, date_field,
+            dry_run=args.dry_run,
+            start_date=args.start,
+            end_date=args.end,
+        )
         grand_updated += updated
         grand_skipped += skipped
 
