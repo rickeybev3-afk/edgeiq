@@ -2525,7 +2525,7 @@ def eod_update():
             except Exception as _cpe_guard:
                 log.warning(f"EOD close-price sweep (already-resolved path) failed: {_cpe_guard}")
             try:
-                _recalc_eod_pnl_r_recent()
+                _recalc_eod_pnl_r_recent(lookback_days=1)
             except Exception as _rpnl_guard:
                 log.warning(f"EOD P&L recalc (already-resolved path) failed: {_rpnl_guard}")
             return
@@ -2557,7 +2557,7 @@ def eod_update():
         except Exception as _cpe_early:
             log.warning(f"EOD close-price sweep (scan-failed path) failed: {_cpe_early}")
         try:
-            _recalc_eod_pnl_r_recent()
+            _recalc_eod_pnl_r_recent(lookback_days=1)
         except Exception as _rpnl_early:
             log.warning(f"EOD P&L recalc (scan-failed path) failed: {_rpnl_early}")
         return
@@ -2632,7 +2632,7 @@ def eod_update():
     except Exception as _cpe:
         log.warning(f"EOD close-price sweep failed (non-critical): {_cpe}")
     try:
-        _recalc_eod_pnl_r_recent()
+        _recalc_eod_pnl_r_recent(lookback_days=1)
     except Exception as _rpnl:
         log.warning(f"EOD P&L recalc (main path) failed (non-critical): {_rpnl}")
 
