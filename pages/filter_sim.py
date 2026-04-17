@@ -629,7 +629,7 @@ else:
 
     for trade in sorted_trades:
         r_val = trade.get("pnl_r_sim") or 0.0
-        if pnl_risk_mode == "Fixed $ per trade":
+        if pnl_fixed_risk is not None:
             risk_amt = float(pnl_fixed_risk)
         else:
             # Compound, but cap position size at COMPOUND_CAP × starting risk
