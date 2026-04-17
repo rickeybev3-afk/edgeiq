@@ -11920,6 +11920,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             for _raw_col, _display_col in _extra_col_map.items():
                                 if _raw_col in _tk_drill_df.columns:
                                     _tk_drill_display[_display_col] = _tk_drill_df[_raw_col].values
+                            # Compute Delta R = Tiered Exit R − EOD Hold R (matching main history table)
+                            _has_eod_r    = "EOD Hold R"    in _tk_drill_display.columns
+                            _has_tiered_r = "Tiered Exit R" in _tk_drill_display.columns
+                            if _has_eod_r and _has_tiered_r:
+                                _eod_r_s    = pd.to_numeric(_tk_drill_display["EOD Hold R"],    errors="coerce")
+                                _tiered_r_s = pd.to_numeric(_tk_drill_display["Tiered Exit R"], errors="coerce")
+                                _tk_drill_display["Delta R"] = (
+                                    _tiered_r_s - _eod_r_s
+                                ).where(_eod_r_s.notna() & _tiered_r_s.notna())
                             _tk_drill_display["Date"] = (
                                 _tk_drill_display["Date"].astype(str).str[:10]
                             )
@@ -11934,6 +11943,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             # Build an HTML table so the "View in Log" anchor links
                             # work as true same-page navigation (LinkColumn opens new tabs).
+                            _dd_show_eod_r    = "EOD Hold R"    in _tk_drill_display.columns
+                            _dd_show_tiered_r = "Tiered Exit R" in _tk_drill_display.columns
+                            _dd_show_delta_r  = "Delta R"       in _tk_drill_display.columns
                             _dd_rows_html = ""
                             for _, _dd_row in _tk_drill_display.iterrows():
                                 _dd_date   = str(_dd_row["Date"])
@@ -11945,6 +11957,36 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _dd_wl     = str(_dd_row["Result"])
                                 _dd_wl_clr = "#4caf50" if _dd_wl == "Win" else "#ef5350"
                                 _dd_anchor = f"trade-{_tk_name.lower()}-{_dd_date}"
+                                # Optional R columns
+                                _dd_eod_r_cell = ""
+                                if _dd_show_eod_r:
+                                    try:
+                                        _dd_eod_r_v = float(_dd_row["EOD Hold R"])
+                                        _dd_eod_r_str = f"{_dd_eod_r_v:+.2f}R"
+                                    except (ValueError, TypeError):
+                                        _dd_eod_r_str = "—"
+                                    _dd_eod_r_cell = f'<td style="padding:6px 8px;font-family:monospace;">{_dd_eod_r_str}</td>'
+                                _dd_tiered_r_cell = ""
+                                if _dd_show_tiered_r:
+                                    try:
+                                        _dd_tiered_r_v = float(_dd_row["Tiered Exit R"])
+                                        _dd_tiered_r_str = f"{_dd_tiered_r_v:+.2f}R"
+                                    except (ValueError, TypeError):
+                                        _dd_tiered_r_str = "—"
+                                    _dd_tiered_r_cell = f'<td style="padding:6px 8px;font-family:monospace;">{_dd_tiered_r_str}</td>'
+                                _dd_delta_r_cell = ""
+                                if _dd_show_delta_r:
+                                    try:
+                                        _dd_dr_v = float(_dd_row["Delta R"])
+                                        _dd_dr_clr = "#66bb6a" if _dd_dr_v > 0 else "#ef5350" if _dd_dr_v < 0 else "#cfd8dc"
+                                        _dd_dr_str = f"{_dd_dr_v:+.2f}R"
+                                    except (ValueError, TypeError):
+                                        _dd_dr_clr = "#cfd8dc"
+                                        _dd_dr_str = "—"
+                                    _dd_delta_r_cell = (
+                                        f'<td style="padding:6px 8px;font-family:monospace;'
+                                        f'color:{_dd_dr_clr};font-weight:700;">{_dd_dr_str}</td>'
+                                    )
                                 _dd_rows_html += (
                                     f'<tr style="border-bottom:1px solid #0d2137;">'
                                     f'<td style="padding:6px 8px;">{_html.escape(_dd_date)}</td>'
@@ -11953,13 +11995,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f'<td style="padding:6px 8px;">{_html.escape(_dd_eod)}</td>'
                                     f'<td style="padding:6px 8px;">{_html.escape(_dd_ft_str)}</td>'
                                     f'<td style="padding:6px 8px;color:{_dd_wl_clr};font-weight:700;">{_html.escape(_dd_wl)}</td>'
-                                    f'<td style="padding:6px 8px;">'
+                                    + _dd_eod_r_cell
+                                    + _dd_tiered_r_cell
+                                    + _dd_delta_r_cell
+                                    + f'<td style="padding:6px 8px;">'
                                     f'<a href="#{_dd_anchor}" '
                                     f'style="color:#90caf9;font-size:11px;text-decoration:none;" '
                                     f'title="Scroll to this trade in the main log below">'
                                     f'&#8595; Jump</a></td>'
                                     f'</tr>'
                                 )
+                            _dd_extra_headers = ""
+                            if _dd_show_eod_r:
+                                _dd_extra_headers += '<th style="padding:4px 8px;text-align:left;">EOD Hold R</th>'
+                            if _dd_show_tiered_r:
+                                _dd_extra_headers += '<th style="padding:4px 8px;text-align:left;">Tiered Exit R</th>'
+                            if _dd_show_delta_r:
+                                _dd_extra_headers += '<th style="padding:4px 8px;text-align:left;">Delta R</th>'
                             st.markdown(
                                 f'<div style="overflow-x:auto;">'
                                 f'<table style="width:100%;border-collapse:collapse;'
@@ -11973,7 +12025,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f'<th style="padding:4px 8px;text-align:left;">EOD Reality</th>'
                                 f'<th style="padding:4px 8px;text-align:left;">Follow-Thru %</th>'
                                 f'<th style="padding:4px 8px;text-align:left;">Result</th>'
-                                f'<th style="padding:4px 8px;text-align:left;">View in Log</th>'
+                                + _dd_extra_headers
+                                + f'<th style="padding:4px 8px;text-align:left;">View in Log</th>'
                                 f'</tr></thead>'
                                 f'<tbody>{_dd_rows_html}</tbody>'
                                 f'</table></div>',
