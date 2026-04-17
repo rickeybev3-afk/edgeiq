@@ -17966,6 +17966,7 @@ ALTER TABLE backtest_sim_runs
             )
             _pt_eod_scan_cols = st.columns(2)
             _pt_eod_has_scan = "scan_type" in _verified.columns
+            _pt_eod_exp_map: dict = {}
             for _pt_eod_col, _pt_eod_scan, _pt_eod_label, _pt_eod_accent in [
                 (_pt_eod_scan_cols[0], "morning",  "🌅 Morning EOD",  "#81c784"),
                 (_pt_eod_scan_cols[1], "intraday", "⚡ Intraday EOD", "#64b5f6"),
@@ -18000,6 +18001,7 @@ ALTER TABLE backtest_sim_runs
                         _pt_eod_wrc  = "#2e7d32" if _pt_eod_wr >= 60 else ("#ef6c00" if _pt_eod_wr >= 50 else "#c62828")
                         _pt_eod_expc = "#4caf50" if _pt_eod_exp >= 0 else "#ef5350"
                         _pt_eod_totc = "#4caf50" if _pt_eod_tot >= 0 else "#ef5350"
+                        _pt_eod_exp_map[_pt_eod_scan] = _pt_eod_exp
                         st.markdown(
                             f'<div style="background:#020813; border:1px solid #1a2744; '
                             f'border-left:3px solid {_pt_eod_accent}; border-radius:8px; '
@@ -18019,6 +18021,41 @@ ALTER TABLE backtest_sim_runs
                             f'</div>',
                             unsafe_allow_html=True,
                         )
+            if "morning" in _pt_eod_exp_map and "intraday" in _pt_eod_exp_map:
+                _pt_eod_m_exp = _pt_eod_exp_map["morning"]
+                _pt_eod_i_exp = _pt_eod_exp_map["intraday"]
+                _pt_eod_m_str = f'{"+" if _pt_eod_m_exp >= 0 else ""}{_pt_eod_m_exp:.2f}R'
+                _pt_eod_i_str = f'{"+" if _pt_eod_i_exp >= 0 else ""}{_pt_eod_i_exp:.2f}R'
+                if _pt_eod_m_exp > _pt_eod_i_exp:
+                    _pt_eod_verdict = (
+                        f'🌅 Morning EOD (<span style="color:#81c784;font-weight:700;">{_pt_eod_m_str}</span>) '
+                        f'outperforms ⚡ Intraday EOD (<span style="color:#64b5f6;">{_pt_eod_i_str}</span>) '
+                        f'on your paper trades'
+                    )
+                    _pt_eod_verdict_border = "#81c784"
+                elif _pt_eod_i_exp > _pt_eod_m_exp:
+                    _pt_eod_verdict = (
+                        f'⚡ Intraday EOD (<span style="color:#64b5f6;font-weight:700;">{_pt_eod_i_str}</span>) '
+                        f'outperforms 🌅 Morning EOD (<span style="color:#81c784;">{_pt_eod_m_str}</span>) '
+                        f'on your paper trades'
+                    )
+                    _pt_eod_verdict_border = "#64b5f6"
+                else:
+                    _pt_eod_verdict = (
+                        f'🤝 Morning EOD ({_pt_eod_m_str}) and Intraday EOD ({_pt_eod_i_str}) '
+                        f'are tied on your paper trades'
+                    )
+                    _pt_eod_verdict_border = "#546e7a"
+                st.markdown(
+                    f'<div style="background:#020813; border:1px solid #1a2744; '
+                    f'border-left:3px solid {_pt_eod_verdict_border}; border-radius:8px; '
+                    f'padding:10px 16px; margin-top:8px; font-size:12px; color:#cfd8dc;">'
+                    f'<span style="color:#90a4ae; font-size:10px; text-transform:uppercase; '
+                    f'letter-spacing:1px; font-weight:700;">Head-to-Head Verdict &nbsp;▸&nbsp;</span>'
+                    f'{_pt_eod_verdict}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -19879,6 +19916,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         _ptt_eod_scan_cols = st.columns(2)
         _ptt_eod_has_scan = "scan_type" in _pt_df.columns
+        _ptt_eod_exp_map: dict = {}
         for _ptt_eod_col, _ptt_eod_scan, _ptt_eod_label, _ptt_eod_accent in [
             (_ptt_eod_scan_cols[0], "morning",  "🌅 Morning EOD",  "#81c784"),
             (_ptt_eod_scan_cols[1], "intraday", "⚡ Intraday EOD", "#64b5f6"),
@@ -19913,6 +19951,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     _ptt_eod_wrc  = "#2e7d32" if _ptt_eod_wr >= 60 else ("#ef6c00" if _ptt_eod_wr >= 50 else "#c62828")
                     _ptt_eod_expc = "#4caf50" if _ptt_eod_exp >= 0 else "#ef5350"
                     _ptt_eod_totc = "#4caf50" if _ptt_eod_tot >= 0 else "#ef5350"
+                    _ptt_eod_exp_map[_ptt_eod_scan] = _ptt_eod_exp
                     st.markdown(
                         f'<div style="background:#020813; border:1px solid #1a2744; '
                         f'border-left:3px solid {_ptt_eod_accent}; border-radius:8px; '
@@ -19932,6 +19971,41 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         f'</div>',
                         unsafe_allow_html=True,
                     )
+        if "morning" in _ptt_eod_exp_map and "intraday" in _ptt_eod_exp_map:
+            _ptt_eod_m_exp = _ptt_eod_exp_map["morning"]
+            _ptt_eod_i_exp = _ptt_eod_exp_map["intraday"]
+            _ptt_eod_m_str = f'{"+" if _ptt_eod_m_exp >= 0 else ""}{_ptt_eod_m_exp:.2f}R'
+            _ptt_eod_i_str = f'{"+" if _ptt_eod_i_exp >= 0 else ""}{_ptt_eod_i_exp:.2f}R'
+            if _ptt_eod_m_exp > _ptt_eod_i_exp:
+                _ptt_eod_verdict = (
+                    f'🌅 Morning EOD (<span style="color:#81c784;font-weight:700;">{_ptt_eod_m_str}</span>) '
+                    f'outperforms ⚡ Intraday EOD (<span style="color:#64b5f6;">{_ptt_eod_i_str}</span>) '
+                    f'on your paper trades'
+                )
+                _ptt_eod_verdict_border = "#81c784"
+            elif _ptt_eod_i_exp > _ptt_eod_m_exp:
+                _ptt_eod_verdict = (
+                    f'⚡ Intraday EOD (<span style="color:#64b5f6;font-weight:700;">{_ptt_eod_i_str}</span>) '
+                    f'outperforms 🌅 Morning EOD (<span style="color:#81c784;">{_ptt_eod_m_str}</span>) '
+                    f'on your paper trades'
+                )
+                _ptt_eod_verdict_border = "#64b5f6"
+            else:
+                _ptt_eod_verdict = (
+                    f'🤝 Morning EOD ({_ptt_eod_m_str}) and Intraday EOD ({_ptt_eod_i_str}) '
+                    f'are tied on your paper trades'
+                )
+                _ptt_eod_verdict_border = "#546e7a"
+            st.markdown(
+                f'<div style="background:#020813; border:1px solid #1a2744; '
+                f'border-left:3px solid {_ptt_eod_verdict_border}; border-radius:8px; '
+                f'padding:10px 16px; margin-top:8px; font-size:12px; color:#cfd8dc;">'
+                f'<span style="color:#90a4ae; font-size:10px; text-transform:uppercase; '
+                f'letter-spacing:1px; font-weight:700;">Head-to-Head Verdict &nbsp;▸&nbsp;</span>'
+                f'{_ptt_eod_verdict}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     # Full trade log
     with st.expander("📋 Full Paper Trade Log", expanded=False):
