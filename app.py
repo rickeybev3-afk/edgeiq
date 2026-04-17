@@ -13538,6 +13538,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "ℹ️ Divergence analysis requires an EOD or tiered-exit R column — "
                                 "showing equity curve only."
                             )
+                            _mini_eq_csv_rows = "\n".join(
+                                f"{i},{v:.2f}" for i, v in enumerate(_mini_eq)
+                            )
+                            st.download_button(
+                                label="⬇️ Download Equity Curve CSV",
+                                data=f"trade_index,equity_usd\n{_mini_eq_csv_rows}",
+                                file_name=f"{_tk_name}_equity_curve.csv",
+                                mime="text/csv",
+                                key=f"_dl_mini_eq_{_tk_name}",
+                            )
                         if _mini_div_data and not _mini_eq_only:
                             _mini_eq  = _mini_div_data["eq_curve"]
                             _mini_r   = _mini_div_data["r_curve"]
@@ -13638,6 +13648,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             st.caption(
                                 f"🟡 **Trade\u00a0#{_mini_idx}**: {_mini_div_msg}"
+                            )
+                            _mini_csv_len = min(len(_mini_eq), len(_mini_r))
+                            _mini_div_csv_rows = "\n".join(
+                                f"{i},{_mini_eq[i]:.2f},{_mini_r[i]:.4f}"
+                                for i in range(_mini_csv_len)
+                            )
+                            st.download_button(
+                                label="⬇️ Download Curve Data CSV",
+                                data=f"trade_index,equity_usd,cum_r\n{_mini_div_csv_rows}",
+                                file_name=f"{_tk_name}_equity_r_curve.csv",
+                                mime="text/csv",
+                                key=f"_dl_mini_div_{_tk_name}",
                             )
 
                         # ── Drill-down: trades at a selected TCS cutoff ──────────
