@@ -15043,22 +15043,31 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             ),
                         )
 
-                        def _preview_row_style(row):
-                            if str(row.get("Sim", "")).startswith("⚠ No sim"):
-                                return ["background-color: rgba(255,152,0,0.15)"] * len(row)
-                            return [""] * len(row)
+                    # Persist preview table and sim_failed in session_state so the table
+                    # survives reruns (e.g. sidebar interactions) without re-scanning.
+                    st.session_state["_pt_sim_failed"] = _sim_failed
+                    st.session_state["_pt_preview_df"] = _pt_preview_df
 
-                        st.dataframe(
-                            _pt_preview_df.style.apply(_preview_row_style, axis=1)
-                                .map(
-                                    lambda v: "color: #e65100; font-weight:700" if str(v).startswith("⚠ No sim") else "",
-                                    subset=["Sim"],
-                                ),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                    else:
-                        st.dataframe(_pt_preview_df, use_container_width=True, hide_index=True)
+    # Render the scan preview table from session_state so it persists across reruns
+    # (sidebar interactions, widget changes, etc.) without requiring a re-scan.
+    if "_pt_preview_df" in st.session_state and not st.session_state["_pt_preview_df"].empty:
+        _ss_preview_df = st.session_state["_pt_preview_df"]
+        if "Sim" in _ss_preview_df.columns:
+            def _preview_row_style(row):
+                if str(row.get("Sim", "")).startswith("⚠ No sim"):
+                    return ["background-color: rgba(255,152,0,0.15)"] * len(row)
+                return [""] * len(row)
+            st.dataframe(
+                _ss_preview_df.style.apply(_preview_row_style, axis=1)
+                    .map(
+                        lambda v: "color: #e65100; font-weight:700" if str(v).startswith("⚠ No sim") else "",
+                        subset=["Sim"],
+                    ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.dataframe(_ss_preview_df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
