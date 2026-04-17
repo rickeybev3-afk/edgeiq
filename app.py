@@ -17709,18 +17709,47 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
     # Full trade log
     with st.expander("📋 Full Paper Trade Log", expanded=False):
-        _pt_log_cols = [
-            c for c in ["trade_date", "ticker", "tcs", "predicted",
-                         "actual_outcome", "follow_thru_pct", "win_loss",
-                         "mae", "mfe", "entry_time", "exit_trigger",
-                         "false_break_up", "false_break_down", "min_tcs_filter"]
-            if c in _pt_df.columns
-        ]
+        # Include sim_outcome temporarily so we can derive the annotation
+        # from the same sorted slice (guarantees per-row accuracy).
+        _pt_sim_fail_labels = {
+            "missing_data": "missing IB data",
+            "invalid_ib":   "invalid IB range",
+        }
+        _pt_log_base_cols = ["trade_date", "ticker", "tcs", "predicted",
+                              "actual_outcome", "follow_thru_pct", "win_loss",
+                              "mae", "mfe", "entry_time", "exit_trigger",
+                              "false_break_up", "false_break_down", "min_tcs_filter"]
+        _pt_include_sim_outcome = "sim_outcome" in _pt_df.columns
+        if _pt_include_sim_outcome:
+            _pt_log_base_cols = _pt_log_base_cols + ["sim_outcome"]
+        _pt_log_cols = [c for c in _pt_log_base_cols if c in _pt_df.columns]
         _pt_log_show = _pt_df[_pt_log_cols].sort_values(
-            "trade_date", ascending=False
+            ["trade_date", "ticker"], ascending=[False, True]
         ).reset_index(drop=True)
 
+        # Derive the human-readable "Sim" annotation from the sorted slice,
+        # then drop the raw sim_outcome column so it doesn't appear in the table.
+        if _pt_include_sim_outcome and "sim_outcome" in _pt_log_show.columns:
+            _pt_log_show.insert(
+                _pt_log_show.columns.get_loc("ticker") + 1,
+                "Sim",
+                _pt_log_show["sim_outcome"].apply(
+                    lambda v: f"⚠ No sim — {_pt_sim_fail_labels[v]}"
+                    if v in _pt_sim_fail_labels else ""
+                ),
+            )
+            _pt_log_show = _pt_log_show.drop(columns=["sim_outcome"])
+
+        _pt_log_has_sim_col = "Sim" in _pt_log_show.columns
+
         def _pt_row_color(row):
+            if _pt_log_has_sim_col and str(row.get("Sim", "")).startswith("⚠ No sim"):
+                warn = "background-color: rgba(255,152,0,0.15)"
+                warn_cell = "background-color: rgba(255,152,0,0.15); color:#e65100; font-weight:700"
+                return [
+                    warn_cell if col == "Sim" else warn
+                    for col in row.index
+                ]
             wl = str(row.get("win_loss", "")).strip()
             if wl in ("W", "Win"):
                 base = "background-color: rgba(76,175,80,0.08)"
