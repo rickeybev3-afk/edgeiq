@@ -2567,7 +2567,15 @@ def eod_update():
             except Exception as _cpe_guard:
                 log.warning(f"EOD close-price sweep (already-resolved path) failed: {_cpe_guard}")
             try:
-                _recalc_eod_pnl_r_recent(lookback_days=1)
+                _t0_rpnl = time.monotonic()
+                _rpnl_guard_res = _recalc_eod_pnl_r_recent(lookback_days=1)
+                _elapsed_rpnl = time.monotonic() - _t0_rpnl
+                log.info(
+                    f"EOD P&L recalc (already-resolved path): "
+                    f"{_rpnl_guard_res.get('written', 0)} row(s) updated, "
+                    f"{_rpnl_guard_res.get('skipped', 0)} skipped — "
+                    f"{_elapsed_rpnl:.2f}s"
+                )
             except Exception as _rpnl_guard:
                 log.warning(f"EOD P&L recalc (already-resolved path) failed: {_rpnl_guard}")
             return
@@ -2599,7 +2607,15 @@ def eod_update():
         except Exception as _cpe_early:
             log.warning(f"EOD close-price sweep (scan-failed path) failed: {_cpe_early}")
         try:
-            _recalc_eod_pnl_r_recent(lookback_days=1)
+            _t0_rpnl = time.monotonic()
+            _rpnl_early_res = _recalc_eod_pnl_r_recent(lookback_days=1)
+            _elapsed_rpnl = time.monotonic() - _t0_rpnl
+            log.info(
+                f"EOD P&L recalc (scan-failed path): "
+                f"{_rpnl_early_res.get('written', 0)} row(s) updated, "
+                f"{_rpnl_early_res.get('skipped', 0)} skipped — "
+                f"{_elapsed_rpnl:.2f}s"
+            )
         except Exception as _rpnl_early:
             log.warning(f"EOD P&L recalc (scan-failed path) failed: {_rpnl_early}")
         return
@@ -2674,7 +2690,15 @@ def eod_update():
     except Exception as _cpe:
         log.warning(f"EOD close-price sweep failed (non-critical): {_cpe}")
     try:
-        _recalc_eod_pnl_r_recent(lookback_days=1)
+        _t0_rpnl = time.monotonic()
+        _rpnl_res = _recalc_eod_pnl_r_recent(lookback_days=1)
+        _elapsed_rpnl = time.monotonic() - _t0_rpnl
+        log.info(
+            f"EOD P&L recalc (main path): "
+            f"{_rpnl_res.get('written', 0)} row(s) updated, "
+            f"{_rpnl_res.get('skipped', 0)} skipped — "
+            f"{_elapsed_rpnl:.2f}s"
+        )
     except Exception as _rpnl:
         log.warning(f"EOD P&L recalc (main path) failed (non-critical): {_rpnl}")
 
