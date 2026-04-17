@@ -726,7 +726,29 @@ def _run_credential_check() -> None:
     _tg_token   = _os_cred.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     _tg_chat_id = _os_cred.environ.get("TELEGRAM_CHAT_ID", "").strip()
     _failed_names = {_n for _n, _ in errors}
-    if _tg_token and _tg_chat_id:
+
+    if _tg_token:
+        # Collect opted-in subscriber chat IDs for credential alerts.
+        try:
+            _sub_pairs = get_beta_chat_ids(credential_alerts_only=True)
+        except Exception as _exc_sub:
+            logging.warning("[RUNTIME] Could not fetch subscriber chat IDs for credential alert: %s", _exc_sub)
+            _sub_pairs = []
+
+        # Build deduplicated list of chat IDs to notify.  Admin chat always
+        # receives these alerts; subscriber chat IDs are added when they have
+        # opted in (default is opted in).
+        def _build_recipients(exclude_admin: bool = False) -> list[str]:
+            recipients: list[str] = []
+            if _tg_chat_id and not exclude_admin:
+                recipients.append(_tg_chat_id)
+            for _uid, _cid in _sub_pairs:
+                _cid_str = str(_cid)
+                if _cid_str not in recipients:
+                    recipients.append(_cid_str)
+            return recipients
+
+        # ── Failure alerts ────────────────────────────────────────────────
         _new_failures = [(_n, _m) for _n, _m in errors if _n not in _runtime_credential_alerted]
         for _cred_name, _cred_msg in _new_failures:
             _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -738,24 +760,41 @@ def _run_credential_check() -> None:
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"{_cred_msg}"
             )
-            if _send_telegram_message(_tg_token, _tg_chat_id, _alert_msg):
+            _delivered = False
+            for _rcpt in _build_recipients():
+                if _send_telegram_message(_tg_token, _rcpt, _alert_msg):
+                    _delivered = True
+                else:
+                    logging.warning(
+                        "[RUNTIME] Telegram credential alert not delivered to %s for %s",
+                        _rcpt, _cred_name,
+                    )
+            if _delivered:
                 _runtime_credential_alerted.add(_cred_name)
-            else:
-                logging.warning("[RUNTIME] Telegram credential alert not delivered for %s", _cred_name)
-    # Send "all clear" alerts for credentials that have recovered, then remove
-    # them from the alerted set so a later re-failure triggers a fresh alert.
-    for _recovered in list(_runtime_credential_alerted - _failed_names):
-        if _tg_token and _tg_chat_id:
+
+        # ── Recovery alerts ───────────────────────────────────────────────
+        # Send a one-time recovery notice for any credential that was
+        # previously alerted but is now healthy again.
+        _recovered_names = _runtime_credential_alerted - _failed_names
+        for _recovered_name in list(_recovered_names):
             _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             _recovery_msg = (
                 f"✅ <b>Credential Recovered</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🟢 <b>{_recovered}</b> is valid again.\n"
+                f"🟢 <b>{_recovered_name}</b> is valid again.\n"
                 f"⏰ Recovered at: <b>{_ts}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━"
             )
-            if not _send_telegram_message(_tg_token, _tg_chat_id, _recovery_msg):
-                logging.warning("[RUNTIME] Telegram recovery alert not delivered for %s", _recovered)
+            for _rcpt in _build_recipients():
+                if not _send_telegram_message(_tg_token, _rcpt, _recovery_msg):
+                    logging.warning(
+                        "[RUNTIME] Telegram credential recovery alert not delivered to %s for %s",
+                        _rcpt, _recovered_name,
+                    )
+
+    # Always clear recovered credentials from the alerted set regardless of
+    # whether Telegram is configured — ensures a later re-failure always alerts.
+    for _recovered in _runtime_credential_alerted - _failed_names:
         _runtime_credential_alerted.discard(_recovered)
 
 
@@ -11895,6 +11934,7 @@ def get_beta_chat_ids(
     exclude_user_id: str = "",
     tcs_alerts_only: bool = False,
     morning_alerts_only: bool = False,
+    credential_alerts_only: bool = False,
 ) -> list:
     """Return list of (user_id, chat_id) tuples for all beta subscribers.
 
@@ -11906,6 +11946,10 @@ def get_beta_chat_ids(
 
     When morning_alerts_only is True, subscribers who have opted out of
     morning setup alerts (morning_alerts_enabled == False) are excluded.
+
+    When credential_alerts_only is True, subscribers who have opted out of
+    credential failure/recovery alerts (credential_alerts_enabled == False)
+    are excluded.
     """
     import json as _json
 
@@ -11914,6 +11958,8 @@ def get_beta_chat_ids(
         if tcs_alerts_only and prefs.get("tcs_alerts_enabled", True) is False:
             return False
         if morning_alerts_only and prefs.get("morning_alerts_enabled", True) is False:
+            return False
+        if credential_alerts_only and prefs.get("credential_alerts_enabled", True) is False:
             return False
         return True
 

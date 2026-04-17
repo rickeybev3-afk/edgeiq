@@ -110,6 +110,13 @@ _ALERT_REGISTRY = [
         "label":       "TCS threshold shift alerts",
         "description": "Notifies you when a structure's TCS threshold crosses a significant level.",
     },
+    {
+        "key":         "credential_alerts",
+        "pref_key":    "credential_alerts_enabled",
+        "default":     True,
+        "label":       "Credential failure alerts",
+        "description": "Notifies you when an API credential (Alpaca, Supabase) fails or recovers.",
+    },
 ]
 
 # ── Import backend functions ──────────────────────────────────────────────────
