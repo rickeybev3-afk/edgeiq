@@ -161,15 +161,119 @@ def _send_telegram(message: str) -> None:
         log.warning("Telegram send error: %s", exc)
 
 
+# ── Email helper ─────────────────────────────────────────────────────────────
+
+
+def _send_email_alert(subject: str, body_plain: str, body_html: str) -> None:
+    """Send an alert email via SendGrid API or SMTP.
+
+    Credential resolution (tried in order):
+      1. SendGrid  — SENDGRID_API_KEY + ALERT_EMAIL_FROM + ALERT_EMAIL_TO
+      2. SMTP      — SMTP_HOST + ALERT_EMAIL_FROM + ALERT_EMAIL_TO
+                     SMTP_USER / SMTP_PASSWORD are optional (unauthenticated
+                     relays are supported).
+                     SMTP_PORT defaults to 587, SMTP_TLS defaults to true.
+
+    Silently skips (log-only) when no credentials are present.
+    """
+    from_addr = os.getenv("ALERT_EMAIL_FROM", "").strip()
+    to_addr   = os.getenv("ALERT_EMAIL_TO",   "").strip()
+
+    if not from_addr or not to_addr:
+        log.info("ALERT_EMAIL_FROM/ALERT_EMAIL_TO not set — skipping email notification.")
+        return
+
+    sendgrid_key = os.getenv("SENDGRID_API_KEY", "").strip()
+    smtp_host    = os.getenv("SMTP_HOST",        "").strip()
+
+    if not sendgrid_key and not smtp_host:
+        log.info("No email credentials configured (SENDGRID_API_KEY or SMTP_HOST) — skipping email notification.")
+        return
+
+    if sendgrid_key:
+        _send_email_via_sendgrid(sendgrid_key, from_addr, to_addr, subject, body_plain, body_html)
+    else:
+        _send_email_via_smtp(smtp_host, from_addr, to_addr, subject, body_plain, body_html)
+
+
+def _send_email_via_sendgrid(
+    api_key: str, from_addr: str, to_addr: str,
+    subject: str, body_plain: str, body_html: str,
+) -> None:
+    try:
+        import json as _json
+        import urllib.request as _urllib_req
+
+        payload = _json.dumps({
+            "personalizations": [{"to": [{"email": to_addr}]}],
+            "from":    {"email": from_addr},
+            "subject": subject,
+            "content": [
+                {"type": "text/plain", "value": body_plain},
+                {"type": "text/html",  "value": body_html},
+            ],
+        }).encode()
+        req = _urllib_req.Request(
+            "https://api.sendgrid.com/v3/mail/send",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type":  "application/json",
+            },
+            method="POST",
+        )
+        with _urllib_req.urlopen(req, timeout=15) as resp:
+            status = resp.status
+        if status in (200, 202):
+            log.info("Email alert sent via SendGrid.")
+        else:
+            log.warning("SendGrid returned unexpected status %s.", status)
+    except Exception as exc:
+        log.warning("SendGrid send error: %s", exc)
+
+
+def _send_email_via_smtp(
+    smtp_host: str, from_addr: str, to_addr: str,
+    subject: str, body_plain: str, body_html: str,
+) -> None:
+    try:
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text      import MIMEText
+
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_user = os.getenv("SMTP_USER",     "").strip()
+        smtp_pass = os.getenv("SMTP_PASSWORD", "").strip()
+        use_tls   = os.getenv("SMTP_TLS", "true").strip().lower() not in ("0", "false", "no")
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = from_addr
+        msg["To"]      = to_addr
+        msg.attach(MIMEText(body_plain, "plain"))
+        msg.attach(MIMEText(body_html,  "html"))
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            if use_tls:
+                server.starttls()
+            if smtp_user and smtp_pass:
+                server.login(smtp_user, smtp_pass)
+            server.sendmail(from_addr, [to_addr], msg.as_string())
+        log.info("Email alert sent via SMTP (%s:%s).", smtp_host, smtp_port)
+    except Exception as exc:
+        log.warning("SMTP send error: %s", exc)
+
+
 # ── Cache-failure alert dispatcher ───────────────────────────────────────────
 
 
 def _send_cache_failure_alert(error_msg: str) -> None:
     """Dispatch an operator alert when mv_tiered_pnl_summary refresh fails.
 
-    Tries both Slack (SLACK_WEBHOOK_URL) and Telegram (TELEGRAM_BOT_TOKEN +
-    TELEGRAM_CHAT_ID).  Each channel silently skips if its credentials are
-    absent, so operators only need to configure whichever channel they use.
+    Tries Slack (SLACK_WEBHOOK_URL), Telegram (TELEGRAM_BOT_TOKEN +
+    TELEGRAM_CHAT_ID), and Email (SENDGRID_API_KEY or SMTP_* + ALERT_EMAIL_*).
+    Each channel silently skips if its credentials are absent, so operators
+    only need to configure whichever channel(s) they use.
     """
     timestamp = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
     plain_msg = (
@@ -185,6 +289,14 @@ def _send_cache_failure_alert(error_msg: str) -> None:
         f"<b>Error:</b> <code>{html.escape(error_msg[:400])}</code>"
     )
     _send_telegram(html_msg)
+
+    email_subject = "[EdgeIQ] Ladder cache refresh FAILED"
+    email_html = (
+        f"<p>⚠️ <strong>EdgeIQ — Ladder cache refresh FAILED</strong></p>"
+        f"<p><strong>Time:</strong> {timestamp}</p>"
+        f"<p><strong>Error:</strong> <code>{html.escape(error_msg[:400])}</code></p>"
+    )
+    _send_email_alert(email_subject, plain_msg, email_html)
 
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -434,16 +546,26 @@ def main():
         bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
         and bool(os.getenv("TELEGRAM_CHAT_ID", "").strip())
     )
-    if slack_active or telegram_active:
+    email_active = (
+        bool(os.getenv("ALERT_EMAIL_FROM", "").strip())
+        and bool(os.getenv("ALERT_EMAIL_TO",   "").strip())
+        and (
+            bool(os.getenv("SENDGRID_API_KEY", "").strip())
+            or bool(os.getenv("SMTP_HOST", "").strip())
+        )
+    )
+    if slack_active or telegram_active or email_active:
         channels = ", ".join(filter(None, [
-            "Slack" if slack_active else "",
+            "Slack"    if slack_active    else "",
             "Telegram" if telegram_active else "",
+            "Email"    if email_active    else "",
         ]))
         log.info("Cache-failure alerts enabled via: %s", channels)
     else:
         log.warning(
             "No alert channels configured — cache-refresh failures will only appear in logs. "
-            "Set SLACK_WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID to enable alerts."
+            "Set SLACK_WEBHOOK_URL, TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID, or "
+            "SENDGRID_API_KEY (or SMTP_HOST)+ALERT_EMAIL_FROM+ALERT_EMAIL_TO to enable alerts."
         )
 
     # Run backfill immediately on startup to catch any rows written since last run.
