@@ -162,6 +162,20 @@ def vwap_aligned(row):
     return cvv <= 0.0
 
 
+# ── Money formatter for large numbers ─────────────────────────────────────────
+def fmt_money(v):
+    """Format a dollar amount compactly: $1.2T / $43B / $1.2M / $42,000"""
+    av = abs(v)
+    sign = "-" if v < 0 else ""
+    if av >= 1e12:
+        return f"{sign}${av/1e12:.2f}T"
+    if av >= 1e9:
+        return f"{sign}${av/1e9:.2f}B"
+    if av >= 1e6:
+        return f"{sign}${av/1e6:.2f}M"
+    return f"{sign}${av:,.0f}"
+
+
 # ── WR color helper ───────────────────────────────────────────────────────────
 def wr_color(wr):
     if wr >= 88:
@@ -560,19 +574,27 @@ else:
             )
 
     # ── Simulation ─────────────────────────────────────────────────────────────
-    eq   = float(pnl_equity)
+    _start_eq = float(pnl_equity)
+    COMPOUND_CAP = 20.0  # same cap used in the main backtest engine
+    eq   = _start_eq
     curve = [eq]
     peak  = eq
     max_dd_pct    = 0.0
     max_dd_dollar = 0.0
     drawdown_pcts = [0.0]
+    cap_hit = False
 
     for trade in sorted_trades:
         r_val = trade.get("pnl_r_sim") or 0.0
         if pnl_risk_mode == "Fixed $ per trade":
             risk_amt = float(pnl_fixed_risk)
         else:
-            risk_amt = eq * (float(pnl_risk_pct) / 100.0)
+            # Compound, but cap position size at COMPOUND_CAP × starting risk
+            compound_factor = min(eq / _start_eq, COMPOUND_CAP)
+            if compound_factor >= COMPOUND_CAP:
+                cap_hit = True
+            base_risk = _start_eq * (float(pnl_risk_pct) / 100.0)
+            risk_amt  = base_risk * compound_factor
         eq += r_val * risk_amt
         eq  = max(eq, 0.0)
         curve.append(eq)
@@ -609,20 +631,30 @@ else:
             unsafe_allow_html=True,
         )
 
+    # ── Cap-hit notice ─────────────────────────────────────────────────────────
+    if cap_hit:
+        st.info(
+            f"ℹ️ Position size capped at **{int(COMPOUND_CAP)}× starting risk** "
+            f"(same guardrail used in the main backtest engine). "
+            "Without the cap, compounding at this WR over thousands of trades "
+            "produces unrealistic astronomical numbers."
+        )
+
     # ── Summary metrics ────────────────────────────────────────────────────────
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Final Equity",    f"${final_equity:,.0f}",
+    m1.metric("Final Equity",    fmt_money(final_equity),
               delta=f"{net_return_pct:+.1f}% total")
     m2.metric("CAGR (annualised)",
               f"{ann_return:+.1f}%" if ann_return is not None else "n/a",
               delta=f"over {trading_years:.1f} yrs" if trading_years else None)
-    m3.metric("Max Drawdown",    f"${max_dd_dollar:,.0f}",
+    m3.metric("Max Drawdown",    fmt_money(max_dd_dollar),
               delta=f"{max_dd_pct:.1f}% from peak")
-    m4.metric("Avg $ / Trade",   f"${avg_trade_amt:+,.0f}",
+    m4.metric("Avg $ / Trade",   fmt_money(avg_trade_amt),
               delta=f"{s3['exp']:+.3f}R avg")
     _r_label = (
-        f"1R = ${pnl_fixed_risk:,}" if pnl_risk_mode == "Fixed $ per trade"
-        else f"1R = {pnl_risk_pct}% of equity"
+        f"1R = {fmt_money(pnl_fixed_risk)}" if pnl_risk_mode == "Fixed $ per trade"
+        else f"1R = {pnl_risk_pct}% of equity (capped {int(COMPOUND_CAP)}×)"
+        if cap_hit else f"1R = {pnl_risk_pct}% of equity"
     )
     m5.metric("Risk per trade",  _r_label, delta=None)
 
