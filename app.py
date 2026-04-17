@@ -7924,6 +7924,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
         ['rp_end_date',      'rp_end_date'],
         ['rp_tcs_floor',     'rp_tcs_floor_filter'],
         ['rp_tcs_offset',    'rp_tcs_offset'],
+        ['rp_pos_size',      'rp_pos_size'],
+        ['rp_compound',      'rp_compound'],
+        ['rp_equity',        'rp_equity'],
     ];
     var changed = false;
     params.forEach(function(pair) {
@@ -8004,6 +8007,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.session_state["rp_scan_type"] = "Morning (10:47 AM)"
                     st.session_state["rp_tcs_floor_filter"] = "All"
                     st.session_state["rp_tcs_offset"] = 0
+                    st.session_state["rp_pos_size"] = 500
+                    st.session_state["rp_compound"] = False
+                    st.session_state["rp_equity"] = 10000
                     # Reflect all resets in the signature so the stored value
                     # matches actual session state and does not trigger a
                     # spurious extra clear on the very next rerun.
@@ -8030,11 +8036,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
+            if "rp_pos_size" not in st.session_state:
+                try:
+                    st.session_state["rp_pos_size"] = int(st.query_params.get("rp_pos_size", 500))
+                except (ValueError, TypeError):
+                    st.session_state["rp_pos_size"] = 500
+            if "rp_compound" not in st.session_state:
+                _qp_compound = st.query_params.get("rp_compound", "false")
+                st.session_state["rp_compound"] = str(_qp_compound).lower() == "true"
+            if "rp_equity" not in st.session_state:
+                try:
+                    st.session_state["rp_equity"] = int(st.query_params.get("rp_equity", 10000))
+                except (ValueError, TypeError):
+                    st.session_state["rp_equity"] = 10000
             if _rp_bot_mode:
                 _rp_pos_size = st.number_input(
                     "Position Size ($)", min_value=100, max_value=50000,
                     value=500, step=100, key="rp_pos_size",
                     help="Fixed dollar amount invested per trade (or starting position if compounding is on).",
+                )
+                if st.query_params.get("rp_pos_size") != str(_rp_pos_size):
+                    st.query_params["rp_pos_size"] = str(_rp_pos_size)
+                _cmp_rp_filters.html(
+                    f"<script>localStorage.setItem('rp_pos_size', {repr(str(_rp_pos_size))});</script>",
+                    height=0,
                 )
                 _rp_risk_pct = 2.0
                 _rp_compound = st.checkbox(
@@ -8046,6 +8071,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "Formula: pos = starting_pos × (current_equity / starting_equity)."
                     ),
                 )
+                _rp_compound_str = "true" if _rp_compound else "false"
+                if st.query_params.get("rp_compound") != _rp_compound_str:
+                    st.query_params["rp_compound"] = _rp_compound_str
+                _cmp_rp_filters.html(
+                    f"<script>localStorage.setItem('rp_compound', {repr(_rp_compound_str)});</script>",
+                    height=0,
+                )
             else:
                 _rp_pos_size = 500
                 _rp_compound = False
@@ -8053,6 +8085,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "Starting Equity ($)", min_value=1000, max_value=500000,
                 value=10000, step=500, key="rp_equity",
                 help="Starting account size for the equity curve.",
+            )
+            if st.query_params.get("rp_equity") != str(_rp_equity):
+                st.query_params["rp_equity"] = str(_rp_equity)
+            _cmp_rp_filters.html(
+                f"<script>localStorage.setItem('rp_equity', {repr(str(_rp_equity))});</script>",
+                height=0,
             )
         with _rp_col2:
             if _rp_bot_mode:
