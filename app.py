@@ -10387,7 +10387,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         "ΔWR (marg−comf)":  f"{_cs_delta_wr:+.1f}pp" if _cs_delta_wr is not None else "—",
                                         "Marg Avg R":       f"{_cs_marg_avgr:+.2f}R" if _cs_marg_avgr is not None else "—",
                                     })
-                                _cs_struct_rows.sort(key=lambda _r: _r["Marginal Trades"], reverse=True)
+                                def _parse_cs_dwr(r):
+                                    try:
+                                        return float(str(r["ΔWR (marg−comf)"]).replace("pp", "").replace("+", ""))
+                                    except Exception:
+                                        return float("inf")
+                                _cs_struct_rows.sort(key=_parse_cs_dwr)
                                 for _cs_row in _cs_struct_rows:
                                     _cs_data = {c: "" for c in _csv_cols}
                                     _cs_values = [
