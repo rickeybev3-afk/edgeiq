@@ -7858,6 +7858,53 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         st.markdown("**Trade-by-Trade Log**")
 
+                        _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3 = st.columns([2, 1, 1])
+                        with _rp_log_fcol1:
+                            _rp_log_ticker_filter = st.text_input(
+                                "Filter by ticker",
+                                value="",
+                                key="rp_log_ticker_filter",
+                                placeholder="e.g. AAPL, NVDA",
+                                label_visibility="collapsed",
+                            )
+                        with _rp_log_fcol2:
+                            _rp_log_wl_filter = st.selectbox(
+                                "W/L filter",
+                                options=["All", "Win", "Loss"],
+                                index=0,
+                                key="rp_log_wl_filter",
+                                label_visibility="collapsed",
+                            )
+                        with _rp_log_fcol3:
+                            _rp_log_show_neutral = st.checkbox(
+                                "Show neutral rows",
+                                value=True,
+                                key="rp_log_show_neutral",
+                            )
+
+                        _rp_display_df = _rp_df.copy()
+                        if _rp_log_ticker_filter.strip():
+                            _rp_tickers_input = [
+                                t.strip().upper()
+                                for t in _rp_log_ticker_filter.replace(",", " ").split()
+                                if t.strip()
+                            ]
+                            if _rp_tickers_input:
+                                _rp_display_df = _rp_display_df[
+                                    _rp_display_df["Ticker"].str.upper().isin(_rp_tickers_input)
+                                ]
+                        if _rp_log_wl_filter != "All":
+                            _rp_display_df = _rp_display_df[
+                                _rp_display_df["W/L"] == _rp_log_wl_filter
+                            ]
+                        if not _rp_log_show_neutral:
+                            _rp_display_df = _rp_display_df[
+                                _rp_display_df["W/L"].isin(["Win", "Loss"])
+                            ]
+
+                        if len(_rp_display_df) == 0:
+                            st.info("No trades match the current filters.")
+
                         def _rp_row_style(row):
                             wl = str(row.get("W/L", "")).strip()
                             # Detect marginal TCS (within 5 points of the floor)
@@ -7884,7 +7931,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 return ["background-color: rgba(144,164,174,0.08); color:#90a4ae"] * len(row)
                             return [hi if col == "W/L" else base for col in row.index]
 
-                        _rp_styled_df = _rp_df.style.apply(_rp_row_style, axis=1)
+                        _rp_styled_df = _rp_display_df.style.apply(_rp_row_style, axis=1)
                         st.dataframe(
                             _rp_styled_df,
                             use_container_width=True,
