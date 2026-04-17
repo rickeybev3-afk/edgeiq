@@ -1675,6 +1675,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
 
     written = 0
     skipped = 0
+    patched: list[str] = []  # "TICKER (date) @ price" entries for the alert
 
     for trade_date_str in sorted(by_date.keys(), reverse=True):
         date_rows = by_date[trade_date_str]
@@ -1705,6 +1706,7 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
                 ).eq("id", row["id"]).execute()
                 log.info(f"    {ticker}: close_price → {cp:.4f}")
                 written += 1
+                patched.append(f"{ticker} ({trade_date_str}) @ ${cp:.2f}")
             except Exception as _ue:
                 log.warning(
                     f"    DB update failed for {ticker} (id={row['id']}): {_ue}"
@@ -1715,6 +1717,19 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
         f"EOD close-price sweep done — {written} written, "
         f"{skipped} skipped (no Alpaca data or update error)."
     )
+
+    if written > 0:
+        _ticker_lines = "\n".join(f"  • {entry}" for entry in patched)
+        _sweep_msg = (
+            f"🔧 <b>Close-Price Sweep</b> — {written} row(s) backfilled\n"
+            f"{_ticker_lines}\n"
+            f"<i>Housekeeping: these close prices were missing after EOD and have been patched automatically.</i>"
+        )
+        try:
+            tg_send(_sweep_msg)
+        except Exception as _tge:
+            log.warning(f"_eod_collect_close_prices: Telegram alert failed: {_tge}")
+
     return {"written": written, "skipped": skipped}
 
 
