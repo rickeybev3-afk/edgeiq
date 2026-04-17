@@ -30,7 +30,7 @@ Flags passed through to run_tiered_pnl_backfill
   --no-ratelimit   Skip inter-request Alpaca sleep (useful on paid data plans)
 """
 
-import sys, os, time, datetime, subprocess, logging, signal, threading
+import sys, os, time, datetime, subprocess, logging, signal, threading, json, html
 
 # ── Shutdown flag — set by signal handler ─────────────────────────────────────
 
@@ -93,6 +93,42 @@ def _interruptible_sleep(seconds: float) -> bool:
     return False
 
 
+# ── Telegram helper ───────────────────────────────────────────────────────────
+
+_STATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           ".edgeiq_tiered_pnl_run_stats.json")
+
+
+def _send_telegram(message: str) -> None:
+    """Send a Telegram message using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+
+    Silently skips (log-only) if either credential is absent.
+    """
+    token   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        log.info("Telegram credentials not set — skipping Telegram notification.")
+        return
+    try:
+        import urllib.request as _urllib_req
+        import urllib.parse  as _urllib_parse
+        body = _urllib_parse.urlencode({
+            "chat_id":    chat_id,
+            "text":       message,
+            "parse_mode": "HTML",
+        }).encode()
+        req  = _urllib_req.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body,
+            method="POST",
+        )
+        with _urllib_req.urlopen(req, timeout=10):
+            pass
+        log.info("Telegram notification sent.")
+    except Exception as exc:
+        log.warning("Telegram send error: %s", exc)
+
+
 # ── Logging setup ─────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -147,6 +183,9 @@ def run_backfill():
     Using subprocess (rather than importing the module) keeps each run in a
     fresh interpreter context, which avoids any state leakage between nightly
     runs and makes it trivial to read the output as a stream.
+
+    After each run a Telegram summary is sent (if credentials are available)
+    with rows fetched, updated, skipped, errors, and elapsed time.
     """
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "run_tiered_pnl_backfill.py")
@@ -156,24 +195,104 @@ def run_backfill():
     if "--no-ratelimit" in sys.argv:
         cmd.append("--no-ratelimit")
 
+    # Remove any stale stats file so we can detect a fresh write.
+    try:
+        os.remove(_STATS_FILE)
+    except FileNotFoundError:
+        pass
+    except Exception as _rm_err:
+        log.warning("Could not remove stale stats file: %s", _rm_err)
+
     log.info("Starting backfill:  %s", " ".join(cmd))
     start = time.monotonic()
+    exception_msg: str = ""
+    exit_code: int = 0
+    captured_output: str = ""
     try:
         result = subprocess.run(
             cmd,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,   # merge stderr into stdout
             text=True,
         )
+        captured_output = result.stdout or ""
         elapsed = time.monotonic() - start
-        if result.returncode == 0:
+        exit_code = result.returncode
+        # Echo captured output so it appears in the workflow console logs.
+        if captured_output:
+            sys.stdout.write(captured_output)
+            sys.stdout.flush()
+        if exit_code == 0:
             log.info("Backfill complete (%.0fs, exit 0).", elapsed)
         else:
-            log.warning("Backfill exited with code %d (%.0fs).",
-                        result.returncode, elapsed)
+            log.warning("Backfill exited with code %d (%.0fs).", exit_code, elapsed)
     except Exception as exc:
         elapsed = time.monotonic() - start
+        exception_msg = str(exc)
         log.error("Backfill raised an exception after %.0fs: %s", elapsed, exc)
+
+    # ── Build and send Telegram summary ───────────────────────────────────────
+    run_date = _et_now().strftime("%Y-%m-%d")
+    elapsed_fmt = f"{elapsed:.0f}s"
+
+    def _tail(text: str, lines: int = 20) -> str:
+        """Return the last `lines` lines of text, HTML-escaped."""
+        tail = "\n".join(text.splitlines()[-lines:]).strip()
+        return html.escape(tail)[:800]  # cap at 800 chars to stay within TG limits
+
+    if exception_msg:
+        msg = (
+            f"⚠️ <b>Nightly Tiered P&amp;L Refresh — ERROR</b>\n"
+            f"Date: {run_date}\n"
+            f"Elapsed: {elapsed_fmt}\n"
+            f"<b>Exception:</b> <code>{html.escape(exception_msg[:300])}</code>"
+        )
+        _send_telegram(msg)
+        return
+
+    # Try to read stats written by the backfill script.
+    stats: dict = {}
+    try:
+        with open(_STATS_FILE) as _f:
+            stats = json.load(_f)
+    except FileNotFoundError:
+        log.warning("Stats file not found — backfill may have failed before writing it.")
+    except Exception as _read_err:
+        log.warning("Could not read stats file: %s", _read_err)
+
+    bt = stats.get("backtest") or {}
+
+    if exit_code != 0 or not stats:
+        # Backfill exited with an error or produced no stats; include output tail.
+        error_excerpt = _tail(captured_output) if captured_output else "(no output captured)"
+        msg = (
+            f"⚠️ <b>Nightly Tiered P&amp;L Refresh — FAILED</b>\n"
+            f"Date: {run_date}\n"
+            f"Exit code: {exit_code}\n"
+            f"Elapsed: {elapsed_fmt}\n"
+            f"<b>Last output:</b>\n<code>{error_excerpt}</code>"
+        )
+    else:
+        fetched  = bt.get("fetched", 0)
+        updated  = bt.get("updated", 0)
+        skipped  = (bt.get("skipped_no_bars", 0) + bt.get("skipped_no_tiered", 0))
+        errors   = bt.get("errors", 0)
+        elapsed_s = stats.get("elapsed_s", elapsed)
+        mins, secs = divmod(int(elapsed_s), 60)
+        elapsed_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+
+        status_icon = "✅" if errors == 0 else "⚠️"
+        msg = (
+            f"{status_icon} <b>Nightly Tiered P&amp;L Refresh</b>\n"
+            f"Date: {run_date}\n"
+            f"Rows fetched : {fetched}\n"
+            f"Rows updated : {updated}\n"
+            f"Rows skipped : {skipped}\n"
+            f"Errors       : {errors}\n"
+            f"Elapsed      : {elapsed_str}"
+        )
+
+    _send_telegram(msg)
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────

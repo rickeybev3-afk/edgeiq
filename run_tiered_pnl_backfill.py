@@ -101,6 +101,7 @@ Usage
 import sys
 import os
 import time
+import json
 import argparse
 from datetime import date, datetime
 
@@ -1035,6 +1036,25 @@ def main():
         print("\n  *** DRY RUN complete — re-run without --dry-run to write to DB ***")
     else:
         print("\n  Backfill complete.")
+
+    # ── Write run stats to a temp JSON file so the nightly scheduler can ──────
+    # read them and send a Telegram summary without needing to parse stdout.
+    # Only written on real (non-dry-run, non-reset-sentinel) runs.
+    if not dry_run and not reset_sentinel:
+        combined_stats = {
+            "elapsed_s": round(elapsed, 1),
+            "backtest": bstats if not skip_backtest else None,
+            "paper_trades": grand_pt if not backtest_only and user_ids else None,
+        }
+        try:
+            stats_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                ".edgeiq_tiered_pnl_run_stats.json",
+            )
+            with open(stats_path, "w") as _f:
+                json.dump(combined_stats, _f)
+        except Exception as _e:
+            print(f"  (stats file write failed: {_e})")
 
 
 if __name__ == "__main__":
