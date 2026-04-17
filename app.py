@@ -500,12 +500,23 @@ if _runtime_errors:
 # check thread in backend.py.  Streamlit re-runs this script on every
 # interaction, so the banner appears as soon as the thread has finished (usually
 # within a few seconds of first page load).
-if _alpaca_mismatch_status["mismatch"]:
-    st.warning(
-        f"**⚠️ Alpaca credential mismatch detected**\n\n"
-        f"{_alpaca_mismatch_status['message']}\n\n"
-        "Use the **Trading Mode** toggle in the sidebar to switch modes without restarting."
-    )
+#
+# Auto-clear the dismiss flag once the mismatch resolves so the banner will
+# reappear if a new mismatch is introduced later in the same session.
+if not _alpaca_mismatch_status["mismatch"]:
+    st.session_state.pop("alpaca_mismatch_dismissed", None)
+elif not st.session_state.get("alpaca_mismatch_dismissed", False):
+    _col_msg, _col_btn = st.columns([10, 1])
+    with _col_msg:
+        st.warning(
+            f"**⚠️ Alpaca credential mismatch detected**\n\n"
+            f"{_alpaca_mismatch_status['message']}\n\n"
+            "Use the **Trading Mode** toggle in the sidebar to switch modes without restarting."
+        )
+    with _col_btn:
+        if st.button("Dismiss", key="dismiss_alpaca_mismatch"):
+            st.session_state["alpaca_mismatch_dismissed"] = True
+            st.rerun()
 
 # ── Session state ──────────────────────────────────────────────────────────────
 _DEFAULTS = {
