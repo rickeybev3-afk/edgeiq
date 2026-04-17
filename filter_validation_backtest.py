@@ -1,8 +1,10 @@
 """
 filter_validation_backtest.py
 ──────────────────────────────
-Validates the IB range % + VWAP alignment entry filters against the full
-historical backtest dataset (backtest_sim_runs).
+Validates the IB range % + VWAP alignment entry filters against historical data.
+
+Default source: backtest_sim_runs  (~34k rows, full historical dataset)
+Live source   : paper_trades       (live-logged trades; use --source paper_trades)
 
 Dataset: trades where IB was actually broken (actual_outcome in Bullish/Bearish
 Break) AND pnl_r_sim is computed.  Win = pnl_r_sim > 0 (bracket trade hit target).
@@ -12,7 +14,9 @@ Expected filter progression (from deep data-mining pass):
   + IB range < 10% of open price            → ~91-93% WR
   + VWAP aligned (close on correct VWAP side) → ~96-98% WR, ~+2.4R
 
-Run via: python filter_validation_backtest.py
+Run via:
+  python filter_validation_backtest.py                          # backtest history
+  python filter_validation_backtest.py --source paper_trades    # live paper trades
 """
 
 import sys
@@ -34,6 +38,9 @@ def _parse_args():
                    help='Supabase user_id to query (default: hard-coded account)')
     p.add_argument('--max-rows', type=int, default=DEFAULT_MAX_ROWS,
                    help='Cap total rows loaded (0 = full history, e.g. 1000 for quick sanity check)')
+    p.add_argument('--source', choices=['backtest', 'paper_trades'], default='backtest',
+                   help='Data source: "backtest" uses backtest_sim_runs (default); '
+                        '"paper_trades" uses the live paper_trades table')
     return p.parse_args()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +80,59 @@ def load_rows(user_id: str, max_rows: int = 0):
         if len(batch) < page_size or (max_rows > 0 and len(all_rows) >= max_rows):
             break
         offset += page_size
+    return all_rows
+
+
+def load_rows_live(user_id: str, max_rows: int = 0):
+    """
+    Fetch settled breakout trades from paper_trades (live-mode validation).
+
+    paper_trades stores vwap_at_ib (raw VWAP price) and alert_price (close at
+    signal) rather than a pre-computed close_vs_vwap_pct.  This function derives
+    close_vs_vwap_pct on the fly so the rest of the analysis code is unchanged:
+
+        close_vs_vwap_pct = (alert_price - vwap_at_ib) / vwap_at_ib * 100
+
+    Filters:
+      actual_outcome in ('Bullish Break', 'Bearish Break')
+      pnl_r_sim is not null
+    user_id : Supabase user_id to filter by
+    max_rows: if > 0, cap total rows loaded
+    """
+    cols = (
+        'actual_outcome,tcs,ib_range_pct,vwap_at_ib,alert_price,'
+        'pnl_r_sim,scan_type'
+    )
+    all_rows = []
+    offset   = 0
+    while True:
+        page_size = PAGE if (max_rows == 0) else min(PAGE, max_rows - len(all_rows))
+        if page_size <= 0:
+            break
+        resp = (
+            SUPABASE.table('paper_trades')
+            .select(cols)
+            .eq('user_id', user_id)
+            .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
+            .not_.is_('pnl_r_sim', 'null')
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = resp.data or []
+        all_rows.extend(batch)
+        if len(batch) < page_size or (max_rows > 0 and len(all_rows) >= max_rows):
+            break
+        offset += page_size
+
+    # Derive close_vs_vwap_pct from raw columns so vwap_aligned() works unchanged.
+    for row in all_rows:
+        vwap       = row.get('vwap_at_ib')
+        alert_px   = row.get('alert_price')
+        if vwap and alert_px and float(vwap) != 0:
+            row['close_vs_vwap_pct'] = (float(alert_px) - float(vwap)) / float(vwap) * 100
+        else:
+            row['close_vs_vwap_pct'] = None
+
     return all_rows
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,10 +191,15 @@ def main():
     args = _parse_args()
     user_id  = args.user_id
     max_rows = args.max_rows
+    source   = args.source
 
-    cap_note = f' (capped at {max_rows})' if max_rows else ' (full history)'
-    print(f'Loading breakout trades from backtest_sim_runs{cap_note}…')
-    all_rows = load_rows(user_id=user_id, max_rows=max_rows)
+    cap_note   = f' (capped at {max_rows})' if max_rows else ' (full history)'
+    table_name = 'paper_trades' if source == 'paper_trades' else 'backtest_sim_runs'
+    print(f'Loading breakout trades from {table_name}{cap_note}…')
+    if source == 'paper_trades':
+        all_rows = load_rows_live(user_id=user_id, max_rows=max_rows)
+    else:
+        all_rows = load_rows(user_id=user_id, max_rows=max_rows)
     print(f'  → {len(all_rows)} settled breakout trades (actual_outcome = Bullish/Bearish Break, pnl_r_sim not null)')
 
     # ── Layer 0: no filters ───────────────────────────────────────────────────
