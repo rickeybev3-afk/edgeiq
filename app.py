@@ -5943,9 +5943,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         0, _rp_sig[8],
                         0.0,
                     )
-            for _k in list(st.session_state.keys()):
-                if _k.startswith("_drill_tcs_persist_"):
-                    del st.session_state[_k]
+            _cleared_floors = [
+                _k for _k in list(st.session_state.keys())
+                if _k.startswith("_drill_tcs_persist_")
+            ]
+            for _k in _cleared_floors:
+                del st.session_state[_k]
+            if _cleared_floors and "_rp_prev_sig" in st.session_state:
+                st.toast(
+                    "Your pinned TCS floor selections were reset because the "
+                    "replay parameters changed.",
+                    icon="ℹ️",
+                )
         st.session_state["_rp_prev_sig"] = _rp_sig
 
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
