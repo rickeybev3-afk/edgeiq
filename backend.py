@@ -2253,7 +2253,37 @@ def _load_tcs_alert_thresholds() -> dict:
     return {}
 
 
-_tcs_alert_cache: dict = {}   # {structure_YYYY-MM-DD: True}
+_TCS_ALERT_CACHE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "tcs_alert_cache.json"
+)
+
+
+def _load_tcs_alert_cache() -> dict:
+    """Load the deduplication cache from disk, discarding entries from past UTC days."""
+    import json as _json
+    import datetime as _dt
+
+    today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        with open(_TCS_ALERT_CACHE_FILE) as _f:
+            raw: dict = _json.load(_f)
+        return {k: v for k, v in raw.items() if k.endswith(today)}
+    except Exception:
+        return {}
+
+
+def _save_tcs_alert_cache(cache: dict) -> None:
+    """Persist the deduplication cache to disk."""
+    import json as _json
+
+    try:
+        with open(_TCS_ALERT_CACHE_FILE, "w") as _f:
+            _json.dump(cache, _f)
+    except Exception:
+        pass
+
+
+_tcs_alert_cache: dict = _load_tcs_alert_cache()  # {structure_YYYY-MM-DD: True}
 
 
 def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
@@ -2358,6 +2388,7 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
         _tcs_alert_cache[_k] = True
     for _k in [k for k in list(_tcs_alert_cache) if not k.endswith(_today)]:
         _tcs_alert_cache.pop(_k, None)
+    _save_tcs_alert_cache(_tcs_alert_cache)
 
     # Also broadcast to all beta subscribers, excluding the owner (who already
     # received the message via the main TELEGRAM_CHAT_ID above).
