@@ -9518,16 +9518,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 columns=["_sort_win_pct", "_sort_eod_r", "_sort_tiered_r"],
                 errors="ignore",
             )
-            # Add a gold medal badge to the best-performing ticker's cell
+            # Add medal badges to the top-3 tickers
             if len(_tkr_display_df) > 0 and "Ticker" in _tkr_display_df.columns:
                 _tkr_display_df = _tkr_display_df.copy()
-                _best_row_idx = _tkr_display_df.index[0]
                 _tkr_col_pos = _tkr_display_df.columns.get_loc("Ticker")
+                _best_row_idx    = _tkr_display_df.index[0]
+                _silver_row_idx  = _tkr_display_df.index[1] if len(_tkr_display_df) > 1 else None
+                _bronze_row_idx  = _tkr_display_df.index[2] if len(_tkr_display_df) > 2 else None
                 _tkr_display_df.iloc[0, _tkr_col_pos] = (
                     "🥇 " + str(_tkr_display_df.iloc[0, _tkr_col_pos])
                 )
+                if _silver_row_idx is not None:
+                    _tkr_display_df.iloc[1, _tkr_col_pos] = (
+                        "🥈 " + str(_tkr_display_df.iloc[1, _tkr_col_pos])
+                    )
+                if _bronze_row_idx is not None:
+                    _tkr_display_df.iloc[2, _tkr_col_pos] = (
+                        "🥉 " + str(_tkr_display_df.iloc[2, _tkr_col_pos])
+                    )
             else:
-                _best_row_idx = None
+                _best_row_idx   = None
+                _silver_row_idx = None
+                _bronze_row_idx = None
 
             def _style_rows(row):
                 _is_best = _best_row_idx is not None and row.name == _best_row_idx
@@ -9538,6 +9550,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     return ["background-color: #e8e8e8; color: #666666"] * len(row)
                 if _is_best:
                     return ["background-color: #fffbcc; font-weight: bold"] * len(row)
+                if _silver_row_idx is not None and row.name == _silver_row_idx:
+                    return ["background-color: #f0f0f0; font-weight: bold"] * len(row)
+                if _bronze_row_idx is not None and row.name == _bronze_row_idx:
+                    return ["background-color: #fde8cc; font-weight: bold"] * len(row)
                 return [""] * len(row)
 
             _styled_summary = _tkr_display_df.style.apply(_style_rows, axis=1)
