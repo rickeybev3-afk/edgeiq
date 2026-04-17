@@ -11548,6 +11548,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _tk_max_div_idx = _max_div_idx_tk
                                     _dir_tk = "Amplified" if _max_div_val_tk > 0 else "Dampened"
                                     _tk_div_label = f"Trade #{_max_div_idx_tk} ({_dir_tk})"
+                        else:
+                            # No R data — store equity curve only so the mini-chart
+                            # can still render a fallback equity-only view.
+                            if len(_tk_eq_cum) > 1:
+                                _tkr_div_chart_data[_tk] = {
+                                    "eq_curve": _tk_eq_cum,
+                                    "eq_only":  True,
+                                }
                 except Exception:
                     pass
 
@@ -13021,6 +13029,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         # ── Divergence mini-chart ────────────────────────────────
                         _mini_div_data = _tkr_div_chart_data.get(_tk_name)
+                        _mini_eq_only  = bool(_mini_div_data and _mini_div_data.get("eq_only"))
                         if not _mini_div_data:
                             st.markdown(
                                 '<div style="border-top:1px solid #1e2a3a;margin:12px 0 6px 0;"></div>',
@@ -13031,7 +13040,62 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "tiered exit column (and ensure trades have varying follow-thru %) "
                                 "to unlock the Equity vs R mini-chart."
                             )
-                        if _mini_div_data:
+                        if _mini_div_data and _mini_eq_only:
+                            # Equity-only fallback: no R column available
+                            _mini_eq  = _mini_div_data["eq_curve"]
+                            _mini_n   = len(_mini_eq)
+                            _mini_fig = go.Figure()
+                            _mini_fig.add_trace(go.Scatter(
+                                x=list(range(_mini_n)),
+                                y=_mini_eq,
+                                name="Equity ($)",
+                                mode="lines",
+                                line=dict(color="#4fc3f7", width=1.5),
+                            ))
+                            _mini_fig.update_layout(
+                                height=240,
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                dragmode="zoom",
+                                showlegend=False,
+                                xaxis=dict(
+                                    title=dict(text="Trade #", font=dict(size=10)),
+                                    gridcolor="#1a1a2e",
+                                    color="#cccccc",
+                                    zeroline=False,
+                                    tickfont=dict(size=9),
+                                ),
+                                yaxis=dict(
+                                    title=dict(text="Equity ($)", font=dict(color="#4fc3f7", size=10)),
+                                    tickfont=dict(color="#4fc3f7", size=9),
+                                    gridcolor="#1a1a2e",
+                                    zeroline=True,
+                                    zerolinecolor="#555",
+                                ),
+                            )
+                            st.markdown(
+                                '<div style="border-top:1px solid #1e2a3a;margin:12px 0 6px 0;"></div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                '<div style="font-size:12px;font-weight:700;color:#90caf9;'
+                                'margin-bottom:4px;">📈 Equity Curve</div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.plotly_chart(
+                                _mini_fig,
+                                use_container_width=True,
+                                config={
+                                    "scrollZoom": True,
+                                    "displayModeBar": False,
+                                },
+                            )
+                            st.caption(
+                                "ℹ️ Divergence analysis requires an EOD or tiered-exit R column — "
+                                "showing equity curve only."
+                            )
+                        if _mini_div_data and not _mini_eq_only:
                             _mini_eq  = _mini_div_data["eq_curve"]
                             _mini_r   = _mini_div_data["r_curve"]
                             _mini_idx = _mini_div_data["max_div_idx"]
