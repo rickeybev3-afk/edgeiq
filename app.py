@@ -14264,9 +14264,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 else 0
                             )
 
-                        def _make_drill_tcs_on_change(_widget_key, _pkey):
+                        _dd_dr_filter_key = f"dd_delta_r_filter_{_tk_name}"
+
+                        def _make_drill_tcs_on_change(_widget_key, _pkey, _dr_fkey):
                             def _on_change():
                                 st.session_state[_pkey] = st.session_state[_widget_key]
+                                if _dr_fkey in st.session_state:
+                                    del st.session_state[_dr_fkey]
                             return _on_change
 
                         _show_reset_btn = (
@@ -14287,7 +14291,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 index=_tk_drill_default_idx,
                                 key=f"drill_tcs_{_tk_name}",
                                 on_change=_make_drill_tcs_on_change(
-                                    f"drill_tcs_{_tk_name}", _tk_persist_key
+                                    f"drill_tcs_{_tk_name}", _tk_persist_key, _dd_dr_filter_key
                                 ),
                                 help=(
                                     "Select a TCS floor to view all individual trades for this "
@@ -14309,6 +14313,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _drill_widget_key = f"drill_tcs_{_tk_name}"
                                     if _drill_widget_key in st.session_state:
                                         del st.session_state[_drill_widget_key]
+                                    if _dd_dr_filter_key in st.session_state:
+                                        del st.session_state[_dd_dr_filter_key]
                                     st.rerun()
                         _tk_drill_mask = (
                             (_bt_df["ticker"] == _tk_name)
@@ -14498,7 +14504,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f"red = filtered out (at or above threshold)"
                                 )
                             # ── Delta R winner filter ─────────────────────────────────
-                            _dd_dr_filter_key = f"dd_delta_r_filter_{_tk_name}_{_tk_drill_floor}"
                             _dd_dr_filter = "All"
                             _dd_unfiltered_total = len(_tk_drill_display)
                             if _dd_show_delta_r:
@@ -14519,6 +14524,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _tk_drill_display["Delta R"], errors="coerce"
                                     ) < 0
                                     _tk_drill_display = _tk_drill_display[_dd_dr_mask].copy()
+                                if _dd_dr_filter != "All":
+                                    _dd_filtered_n = len(_tk_drill_display)
+                                    _dd_filter_label = "Tiered won" if "Tiered" in _dd_dr_filter else "EOD won"
+                                    st.caption(
+                                        f"🔽 Filtered to **{_dd_filter_label}** — "
+                                        f"**{_dd_filtered_n} of {_dd_unfiltered_total}** rows shown"
+                                    )
                             _dd_rows_html = ""
                             for _, _dd_row in _tk_drill_display.iterrows():
                                 _dd_date   = str(_dd_row["Date"])
