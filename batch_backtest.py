@@ -1200,7 +1200,8 @@ def main():
         # sim_runs() scoped to [start_date, end_date] closes this gap without
         # rescanning the entire table.
         if not args.skip_post_backfill:
-            print("  Running targeted tiered P&L backfill for this date window...")
+            _dry_run_prefix = "[DRY RUN] " if args.dry_run else ""
+            print(f"  {_dry_run_prefix}Running targeted tiered P&L backfill for this date window...")
             try:
                 bstats = backfill_backtest_sim_runs(
                     dry_run=args.dry_run,
@@ -1208,8 +1209,9 @@ def main():
                     date_from=str(start_date),
                     date_to=str(end_date),
                 )
+                _dry_run_note = " (dry run — no rows written)" if args.dry_run else ""
                 print(
-                    f"  ✓ Tiered P&L backfill complete — "
+                    f"  ✓ {_dry_run_prefix}Tiered P&L backfill complete{_dry_run_note} — "
                     f"{bstats['updated']} row(s) updated, "
                     f"{bstats['skipped_no_bars']} skipped (no bars), "
                     f"{bstats['errors']} error(s).\n"
