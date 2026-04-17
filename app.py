@@ -8297,16 +8297,53 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         # ── R-column selector ──────────────────────────────────────────────
                         _r_col_options = ["MFE R", "EOD Hold R", "Tiered Exit R"]
-                        _r_col_default = [c for c in _r_col_options if c in _rp_csv_df.columns]
+                        # Restore saved selection from localStorage → query param on first load
+                        import streamlit.components.v1 as _cmp_r_col
+                        _cmp_r_col.html("""
+<script>
+(function() {
+    var _LS_KEY = 'rp_r_col_select';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('rp_r_cols')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (saved === null) return;  // null = never saved; "" = user chose none — both must round-trip
+    url.searchParams.set('rp_r_cols', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+                        # Initialise session state from query params (once per session).
+                        # Distinguish "param absent" (no prior save → default to all) from
+                        # "param present but empty" (user explicitly deselected everything).
+                        if "rp_r_col_select" not in st.session_state:
+                            _df_r_cols = set(_rp_csv_df.columns)
+                            if "rp_r_cols" in st.query_params:
+                                _qp_r_cols_raw = st.query_params["rp_r_cols"]
+                                _qp_r_cols = [
+                                    c.strip() for c in _qp_r_cols_raw.split(",")
+                                    if c.strip() in _r_col_options and c.strip() in _df_r_cols
+                                ] if _qp_r_cols_raw else []
+                                st.session_state["rp_r_col_select"] = _qp_r_cols
+                            else:
+                                st.session_state["rp_r_col_select"] = [
+                                    c for c in _r_col_options if c in _df_r_cols
+                                ]
                         _r_cols_selected = st.multiselect(
                             "R columns in CSV",
                             options=_r_col_options,
-                            default=_r_col_default,
                             key="rp_r_col_select",
                             help=(
                                 "Choose which R-multiple columns to include in the downloaded CSV. "
                                 "Deselect columns you don't use to keep your spreadsheet tidy."
                             ),
+                        )
+                        # Persist the current selection to query params + localStorage
+                        _r_cols_serialised = ",".join(_r_cols_selected)
+                        if st.query_params.get("rp_r_cols") != _r_cols_serialised:
+                            st.query_params["rp_r_cols"] = _r_cols_serialised
+                        _cmp_r_col.html(
+                            f"<script>localStorage.setItem('rp_r_col_select', {repr(_r_cols_serialised)});</script>",
+                            height=0,
                         )
                         # Drop unselected R columns from the export dataframe.
                         # Cumulative R is the running sum of MFE R, so it is dropped
