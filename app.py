@@ -13489,13 +13489,15 @@ ALTER TABLE backtest_sim_runs
         _display_cols = [c for c in ["trade_date", "ticker", "tcs", "predicted_structure",
                                       "actual_outcome", "win_loss", "follow_thru_pct",
                                       "mae", "mfe",
-                                      "sim_pnl_100sh"] if c in _verified.columns]
+                                      "sim_pnl_100sh",
+                                      "eod_pnl_r", "tiered_pnl_r"] if c in _verified.columns]
         _show = _verified[_display_cols].rename(columns={
             "trade_date": "Date", "ticker": "Ticker", "tcs": "TCS",
             "predicted_structure": "Predicted", "actual_outcome": "Actual",
             "win_loss": "W/L", "follow_thru_pct": "FT %",
             "mae": "MAE %", "mfe": "MFE %",
-            "sim_pnl_100sh": "P&L (100sh)"
+            "sim_pnl_100sh": "P&L (100sh)",
+            "eod_pnl_r": "EOD Hold R", "tiered_pnl_r": "Tiered Exit R",
         }).reset_index(drop=True)
 
         def _color_wl(val):
@@ -13521,6 +13523,15 @@ ALTER TABLE backtest_sim_runs
             except (ValueError, TypeError):
                 return ""
 
+        def _color_r(val):
+            try:
+                v = float(val)
+                if v > 0:  return "color: #66bb6a; font-weight:700"
+                if v < 0:  return "color: #ef5350; font-weight:700"
+                return ""
+            except (ValueError, TypeError):
+                return ""
+
         _style_map = {}
         if "W/L" in _show.columns:
             _style_map["W/L"] = _color_wl
@@ -13528,6 +13539,10 @@ ALTER TABLE backtest_sim_runs
             _style_map["MAE %"] = _color_mae
         if "MFE %" in _show.columns:
             _style_map["MFE %"] = _color_mfe
+        if "EOD Hold R" in _show.columns:
+            _style_map["EOD Hold R"] = _color_r
+        if "Tiered Exit R" in _show.columns:
+            _style_map["Tiered Exit R"] = _color_r
 
         _styled = _show.style
         for _col_name, _fn in _style_map.items():
