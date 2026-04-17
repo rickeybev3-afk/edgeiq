@@ -17754,8 +17754,31 @@ ALTER TABLE backtest_sim_runs
                     _eod_recomputed = 0
                     _eod_errors = 0
                     if _cp_filled > 0:
-                        with st.spinner("Recomputing EOD P&L for newly filled rows…"):
-                            _eod_result = recompute_eod_pnl_for_filled_rows(user_id=_AUTH_USER_ID)
+                        _eod_progress_bar = st.progress(0.0)
+                        _eod_status_text = st.empty()
+                        _eod_status_text.caption("Recomputing EOD P&L…")
+
+                        def _eod_progress_cb(done: int, total: int):
+                            try:
+                                if total > 0:
+                                    _eod_progress_bar.progress(done / total)
+                                if done < total:
+                                    _eod_status_text.caption(
+                                        f"Recomputed {done:,} / {total:,} rows…"
+                                    )
+                                else:
+                                    _eod_status_text.caption(
+                                        f"Recomputed {total:,} row{'s' if total != 1 else ''}."
+                                    )
+                            except Exception:
+                                pass
+
+                        _eod_result = recompute_eod_pnl_for_filled_rows(
+                            user_id=_AUTH_USER_ID,
+                            progress_callback=_eod_progress_cb,
+                        )
+                        _eod_progress_bar.empty()
+                        _eod_status_text.empty()
                         _eod_recomputed = _eod_result.get("recomputed", 0)
                         _eod_errors = _eod_result.get("errors", 0)
                     _still_note = (

@@ -9154,7 +9154,7 @@ def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False,
     return stats
 
 
-def recompute_eod_pnl_for_filled_rows(user_id: str = "") -> dict:
+def recompute_eod_pnl_for_filled_rows(user_id: str = "", progress_callback=None) -> dict:
     """Recompute eod_pnl_r for backtest_sim_runs rows that now have a close_price
     but are still missing eod_pnl_r.
 
@@ -9215,6 +9215,12 @@ def recompute_eod_pnl_for_filled_rows(user_id: str = "") -> dict:
         ).eq("id", row["id"]).execute()
         return "recomputed"
 
+    total_rows = len(rows)
+    done_count = 0
+
+    if progress_callback and total_rows > 0:
+        progress_callback(0, total_rows)
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {pool.submit(_compute_and_write, r): r["id"] for r in rows}
         for fut in as_completed(futures):
@@ -9224,6 +9230,9 @@ def recompute_eod_pnl_for_filled_rows(user_id: str = "") -> dict:
             except Exception as e:
                 print(f"recompute_eod_pnl_for_filled_rows write error: {e}")
                 stats["errors"] += 1
+            done_count += 1
+            if progress_callback:
+                progress_callback(done_count, total_rows)
 
     return stats
 
