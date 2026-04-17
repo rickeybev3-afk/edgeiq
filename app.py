@@ -9106,6 +9106,36 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _stat_row("Max Drawdown (Tiered R)", f"{abs(_csv_ov_tier_mdd)}R"),
                             ]
 
+                        if _has_eod_col and _has_tiered_col:
+                            _summary_rows += [
+                                {c: "" for c in _csv_cols},
+                                _stat_row("--- EOD vs TIERED DELTA BY SCAN TYPE ---", ""),
+                                _stat_row("(matched rows only: both EOD and Tiered R non-null)", ""),
+                            ]
+                            for _sc_csv_name, _sc_csv_label in [("morning", "Morning"), ("intraday", "Intraday")]:
+                                _sc_csv_eod_ser    = pd.to_numeric(_rp_df["R (EOD)"],    errors="coerce")
+                                _sc_csv_tiered_ser = pd.to_numeric(_rp_df["R (Tiered)"], errors="coerce")
+                                _sc_csv_mask       = (
+                                    (_rp_df["Snapshot"].str.lower() == _sc_csv_name) &
+                                    _sc_csv_eod_ser.notna() &
+                                    _sc_csv_tiered_ser.notna()
+                                )
+                                _sc_csv_both       = _rp_df[_sc_csv_mask]
+                                _sc_csv_n          = len(_sc_csv_both)
+                                if _sc_csv_n > 0:
+                                    _sc_csv_avg_eod    = round(pd.to_numeric(_sc_csv_both["R (EOD)"],    errors="coerce").mean(), 3)
+                                    _sc_csv_avg_tiered = round(pd.to_numeric(_sc_csv_both["R (Tiered)"], errors="coerce").mean(), 3)
+                                    _sc_csv_delta      = round(_sc_csv_avg_tiered - _sc_csv_avg_eod, 3)
+                                    _summary_rows += [
+                                        _stat_row(f"  {_sc_csv_label} ({_sc_csv_n} matched trades) — Avg EOD R",    f"{_sc_csv_avg_eod:+.3f}R"),
+                                        _stat_row(f"  {_sc_csv_label} — Avg Tiered R",                              f"{_sc_csv_avg_tiered:+.3f}R"),
+                                        _stat_row(f"  {_sc_csv_label} — Delta (Tiered \u2212 EOD)",                  f"{_sc_csv_delta:+.3f}R"),
+                                    ]
+                                else:
+                                    _summary_rows.append(
+                                        _stat_row(f"  {_sc_csv_label}", "(no matched trades — needs both EOD & Tiered populated)")
+                                    )
+
                         for _csv_btl, _csv_bte, _csv_btst, _csv_btlo, _csv_bthi, _csv_btc, _csv_btd in _bt_tier_defs:
                             _csv_tier_mask = (
                                 (_rp_df["Snapshot"].str.lower() == _csv_btst) &
