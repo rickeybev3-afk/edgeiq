@@ -10328,21 +10328,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         # Initialise session state from query params (once per session).
                         # Distinguish "param absent" (no prior save → default to all) from
                         # "param present but empty" (user explicitly deselected everything).
+                        _df_r_cols = set(_rp_csv_df.columns)
                         if "rp_r_col_select" not in st.session_state:
-                            _df_r_cols = set(_rp_csv_df.columns)
                             if "rp_r_cols" in st.query_params:
                                 _qp_r_cols_raw = st.query_params["rp_r_cols"]
-                                _qp_r_cols = [
+                                _qp_r_cols_full = [
                                     c.strip() for c in _qp_r_cols_raw.split(",")
-                                    if c.strip() in _r_col_options and c.strip() in _df_r_cols
+                                    if c.strip() in _r_col_options
                                 ] if _qp_r_cols_raw else []
-                                st.session_state["rp_r_col_select"] = _qp_r_cols
-                            else:
+                                st.session_state["_rp_r_col_full_pref"] = _qp_r_cols_full
                                 st.session_state["rp_r_col_select"] = [
-                                    c for c in _r_col_options if c in _df_r_cols
+                                    c for c in _qp_r_cols_full if c in _df_r_cols
                                 ]
+                            else:
+                                _default_r = [c for c in _r_col_options if c in _df_r_cols]
+                                st.session_state["_rp_r_col_full_pref"] = _default_r
+                                st.session_state["rp_r_col_select"] = _default_r
                         def _on_rp_r_change():
-                            st.session_state["sw_r_col_select"] = list(st.session_state["rp_r_col_select"])
+                            st.session_state["sw_r_col_select"] = list(
+                                st.session_state.get("_rp_r_col_full_pref",
+                                st.session_state["rp_r_col_select"])
+                            )
 
                         _r_cols_selected = st.multiselect(
                             "R columns in CSV",
@@ -10354,8 +10360,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Deselect columns you don't use to keep your spreadsheet tidy."
                             ),
                         )
-                        # Persist the current selection to query params + localStorage
-                        _r_cols_serialised = ",".join(_r_cols_selected)
+                        # Persist the current selection to query params + localStorage.
+                        # Merge: keep any saved R columns that are not available for the
+                        # current ticker's df so they survive ticker switches / reloads.
+                        _prev_rp_r_full = st.session_state.get("_rp_r_col_full_pref", _r_cols_selected)
+                        _rp_r_unavailable = [c for c in _prev_rp_r_full if c not in _df_r_cols]
+                        _rp_r_merged = _r_cols_selected + [
+                            c for c in _rp_r_unavailable if c not in _r_cols_selected
+                        ]
+                        st.session_state["_rp_r_col_full_pref"] = _rp_r_merged
+                        _r_cols_serialised = ",".join(_rp_r_merged)
                         if st.query_params.get("rp_r_cols") != _r_cols_serialised:
                             st.query_params["rp_r_cols"] = _r_cols_serialised
                         _cmp_r_col.html(
@@ -13014,7 +13028,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # If the main selector hasn't rendered yet (sweep tab opened first),
                 # fall back to the shared query param or default to all columns.
                 if "rp_r_col_select" in st.session_state:
-                    st.session_state["sw_r_col_select"] = list(st.session_state["rp_r_col_select"])
+                    # Use the full (pre-merge) pref when available so that columns
+                    # absent from the current ticker's df aren't silently dropped here.
+                    _sw_sync_src = st.session_state.get(
+                        "_rp_r_col_full_pref", st.session_state["rp_r_col_select"]
+                    )
+                    st.session_state["sw_r_col_select"] = [
+                        c for c in _sw_sync_src if c in _sw_r_col_opts
+                    ]
                 elif "sw_r_col_select" not in st.session_state:
                     if "rp_r_cols" in st.query_params:
                         _qp_sw_r_raw = st.query_params["rp_r_cols"]
@@ -13026,7 +13047,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.session_state["sw_r_col_select"] = list(_sw_r_col_opts)
 
                 def _on_sw_r_change():
-                    st.session_state["rp_r_col_select"] = list(st.session_state["sw_r_col_select"])
+                    _sw_sel = list(st.session_state["sw_r_col_select"])
+                    st.session_state["rp_r_col_select"] = _sw_sel
+                    # Do NOT write _rp_r_col_full_pref here — the post-widget merge
+                    # step owns that update so it can preserve any extra columns that
+                    # fall outside the current option set.
 
                 _sw_r_selected = st.multiselect(
                     "R columns in CSV (all sweep tickers)",
@@ -13039,7 +13064,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "changing it here updates it there too, and vice versa."
                     ),
                 )
-                _sw_r_serialised = ",".join(_sw_r_selected)
+                # Merge: preserve any saved columns outside the known option set so
+                # future column additions don't get silently dropped on write-back.
+                _prev_sw_r_full = st.session_state.get("_rp_r_col_full_pref", _sw_r_selected)
+                _sw_r_extra = [c for c in _prev_sw_r_full if c not in _sw_r_col_opts]
+                _sw_r_merged = _sw_r_selected + [c for c in _sw_r_extra if c not in _sw_r_selected]
+                st.session_state["_rp_r_col_full_pref"] = _sw_r_merged
+                _sw_r_serialised = ",".join(_sw_r_merged)
                 if st.query_params.get("rp_r_cols") != _sw_r_serialised:
                     st.query_params["rp_r_cols"] = _sw_r_serialised
                 _cmp_sw_r.html(
