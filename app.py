@@ -8997,6 +8997,33 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _stat_row("Expectancy (Tiered R)",      f"{_csv_bt_tier_exp:+.3f}R/trade"),
                                     _stat_row("Max Drawdown (Tiered R)",    f"{abs(_csv_bt_tier_mdd)}R"),
                                 ])
+                        if _rp_bot_mode and "TCS Floor" in _rp_df.columns and "TCS" in _rp_df.columns:
+                            _csv_marg_pct = round(_marg_n / _total_trades * 100, 1) if _total_trades else 0
+                            _csv_marg_wr_str   = f"{_marg_wr}%" if _marg_wr is not None else "N/A"
+                            _csv_comf_wr_str   = f"{_comf_wr}%" if _comf_wr is not None else "N/A"
+                            _csv_marg_avgr_str = f"{_marg_avgr:+.2f}R" if _marg_avgr is not None else "N/A"
+                            _csv_comf_avgr_str = f"{_comf_avgr:+.2f}R" if _comf_avgr is not None else "N/A"
+                            _csv_marg_wr_delta = (
+                                f"{round(_marg_wr - _comf_wr, 1):+.1f}pp vs comfortable"
+                                if (_marg_wr is not None and _comf_wr is not None) else "N/A"
+                            )
+                            _csv_marg_avgr_delta = (
+                                f"{round(_marg_avgr - _comf_avgr, 2):+.2f}R vs comfortable"
+                                if (_marg_avgr is not None and _comf_avgr is not None) else "N/A"
+                            )
+                            _summary_rows += [
+                                {c: "" for c in _csv_cols},
+                                _stat_row("--- MARGINAL ENTRY ANALYSIS (TCS cleared floor by ≤ 5 pts) ---", ""),
+                                _stat_row("Marginal Trades",         f"{_marg_n}  ({_csv_marg_pct}% of total)"),
+                                _stat_row("Comfortable Trades",      f"{_comf_n}"),
+                                _stat_row("Marginal Win Rate",        _csv_marg_wr_str),
+                                _stat_row("Comfortable Win Rate",     _csv_comf_wr_str),
+                                _stat_row("Marginal vs Comfortable WR", _csv_marg_wr_delta),
+                                _stat_row("Marginal Avg R (MFE)",     _csv_marg_avgr_str),
+                                _stat_row("Comfortable Avg R (MFE)",  _csv_comf_avgr_str),
+                                _stat_row("Marginal vs Comfortable Avg R", _csv_marg_avgr_delta),
+                            ]
+
                         _rp_csv_export = pd.concat(
                             [_rp_csv_df,
                              pd.DataFrame(_summary_rows)],
@@ -9008,7 +9035,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             file_name="replay_trades.csv",
                             mime="text/csv",
                             key="rp_dl_csv",
-                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes overall R-stats summary and per-tier (P1–P4) breakdown at the bottom",
+                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes overall R-stats summary, per-tier (P1–P4) breakdown, and marginal entry analysis at the bottom",
                         )
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
