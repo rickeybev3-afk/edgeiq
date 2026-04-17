@@ -20061,19 +20061,35 @@ ALTER TABLE backtest_sim_runs
                         "Check that ALPACA_API_KEY and ALPACA_SECRET_KEY are set."
                     )
                 else:
+                    _pt_eod_recomputed = 0
+                    _pt_eod_errors = 0
+                    if _pt_cp_filled > 0:
+                        with st.spinner("Recomputing EOD P&L for newly filled rows…"):
+                            _pt_eod_result = recompute_eod_pnl_for_filled_rows(user_id=_AUTH_USER_ID)
+                        _pt_eod_recomputed = _pt_eod_result.get("recomputed", 0)
+                        _pt_eod_errors = _pt_eod_result.get("errors", 0)
                     _pt_still_note = (
                         f"{_pt_cp_still:,} still missing (delisted / no IEX coverage)."
                         if _pt_cp_still else "All rows filled successfully."
                     )
+                    _pt_eod_note = (
+                        f" EOD P&L recomputed for {_pt_eod_recomputed:,} row{'s' if _pt_eod_recomputed != 1 else ''}."
+                        if _pt_eod_recomputed else ""
+                    )
                     st.success(
                         f"Done — {_pt_cp_filled:,} row{'s' if _pt_cp_filled != 1 else ''} filled. "
-                        f"{_pt_still_note}"
+                        f"{_pt_still_note}{_pt_eod_note}"
                     )
                     if _pt_cp_errors:
                         st.warning(
                             f"{_pt_cp_errors:,} write error{'s' if _pt_cp_errors != 1 else ''} "
                             f"encountered — some rows may not have been saved. "
                             f"Check the server logs for details."
+                        )
+                    if _pt_eod_errors:
+                        st.warning(
+                            f"{_pt_eod_errors} EOD P&L row{'s' if _pt_eod_errors != 1 else ''} could not be "
+                            f"written — check server logs for details."
                         )
                     st.rerun()
 
