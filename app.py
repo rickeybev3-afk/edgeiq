@@ -18102,6 +18102,24 @@ ALTER TABLE backtest_sim_runs
                             "Negative = tiered exits outperform. Only includes trades where both metrics are available."
                         )
 
+            # ── Build filtered-view badge label for all BTS tier cards ──────────
+            _bts_tier_date_parts = []
+            if _bts_start:
+                _bts_tier_date_parts.append(_bts_start.strftime("%b %Y"))
+            if _bts_end:
+                _bts_tier_date_parts.append(_bts_end.strftime("%b %Y"))
+            if len(_bts_tier_date_parts) == 2:
+                _bts_tier_filter_label = f"{_bts_tier_date_parts[0]} – {_bts_tier_date_parts[1]}"
+            elif len(_bts_tier_date_parts) == 1:
+                _bts_tier_filter_label = ("from " if _bts_start else "to ") + _bts_tier_date_parts[0]
+            else:
+                _bts_tier_filter_label = ""
+            _bts_filter_badge_html = (
+                f'<div style="font-size:10px;color:#5c6bc0;margin-top:5px;'
+                f'background:#0d1b2a;border-radius:4px;padding:2px 6px;display:inline-block;">'
+                f'📅 Filtered: {_bts_tier_filter_label}</div>'
+            ) if _bts_tier_filter_label else ""
+
             # ── Row 3b — P1–P4 Priority Tier Breakdown ───────────────────────
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(
@@ -18142,6 +18160,7 @@ ALTER TABLE backtest_sim_runs
                             f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
                             f'<div style="font-size:13px;font-weight:700;color:{_btsc};">{_btse} {_btsl}</div>'
                             f'<div style="font-size:11px;color:#546e7a;margin-top:6px;">TCS data unavailable</div>'
+                            f'{_bts_filter_badge_html}'
                             f'</div>', unsafe_allow_html=True
                         )
                     else:
@@ -18158,6 +18177,7 @@ ALTER TABLE backtest_sim_runs
                                 f'<div style="font-size:13px;font-weight:700;color:{_btsc};">{_btse} {_btsl}</div>'
                                 f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_btsd}</div>'
                                 f'<div style="font-size:12px;color:#546e7a;margin-top:6px;">No trades</div>'
+                                f'{_bts_filter_badge_html}'
                                 f'</div>', unsafe_allow_html=True
                             )
                         else:
@@ -18193,6 +18213,7 @@ ALTER TABLE backtest_sim_runs
                                 f'Avg Win: +{_bts_avg_w2:.2f}R  ·  Avg Loss: {_bts_avg_l2:.2f}R</div>'
                                 f'<div style="font-size:11px;color:#90a4ae;">'
                                 f'Total: {"+" if _bts_ttot2 >= 0 else ""}{_bts_ttot2:.1f}R</div>'
+                                f'{_bts_filter_badge_html}'
                                 f'</div>', unsafe_allow_html=True
                             )
 
@@ -18237,6 +18258,7 @@ ALTER TABLE backtest_sim_runs
                                 f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
                                 f'<div style="font-size:13px;font-weight:700;color:{_bts_etc};">{_bts_ete} {_bts_etl}</div>'
                                 f'<div style="font-size:11px;color:#546e7a;margin-top:6px;">TCS data unavailable</div>'
+                                f'{_bts_filter_badge_html}'
                                 f'</div>', unsafe_allow_html=True
                             )
                         else:
@@ -18253,6 +18275,7 @@ ALTER TABLE backtest_sim_runs
                                     f'<div style="font-size:13px;font-weight:700;color:{_bts_etc};">{_bts_ete} {_bts_etl}</div>'
                                     f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_bts_etd}</div>'
                                     f'<div style="font-size:12px;color:#546e7a;margin-top:6px;">No trades</div>'
+                                    f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
                             else:
@@ -18288,6 +18311,7 @@ ALTER TABLE backtest_sim_runs
                                     f'Avg Win: +{_bts_etavgw:.2f}R  ·  Avg Loss: {_bts_etavgl:.2f}R</div>'
                                     f'<div style="font-size:11px;color:#90a4ae;">'
                                     f'Total: {"+" if _bts_ettot >= 0 else ""}{_bts_ettot:.1f}R</div>'
+                                    f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
 
@@ -18332,6 +18356,7 @@ ALTER TABLE backtest_sim_runs
                                 f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
                                 f'<div style="font-size:13px;font-weight:700;color:{_bts_ltc};">{_bts_lte} {_bts_ltl}</div>'
                                 f'<div style="font-size:11px;color:#546e7a;margin-top:6px;">TCS data unavailable</div>'
+                                f'{_bts_filter_badge_html}'
                                 f'</div>', unsafe_allow_html=True
                             )
                         else:
@@ -18348,6 +18373,7 @@ ALTER TABLE backtest_sim_runs
                                     f'<div style="font-size:13px;font-weight:700;color:{_bts_ltc};">{_bts_lte} {_bts_ltl}</div>'
                                     f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_bts_ltd2}</div>'
                                     f'<div style="font-size:12px;color:#546e7a;margin-top:6px;">No trades</div>'
+                                    f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
                             else:
@@ -18383,6 +18409,7 @@ ALTER TABLE backtest_sim_runs
                                     f'Avg Win: +{_bts_ltavgw:.2f}R  ·  Avg Loss: {_bts_ltavgl:.2f}R</div>'
                                     f'<div style="font-size:11px;color:#90a4ae;">'
                                     f'Total: {"+" if _bts_lttot >= 0 else ""}{_bts_lttot:.1f}R</div>'
+                                    f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
 
