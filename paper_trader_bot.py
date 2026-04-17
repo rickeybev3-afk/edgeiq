@@ -880,6 +880,10 @@ def telegram_listener() -> None:
                                     "  ↳ Use <code>/settings tcs_structures KEY on|off</code> to toggle "
                                     "(e.g. <code>/settings tcs_structures trend_bull off</code>)"
                                 )
+                                valid_keys = ", ".join(
+                                    f"<code>{k}</code>" for k in sorted(WK_DISPLAY.keys())
+                                )
+                                lines.append(f"  ↳ Valid keys: {valid_keys}")
                             toggle_cmds.append(
                                 f"  <code>/settings {a['key']} on</code> | "
                                 f"<code>/settings {a['key']} off</code>"
