@@ -12,6 +12,7 @@ import struct
 import hashlib
 import base64
 import json
+import datetime
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -90,6 +91,13 @@ def _refresh_db_cache() -> None:
     while True:
         result = _check_db_reachable()
         with _db_cache_lock:
+            previous = _db_reachable_cache
+            if result != previous:
+                ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if result:
+                    print(f"[deploy_server] DB came back online at {ts}", flush=True)
+                else:
+                    print(f"[deploy_server] DB became unreachable at {ts}", flush=True)
             _db_reachable_cache = result
             _db_cache_checked_at = datetime.now(timezone.utc)
         time.sleep(_DB_CACHE_TTL)
