@@ -22970,6 +22970,32 @@ ALTER TABLE backtest_sim_runs
             _tiered_vals = pd.to_numeric(_show["Tiered Exit R"], errors="coerce")
             _show["Delta R"] = (_tiered_vals - _eod_vals).where(_eod_vals.notna() & _tiered_vals.notna())
 
+        # ── Ticker / Structure filters for the sweep table ────────────────────
+        _sw_filt_cols = st.columns([1, 1, 2])
+        with _sw_filt_cols[0]:
+            _sw_all_tickers = sorted(_show["Ticker"].dropna().unique().tolist()) if "Ticker" in _show.columns else []
+            _sw_sel_tickers = st.multiselect(
+                "Filter by Ticker",
+                options=_sw_all_tickers,
+                default=[],
+                key="pt_sweep_ticker_filter",
+                placeholder="All tickers",
+            )
+        with _sw_filt_cols[1]:
+            _sw_all_structs = sorted(_show["Predicted"].dropna().unique().tolist()) if "Predicted" in _show.columns else []
+            _sw_sel_structs = st.multiselect(
+                "Filter by Structure",
+                options=_sw_all_structs,
+                default=[],
+                key="pt_sweep_struct_filter",
+                placeholder="All structures",
+            )
+        _show_vis = _show.copy()
+        if _sw_sel_tickers:
+            _show_vis = _show_vis[_show_vis["Ticker"].isin(_sw_sel_tickers)]
+        if _sw_sel_structs:
+            _show_vis = _show_vis[_show_vis["Predicted"].isin(_sw_sel_structs)]
+
         def _color_wl(val):
             if val in ("W", "Win"):   return "color: #66bb6a; font-weight:700"
             if val in ("L", "Loss"):  return "color: #ef5350; font-weight:700"
@@ -23039,9 +23065,10 @@ ALTER TABLE backtest_sim_runs
         if "Delta R" in _show.columns:
             _style_map["Delta R"] = _color_delta_r
 
-        _styled = _show.style
+        _styled = _show_vis.style
         for _col_name, _fn in _style_map.items():
-            _styled = _styled.map(_fn, subset=[_col_name])
+            if _col_name in _show_vis.columns:
+                _styled = _styled.map(_fn, subset=[_col_name])
 
         if "IB Width %" in _show.columns:
             st.caption(
@@ -23051,8 +23078,8 @@ ALTER TABLE backtest_sim_runs
             )
 
         # ── Delta R aggregate summary for all-tickers sweep ──────────────────
-        if "Delta R" in _show.columns:
-            _sw_dr_series = pd.to_numeric(_show["Delta R"], errors="coerce").dropna()
+        if "Delta R" in _show_vis.columns:
+            _sw_dr_series = pd.to_numeric(_show_vis["Delta R"], errors="coerce").dropna()
             _sw_dr_total  = len(_sw_dr_series)
             _sw_dr_pos    = int((_sw_dr_series > 0).sum())
             _sw_dr_neg    = int((_sw_dr_series < 0).sum())
