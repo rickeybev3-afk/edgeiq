@@ -11316,6 +11316,63 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         unsafe_allow_html=True,
                     )
 
+                # ── R-column selector (sweep CSV) — shared persistence ──────────────
+                # Rendered once here (outside the per-ticker loop) to avoid duplicate
+                # widget keys. Uses the same localStorage key (rp_r_col_select) and
+                # query param (rp_r_cols) as the main replay CSV selector so the
+                # preference is reflected in both places without setting it twice.
+                import streamlit.components.v1 as _cmp_sw_r
+                _sw_r_col_opts = ["MFE R", "EOD Hold R", "Tiered Exit R"]
+                _cmp_sw_r.html("""
+<script>
+(function() {
+    var _LS_KEY = 'rp_r_col_select';
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.has('rp_r_cols')) return;
+    var saved = localStorage.getItem(_LS_KEY);
+    if (saved === null) return;
+    url.searchParams.set('rp_r_cols', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>
+""", height=0)
+                # Sync from the main replay selector every rerun (main → sweep).
+                # If the main selector hasn't rendered yet (sweep tab opened first),
+                # fall back to the shared query param or default to all columns.
+                if "rp_r_col_select" in st.session_state:
+                    st.session_state["sw_r_col_select"] = list(st.session_state["rp_r_col_select"])
+                elif "sw_r_col_select" not in st.session_state:
+                    if "rp_r_cols" in st.query_params:
+                        _qp_sw_r_raw = st.query_params["rp_r_cols"]
+                        st.session_state["sw_r_col_select"] = [
+                            c.strip() for c in _qp_sw_r_raw.split(",")
+                            if c.strip() in _sw_r_col_opts
+                        ] if _qp_sw_r_raw else []
+                    else:
+                        st.session_state["sw_r_col_select"] = list(_sw_r_col_opts)
+
+                def _on_sw_r_change():
+                    st.session_state["rp_r_col_select"] = list(st.session_state["sw_r_col_select"])
+
+                _sw_r_selected = st.multiselect(
+                    "R columns in CSV (all sweep tickers)",
+                    options=_sw_r_col_opts,
+                    key="sw_r_col_select",
+                    on_change=_on_sw_r_change,
+                    help=(
+                        "Choose which R-multiple columns to include in the downloaded CSV. "
+                        "This preference is shared with the main replay export — "
+                        "changing it here updates it there too, and vice versa."
+                    ),
+                )
+                _sw_r_serialised = ",".join(_sw_r_selected)
+                if st.query_params.get("rp_r_cols") != _sw_r_serialised:
+                    st.query_params["rp_r_cols"] = _sw_r_serialised
+                _cmp_sw_r.html(
+                    f"<script>localStorage.setItem('rp_r_col_select', {repr(_sw_r_serialised)});</script>",
+                    height=0,
+                )
+
                 # ── Per-ticker expanders ──────────────────────────────────────
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
@@ -11781,6 +11838,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                         else:
                             _tk_sw_csv_export = _tk_sw_df
+
+                        # Apply the sweep-section R-column preference (set once above the
+                        # per-ticker loop) to strip the R-stats summary rows when the
+                        # trader has deselected both EOD Hold R and Tiered Exit R.
+                        if not any(c in _sw_r_selected for c in ["EOD Hold R", "Tiered Exit R"]):
+                            _tk_sw_csv_export = _tk_sw_df
+
                         st.download_button(
                             label="⬇️ Download Sweep Summary CSV",
                             data=_tk_sw_csv_export.to_csv(index=False),
