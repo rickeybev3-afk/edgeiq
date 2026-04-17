@@ -16199,6 +16199,100 @@ ALTER TABLE backtest_sim_runs
                                     unsafe_allow_html=True,
                                 )
 
+            # ── Row 3c — EOD vs Tiered delta over time ───────────────────────
+            _EXPECTED_SCAN_TYPES = {"morning": "Morning", "intraday": "Intraday"}
+            _SCAN_TYPE_COLORS    = {"Morning": "#7986cb", "Intraday": "#66bb6a"}
+            if (
+                "eod_pnl_r" in _bts_df.columns
+                and "tiered_pnl_r" in _bts_df.columns
+                and "trade_date" in _bts_df.columns
+                and "scan_type" in _bts_df.columns
+            ):
+                _bts_delta_ts_df = _bts_df[
+                    _bts_df["eod_pnl_r"].notna()
+                    & _bts_df["tiered_pnl_r"].notna()
+                    & _bts_df["scan_type"].isin(_EXPECTED_SCAN_TYPES.keys())
+                ].copy()
+                if not _bts_delta_ts_df.empty:
+                    _bts_delta_ts_df["eod_pnl_r"]    = _bts_delta_ts_df["eod_pnl_r"].astype(float)
+                    _bts_delta_ts_df["tiered_pnl_r"]  = _bts_delta_ts_df["tiered_pnl_r"].astype(float)
+                    _bts_delta_ts_df["eod_minus_tiered"] = (
+                        _bts_delta_ts_df["eod_pnl_r"] - _bts_delta_ts_df["tiered_pnl_r"]
+                    )
+                    _bts_delta_ts_df["trade_date"] = pd.to_datetime(
+                        _bts_delta_ts_df["trade_date"], errors="coerce"
+                    ).dt.normalize()
+                    _bts_delta_ts_df = _bts_delta_ts_df[_bts_delta_ts_df["trade_date"].notna()]
+                    _bts_delta_ts_grouped = (
+                        _bts_delta_ts_df.groupby(["trade_date", "scan_type"])["eod_minus_tiered"]
+                        .mean()
+                        .reset_index()
+                    )
+                    _bts_delta_ts_grouped.columns = ["trade_date", "Scan Type", "EOD − Tiered (R)"]
+                    _bts_delta_ts_grouped["Scan Type"] = _bts_delta_ts_grouped["Scan Type"].map(
+                        _EXPECTED_SCAN_TYPES
+                    ).fillna(_bts_delta_ts_grouped["Scan Type"])
+                    if not _bts_delta_ts_grouped.empty:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.markdown(
+                            '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                            'text-transform:uppercase;margin-bottom:6px;">'
+                            'EOD vs Tiered Exit Delta — Per Scan Type Over Time</div>',
+                            unsafe_allow_html=True,
+                        )
+                        _bts_delta_domain = [v for k, v in _EXPECTED_SCAN_TYPES.items()
+                                             if v in _bts_delta_ts_grouped["Scan Type"].values]
+                        _bts_delta_color_range = [_SCAN_TYPE_COLORS[s] for s in _bts_delta_domain]
+                        _zero_rule = (
+                            _alt_bt.Chart(pd.DataFrame({"y": [0]}))
+                            .mark_rule(color="#455a64", strokeDash=[4, 4], strokeWidth=1)
+                            .encode(y=_alt_bt.Y("y:Q"))
+                        )
+                        _bts_delta_line = (
+                            _alt_bt.Chart(_bts_delta_ts_grouped)
+                            .mark_line(point=True, strokeWidth=2)
+                            .encode(
+                                x=_alt_bt.X("trade_date:T", title="Date", axis=_alt_bt.Axis(format="%b %d '%y")),
+                                y=_alt_bt.Y(
+                                    "EOD − Tiered (R):Q",
+                                    title="EOD − Tiered (avg R)",
+                                    scale=_alt_bt.Scale(zero=True),
+                                ),
+                                color=_alt_bt.Color(
+                                    "Scan Type:N",
+                                    scale=_alt_bt.Scale(
+                                        domain=_bts_delta_domain,
+                                        range=_bts_delta_color_range,
+                                    ),
+                                    legend=_alt_bt.Legend(
+                                        orient="top",
+                                        labelColor="#cfd8dc",
+                                        titleColor="#cfd8dc",
+                                    ),
+                                ),
+                                tooltip=[
+                                    _alt_bt.Tooltip("trade_date:T", title="Date"),
+                                    _alt_bt.Tooltip("Scan Type:N", title="Scan Type"),
+                                    _alt_bt.Tooltip("EOD − Tiered (R):Q", title="EOD − Tiered (avg R)", format=".3f"),
+                                ],
+                            )
+                            .properties(height=220)
+                        )
+                        _bts_delta_chart = (
+                            (_zero_rule + _bts_delta_line)
+                            .configure_view(fill="#141e2e", stroke=None)
+                            .configure_axis(
+                                labelColor="#90a4ae",
+                                titleColor="#90a4ae",
+                                gridColor="#263248",
+                            )
+                        )
+                        st.altair_chart(_bts_delta_chart, use_container_width=True)
+                        st.caption(
+                            "Positive = EOD holds outperform tiered exits on average for that day. "
+                            "Negative = tiered exits outperform. Only includes trades where both metrics are available."
+                        )
+
             # ── Row 3b — P1–P4 Priority Tier Breakdown ───────────────────────
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(
