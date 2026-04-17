@@ -200,40 +200,58 @@ log = logging.getLogger("nightly_tiered_pnl")
 
 # ── Ladder P&L summary-cache refresh ─────────────────────────────────────────
 
-def refresh_summary_cache():
-    """Call backend.refresh_mv_tiered_pnl_summary() and log the outcome.
+def _refresh_one_view(backend_fn_name: str, view_name: str) -> None:
+    """Refresh a single materialised view by calling the named backend function.
 
-    The function is imported lazily so this module can still start up even if
-    backend.py has import-time side effects that haven't finished yet.
+    Parameters
+    ----------
+    backend_fn_name : name of the function on the backend module, e.g.
+                      'refresh_mv_tiered_pnl_summary'.
+    view_name       : display name used in log/alert messages.
     """
-    log.info("Refreshing mv_tiered_pnl_summary materialised view …")
+    log.info("Refreshing %s materialised view …", view_name)
     start = time.monotonic()
     try:
         import backend as _backend
-        result = _backend.refresh_mv_tiered_pnl_summary()
+        fn = getattr(_backend, backend_fn_name)
+        result = fn()
         elapsed = time.monotonic() - start
         if result.get("success"):
             log.info(
-                "mv_tiered_pnl_summary refresh complete (%.1fs): %s",
+                "%s refresh complete (%.1fs): %s",
+                view_name,
                 elapsed,
                 result.get("message", "ok"),
             )
         else:
             failure_msg = result.get("message", "unknown error")
             log.warning(
-                "mv_tiered_pnl_summary refresh failed (%.1fs): %s",
+                "%s refresh failed (%.1fs): %s",
+                view_name,
                 elapsed,
                 failure_msg,
             )
-            _send_cache_failure_alert(failure_msg)
+            _send_cache_failure_alert(f"{view_name}: {failure_msg}")
     except Exception as exc:
         elapsed = time.monotonic() - start
         log.error(
-            "mv_tiered_pnl_summary refresh raised an exception after %.1fs: %s",
+            "%s refresh raised an exception after %.1fs: %s",
+            view_name,
             elapsed,
             exc,
         )
-        _send_cache_failure_alert(f"Exception after {elapsed:.1f}s: {exc}")
+        _send_cache_failure_alert(f"{view_name} exception after {elapsed:.1f}s: {exc}")
+
+
+def refresh_summary_cache():
+    """Refresh both the backtest and paper-trades Ladder materialised views.
+
+    Calls refresh_mv_tiered_pnl_summary() (backtest_sim_runs) and
+    refresh_mv_paper_tiered_pnl_summary() (paper_trades) so both Ladder
+    stat cards benefit from the pre-aggregated cache after each nightly run.
+    """
+    _refresh_one_view("refresh_mv_tiered_pnl_summary",       "mv_tiered_pnl_summary")
+    _refresh_one_view("refresh_mv_paper_tiered_pnl_summary", "mv_paper_tiered_pnl_summary")
 
 
 # ── Backfill runner ───────────────────────────────────────────────────────────
@@ -401,7 +419,7 @@ def main():
 
     log.info("=" * 60)
     log.info("Nightly Tiered P&L Refresh — started")
-    log.info("Scheduled events (ET):  21:00 → cache refresh,  00:05 → backfill + cache refresh")
+    log.info("Scheduled events (ET):  21:00 → cache refresh (both views),  00:05 → backfill + cache refresh")
     if date_from or date_to:
         log.info(
             "Date window: %s → %s",

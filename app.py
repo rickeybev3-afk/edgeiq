@@ -18032,6 +18032,9 @@ ALTER TABLE backtest_sim_runs
         _scen_stat_cols = st.columns(3)
         _scen_data_cache = {}   # store computed per-scenario data for overlay chart below
 
+        # Pre-load the paper Ladder cache once for the tiered_pnl_r card.
+        _paper_ladder_cache = get_paper_ladder_pnl_summary(user_id=_AUTH_USER_ID)
+
         for _ci, (_scol, _sclr, _slabel, _sdesc) in enumerate(_scen_defs):
             with _scen_stat_cols[_ci]:
                 st.markdown(
@@ -18055,16 +18058,42 @@ ALTER TABLE backtest_sim_runs
                     )
                     continue
 
-                _sc_df  = _sim_df[_sim_df[_scol].notna()].copy()
-                _sc_df[_scol] = _sc_df[_scol].astype(float)
-                _sc_wins   = _sc_df[_sc_df[_scol] > 0]
-                _sc_losses = _sc_df[_sc_df[_scol] <= 0]
-                _sc_total  = len(_sc_df)
-                _sc_wr     = len(_sc_wins) / _sc_total * 100 if _sc_total else 0.0
-                _sc_avg_w  = _sc_wins[_scol].mean()   if len(_sc_wins)   else 0.0
-                _sc_avg_l  = _sc_losses[_scol].mean() if len(_sc_losses) else 0.0
-                _sc_exp    = _sc_df[_scol].mean() if _sc_total else 0.0
-                _sc_total_r = _sc_df[_scol].sum()
+                # ── Use pre-aggregated view for tiered_pnl_r when available ──
+                _use_cache = (
+                    _scol == "tiered_pnl_r"
+                    and not _paper_ladder_cache.empty
+                    and "total_trades" in _paper_ladder_cache.columns
+                )
+                if _use_cache:
+                    _cv = _paper_ladder_cache
+                    for _nc in ("total_trades", "wins", "losses", "sum_tiered_r"):
+                        _cv[_nc] = pd.to_numeric(_cv[_nc], errors="coerce").fillna(0)
+                    _sc_total   = int(_cv["total_trades"].sum())
+                    _sc_wins_n  = int(_cv["wins"].sum())
+                    _sc_losses_n = int(_cv["losses"].sum())
+                    _sc_total_r  = float(_cv["sum_tiered_r"].sum())
+                    _sc_wr   = _sc_wins_n / _sc_total * 100 if _sc_total else 0.0
+                    _sc_exp  = _sc_total_r / _sc_total if _sc_total else 0.0
+                    # avg winner/loser still derived from the in-memory DataFrame
+                    _sc_df   = _sim_df[_sim_df[_scol].notna()].copy()
+                    _sc_df[_scol] = _sc_df[_scol].astype(float)
+                    _sc_wins_df   = _sc_df[_sc_df[_scol] > 0]
+                    _sc_losses_df = _sc_df[_sc_df[_scol] <= 0]
+                    _sc_avg_w = _sc_wins_df[_scol].mean()   if len(_sc_wins_df)   else 0.0
+                    _sc_avg_l = _sc_losses_df[_scol].mean() if len(_sc_losses_df) else 0.0
+                    _sc_wins   = type("_Obj", (), {"__len__": lambda s: _sc_wins_n})()
+                    _sc_losses = type("_Obj", (), {"__len__": lambda s: _sc_losses_n})()
+                else:
+                    _sc_df  = _sim_df[_sim_df[_scol].notna()].copy()
+                    _sc_df[_scol] = _sc_df[_scol].astype(float)
+                    _sc_wins   = _sc_df[_sc_df[_scol] > 0]
+                    _sc_losses = _sc_df[_sc_df[_scol] <= 0]
+                    _sc_total  = len(_sc_df)
+                    _sc_wr     = len(_sc_wins) / _sc_total * 100 if _sc_total else 0.0
+                    _sc_avg_w  = _sc_wins[_scol].mean()   if len(_sc_wins)   else 0.0
+                    _sc_avg_l  = _sc_losses[_scol].mean() if len(_sc_losses) else 0.0
+                    _sc_exp    = _sc_df[_scol].mean() if _sc_total else 0.0
+                    _sc_total_r = _sc_df[_scol].sum()
 
                 _sc_wr_c  = "#2e7d32" if _sc_wr >= 60 else ("#ef6c00" if _sc_wr >= 50 else "#c62828")
                 _sc_ex_c  = "#2e7d32" if _sc_exp > 0 else "#c62828"

@@ -7928,6 +7928,33 @@ GROUP BY user_id, screener, scan_type, month;
 
 CREATE UNIQUE INDEX IF NOT EXISTS mv_tiered_pnl_summary_uidx
     ON mv_tiered_pnl_summary(user_id, screener, scan_type, month);
+
+-- 8. Materialised summary view for paper_trades Ladder stats — refreshed nightly:
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_paper_tiered_pnl_summary AS
+SELECT
+    user_id,
+    predicted                              AS screener,
+    COALESCE(scan_type, 'morning')         AS scan_type,
+    date_trunc('month', trade_date::date)::date AS month,
+    COUNT(*)                               AS total_trades,
+    COUNT(*) FILTER (WHERE tiered_pnl_r > 0)   AS wins,
+    COUNT(*) FILTER (WHERE tiered_pnl_r <= 0)  AS losses,
+    ROUND(AVG(tiered_pnl_r)::numeric, 4)       AS avg_tiered_r,
+    ROUND(SUM(tiered_pnl_r)::numeric, 4)       AS sum_tiered_r,
+    ROUND(AVG(eod_pnl_r)::numeric, 4)          AS avg_eod_r,
+    ROUND(SUM(eod_pnl_r)::numeric, 4)          AS sum_eod_r,
+    ROUND(AVG(pnl_r_sim)::numeric, 4)          AS avg_sim_r,
+    ROUND(
+        COUNT(*) FILTER (WHERE tiered_pnl_r > 0)::numeric
+        / NULLIF(COUNT(*), 0) * 100, 2
+    )                                           AS win_rate_pct
+FROM paper_trades
+WHERE tiered_pnl_r IS NOT NULL
+  AND tiered_pnl_r <> -9999
+GROUP BY user_id, screener, scan_type, month;
+
+CREATE UNIQUE INDEX IF NOT EXISTS mv_paper_tiered_pnl_summary_uidx
+    ON mv_paper_tiered_pnl_summary(user_id, screener, scan_type, month);
 """
 
 
@@ -8731,6 +8758,94 @@ def refresh_mv_tiered_pnl_summary() -> dict:
                 "success": False,
                 "message": (
                     "mv_tiered_pnl_summary does not exist yet. "
+                    "Run the SQL in _ALL_PENDING_MIGRATIONS to create it."
+                ),
+            }
+        return {"success": False, "message": f"Refresh failed: {err}"}
+
+
+def get_paper_ladder_pnl_summary(
+    user_id: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> "pd.DataFrame":
+    """Return pre-aggregated Ladder P&L summary stats for paper trades from the
+    materialised view mv_paper_tiered_pnl_summary.
+
+    Reads *mv_paper_tiered_pnl_summary* (created via the SQL in
+    _ALL_PENDING_MIGRATIONS) which stores per-screener/scan_type/month roll-ups
+    of paper_trades.tiered_pnl_r.  Returns an empty DataFrame if the view has
+    not yet been created or is unavailable.
+
+    Parameters
+    ----------
+    user_id    : scope to a single user; empty string = all users.
+    start_date : ISO date string (inclusive); empty = no lower bound.
+    end_date   : ISO date string (inclusive); empty = no upper bound.
+
+    Returns a DataFrame with columns:
+        screener, scan_type, month, total_trades, wins, losses,
+        avg_tiered_r, sum_tiered_r, avg_eod_r, sum_eod_r, win_rate_pct
+    """
+    if not supabase:
+        return pd.DataFrame()
+
+    try:
+        q = supabase.table("mv_paper_tiered_pnl_summary").select(
+            "screener,scan_type,month,total_trades,wins,losses,"
+            "avg_tiered_r,sum_tiered_r,avg_eod_r,sum_eod_r,win_rate_pct"
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        if start_date:
+            q = q.gte("month", start_date)
+        if end_date:
+            q = q.lte("month", end_date)
+        data = q.order("month", desc=True).execute().data
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        err = str(e)
+        if "relation" in err.lower() and "does not exist" in err.lower():
+            print(
+                "get_paper_ladder_pnl_summary: mv_paper_tiered_pnl_summary not yet created. "
+                "Run the SQL in _ALL_PENDING_MIGRATIONS in the Supabase SQL Editor."
+            )
+        else:
+            print(f"get_paper_ladder_pnl_summary error: {e}")
+        return pd.DataFrame()
+
+
+def refresh_mv_paper_tiered_pnl_summary() -> dict:
+    """Trigger a REFRESH MATERIALIZED VIEW CONCURRENTLY on mv_paper_tiered_pnl_summary.
+
+    Designed to be called from a nightly scheduled job or manually from the
+    admin panel.  Uses the exec_sql RPC so no direct DB connection is needed.
+
+    Returns dict with keys: success (bool), message (str).
+    """
+    if not supabase:
+        return {"success": False, "message": "Supabase not connected"}
+    try:
+        supabase.rpc(
+            "exec_sql",
+            {"query": "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_paper_tiered_pnl_summary"},
+        ).execute()
+        return {"success": True, "message": "mv_paper_tiered_pnl_summary refreshed successfully"}
+    except Exception as e:
+        err = str(e)
+        if "PGRST202" in err:
+            return {
+                "success": False,
+                "message": (
+                    "exec_sql function not found — run CREATE FUNCTION in the "
+                    "Supabase SQL Editor first (see _EXEC_SQL_FUNCTION constant)."
+                ),
+            }
+        if "relation" in err.lower() and "does not exist" in err.lower():
+            return {
+                "success": False,
+                "message": (
+                    "mv_paper_tiered_pnl_summary does not exist yet. "
                     "Run the SQL in _ALL_PENDING_MIGRATIONS to create it."
                 ),
             }
