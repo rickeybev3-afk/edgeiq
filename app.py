@@ -18536,6 +18536,49 @@ ALTER TABLE backtest_sim_runs
                                     f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
+                                _bts_et_spk_data = None
+                                if "sim_date" in _bts_etdf.columns:
+                                    try:
+                                        _bts_et_spk = _bts_etdf.copy()
+                                        _bts_et_spk["_dt"] = pd.to_datetime(_bts_et_spk["sim_date"], errors="coerce")
+                                        _bts_et_spk = _bts_et_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
+                                        _bts_et_wkly = _bts_et_spk.resample("W-FRI").agg(
+                                            _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
+                                            _tot=("eod_pnl_r", "count"),
+                                        )
+                                        _bts_et_wkly = _bts_et_wkly[_bts_et_wkly["_tot"] > 0]
+                                        _bts_et_wkly["_wr"] = _bts_et_wkly["_wins"] / _bts_et_wkly["_tot"] * 100
+                                        if len(_bts_et_wkly) >= 3:
+                                            _bts_et_spk_data = _bts_et_wkly
+                                    except (ValueError, KeyError, TypeError) as _bts_et_spk_err:
+                                        import sys
+                                        print(f"[BTS EOD sparkline] {_bts_etl}: {_bts_et_spk_err}", file=sys.stderr)
+                                if _bts_et_spk_data is not None:
+                                    _bts_et_sfig = go.Figure()
+                                    _bts_et_sfig.add_trace(go.Scatter(
+                                        x=[idx.strftime("w/e %b %d") for idx in _bts_et_spk_data.index],
+                                        y=_bts_et_spk_data["_wr"].tolist(),
+                                        mode="lines+markers",
+                                        line=dict(color=_bts_etc, width=1.5),
+                                        marker=dict(size=4, color=_bts_etc),
+                                        hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
+                                    ))
+                                    _bts_et_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                                    _bts_et_sfig.update_layout(
+                                        height=70,
+                                        margin=dict(l=2, r=2, t=6, b=2),
+                                        paper_bgcolor="rgba(0,0,0,0)",
+                                        plot_bgcolor="rgba(0,0,0,0)",
+                                        xaxis=dict(visible=False, fixedrange=True),
+                                        yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
+                                        showlegend=False,
+                                    )
+                                    st.plotly_chart(
+                                        _bts_et_sfig,
+                                        use_container_width=True,
+                                        config={"displayModeBar": False},
+                                    )
+                                    st.caption("Weekly EOD win rate")
 
             # ── Row 3d — P1–P4 Priority Tier Breakdown — Ladder Exit ─────────
             _bts_has_ldr_col = "tiered_pnl_r" in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
