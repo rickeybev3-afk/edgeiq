@@ -12492,16 +12492,16 @@ ALTER TABLE backtest_sim_runs
     # ════════════════════════════════════════════════════════════════════════════
     # SECTION 1c — 5-YEAR BACKTEST INTELLIGENCE GRID (Scan Type × TCS)
     # ════════════════════════════════════════════════════════════════════════════
-    st.markdown("### 🗺️ 5-Year Edge Map — Time of Day × Confidence Score")
+    st.markdown("### 🗺️ 5-Year Edge Map — Scan Type × TCS")
     st.caption(
         "True expectancy per setup = P(breakout) × Avg R earned on breaks. "
         "Excludes Pending records. Only Bullish/Bearish Breaks counted as entries. "
         "All other outcomes (Range-Bound, Neutral, etc.) reduce P(breakout). "
-        "5 years of data · morning and intraday scans."
+        "Use the date filter below to narrow to a specific window, or leave blank for all-time data."
     )
 
     @st.cache_data(ttl=3600, show_spinner=False)
-    def _load_backtest_grid(uid):
+    def _load_backtest_grid(uid, start_date=None, end_date=None):
         RESOLVED = [
             "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
             "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
@@ -12512,7 +12512,7 @@ ALTER TABLE backtest_sim_runs
                 try:
                     rows, offset = [], 0
                     while True:
-                        batch = (
+                        q = (
                             supabase.table("backtest_sim_runs")
                             .select("actual_outcome,pnl_r_sim")
                             .eq("user_id", uid)
@@ -12520,7 +12520,13 @@ ALTER TABLE backtest_sim_runs
                             .gte("tcs", lo)
                             .lt("tcs", min(hi, 100) if hi < 101 else 200)
                             .in_("actual_outcome", RESOLVED)
-                            .range(offset, offset + 999)
+                        )
+                        if start_date:
+                            q = q.gte("sim_date", str(start_date))
+                        if end_date:
+                            q = q.lte("sim_date", str(end_date))
+                        batch = (
+                            q.range(offset, offset + 999)
                             .execute()
                             .data or []
                         )
@@ -12556,10 +12562,50 @@ ALTER TABLE backtest_sim_runs
                     continue
         return grid
 
-    _bt_grid = _load_backtest_grid(st.session_state.get("auth_user_id", ""))
+    # ── Date-range filter for SECTION 1c ─────────────────────────────────────
+    _grid_dr_cols = st.columns([1, 1, 4])
+    with _grid_dr_cols[0]:
+        _grid_start = st.date_input(
+            "From",
+            value=None,
+            key="grid_dr_start",
+            help="Filter edge map to runs from this date (inclusive). Leave blank for all time.",
+        )
+    with _grid_dr_cols[1]:
+        _grid_end = st.date_input(
+            "To",
+            value=None,
+            key="grid_dr_end",
+            help="Filter edge map to runs up to this date (inclusive). Leave blank for all time.",
+        )
+
+    _grid_date_invalid = bool(_grid_start and _grid_end and _grid_start > _grid_end)
+
+    if _grid_date_invalid:
+        st.error("'From' date must be on or before the 'To' date — no results shown.")
+    elif _grid_start or _grid_end:
+        _date_label = []
+        if _grid_start:
+            _date_label.append(f"from {_grid_start}")
+        if _grid_end:
+            _date_label.append(f"to {_grid_end}")
+        st.caption(f"Edge map filtered {' '.join(_date_label)} — win rates and expectancy reflect this window only.")
+
+    if _grid_date_invalid:
+        _bt_grid = []
+    else:
+        _bt_grid = _load_backtest_grid(
+            st.session_state.get("auth_user_id", ""),
+            start_date=_grid_start,
+            end_date=_grid_end,
+        )
 
     if not _bt_grid:
-        st.info("Backtest grid data unavailable — batch backtest may still be running.")
+        if not _grid_date_invalid:
+            if _grid_start or _grid_end:
+                st.warning("No edge map data found in the selected date range — try widening the filter or clearing the dates.")
+            else:
+                st.info("Backtest grid data unavailable — batch backtest may still be running.")
     else:
         # ── Priority tier assignment ─────────────────────────────────────────
         def _get_tier(row):
