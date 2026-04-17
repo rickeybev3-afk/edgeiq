@@ -11607,17 +11607,18 @@ def load_cognitive_delta_analysis(user_id: str) -> "pd.DataFrame":
 # ── Decision Log ───────────────────────────────────────────────────────────────
 _DECISION_LOG_SQL = """
 CREATE TABLE IF NOT EXISTS decision_log (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id       UUID NOT NULL,
-  decision_date DATE NOT NULL DEFAULT CURRENT_DATE,
-  category      TEXT NOT NULL,
-  call          TEXT NOT NULL,
-  reasoning     TEXT,
-  outcome       TEXT NOT NULL DEFAULT 'Pending',
-  outcome_notes TEXT,
-  outcome_date  DATE,
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          UUID NOT NULL,
+  decision_date    DATE NOT NULL DEFAULT CURRENT_DATE,
+  category         TEXT NOT NULL,
+  call             TEXT NOT NULL,
+  reasoning        TEXT,
+  outcome          TEXT NOT NULL DEFAULT 'Pending',
+  outcome_notes    TEXT,
+  outcome_date     DATE,
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ,
+  last_reopened_at TIMESTAMPTZ
 );
 """.strip()
 
@@ -11750,6 +11751,14 @@ def ensure_decision_log_table() -> bool:
     except Exception as e:
         print(f"ensure_decision_log_table migration (updated_at) warning: {e}")
 
+    try:
+        supabase.rpc(
+            "exec_sql",
+            {"query": "ALTER TABLE decision_log ADD COLUMN IF NOT EXISTS last_reopened_at TIMESTAMPTZ"},
+        ).execute()
+    except Exception as e:
+        print(f"ensure_decision_log_table migration (last_reopened_at) warning: {e}")
+
     return True
 
 
@@ -11807,6 +11816,9 @@ def update_decision_outcome(
 
     When ``is_edit=True`` the ``updated_at`` column is stamped with the current
     UTC time so the UI can display an "edited <date>" label.
+
+    When ``outcome=="Pending"`` (a reopen) ``last_reopened_at`` is stamped with
+    the current UTC time so the UI can show a distinct "reopened" indicator.
     """
     if not supabase:
         return False
@@ -11820,6 +11832,7 @@ def update_decision_outcome(
             patch["updated_at"] = datetime.utcnow().isoformat()
         elif outcome == "Pending":
             patch["updated_at"] = None
+            patch["last_reopened_at"] = datetime.utcnow().isoformat()
         supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
         return True
     except Exception as e:

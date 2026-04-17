@@ -24758,6 +24758,16 @@ def render_decision_log_tab():
             except Exception:
                 _edited_label = "edited"
 
+        _last_reopened_raw = _dlr.get("last_reopened_at") or ""
+        _reopened_label = ""
+        if _last_reopened_raw:
+            try:
+                import datetime as _dt_mod
+                _ro_dt = _dt_mod.datetime.fromisoformat(_last_reopened_raw.replace("Z", "+00:00"))
+                _reopened_label = "↩ reopened " + _ro_dt.strftime("%b") + " " + str(_ro_dt.day)
+            except Exception:
+                _reopened_label = "↩ reopened"
+
         _header_html = (
             f'<div style="border-left:3px solid {_border_c}; background:#12121e; '
             f'border-radius:0 8px 8px 0; padding:12px 16px; margin-bottom:4px;">'
@@ -24767,6 +24777,7 @@ def render_decision_log_tab():
             f'{_out_badge}'
             f'{"" if not _out_date else f"<span style=&quot;font-size:11px; color:#546e7a;&quot;>→ {_out_date}</span>"}'
             f'{"" if not _edited_label else f"<span style=&quot;font-size:10px; color:#546e7a; font-style:italic;&quot;>({_edited_label})</span>"}'
+            f'{"" if not _reopened_label else f"<span style=&quot;font-size:10px; color:#e65100; font-style:italic; background:#1a0d00; border-radius:4px; padding:1px 5px;&quot;>{_reopened_label}</span>"}'
             f'</div>'
             f'<div style="font-size:14px; color:#e0e0e0; font-weight:600; line-height:1.4; margin-bottom:4px;">'
             f'{_call_txt}</div>'
