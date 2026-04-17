@@ -6830,6 +6830,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
                         ]
                         _bt_tier_cols = st.columns(4)
+                        # Pre-compute expectancy R per tier for best-edge highlight
+                        _bt_tier_exp_map: dict = {}
+                        for _bti2, (_btl2x, _bte2x, _btst2x, _btlo2x, _bthi2x, _btc2x, _btd2x) in enumerate(_bt_tier_defs):
+                            _bt_mask2 = (
+                                (_rp_df["Snapshot"].str.lower() == _btst2x) &
+                                (_rp_df["TCS"] >= _btlo2x) &
+                                (_rp_df["TCS"] <= _bthi2x)
+                            )
+                            _bt_td2 = _rp_df[_bt_mask2]
+                            if not _bt_td2.empty:
+                                _bt_tier_exp_map[_bti2] = round(_bt_td2["R (MFE)"].mean(), 3)
+                        _bt_best_exp_r = max(_bt_tier_exp_map.values()) if len(_bt_tier_exp_map) > 1 else None
+
                         for _bti, (_btl, _bte, _btst, _btlo, _bthi, _btc, _btd) in enumerate(_bt_tier_defs):
                             _bt_tier_mask = (
                                 (_rp_df["Snapshot"].str.lower() == _btst) &
@@ -6859,8 +6872,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _bt_exp_r   = round(_bt_r_ser.mean(), 3)
                                     _bt_exp_r_str = f'{"+" if _bt_exp_r >= 0 else ""}{_bt_exp_r:.3f}R'
                                     _bt_exp_r_col = "#2e7d32" if _bt_exp_r > 0 else ("#ef6c00" if _bt_exp_r == 0 else "#c62828")
+                                    _bt_is_best = _bt_best_exp_r is not None and abs(_bt_exp_r - _bt_best_exp_r) < 1e-9
+                                    _bt_card_border = "2px solid #ffd54f" if _bt_is_best else "1px solid #263444"
+                                    _bt_best_badge  = (
+                                        '<div style="font-size:10px;font-weight:700;color:#ffd54f;'
+                                        'background:rgba(255,213,79,0.12);border-radius:4px;'
+                                        'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
+                                        'Best Edge ⭐</div>'
+                                    ) if _bt_is_best else ""
                                     st.markdown(
-                                        f'<div style="background:#1e2a3a;border-radius:8px;padding:12px;text-align:center;">'
+                                        f'<div style="background:#1e2a3a;border:{_bt_card_border};'
+                                        f'border-radius:8px;padding:12px;text-align:center;">'
+                                        f'{_bt_best_badge}'
                                         f'<div style="font-size:13px;font-weight:700;color:{_btc};">{_bte} {_btl}</div>'
                                         f'<div style="font-size:11px;color:#90a4ae;margin-top:2px;">{_btd}</div>'
                                         f'<div style="font-size:22px;font-weight:700;color:{_btc2};margin-top:4px;">{_btwr:.1f}%</div>'
@@ -11472,6 +11495,20 @@ ALTER TABLE backtest_sim_runs
     _has_tcs = "tcs" in _sim_df.columns and _sim_df["tcs"].notna().any()
     _tier_cols = st.columns(4)
 
+    # Pre-compute expectancy R per tier to find best edge
+    _tier_exp_map: dict = {}
+    if _has_tcs:
+        for _ti2, (_tlabel2, _temoji2, _tst2, _tcs_lo2, _tcs_hi2, _tcolor2, _tdesc2) in enumerate(_tier_defs):
+            _tdf2 = _sim_df[
+                (_sim_df["scan_type"].fillna("morning") == _tst2) &
+                (_sim_df["tcs"].fillna(0) >= _tcs_lo2) &
+                (_sim_df["tcs"].fillna(0) <= _tcs_hi2)
+            ]
+            if not _tdf2.empty:
+                _tier_exp_map[_ti2] = _tdf2["pnl_r_sim"].mean()
+    # Only show best-edge highlight when more than one tier has trades
+    _best_exp_r = max(_tier_exp_map.values()) if len(_tier_exp_map) > 1 else None
+
     for _ti, (_tlabel, _temoji, _tst, _tcs_lo, _tcs_hi, _tcolor, _tdesc) in enumerate(_tier_defs):
         with _tier_cols[_ti]:
             if not _has_tcs:
@@ -11505,9 +11542,18 @@ ALTER TABLE backtest_sim_runs
                     _ttot = _tdf["pnl_r_sim"].sum()
                     _pct_trades = len(_tdf) / _s_total * 100 if _s_total else 0
                     _pct_r      = _ttot / _s_total_r * 100 if _s_total_r else 0
+                    _is_best = _best_exp_r is not None and abs(_texp - _best_exp_r) < 1e-9
+                    _card_border = f"2px solid #ffd54f" if _is_best else f"3px solid {_tcolor}"
+                    _best_badge  = (
+                        '<div style="font-size:10px;font-weight:700;color:#ffd54f;'
+                        'background:rgba(255,213,79,0.12);border-radius:4px;'
+                        'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
+                        'Best Edge ⭐</div>'
+                    ) if _is_best else ""
                     st.markdown(
-                        f'<div style="background:#1e2a3a;border-left:3px solid {_tcolor};'
+                        f'<div style="background:#1e2a3a;border-left:{_card_border};'
                         f'border-radius:8px;padding:12px;text-align:center;">'
+                        f'{_best_badge}'
                         f'<div style="font-size:13px;font-weight:700;color:{_tcolor};">{_temoji} {_tlabel}</div>'
                         f'<div style="font-size:10px;color:#90a4ae;margin-bottom:6px;">{_tdesc}</div>'
                         f'<div style="font-size:22px;font-weight:700;color:{"#2e7d32" if _twr >= 55 else "#ef6c00"};">'
