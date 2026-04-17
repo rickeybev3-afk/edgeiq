@@ -10068,7 +10068,13 @@ def compute_r_trend_history(user_id: str = "", r_source: str | None = None) -> "
 
 
 def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
-    """Load paper trades from the last N days (default 21 = 3 weeks)."""
+    """Load paper trades from the last N days (default 21 = 3 weeks).
+
+    Rows whose tiered_pnl_r equals TIERED_PNL_SENTINEL (-9999) are permanently
+    unfillable (no Alpaca bars available).  The sentinel is replaced with NaN so
+    that all downstream .notna()/.dropna() filters exclude them automatically
+    without any extra handling in the UI layer.
+    """
     if not supabase:
         return pd.DataFrame()
     try:
@@ -10082,10 +10088,47 @@ def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
             .order("trade_date", desc=True)
         )
         data = q.execute().data
-        return pd.DataFrame(data) if data else pd.DataFrame()
+        df = pd.DataFrame(data) if data else pd.DataFrame()
+        if not df.empty and "tiered_pnl_r" in df.columns:
+            import numpy as _np
+            df["tiered_pnl_r"] = pd.to_numeric(df["tiered_pnl_r"], errors="coerce")
+            df.loc[df["tiered_pnl_r"] == TIERED_PNL_SENTINEL, "tiered_pnl_r"] = _np.nan
+        return df
     except Exception as e:
         print(f"Paper trades load error: {e}")
         return pd.DataFrame()
+
+
+def count_paper_tiered_pending(user_id: str = "") -> int:
+    """Return the count of paper_trades rows that qualify for tiered P&L backfill.
+
+    Qualifying rows have a Bullish/Bearish actual_outcome, NULL tiered_pnl_r,
+    and all three price fields (close_price, ib_high, ib_low) populated.
+    Sentinel-stamped rows (tiered_pnl_r = TIERED_PNL_SENTINEL) are non-NULL and
+    therefore excluded automatically by the IS NULL filter.
+
+    Pass *user_id* to scope the count to a single user (recommended for multi-tenant
+    deployments). An empty string skips the user filter and counts all rows.
+    """
+    if not supabase:
+        return 0
+    try:
+        q = (
+            supabase.table("paper_trades")
+            .select("id", count="exact")
+            .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+            .is_("tiered_pnl_r", "null")
+            .not_.is_("close_price", "null")
+            .not_.is_("ib_high", "null")
+            .not_.is_("ib_low", "null")
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        resp = q.execute()
+        return resp.count or 0
+    except Exception as e:
+        print(f"count_paper_tiered_pending error: {e}")
+        return 0
 
 
 def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "") -> dict:

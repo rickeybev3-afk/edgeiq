@@ -359,14 +359,9 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
                         return stats
                 else:
                     # API returned successfully with zero bars — row genuinely has
-                    # no data.  paper_trades sentinel stamping is handled separately;
-                    # for now, defer with skipped_ids so this run terminates.
-                    print("no bars — eod_pnl_r only, row deferred")
-                    consecutive_errors += 1
-                    if consecutive_errors >= MAX_ERRORS:
-                        print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
-                        print("  Stopping this user — check Alpaca credentials and retry.")
-                        return stats
+                    # no data (delisted, pre-listing, holiday gap).  Stamp with
+                    # sentinel so the row exits the IS NULL pending count permanently.
+                    consecutive_errors = 0
                     eod_only = backend.compute_trade_sim_tiered(
                         aft_df    = None,
                         ib_high   = ib_high,
@@ -374,13 +369,19 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
                         direction = direction,
                         close_px  = close_price,
                     )
-                    if not dry_run and existing_eod is None and eod_only.get("eod_pnl_r") is not None:
+                    eod_r = eod_only.get("eod_pnl_r")
+                    patch_no_bars: dict = {"tiered_pnl_r": backend.TIERED_PNL_SENTINEL}
+                    if existing_eod is None and eod_r is not None:
+                        patch_no_bars["eod_pnl_r"] = eod_r
+                    eod_str = f"  eod={eod_r:+.4f}R" if eod_r is not None else ""
+                    print(f"no bars — stamping sentinel{eod_str}" + (" [DRY RUN]" if dry_run else ""))
+                    if not dry_run:
                         try:
                             backend.supabase.table("paper_trades").update(
-                                {"eod_pnl_r": eod_only["eod_pnl_r"]}
+                                patch_no_bars
                             ).eq("id", row_id).execute()
                         except Exception as e:
-                            print(f"\n    eod_pnl_r update error: {e}")
+                            print(f"\n    sentinel update error: {e}")
                 stats["skipped_no_bars"] += 1
                 skipped_ids.append(row_id)
                 continue
