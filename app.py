@@ -385,87 +385,141 @@ if _startup_errors:
         # ── Welcome / onboarding screen for brand-new (unconfigured) instances ──
         st.markdown(
             """
-            <div style="
-                max-width:680px;
-                margin:3rem auto;
-                padding:2.5rem 2rem;
-                border:1px solid #334155;
-                border-radius:12px;
-                background:#0f172a;
-                color:#e2e8f0;
-                font-family:sans-serif;
-            ">
-            <h1 style="margin-top:0;font-size:1.8rem;color:#f8fafc;">
-                👋 Welcome to EdgeIQ
-            </h1>
-            <p style="color:#94a3b8;font-size:1rem;margin-bottom:1.5rem;">
+            <style>
+            .edgeiq-welcome-card {
+                max-width: 680px;
+                margin: 3rem auto;
+                padding: 2.5rem 2rem;
+                border: 1px solid rgba(128, 128, 128, 0.25);
+                border-radius: 12px;
+                background: var(--background-color);
+                color: var(--text-color);
+                font-family: sans-serif;
+            }
+            .edgeiq-welcome-card h1 {
+                margin-top: 0;
+                font-size: 1.8rem;
+                color: var(--text-color);
+            }
+            .edgeiq-welcome-card .muted {
+                opacity: 0.65;
+                font-size: 1rem;
+                margin-bottom: 1.5rem;
+            }
+            .edgeiq-welcome-card hr {
+                border: none;
+                border-top: 1px solid rgba(128, 128, 128, 0.2);
+                margin-bottom: 1.5rem;
+            }
+            .edgeiq-welcome-card h3 {
+                color: var(--text-color);
+                font-size: 1.05rem;
+                margin-bottom: 0.3rem;
+            }
+            .edgeiq-welcome-card .step-body {
+                opacity: 0.7;
+                font-size: 0.92rem;
+                margin-bottom: 1.4rem;
+            }
+            .edgeiq-welcome-card .step-body strong {
+                opacity: 1;
+                color: var(--text-color);
+            }
+            .edgeiq-welcome-card table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.88rem;
+                margin-bottom: 1.4rem;
+            }
+            .edgeiq-welcome-card thead tr {
+                border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+            }
+            .edgeiq-welcome-card th {
+                text-align: left;
+                padding: 6px 8px;
+                opacity: 0.5;
+                font-weight: 600;
+            }
+            .edgeiq-welcome-card tbody tr {
+                border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+            }
+            .edgeiq-welcome-card tbody tr:last-child {
+                border-bottom: none;
+            }
+            .edgeiq-welcome-card td {
+                padding: 7px 8px;
+            }
+            .edgeiq-welcome-card code {
+                color: var(--primary-color);
+                background: rgba(128, 128, 128, 0.1);
+                padding: 1px 4px;
+                border-radius: 3px;
+            }
+            .edgeiq-welcome-card a {
+                color: var(--primary-color);
+            }
+            </style>
+            <div class="edgeiq-welcome-card">
+            <h1>👋 Welcome to EdgeIQ</h1>
+            <p class="muted">
                 This looks like a fresh instance — no secrets have been configured yet.
                 Follow the steps below to get up and running in a few minutes.
             </p>
 
-            <hr style="border-color:#1e293b;margin-bottom:1.5rem;" />
+            <hr />
 
-            <h3 style="color:#f8fafc;font-size:1.05rem;margin-bottom:0.3rem;">
-                Step 1 — Fork this project
-            </h3>
-            <p style="color:#94a3b8;font-size:0.92rem;margin-bottom:1.4rem;">
-                In Replit, click <strong style="color:#e2e8f0;">Fork</strong> to create your own
+            <h3>Step 1 — Fork this project</h3>
+            <p class="step-body">
+                In Replit, click <strong>Fork</strong> to create your own
                 private copy. All secrets are stored per-fork, so never share your fork URL
                 with anyone who shouldn't have access.
             </p>
 
-            <h3 style="color:#f8fafc;font-size:1.05rem;margin-bottom:0.3rem;">
-                Step 2 — Add your secrets
-            </h3>
-            <p style="color:#94a3b8;font-size:0.92rem;margin-bottom:0.6rem;">
-                Open <strong style="color:#e2e8f0;">Secrets</strong> (🔒 lock icon in the
+            <h3>Step 2 — Add your secrets</h3>
+            <p class="step-body" style="margin-bottom:0.6rem;">
+                Open <strong>Secrets</strong> (🔒 lock icon in the
                 left sidebar) and add each of the four keys below.
             </p>
-            <table style="
-                width:100%;
-                border-collapse:collapse;
-                font-size:0.88rem;
-                margin-bottom:1.4rem;
-            ">
+            <table>
               <thead>
-                <tr style="border-bottom:1px solid #1e293b;">
-                  <th style="text-align:left;padding:6px 8px;color:#64748b;">Secret name</th>
-                  <th style="text-align:left;padding:6px 8px;color:#64748b;">Where to find it</th>
+                <tr>
+                  <th>Secret name</th>
+                  <th>Where to find it</th>
                 </tr>
               </thead>
               <tbody>
-                <tr style="border-bottom:1px solid #1e293b;">
-                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">SUPABASE_URL</code></td>
-                  <td style="padding:7px 8px;">
+                <tr>
+                  <td><code>SUPABASE_URL</code></td>
+                  <td>
                     <a href="https://supabase.com/dashboard/project/_/settings/api"
-                       target="_blank" style="color:#38bdf8;">
+                       target="_blank">
                       Supabase → Settings → API → Project URL
                     </a>
                   </td>
                 </tr>
-                <tr style="border-bottom:1px solid #1e293b;">
-                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">SUPABASE_KEY</code></td>
-                  <td style="padding:7px 8px;">
+                <tr>
+                  <td><code>SUPABASE_KEY</code></td>
+                  <td>
                     <a href="https://supabase.com/dashboard/project/_/settings/api"
-                       target="_blank" style="color:#38bdf8;">
+                       target="_blank">
                       Supabase → Settings → API → anon / public key
                     </a>
                   </td>
                 </tr>
-                <tr style="border-bottom:1px solid #1e293b;">
-                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">ALPACA_API_KEY</code></td>
-                  <td style="padding:7px 8px;">
+                <tr>
+                  <td><code>ALPACA_API_KEY</code></td>
+                  <td>
                     <a href="https://app.alpaca.markets/paper/dashboard/overview"
-                       target="_blank" style="color:#38bdf8;">
+                       target="_blank">
                       Alpaca → Paper Dashboard → API Keys → Generate
                     </a>
                   </td>
                 </tr>
                 <tr>
-                  <td style="padding:7px 8px;"><code style="color:#7dd3fc;">ALPACA_SECRET_KEY</code></td>
-                  <td style="padding:7px 8px;">
+                  <td><code>ALPACA_SECRET_KEY</code></td>
+                  <td>
                     <a href="https://app.alpaca.markets/paper/dashboard/overview"
-                       target="_blank" style="color:#38bdf8;">
+                       target="_blank">
                       Alpaca → Paper Dashboard → API Keys → Generate
                     </a>
                   </td>
@@ -473,12 +527,10 @@ if _startup_errors:
               </tbody>
             </table>
 
-            <h3 style="color:#f8fafc;font-size:1.05rem;margin-bottom:0.3rem;">
-                Step 3 — Restart the app
-            </h3>
-            <p style="color:#94a3b8;font-size:0.92rem;margin-bottom:0;">
-                After saving all four secrets, click the <strong style="color:#e2e8f0;">Stop ▶ Run</strong>
-                button (or use the <strong style="color:#e2e8f0;">Restart</strong> option) to reboot
+            <h3>Step 3 — Restart the app</h3>
+            <p class="step-body" style="margin-bottom:0;">
+                After saving all four secrets, click the <strong>Stop ▶ Run</strong>
+                button (or use the <strong>Restart</strong> option) to reboot
                 the app. This screen will be replaced by the full dashboard once the secrets are
                 detected.
             </p>
