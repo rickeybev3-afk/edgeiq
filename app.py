@@ -4540,6 +4540,12 @@ with st.sidebar:
     def _cached_cred_check(_key: str, _secret: str, _is_paper: bool) -> dict:
         return check_credential_match_sync(_key, _secret, _is_paper)
 
+    # If the user cancelled a Paper→Live switch in the previous run, reset the
+    # radio widget key BEFORE the widget is rendered so Streamlit honours the
+    # value (setting it after render is silently ignored).
+    if st.session_state.pop("_tm_cancel_requested", False):
+        st.session_state["_tm_radio"] = "Paper"
+
     _tm_current = st.session_state.get("_trading_mode", "paper" if get_trading_mode() else "live")
     _tm_idx = 0 if _tm_current == "paper" else 1
     _tm_choice = st.radio(
@@ -4556,15 +4562,56 @@ with st.sidebar:
     _tm_is_paper = _tm_choice == "Paper"
     _tm_label = "paper" if _tm_is_paper else "live"
 
-    if _tm_label != _tm_current:
-        set_trading_mode(_tm_is_paper)
-        st.session_state["_trading_mode"] = _tm_label
-        if _sb_uid:
-            _tm_prefs = {**st.session_state.get("_cached_prefs", {}), "trading_mode": _tm_label}
-            save_user_prefs(_sb_uid, _tm_prefs)
-            st.session_state["_cached_prefs"] = _tm_prefs
+    # If the user toggled back to Paper while a confirmation was pending, clear it
+    if _tm_label == "paper" and st.session_state.get("_tm_pending_live"):
+        st.session_state.pop("_tm_pending_live", None)
 
-    if _tm_is_paper:
+    if _tm_label != _tm_current:
+        if _tm_label == "live" and _tm_current == "paper":
+            # Paper → Live: require explicit confirmation before committing
+            st.session_state["_tm_pending_live"] = True
+        else:
+            # Live → Paper (or same): commit immediately, no confirmation needed
+            set_trading_mode(_tm_is_paper)
+            st.session_state["_trading_mode"] = _tm_label
+            st.session_state.pop("_tm_pending_live", None)
+            if _sb_uid:
+                _tm_prefs = {**st.session_state.get("_cached_prefs", {}), "trading_mode": _tm_label}
+                save_user_prefs(_sb_uid, _tm_prefs)
+                st.session_state["_cached_prefs"] = _tm_prefs
+
+    # Confirmation gate for Paper → Live switch
+    if st.session_state.get("_tm_pending_live"):
+        st.warning(
+            "⚠️ **You are switching to LIVE mode.** "
+            "Real orders will use real money. Continue?",
+        )
+        _conf_col1, _conf_col2 = st.columns(2)
+        with _conf_col1:
+            if st.button("✅ Yes, switch to Live", use_container_width=True, type="primary"):
+                set_trading_mode(False)
+                st.session_state["_trading_mode"] = "live"
+                st.session_state.pop("_tm_pending_live", None)
+                if _sb_uid:
+                    _tm_prefs = {**st.session_state.get("_cached_prefs", {}), "trading_mode": "live"}
+                    save_user_prefs(_sb_uid, _tm_prefs)
+                    st.session_state["_cached_prefs"] = _tm_prefs
+                st.rerun()
+        with _conf_col2:
+            if st.button("❌ Cancel", use_container_width=True):
+                set_trading_mode(True)
+                st.session_state["_trading_mode"] = "paper"
+                # Signal the next render to reset the radio BEFORE it's drawn
+                st.session_state["_tm_cancel_requested"] = True
+                st.session_state.pop("_tm_pending_live", None)
+                st.rerun()
+
+    # Resolve the effective mode for the status badge below
+    _effective_is_paper = (
+        st.session_state.get("_trading_mode", _tm_label) == "paper"
+    )
+
+    if _effective_is_paper:
         st.markdown(
             '<div style="background:#0a1a2a; border:1px solid #1565c0; border-radius:8px; '
             'padding:8px 12px; margin:4px 0;">'
@@ -4585,12 +4632,12 @@ with st.sidebar:
         )
 
     if api_key and secret_key:
-        _cred_result = _cached_cred_check(api_key, secret_key, _tm_is_paper)
+        _cred_result = _cached_cred_check(api_key, secret_key, _effective_is_paper)
         if _cred_result.get("error"):
             st.caption(f"⚠️ Could not verify credentials: {_cred_result['error']}")
         elif not _cred_result.get("matched"):
             _key_type = "paper" if _cred_result.get("key_is_paper") else "live"
-            _wanted   = "paper" if _tm_is_paper else "live"
+            _wanted   = "paper" if _effective_is_paper else "live"
             st.warning(
                 f"⚠️ **Credential mismatch:** your Alpaca keys belong to a **{_key_type}** "
                 f"account but Trading Mode is set to **{_wanted}**. "

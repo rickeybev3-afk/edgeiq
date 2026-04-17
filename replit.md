@@ -1,368 +1,44 @@
 # EdgeIQ — Professional Trading Terminal
 
-## What This Is
+## Overview
 
-**EdgeIQ — "Find your edge, then automate it."**
+EdgeIQ is a Python Streamlit trading terminal designed for Volume Profile and Initial Balance (IB) structure analysis of small-cap stocks, primarily focusing on IB breakouts. It integrates with the Alpaca API for real-time data and trading, and Supabase for multi-user authentication and cloud data storage.
 
-A Python Streamlit trading terminal (port 8080) for Volume Profile / IB structure analysis of small-cap stocks. Built around the Alpaca API (SIP feed) + Supabase (multi-user auth + cloud data). Dark-mode, Plotly charts.
+The core purpose is to identify and automate trading strategies based on structural market inefficiencies, specifically IB breakouts in high-TCS (Total Composite Score) small-cap setups. The long-term vision is to develop cognitive profiling software and a "Brain Marketplace" where verified traders can rent out their calibrated trading algorithms, fostering a consistency flywheel where logging trades leads to better calibration and passive income for traders. This marketplace will feature personalized brain matching based on cognitive fingerprinting.
 
-**Core thesis:** IB (Initial Balance — first hour of trading 9:30–10:30 AM) breakouts on high-TCS small-cap setups have asymmetric reward profiles. The edge is structural (Market Profile theory, decades old) — not curve-fitted. Institutions use IB levels. That's why it works.
+The project is currently in Phase 1.5, focusing on paper execution of trades via Alpaca, with an upcoming transition to live execution (Phase 2). Financial projections indicate significant potential returns, with a strong emphasis on risk management and compounding.
 
-**Long-term vision:** Cognitive profiling software product. Combined exit ceiling: $500M–$1.2B.
-
-**Roadmap:** Personal calibration engine → Paper automation → Paper execution (Alpaca) → Live autonomous trading → Meta-brain marketplace → Asset class expansion → Institutional data licensing
-
-**Pricing tiers:** $49 / $99 / $199 / $999 / $5K–15K/mo (institutional)
-
-**Brain Marketplace (Tier 3+ evolution):**
-Verified traders list their calibrated brains for rent. Brain owner earns 50% of every rental. Pricing scales with accuracy tier:
-- Verified (100–199 trades): $29–$49/mo rental
-- Pro Verified (200–499 trades): $49–$149/mo
-- Elite (500–999 trades): $99–$249/mo
-- Institutional Grade (1,000+ trades): $249–$999/mo
-
-**Cohort matching** — renters are matched to brains that fit their cognitive fingerprint (similar decision style, scan timing, structure preference), not just ranked by WR. A trader learns better from someone who thinks like them than from the #1 performer. This is the core innovation — no trading product has ever done personalized brain matching.
-
-**Consistency flywheel:** Logging earns passive income (50% rental revenue) → financial incentive to log every trade → better calibration → higher tier → higher rental price → more renters. The logging IS the business. Solves the fundamental journaling dropout problem that kills every other trading journal.
-
-**Future incentives to stack:** leaderboard visibility, renter feedback loop (outcomes auto-update brain accuracy score), performance-based royalty scaling, cohort recognition, brain evolution timeline, "inspired by" attribution.
-
----
-
-## ⚠️ ABSOLUTE CODE RULES — NEVER VIOLATE THESE
-
-### HARD PRESERVATION — NEVER MODIFY THESE 3 FUNCTIONS (EVER):
-- `compute_buy_sell_pressure` (backend.py)
-- `classify_day_structure` (backend.py)
-- `compute_structure_probabilities` (backend.py)
-
-These are the core IP. Any change breaks the entire system. If a task seems to require changing them — it doesn't. Find another way.
-
-### Architecture Rules:
-- **Math/logic → `backend.py` only. UI/rendering → `app.py` only.**
-- **`_go` variable:** Reserved as `plotly.graph_objects` alias — never reuse as local var.
-- **Plotly/HTML:** 6-digit hex or `rgba()` only. No HTML comments in f-strings. No backslashes in f-string expressions (Python 3.11).
-- **`app.py` USER_ID:** Must use `st.session_state.get("auth_user_id", "")` inside render functions — NOT global `USER_ID`.
-- **SIP:** Paid real-time subscription active — no delay cap on `fetch_bars`. Historical bars always available.
-
-### Data Column Semantics (CRITICAL — wrong assumptions cause silent bugs):
-- **`predicted` column** = normally stores the **structure TYPE** ("Neutral", "Ntrl Extreme", "Normal", "Nrml Var", "Dbl Dist", "Non-Trend", "Trend"). In the live bot, directional scans can also store "Bullish Break" / "Bearish Break" here when structure classification produces a directional signal. **Do NOT substring-match for "bull"/"bear" in `predicted` — use exact "Bullish Break"/"Bearish Break" matching, or prefer `actual_outcome` first.**
-- **`actual_outcome`** = stores the **real market direction** (e.g. "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides") — set by EOD outcome logic based on whether price broke IB high/low, **regardless of what was predicted**.
-- **`win_loss`** = "Win" / "Loss" based on structure prediction accuracy — NOT trade P&L.
-- **`follow_thru_pct`** = **MFE** (how far the HIGH went above IB high for bullish, or LOW below IB low for bearish) — **ALWAYS POSITIVE for Bullish Break, ALWAYS NEGATIVE for Bearish Break by definition**. It is NOT the EOD close vs entry. Using `follow_thru_pct × direction` = always positive = fake 100% win rate. Use `win_loss` for win/loss determination in P&L simulations, and `abs(follow_thru_pct)` for the magnitude.
-- **`pnl_r_sim`** = sim P&L from `compute_trade_sim()` — **MFE is the INTENDED permanent basis, not a fallback**. It measures the strategy's theoretical ceiling (how far the setup moved in your favor). The adaptive exit layer being built will try to capture as much of this MFE ceiling as possible by detecting volume decay, zone confluence failure, RVOL fade, etc. DO NOT switch to EOD close — MFE is correct by design. High win rate (~80-90%) is expected because MFE only goes negative on `false_break` stop-outs.
-- **`close_price`** = **intentionally left NULL** — not used for `pnl_r_sim`. The `compute_trade_sim()` close_price path exists for `eod_pnl_r` only.
-- **`eod_pnl_r`** = hold-to-close P&L, **intentionally uncapped** (no stop applied — can exceed -1R). Requires `close_price` column to be populated.
-- **`tiered_pnl_r`** = 50% at 1R → stop to BE → 25% at 2R → 25% runner to close (bar-by-bar replay, cannot backfill without bars).
-
----
-
-## Phases & Current Status
-
-### Phase 1 — Calibration ✅ COMPLETE (ongoing data collection)
-Bot runs 100% autonomously. Logs every setup to Supabase. EOD resolves outcomes.
-Structure predictions, TCS scoring, and brain recalibration all running live.
-
-### Phase 1.5 — Paper Execution ✅ ACTIVE (activated April 15, 2026)
-Alpaca bracket orders live on paper account (`paper-api.alpaca.markets`) — zero real risk.
-`LIVE_ORDERS_ENABLED=true` set in Replit Secrets. Bot placing real bracket orders each scan.
-
-**Phase Gate to Phase 2 (Live Money):**
-- 30 settled trades ✅ PASSED (111/30 as of April 17)
-- 60% directional WR ✅ PASSED — **80.8% at TCS≥50** (measured April 17 after fixing directional resolution bug; old 67.6% was a loose "any break wins" metric, not directional accuracy)
-- 30 days of paper execution 🟡 IN PROGRESS — bot execution bug fixed April 17 (predicted→"Neutral" always, orders never fired); first real Alpaca order attempt April 18
-- Target: May 6, 2026 — use remaining time to validate Alpaca bracket execution end-to-end
-
-### Phase 2 — Live Execution 🔲 NEXT
-One config change: `IS_PAPER_ALPACA=false` in Replit Secrets.
-Switches endpoint from `paper-api.alpaca.markets` → `api.alpaca.markets`.
-
-### Phase 3 — Scale + Distribution 🔲 FUTURE
-Compound 1% risk/trade up to $2,000 max. Spread across ALL simultaneous signals.
-
-### Phase 4 — Meta-Brain Marketplace 🔲 FUTURE
-Beta users contribute outcomes. Collective brain layer across users.
-
----
-
-## Bot Schedule (ET — all times Eastern)
-
-| Time | Job |
-|------|-----|
-| 9:15 AM | Finviz watchlist refresh → save to Supabase |
-| 10:47 AM | Morning scan + Telegram alerts + Alpaca bracket orders |
-| 11:45 AM | Midday watchlist refresh |
-| 2:00 PM | Intraday scan + alerts + Alpaca bracket orders |
-| 4:20 PM | Cancel unfilled orders → EOD outcome update → Reconcile fills |
-| 4:25 PM | Auto-verify watchlist predictions |
-| 4:30 PM | Nightly brain recalibration |
-| 11:59 PM | Daily PDF summary (optional) |
-
-Bot is started via `deploy_server.py` which spawns all scheduled jobs.
-
----
-
-## Two-Brain System
-
-**Two separate brain files — never conflate them:**
-- `brain_weights.json` = live personal brain (updated nightly via recalibration)
-- `brain_weights_historical.json` = historical prior (5-year backtest weights)
-- Blended at runtime via `blend_brain_weights()` in backend.py
-
-**TCS threshold file:** `tcs_thresholds.json` = per-structure TCS cutoffs. Written nightly after recalibration and after batch backtest runs.
-
-**Current live weights (as of April 16, 2026 recalibration):**
-- `neutral` = 1.0013, `ntrl_extreme` = 0.9932, `normal` = 1.3334
-- All others = 1.0 (baseline)
-
----
-
-## Env Vars (Alpaca Execution Layer)
-
-| Var | Current | Purpose |
-|-----|---------|---------|
-| `LIVE_ORDERS_ENABLED` | `true` | Master switch for order placement |
-| `IS_PAPER_ALPACA` | `true` | `true` = paper endpoint, `false` = live |
-| `RISK_PER_TRADE` | `500` | Fallback. Live = 1% of equity, capped $250–$2,000 |
-
----
-
-## Confirmed Financial Projections (5-Year Backtest — April 2026)
-
-### Priority Tier System (~14,000 setups across 5 years)
-
-| Tier | Scan | TCS | Setups | Break Rate | Avg R/Trade | True Exp/Setup |
-|------|------|-----|--------|------------|-------------|----------------|
-| 🔴 P1 | Intraday | 70+ | 940 | 82.6% | +4.60R | +3.78R |
-| 🟠 P2 | Intraday | 50–69 | 1,487 | 81.2% | +2.17R | +2.02R |
-| 🟡 P3 | Morning | 70+ | 126 | 74.6% | +7.69R | +6.71R |
-| 🟢 P4 | Morning | 50–69 | 590 | 69.5% | +1.80R | +1.32R |
-
-~497 breakout trades/year across all 4 tiers = ~2 executable trades/day.
-
-### Financial Model — $500 Risk Per Trade
-
-| Scenario | Per Year |
-|----------|---------|
-| All 4 tiers, flat $500 sizing | +$690,355 |
-| Conservative (25% haircut) | +$517,766 |
-| 1% compounding + $2k cap | ~$150k–$300k yr 1 from $50k |
-
-### Personal Account Projection ($7k start, May 6 2026, 1% compounding, $2k cap at $200k)
-
-| Date | Conservative (0.5R/trade) | Expected (0.804R/trade) |
-|---|---|---|
-| Dec 2026 | $25,800 | $51,400 |
-| Dec 2027 | $241,800 | $675,200 |
-| Dec 2028 | $733,800 | $1,466,400 |
-| May 2031 (5yr) | $1,922,800 | $3,378,300 |
-
-### Live Paper Trade Results (as of April 17, 2026 — 111 resolved trades, April 6–16)
-
-- **Overall WR: 67.6%** (75W / 36L across all scan types and TCS levels)
-- **TCS≥50: 84.6% WR** (26 trades) — tracking *above* the 80.8% backtest prediction ✅
-- **TCS≥60: 78.9% WR** (19 trades)
-- **TCS≥70: 100% WR** (7 trades)
-- **Directional break WR: 100%** — every trade where the ticker actually broke IB in the predicted direction was a win (74 trades)
-- **Tiered P&L: +42.67R** total across 74 trades (+0.577R avg per trade)
-- Early April 14 snapshot (10 trades, 100% directional WR, +7.79R) was real — directional-only view
-
-### True Compounding Breakdown (blended avg R per trade, trade-count weighted)
-
-| Tier | Trades/yr | Avg R | Weight |
-|------|-----------|-------|--------|
-| P1 (Intraday TCS 70+) | 776 | +4.60R | |
-| P2 (Intraday TCS 50–69) | 1,207 | +2.17R | |
-| P3 (Morning TCS 70+) | 94 | +7.69R | |
-| P4 (Morning TCS 50–69) | 410 | +1.80R | |
-| **Blended avg** | **2,487** | **+3.076R/trade** | weighted |
-
-True 1% compounding (1% of growing balance per trade):
-- Conservative 65% WR: $50k → ~$35M end of year 1 (mathematical ceiling)
-- Realistic 75% WR: $50k → ~$165M+ end of year 1 (mathematical ceiling)
-- Current live pace 100% WR: $50k → ~$540k end of year 1 (fully executable)
-- Flat $500/trade (no compounding): $517k/year — always executable, baseline floor
-
-Practical compounding guide (hard cap keeps positions in executable range):
-- $50k account → $500/trade → compound freely
-- $100k–$200k → $1,000–$2,000/trade → compound freely
-- $200k+ → cap at $2,000/trade → scale via more simultaneous positions
-- $500k+ → 5–10 simultaneous positions at $1k–$2k each
-
-**Realistic Year 1 floor (1% compounding + $2k hard cap): $150k–$300k from $50k start.**
-
-### Real-World Trading Gap Analysis (verified April 14, 2026)
-
-All structural barriers to live trading are solved by system design. Only remaining gap:
-- **Entry fill slippage: 0.1–0.3% past IB level** — absorbed by edge, non-material
-
----
-
-## Three P&L Simulation Scenarios (Task #45, April 2026)
-
-Built in `compute_trade_sim()` and `compute_trade_sim_tiered()` in backend.py.
-
-| Scenario | Column | Description | Capped? |
-|----------|--------|-------------|---------|
-| MFE (Best Possible) | `pnl_r_sim` | Max intraday excursion — theoretical ceiling | Loss capped at -1R |
-| EOD Hold | `eod_pnl_r` | Raw hold-to-close, no stop applied | **Uncapped** (can exceed -1R) |
-| 50/25/25 Ladder | `tiered_pnl_r` | 50% at 1R → stop to BE → 25% at 2R → 25% runner | Bar-by-bar replay only |
-
-**Tiered sim key mechanics:**
-- `entered` flag: position only active once bar crosses entry level (ib_high for bull, ib_low for bear)
-- Stop-priority convention: stop checked before targets on every bar (worst-case assumption)
-- Cannot backfill tiered from stored data — requires live bar replay
-
----
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `app.py` | All UI/rendering — Streamlit tabs, charts, widgets |
-| `backend.py` | All math/logic — IB engine, TCS, probabilities, backtest, order placement |
-| `paper_trader_bot.py` | Autonomous daily bot — scheduler, alerts, EOD, order placement, recalibration |
-| `batch_backtest.py` | Historical backtest runner (currently configured: 1,260 days / all scan types) |
-| `run_sim_backfill.py` | Recomputes pnl_r_sim (MFE-based) on all existing breakout rows — safe to re-run if compute_trade_sim() logic changes |
-| `deploy_server.py` | Starts all bots on deployment |
-| `brain_weights.json` | Live adaptive brain multipliers — DO NOT MODIFY DIRECTLY |
-| `brain_weights_historical.json` | Historical prior weights — DO NOT MODIFY |
-| `tcs_thresholds.json` | Per-structure TCS cutoffs — written by recalibration + batch backtest |
-| `.local/build_notes.md` | Public build notes |
-| `.local/build_notes_private.md` | Private build notes (personal info, strategy, roadmap) |
-| `.local/ip_documentation.md` | Proprietary systems documentation |
-| `.local/rls_setup.sql` | Supabase RLS policies |
-| `.streamlit/config.toml` | enableCORS=false, enableXsrfProtection=false, port 8080 |
-
-**Architecture rule:** Math/logic → `backend.py` only. UI/rendering → `app.py` only.
-
----
-
-## Supabase
-
-- **Project:** `kqrwrvtelexylqonsjsl`
-- **SQL Editor:** https://supabase.com/dashboard/project/kqrwrvtelexylqonsjsl/sql/new
-- **User ID:** `a5e1fcab-8369-42c4-8550-a8a19734510c`
-- **RLS:** ON permanently — all queries need `.eq("user_id", user_id)`
-
-### `paper_trades` columns
-`id, user_id, trade_date, ticker, tcs, predicted, ib_low, ib_high, open_price, actual_outcome, follow_thru_pct, win_loss, false_break_up, false_break_down, min_tcs_filter, created_at, alert_price, alert_time, post_alert_move_pct, structure_conf, regime_tag, rvol, gap_pct, mae, mfe, entry_time, exit_trigger, entry_ib_distance, scan_type, sim_outcome, pnl_r_sim, pnl_pct_sim, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, alpaca_order_id, alpaca_qty, order_placed_at, alpaca_fill_price, close_price, eod_pnl_r, tiered_pnl_r, ib_range_pct, vwap_at_ib`
-
-**New columns (added Task #205, April 2026):**
-- `ib_range_pct` — `(ib_high - ib_low) / open_price * 100`. Filter: skip order if ≥ 10%. Populated at `log_paper_trades()` insert. Retroactively backfilled 142 rows April 17.
-- `vwap_at_ib` — VWAP at IB close time (~10:30 AM ET). Patched by `log_context_levels()`. Filter: close_price must be on correct VWAP side for the predicted direction. Retroactively backfilled 110 rows via `vwap_replay.py --patch` April 17.
-
-### `backtest_sim_runs` columns
-`id, user_id, sim_date, ticker, tcs, predicted, actual_outcome, ib_low, ib_high, follow_thru_pct, false_break_up, false_break_down, scan_type, sim_outcome, pnl_r_sim, pnl_pct_sim, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, close_price, eod_pnl_r, tiered_pnl_r, open_price, rvol, poc_price, ib_range_pct, gap_pct, gap_vs_ib_pct, day_of_week, entry_hour`
-
-**Live counts (as of April 17, 2026):**
-- `backtest_sim_runs`: 33,776+ rows | 16,766 Bullish/Bearish Break with pnl_r_sim
-- `paper_trades`: 143 total rows | 111 settled (win_loss set) | 74 with pnl_r_sim
-- Paper trade WR — OLD loose metric (any break): 67.6% | **DIRECTIONAL WR (correct metric): 65.8% overall → 80.8% at TCS≥50 → 100% at TCS≥70** (measured April 17)
-- Full filter backtest target: **95.7% WR, +2.46R expectancy** (TCS≥50 + IB<10% + VWAP)
-- Total R logged live (74 priced trades): **+58.6R** avg **+0.79R/trade**
-
-### SQL Migrations — ALL COMPLETED ✅
-All columns listed below are confirmed present in both tables. No pending migrations.
-
----
-
-## Alpaca Execution — How Bracket Orders Work
-
-**Status: BUILT ✅ — activation pending 2 user actions (April 14, 2026):**
-1. Run SQL migration for tracking columns: `alpaca_order_id`, `alpaca_qty`, `order_placed_at`, `alpaca_fill_price`
-2. Set `LIVE_ORDERS_ENABLED=true` in Replit Secrets
-
-Once activated: bot places + cancels + reconciles bracket orders autonomously.
-Phase 2 (live money): one config change — `IS_PAPER_ALPACA=false`.
-
-```
-Morning scan (10:47 AM) → qualifying setup (TCS ≥ 50, Bullish Break)
-  └─ place_alpaca_bracket_order() called:
-       qty = int($500 risk ÷ IB range per share)
-       Entry:       stop buy triggered at IB high
-       Stop loss:   stop sell at IB low       (−1R = −$500)
-       Take profit: limit sell at IB high + 2×IB range  (+2R = +$1,000)
-       → Alpaca manages all 3 legs automatically
-
-4:20 PM → cancel_alpaca_day_orders()  (removes unfilled entries)
-        → reconcile_alpaca_fills()     (patches actual fill prices to Supabase)
-```
-
-Bearish Break = mirror image (sell short at IB low, stop at IB high, target = IB low − 2×range).
-
----
-
-## Standalone Pages (no login required — URL param gated)
-
-| URL Param | Access Key | Purpose |
-|---|---|---|
-| `/?notes=<USER_ID>` | User ID | Public build notes viewer |
-| `/?private=<PRIVATE_KEY>` | `7c3f9b2a-4e1d-4a8c-b05f-3d8e6f1a9c4b` | Private build notes |
-| `/?journal=<USER_ID>` | User ID | Trade Journal Logger |
-| `/?beta=<BETA_USER_ID>` | Beta user's ID | Beta tester portal |
-
-## Streamlit Multipage App (/pages/)
-
-| File | Path | Purpose |
-|---|---|---|
-| `pages/build_notes.py` | `/build_notes` | Public build notes markdown viewer |
-| `pages/build_notes_private.py` | `/build_notes_private` | Private build notes (passcode gated) |
-| `pages/filter_sim.py` | `/filter_sim` | **Interactive filter simulation** — dial TCS/IB/VWAP sliders, see live WR & expectancy from 33k+ historical trades. Filter funnel, IB bucket chart, scan type split, full combo matrix. Cache 60 min. |
-
-## Analysis / Utility Scripts
-
-| Script | Purpose | Key Flags |
-|---|---|---|
-| `filter_validation_backtest.py` | Validate IB+VWAP filters against full historical dataset | `--user-id`, `--max-rows` |
-| `vwap_replay.py` | Retroactive VWAP replay on live paper_trades — fetches Alpaca 1-min bars, computes VWAP at IB close, applies full filter | `--patch` (writes vwap_at_ib back to DB), `--user-id` |
-| `adaptive_exit_backtest.py` | Exit strategy backtesting | — |
-| `batch_backtest.py` | Batch simulation run | `--days`, `--screener`, `--dry-run`, `--user-id` |
-| `backfill_close_prices.py` | Fill missing close prices | — |
-| `run_sim_backfill.py` | Backfill simulation outcomes | — |
-
----
-
-## Known Issues / Pending Work
-
-### Active / Near-term
-- `alert_price` and `structure_conf` are NULL for current paper_trades rows (not captured at alert time)
-- `tiered_pnl_r` for paper trades never populates — EOD bot doesn't replay intraday bars (needs bar fetch at 4:20 PM)
-- Replay Min TCS selectbox options (Any/≥40/≥50/≥60/≥65/≥70/≥75/≥80/≥90) — Best TCS buttons snap to nearest; fine for now
-- Alpaca fill reconciliation matches on ticker+date only — add order_id matching once fills confirmed live
-
-### Phase 2 (after 30-trade gate)
-- Adaptive exit layer: detect volume decay, zone confluence failure, RVOL fade → exit early to capture more of MFE ceiling
-- Pattern discovery engine (~500 rows needed for statistical significance)
-- `iwm_day_type` per paper_trade row (market regime context)
-- Inside bar flag at IB close per paper trade row
-
-### Phase 3+
-- Collective brain layer (multi-user anonymized outcomes → baseline signal)
-- backend.py split → brain.py / data.py / trades.py / auth.py (maintenance window)
-- Multi-timeframe IB detection (morning/midday/EOD evolving structure)
-
----
-
-## Code Rules
-
-- **Plotly/HTML:** 6-digit hex or `rgba()` only. No HTML comments in f-strings. No backslashes in f-string expressions (Python 3.11).
-- **`_go` variable:** Reserved as `plotly.graph_objects` alias — never reuse as local var.
-- **SIP:** Paid real-time subscription active — no delay cap on `fetch_bars`.
-- **`app.py` USER_ID:** Must use `st.session_state.get("auth_user_id", "")` inside render functions — NOT global `USER_ID`.
-- **Standing rule:** Always update `.local/ip_documentation.md` when new proprietary systems/methods are built.
-- **Standing rule:** All personal info stays in `.local/build_notes_private.md` ONLY.
-
----
-
-## User Preferences (Agent Notes)
+## User Preferences
 
 - **Timezone: EST always** — user is in Eastern Standard Time. All time references, scan schedules, and market hours must be in ET. Never say "UTC" or calculate wrong offsets.
 - Build mode only, concise replies, no "ready for review" sign-offs
 - Mobile-friendly communication style
 
-## Stack
+## System Architecture
 
-- Python 3.11, Streamlit, Plotly, Pandas, NumPy, PyTZ, Alpaca-py, Supabase-py
-- pnpm monorepo (legacy from template — ignore for trading terminal work)
-- Port: 8080
+**Core Principles:**
+- **Separation of Concerns:** Mathematical and logical operations are strictly confined to `backend.py`, while all UI/rendering functionalities reside in `app.py`.
+- **IP Preservation:** Three critical functions (`compute_buy_sell_pressure`, `classify_day_structure`, `compute_structure_probabilities` in `backend.py`) are proprietary and must never be modified.
+- **Plotting Standards:** Plotly/HTML elements use 6-digit hex or `rgba()` for colors.
+- **User ID Handling:** `st.session_state.get("auth_user_id", "")` must be used for `USER_ID` within `app.py` render functions.
+
+**Key Features & Implementations:**
+
+1.  **IB Engine & TCS Scoring:** `backend.py` houses the core logic for Initial Balance calculations, Total Composite Score (TCS) assignments, and structure probability computations.
+2.  **Adaptive Brains:** The system utilizes two brain files (`brain_weights.json` for live personal weights and `brain_weights_historical.json` for historical priors), which are blended at runtime. TCS thresholds are stored in `tcs_thresholds.json`.
+3.  **Automated Trading Bot:** `paper_trader_bot.py` orchestrates daily autonomous operations, including watchlist refreshes, morning/intraday scans, Telegram alerts, Alpaca bracket order placement, EOD outcome resolution, and nightly brain recalibration. The bot operates on a defined schedule (9:15 AM, 10:47 AM, 11:45 AM, 2:00 PM, 4:20 PM, 4:25 PM, 4:30 PM, 11:59 PM ET).
+4.  **Alpaca Execution Layer:** Integrated for automated bracket order placement (entry, stop loss, take profit) based on IB levels. Supports both paper and live trading via configuration.
+5.  **P&L Simulation:** Three simulation scenarios (`pnl_r_sim` for MFE, `eod_pnl_r` for EOD hold, `tiered_pnl_r` for 50/25/25 ladder) are implemented in `backend.py` to evaluate strategy performance.
+6.  **UI/UX:** Streamlit is used for the front-end, featuring dark mode and Plotly charts. Interactive filter simulation (`/filter_sim`) allows users to adjust parameters and view historical performance.
+7.  **Data Column Semantics:** Strict definitions for data columns like `predicted`, `actual_outcome`, `win_loss`, `follow_thru_pct`, `pnl_r_sim`, `eod_pnl_r`, `tiered_pnl_r`, `close_price`, `ib_range_pct`, and `vwap_at_ib` are enforced to ensure data integrity and correct interpretation.
+
+## External Dependencies
+
+-   **Alpaca API:** Used for real-time market data (SIP feed) and automated trade execution (bracket orders) in both paper and live accounts.
+-   **Supabase:** Serves as the backend for multi-user authentication and cloud data storage, managing `paper_trades` and `backtest_sim_runs` tables. Row Level Security (RLS) is permanently enabled.
+-   **Streamlit:** The primary framework for building the web-based user interface.
+-   **Plotly:** Utilized for interactive charting and data visualization within the Streamlit application.
+-   **Pandas & NumPy:** Core libraries for data manipulation and numerical operations.
+-   **PyTZ:** For timezone handling, ensuring all operations are aligned with EST.
+-   **Alpaca-py & Supabase-py:** Python client libraries for interacting with the respective APIs.
+-   **Telegram:** Integrated for sending alerts.
