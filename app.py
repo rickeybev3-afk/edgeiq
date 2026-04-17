@@ -144,6 +144,20 @@ def _cached_load_sa_journal():
 def _cached_load_ranking_accuracy(user_id: str = ""):
     return load_ranking_accuracy(user_id=user_id)
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_count_missing_close_price_in_range(
+    start_date: str | None,
+    end_date: str | None,
+    user_id: str,
+    table: str | None,
+) -> int:
+    return count_missing_close_price_in_range(
+        start_date=start_date,
+        end_date=end_date,
+        user_id=user_id,
+        table=table,
+    )
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_ticker_rankings(user_id: str = "", rating_date=None):
     return load_ticker_rankings(user_id=user_id, rating_date=rating_date)
@@ -5686,7 +5700,7 @@ with st.sidebar:
         _bf_preflight_count: int | None = None
         if not _bf_range_invalid:
             try:
-                _bf_preflight_count = count_missing_close_price_in_range(
+                _bf_preflight_count = _cached_count_missing_close_price_in_range(
                     start_date=_bf_start_str,
                     end_date=_bf_end_str,
                     user_id=_AUTH_USER_ID or "",
