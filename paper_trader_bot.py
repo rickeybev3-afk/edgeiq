@@ -2173,13 +2173,13 @@ def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
 
     if not rows:
         log.info(
-            "Nightly close-price catch-up: no paper_trades rows need eod_pnl_r "
+            "EOD close-price catch-up: no paper_trades rows need eod_pnl_r "
             "recalculation (last %d days).", lookback_days
         )
         return {"written": 0, "skipped": 0}
 
     log.info(
-        f"Nightly eod_pnl_r recalc: {len(rows)} paper_trades row(s) have "
+        f"EOD eod_pnl_r recalc: {len(rows)} paper_trades row(s) have "
         f"close_price but NULL eod_pnl_r — computing now…"
     )
 
@@ -2226,7 +2226,7 @@ def _recalc_eod_pnl_r_recent(lookback_days: int = 7) -> dict:
             skipped += 1
 
     log.info(
-        f"Nightly eod_pnl_r recalc done — {written} written, {skipped} skipped."
+        f"EOD eod_pnl_r recalc done — {written} written, {skipped} skipped."
     )
     return {"written": written, "skipped": skipped}
 
