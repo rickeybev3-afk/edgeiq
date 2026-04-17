@@ -15504,6 +15504,10 @@ ALTER TABLE backtest_sim_runs
             "sim_pnl_100sh": "P&L (100sh)",
             "eod_pnl_r": "EOD Hold R", "tiered_pnl_r": "Tiered Exit R",
         }).reset_index(drop=True)
+        if "EOD Hold R" in _show.columns and "Tiered Exit R" in _show.columns:
+            _eod_vals    = pd.to_numeric(_show["EOD Hold R"],    errors="coerce")
+            _tiered_vals = pd.to_numeric(_show["Tiered Exit R"], errors="coerce")
+            _show["Delta R"] = (_tiered_vals - _eod_vals).where(_eod_vals.notna() & _tiered_vals.notna())
 
         def _color_wl(val):
             if val in ("W", "Win"):   return "color: #66bb6a; font-weight:700"
@@ -15537,6 +15541,15 @@ ALTER TABLE backtest_sim_runs
             except (ValueError, TypeError):
                 return ""
 
+        def _color_delta_r(val):
+            try:
+                v = float(val)
+                if v > 0:  return "color: #66bb6a; font-weight:700"
+                if v < 0:  return "color: #ef5350; font-weight:700"
+                return ""
+            except (ValueError, TypeError):
+                return ""
+
         _style_map = {}
         if "W/L" in _show.columns:
             _style_map["W/L"] = _color_wl
@@ -15548,6 +15561,8 @@ ALTER TABLE backtest_sim_runs
             _style_map["EOD Hold R"] = _color_r
         if "Tiered Exit R" in _show.columns:
             _style_map["Tiered Exit R"] = _color_r
+        if "Delta R" in _show.columns:
+            _style_map["Delta R"] = _color_delta_r
 
         _styled = _show.style
         for _col_name, _fn in _style_map.items():
