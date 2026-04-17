@@ -11974,6 +11974,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                         else:
                             _tk_sw_csv_export = _tk_sw_df
+                            st.markdown(
+                                f'<div style="margin:10px 0 6px 0;">'
+                                f'<span style="font-size:10px;font-weight:700;'
+                                f'color:#546e7a;letter-spacing:0.8px;'
+                                f'text-transform:uppercase;">R-Stats</span>'
+                                f'</div>'
+                                f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">'
+                                f'<div style="background:rgba(144,164,174,0.06);border:1px solid rgba(144,164,174,0.15);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#546e7a;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Stop-Out Rate</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#546e7a;">—</div></div>'
+                                f'<div style="background:rgba(144,164,174,0.06);border:1px solid rgba(144,164,174,0.15);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#546e7a;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Avg Win R</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#546e7a;">—</div></div>'
+                                f'<div style="background:rgba(144,164,174,0.06);border:1px solid rgba(144,164,174,0.15);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#546e7a;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Avg Loss R</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#546e7a;">—</div></div>'
+                                f'<div style="background:rgba(144,164,174,0.06);border:1px solid rgba(144,164,174,0.15);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#546e7a;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Expectancy</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#546e7a;">—</div></div>'
+                                f'<div style="background:rgba(144,164,174,0.06);border:1px solid rgba(144,164,174,0.15);'
+                                f'border-radius:6px;padding:7px 13px;min-width:110px;text-align:center;">'
+                                f'<div style="font-size:9px;color:#546e7a;letter-spacing:0.7px;'
+                                f'text-transform:uppercase;margin-bottom:3px;">Max Drawdown R</div>'
+                                f'<div style="font-size:18px;font-weight:700;color:#546e7a;">—</div></div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.caption(
+                                "ℹ️ R data not available — add an **EOD exit** or **tiered exit** column to unlock R-stats."
+                            )
 
                         # Apply the sweep-section R-column preference (set once above the
                         # per-ticker loop) to strip the R-stats summary rows when the
