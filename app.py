@@ -7864,26 +7864,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "Lower the minimum or expand your date range."
                     )
                 else:
-                    _opt_sort_col = st.radio(
-                        "Sort results by",
-                        _OPT_SORT_OPTIONS,
-                        index=_OPT_SORT_OPTIONS.index(
-                            st.session_state.get("opt_sort_col", "Expectancy")
-                            if st.session_state.get("opt_sort_col", "Expectancy") in _OPT_SORT_OPTIONS
-                            else "Expectancy"
-                        ),
-                        horizontal=True,
-                        key="opt_sort_col",
-                    )
-                    _opt_sort_qp_cur = st.query_params.get("opt_sort_col")
-                    if _opt_sort_qp_cur != _opt_sort_col:
+                    _opt_all_cols = [
+                        "Scan Type", "Min TCS", "Win Rate %", "Trades",
+                        "Avg Win (R)", "Avg Loss (R)", "Expectancy", "Total R", "Max DD (R)",
+                    ]
+                    _opt_asc_defaults = {"Max DD (R)", "Min TCS"}
+
+                    if "opt_hdr_sort_col" not in st.session_state:
+                        # Seed from cross-session query-param value restored by JS above
+                        _seed = st.session_state.get("opt_sort_col", "Expectancy")
+                        st.session_state["opt_hdr_sort_col"] = (
+                            _seed if _seed in _opt_all_cols else "Expectancy"
+                        )
+                    if "opt_hdr_sort_asc" not in st.session_state:
+                        st.session_state["opt_hdr_sort_asc"] = (
+                            st.session_state["opt_hdr_sort_col"] in _opt_asc_defaults
+                        )
+
+                    _opt_sort_col = st.session_state["opt_hdr_sort_col"]
+                    _opt_sort_asc = st.session_state["opt_hdr_sort_asc"]
+                    # Persist sort column in URL + localStorage for cross-session restore
+                    if st.query_params.get("opt_sort_col") != _opt_sort_col:
                         st.query_params["opt_sort_col"] = _opt_sort_col
                     _cmp_opt_sort.html(
                         f"<script>localStorage.setItem('opt_sort_col', {repr(_opt_sort_col)});</script>",
                         height=0,
                     )
-                    _opt_sort_asc = _opt_sort_col == "Max DD (R)"
-                    _opt_df = pd.DataFrame(_opt_table_rows).sort_values(_opt_sort_col, ascending=_opt_sort_asc).reset_index(drop=True)
+                    # Use a numeric shadow key for Min TCS to avoid mixed int/str sort errors
+                    _opt_df_raw = pd.DataFrame(_opt_table_rows)
+                    _opt_df_raw["_tcs_sort"] = _opt_df_raw["Min TCS"].apply(
+                        lambda v: 0 if v == "Any" else int(v)
+                    )
+                    _sort_key = "_tcs_sort" if _opt_sort_col == "Min TCS" else _opt_sort_col
+                    _opt_df = (
+                        _opt_df_raw
+                        .sort_values(_sort_key, ascending=_opt_sort_asc)
+                        .drop(columns=["_tcs_sort"])
+                        .reset_index(drop=True)
+                    )
                     _opt_best = _opt_df.iloc[0]
 
                     _opt_sort_label = (
@@ -7894,6 +7912,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         else f"{_opt_best['Total R']:+.1f} Total R"
                         if _opt_sort_col == "Total R"
                         else f"{_opt_best['Win Rate %']}% Win Rate"
+                        if _opt_sort_col == "Win Rate %"
+                        else f"{int(_opt_best['Trades'])} trades"
+                        if _opt_sort_col == "Trades"
+                        else f"{_opt_best['Avg Win (R)']:+.3f}R avg win"
+                        if _opt_sort_col == "Avg Win (R)"
+                        else f"{_opt_best['Avg Loss (R)']:+.3f}R avg loss"
+                        if _opt_sort_col == "Avg Loss (R)"
+                        else f"TCS ≥ {_opt_best['Min TCS']}"
+                        if _opt_sort_col == "Min TCS"
+                        else f"{_opt_best['Scan Type']}"
                     )
                     st.markdown(
                         f'<div style="background:#0a2a0a;border-left:3px solid #00e676;padding:8px 14px;'
@@ -7906,6 +7934,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f'</div>',
                         unsafe_allow_html=True,
                     )
+
+                    _hdr_cols = st.columns(len(_opt_all_cols))
+                    for _hci, _hcn in enumerate(_opt_all_cols):
+                        _arrow = (" ▲" if _opt_sort_asc else " ▼") if _hcn == _opt_sort_col else ""
+                        if _hdr_cols[_hci].button(
+                            f"{_hcn}{_arrow}",
+                            key=f"opt_hdr_{_hci}",
+                            use_container_width=True,
+                        ):
+                            if st.session_state["opt_hdr_sort_col"] == _hcn:
+                                st.session_state["opt_hdr_sort_asc"] = not st.session_state["opt_hdr_sort_asc"]
+                            else:
+                                st.session_state["opt_hdr_sort_col"] = _hcn
+                                st.session_state["opt_hdr_sort_asc"] = _hcn in _opt_asc_defaults
+                            st.rerun()
 
                     def _opt_style(row):
                         if row.name == 0:
