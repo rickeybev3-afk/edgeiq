@@ -431,5 +431,65 @@ def main():
     except Exception as _e:
         log.warning(f'Could not write backfill history file: {_e}')
 
+    if total_errors > 0:
+        _send_backfill_alert(total_saved, total_no_bars, total_errors)
+
+
+def _send_backfill_alert(rows_saved: int, no_bars: int, errors: int) -> None:
+    """Send a Telegram alert when a backfill run completes with errors.
+
+    Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from the environment.
+    Silently skips if credentials are absent or if the operator has disabled
+    backfill error alerts via the dashboard (backfill_error_alerts_enabled pref).
+    """
+    import json as _json2
+    import urllib.request as _urllib_req
+    import urllib.parse as _urllib_parse
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        log.info("Telegram credentials not set — skipping backfill error alert.")
+        return
+
+    _user_prefs_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
+    try:
+        if os.path.exists(_user_prefs_file):
+            with open(_user_prefs_file) as _pf:
+                _all = _json2.load(_pf)
+            owner_id = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
+            _prefs = _all.get(owner_id, {})
+            if not _prefs.get("backfill_error_alerts_enabled", True):
+                log.info("Backfill error alerts disabled by operator — skipping.")
+                return
+    except Exception as _pe:
+        log.warning(f"Could not read owner prefs for backfill alert: {_pe}")
+
+    message = (
+        f"⚠️ <b>Backfill run completed with errors</b>\n\n"
+        f"Rows saved: <b>{rows_saved}</b>\n"
+        f"No-bars:    <b>{no_bars}</b>\n"
+        f"Errors:     <b>{errors}</b>"
+    )
+    try:
+        body = _urllib_parse.urlencode({
+            "chat_id":    chat_id,
+            "text":       message,
+            "parse_mode": "HTML",
+        }).encode()
+        req = _urllib_req.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body,
+            method="POST",
+        )
+        with _urllib_req.urlopen(req, timeout=8) as resp:
+            if resp.status == 200:
+                log.info("Backfill error alert sent via Telegram.")
+            else:
+                log.warning(f"Telegram sendMessage returned HTTP {resp.status}")
+    except Exception as _te:
+        log.warning(f"Could not send backfill Telegram alert: {_te}")
+
+
 if __name__ == '__main__':
     main()

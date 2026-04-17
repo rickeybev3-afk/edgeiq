@@ -447,11 +447,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/trading-mode":
             self._trading_mode_get()
             return
-        if path == "/api/credential-alerts":
-            self._credential_alerts_get()
-            return
         if path == "/api/subscribers/credential-alerts":
             self._subscribers_credential_alerts_get()
+            return
+        if path == "/api/backfill-error-alerts":
+            self._backfill_error_alerts_get()
             return
         if path == "/api/db-events":
             self._db_events_get()
@@ -491,6 +491,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/credential-alerts":
             self._credential_alerts_post()
+            return
+        if path == "/api/backfill-error-alerts":
+            self._backfill_error_alerts_post()
             return
         self._proxy() if streamlit_ready else self._loading()
 
@@ -717,6 +720,68 @@ class Handler(http.server.BaseHTTPRequestHandler):
             enabled = bool(payload["enabled"])
             prefs = _load_owner_prefs()
             prefs["credential_alerts_enabled"] = enabled
+            _save_owner_prefs(prefs)
+            body = json.dumps({"enabled": enabled}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+    def _backfill_error_alerts_get(self):
+        """Return backfill_error_alerts_enabled from owner's user prefs (default True)."""
+        try:
+            prefs = _load_owner_prefs()
+            enabled = prefs.get("backfill_error_alerts_enabled", True)
+            body = json.dumps({"enabled": bool(enabled)}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _backfill_error_alerts_post(self):
+        """Accept {"enabled": bool} and persist backfill_error_alerts_enabled in owner's user prefs."""
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "enabled" not in payload:
+                body = json.dumps({"error": "'enabled' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            enabled = bool(payload["enabled"])
+            prefs = _load_owner_prefs()
+            prefs["backfill_error_alerts_enabled"] = enabled
             _save_owner_prefs(prefs)
             body = json.dumps({"enabled": enabled}).encode()
             self.send_response(200)

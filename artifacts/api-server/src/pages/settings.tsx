@@ -37,6 +37,14 @@ interface BackfillRun {
   errors: number;
 }
 
+interface BackfillErrorAlertsState {
+  enabled: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface BackfillHealth {
   available: boolean;
   loading: boolean;
@@ -83,6 +91,14 @@ export default function Settings() {
     subscribers: [],
     loading: true,
     error: null,
+  });
+
+  const [backfillErrAlerts, setBackfillErrAlerts] = useState<BackfillErrorAlertsState>({
+    enabled: true,
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
   });
 
   useEffect(() => {
@@ -164,6 +180,37 @@ export default function Settings() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/backfill-error-alerts")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setBackfillErrAlerts((s) => ({
+            ...s,
+            enabled: data.enabled !== false,
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load backfill error alert preference.";
+          setBackfillErrAlerts((s) => ({
+            ...s,
+            loading: false,
+            error: msg,
+          }));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealth>({ available: false, loading: true });
 
   useEffect(() => {
@@ -189,7 +236,7 @@ export default function Settings() {
 
   useHashScroll(
     ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading]
   );
 
   async function handleChange(newMode: TradingMode) {
@@ -241,6 +288,32 @@ export default function Settings() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setCredAlerts((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handleBackfillErrAlertsToggle(newEnabled: boolean) {
+    setBackfillErrAlerts((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/backfill-error-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setBackfillErrAlerts((s) => ({
+        ...s,
+        enabled: data.enabled !== false,
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setBackfillErrAlerts((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setBackfillErrAlerts((s) => ({ ...s, saving: false, error: msg }));
     }
   }
 
@@ -376,6 +449,52 @@ export default function Settings() {
           {credAlerts.error && (
             <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
               ⚠ {credAlerts.error}
+            </p>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "16px",
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid #2d3748",
+              borderRadius: "8px",
+              marginTop: "12px",
+            }}
+          >
+            <div style={{ flex: 1, marginRight: "16px" }}>
+              <div style={{ fontSize: "14px", fontWeight: 600, color: "#e2e8f0", marginBottom: "4px" }}>
+                Backfill error alerts
+              </div>
+              <div style={{ fontSize: "12px", color: "#64748b", lineHeight: "1.5" }}>
+                Send a Telegram message when a context-levels backfill run completes with errors.
+              </div>
+            </div>
+
+            {backfillErrAlerts.loading ? (
+              <span style={{ fontSize: "12px", color: "#475569" }}>Loading…</span>
+            ) : (
+              <ToggleSwitch
+                enabled={backfillErrAlerts.enabled}
+                disabled={backfillErrAlerts.saving}
+                onChange={handleBackfillErrAlertsToggle}
+              />
+            )}
+          </div>
+
+          {backfillErrAlerts.saving && (
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "14px" }}>Saving…</p>
+          )}
+          {backfillErrAlerts.saved && (
+            <p style={{ fontSize: "13px", color: "#4ade80", marginTop: "14px" }}>
+              ✓ Preference saved.
+            </p>
+          )}
+          {backfillErrAlerts.error && (
+            <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
+              ⚠ {backfillErrAlerts.error}
             </p>
           )}
         </section>
