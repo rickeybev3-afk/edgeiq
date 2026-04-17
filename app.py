@@ -9629,6 +9629,55 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _stat_row("Expectancy (Tiered R)",      f"{_csv_bt_tier_exp:+.3f}R/trade"),
                                     _stat_row("Max Drawdown (Tiered R)",    f"{abs(_csv_bt_tier_mdd)}R"),
                                 ])
+                                if _has_marginal_data:
+                                    _csv_bt_marg_mask = (
+                                        (_csv_td["TCS"] - _csv_td["TCS Floor"]).between(0, 5, inclusive="both")
+                                    )
+                                    _csv_bt_marg_df   = _csv_td[_csv_bt_marg_mask]
+                                    _csv_bt_comf_df   = _csv_td[~_csv_bt_marg_mask]
+                                    _csv_bt_marg_n    = len(_csv_bt_marg_df)
+                                    _csv_bt_comf_n    = len(_csv_bt_comf_df)
+                                    _csv_bt_marg_pct  = round(_csv_bt_marg_n / _csv_tr_n * 100, 1) if _csv_tr_n else 0
+                                    _csv_bt_marg_wr   = (
+                                        round((_csv_bt_marg_df["P&L ($)"] > 0).sum() / _csv_bt_marg_n * 100, 1)
+                                        if _csv_bt_marg_n else None
+                                    )
+                                    _csv_bt_comf_wr   = (
+                                        round((_csv_bt_comf_df["P&L ($)"] > 0).sum() / _csv_bt_comf_n * 100, 1)
+                                        if _csv_bt_comf_n else None
+                                    )
+                                    _csv_bt_marg_avgr = (
+                                        round(_csv_bt_marg_df["R (MFE)"].mean(), 2)
+                                        if (_csv_bt_marg_n and "R (MFE)" in _csv_bt_marg_df.columns)
+                                        else None
+                                    )
+                                    _csv_bt_comf_avgr = (
+                                        round(_csv_bt_comf_df["R (MFE)"].mean(), 2)
+                                        if (_csv_bt_comf_n and "R (MFE)" in _csv_bt_comf_df.columns)
+                                        else None
+                                    )
+                                    _csv_bt_marg_wr_str   = f"{_csv_bt_marg_wr}%"   if _csv_bt_marg_wr   is not None else "N/A"
+                                    _csv_bt_comf_wr_str   = f"{_csv_bt_comf_wr}%"   if _csv_bt_comf_wr   is not None else "N/A"
+                                    _csv_bt_marg_avgr_str = f"{_csv_bt_marg_avgr:+.2f}R" if _csv_bt_marg_avgr is not None else "N/A"
+                                    _csv_bt_comf_avgr_str = f"{_csv_bt_comf_avgr:+.2f}R" if _csv_bt_comf_avgr is not None else "N/A"
+                                    _csv_bt_marg_wr_delta = (
+                                        f"{round(_csv_bt_marg_wr - _csv_bt_comf_wr, 1):+.1f}pp vs comfortable"
+                                        if (_csv_bt_marg_wr is not None and _csv_bt_comf_wr is not None) else "N/A"
+                                    )
+                                    _csv_bt_marg_avgr_delta = (
+                                        f"{round(_csv_bt_marg_avgr - _csv_bt_comf_avgr, 2):+.2f}R vs comfortable"
+                                        if (_csv_bt_marg_avgr is not None and _csv_bt_comf_avgr is not None) else "N/A"
+                                    )
+                                    _summary_rows.extend([
+                                        _stat_row("  Marginal Trades (TCS ≤ floor+5)", f"{_csv_bt_marg_n}  ({_csv_bt_marg_pct}% of tier)"),
+                                        _stat_row("  Comfortable Trades",               f"{_csv_bt_comf_n}"),
+                                        _stat_row("  Marginal Win Rate",                _csv_bt_marg_wr_str),
+                                        _stat_row("  Comfortable Win Rate",             _csv_bt_comf_wr_str),
+                                        _stat_row("  Marginal vs Comfortable WR",       _csv_bt_marg_wr_delta),
+                                        _stat_row("  Marginal Avg R (MFE)",             _csv_bt_marg_avgr_str),
+                                        _stat_row("  Comfortable Avg R (MFE)",          _csv_bt_comf_avgr_str),
+                                        _stat_row("  Marginal vs Comfortable Avg R",    _csv_bt_marg_avgr_delta),
+                                    ])
                         if _has_marginal_data:
                             _csv_marg_wr_str   = f"{_marg_wr_pre}%" if _marg_wr_pre is not None else "N/A"
                             _csv_comf_wr_str   = f"{_comf_wr_pre}%" if _comf_wr_pre is not None else "N/A"
