@@ -8593,24 +8593,40 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             else:
                                 _div_msg = "Position sizing dampened raw edge here (equity lagged R)"
 
-                            _fig_dual = go.Figure()
-
-                            # Shaded band around the max-divergence point
-                            _band_half = max(1, round(_min_len * 0.015))
-                            _fig_dual.add_vrect(
-                                x0=max(0, _max_div_idx - _band_half),
-                                x1=min(_min_len - 1, _max_div_idx + _band_half),
-                                fillcolor="rgba(255, 214, 0, 0.12)",
-                                layer="below",
-                                line_width=0,
+                            # Two-row subplot: equity/R on top, divergence history below
+                            _fig_dual = make_subplots(
+                                rows=2, cols=1,
+                                shared_xaxes=True,
+                                row_heights=[0.62, 0.38],
+                                vertical_spacing=0.05,
+                                specs=[[{"secondary_y": True}], [{"secondary_y": False}]],
                             )
-                            # Vertical dashed line at the exact peak
+
+                            # Shaded band around the max-divergence point (both rows)
+                            _band_half = max(1, round(_min_len * 0.015))
+                            for _vr_row in (1, 2):
+                                _fig_dual.add_vrect(
+                                    x0=max(0, _max_div_idx - _band_half),
+                                    x1=min(_min_len - 1, _max_div_idx + _band_half),
+                                    fillcolor="rgba(255, 214, 0, 0.10)",
+                                    layer="below",
+                                    line_width=0,
+                                    row=_vr_row, col=1,
+                                )
+                            # Vertical dashed line at the exact peak (row 1 with annotation)
                             _fig_dual.add_vline(
                                 x=_max_div_idx,
                                 line=dict(color="rgba(255, 214, 0, 0.7)", width=1.5, dash="dot"),
                                 annotation_text=f"Max divergence (trade #{_max_div_idx})",
                                 annotation_position="top left",
                                 annotation_font=dict(color="#ffd600", size=11),
+                                row=1, col=1,
+                            )
+                            # Matching dashed line on divergence sub-chart (no annotation)
+                            _fig_dual.add_vline(
+                                x=_max_div_idx,
+                                line=dict(color="rgba(255, 214, 0, 0.5)", width=1, dash="dot"),
+                                row=2, col=1,
                             )
 
                             # ── Drawdown highlight (red vrect, same +1 offset as Equity view) ──
@@ -8623,6 +8639,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     fillcolor="rgba(220, 50, 50, 0.15)",
                                     layer="below",
                                     line_width=0,
+                                    row=1, col=1,
                                 )
                                 _fig_dual.add_trace(go.Scatter(
                                     x=[_dual_peak_idx],
@@ -8630,35 +8647,47 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     mode="markers",
                                     marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
                                     name=f"DD Start (trade #{_dd_peak_idx})",
-                                    yaxis="y1",
-                                ))
+                                ), row=1, col=1, secondary_y=False)
                                 _fig_dual.add_trace(go.Scatter(
                                     x=[_dual_trough_idx],
                                     y=[float(_rp_equity_curve[_dual_trough_idx])],
                                     mode="markers",
                                     marker=dict(color="#d62728", size=10, symbol="triangle-up"),
                                     name=f"DD End (trade #{_dd_trough_idx})",
-                                    yaxis="y1",
-                                ))
+                                ), row=1, col=1, secondary_y=False)
 
+                            # ── Row 1: Equity ($) + Cumulative R ────────────────────────
                             _fig_dual.add_trace(go.Scatter(
                                 x=_x_eq,
                                 y=_rp_equity_curve,
                                 name="Equity ($)",
                                 mode="lines",
                                 line=dict(color="#4fc3f7", width=2),
-                                yaxis="y1",
-                            ))
+                            ), row=1, col=1, secondary_y=False)
                             _fig_dual.add_trace(go.Scatter(
                                 x=_x_r,
                                 y=list(_cum_r_both),
                                 name="Cumulative R",
                                 mode="lines",
                                 line=dict(color="#ef9a9a", width=2),
-                                yaxis="y2",
-                            ))
+                            ), row=1, col=1, secondary_y=True)
+
+                            # ── Row 2: Full divergence history ───────────────────────────
+                            _div_x = list(range(_min_len))
+                            _div_y = list(_div_arr)
+                            _fig_dual.add_trace(go.Scatter(
+                                x=_div_x,
+                                y=_div_y,
+                                name="Divergence",
+                                mode="lines",
+                                line=dict(color="#ffd600", width=1.5),
+                                fill="tozeroy",
+                                fillcolor="rgba(255, 214, 0, 0.13)",
+                                hovertemplate="Trade #%{x}<br>Divergence: %{y:.3f}<extra></extra>",
+                            ), row=2, col=1)
+
                             _fig_dual.update_layout(
-                                height=340,
+                                height=490,
                                 margin=dict(l=10, r=10, t=10, b=10),
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 plot_bgcolor="rgba(0,0,0,0)",
@@ -8670,6 +8699,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     font=dict(color="#cccccc"),
                                 ),
                                 xaxis=dict(
+                                    gridcolor="#1a1a2e",
+                                    color="#cccccc",
+                                    zeroline=False,
+                                ),
+                                xaxis2=dict(
                                     title="Trade #",
                                     gridcolor="#1a1a2e",
                                     color="#cccccc",
@@ -8686,10 +8720,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 yaxis2=dict(
                                     title=dict(text="Cumulative R", font=dict(color="#ef9a9a")),
                                     tickfont=dict(color="#ef9a9a"),
-                                    overlaying="y",
-                                    side="right",
                                     gridcolor="rgba(0,0,0,0)",
                                     zeroline=False,
+                                ),
+                                yaxis3=dict(
+                                    title=dict(text="Divergence (norm.)", font=dict(color="#ffd600")),
+                                    tickfont=dict(color="#aaaaaa"),
+                                    gridcolor="#1a1a2e",
+                                    zeroline=True,
+                                    zerolinecolor="rgba(255, 214, 0, 0.45)",
+                                    zerolinewidth=1.5,
                                 ),
                             )
                             st.plotly_chart(
@@ -8703,7 +8743,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 },
                             )
                             st.caption(
-                                f"**Equity & R** — divergences reveal where position sizing amplifies or dampens raw edge"
+                                f"**Equity & R** — top: curves over time · bottom: normalised divergence (equity_norm − R_norm) at every trade"
                                 f"\u2002|\u2002🟡 **Trade\u00a0#{_max_div_idx}**: {_div_msg}"
                             )
                             if _dd_trough_idx is not None and _dd_peak_idx is not None:
