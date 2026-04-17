@@ -1490,6 +1490,135 @@ def intraday_scan():
         log.info("No intraday setups above threshold.")
 
 
+def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
+    """Fetch and store EOD close prices for all paper_trades rows that still
+    have NULL close_price, covering today's trades and any recent missed days.
+
+    Called at the end of eod_update() so gaps self-heal automatically without
+    manual backfill runs.  backfill_close_prices.py remains a one-time recovery
+    tool for rows older than lookback_days.
+
+    Strategy (mirrors backfill_close_prices.py):
+    - Query all user's paper_trades with close_price IS NULL and trade_date
+      within the past `lookback_days` calendar days.
+    - Group rows by trade_date so we do one Alpaca call per date (batch of
+      tickers) rather than one call per row.
+    - Write results back to Supabase row-by-row.
+
+    Returns {"written": N, "skipped": M}.
+    """
+    from collections import defaultdict
+    from datetime import timedelta
+
+    if not _supabase_client:
+        log.warning("_eod_collect_close_prices: No Supabase connection — skipping.")
+        return {"written": 0, "skipped": 0}
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        log.warning("_eod_collect_close_prices: Alpaca keys not set — skipping.")
+        return {"written": 0, "skipped": 0}
+
+    log.info(
+        f"EOD close-price sweep: querying paper_trades with NULL close_price "
+        f"(last {lookback_days} days, user {USER_ID})…"
+    )
+
+    cutoff = str(date.today() - timedelta(days=lookback_days))
+    _PAGE = 1000
+    rows: list = []
+    offset = 0
+    try:
+        while True:
+            resp = (
+                _supabase_client.table("paper_trades")
+                .select("id,ticker,trade_date")
+                .eq("user_id", USER_ID)
+                .is_("close_price", "null")
+                .gte("trade_date", cutoff)
+                # Newest dates first so today's rows are always prioritised
+                # and processed even when the historical backlog is large.
+                # Secondary order by id (desc) makes pagination deterministic
+                # when many rows share the same trade_date.
+                .order("trade_date", desc=True)
+                .order("id", desc=True)
+                .range(offset, offset + _PAGE - 1)
+                .execute()
+            )
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < _PAGE:
+                break
+            offset += _PAGE
+    except Exception as _qe:
+        log.warning(f"_eod_collect_close_prices: DB query failed: {_qe}")
+        return {"written": 0, "skipped": 0}
+
+    if not rows:
+        log.info("No paper_trades rows with NULL close_price in the look-back window — nothing to collect.")
+        return {"written": 0, "skipped": 0}
+
+    # Group by date for efficient batched Alpaca calls
+    by_date: dict[str, list] = defaultdict(list)
+    for r in rows:
+        td = (r.get("trade_date") or "")[:10]
+        if td:
+            by_date[td].append(r)
+
+    log.info(
+        f"  Found {len(rows)} row(s) across {len(by_date)} date(s) "
+        f"with NULL close_price."
+    )
+
+    try:
+        from backfill_close_prices import fetch_closes_for_date
+    except Exception as _ie:
+        log.warning(f"_eod_collect_close_prices: Cannot import fetch_closes_for_date: {_ie}")
+        return {"written": 0, "skipped": 0}
+
+    written = 0
+    skipped = 0
+
+    for trade_date_str in sorted(by_date.keys(), reverse=True):
+        date_rows = by_date[trade_date_str]
+        tickers = sorted({r["ticker"] for r in date_rows if r.get("ticker")})
+
+        log.info(
+            f"  {trade_date_str}: {len(tickers)} ticker(s) — "
+            f"{', '.join(tickers[:10])}{'…' if len(tickers) > 10 else ''}"
+        )
+
+        try:
+            closes = fetch_closes_for_date(trade_date_str, tickers)
+        except Exception as _fe:
+            log.warning(f"  Alpaca fetch failed for {trade_date_str}: {_fe}")
+            skipped += len(date_rows)
+            continue
+
+        for row in date_rows:
+            ticker = row.get("ticker", "")
+            cp = closes.get(ticker)
+            if cp is None:
+                log.debug(f"    No Alpaca data for {ticker} on {trade_date_str} — skipping.")
+                skipped += 1
+                continue
+            try:
+                _supabase_client.table("paper_trades").update(
+                    {"close_price": round(float(cp), 4)}
+                ).eq("id", row["id"]).execute()
+                log.info(f"    {ticker}: close_price → {cp:.4f}")
+                written += 1
+            except Exception as _ue:
+                log.warning(
+                    f"    DB update failed for {ticker} (id={row['id']}): {_ue}"
+                )
+                skipped += 1
+
+    log.info(
+        f"EOD close-price sweep done — {written} written, "
+        f"{skipped} skipped (no Alpaca data or update error)."
+    )
+    return {"written": written, "skipped": skipped}
+
+
 def eod_update():
     """4:20 PM ET — update paper trades with full-day outcomes + send EOD summary."""
     today = date.today()
@@ -1505,6 +1634,12 @@ def eod_update():
             "actual_outcome", "Pending").limit(1).execute()
         if existing.data:
             log.info(f"EOD already resolved for {today} — skipping to prevent duplicate.")
+            # Still run the close-price sweep in case it was missed on the prior
+            # run (e.g. the sweep itself failed or the bot was restarted mid-EOD).
+            try:
+                _eod_collect_close_prices()
+            except Exception as _cpe_guard:
+                log.warning(f"EOD close-price sweep (already-resolved path) failed: {_cpe_guard}")
             return
     except Exception as _ge:
         log.warning(f"EOD guard check failed (proceeding anyway): {_ge}")
@@ -1527,6 +1662,12 @@ def eod_update():
     if not results:
         log.warning("No results from EOD scan — cannot update outcomes.")
         tg_send(f"⚠️ <b>EOD Update Failed</b> — {today}\nNo bar data returned.")
+        # Still run close-price sweep so existing paper_trades rows don't go NULL
+        # even when the scan itself comes back empty.
+        try:
+            _eod_collect_close_prices()
+        except Exception as _cpe_early:
+            log.warning(f"EOD close-price sweep (scan-failed path) failed: {_cpe_early}")
         return
 
     for r in results:
@@ -1583,6 +1724,21 @@ def eod_update():
 
     # ── Beta subscriber broadcast (clean — no TCS/brain language) ─────────
     _broadcast_eod_to_subscribers(results, today)
+
+    # ── Sweep: fill close_price for any paper_trades rows still NULL ──────────
+    # update_paper_trade_outcomes() only writes close_price for tickers that
+    # appear in the EOD scan results.  Any rows logged earlier that didn't make
+    # it into the scan (or from days when the EOD job failed) stay NULL without
+    # this self-healing sweep, which covers the last 60 days automatically.
+    try:
+        _cp = _eod_collect_close_prices()
+        if _cp.get("written", 0):
+            log.info(
+                f"EOD close-price sweep: {_cp['written']} row(s) updated "
+                f"({_cp.get('skipped', 0)} skipped — no Alpaca data)."
+            )
+    except Exception as _cpe:
+        log.warning(f"EOD close-price sweep failed (non-critical): {_cpe}")
 
 
 def _send_rankings_summary(rows: list, rating_date) -> None:
