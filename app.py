@@ -4682,6 +4682,8 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             pass
     if "pt_extra_tickers" in _prefs:
         st.session_state["pt_extra_tickers"] = str(_prefs["pt_extra_tickers"])
+    if "pt_eod_tickers" in _prefs:
+        st.session_state["pt_eod_tickers"] = str(_prefs["pt_eod_tickers"])
     if "rk_extra_tickers" in _prefs:
         st.session_state["rk_extra_tickers"] = str(_prefs["rk_extra_tickers"])
     if "bts_dr_start" in _prefs:
@@ -19517,6 +19519,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             key="pt_eod_tickers",
             placeholder="e.g. SATL, UGRO, ANNA — or leave blank",
         )
+    # Persist pt_eod_tickers to user prefs when it changes
+    if _AUTH_USER_ID:
+        _pt_eod_et_cached = st.session_state.get("_cached_prefs", {})
+        if _pt_eod_et_cached.get("pt_eod_tickers") != _eod_tickers_raw:
+            _pt_eod_et_new_prefs = {**_pt_eod_et_cached, "pt_eod_tickers": _eod_tickers_raw}
+            save_user_prefs(_AUTH_USER_ID, _pt_eod_et_new_prefs)
+            st.session_state["_cached_prefs"] = _pt_eod_et_new_prefs
     if st.button("🔒 Update Outcomes for Selected Date", key="pt_eod_btn", use_container_width=True):
         _eod_tickers = (
             [t.strip().upper() for t in _eod_tickers_raw.split(",") if t.strip()]
