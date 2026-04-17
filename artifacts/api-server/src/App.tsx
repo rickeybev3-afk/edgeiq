@@ -21,6 +21,30 @@ interface HealthState {
   db_checked_at?: string;
 }
 
+interface BackfillHealthData {
+  available: boolean;
+  loading: boolean;
+  completed_at?: string;
+  rows_saved?: number;
+  no_bars?: number;
+  errors?: number;
+  error?: string;
+}
+
+function formatRelativeTime(isoTimestamp: string): string {
+  const t = new Date(isoTimestamp);
+  if (isNaN(t.getTime())) return isoTimestamp;
+  const diffMs = Date.now() - t.getTime();
+  const diffSec = Math.round(diffMs / 1000);
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDays = Math.round(diffHr / 24);
+  return `${diffDays}d ago`;
+}
+
 function formatCheckedAgo(isoTimestamp: string): string {
   const checkedAt = new Date(isoTimestamp);
   if (isNaN(checkedAt.getTime())) return "DB check time unavailable";
@@ -389,6 +413,7 @@ function StatusDot({ ok }: { ok: boolean }) {
 
 function Home({ health }: { health: HealthState }) {
   const [credAlertsEnabled, setCredAlertsEnabled] = useState<boolean | null>(null);
+  const [backfillHealth, setBackfillHealth] = useState<BackfillHealthData>({ available: false, loading: true });
 
   useEffect(() => {
     let cancelled = false;
@@ -404,6 +429,23 @@ function Home({ health }: { health: HealthState }) {
         if (!cancelled) setCredAlertsEnabled(null);
       });
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchBackfill = () => {
+      fetch("/api/backfill-health")
+        .then((r) => r.json())
+        .then((data) => {
+          if (!cancelled) setBackfillHealth({ loading: false, ...data });
+        })
+        .catch(() => {
+          if (!cancelled) setBackfillHealth({ available: false, loading: false });
+        });
+    };
+    fetchBackfill();
+    const interval = setInterval(fetchBackfill, 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   const settingsBase = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -490,6 +532,53 @@ function Home({ health }: { health: HealthState }) {
               >
                 {credAlertsEnabled === null ? "—" : credAlertsEnabled ? "On" : "Off"}
               </a>
+            </div>
+
+            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+              {backfillHealth.loading ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+              ) : !backfillHealth.available ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+              ) : (backfillHealth.errors ?? 0) > 0 ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f87171", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #f87171" }} />
+              ) : (backfillHealth.no_bars ?? 0) > 0 ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#fbbf24", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #fbbf24" }} />
+              ) : (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #4ade80" }} />
+              )}
+              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Backfill</span>
+              {backfillHealth.loading ? (
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>—</span>
+              ) : !backfillHealth.available ? (
+                <a
+                  href={`${settingsBase}/settings#backfill-health`}
+                  style={{ fontSize: "13px", color: "#475569", fontWeight: 600, textDecoration: "none" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
+                  title="No backfill run recorded yet"
+                >
+                  No data
+                </a>
+              ) : (
+                <a
+                  href={`${settingsBase}/settings#backfill-health`}
+                  style={{ fontSize: "13px", textDecoration: "none", display: "flex", alignItems: "center", gap: "6px" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
+                  title="Go to backfill health details"
+                >
+                  <span style={{ color: "#86efac", fontWeight: 600 }}>{(backfillHealth.rows_saved ?? 0).toLocaleString()} rows</span>
+                  {(backfillHealth.no_bars ?? 0) > 0 && (
+                    <span style={{ color: "#fbbf24", fontWeight: 600 }}>· {backfillHealth.no_bars} no-bars</span>
+                  )}
+                  {(backfillHealth.errors ?? 0) > 0 && (
+                    <span style={{ color: "#f87171", fontWeight: 600 }}>· {backfillHealth.errors} err</span>
+                  )}
+                  {backfillHealth.completed_at && (
+                    <span style={{ color: "#64748b", fontSize: "12px" }}>· {formatRelativeTime(backfillHealth.completed_at)}</span>
+                  )}
+                </a>
+              )}
             </div>
           </div>
         </div>
