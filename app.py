@@ -7785,7 +7785,47 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _n_eq  = len(_rp_equity_curve)
                             _x_eq  = list(range(_n_eq))
                             _x_r   = list(range(len(_cum_r_both)))
+                            # ── Compute normalised divergence to find the peak gap ────────
+                            _eq_arr   = pd.Series(_rp_equity_curve, dtype=float)
+                            _r_arr    = pd.Series(_cum_r_both, dtype=float)
+                            _min_len  = min(len(_eq_arr), len(_r_arr))
+                            _eq_arr   = _eq_arr.iloc[:_min_len]
+                            _r_arr    = _r_arr.iloc[:_min_len]
+                            _eq_range = _eq_arr.max() - _eq_arr.min()
+                            _r_range  = _r_arr.max()  - _r_arr.min()
+                            _eq_norm  = (_eq_arr - _eq_arr.min()) / _eq_range if _eq_range != 0 else _eq_arr * 0
+                            _r_norm   = (_r_arr  - _r_arr.min())  / _r_range  if _r_range  != 0 else _r_arr  * 0
+                            _div_arr  = (_eq_norm - _r_norm)
+                            _div_abs  = _div_arr.abs()
+                            _max_div_idx = int(_div_abs.idxmax())
+                            _max_div_val = float(_div_arr.iloc[_max_div_idx])
+                            if abs(_max_div_val) < 0.02:
+                                _div_msg = "Equity and R track closely — position sizing matched raw edge well"
+                            elif _max_div_val > 0:
+                                _div_msg = "Position sizing amplified raw edge here (equity outpaced R)"
+                            else:
+                                _div_msg = "Position sizing dampened raw edge here (equity lagged R)"
+
                             _fig_dual = go.Figure()
+
+                            # Shaded band around the max-divergence point
+                            _band_half = max(1, round(_min_len * 0.015))
+                            _fig_dual.add_vrect(
+                                x0=max(0, _max_div_idx - _band_half),
+                                x1=min(_min_len - 1, _max_div_idx + _band_half),
+                                fillcolor="rgba(255, 214, 0, 0.12)",
+                                layer="below",
+                                line_width=0,
+                            )
+                            # Vertical dashed line at the exact peak
+                            _fig_dual.add_vline(
+                                x=_max_div_idx,
+                                line=dict(color="rgba(255, 214, 0, 0.7)", width=1.5, dash="dot"),
+                                annotation_text=f"Max divergence (trade #{_max_div_idx})",
+                                annotation_position="top left",
+                                annotation_font=dict(color="#ffd600", size=11),
+                            )
+
                             _fig_dual.add_trace(go.Scatter(
                                 x=_x_eq,
                                 y=_rp_equity_curve,
@@ -7837,7 +7877,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     zeroline=False,
                                 ),
                             )
-                            st.caption("**Equity & R** — divergences reveal where position sizing amplifies or dampens raw edge")
                             st.plotly_chart(
                                 _fig_dual,
                                 use_container_width=True,
@@ -7847,6 +7886,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "modeBarButtonsToRemove": ["select2d", "lasso2d"],
                                     "toImageButtonOptions": {"format": "png"},
                                 },
+                            )
+                            st.caption(
+                                f"**Equity & R** — divergences reveal where position sizing amplifies or dampens raw edge"
+                                f"\u2002|\u2002🟡 **Trade\u00a0#{_max_div_idx}**: {_div_msg}"
                             )
 
                         # ── Replay CSV download ────────────────────────────────────────────
