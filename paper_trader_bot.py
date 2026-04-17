@@ -63,9 +63,14 @@ LIVE_ORDERS_ENABLED     = os.getenv("LIVE_ORDERS_ENABLED", "false").lower() == "
 IS_PAPER_ALPACA         = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
 RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
 # PDT guard: block new orders when day-trade count >= this limit (FINRA: 3 in rolling 5 days)
-PDT_MAX_DAY_TRADES      = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
+PDT_MAX_DAY_TRADES       = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
 # Concurrent position cap: block new orders when open positions >= this limit
 MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", "2"))
+# PDT equity floor: fire a Telegram warning when live account equity drops below this level
+# Default $26k gives a ~$1k buffer above the $25k PDT threshold (5 losses of $500 each = $2,500 drawdown cushion)
+PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
+# Cooldown between repeated PDT floor warnings (seconds) — default 4 hours
+PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
 
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -423,6 +428,57 @@ def _check_concurrent_positions_guard() -> tuple[bool, int]:
     return count >= MAX_CONCURRENT_POSITIONS, count
 
 
+def _warn_pdt_equity_floor(equity: float | None = None) -> None:
+    """Fire a Telegram warning if live account equity is below PDT_EQUITY_FLOOR.
+
+    Fetches equity from Alpaca if not supplied (saves an extra API call when
+    the caller already has the account data).  Silently skips on paper accounts.
+    Applies a cooldown (PDT_FLOOR_WARN_COOLDOWN seconds) to avoid spam.
+    """
+    if IS_PAPER_ALPACA:
+        return
+
+    if equity is None:
+        acct   = _alpaca_get("/v2/account")
+        equity = float(acct.get("equity", 0) or 0) if acct else 0.0
+
+    if equity <= 0 or equity >= PDT_EQUITY_FLOOR:
+        return   # no alert needed
+
+    # Cooldown: only warn once per PDT_FLOOR_WARN_COOLDOWN seconds
+    _flag     = "/tmp/.edgeiq_pdt_floor_warned"
+    _now      = time.time()
+    _last     = 0.0
+    try:
+        if os.path.exists(_flag):
+            _last = float(open(_flag).read().strip())
+    except Exception:
+        pass
+    if (_now - _last) < PDT_FLOOR_WARN_COOLDOWN:
+        log.info(
+            f"[PDT floor] Equity ${equity:,.2f} < floor ${PDT_EQUITY_FLOOR:,.0f} "
+            f"— alert suppressed (cooldown {int(PDT_FLOOR_WARN_COOLDOWN / 3600):.0f}h)"
+        )
+        return
+    try:
+        with open(_flag, "w") as _f:
+            _f.write(str(_now))
+    except Exception:
+        pass
+
+    _gap       = PDT_EQUITY_FLOOR - equity
+    _losses_to = int(_gap / RISK_PER_TRADE) + 1   # approx losses until PDT re-engages
+    log.warning(f"[PDT floor] ⚠️  Equity ${equity:,.2f} — ${_gap:,.2f} below PDT floor (${PDT_EQUITY_FLOOR:,.0f})")
+    tg_send(
+        f"⚠️ <b>PDT Equity Floor Warning</b>\n"
+        f"Account equity: <b>${equity:,.2f}</b>\n"
+        f"PDT floor: <b>${PDT_EQUITY_FLOOR:,.0f}</b> "
+        f"(${_gap:,.2f} below — ~{_losses_to} more loss{'es' if _losses_to != 1 else ''} "
+        f"to PDT re-engagement at $25k)\n"
+        f"<i>Consider pausing or reducing size until equity recovers above ${PDT_EQUITY_FLOOR:,.0f}.</i>"
+    )
+
+
 def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
 
@@ -467,6 +523,9 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"<i>FINRA PDT rule: &lt;$25k accounts limited to 3 round-trips / 5 days.</i>"
         )
         return
+
+    # ── PDT equity floor warning (fires if equity near $25k boundary) ──────────
+    _warn_pdt_equity_floor()
 
     # ── Concurrent position cap ────────────────────────────────────────────────
     _pos_blocked, _pos_count = _check_concurrent_positions_guard()
@@ -2706,9 +2765,18 @@ def main():
                 _pos_blk, _pos_n = _check_concurrent_positions_guard()
                 _pdt_warn  = " 🚫 LIMIT REACHED" if _pdt_blk else ""
                 _pos_warn  = " 🚫 AT CAP" if _pos_blk else ""
+                # Equity floor check at startup
+                _acct_s    = _alpaca_get("/v2/account")
+                _equity_s  = float(_acct_s.get("equity", 0) or 0) if _acct_s else 0.0
+                _floor_warn = ""
+                if 0 < _equity_s < PDT_EQUITY_FLOOR:
+                    _gap_s = PDT_EQUITY_FLOOR - _equity_s
+                    _floor_warn = f"\n⚠️ Equity ${_equity_s:,.2f} — ${_gap_s:,.2f} below PDT floor (${PDT_EQUITY_FLOOR:,.0f})"
+                    _warn_pdt_equity_floor(equity=_equity_s)
                 _startup_extra = (
                     f"\n📊 PDT: <b>{_pdt_n}/{PDT_MAX_DAY_TRADES}</b> day trades used{_pdt_warn}"
                     f"\n📌 Positions: <b>{_pos_n}/{MAX_CONCURRENT_POSITIONS}</b> open{_pos_warn}"
+                    f"{_floor_warn}"
                 )
             tg_send(
                 f"🟢 <b>EdgeIQ Paper Trader Bot started</b>\n"
