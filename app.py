@@ -140,6 +140,74 @@ def _cached_check_db_connection() -> tuple[bool, str]:
     # a loopback round-trip while keeping the same reachability semantics.
     return check_db_connection()
 
+
+@st.fragment(run_every=30)
+def _db_status_widget() -> None:
+    """Render the DB connection badge inside the sidebar.
+
+    Streamlit automatically reruns this fragment every 30 seconds via
+    ``run_every``.  When the DB is unreachable, the cached result is cleared
+    and a fresh HTTP HEAD check is made so the badge self-heals as soon as
+    connectivity returns.  When the DB is healthy or unconfigured, the cached
+    result is reused to avoid unnecessary network probes.  The manual Retry
+    button still works for on-demand rechecks.
+    """
+    _db_ok, _db_err = _cached_check_db_connection()
+    if not _db_ok and _db_err != "Credentials not configured":
+        _cached_check_db_connection.clear()
+        _db_ok, _db_err = _cached_check_db_connection()
+
+    if _db_ok:
+        st.session_state["_db_last_connected_ts"] = time.monotonic()
+        st.markdown(
+            '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
+            'padding:8px 12px; margin-bottom:8px;">'
+            '<span style="font-size:12px; font-weight:700; color:#66bb6a;">'
+            '🟢 Database: Connected</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    elif _db_err == "Credentials not configured":
+        st.markdown(
+            '<div style="background:#1a1a1a; border:1px solid #555; border-radius:8px; '
+            'padding:8px 12px; margin-bottom:8px;">'
+            '<span style="font-size:12px; font-weight:700; color:#aaa;">'
+            '⚪ Database: Not configured</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        _db_last_ts = st.session_state.get("_db_last_connected_ts")
+        if _db_last_ts is not None:
+            _db_elapsed_s = time.monotonic() - _db_last_ts
+            if _db_elapsed_s < 60:
+                _db_last_label = "just now"
+            elif _db_elapsed_s < 3600:
+                _db_last_label = f"{int(_db_elapsed_s // 60)} min ago"
+            else:
+                _db_last_label = f"{int(_db_elapsed_s // 3600)} hr ago"
+            _db_last_line = f'<br><span style="font-size:10px; color:#ef9a9a;">Last connected: {_db_last_label}</span>'
+        else:
+            _db_last_line = '<br><span style="font-size:10px; color:#ef9a9a;">Never connected this session</span>'
+        _db_badge_col, _db_btn_col = st.columns([3, 1])
+        with _db_badge_col:
+            st.markdown(
+                '<div style="background:#1a0a0a; border:1px solid #c62828; border-radius:8px; '
+                'padding:8px 12px; margin-bottom:8px;">'
+                f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
+                f'🔴 Database: Unreachable</span>'
+                f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
+                f'{_db_last_line}'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        with _db_btn_col:
+            st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
+            if st.button("↩", key="_db_retry_btn",
+                         help="Retry: clear cached status and recheck the database connection"):
+                _cached_check_db_connection.clear()
+                st.rerun()
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_get_breadth_regime_history(days: int = 30, user_id: str = "") -> list:
     return get_breadth_regime_history(days=days, user_id=user_id)
@@ -4605,57 +4673,7 @@ if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
 
 with st.sidebar:
     # ── Database connection status ─────────────────────────────────────────
-    _db_ok, _db_err = _cached_check_db_connection()
-    if _db_ok:
-        st.session_state["_db_last_connected_ts"] = time.monotonic()
-        st.markdown(
-            '<div style="background:#0a1a0a; border:1px solid #2e7d32; border-radius:8px; '
-            'padding:8px 12px; margin-bottom:8px;">'
-            '<span style="font-size:12px; font-weight:700; color:#66bb6a;">'
-            '🟢 Database: Connected</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-    elif _db_err == "Credentials not configured":
-        st.markdown(
-            '<div style="background:#1a1a1a; border:1px solid #555; border-radius:8px; '
-            'padding:8px 12px; margin-bottom:8px;">'
-            '<span style="font-size:12px; font-weight:700; color:#aaa;">'
-            '⚪ Database: Not configured</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        _db_last_ts = st.session_state.get("_db_last_connected_ts")
-        if _db_last_ts is not None:
-            _db_elapsed_s = time.monotonic() - _db_last_ts
-            if _db_elapsed_s < 60:
-                _db_last_label = "just now"
-            elif _db_elapsed_s < 3600:
-                _db_last_label = f"{int(_db_elapsed_s // 60)} min ago"
-            else:
-                _db_last_label = f"{int(_db_elapsed_s // 3600)} hr ago"
-            _db_last_line = f'<br><span style="font-size:10px; color:#ef9a9a;">Last connected: {_db_last_label}</span>'
-        else:
-            _db_last_line = '<br><span style="font-size:10px; color:#ef9a9a;">Never connected this session</span>'
-        _db_badge_col, _db_btn_col = st.columns([3, 1])
-        with _db_badge_col:
-            st.markdown(
-                '<div style="background:#1a0a0a; border:1px solid #c62828; border-radius:8px; '
-                'padding:8px 12px; margin-bottom:8px;">'
-                f'<span style="font-size:12px; font-weight:700; color:#ef5350;">'
-                f'🔴 Database: Unreachable</span>'
-                f'<br><span style="font-size:10px; color:#e57373;">{_db_err}</span>'
-                f'{_db_last_line}'
-                '</div>',
-                unsafe_allow_html=True,
-            )
-        with _db_btn_col:
-            st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
-            if st.button("↩", key="_db_retry_btn",
-                         help="Retry: clear cached status and recheck the database connection"):
-                _cached_check_db_connection.clear()
-                st.rerun()
+    _db_status_widget()
 
     # ── Credential health indicator ────────────────────────────────────────
     _cred_healthy_ts = get_runtime_last_healthy_ts()
