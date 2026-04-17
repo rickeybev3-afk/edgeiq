@@ -10007,10 +10007,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.session_state["rp_r_col_select"] = [
                                     c for c in _r_col_options if c in _df_r_cols
                                 ]
+                        def _on_rp_r_change():
+                            st.session_state["sw_r_col_select"] = list(st.session_state["rp_r_col_select"])
+
                         _r_cols_selected = st.multiselect(
                             "R columns in CSV",
                             options=_r_col_options,
                             key="rp_r_col_select",
+                            on_change=_on_rp_r_change,
                             help=(
                                 "Choose which R-multiple columns to include in the downloaded CSV. "
                                 "Deselect columns you don't use to keep your spreadsheet tidy."
