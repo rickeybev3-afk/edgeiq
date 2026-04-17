@@ -4946,6 +4946,33 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
+# Seed localStorage with the DB-stored feed preference on first load (new device/browser).
+# This runs once per session when prefs are loaded and only touches localStorage if it is
+# empty — so it never overrides a choice the trader has already made in this browser.
+_gdf_for_seed = st.session_state.get("_global_default_feed", "")
+if _gdf_for_seed in ("sip", "iex"):
+    import streamlit.components.v1 as _cmp_feed_seed
+    _pt_feed_for_seed = "SIP (paid \u2014 accurate)" if _gdf_for_seed == "sip" else "IEX (free \u2014 limited)"
+    _cmp_feed_seed.html(
+        f"""<script>
+(function() {{
+    var dbFeed = {repr(_gdf_for_seed)};
+    if (!dbFeed || localStorage.getItem('edgeiq_feed')) return;
+    localStorage.setItem('edgeiq_feed', dbFeed);
+    localStorage.setItem('global_default_feed', dbFeed);
+    localStorage.setItem('hist_scan_feed', dbFeed);
+    localStorage.setItem('replay_feed_sel', dbFeed);
+    localStorage.setItem('live_scan_feed', dbFeed);
+    localStorage.setItem('scan_feed_select', dbFeed);
+    localStorage.setItem('pat_scan_feed', dbFeed);
+    localStorage.setItem('bt_feed_select', dbFeed);
+    localStorage.setItem('wpe_feed_select', dbFeed);
+    localStorage.setItem('pt_feed', {repr(_pt_feed_for_seed)});
+}})();
+</script>""",
+        height=0,
+    )
+
 if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
     _early_wl = _cached_load_watchlist(user_id=_AUTH_USER_ID)
     _joined = ", ".join(_early_wl) if _early_wl else _DEFAULT_WATCHLIST
@@ -6082,6 +6109,12 @@ with st.sidebar:
             f"<script>(function(){{var _f={repr(data_feed)};localStorage.setItem('hist_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
+        if _AUTH_USER_ID:
+            _hf_cached = st.session_state.get("_cached_prefs", {})
+            if _hf_cached.get("default_feed") != data_feed:
+                _hf_new_prefs = {**_hf_cached, "default_feed": data_feed}
+                save_user_prefs(_AUTH_USER_ID, _hf_new_prefs)
+                st.session_state["_cached_prefs"] = _hf_new_prefs
         run_button = st.button("🚀 Fetch & Analyze", use_container_width=True, type="primary")
 
     elif mode == "🎬 Replay":
@@ -6123,6 +6156,12 @@ with st.sidebar:
             f"<script>(function(){{var _f={repr(data_feed)};localStorage.setItem('replay_feed_sel',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
+        if _AUTH_USER_ID:
+            _rf_cached = st.session_state.get("_cached_prefs", {})
+            if _rf_cached.get("default_feed") != data_feed:
+                _rf_new_prefs = {**_rf_cached, "default_feed": data_feed}
+                save_user_prefs(_AUTH_USER_ID, _rf_new_prefs)
+                st.session_state["_cached_prefs"] = _rf_new_prefs
         replay_load = st.button("📥 Load Day for Replay", use_container_width=True, type="primary")
 
         # ── Replay controls (shown once bars are loaded) ───────────────────────
@@ -6218,6 +6257,12 @@ with st.sidebar:
             f"<script>(function(){{var _f={repr(live_feed)};localStorage.setItem('live_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
+        if _AUTH_USER_ID:
+            _lf_cached = st.session_state.get("_cached_prefs", {})
+            if _lf_cached.get("default_feed") != live_feed:
+                _lf_new_prefs = {**_lf_cached, "default_feed": live_feed}
+                save_user_prefs(_AUTH_USER_ID, _lf_new_prefs)
+                st.session_state["_cached_prefs"] = _lf_new_prefs
         if not st.session_state.live_active:
             start_live = st.button("▶ Start Live Stream", use_container_width=True, type="primary")
         else:
@@ -6444,6 +6489,12 @@ with st.sidebar:
         f"<script>(function(){{var _f={repr(scan_feed)};localStorage.setItem('scan_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
     )
+    if _AUTH_USER_ID:
+        _sf_cached = st.session_state.get("_cached_prefs", {})
+        if _sf_cached.get("default_feed") != scan_feed:
+            _sf_new_prefs = {**_sf_cached, "default_feed": scan_feed}
+            save_user_prefs(_AUTH_USER_ID, _sf_new_prefs)
+            st.session_state["_cached_prefs"] = _sf_new_prefs
     if scan_feed == "iex":
         st.info("ℹ️ IEX (free tier): PM Volume will be blank. Switch to SIP for full pre-market data.")
     _price_cols = st.columns(3)
@@ -15389,6 +15440,12 @@ Nothing here requires any input from you. All numbers update automatically as yo
         height=0,
     )
 
+    if _AUTH_USER_ID:
+        _pf_cached = st.session_state.get("_cached_prefs", {})
+        if _pf_cached.get("default_feed") != _pat_scan_feed:
+            _pf_new_prefs = {**_pf_cached, "default_feed": _pat_scan_feed}
+            save_user_prefs(_AUTH_USER_ID, _pf_new_prefs)
+            st.session_state["_cached_prefs"] = _pf_new_prefs
     if _pat_col1.button("🔬 Scan Trade History for Patterns",
                         use_container_width=True, key="pat_scan_btn"):
         if not _pat_scan_api or not _pat_scan_sec:
@@ -15643,6 +15700,12 @@ def render_tracker_tab():
             f"<script>(function(){{var _f={repr(_bt_feed)};localStorage.setItem('bt_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
+        if _AUTH_USER_ID:
+            _btf_cached = st.session_state.get("_cached_prefs", {})
+            if _btf_cached.get("default_feed") != _bt_feed:
+                _btf_new_prefs = {**_btf_cached, "default_feed": _bt_feed}
+                save_user_prefs(_AUTH_USER_ID, _btf_new_prefs)
+                st.session_state["_cached_prefs"] = _btf_new_prefs
         _bt_run = st.button("▶ Run Batch Backtest", type="primary",
                             use_container_width=True, key="bt_run_btn")
 
@@ -21807,6 +21870,12 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             f"<script>(function(){{var _f={repr(_pt_feed_str)};localStorage.setItem('pt_feed',{repr(_pt_feed)});if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
         )
+        if _AUTH_USER_ID:
+            _ptf_cached = st.session_state.get("_cached_prefs", {})
+            if _ptf_cached.get("default_feed") != _pt_feed_str:
+                _ptf_new_prefs = {**_ptf_cached, "default_feed": _pt_feed_str}
+                save_user_prefs(_AUTH_USER_ID, _ptf_new_prefs)
+                st.session_state["_cached_prefs"] = _ptf_new_prefs
     with _pt_c3:
         _pt_min_tcs = st.slider(
             "Min TCS Filter",
@@ -23761,6 +23830,12 @@ with tab_scan:
         f"<script>(function(){{var _f={repr(_wpe_feed)};localStorage.setItem('wpe_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
     )
+    if _AUTH_USER_ID:
+        _wpef_cached = st.session_state.get("_cached_prefs", {})
+        if _wpef_cached.get("default_feed") != _wpe_feed:
+            _wpef_new_prefs = {**_wpef_cached, "default_feed": _wpe_feed}
+            save_user_prefs(_AUTH_USER_ID, _wpef_new_prefs)
+            st.session_state["_cached_prefs"] = _wpef_new_prefs
     _wpe_col1, _wpe_col2, _wpe_col3 = st.columns(3)
 
     # Predict All — only active when tickers are entered
