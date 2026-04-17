@@ -5024,7 +5024,39 @@ with st.sidebar:
             st.session_state["_pref_alpaca_secret"] = secret_key
 
     st.markdown("---")
-    st.markdown('<a id="trading-mode"></a>', unsafe_allow_html=True)
+    st.markdown(
+        '<style>'
+        '@keyframes _tm_glow {'
+        '  0%   { box-shadow: none; background: transparent; }'
+        '  25%  { box-shadow: 0 0 0 3px #fbbf24, 0 0 22px 8px rgba(251,191,36,0.35); background: rgba(251,191,36,0.09); }'
+        '  100% { box-shadow: none; background: transparent; }'
+        '}'
+        '._tm_flash { animation: _tm_glow 1.5s ease-out forwards; border-radius: 8px; }'
+        '</style>'
+        '<a id="trading-mode" data-tm-anchor="1"></a>'
+        '<script>'
+        '(function(){'
+        '  function _doFlash(){'
+        '    if(window.location.hash!="#trading-mode")return;'
+        '    var a=document.getElementById("trading-mode");'
+        '    if(!a)return;'
+        '    var el=a;'
+        '    while(el.parentElement&&!el.parentElement.matches("[data-testid=\\"stSidebar\\"] [data-testid=\\"stVerticalBlock\\"]")){el=el.parentElement;}'
+        '    var s=el;'
+        '    while(s&&!s.nextElementSibling)s=s.parentElement;'
+        '    var nxt=s?s.nextElementSibling:null;'
+        '    if(nxt){nxt.classList.remove("_tm_flash");void nxt.offsetWidth;nxt.classList.add("_tm_flash");}'
+        '  }'
+        '  if(!window._tmFlashBound){'
+        '    window._tmFlashBound=true;'
+        '    window.addEventListener("hashchange",function(){setTimeout(_doFlash,200);});'
+        '  }'
+        '  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",function(){setTimeout(_doFlash,200);});'
+        '  else setTimeout(_doFlash,200);'
+        '})();'
+        '</script>',
+        unsafe_allow_html=True,
+    )
     st.header("🔀 Trading Mode")
 
     @st.cache_data(ttl=300, show_spinner=False)
