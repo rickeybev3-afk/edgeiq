@@ -14,6 +14,19 @@ A Python Streamlit trading terminal (port 8080) for Volume Profile / IB structur
 
 **Pricing tiers:** $49 / $99 / $199 / $999 / $5K–15K/mo (institutional)
 
+**Brain Marketplace (Tier 3+ evolution):**
+Verified traders list their calibrated brains for rent. Brain owner earns 50% of every rental. Pricing scales with accuracy tier:
+- Verified (100–199 trades): $29–$49/mo rental
+- Pro Verified (200–499 trades): $49–$149/mo
+- Elite (500–999 trades): $99–$249/mo
+- Institutional Grade (1,000+ trades): $249–$999/mo
+
+**Cohort matching** — renters are matched to brains that fit their cognitive fingerprint (similar decision style, scan timing, structure preference), not just ranked by WR. A trader learns better from someone who thinks like them than from the #1 performer. This is the core innovation — no trading product has ever done personalized brain matching.
+
+**Consistency flywheel:** Logging earns passive income (50% rental revenue) → financial incentive to log every trade → better calibration → higher tier → higher rental price → more renters. The logging IS the business. Solves the fundamental journaling dropout problem that kills every other trading journal.
+
+**Future incentives to stack:** leaderboard visibility, renter feedback loop (outcomes auto-update brain accuracy score), performance-based royalty scaling, cohort recognition, brain evolution timeline, "inspired by" attribution.
+
 ---
 
 ## ⚠️ ABSOLUTE CODE RULES — NEVER VIOLATE THESE
