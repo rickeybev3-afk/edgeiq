@@ -9758,6 +9758,93 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.session_state["_csv_global_reset"] = True
                         st.rerun()
 
+                # ── Combined "all tickers" overview chart ────────────────────
+                _comb_rows = []
+                for _ctk, _ctk_rows in _tkr_sweep_data.items():
+                    _ctk_df = _pd_bt.DataFrame(_ctk_rows)
+                    _ctk_suff = _ctk_df[_ctk_df["Sufficient"] == "✓"]
+                    if not _ctk_suff.empty:
+                        _ctk_best_pnl = _ctk_suff["Net P&L ($)"].max()
+                        _ctk_best_row = _ctk_suff[_ctk_suff["Net P&L ($)"] == _ctk_best_pnl].iloc[0]
+                        _ctk_color = "#4caf50" if _ctk_best_pnl >= 0 else "#ef5350"
+                        _ctk_floor = int(_ctk_best_row["TCS Floor"])
+                        _ctk_trades = int(_ctk_best_row["Trades"])
+                        _ctk_wr = float(_ctk_best_row["Win Rate"])
+                        _ctk_exp = float(_ctk_best_row["Expectancy ($)"])
+                        _ctk_suf_label = "✓"
+                    else:
+                        _ctk_best_pnl_all = float(_ctk_df["Net P&L ($)"].max())
+                        _ctk_best_row_all = _ctk_df[_ctk_df["Net P&L ($)"] == _ctk_best_pnl_all].iloc[0]
+                        _ctk_best_pnl = _ctk_best_pnl_all
+                        _ctk_color = "#555555"
+                        _ctk_floor = int(_ctk_best_row_all["TCS Floor"])
+                        _ctk_trades = int(_ctk_best_row_all["Trades"])
+                        _ctk_wr = float(_ctk_best_row_all["Win Rate"])
+                        _ctk_exp = float(_ctk_best_row_all["Expectancy ($)"])
+                        _ctk_suf_label = "✗"
+                    _comb_rows.append({
+                        "Ticker":         _ctk,
+                        "Best TCS Floor": _ctk_floor,
+                        "Net P&L ($)":    round(_ctk_best_pnl, 0),
+                        "Trades":         _ctk_trades,
+                        "Win Rate":       round(_ctk_wr, 1),
+                        "Expectancy ($)": round(_ctk_exp, 2),
+                        "Sufficient":     _ctk_suf_label,
+                        "Color":          _ctk_color,
+                    })
+
+                if _comb_rows:
+                    _comb_df = _pd_bt.DataFrame(_comb_rows)
+                    _comb_df = _comb_df.sort_values("Net P&L ($)", ascending=False)
+
+                    st.markdown(
+                        '<div style="font-size:12px;font-weight:700;color:#90caf9;'
+                        'letter-spacing:0.4px;margin:10px 0 6px 0;">📊 Combined Sweep Overview — best TCS floor per ticker</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    _comb_bar = (
+                        _alt_tk.Chart(_comb_df)
+                        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                        .encode(
+                            x=_alt_tk.X(
+                                "Ticker:N",
+                                sort=list(_comb_df["Ticker"]),
+                                axis=_alt_tk.Axis(title="Ticker", labelColor="#b0bec5", titleColor="#90caf9"),
+                            ),
+                            y=_alt_tk.Y(
+                                "Net P&L ($):Q",
+                                axis=_alt_tk.Axis(title="Net P&L ($)", labelColor="#b0bec5", titleColor="#90caf9", format="$,.0f"),
+                            ),
+                            color=_alt_tk.Color("Color:N", scale=None, legend=None),
+                            tooltip=[
+                                _alt_tk.Tooltip("Ticker:N", title="Ticker"),
+                                _alt_tk.Tooltip("Best TCS Floor:Q", title="Best TCS Floor"),
+                                _alt_tk.Tooltip("Trades:Q", title="Trades"),
+                                _alt_tk.Tooltip("Win Rate:Q", title="Win Rate %", format=".1f"),
+                                _alt_tk.Tooltip("Net P&L ($):Q", title="Net P&L ($)", format="$,.0f"),
+                                _alt_tk.Tooltip("Expectancy ($):Q", title="Expectancy ($)", format="$,.2f"),
+                                _alt_tk.Tooltip("Sufficient:N", title="Sufficient"),
+                            ],
+                        )
+                        .properties(height=240)
+                        .configure_view(strokeWidth=0, fill="#0e1117")
+                        .configure_axis(gridColor="#2a2a3a", domainColor="#444")
+                    )
+                    st.altair_chart(_comb_bar, use_container_width=True)
+
+                    st.markdown(
+                        f'<div style="display:flex;gap:18px;flex-wrap:wrap;margin:-6px 0 12px 0;font-size:11px;color:#90a4ae;">'
+                        f'<span><span style="display:inline-block;width:10px;height:10px;background:#4caf50;border-radius:2px;margin-right:4px;"></span>Best floor</span>'
+                        f'<span><span style="display:inline-block;width:10px;height:10px;background:#42a5f5;border-radius:2px;margin-right:4px;"></span>Profitable</span>'
+                        f'<span><span style="display:inline-block;width:10px;height:10px;background:#ef5350;border-radius:2px;margin-right:4px;"></span>Unprofitable</span>'
+                        f'<span><span style="display:inline-block;width:10px;height:10px;background:#555555;border-radius:2px;margin-right:4px;"></span>'
+                        f'Insufficient data (&lt;{_MIN_TCS_TRADES} trades)</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                # ── Per-ticker expanders ──────────────────────────────────────
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
                     _tk_rows = _tkr_sweep_data[_tk_name]
                     _tk_sw_df = _pd_bt.DataFrame(_tk_rows)
