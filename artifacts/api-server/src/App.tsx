@@ -17,8 +17,12 @@ interface HealthState {
   alpaca_mismatch_message?: string;
 }
 
+const MISMATCH_DISMISSED_KEY = "alpaca_mismatch_banner_dismissed";
+
 function AlpacaMismatchBanner({ message }: { message: string }) {
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(
+    () => sessionStorage.getItem(MISMATCH_DISMISSED_KEY) === "1"
+  );
 
   if (dismissed) return null;
 
@@ -56,7 +60,7 @@ function AlpacaMismatchBanner({ message }: { message: string }) {
         </a>
       </span>
       <button
-        onClick={() => setDismissed(true)}
+        onClick={() => { sessionStorage.setItem(MISMATCH_DISMISSED_KEY, "1"); setDismissed(true); }}
         aria-label="Dismiss banner"
         style={{
           background: "none",
@@ -186,6 +190,12 @@ function App() {
       clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    if (health.checked && !health.alpaca_mode_mismatch) {
+      sessionStorage.removeItem(MISMATCH_DISMISSED_KEY);
+    }
+  }, [health.checked, health.alpaca_mode_mismatch]);
 
   if (!health.checked) {
     return null;
