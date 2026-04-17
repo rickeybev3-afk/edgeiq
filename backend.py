@@ -2183,22 +2183,43 @@ def save_tcs_alert_structures(structures) -> bool:
 
     Only recognised keys (those present in :data:`WK_DISPLAY`) are written;
     unknown keys are silently discarded.  Overwrites the file while preserving
-    the comment key.  Returns ``True`` on success, ``False`` on any I/O failure.
+    the comment key and any existing ``thresholds`` map.  Returns ``True`` on
+    success, ``False`` on any I/O failure.
     """
     import json as _json
 
     valid = set(WK_DISPLAY.keys())
     sanitised = sorted(k for k in structures if k in valid)
     cfg_path = os.path.join(os.path.dirname(__file__) or ".", "tcs_alert_config.json")
-    cfg = {
+
+    # Preserve any existing thresholds map so a save_tcs_alert_structures call
+    # does not silently wipe per-structure threshold overrides.
+    existing_thresholds: dict = {}
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path) as _f:
+                _existing = _json.load(_f)
+            if isinstance(_existing.get("thresholds"), dict):
+                existing_thresholds = _existing["thresholds"]
+        except Exception:
+            pass
+
+    cfg: dict = {
         "_comment": (
-            "List the structure keys you want TCS threshold-shift alerts for. "
-            "Remove a key to silence alerts for that structure. "
-            "Leave alert_structures as an empty list [] to silence ALL alerts, "
-            "or delete this file to receive alerts for every structure (default behaviour)."
+            "Controls which TCS structures trigger Telegram threshold-shift alerts and "
+            "what delta (in points) must be exceeded before an alert fires. "
+            "Remove a key from alert_structures to silence alerts for that structure. "
+            "Set alert_structures to [] to silence ALL alerts, or delete this file to "
+            "receive alerts for every structure (default). "
+            "Use the optional thresholds map to set a per-structure minimum delta; "
+            "structures not listed fall back to the global default of 5 points. "
+            "Example: {\"alert_structures\": [\"trend_bull\", \"normal\"], "
+            "\"thresholds\": {\"trend_bull\": 8, \"normal\": 3}}"
         ),
         "alert_structures": sanitised,
     }
+    if existing_thresholds:
+        cfg["thresholds"] = existing_thresholds
     try:
         with open(cfg_path, "w") as _f:
             _json.dump(cfg, _f, indent=2)
@@ -2207,11 +2228,40 @@ def save_tcs_alert_structures(structures) -> bool:
         return False
 
 
+def _load_tcs_alert_thresholds() -> dict:
+    """Return a map of structure_key → minimum delta required to fire an alert.
+
+    Reads the optional ``thresholds`` map from ``tcs_alert_config.json``.  Any
+    structure *not* present in the map will use the global default of 5 points.
+
+    Returns an empty dict when the file is absent or the key is missing,
+    causing all structures to use the global default.
+    """
+    import json as _json
+
+    cfg_path = os.path.join(os.path.dirname(__file__) or ".", "tcs_alert_config.json")
+    if not os.path.exists(cfg_path):
+        return {}
+    try:
+        with open(cfg_path) as _f:
+            cfg = _json.load(_f)
+        raw = cfg.get("thresholds", {})
+        if isinstance(raw, dict):
+            return {str(k): float(v) for k, v in raw.items()}
+    except Exception:
+        pass
+    return {}
+
+
 _tcs_alert_cache: dict = {}   # {structure_YYYY-MM-DD: True}
 
 
 def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
-    """Send a Telegram alert for any TCS structure whose threshold moved by ≥5 points.
+    """Send a Telegram alert for any TCS structure whose threshold moved enough.
+
+    The minimum delta required before an alert fires is controlled per-structure
+    via the optional ``thresholds`` map in ``tcs_alert_config.json``.  Any
+    structure not listed there falls back to the global default of 5 points.
 
     Only fires when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are configured.
     Silently skips if nothing changed significantly or credentials are absent.
@@ -2235,11 +2285,12 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
     if not _token or not _chat_id:
         return
 
-    opted_in = _load_tcs_alert_structures()
+    opted_in   = _load_tcs_alert_structures()
+    thresholds = _load_tcs_alert_thresholds()
 
+    _DEFAULT_THRESHOLD = 5
     _today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
 
-    _THRESHOLD = 5
     lines = []
     alerted_keys = []
     all_keys = set(list(previous.keys()) + list(current.keys()))
@@ -2251,7 +2302,8 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
         if old_val is None or new_val is None:
             continue
         delta = new_val - old_val
-        if abs(delta) < _THRESHOLD:
+        _threshold = thresholds.get(wk, _DEFAULT_THRESHOLD)
+        if abs(delta) < _threshold:
             continue
         _cache_key = f"{wk}_{_today}"
         if _cache_key in _tcs_alert_cache:

@@ -1,5 +1,5 @@
 {
-  "_comment": "List the structure keys you want TCS threshold-shift alerts for. Remove a key to silence alerts for that structure. Leave alert_structures as an empty list [] to silence ALL alerts, or delete this file to receive alerts for every structure (default behaviour).",
+  "_comment": "Controls which TCS structures trigger Telegram threshold-shift alerts and what delta (in points) must be exceeded before an alert fires. Remove a key from alert_structures to silence alerts for that structure. Set alert_structures to [] to silence ALL alerts, or delete this file to receive alerts for every structure (default). Use the optional thresholds map to set a per-structure minimum delta; structures not listed fall back to the global default of 5 points. Example: {\"alert_structures\": [\"trend_bull\", \"normal\"], \"thresholds\": {\"trend_bull\": 8, \"normal\": 3}}",
   "alert_structures": [
     "trend_bull",
     "trend_bear",
@@ -9,5 +9,9 @@
     "neutral",
     "ntrl_extreme",
     "nrml_variation"
-  ]
+  ],
+  "thresholds": {
+    "trend_bull": 8,
+    "trend_bear": 8
+  }
 }
