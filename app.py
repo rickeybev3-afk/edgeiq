@@ -10958,7 +10958,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _sw_peak_r      = _sw_cum_r_vals.cummax()
                             _sw_max_dd_r    = round((_sw_cum_r_vals - _sw_peak_r).min(), 2) if _sw_n else 0
 
-                            # ── Cumulative R chart with drawdown highlight ──────────
+                            # ── Chart view toggle: Cumulative R | Both ─────────────
+                            _SW_CHART_OPTS = ["Cumulative R", "Both"]
+                            _sw_chart_key  = f"opt_chart_view_{_tk_name}"
+                            _sw_chart_view = st.radio(
+                                "Chart view",
+                                options=_SW_CHART_OPTS,
+                                index=0,
+                                horizontal=True,
+                                key=_sw_chart_key,
+                                label_visibility="collapsed",
+                            )
+
+                            # ── Compute max-drawdown indices (shared) ───────────────
                             _sw_dd_series = _sw_cum_r_vals - _sw_peak_r
                             if _sw_n and _sw_max_dd_r < 0:
                                 _sw_dd_trough_idx = int(_sw_dd_series.idxmin())
@@ -10967,57 +10979,197 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _sw_dd_trough_idx = None
                                 _sw_dd_peak_idx   = None
 
-                            _sw_fig_cum_r = go.Figure()
-                            _sw_fig_cum_r.add_trace(go.Scatter(
-                                x=list(range(len(_sw_cum_r_vals))),
-                                y=_sw_cum_r_vals.tolist(),
-                                mode="lines",
-                                name="Cumulative R",
-                                line=dict(color="#1f77b4", width=2),
-                            ))
+                            if _sw_chart_view == "Cumulative R":
+                                _sw_fig_cum_r = go.Figure()
+                                _sw_fig_cum_r.add_trace(go.Scatter(
+                                    x=list(range(len(_sw_cum_r_vals))),
+                                    y=_sw_cum_r_vals.tolist(),
+                                    mode="lines",
+                                    name="Cumulative R",
+                                    line=dict(color="#1f77b4", width=2),
+                                ))
 
-                            if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
-                                _sw_fig_cum_r.add_vrect(
-                                    x0=_sw_dd_peak_idx,
-                                    x1=_sw_dd_trough_idx,
-                                    fillcolor="rgba(220, 50, 50, 0.15)",
+                                if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
+                                    _sw_fig_cum_r.add_vrect(
+                                        x0=_sw_dd_peak_idx,
+                                        x1=_sw_dd_trough_idx,
+                                        fillcolor="rgba(220, 50, 50, 0.15)",
+                                        layer="below",
+                                        line_width=0,
+                                    )
+                                    _sw_fig_cum_r.add_trace(go.Scatter(
+                                        x=[_sw_dd_peak_idx],
+                                        y=[float(_sw_cum_r_vals.iloc[_sw_dd_peak_idx])],
+                                        mode="markers",
+                                        marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
+                                        name=f"DD Start (trade #{_sw_dd_peak_idx})",
+                                    ))
+                                    _sw_fig_cum_r.add_trace(go.Scatter(
+                                        x=[_sw_dd_trough_idx],
+                                        y=[float(_sw_cum_r_vals.iloc[_sw_dd_trough_idx])],
+                                        mode="markers",
+                                        marker=dict(color="#d62728", size=10, symbol="triangle-up"),
+                                        name=f"DD End (trade #{_sw_dd_trough_idx})",
+                                    ))
+
+                                _sw_fig_cum_r.update_layout(
+                                    height=240,
+                                    margin=dict(l=0, r=0, t=10, b=30),
+                                    xaxis_title="Trade #",
+                                    yaxis_title="Cumulative R",
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                    plot_bgcolor="rgba(0,0,0,0)",
+                                    paper_bgcolor="rgba(0,0,0,0)",
+                                )
+                                _sw_fig_cum_r.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                                _sw_fig_cum_r.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                                st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade across all TCS floors")
+                                st.plotly_chart(_sw_fig_cum_r, use_container_width=True)
+
+                                if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
+                                    st.caption(
+                                        f"🔴 Max drawdown period: trade\u00a0**#{_sw_dd_peak_idx}** → **#{_sw_dd_trough_idx}**"
+                                        f"\u2002({_sw_dd_trough_idx - _sw_dd_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_sw_max_dd_r)}R**"
+                                    )
+                            else:
+                                # ── Dual-axis: Equity ($) left, Cumulative R right ──
+                                _sw_start_eq   = float(st.session_state.get("bt_mc_equity", 10_000))
+                                _sw_risk_frac  = st.session_state.get("bt_mc_risk", 2.0) / 100.0
+                                _sw_risk_amt   = _sw_start_eq * _sw_risk_frac
+                                _sw_eq_curve: list = [_sw_start_eq]
+                                for _sw_rv in _sw_r_ser:
+                                    _sw_eq_curve.append(_sw_eq_curve[-1] + _sw_risk_amt * float(_sw_rv))
+
+                                # Prepend 0 to cum_r so both series share x=0 = before any trade
+                                _sw_cum_r_both = _pd_bt.concat(
+                                    [_pd_bt.Series([0.0]), _sw_cum_r_vals], ignore_index=True
+                                )
+                                _sw_n_eq   = len(_sw_eq_curve)
+                                _sw_x_eq   = list(range(_sw_n_eq))
+                                _sw_x_r    = list(range(len(_sw_cum_r_both)))
+
+                                # Normalise to find peak divergence
+                                _sw_eq_arr   = _pd_bt.Series(_sw_eq_curve, dtype=float)
+                                _sw_r_arr    = _pd_bt.Series(_sw_cum_r_both, dtype=float)
+                                _sw_min_len  = min(len(_sw_eq_arr), len(_sw_r_arr))
+                                _sw_eq_arr   = _sw_eq_arr.iloc[:_sw_min_len]
+                                _sw_r_arr    = _sw_r_arr.iloc[:_sw_min_len]
+                                _sw_eq_range = _sw_eq_arr.max() - _sw_eq_arr.min()
+                                _sw_r_range  = _sw_r_arr.max()  - _sw_r_arr.min()
+                                _sw_eq_norm  = (_sw_eq_arr - _sw_eq_arr.min()) / _sw_eq_range if _sw_eq_range != 0 else _sw_eq_arr * 0
+                                _sw_r_norm   = (_sw_r_arr  - _sw_r_arr.min())  / _sw_r_range  if _sw_r_range  != 0 else _sw_r_arr  * 0
+                                _sw_div_arr  = _sw_eq_norm - _sw_r_norm
+                                _sw_div_abs  = _sw_div_arr.abs()
+                                _sw_max_div_idx = int(_sw_div_abs.idxmax())
+                                _sw_max_div_val = float(_sw_div_arr.iloc[_sw_max_div_idx])
+                                if abs(_sw_max_div_val) < 0.02:
+                                    _sw_div_msg = "Equity and R track closely — position sizing matched raw edge well"
+                                elif _sw_max_div_val > 0:
+                                    _sw_div_msg = "Position sizing amplified raw edge here (equity outpaced R)"
+                                else:
+                                    _sw_div_msg = "Position sizing dampened raw edge here (equity lagged R)"
+
+                                _sw_fig_dual = go.Figure()
+
+                                # Shaded band at max-divergence point
+                                _sw_band_half = max(1, round(_sw_min_len * 0.015))
+                                _sw_fig_dual.add_vrect(
+                                    x0=max(0, _sw_max_div_idx - _sw_band_half),
+                                    x1=min(_sw_min_len - 1, _sw_max_div_idx + _sw_band_half),
+                                    fillcolor="rgba(255, 214, 0, 0.12)",
                                     layer="below",
                                     line_width=0,
                                 )
-                                _sw_fig_cum_r.add_trace(go.Scatter(
-                                    x=[_sw_dd_peak_idx],
-                                    y=[float(_sw_cum_r_vals.iloc[_sw_dd_peak_idx])],
-                                    mode="markers",
-                                    marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
-                                    name=f"DD Start (trade #{_sw_dd_peak_idx})",
-                                ))
-                                _sw_fig_cum_r.add_trace(go.Scatter(
-                                    x=[_sw_dd_trough_idx],
-                                    y=[float(_sw_cum_r_vals.iloc[_sw_dd_trough_idx])],
-                                    mode="markers",
-                                    marker=dict(color="#d62728", size=10, symbol="triangle-up"),
-                                    name=f"DD End (trade #{_sw_dd_trough_idx})",
-                                ))
-
-                            _sw_fig_cum_r.update_layout(
-                                height=240,
-                                margin=dict(l=0, r=0, t=10, b=30),
-                                xaxis_title="Trade #",
-                                yaxis_title="Cumulative R",
-                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                                plot_bgcolor="rgba(0,0,0,0)",
-                                paper_bgcolor="rgba(0,0,0,0)",
-                            )
-                            _sw_fig_cum_r.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
-                            _sw_fig_cum_r.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
-                            st.caption("**Cumulative R (raw edge)** — sum of R multiples trade by trade across all TCS floors")
-                            st.plotly_chart(_sw_fig_cum_r, use_container_width=True)
-
-                            if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
-                                st.caption(
-                                    f"🔴 Max drawdown period: trade\u00a0**#{_sw_dd_peak_idx}** → **#{_sw_dd_trough_idx}**"
-                                    f"\u2002({_sw_dd_trough_idx - _sw_dd_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_sw_max_dd_r)}R**"
+                                _sw_fig_dual.add_vline(
+                                    x=_sw_max_div_idx,
+                                    line=dict(color="rgba(255, 214, 0, 0.7)", width=1.5, dash="dot"),
+                                    annotation_text=f"Max divergence (trade #{_sw_max_div_idx})",
+                                    annotation_position="top left",
+                                    annotation_font=dict(color="#ffd600", size=11),
                                 )
+
+                                # Drawdown shading on the R axis.
+                                # _sw_cum_r_both has a prepended 0.0 baseline, so trade k
+                                # is plotted at x=k+1; shift vrect indices accordingly.
+                                if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
+                                    _sw_fig_dual.add_vrect(
+                                        x0=_sw_dd_peak_idx + 1,
+                                        x1=_sw_dd_trough_idx + 1,
+                                        fillcolor="rgba(220, 50, 50, 0.10)",
+                                        layer="below",
+                                        line_width=0,
+                                    )
+
+                                _sw_fig_dual.add_trace(go.Scatter(
+                                    x=_sw_x_eq,
+                                    y=_sw_eq_curve,
+                                    name="Equity ($)",
+                                    mode="lines",
+                                    line=dict(color="#4fc3f7", width=2),
+                                    yaxis="y1",
+                                ))
+                                _sw_fig_dual.add_trace(go.Scatter(
+                                    x=_sw_x_r,
+                                    y=list(_sw_cum_r_both),
+                                    name="Cumulative R",
+                                    mode="lines",
+                                    line=dict(color="#ef9a9a", width=2),
+                                    yaxis="y2",
+                                ))
+                                _sw_fig_dual.update_layout(
+                                    height=340,
+                                    margin=dict(l=10, r=10, t=10, b=10),
+                                    paper_bgcolor="rgba(0,0,0,0)",
+                                    plot_bgcolor="rgba(0,0,0,0)",
+                                    dragmode="zoom",
+                                    legend=dict(
+                                        orientation="h",
+                                        yanchor="bottom", y=1.02,
+                                        xanchor="right", x=1,
+                                        font=dict(color="#cccccc"),
+                                    ),
+                                    xaxis=dict(
+                                        title="Trade #",
+                                        gridcolor="#1a1a2e",
+                                        color="#cccccc",
+                                        zeroline=False,
+                                        rangeslider=dict(visible=True, thickness=0.08),
+                                    ),
+                                    yaxis=dict(
+                                        title=dict(text="Equity ($)", font=dict(color="#4fc3f7")),
+                                        tickfont=dict(color="#4fc3f7"),
+                                        gridcolor="#1a1a2e",
+                                        zeroline=True,
+                                        zerolinecolor="#555",
+                                    ),
+                                    yaxis2=dict(
+                                        title=dict(text="Cumulative R", font=dict(color="#ef9a9a")),
+                                        tickfont=dict(color="#ef9a9a"),
+                                        overlaying="y",
+                                        side="right",
+                                        gridcolor="rgba(0,0,0,0)",
+                                        zeroline=False,
+                                    ),
+                                )
+                                st.plotly_chart(
+                                    _sw_fig_dual,
+                                    use_container_width=True,
+                                    config={
+                                        "scrollZoom": True,
+                                        "displayModeBar": True,
+                                        "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+                                        "toImageButtonOptions": {"format": "png"},
+                                    },
+                                )
+                                st.caption(
+                                    f"**Equity & R** — divergences reveal where position sizing amplifies or dampens raw edge"
+                                    f"\u2002|\u2002🟡 **Trade\u00a0#{_sw_max_div_idx}**: {_sw_div_msg}"
+                                )
+                                if _sw_dd_trough_idx is not None and _sw_dd_peak_idx is not None:
+                                    st.caption(
+                                        f"🔴 Max drawdown period: trade\u00a0**#{_sw_dd_peak_idx}** → **#{_sw_dd_trough_idx}**"
+                                        f"\u2002({_sw_dd_trough_idx - _sw_dd_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_sw_max_dd_r)}R**"
+                                    )
 
                             # ── Visual R-stats metric chips ───────────────────────
                             _sw_exp_clr = "#66bb6a" if _sw_exp_r >= 0 else "#ef5350"
