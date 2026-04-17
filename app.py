@@ -8653,6 +8653,33 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sm4.metric("Avg Win", f"${_avg_win:,.0f}")
                         _sm5.metric("Profit Factor", _pf_str)
 
+                        # ── Win/loss split bar ────────────────────────────────────────────
+                        _sm_pnl_neutral  = int((_rp_df["P&L ($)"] == 0).sum())
+                        _sm_pnl_losses   = int((_rp_df["P&L ($)"] < 0).sum())
+                        _sm_bar_win_pct  = (_pnl_wins      / _total_trades * 100) if _total_trades else 0.0
+                        _sm_bar_loss_pct = (_sm_pnl_losses / _total_trades * 100) if _total_trades else 0.0
+                        _sm_bar_neut_pct = (_sm_pnl_neutral / _total_trades * 100) if _total_trades else 0.0
+                        st.markdown(
+                            f"""
+                            <div style="margin:4px 0 10px 0;">
+                              <div style="
+                                  display:flex;width:100%;height:6px;border-radius:3px;overflow:hidden;
+                                  background:rgba(255,255,255,0.06);
+                              ">
+                                <div style="width:{_sm_bar_win_pct:.2f}%;background:#66bb6a;"></div>
+                                <div style="width:{_sm_bar_loss_pct:.2f}%;background:#ef5350;"></div>
+                                <div style="width:{_sm_bar_neut_pct:.2f}%;background:#546e7a;"></div>
+                              </div>
+                              <div style="display:flex;gap:12px;margin-top:4px;font-size:11px;">
+                                <span style="color:#66bb6a;font-weight:700;">✔ {_pnl_wins} Win{"s" if _pnl_wins != 1 else ""}</span>
+                                <span style="color:#ef5350;font-weight:700;">✘ {_sm_pnl_losses} Loss{"es" if _sm_pnl_losses != 1 else ""}</span>
+                                <span style="color:#90a4ae;">— {_sm_pnl_neutral} Neutral</span>
+                              </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
                         # ── R-based stats row (only when column is present) ───────────────
                         _has_r_col = "R (MFE)" in _rp_df.columns
                         _avg_win_r = _avg_loss_r = 0
