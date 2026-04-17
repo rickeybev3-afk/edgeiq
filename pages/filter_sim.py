@@ -528,21 +528,37 @@ with pnl_c1:
     )
 with pnl_c2:
     pnl_risk_mode = st.radio(
-        "Risk sizing", ["Fixed $ per trade", "% of equity (compounding)"],
-        horizontal=True, key="fs_pnl_mode",
+        "Risk sizing",
+        ["Fixed position size ($)", "Fixed risk $ per trade", "% of equity (compounding)"],
+        horizontal=False, key="fs_pnl_mode",
     )
 with pnl_c3:
-    if pnl_risk_mode == "Fixed $ per trade":
+    if pnl_risk_mode == "Fixed position size ($)":
+        pnl_pos_size = st.number_input(
+            "Position size ($)", min_value=100, max_value=500_000,
+            value=1500, step=100, key="fs_pnl_pos_size",
+            help="Total dollars put into each trade (e.g. $1,500).",
+        )
+        pnl_stop_pct = st.number_input(
+            "Avg stop % (of position)", min_value=1.0, max_value=50.0,
+            value=10.0, step=0.5, key="fs_pnl_stop_pct",
+            help="Your typical stop-loss as a % of position size. 10% stop on $1,500 = $150 risk (1R).",
+        )
+        pnl_fixed_risk = round(float(pnl_pos_size) * float(pnl_stop_pct) / 100.0, 2)
+        pnl_risk_pct = None
+        st.caption(f"→ 1R = **${pnl_fixed_risk:,.0f}** per trade")
+    elif pnl_risk_mode == "Fixed risk $ per trade":
         pnl_fixed_risk = st.number_input(
-            "Risk $ per trade", min_value=50, max_value=50_000,
-            value=300, step=50, key="fs_pnl_risk",
+            "Risk $ per trade (1R)", min_value=10, max_value=50_000,
+            value=150, step=10, key="fs_pnl_risk",
+            help="Dollar amount you lose when stopped out (1R). E.g. $150 = 2.1% of a $7k account.",
         )
         pnl_risk_pct = None
     else:
         pnl_risk_pct = st.number_input(
             "Risk % per trade", min_value=0.5, max_value=10.0,
-            value=4.3, step=0.1, key="fs_pnl_risk_pct",
-            help="% of current equity risked per trade (1R = this amount)",
+            value=2.1, step=0.1, key="fs_pnl_risk_pct",
+            help="% of current equity risked per trade (1R = this amount). Compounds as equity grows.",
         )
         pnl_fixed_risk = None
 
@@ -591,7 +607,7 @@ else:
             pass
 
     # ── Risk % warning ─────────────────────────────────────────────────────────
-    if pnl_risk_mode == "Fixed $ per trade":
+    if pnl_fixed_risk is not None:
         _risk_pct_warn = float(pnl_fixed_risk) / float(pnl_equity) * 100
         if _risk_pct_warn > 10:
             st.warning(
