@@ -546,11 +546,38 @@ with pnl_c3:
         )
         pnl_fixed_risk = None
 
+# ── Date range filter ──────────────────────────────────────────────────────────
+_all_sorted = sorted(final, key=lambda r: r.get("sim_date") or "")
+_all_sim_dates = [r["sim_date"] for r in _all_sorted if r.get("sim_date")]
+_data_min = datetime.strptime(_all_sim_dates[0],  "%Y-%m-%d").date() if _all_sim_dates else datetime(2021, 6, 1).date()
+_data_max = datetime.strptime(_all_sim_dates[-1], "%Y-%m-%d").date() if _all_sim_dates else datetime.today().date()
+
+_dr_c1, _dr_c2 = st.columns(2)
+with _dr_c1:
+    pnl_date_start = st.date_input(
+        "Sim start date", value=_data_min, min_value=_data_min, max_value=_data_max,
+        key="fs_pnl_date_start",
+        help="Only include trades on or after this date in the P&L simulation.",
+    )
+with _dr_c2:
+    pnl_date_end = st.date_input(
+        "Sim end date", value=_data_max, min_value=_data_min, max_value=_data_max,
+        key="fs_pnl_date_end",
+        help="Only include trades on or before this date in the P&L simulation.",
+    )
+
 if s3["n"] == 0:
     st.info("No trades pass the current filters. Adjust sliders above.")
 else:
     # ── Sort and extract date range ────────────────────────────────────────────
-    sorted_trades = sorted(final, key=lambda r: r.get("sim_date") or "")
+    sorted_trades = [
+        r for r in _all_sorted
+        if r.get("sim_date")
+        and str(pnl_date_start) <= r["sim_date"] <= str(pnl_date_end)
+    ]
+    if not sorted_trades:
+        st.info("No trades fall within the selected date range. Adjust the sim start/end dates above.")
+        st.stop()
     sim_dates = [r["sim_date"] for r in sorted_trades if r.get("sim_date")]
     sim_start_str = sim_dates[0]  if sim_dates else None
     sim_end_str   = sim_dates[-1] if sim_dates else None
