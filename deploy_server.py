@@ -146,6 +146,64 @@ def _load_owner_prefs() -> dict:
     return result
 
 
+def _load_all_subscriber_prefs() -> list:
+    """Return a list of all subscribers with their credential_alerts_enabled status.
+
+    Queries user_preferences from Supabase (all rows) or local file fallback.
+    Each entry:  {"user_id": str, "credential_alerts_enabled": bool}
+    """
+    result = []
+
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_key = (
+        os.environ.get("SUPABASE_KEY") or
+        os.environ.get("SUPABASE_ANON_KEY") or
+        os.environ.get("VITE_SUPABASE_ANON_KEY") or
+        ""
+    )
+    if supabase_url and supabase_key:
+        try:
+            import urllib.request as _ur
+            req = _ur.Request(
+                f"{supabase_url}/rest/v1/user_preferences?select=user_id,prefs",
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Accept": "application/json",
+                },
+            )
+            with _ur.urlopen(req, timeout=4) as resp:
+                rows = json.loads(resp.read())
+                for row in rows:
+                    uid = row.get("user_id", "")
+                    raw = row.get("prefs", "{}")
+                    prefs = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                    result.append({
+                        "user_id": uid,
+                        "credential_alerts_enabled": prefs.get("credential_alerts_enabled", True) is not False,
+                    })
+            return result
+        except Exception:
+            pass
+
+    # Local file fallback
+    try:
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                all_prefs = json.load(_f)
+            for uid, prefs in all_prefs.items():
+                if not isinstance(prefs, dict):
+                    continue
+                result.append({
+                    "user_id": uid,
+                    "credential_alerts_enabled": prefs.get("credential_alerts_enabled", True) is not False,
+                })
+    except Exception:
+        pass
+
+    return result
+
+
 def _save_owner_prefs(prefs: dict) -> None:
     """Persist the owner's user preferences to local file + Supabase.
 
@@ -392,6 +450,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/credential-alerts":
             self._credential_alerts_get()
             return
+        if path == "/api/subscribers/credential-alerts":
+            self._subscribers_credential_alerts_get()
+            return
         if path == "/api/db-events":
             self._db_events_get()
             return
@@ -568,6 +629,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             prefs = _load_owner_prefs()
             enabled = prefs.get("credential_alerts_enabled", True)
             body = json.dumps({"enabled": bool(enabled)}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _subscribers_credential_alerts_get(self):
+        """Return all subscribers with their credential_alerts_enabled opt-out status.
+
+        Queries all rows in user_preferences (Supabase first, local file fallback)
+        and returns a list of objects:
+          [{"user_id": str, "credential_alerts_enabled": bool}, ...]
+        """
+        try:
+            subscribers = _load_all_subscriber_prefs()
+            body = json.dumps({"subscribers": subscribers}).encode()
             self.send_response(200)
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()

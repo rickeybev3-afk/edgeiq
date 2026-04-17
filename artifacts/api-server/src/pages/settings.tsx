@@ -19,6 +19,17 @@ interface CredentialAlertsState {
   saved: boolean;
 }
 
+interface SubscriberCredentialStatus {
+  user_id: string;
+  credential_alerts_enabled: boolean;
+}
+
+interface SubscribersState {
+  subscribers: SubscriberCredentialStatus[];
+  loading: boolean;
+  error: string | null;
+}
+
 interface BackfillHealth {
   available: boolean;
   loading: boolean;
@@ -60,6 +71,12 @@ export default function Settings() {
     saved: false,
   });
 
+  const [subscribersState, setSubscribersState] = useState<SubscribersState>({
+    subscribers: [],
+    loading: true,
+    error: null,
+  });
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/trading-mode")
@@ -81,6 +98,31 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/subscribers/credential-alerts")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setSubscribersState({
+            subscribers: Array.isArray(data.subscribers) ? data.subscribers : [],
+            loading: false,
+            error: null,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load subscriber list.";
+          setSubscribersState({ subscribers: [], loading: false, error: msg });
+        }
+      });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -138,8 +180,8 @@ export default function Settings() {
   }, []);
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#backfill-health"],
-    [state.loading, credAlerts.loading, backfillHealth.loading],
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading],
   );
 
   async function handleChange(newMode: TradingMode) {
@@ -327,6 +369,55 @@ export default function Settings() {
             <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
               ⚠ {credAlerts.error}
             </p>
+          )}
+        </section>
+
+        <section
+          id="subscriber-opt-out"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "24px",
+            marginBottom: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Per-Subscriber Credential Alert Status
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            Shows whether each subscriber will receive credential failure alerts.
+            Subscribers can opt out via the Telegram bot's /settings command.
+          </p>
+
+          {subscribersState.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : subscribersState.error ? (
+            <p style={{ fontSize: "13px", color: "#f87171" }}>⚠ {subscribersState.error}</p>
+          ) : subscribersState.subscribers.length === 0 ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "14px 16px",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #2d3748",
+                borderRadius: "8px",
+                color: "#64748b",
+                fontSize: "13px",
+              }}
+            >
+              <span style={{ fontSize: "16px" }}>—</span>
+              No subscribers found. Subscribers appear here once they have connected via Telegram.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {subscribersState.subscribers.map((sub) => (
+                <SubscriberRow key={sub.user_id} subscriber={sub} />
+              ))}
+            </div>
           )}
         </section>
 
@@ -530,6 +621,65 @@ function ModeButton({
         {description}
       </p>
     </button>
+  );
+}
+
+function SubscriberRow({ subscriber }: { subscriber: SubscriberCredentialStatus }) {
+  const enabled = subscriber.credential_alerts_enabled;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "12px 16px",
+        background: "rgba(255,255,255,0.03)",
+        border: `1px solid ${enabled ? "#2d3748" : "#7f1d1d"}`,
+        borderRadius: "8px",
+      }}
+    >
+      <div style={{ flex: 1, marginRight: "16px", overflow: "hidden" }}>
+        <div
+          style={{
+            fontSize: "13px",
+            fontFamily: "monospace",
+            color: "#cbd5e1",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {subscriber.user_id}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          flexShrink: 0,
+        }}
+      >
+        <span
+          style={{
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            background: enabled ? "#22c55e" : "#ef4444",
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
+            fontSize: "12px",
+            fontWeight: 600,
+            color: enabled ? "#4ade80" : "#f87171",
+          }}
+        >
+          {enabled ? "Enabled" : "Opted out"}
+        </span>
+      </div>
+    </div>
   );
 }
 
