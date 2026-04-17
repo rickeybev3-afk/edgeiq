@@ -10953,6 +10953,87 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"**{_tk_d_wr:.1f}% WR** · "
                                 f"Net P&L: **{_tk_d_sign}${_tk_d_pnl:,.0f}**"
                             )
+
+                            # ── Cumulative R chart for selected TCS floor ─────────
+                            _drill_r_col = (
+                                "eod_pnl_r" if "eod_pnl_r" in _tk_drill_df.columns
+                                else ("tiered_pnl_r" if "tiered_pnl_r" in _tk_drill_df.columns else None)
+                            )
+                            if _drill_r_col is not None:
+                                _drill_r_ser = _pd_bt.to_numeric(
+                                    _tk_drill_df[_drill_r_col], errors="coerce"
+                                ).dropna().reset_index(drop=True)
+                                if len(_drill_r_ser) > 0:
+                                    _drill_cum_r = _drill_r_ser.cumsum().reset_index(drop=True)
+                                    _drill_peak  = _drill_cum_r.cummax()
+                                    _drill_dd    = _drill_cum_r - _drill_peak
+                                    _drill_max_dd = round(_drill_dd.min(), 2)
+
+                                    if _drill_max_dd < 0:
+                                        _drill_trough_idx = int(_drill_dd.idxmin())
+                                        _drill_peak_idx   = int(_drill_cum_r.iloc[:_drill_trough_idx + 1].idxmax())
+                                    else:
+                                        _drill_trough_idx = None
+                                        _drill_peak_idx   = None
+
+                                    _drill_fig = go.Figure()
+                                    _drill_fig.add_trace(go.Scatter(
+                                        x=list(range(len(_drill_cum_r))),
+                                        y=_drill_cum_r.tolist(),
+                                        mode="lines",
+                                        name="Cumulative R",
+                                        line=dict(color="#1f77b4", width=2),
+                                    ))
+
+                                    if _drill_trough_idx is not None and _drill_peak_idx is not None:
+                                        _drill_fig.add_vrect(
+                                            x0=_drill_peak_idx,
+                                            x1=_drill_trough_idx,
+                                            fillcolor="rgba(220, 50, 50, 0.15)",
+                                            layer="below",
+                                            line_width=0,
+                                        )
+                                        _drill_fig.add_trace(go.Scatter(
+                                            x=[_drill_peak_idx],
+                                            y=[float(_drill_cum_r.iloc[_drill_peak_idx])],
+                                            mode="markers",
+                                            marker=dict(color="#2ca02c", size=10, symbol="triangle-down"),
+                                            name=f"DD Start (trade #{_drill_peak_idx})",
+                                        ))
+                                        _drill_fig.add_trace(go.Scatter(
+                                            x=[_drill_trough_idx],
+                                            y=[float(_drill_cum_r.iloc[_drill_trough_idx])],
+                                            mode="markers",
+                                            marker=dict(color="#d62728", size=10, symbol="triangle-up"),
+                                            name=f"DD End (trade #{_drill_trough_idx})",
+                                        ))
+
+                                    _drill_fig.update_layout(
+                                        height=240,
+                                        margin=dict(l=0, r=0, t=10, b=30),
+                                        xaxis_title="Trade #",
+                                        yaxis_title="Cumulative R",
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                        plot_bgcolor="rgba(0,0,0,0)",
+                                        paper_bgcolor="rgba(0,0,0,0)",
+                                    )
+                                    _drill_fig.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+                                    _drill_fig.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+
+                                    _drill_r_label = "EOD Hold R" if _drill_r_col == "eod_pnl_r" else "Tiered Exit R"
+                                    _drill_plotted_n = len(_drill_r_ser)
+                                    st.caption(
+                                        f"**Cumulative R ({_drill_r_label})** — {_drill_plotted_n} trades with R data "
+                                        f"(TCS ≥ {_tk_drill_floor})"
+                                    )
+                                    st.plotly_chart(_drill_fig, use_container_width=True)
+
+                                    if _drill_trough_idx is not None and _drill_peak_idx is not None:
+                                        st.caption(
+                                            f"🔴 Max drawdown period: trade\u00a0**#{_drill_peak_idx}** → **#{_drill_trough_idx}**"
+                                            f"\u2002({_drill_trough_idx - _drill_peak_idx} trades)\u2002|\u2002magnitude\u00a0**{abs(_drill_max_dd)}R**"
+                                        )
+
                             _tk_date_col = (
                                 "sim_date"
                                 if "sim_date" in _tk_drill_df.columns
