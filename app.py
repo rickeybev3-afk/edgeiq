@@ -8339,6 +8339,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         unsafe_allow_html=True,
                     )
 
+                    _active_sort_nth = (
+                        list(_opt_all_cols).index(_opt_sort_col) + 1
+                        if _opt_sort_col in _opt_all_cols else 1
+                    )
+                    st.markdown(
+                        f"""<style>
+                        [data-testid="stHorizontalBlock"]:has(
+                            [data-testid="column"]:nth-child({len(_opt_all_cols)})
+                            button[data-testid="stBaseButton-secondary"]
+                        ) [data-testid="column"]:nth-child({_active_sort_nth})
+                          button[data-testid="stBaseButton-secondary"] {{
+                            background-color: #0d2a1a !important;
+                            border: 1px solid #00e676 !important;
+                            color: #00e676 !important;
+                            font-weight: 700 !important;
+                        }}
+                        </style>""",
+                        unsafe_allow_html=True,
+                    )
                     _hdr_cols = st.columns(len(_opt_all_cols))
                     for _hci, _hcn in enumerate(_opt_all_cols):
                         _arrow = (" ▲" if _opt_sort_asc else " ▼") if _hcn == _opt_sort_col else ""
