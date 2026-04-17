@@ -666,10 +666,14 @@ else:
     net_return_pct = (final_equity - float(pnl_equity)) / float(pnl_equity) * 100
     avg_trade_amt  = (final_equity - float(pnl_equity)) / s3["n"] if s3["n"] else 0
 
-    # Annualised return (CAGR)
+    # Annualised return (CAGR) — skip if period too short to annualise meaningfully
     ann_return = None
-    if trading_years and float(pnl_equity) > 0 and final_equity > 0:
-        ann_return = ((final_equity / float(pnl_equity)) ** (1.0 / trading_years) - 1) * 100
+    if trading_years and trading_years >= 0.25 and float(pnl_equity) > 0 and final_equity > 0:
+        try:
+            _raw_cagr = ((final_equity / float(pnl_equity)) ** (1.0 / trading_years) - 1) * 100
+            ann_return = _raw_cagr if _raw_cagr <= 99_999 else None  # cap at 99,999%
+        except (OverflowError, ZeroDivisionError, ValueError):
+            ann_return = None
 
     trades_per_yr = s3["n"] / trading_years if trading_years else None
 
@@ -700,7 +704,7 @@ else:
     m1.metric("Final Equity",    fmt_money(final_equity),
               delta=f"{net_return_pct:+.1f}% total")
     m2.metric("CAGR (annualised)",
-              f"{ann_return:+.1f}%" if ann_return is not None else "n/a",
+              f"{ann_return:+.1f}%" if ann_return is not None else "n/a (< 3 months)",
               delta=f"over {trading_years:.1f} yrs" if trading_years else None)
     m3.metric("Max Drawdown",    fmt_money(max_dd_dollar),
               delta=f"{max_dd_pct:.1f}% from peak")
