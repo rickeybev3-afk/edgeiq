@@ -53,6 +53,75 @@ from backend import (
     save_tcs_alert_structures,
 )
 
+# ── Cached DB-loader wrappers (ttl=300 s ≈ 5 min) ────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_journal(user_id: str = ""):
+    return load_journal(user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_accuracy_tracker(user_id: str = ""):
+    return load_accuracy_tracker(user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_paper_trades(user_id: str = "", days: int = 365):
+    return load_paper_trades(user_id=user_id, days=days)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_user_prefs(user_id: str = ""):
+    return load_user_prefs(user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_watchlist(user_id: str = ""):
+    return load_watchlist(user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_watchlist_predictions(user_id: str = "", pred_date=None):
+    return load_watchlist_predictions(user_id=user_id, pred_date=pred_date)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_eod_notes(user_id: str = "", limit: int = 60):
+    return load_eod_notes(user_id=user_id, limit=limit)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_tcs_alert_structures():
+    return load_tcs_alert_structures()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_tcs_threshold_history(days: int = 14):
+    return load_tcs_threshold_history(days=days)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_tcs_thresholds(default: int = 50):
+    return load_tcs_thresholds(default=default)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_high_conviction_log():
+    return load_high_conviction_log()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_brain_weights(user_id: str = ""):
+    return load_brain_weights(user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_sa_journal():
+    return load_sa_journal()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_ranking_accuracy(user_id: str = ""):
+    return load_ranking_accuracy(user_id=user_id)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_ticker_rankings(user_id: str = "", rating_date=None):
+    return load_ticker_rankings(user_id=user_id, rating_date=rating_date)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_cognitive_delta_today(user_id: str = "", trade_date=None):
+    return load_cognitive_delta_today(user_id=user_id, trade_date=trade_date)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_cognitive_delta_analysis(user_id: str = ""):
+    return load_cognitive_delta_analysis(user_id=user_id)
+
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
 def _regenerate_notes_html():
     import json as _json
@@ -312,7 +381,7 @@ for _k, _v in _DEFAULTS.items():
 # ── Restore today's brain accuracy counters from Supabase on first load ────────
 if st.session_state.brain_session_total == 0:
     try:
-        _restore_df = load_accuracy_tracker()
+        _restore_df = _cached_load_accuracy_tracker()
         if "timestamp" in _restore_df.columns and not _restore_df.empty:
             _today_str  = datetime.now(EASTERN).strftime("%Y-%m-%d")
             _today_rows = _restore_df[
@@ -620,7 +689,7 @@ def render_beta_portal(beta_user_id: str):
                     st.warning("No closed trades found. Make sure you exported Order History (not Account History).")
                 else:
                     # Dedup against existing journal
-                    _b_existing = load_journal(user_id=beta_user_id)
+                    _b_existing = _cached_load_journal(user_id=beta_user_id)
                     _b_existing_keys: set = set()
                     if not _b_existing.empty:
                         for _, _br in _b_existing.iterrows():
@@ -718,7 +787,7 @@ def render_beta_portal(beta_user_id: str):
                     unsafe_allow_html=True)
         st.caption("Connect Telegram to receive morning scanner setups and end-of-day results each trading day.")
 
-        _b_prefs = load_user_prefs(beta_user_id)
+        _b_prefs = _cached_load_user_prefs(user_id=beta_user_id)
         _b_chat_id = _b_prefs.get("tg_chat_id")
 
         if _b_chat_id:
@@ -839,7 +908,7 @@ def render_trade_journal_page():
     _, col, _ = st.columns([1, 4, 1])
     with col:
 
-        _tj_journal = load_journal(user_id=_tj_uid)
+        _tj_journal = _cached_load_journal(user_id=_tj_uid)
         _tj_count = len(_tj_journal) if not _tj_journal.empty else 0
 
         _tj_acc_rows = []
@@ -898,7 +967,7 @@ def render_trade_journal_page():
                 if not _tj_trades:
                     st.warning("No closed trades found. Make sure you exported Order History.")
                 else:
-                    _tj_existing = load_journal(user_id=_tj_uid)
+                    _tj_existing = _cached_load_journal(user_id=_tj_uid)
                     _tj_existing_keys: set = set()
                     if not _tj_existing.empty:
                         for _, _r in _tj_existing.iterrows():
@@ -953,7 +1022,7 @@ def render_trade_journal_page():
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ── TCS Threshold History (last 14 days) ───────────────────────────────
-        _tcs_hist = load_tcs_threshold_history(days=14)
+        _tcs_hist = _cached_load_tcs_threshold_history(days=14)
         if _tcs_hist:
             import pandas as _pd
             st.markdown(
@@ -1123,7 +1192,7 @@ def render_log_entry_ui():
             )
 
     # ── Recent Trades preview (last 10 from Supabase) ─────────────────────────
-    _recent_df = load_journal(user_id=st.session_state.get("auth_user_id", ""))
+    _recent_df = _cached_load_journal(user_id=st.session_state.get("auth_user_id", ""))
     if not _recent_df.empty:
         _cols = [c for c in ["timestamp", "ticker", "price", "structure", "grade"]
                  if c in _recent_df.columns]
@@ -1182,7 +1251,7 @@ def render_log_entry_ui():
 def render_journal_tab(api_key: str = "", secret_key: str = ""):
     """Render the 📖 My Journal tab."""
     _uid = st.session_state.get("auth_user_id", "")
-    df = load_journal(user_id=_uid)
+    df = _cached_load_journal(user_id=_uid)
 
     with st.expander("📋 How to use this tab — read this first", expanded=df.empty):
         st.markdown(
@@ -1973,7 +2042,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
     st.caption("Chart screenshots, trendline notes, and watchlist for tomorrow — all saved per day.")
 
     # ── Pre-market watchlist prediction panel ─────────────────────────────────
-    _pm_preds_df = load_watchlist_predictions(user_id=_uid, pred_date=date.today())
+    _pm_preds_df = _cached_load_watchlist_predictions(user_id=_uid, pred_date=date.today())
     if not _pm_preds_df.empty:
         _pm_tickers = _pm_preds_df["ticker"].tolist()
         _pm_verified_count = int(_pm_preds_df["verified"].sum()) if "verified" in _pm_preds_df.columns else 0
@@ -2275,14 +2344,14 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             else:
                 st.warning("⚠️ Saved locally — will sync to cloud on next load when Supabase is available.")
             # Auto-reload so changes appear immediately without manual button click
-            _raw_notes = load_eod_notes(user_id=_uid, limit=100)
+            _raw_notes = _cached_load_eod_notes(user_id=_uid, limit=100)
             st.session_state["_eod_notes_loaded"] = enrich_eod_from_journal(_raw_notes, df)
             st.rerun()
         else:
             st.error("❌ Save failed completely. Contact support.")
 
     if _eod_load_col.button("📂 Load Past Reviews", use_container_width=True, key="eod_load_btn"):
-        _raw_notes = load_eod_notes(user_id=_uid, limit=100)
+        _raw_notes = _cached_load_eod_notes(user_id=_uid, limit=100)
         st.session_state["_eod_notes_loaded"] = enrich_eod_from_journal(_raw_notes, df)
 
     # ── Display loaded notes ──────────────────────────────────────────────────
@@ -4063,7 +4132,7 @@ if not st.session_state.get("auth_user"):
 _AUTH_USER_ID = st.session_state.get("auth_user_id", "")
 
 if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
-    _prefs = load_user_prefs(_AUTH_USER_ID)
+    _prefs = _cached_load_user_prefs(user_id=_AUTH_USER_ID)
     if _prefs.get("alpaca_key"):
         st.session_state["_pref_alpaca_key"]    = _prefs["alpaca_key"]
     if _prefs.get("alpaca_secret"):
@@ -4135,7 +4204,7 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
     st.session_state["_prefs_loaded"] = True
 
 if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
-    _early_wl = load_watchlist(_AUTH_USER_ID)
+    _early_wl = _cached_load_watchlist(user_id=_AUTH_USER_ID)
     _joined = ", ".join(_early_wl) if _early_wl else _DEFAULT_WATCHLIST
     st.session_state["_watchlist_tickers"] = _joined
     st.session_state["watchlist_raw"]      = _joined
@@ -4298,7 +4367,7 @@ with st.sidebar:
         "Choose which market structures trigger a Telegram alert when the TCS "
         "threshold shifts ≥ 5 pts overnight. Untick all to silence every TCS shift alert."
     )
-    _tcs_opted = load_tcs_alert_structures()
+    _tcs_opted = _cached_load_tcs_alert_structures()
     _tcs_all_keys = list(WK_DISPLAY.keys())
     _tcs_sel: dict = {}
     _tcs_col_a, _tcs_col_b = st.columns(2)
@@ -5644,7 +5713,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
     # Build calibration ticker list: journal tickers first, fallback to defaults
     # ══════════════════════════════════════════════════════════════════════════
     _cal_uid = st.session_state.get("auth_user_id", "")
-    _cal_journal_df = load_journal(user_id=_cal_uid)
+    _cal_journal_df = _cached_load_journal(user_id=_cal_uid)
     if not _cal_journal_df.empty and "ticker" in _cal_journal_df.columns:
         _journal_tickers = sorted(set(
             str(t).upper().strip()
@@ -9301,8 +9370,8 @@ Nothing here requires any input from you. All numbers update automatically as yo
         )
 
     _uid = st.session_state.get("auth_user_id", "")
-    journal_df = load_journal(user_id=_uid)
-    tracker_df = load_accuracy_tracker(user_id=_uid)
+    journal_df = _cached_load_journal(user_id=_uid)
+    tracker_df = _cached_load_accuracy_tracker(user_id=_uid)
 
     with st.spinner("Computing edge analytics…"):
         ana = compute_edge_analytics(journal_df, tracker_df)
@@ -10351,7 +10420,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
         if not _pat_scan_api or not _pat_scan_sec:
             st.error("Add your Alpaca credentials in the sidebar first.")
         else:
-            _pat_jdf = load_journal(user_id=_pat_scan_uid)
+            _pat_jdf = _cached_load_journal(user_id=_pat_scan_uid)
             if _pat_jdf.empty:
                 st.warning("No journal entries found. Import your Webull CSV in the Journal tab first.")
             else:
@@ -10666,7 +10735,7 @@ def render_tracker_tab():
 
     st.markdown("### 🎯 High Conviction Calls  <span style='font-size:13px;color:#888;font-weight:400'>≥ 75% structure probability</span>",
                 unsafe_allow_html=True)
-    _hc_df = load_high_conviction_log()
+    _hc_df = _cached_load_high_conviction_log()
 
     if _hc_df.empty:
         st.info(
@@ -10725,7 +10794,7 @@ def render_tracker_tab():
                 st.rerun()
 
     st.markdown("---")
-    df = load_accuracy_tracker()
+    df = _cached_load_accuracy_tracker()
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — All-Time Structure Distribution
@@ -10973,7 +11042,7 @@ def render_tracker_tab():
     )
 
     _ws_rows = brain_weights_summary(_AUTH_USER_ID)
-    _raw_w   = load_brain_weights(_AUTH_USER_ID)
+    _raw_w   = _cached_load_brain_weights(user_id=_AUTH_USER_ID)
 
     if not _ws_rows:
         st.info(f"Learning begins once at least 5 comparisons are logged for any structure. "
@@ -11653,14 +11722,14 @@ def render_sa_tab():
                 "in_window":   "✅" if in_win else "❌",
                 "notes":       lg_notes,
             }
-            journal = load_sa_journal()
+            journal = _cached_load_sa_journal()
             journal.append(entry)
             save_sa_journal(journal)
             st.success(f"Logged: {lg_tick} | {pnl_p:+.2f}%")
             st.rerun()
 
     # Display journal + cognitive audit split
-    journal = load_sa_journal()
+    journal = _cached_load_sa_journal()
     if journal:
         dfj = pd.DataFrame(journal)
 
@@ -11743,7 +11812,7 @@ def render_performance_tab():
     st.caption(f"Last loaded: {now_et.strftime('%b %d, %Y  %I:%M:%S %p')} ET")
 
     # ── Load paper trades ───────────────────────────────────────────────────────
-    _pt_df = load_paper_trades(_AUTH_USER_ID, days=365)
+    _pt_df = _cached_load_paper_trades(user_id=_AUTH_USER_ID, days=365)
 
     # ── Load backtest sim history (backtest_sim_runs) ────────────────────────
     @st.cache_data(ttl=300, show_spinner=False)
@@ -11786,7 +11855,7 @@ def render_performance_tab():
             _at_all_df = pd.DataFrame()
 
     # ── Load brain weights ───────────────────────────────────────────────────────
-    _bw = load_brain_weights(_AUTH_USER_ID)
+    _bw = _cached_load_brain_weights(user_id=_AUTH_USER_ID)
 
     # ════════════════════════════════════════════════════════════════════════════
     # SECTION 1 — KPI STRIP
@@ -13254,7 +13323,7 @@ ALTER TABLE backtest_sim_runs
     st.markdown("### 📈 Portfolio Risk Metrics")
 
     _pt_uid = st.session_state.get("auth_user_id", "")
-    _pt_df = load_paper_trades(user_id=_pt_uid, days=365)
+    _pt_df = _cached_load_paper_trades(user_id=_pt_uid, days=365)
     _pm = compute_portfolio_metrics(
         _pt_df,
         api_key=st.session_state.get("ALPACA_API_KEY", ""),
@@ -13441,12 +13510,12 @@ ALTER TABLE backtest_sim_runs
                               help="Runs live recalibration (journal + bot) AND historical calibration (11k+ backtest rows)")
     if _do_recal:
         from paper_trader_bot import _alert_tcs_threshold_changes as _alert_tcs
-        _old_tcs = load_tcs_thresholds()
+        _old_tcs = _cached_load_tcs_thresholds()
         with st.spinner("Recalibrating live brain from journal + paper trades…"):
             _live_cal = recalibrate_from_supabase(user_id=_uid)
         with st.spinner("Calibrating historical brain from backtest data…"):
             _hist_cal = recalibrate_from_history(user_id=_uid)
-        _new_tcs = load_tcs_thresholds()
+        _new_tcs = _cached_load_tcs_thresholds()
         _alert_tcs(_old_tcs, _new_tcs)
         # Persist one clean history event using the true before/after snapshots
         # (individual save_tcs_thresholds calls do not record history so that
@@ -13549,9 +13618,9 @@ ALTER TABLE backtest_sim_runs
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── TCS Threshold History (collapsible) ───────────────────────────────────
-    _bw_tcs_hist   = load_tcs_threshold_history(days=30)
-    _bw_cur_thresh = load_tcs_thresholds()
-    _bw_hist_90    = load_tcs_threshold_history(days=90)
+    _bw_tcs_hist   = _cached_load_tcs_threshold_history(days=30)
+    _bw_cur_thresh = _cached_load_tcs_thresholds()
+    _bw_hist_90    = _cached_load_tcs_threshold_history(days=90)
     _bw_expander_label = (
         f"📈 TCS Threshold Shift History — last {len(_bw_tcs_hist)} recalibrations (30 days)"
         if _bw_tcs_hist
@@ -14165,7 +14234,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             st.session_state["_cached_prefs"] = _pt_pr_new_prefs
 
     # ── Auto-watchlist (Finviz) + optional extras ────────────────────────────
-    _pt_auto_wl = load_watchlist(user_id=_AUTH_USER_ID) or []
+    _pt_auto_wl = _cached_load_watchlist(user_id=_AUTH_USER_ID) or []
     _pt_auto_str = ", ".join(_pt_auto_wl) if _pt_auto_wl else ""
 
     st.markdown(
@@ -14392,7 +14461,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
     _pt_reload = st.button("🔄 Refresh Tracker", key="pt_reload_btn")
     if _pt_reload or "pt_tracker_df" not in st.session_state:
-        _pt_df = load_paper_trades(user_id=_AUTH_USER_ID, days=21)
+        _pt_df = _cached_load_paper_trades(user_id=_AUTH_USER_ID, days=21)
         st.session_state["pt_tracker_df"] = _pt_df
     else:
         _pt_df = st.session_state.get("pt_tracker_df", pd.DataFrame())
@@ -14771,7 +14840,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     _bh_stored = st.session_state.get("_pt_bh_result")
 
     # Always show current weights
-    _cur_weights = load_brain_weights(_AUTH_USER_ID)
+    _cur_weights = _cached_load_brain_weights(user_id=_AUTH_USER_ID)
     _w_default   = 1.0
 
     # Build display table with delta if calibration was just run
@@ -14898,7 +14967,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             st.markdown("**📝 Log Tonight's Rankings**")
             _rk_date = st.date_input("Rating date", value=datetime.now(EASTERN).date(),
                                      key="rk_date_input")
-            _wl_tickers = load_watchlist(_rk_uid)
+            _wl_tickers = _cached_load_watchlist(user_id=_rk_uid)
             if not _wl_tickers:
                 _wl_tickers = list(_DEFAULT_RANKING_TICKERS)
 
@@ -14956,7 +15025,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 with _btn_c1:
                     if st.button("💾 Save Rankings to Database", type="primary",
                                  use_container_width=True, key="rk_save_btn"):
-                        _wp_ctx = load_watchlist_predictions(user_id=_rk_uid, pred_date=_rk_date)
+                        _wp_ctx = _cached_load_watchlist_predictions(user_id=_rk_uid, pred_date=_rk_date)
                         _wp_lookup = {}
                         if not _wp_ctx.empty:
                             for _, _wp_row in _wp_ctx.iterrows():
@@ -15005,7 +15074,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     st.info("No rankings found for that date.")
 
             st.markdown("")
-            _acc_df = load_ranking_accuracy(_rk_uid)
+            _acc_df = _cached_load_ranking_accuracy(user_id=_rk_uid)
             if not _acc_df.empty:
                 _acc_cols = ["rank", "trades", "win_rate", "avg_chg"]
                 _acc_rename = {"rank": "Rank", "trades": "Trades", "win_rate": "Win Rate %", "avg_chg": "Avg Chg %"}
@@ -15041,7 +15110,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
             st.markdown("")
             st.markdown("**📋 Recent Rankings**")
-            _recent_rk = load_ticker_rankings(_rk_uid)
+            _recent_rk = _cached_load_ticker_rankings(user_id=_rk_uid)
             if not _recent_rk.empty:
                 _show_cols = [c for c in ["rating_date", "ticker", "rank", "tcs", "rvol",
                                           "predicted_structure", "actual_chg_pct", "verified"]
@@ -15066,8 +15135,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     else:
         _cd_uid       = _AUTH_USER_ID
         _cd_date      = date.today()
-        _cd_preds     = load_watchlist_predictions(user_id=_cd_uid, pred_date=_cd_date)
-        _cd_today     = load_cognitive_delta_today(_cd_uid, _cd_date)
+        _cd_preds     = _cached_load_watchlist_predictions(user_id=_cd_uid, pred_date=_cd_date)
+        _cd_today     = _cached_load_cognitive_delta_today(user_id=_cd_uid, trade_date=_cd_date)
         _cd_logged    = set(_cd_today["ticker"].tolist()) if not _cd_today.empty else set()
 
         with st.expander("📋 Log Today's Decisions", expanded=False):
@@ -15140,7 +15209,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         st.warning(f"Some errors: {_cd_res['errors']}")
 
         with st.expander("📊 Deviance Analysis", expanded=False):
-            _cd_analysis = load_cognitive_delta_analysis(_cd_uid)
+            _cd_analysis = _cached_load_cognitive_delta_analysis(user_id=_cd_uid)
             if _cd_analysis.empty or len(_cd_analysis) < 5:
                 st.info(f"Need at least 5 verified entries to show analysis. "
                         f"Currently have {len(_cd_analysis)} verified.")
@@ -15719,7 +15788,7 @@ with tab_scan:
 
     # ── Load Saved — always visible ────────────────────────────────────────────
     if _wpe_col3.button("📂 Load Saved", use_container_width=True, key="wpe_load_btn"):
-        _wpe_df = load_watchlist_predictions(user_id=_AUTH_USER_ID)
+        _wpe_df = _cached_load_watchlist_predictions(user_id=_AUTH_USER_ID)
         st.session_state["_wpe_loaded_df"] = _wpe_df
 
     # ── Show verify result ─────────────────────────────────────────────────────
