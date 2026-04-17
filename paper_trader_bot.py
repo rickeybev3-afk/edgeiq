@@ -1964,7 +1964,11 @@ def _eod_collect_close_prices(lookback_days: int = 60) -> dict:
     )
 
     if written > 0:
-        _ticker_lines = "\n".join(f"  • {entry}" for entry in patched)
+        _display_entries = patched[:10]
+        _overflow = len(patched) - len(_display_entries)
+        _ticker_lines = "\n".join(f"  • {entry}" for entry in _display_entries)
+        if _overflow > 0:
+            _ticker_lines += f"\n  …and {_overflow} more"
         _sweep_msg = (
             f"🔧 <b>Close-Price Sweep</b> — {written} row(s) backfilled\n"
             f"{_ticker_lines}\n"
