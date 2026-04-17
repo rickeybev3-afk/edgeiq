@@ -878,7 +878,8 @@ def telegram_listener() -> None:
                                 lines.append(f"  ↳ Watching: {struct_summary}")
                                 lines.append(
                                     "  ↳ Use <code>/settings tcs_structures KEY on|off</code> to toggle "
-                                    "(e.g. <code>/settings tcs_structures trend_bull off</code>)"
+                                    "(e.g. <code>/settings tcs_structures trend_bull off</code>), "
+                                    "or <code>/settings tcs_structures reset</code> to restore all structures"
                                 )
                                 valid_keys = ", ".join(
                                     f"<code>{k}</code>" for k in sorted(WK_DISPLAY.keys())
@@ -969,6 +970,34 @@ def telegram_listener() -> None:
                                 log.warning(
                                     f"settings: save_tcs_alert_structures failed for {struct_key}"
                                 )
+                    elif (
+                        len(parts) == 3
+                        and parts[1] == "tcs_structures"
+                        and parts[2].lower() == "reset"
+                    ):
+                        from backend import (
+                            save_tcs_alert_structures,
+                            WK_DISPLAY,
+                            WK_DISPLAY_PLAIN,
+                        )
+                        all_structs = set(WK_DISPLAY.keys())
+                        saved = save_tcs_alert_structures(all_structs)
+                        if saved:
+                            if "tcs_alert_structures" in sub_prefs:
+                                sub_prefs.pop("tcs_alert_structures")
+                                save_user_prefs(sub_uid, sub_prefs)
+                            all_names = ", ".join(
+                                WK_DISPLAY_PLAIN.get(k, k) for k in sorted(all_structs)
+                            )
+                            tg_reply(chat_id,
+                                "✅ TCS watching list reset to all structures.\n"
+                                f"Now watching: {all_names}\n"
+                                "Use <code>/settings</code> to review all preferences.")
+                            log.info("settings: tcs_structures reset to all")
+                        else:
+                            tg_reply(chat_id,
+                                "❌ Couldn't save your change. Please try again later.")
+                            log.warning("settings: save_tcs_alert_structures failed on reset")
                     else:
                         tg_reply(chat_id,
                             "⚠️ Unknown setting.\n"
