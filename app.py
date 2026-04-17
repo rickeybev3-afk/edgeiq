@@ -55,6 +55,8 @@ from backend import (
     _alpaca_mismatch_status,
     load_tcs_alert_structures,
     save_tcs_alert_structures,
+    load_tcs_alert_thresholds,
+    save_tcs_alert_thresholds,
     get_tcs_alert_config_last_saved,
     get_runtime_last_healthy_ts,
     get_runtime_first_check_done,
@@ -96,6 +98,10 @@ def _cached_load_eod_notes(user_id: str = "", limit: int = 60):
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_tcs_alert_structures():
     return load_tcs_alert_structures()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_tcs_alert_thresholds():
+    return load_tcs_alert_thresholds()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_tcs_threshold_history(days: int = 14):
@@ -4956,6 +4962,36 @@ with st.sidebar:
         st.caption(f"Last saved: {_tcs_saved_str}")
     else:
         st.caption("Preferences not yet saved — defaulting to all structures opted in.")
+
+    st.markdown("**Per-Structure Alert Thresholds (pts)**")
+    st.caption(
+        "Minimum point delta required to fire an alert for each structure. "
+        "Structures not listed here use the global default of 5 pts."
+    )
+    _tcs_current_thresholds = _cached_load_tcs_alert_thresholds()
+    _tcs_thresh_inputs: dict = {}
+    _tcs_thresh_col_a, _tcs_thresh_col_b = st.columns(2)
+    for _tcs_ti, _tcs_tkey in enumerate(_tcs_all_keys):
+        _tcs_tlabel = WK_DISPLAY[_tcs_tkey]
+        _tcs_tdefault = max(0.5, min(50.0, float(_tcs_current_thresholds.get(_tcs_tkey, 5.0))))
+        _tcs_tcol = _tcs_thresh_col_a if _tcs_ti % 2 == 0 else _tcs_thresh_col_b
+        with _tcs_tcol:
+            _tcs_thresh_inputs[_tcs_tkey] = st.number_input(
+                _tcs_tlabel,
+                min_value=0.5,
+                max_value=50.0,
+                value=_tcs_tdefault,
+                step=0.5,
+                key=f"tcs_thresh_{_tcs_tkey}",
+            )
+    if st.button("💾 Save thresholds", key="tcs_thresh_save_btn", use_container_width=True):
+        _tcs_thresh_ok = save_tcs_alert_thresholds(_tcs_thresh_inputs)
+        if _tcs_thresh_ok:
+            _cached_load_tcs_alert_thresholds.clear()
+            _cached_get_tcs_alert_config_last_saved.clear()
+            st.success("Thresholds saved.", icon="✅")
+        else:
+            st.error("Could not save thresholds — database and local file both failed.", icon="⚠️")
 
     st.markdown("---")
     mode = st.radio("Mode", ["📅 Historical", "🎬 Replay", "🔴 Live Stream"], index=0)

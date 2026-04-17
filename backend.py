@@ -2693,6 +2693,114 @@ def _load_tcs_alert_thresholds() -> dict:
     return result
 
 
+def load_tcs_alert_thresholds() -> dict:
+    """Public wrapper around ``_load_tcs_alert_thresholds`` for use by the UI layer."""
+    return _load_tcs_alert_thresholds()
+
+
+def save_tcs_alert_thresholds(thresholds: dict) -> bool:
+    """Persist per-structure delta *thresholds* durably.
+
+    Writes to Supabase (``app_config`` table) as the primary store and also
+    updates the local ``tcs_alert_config.json`` as a fallback cache.  Only
+    recognised structure keys (those present in :data:`WK_DISPLAY`) are written;
+    unknown keys are silently discarded.  Numeric values are coerced to
+    ``float``; non-numeric values are skipped.  Preserves any existing
+    ``alert_structures`` list.  Returns ``True`` when at least one storage
+    backend succeeds.
+    """
+    import json as _json
+
+    _THRESH_MIN = 0.5
+    _THRESH_MAX = 50.0
+
+    valid = set(WK_DISPLAY.keys())
+    sanitised: dict = {}
+    for k, v in thresholds.items():
+        if k not in valid:
+            continue
+        try:
+            clamped = max(_THRESH_MIN, min(_THRESH_MAX, float(v)))
+            sanitised[k] = clamped
+        except (TypeError, ValueError):
+            logging.warning(
+                "[save_tcs_alert_thresholds] Skipping non-numeric threshold for %r: %r",
+                k, v,
+            )
+
+    # Preserve the tri-state semantics of alert_structures:
+    #   None   → no explicit config → default (all structures enabled)
+    #   set()  → explicit opt-in list saved by the user (may be empty)
+    # We must NOT convert None into [] — that would silence all alerts.
+    existing_set = None
+    try:
+        existing_set = _load_tcs_alert_structures()
+    except Exception:
+        pass
+
+    db_value: dict = {}
+    if existing_set is not None:
+        db_value["alert_structures"] = sorted(existing_set)
+    if sanitised:
+        db_value["thresholds"] = sanitised
+
+    db_ok = False
+    if supabase is not None:
+        try:
+            import datetime as _dt
+            supabase.table(_APP_CONFIG_TABLE).upsert(
+                {
+                    "key": _TCS_ALERT_CONFIG_KEY,
+                    "value": db_value,
+                    "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                },
+                on_conflict="key",
+            ).execute()
+            db_ok = True
+        except Exception as _exc:
+            logging.warning(
+                "[save_tcs_alert_thresholds] Supabase write failed: %s. "
+                "Will attempt local JSON fallback.",
+                _exc,
+            )
+
+    file_cfg: dict = {
+        "_comment": (
+            "Controls which TCS structures trigger Telegram threshold-shift alerts and "
+            "what delta (in points) must be exceeded before an alert fires. "
+            "Remove a key from alert_structures to silence alerts for that structure. "
+            "Set alert_structures to [] to silence ALL alerts, or delete this file to "
+            "receive alerts for every structure (default). "
+            "Use the optional thresholds map to set a per-structure minimum delta; "
+            "structures not listed fall back to the global default of 5 points. "
+            "Example: {\"alert_structures\": [\"trend_bull\", \"normal\"], "
+            "\"thresholds\": {\"trend_bull\": 8, \"normal\": 3}}"
+        ),
+    }
+    if existing_set is not None:
+        file_cfg["alert_structures"] = sorted(existing_set)
+    if sanitised:
+        file_cfg["thresholds"] = sanitised
+
+    file_ok = False
+    try:
+        with open(_TCS_ALERT_CFG_PATH, "w") as _f:
+            _json.dump(file_cfg, _f, indent=2)
+        file_ok = True
+    except Exception as _exc:
+        logging.warning(
+            "[save_tcs_alert_thresholds] Local JSON write failed: %s.", _exc
+        )
+
+    if not db_ok and not file_ok:
+        logging.error(
+            "[save_tcs_alert_thresholds] Both Supabase and local file writes failed. "
+            "Threshold preferences were NOT persisted."
+        )
+
+    return db_ok or file_ok
+
+
 def get_tcs_alert_config_last_saved() -> str | None:
     """Return a human-readable 'last saved' string for the TCS alert config.
 
