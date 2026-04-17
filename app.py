@@ -18927,6 +18927,25 @@ ALTER TABLE backtest_sim_runs
 
         import altair as _alt_bt
 
+        # ── Load pre-aggregated Ladder P&L summary (mv_tiered_pnl_summary) ──────
+        # Only load the unfiltered all-time summary.  Cache is month-granular so it
+        # cannot be used safely when an exact-day date filter is active (see guard below).
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _load_ladder_pnl_cache(uid):
+            return get_ladder_pnl_summary(user_id=uid)
+
+        _bts_ldr_cache = _load_ladder_pnl_cache(uid=_AUTH_USER_ID)
+        if not _bts_ldr_cache.empty:
+            _bts_ldr_tot   = int(_bts_ldr_cache["total_trades"].sum())
+            _bts_ldr_wins  = int(_bts_ldr_cache["wins"].sum())
+            _bts_ldr_loss  = int(_bts_ldr_cache["losses"].sum())
+            _bts_ldr_wr    = _bts_ldr_wins / _bts_ldr_tot * 100 if _bts_ldr_tot else 0.0
+            _bts_ldr_tot_r = float(_bts_ldr_cache["sum_tiered_r"].sum())
+            _bts_ldr_exp   = _bts_ldr_tot_r / _bts_ldr_tot if _bts_ldr_tot else 0.0
+        else:
+            _bts_ldr_tot = _bts_ldr_wins = _bts_ldr_loss = 0
+            _bts_ldr_wr = _bts_ldr_tot_r = _bts_ldr_exp = 0.0
+
         _bts_scen_defs = [
             ("pnl_r_sim",    "#4fc3f7", "📈 Best Possible (MFE)",
              "Max intraday excursion — theoretical ceiling, assumes perfect exit timing."),
@@ -18973,12 +18992,38 @@ ALTER TABLE backtest_sim_runs
                 _bsc_df[_bscol] = _bsc_df[_bscol].astype(float)
                 _bsc_wins   = _bsc_df[_bsc_df[_bscol] > 0]
                 _bsc_losses = _bsc_df[_bsc_df[_bscol] <= 0]
-                _bsc_total  = len(_bsc_df)
-                _bsc_wr     = len(_bsc_wins) / _bsc_total * 100 if _bsc_total else 0.0
+                _bsc_total_df = len(_bsc_df)
+
+                # For the Ladder scenario, use pre-aggregated cache when available.
+                # Guards:
+                #   1. No date filter active — cache is month-granular; exact-day
+                #      ranges would produce mismatched totals.
+                #   2. Cache total <= DataFrame count — load_backtest_sim_history caps
+                #      at 5 000 rows; if the cache is all-time and larger, card stats
+                #      would diverge from the chart/table below.
+                _use_ldr_cache = (
+                    _bscol == "tiered_pnl_r"
+                    and _bts_ldr_tot > 0
+                    and not _bts_date_filter_active
+                    and _bts_ldr_tot <= _bsc_total_df
+                )
+                if _use_ldr_cache:
+                    _bsc_total   = _bts_ldr_tot
+                    _bsc_wr      = _bts_ldr_wr
+                    _bsc_exp     = _bts_ldr_exp
+                    _bsc_total_r = _bts_ldr_tot_r
+                    _bsc_wins_n  = _bts_ldr_wins
+                    _bsc_losses_n = _bts_ldr_loss
+                else:
+                    _bsc_total   = _bsc_total_df
+                    _bsc_wr      = len(_bsc_wins) / _bsc_total * 100 if _bsc_total else 0.0
+                    _bsc_exp     = _bsc_df[_bscol].mean() if _bsc_total else 0.0
+                    _bsc_total_r = _bsc_df[_bscol].sum()
+                    _bsc_wins_n  = len(_bsc_wins)
+                    _bsc_losses_n = len(_bsc_losses)
+
                 _bsc_avg_w  = _bsc_wins[_bscol].mean()   if len(_bsc_wins)   else 0.0
                 _bsc_avg_l  = _bsc_losses[_bscol].mean() if len(_bsc_losses) else 0.0
-                _bsc_exp    = _bsc_df[_bscol].mean() if _bsc_total else 0.0
-                _bsc_total_r = _bsc_df[_bscol].sum()
 
                 _bsc_wr_c  = "#2e7d32" if _bsc_wr >= 60 else ("#ef6c00" if _bsc_wr >= 50 else "#c62828")
                 _bsc_ex_c  = "#2e7d32" if _bsc_exp > 0 else "#c62828"
@@ -19006,7 +19051,7 @@ ALTER TABLE backtest_sim_runs
                     f'  <span style="font-size:10px;color:#90a4ae;">Total R</span>'
                     f'  <span style="font-size:13px;font-weight:600;color:{_bsc_tr_c};">{"+" if _bsc_total_r >= 0 else ""}{_bsc_total_r:.1f}R</span>'
                     f'</div>'
-                    f'<div style="font-size:10px;color:#546e7a;text-align:right;margin-top:4px;">{_bsc_total} trades · {len(_bsc_wins)}W / {len(_bsc_losses)}L</div>'
+                    f'<div style="font-size:10px;color:#546e7a;text-align:right;margin-top:4px;">{_bsc_total} trades · {_bsc_wins_n}W / {_bsc_losses_n}L</div>'
                     f'</div>', unsafe_allow_html=True
                 )
                 _bts_cache[_bscol] = (_bsc_df, _bsclr, _bslabel.split(" ", 1)[-1].strip())
