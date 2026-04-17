@@ -8754,6 +8754,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             _rp_display_df = _rp_display_df[_rp_marginal_mask]
 
+                        _rp_any_filter_active = (
+                            bool(_rp_log_ticker_filter.strip())
+                            or _rp_log_wl_filter != "All"
+                            or not _rp_log_show_neutral
+                            or _rp_log_only_marginal
+                        )
+                        if _rp_any_filter_active:
+                            st.caption(f"Showing {len(_rp_display_df)} of {len(_rp_df)} trades")
+
                         if len(_rp_display_df) == 0:
                             st.info("No trades match the current filters.")
 
