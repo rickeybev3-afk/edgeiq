@@ -12653,6 +12653,28 @@ ALTER TABLE backtest_sim_runs
                     _bw_hist_df.style.map(_bw_color_delta, subset=["Δ"]),
                     use_container_width=True, hide_index=True,
                 )
+
+                # ── Line chart: threshold value over time per structure ──────
+                _chart_rows = []
+                for _row in _bw_hist_rows:
+                    _chart_rows.append({
+                        "date":      _row["Date (UTC)"][:10],
+                        "structure": _row["Structure"],
+                        "threshold": _row["After"],
+                    })
+                _chart_df = pd.DataFrame(_chart_rows)
+                if not _chart_df.empty:
+                    _chart_df["date"] = pd.to_datetime(_chart_df["date"])
+                    _chart_pivot = _chart_df.pivot_table(
+                        index="date", columns="structure", values="threshold", aggfunc="last"
+                    )
+                    _chart_pivot = _chart_pivot.sort_index()
+                    _chart_pivot.columns.name = None
+                    _chart_pivot.index.name = "Date"
+                    _plottable = [c for c in _chart_pivot.columns if _chart_pivot[c].notna().sum() >= 2]
+                    if _plottable:
+                        st.caption("Threshold drift over time — structures with ≥ 2 changes shown")
+                        st.line_chart(_chart_pivot[_plottable], use_container_width=True)
             else:
                 st.info("No threshold shifts ≥ 3 pts recorded in the last 30 days.")
 
