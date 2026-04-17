@@ -11913,6 +11913,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if _div_thresh is not None and _flagged_div_indices:
                 # Threshold is set — list every ticker that exceeds it
                 _flagged_tkrs = []
+                _flagged_csv_rows = []
                 for _fi in sorted(_flagged_div_indices):
                     if _fi in _tkr_summary_df.index:
                         _ft_name = _html.escape(str(_tkr_summary_df.loc[_fi, "Ticker"]))
@@ -11920,6 +11921,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _ft_mag  = _tkr_summary_df.loc[_fi, "_sort_div_mag"] if "_sort_div_mag" in _tkr_summary_df.columns else None
                         _ft_mag_str = f" ({_ft_mag:.2f})" if _ft_mag is not None else ""
                         _flagged_tkrs.append(f"{_ft_name}{_ft_mag_str} — {_ft_div}")
+                        _flagged_csv_rows.append({
+                            "Ticker": str(_tkr_summary_df.loc[_fi, "Ticker"]),
+                            "Divergence Magnitude": f"{_ft_mag:.2f}" if _ft_mag is not None else "",
+                            "Max Divergence label": str(_tkr_summary_df.loc[_fi, "Max Divergence"]),
+                        })
                 _n_flagged = len(_flagged_tkrs)
                 _flag_list_html = "  ·  ".join(_flagged_tkrs)
                 st.markdown(
@@ -11930,6 +11936,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f'<span style="color:#ffd600;">{_flag_list_html}</span>'
                     f'</div>',
                     unsafe_allow_html=True,
+                )
+                _flagged_csv_df = pd.DataFrame(_flagged_csv_rows, columns=["Ticker", "Divergence Magnitude", "Max Divergence label"])
+                st.download_button(
+                    label="⬇️ Download flagged tickers",
+                    data=_flagged_csv_df.to_csv(index=False),
+                    file_name="flagged_tickers.csv",
+                    mime="text/csv",
+                    key="_dl_flagged_tickers",
                 )
             elif _div_thresh is not None:
                 # Threshold is set but nothing exceeds it
