@@ -2361,9 +2361,10 @@ def _notify_tcs_threshold_shift(previous: dict, current: dict) -> None:
 
     # Also broadcast to all beta subscribers, excluding the owner (who already
     # received the message via the main TELEGRAM_CHAT_ID above).
+    # Only subscribers who have not opted out of TCS alerts are included.
     _owner_id = _os.environ.get("PAPER_TRADE_USER_ID", "").strip()
     try:
-        _pairs = get_beta_chat_ids(exclude_user_id=_owner_id)
+        _pairs = get_beta_chat_ids(exclude_user_id=_owner_id, tcs_alerts_only=True)
         for _uid, _sub_chat_id in _pairs:
             if str(_sub_chat_id) == str(_chat_id):
                 continue  # extra guard: skip if chat_id matches main chat
@@ -10439,20 +10440,33 @@ def save_beta_chat_id(user_id: str, chat_id) -> bool:
     return save_user_prefs(user_id, prefs)
 
 
-def get_beta_chat_ids(exclude_user_id: str = "") -> list:
+def get_beta_chat_ids(exclude_user_id: str = "", tcs_alerts_only: bool = False) -> list:
     """Return list of (user_id, chat_id) tuples for all beta subscribers.
 
     Skips exclude_user_id (the owner) so they don't get duplicate messages.
     Falls back to the local prefs file when Supabase is unavailable.
+
+    When tcs_alerts_only is True, subscribers who have opted out of TCS
+    threshold shift alerts (tcs_alerts_enabled == False) are excluded.
     """
     import json as _json
+
+    def _keep(prefs: dict) -> bool:
+        """Return True if the subscriber should receive TCS alerts."""
+        if not tcs_alerts_only:
+            return True
+        return prefs.get("tcs_alerts_enabled", True) is not False
 
     def _extract_pairs(rows_dict: dict) -> list:
         found = []
         for uid, prefs in rows_dict.items():
             if exclude_user_id and uid == exclude_user_id:
                 continue
-            cid = prefs.get("tg_chat_id") if isinstance(prefs, dict) else None
+            if not isinstance(prefs, dict):
+                continue
+            if not _keep(prefs):
+                continue
+            cid = prefs.get("tg_chat_id")
             if cid:
                 try:
                     found.append((uid, int(cid)))
@@ -10470,6 +10484,8 @@ def get_beta_chat_ids(exclude_user_id: str = "") -> list:
                     continue
                 raw = row.get("prefs", "{}")
                 prefs = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+                if not _keep(prefs):
+                    continue
                 cid = prefs.get("tg_chat_id")
                 if cid:
                     try:
@@ -10489,6 +10505,37 @@ def get_beta_chat_ids(exclude_user_id: str = "") -> list:
     except Exception as e:
         print(f"get_beta_chat_ids local fallback error: {e}")
     return []
+
+
+def get_user_id_by_chat_id(chat_id) -> str:
+    """Look up the user_id whose tg_chat_id matches the given Telegram chat_id.
+
+    Returns an empty string when no match is found.
+    """
+    import json as _json
+    target = str(chat_id)
+
+    if supabase:
+        try:
+            res = supabase.table("user_preferences").select("user_id,prefs").execute()
+            for row in res.data:
+                raw = row.get("prefs", "{}")
+                prefs = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+                if str(prefs.get("tg_chat_id", "")) == target:
+                    return row.get("user_id", "")
+        except Exception as e:
+            print(f"get_user_id_by_chat_id Supabase error, trying local fallback: {e}")
+
+    try:
+        if os.path.exists(_USER_PREFS_FILE):
+            with open(_USER_PREFS_FILE) as _f:
+                all_prefs = _json.load(_f)
+            for uid, prefs in all_prefs.items():
+                if isinstance(prefs, dict) and str(prefs.get("tg_chat_id", "")) == target:
+                    return uid
+    except Exception as e:
+        print(f"get_user_id_by_chat_id local fallback error: {e}")
+    return ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════

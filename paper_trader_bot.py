@@ -558,7 +558,8 @@ def telegram_listener() -> None:
 
                 if (not text.startswith("/log")
                         and not text.startswith("/start")
-                        and not text.startswith("/exitobs")):
+                        and not text.startswith("/exitobs")
+                        and not text.startswith("/settings")):
                     continue
 
                 # ── /start USER_ID — beta tester connection via deep link ──
@@ -614,6 +615,56 @@ def telegram_listener() -> None:
                         tg_reply(chat_id,
                             f"❌ Couldn't save note for {obs_ticker}. "
                             "Check that the trade exists in your journal and the DB migration has been run.")
+                    continue
+
+                # ── /settings [tcs_alerts on|off] ──
+                if text.startswith("/settings"):
+                    from backend import (
+                        get_user_id_by_chat_id,
+                        load_user_prefs,
+                        save_user_prefs,
+                    )
+                    parts = text.split()
+                    sub_uid = get_user_id_by_chat_id(chat_id)
+                    if not sub_uid:
+                        tg_reply(chat_id,
+                            "⚠️ Your account isn't linked yet. "
+                            "Tap your portal link and use /start to connect.")
+                        continue
+
+                    sub_prefs = load_user_prefs(sub_uid)
+
+                    if len(parts) == 1:
+                        tcs_on = sub_prefs.get("tcs_alerts_enabled", True) is not False
+                        status = "✅ On" if tcs_on else "❌ Off"
+                        tg_reply(chat_id,
+                            "⚙️ <b>Your EdgeIQ Alert Settings</b>\n"
+                            "━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"TCS threshold shift alerts: {status}\n"
+                            "━━━━━━━━━━━━━━━━━━━━━\n"
+                            "To change:\n"
+                            "  <code>/settings tcs_alerts on</code>\n"
+                            "  <code>/settings tcs_alerts off</code>")
+                    elif len(parts) == 3 and parts[1] == "tcs_alerts" and parts[2].lower() in ("on", "off"):
+                        enabled = parts[2].lower() == "on"
+                        sub_prefs["tcs_alerts_enabled"] = enabled
+                        saved = save_user_prefs(sub_uid, sub_prefs)
+                        if saved:
+                            status = "✅ enabled" if enabled else "❌ disabled"
+                            tg_reply(chat_id,
+                                f"⚙️ TCS threshold shift alerts {status}.\n"
+                                "You can change this any time with <code>/settings</code>.")
+                            log.info(f"settings: user_id={sub_uid} tcs_alerts_enabled={enabled}")
+                        else:
+                            tg_reply(chat_id,
+                                "❌ Couldn't save your preference. Please try again later.")
+                            log.warning(f"settings: save_user_prefs failed for user_id={sub_uid}")
+                    else:
+                        tg_reply(chat_id,
+                            "⚠️ Unknown setting. Available commands:\n"
+                            "  <code>/settings</code> — show current preferences\n"
+                            "  <code>/settings tcs_alerts on</code>\n"
+                            "  <code>/settings tcs_alerts off</code>")
                     continue
 
                 parsed = _parse_log_command(text)
