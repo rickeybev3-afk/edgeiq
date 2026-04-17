@@ -8381,12 +8381,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             f" · 🔵 custom floor (TCS ≥ {_tk_persisted_hdr})"
                             if _tk_has_override else ""
                         )
+                        _tk_pnl_sign = "+" if _tk_best_pnl >= 0 else "-"
                         _tk_expander_label = (
                             f"📊 {_tk_name}{'  ✱' if _tk_override_active else ''} — Best: TCS ≥ {_tk_auto_floor} "
-                            f"(≥{_MIN_TCS_TRADES} trades) "
-                            f"· {int(_tk_best_row['Trades'])} trades "
+                            f"({int(_tk_best_row['Trades'])}/{_MIN_TCS_TRADES} trades "
                             f"· {_tk_best_row['Win Rate']:.0f}% WR "
-                            f"· ${_tk_best_pnl:,.0f} net P&L"
+                            f"· {_tk_pnl_sign}${abs(_tk_best_pnl):,.0f} net P&L)"
                             f"{_tk_override_badge}"
                         )
                         _tk_has_best = True
