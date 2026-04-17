@@ -8112,6 +8112,159 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
                 "ticker_list_complete": True}
 
 
+def run_close_price_backfill_batch(user_id: str = "", dry_run: bool = False) -> dict:
+    """Attempt to re-fetch EOD close prices from Alpaca for all rows that are
+    currently missing close_price in backtest_sim_runs and paper_trades.
+
+    Groups null rows by date so only one Alpaca call is made per day, then
+    writes results back to Supabase concurrently.
+
+    Returns a dict with keys:
+      total_rows    – number of rows with null close_price at the start
+      filled        – number of rows successfully updated with a close price
+      still_missing – number of rows that remained unfilled (no Alpaca data)
+      errors        – number of write errors encountered
+    """
+    from datetime import datetime, timedelta
+    from collections import defaultdict
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    TABLES = [
+        ("backtest_sim_runs", "sim_date"),
+        ("paper_trades",      "trade_date"),
+    ]
+    PAGE_SZ       = 1000
+    BATCH_TICKERS = 50
+    MAX_WORKERS   = 20
+
+    stats = {"total_rows": 0, "filled": 0, "still_missing": 0, "errors": 0}
+
+    if not supabase:
+        stats["errors"] = 1
+        return stats
+
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        stats["errors"] = 1
+        return stats
+
+    def _fetch_null_rows(table: str, date_field: str) -> list:
+        rows, offset = [], 0
+        while True:
+            q = (
+                supabase.table(table)
+                .select(f"id,ticker,{date_field}")
+                .is_("close_price", "null")
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            chunk = q.range(offset, offset + PAGE_SZ - 1).execute().data or []
+            rows.extend(chunk)
+            if len(chunk) < PAGE_SZ:
+                break
+            offset += PAGE_SZ
+        return rows
+
+    def _fetch_closes_for_date(trade_date_str: str, tickers: list) -> dict:
+        try:
+            from alpaca.data.historical import StockHistoricalDataClient
+            from alpaca.data.requests  import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame
+            import pandas as pd
+
+            client     = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
+            trade_date = datetime.strptime(trade_date_str, "%Y-%m-%d")
+            start_dt   = trade_date
+            end_dt     = trade_date + timedelta(days=1)
+            closes: dict = {}
+
+            for i in range(0, len(tickers), BATCH_TICKERS):
+                batch = tickers[i: i + BATCH_TICKERS]
+                try:
+                    req  = StockBarsRequest(
+                        symbol_or_symbols=batch,
+                        timeframe=TimeFrame.Day,
+                        start=start_dt,
+                        end=end_dt,
+                        feed="iex",
+                    )
+                    bars = client.get_stock_bars(req)
+                    df   = bars.df
+                    if df.empty:
+                        continue
+                    if isinstance(df.index, pd.MultiIndex):
+                        for sym in batch:
+                            try:
+                                sym_df = df.xs(sym, level="symbol")
+                                if not sym_df.empty:
+                                    closes[sym] = float(sym_df["close"].iloc[-1])
+                            except KeyError:
+                                pass
+                    else:
+                        if not df.empty and len(batch) == 1:
+                            closes[batch[0]] = float(df["close"].iloc[-1])
+                except Exception as _e:
+                    print(f"run_close_price_backfill_batch alpaca error {trade_date_str}: {_e}")
+            return closes
+        except Exception as _e:
+            print(f"run_close_price_backfill_batch fetch_closes error: {_e}")
+            return {}
+
+    def _update_one(table: str, row_id, close_price: float):
+        supabase.table(table).update(
+            {"close_price": round(close_price, 4)}
+        ).eq("id", row_id).execute()
+
+    for table, date_field in TABLES:
+        try:
+            rows = _fetch_null_rows(table, date_field)
+        except Exception as e:
+            print(f"run_close_price_backfill_batch fetch error ({table}): {e}")
+            stats["errors"] += 1
+            continue
+
+        stats["total_rows"] += len(rows)
+
+        by_date: dict = defaultdict(list)
+        for r in rows:
+            sd = (r.get(date_field) or "")[:10]
+            if sd:
+                by_date[sd].append(r)
+
+        for trade_date_str, date_rows in sorted(by_date.items()):
+            tickers = sorted({r.get("ticker", "") for r in date_rows if r.get("ticker")})
+            if not tickers:
+                stats["still_missing"] += len(date_rows)
+                continue
+
+            closes = _fetch_closes_for_date(trade_date_str, tickers)
+
+            updates = []
+            for r in date_rows:
+                ticker = r.get("ticker", "")
+                cp     = closes.get(ticker)
+                if cp is None:
+                    stats["still_missing"] += 1
+                else:
+                    updates.append((r["id"], cp))
+
+            if dry_run or not updates:
+                stats["filled"] += len(updates)
+                continue
+
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                futures = {pool.submit(_update_one, table, rid, cp): rid
+                           for rid, cp in updates}
+                for fut in as_completed(futures):
+                    try:
+                        fut.result()
+                        stats["filled"] += 1
+                    except Exception as e:
+                        print(f"run_close_price_backfill_batch write error: {e}")
+                        stats["errors"] += 1
+
+    return stats
+
+
 def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = False,
                                        user_id: str = "",
                                        exclude_ids: list | None = None) -> dict:

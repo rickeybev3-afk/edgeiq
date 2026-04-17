@@ -14399,32 +14399,58 @@ ALTER TABLE backtest_sim_runs
             _tickers_label = (
                 f'at least {_total_tickers} ticker{"s" if _total_tickers != 1 else ""} affected'
             )
-        st.markdown(
-            f'<div style="background:#020813; border:1px solid #263260; border-radius:8px; '
-            f'padding:12px 20px; margin-bottom:16px;">'
-            f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
-            f'letter-spacing:1.5px; font-weight:700; font-family:monospace; margin-bottom:8px;">'
-            f'⚠ EOD Close Price — Missing Data</div>'
-            f'<div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">'
-            f'<div>'
-            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
-            f'letter-spacing:1px; margin-bottom:2px;">Rows without close price</div>'
-            f'<div style="font-size:28px; font-weight:800; color:#ffa726; '
-            f'font-family:monospace;">{_missing_cp_total:,}</div>'
-            f'<div style="font-size:9px; color:#37474f; margin-top:2px;">'
-            f'no EOD P&amp;L possible · {_tickers_label}</div>'
-            f'</div>'
-            f'<div style="border-left:1px solid #1a2744; padding-left:20px; flex:1;">'
-            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
-            f'letter-spacing:1px; margin-bottom:6px;">Tickers most affected</div>'
-            f'<div>{_ticker_badges}{_more_note}</div>'
-            f'<div style="font-size:9px; color:#37474f; margin-top:6px;">'
-            f'Typically delisted stocks, OTC tickers, or names with no IEX/Alpaca coverage. '
-            f'Run <code style="font-size:9px;">python backfill_close_prices.py</code> to retry.</div>'
-            f'</div>'
-            f'</div></div>',
-            unsafe_allow_html=True,
-        )
+        _cp_card_col, _cp_btn_col = st.columns([3, 1])
+        with _cp_card_col:
+            st.markdown(
+                f'<div style="background:#020813; border:1px solid #263260; border-radius:8px; '
+                f'padding:12px 20px; margin-bottom:16px;">'
+                f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+                f'letter-spacing:1.5px; font-weight:700; font-family:monospace; margin-bottom:8px;">'
+                f'⚠ EOD Close Price — Missing Data</div>'
+                f'<div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">'
+                f'<div>'
+                f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:2px;">Rows without close price</div>'
+                f'<div style="font-size:28px; font-weight:800; color:#ffa726; '
+                f'font-family:monospace;">{_missing_cp_total:,}</div>'
+                f'<div style="font-size:9px; color:#37474f; margin-top:2px;">'
+                f'no EOD P&amp;L possible · {_tickers_label}</div>'
+                f'</div>'
+                f'<div style="border-left:1px solid #1a2744; padding-left:20px; flex:1;">'
+                f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+                f'letter-spacing:1px; margin-bottom:6px;">Tickers most affected</div>'
+                f'<div>{_ticker_badges}{_more_note}</div>'
+                f'<div style="font-size:9px; color:#37474f; margin-top:6px;">'
+                f'Typically delisted stocks, OTC tickers, or names with no IEX/Alpaca coverage.</div>'
+                f'</div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        with _cp_btn_col:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔄 Retry Close Price Fetch", key="cp_retry_backfill_btn",
+                         use_container_width=True):
+                with st.spinner("Fetching close prices from Alpaca — this may take a moment…"):
+                    _cp_result = run_close_price_backfill_batch(user_id=_AUTH_USER_ID)
+                _cp_filled   = _cp_result.get("filled", 0)
+                _cp_still    = _cp_result.get("still_missing", 0)
+                _cp_errors   = _cp_result.get("errors", 0)
+                _cp_total    = _cp_result.get("total_rows", 0)
+                if _cp_errors and not _cp_total:
+                    st.error(
+                        "Retry failed — Alpaca credentials may be missing. "
+                        "Check that ALPACA_API_KEY and ALPACA_SECRET_KEY are set."
+                    )
+                else:
+                    _still_note = (
+                        f"{_cp_still:,} still missing (delisted / no IEX coverage)."
+                        if _cp_still else "All rows filled successfully."
+                    )
+                    st.success(
+                        f"Done — {_cp_filled:,} row{'s' if _cp_filled != 1 else ''} filled. "
+                        f"{_still_note}"
+                    )
+                    st.rerun()
 
     _bt_sim_has_data = (
         not _bt_sim_df.empty
