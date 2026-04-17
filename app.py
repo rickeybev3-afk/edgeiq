@@ -12004,17 +12004,33 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
             elif _worst_div_row_idx is not None:
                 # No threshold set — fall back to highlighting the single worst ticker
-                _worst_div_tkr = _html.escape(str(_tkr_summary_df.loc[_worst_div_row_idx, "Ticker"])) if _worst_div_row_idx in _tkr_summary_df.index else "—"
+                _worst_div_raw = str(_tkr_summary_df.loc[_worst_div_row_idx, "Ticker"]) if _worst_div_row_idx in _tkr_summary_df.index else ""
+                # Strip the ✱ override badge to get the clean ticker name used as a session-state key
+                _worst_div_clean = _worst_div_raw.rstrip().rstrip("✱").rstrip()
+                _worst_div_tkr = _html.escape(_worst_div_raw) if _worst_div_raw else "—"
                 _worst_div_cell = _html.escape(str(_tkr_summary_df.loc[_worst_div_row_idx, "Max Divergence"])) if _worst_div_row_idx in _tkr_summary_df.index else "—"
-                st.markdown(
-                    f'<div style="background:#1a0f00;border-left:3px solid #ffd600;padding:7px 14px;'
-                    f'border-radius:4px;margin-bottom:6px;font-size:13px;">'
-                    f'<span style="color:#ffd600;font-weight:700;">⚡ Worst sizing mismatch: '
-                    f'{_worst_div_tkr} — {_worst_div_cell}</span>'
-                    f'<span style="color:#aaa;margin-left:12px;">Set a divergence threshold above to flag multiple tickers, or sort by Divergence to rank all.</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+                _wdiv_banner_col, _wdiv_btn_col = st.columns([8, 2])
+                with _wdiv_banner_col:
+                    st.markdown(
+                        f'<div style="background:#1a0f00;border-left:3px solid #ffd600;padding:7px 14px;'
+                        f'border-radius:4px;margin-bottom:6px;font-size:13px;">'
+                        f'<span style="color:#ffd600;font-weight:700;">⚡ Worst sizing mismatch: '
+                        f'{_worst_div_tkr} — {_worst_div_cell}</span>'
+                        f'<span style="color:#aaa;margin-left:12px;">Set a divergence threshold above to flag multiple tickers, or sort by Divergence to rank all.</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                with _wdiv_btn_col:
+                    if _worst_div_clean and _worst_div_clean in _tkr_sweep_data:
+                        if st.button(
+                            "↓ Jump to chart",
+                            key="_jump_worst_div_btn",
+                            help=f"Open and scroll to {_worst_div_clean}'s TCS sweep chart",
+                            use_container_width=True,
+                        ):
+                            st.session_state[f"_tk_exp_{_worst_div_clean}"] = True
+                            st.session_state["_scroll_to_worst_div"] = _worst_div_clean
+                            st.rerun()
             st.caption(
                 "🟢 Win % ≥ 60% — model reads this ticker well  · "
                 "🟡 45–60% — mixed signal, paper trade first  · "
@@ -12469,6 +12485,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 if _qp_tkr_detail and f"_tk_exp_{_qp_tkr_detail}" not in st.session_state:
                     st.session_state[f"_tk_exp_{_qp_tkr_detail}"] = True
 
+                # ── Scroll to worst-divergence ticker after jump button click ─
+                _scroll_target = st.session_state.pop("_scroll_to_worst_div", None)
+                if _scroll_target:
+                    import streamlit.components.v1 as _cmp_scroll_div
+                    _safe_scroll_id = "tk-anchor-" + "".join(
+                        c if c.isalnum() or c in "-_." else "-" for c in _scroll_target
+                    )
+                    _cmp_scroll_div.html(
+                        f"""<script>
+(function() {{
+    var _id = {repr(_safe_scroll_id)};
+    function _doScroll() {{
+        var el = window.parent.document.getElementById(_id);
+        if (el) {{ el.scrollIntoView({{behavior:'smooth', block:'start'}}); }}
+        else {{ setTimeout(_doScroll, 150); }}
+    }}
+    setTimeout(_doScroll, 200);
+}})();
+</script>""",
+                        height=0,
+                    )
+
                 # ── Per-ticker expanders ──────────────────────────────────────
                 st.caption("✱ = custom TCS floor override is active for that ticker")
                 for _tk_name in sorted(_tkr_sweep_data.keys(), key=_tk_sort_key):
@@ -12530,6 +12568,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         )
                         _tk_has_best = False
                     _tk_exp_key = f"_tk_exp_{_tk_name}"
+                    _tk_anchor_id = "tk-anchor-" + "".join(
+                        c if c.isalnum() or c in "-_." else "-" for c in _tk_name
+                    )
+                    st.markdown(
+                        f'<div id="{_tk_anchor_id}" style="scroll-margin-top:60px;"></div>',
+                        unsafe_allow_html=True,
+                    )
                     with st.expander(_tk_expander_label, expanded=bool(st.session_state.get(_tk_exp_key, False)), key=_tk_exp_key):
                         if _tk_override_active:
                             st.caption("✱ = custom TCS floor override is active for this ticker")
