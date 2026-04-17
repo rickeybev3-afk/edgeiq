@@ -12714,6 +12714,149 @@ ALTER TABLE backtest_sim_runs
                                 unsafe_allow_html=True,
                             )
 
+            # ── Row 4 — Tiered vs EOD Head-to-Head Comparison ────────────────
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                'text-transform:uppercase;margin-bottom:8px;">'
+                '📊 Tiered vs EOD Hold — Head-to-Head Comparison</div>',
+                unsafe_allow_html=True,
+            )
+            _bts_cmp_has_eod    = "eod_pnl_r"   in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
+            _bts_cmp_has_tiered = "tiered_pnl_r" in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
+
+            if not _bts_cmp_has_eod or not _bts_cmp_has_tiered:
+                st.info(
+                    "Both EOD and tiered R values are needed for this comparison.  \n"
+                    "EOD data requires a close-price backfill; tiered data populates as new backtests run."
+                )
+            else:
+                _bts_cmp_scan_raw  = (
+                    sorted(_bts_df["scan_type"].dropna().unique().tolist())
+                    if "scan_type" in _bts_df.columns else []
+                )
+                _bts_cmp_scan_opts = ["All"] + _bts_cmp_scan_raw
+                _bts_cmp_scan = st.selectbox(
+                    "Scan type",
+                    options=_bts_cmp_scan_opts,
+                    index=0,
+                    key="bts_cmp_scan_filter",
+                    help="Filter comparison to a specific scan type, or 'All' for combined.",
+                )
+                _bts_cmp_df = _bts_df.copy()
+                if _bts_cmp_scan != "All" and "scan_type" in _bts_cmp_df.columns:
+                    _bts_cmp_df = _bts_cmp_df[_bts_cmp_df["scan_type"] == _bts_cmp_scan].copy()
+
+                # Matched rows — both metrics present on the same trade (true apples-to-apples)
+                _bts_both = _bts_cmp_df[
+                    _bts_cmp_df["eod_pnl_r"].notna() & _bts_cmp_df["tiered_pnl_r"].notna()
+                ].copy()
+
+                # Individual coverage counts for display
+                _bts_eod_n    = len(_bts_cmp_df[_bts_cmp_df["eod_pnl_r"].notna()])
+                _bts_tie_n    = len(_bts_cmp_df[_bts_cmp_df["tiered_pnl_r"].notna()])
+                _bts_both_n   = len(_bts_both)
+
+                # Head-to-head averages computed on matched rows only
+                _bts_avg_eod    = _bts_both["eod_pnl_r"].astype(float).mean()    if not _bts_both.empty else None
+                _bts_avg_tiered = _bts_both["tiered_pnl_r"].astype(float).mean() if not _bts_both.empty else None
+
+                def _bts_r_str(val, n):
+                    if val is None:
+                        return "—"
+                    sign = "+" if val >= 0 else ""
+                    return f"{sign}{val:.3f}R ({n} trades)"
+
+                def _bts_r_color(val):
+                    if val is None:
+                        return "#546e7a"
+                    return "#4caf50" if val >= 0 else "#ef5350"
+
+                _bts_eod_str    = _bts_r_str(_bts_avg_eod,    _bts_both_n)
+                _bts_tiered_str = _bts_r_str(_bts_avg_tiered, _bts_both_n)
+                _bts_eod_clr    = _bts_r_color(_bts_avg_eod)
+                _bts_tiered_clr = _bts_r_color(_bts_avg_tiered)
+
+                if _bts_avg_eod is not None and _bts_avg_tiered is not None:
+                    _bts_diff      = _bts_avg_tiered - _bts_avg_eod
+                    _bts_diff_sign = "+" if _bts_diff >= 0 else ""
+                    # % improvement always uses EOD as the baseline denominator
+                    if _bts_avg_eod != 0:
+                        _bts_pct       = _bts_diff / abs(_bts_avg_eod) * 100
+                        _bts_pct_valid = True
+                    else:
+                        _bts_pct       = 0.0
+                        _bts_pct_valid = False
+                    if abs(_bts_diff) < 0.001:
+                        _bts_verdict     = "Strategies tied"
+                        _bts_verdict_clr = "#90a4ae"
+                        _bts_pct_label   = ""
+                    elif _bts_diff > 0:
+                        _bts_verdict     = (
+                            f"Tiered exits outperform EOD hold by "
+                            f"{_bts_diff_sign}{_bts_diff:.3f}R per trade"
+                        )
+                        _bts_verdict_clr = "#ffb74d"
+                        _bts_pct_label   = (
+                            f"+{_bts_pct:.1f}% vs EOD baseline" if _bts_pct_valid else "N/A (EOD avg = 0)"
+                        )
+                    else:
+                        _bts_verdict     = (
+                            f"EOD hold outperforms tiered exits by "
+                            f"{abs(_bts_diff):.3f}R per trade"
+                        )
+                        _bts_verdict_clr = "#81c784"
+                        _bts_pct_label   = (
+                            f"{_bts_pct:.1f}% vs EOD baseline" if _bts_pct_valid else "N/A (EOD avg = 0)"
+                        )
+                elif _bts_both_n == 0 and (_bts_eod_n > 0 or _bts_tie_n > 0):
+                    # Data exists in the full set but no overlap for current filter
+                    _bts_verdict     = "No trades match both metrics for the current filter — try widening the date range or changing scan type"
+                    _bts_verdict_clr = "#78909c"
+                    _bts_pct_label   = ""
+                else:
+                    _bts_verdict     = "Run close-price backfill to populate both metrics"
+                    _bts_verdict_clr = "#546e7a"
+                    _bts_pct_label   = ""
+
+                st.markdown(
+                    f'<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+                    f'padding:14px 24px; margin-bottom:12px;">'
+                    f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+                    f'letter-spacing:1.5px; margin-bottom:10px; font-weight:700; font-family:monospace;">'
+                    f'📊 Strategy Comparison — EOD Hold vs Tiered Exits (avg R per trade)'
+                    f'<span style="font-size:9px; font-weight:400; color:#37474f; margin-left:10px;">'
+                    f'matched trades: {_bts_both_n} · EOD coverage: {_bts_eod_n} · Tiered coverage: {_bts_tie_n}</span>'
+                    f'</div>'
+                    f'<div style="display:flex; gap:32px; flex-wrap:wrap; align-items:center;">'
+
+                    f'<div>'
+                    f'<div style="font-size:9px; color:#81c784; text-transform:uppercase; '
+                    f'letter-spacing:1px; margin-bottom:2px;">📅 Held to Close (EOD)</div>'
+                    f'<div style="font-size:26px; font-weight:800; color:{_bts_eod_clr}; '
+                    f'font-family:monospace;">{_bts_eod_str}</div>'
+                    f'</div>'
+
+                    f'<div style="font-size:20px; color:#37474f; align-self:center;">vs</div>'
+
+                    f'<div>'
+                    f'<div style="font-size:9px; color:#ffb74d; text-transform:uppercase; '
+                    f'letter-spacing:1px; margin-bottom:2px;">🪜 50/25/25 Ladder (Tiered)</div>'
+                    f'<div style="font-size:26px; font-weight:800; color:{_bts_tiered_clr}; '
+                    f'font-family:monospace;">{_bts_tiered_str}</div>'
+                    f'</div>'
+
+                    f'<div style="border-left:1px solid #1a2744; padding-left:24px; align-self:center;">'
+                    f'<div style="font-size:12px; font-weight:700; color:{_bts_verdict_clr};">{_bts_verdict}</div>'
+                    f'{"<div style=\\"font-size:11px; color:#ffb74d; margin-top:2px;\\">" + _bts_pct_label + "</div>" if _bts_pct_label else ""}'
+                    f'<div style="font-size:10px; color:#37474f; margin-top:3px;">'
+                    f'Avg R computed on matched rows only · % vs EOD baseline</div>'
+                    f'</div>'
+
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
