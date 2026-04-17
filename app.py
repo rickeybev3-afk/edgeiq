@@ -7790,6 +7790,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _rp_priority = "P3 🟡" if _tcs >= 70 else "P4 🟢"
                             _rp_eod_r    = _rp_r.get("eod_pnl_r")
                             _rp_tiered_r = _rp_r.get("tiered_pnl_r")
+                            _rp_tiered_display = (
+                                round(float(_rp_tiered_r), 2)
+                                if _rp_tiered_r is not None and float(_rp_tiered_r) != TIERED_PNL_SENTINEL
+                                else None
+                            )
                             _rp_trades.append({
                                 "Priority":    _rp_priority,
                                 "Date":        _rp_date_str,
@@ -7806,7 +7811,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "False Break": _false_break,
                                 "R (MFE)":     round(_pnl_r, 2),
                                 "R (EOD)":     round(float(_rp_eod_r), 2) if _rp_eod_r is not None else None,
-                                "R (Tiered)":  round(float(_rp_tiered_r), 2) if _rp_tiered_r is not None else None,
+                                "R (Tiered)":  _rp_tiered_display,
                                 "Move %":      round(_ft, 2),
                                 "P&L ($)":     round(_trade_pnl, 2),
                                 "Equity":      round(_rp_equity_cur, 2),
@@ -14253,7 +14258,7 @@ ALTER TABLE backtest_sim_runs
                 else:
                     st.success(
                         f"Batch complete — {_bf_fetched} rows processed, "
-                        f"{_bf_updated} updated, {_bf_no_bars} deferred (no bars), "
+                        f"{_bf_updated} updated, {_bf_no_bars} retired (no bar data available), "
                         f"{_bf_no_cross} skipped (no entry cross). "
                         f"{_bf_remain:,} rows still pending."
                     )

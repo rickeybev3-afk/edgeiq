@@ -158,8 +158,21 @@ def discover_user_ids() -> list[str]:
 
 # ── Bar helpers ────────────────────────────────────────────────────────────────
 
+_FETCH_NO_DATA = "no_data"   # API succeeded but returned zero bars (terminal)
+_FETCH_ERROR   = "error"     # exception raised (transient; do not stamp sentinel)
+_FETCH_OK      = "ok"        # success with data
+
+
 def _fetch_bars_safe(ticker: str, trade_date: date):
-    """Fetch 1-min session bars from Alpaca.  Returns None on error."""
+    """Fetch 1-min session bars from Alpaca.
+
+    Returns a 2-tuple ``(df_or_None, status)`` where *status* is one of the
+    module-level constants ``_FETCH_OK``, ``_FETCH_NO_DATA``, or
+    ``_FETCH_ERROR``.
+
+    Callers must distinguish *no_data* (sentinel eligible) from *error*
+    (transient failure; skip without stamping so the row is retried next run).
+    """
     try:
         df = backend.fetch_bars(
             backend.ALPACA_API_KEY,
@@ -167,9 +180,11 @@ def _fetch_bars_safe(ticker: str, trade_date: date):
             ticker,
             trade_date,
         )
-        return df if (df is not None and len(df) > 0) else None
+        if df is not None and len(df) > 0:
+            return df, _FETCH_OK
+        return None, _FETCH_NO_DATA
     except Exception:
-        return None
+        return None, _FETCH_ERROR
 
 
 def _post_ib_bars(full_df, trade_date: date):
@@ -288,31 +303,44 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
 
             print(f"    [{ticker}] {trade_date} {direction}  ", end="", flush=True)
 
-            full_df = _fetch_bars_safe(ticker, trade_date)
+            full_df, _fetch_status = _fetch_bars_safe(ticker, trade_date)
             if rate_limit:
                 time.sleep(ALPACA_SLEEP_S)
 
             if full_df is None:
-                print("no bars — eod_pnl_r only, row deferred")
-                consecutive_errors += 1
-                if consecutive_errors >= MAX_ERRORS:
-                    print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
-                    print("  Stopping this user — check Alpaca credentials and retry.")
-                    return stats
-                eod_only = backend.compute_trade_sim_tiered(
-                    aft_df    = None,
-                    ib_high   = ib_high,
-                    ib_low    = ib_low,
-                    direction = direction,
-                    close_px  = close_price,
-                )
-                if not dry_run and existing_eod is None and eod_only.get("eod_pnl_r") is not None:
-                    try:
-                        backend.supabase.table("paper_trades").update(
-                            {"eod_pnl_r": eod_only["eod_pnl_r"]}
-                        ).eq("id", row_id).execute()
-                    except Exception as e:
-                        print(f"\n    eod_pnl_r update error: {e}")
+                if _fetch_status == _FETCH_ERROR:
+                    # Exception raised — transient failure; skip without sentinel so
+                    # the row remains retriable in a future backfill run.
+                    print("fetch error (transient) — row deferred")
+                    consecutive_errors += 1
+                    if consecutive_errors >= MAX_ERRORS:
+                        print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
+                        print("  Stopping this user — check Alpaca credentials and retry.")
+                        return stats
+                else:
+                    # API returned successfully with zero bars — row genuinely has
+                    # no data.  paper_trades sentinel stamping is handled separately;
+                    # for now, defer with skipped_ids so this run terminates.
+                    print("no bars — eod_pnl_r only, row deferred")
+                    consecutive_errors += 1
+                    if consecutive_errors >= MAX_ERRORS:
+                        print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
+                        print("  Stopping this user — check Alpaca credentials and retry.")
+                        return stats
+                    eod_only = backend.compute_trade_sim_tiered(
+                        aft_df    = None,
+                        ib_high   = ib_high,
+                        ib_low    = ib_low,
+                        direction = direction,
+                        close_px  = close_price,
+                    )
+                    if not dry_run and existing_eod is None and eod_only.get("eod_pnl_r") is not None:
+                        try:
+                            backend.supabase.table("paper_trades").update(
+                                {"eod_pnl_r": eod_only["eod_pnl_r"]}
+                            ).eq("id", row_id).execute()
+                        except Exception as e:
+                            print(f"\n    eod_pnl_r update error: {e}")
                 stats["skipped_no_bars"] += 1
                 skipped_ids.append(row_id)
                 continue
@@ -460,33 +488,51 @@ def backfill_backtest_sim_runs(dry_run: bool, rate_limit: bool) -> dict:
             print(f"    [{ticker}] {sim_date} {direction}  ", end="", flush=True)
 
             # ── Fetch Alpaca bars ─────────────────────────────────────────────
-            full_df = _fetch_bars_safe(ticker, sim_date)
+            full_df, _fetch_status = _fetch_bars_safe(ticker, sim_date)
             if rate_limit:
                 time.sleep(ALPACA_SLEEP_S)
 
             if full_df is None:
-                print("no bars — eod_pnl_r only, row deferred")
-                consecutive_errors += 1
-                if consecutive_errors >= MAX_ERRORS:
-                    print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
-                    print("  Stopping — check Alpaca credentials and retry.")
-                    return stats
-                eod_only = backend.compute_trade_sim_tiered(
-                    aft_df    = None,
-                    ib_high   = ib_high,
-                    ib_low    = ib_low,
-                    direction = direction,
-                    close_px  = close_price,
-                )
-                if not dry_run and existing_eod is None and eod_only.get("eod_pnl_r") is not None:
-                    try:
-                        backend.supabase.table("backtest_sim_runs").update(
-                            {"eod_pnl_r": eod_only["eod_pnl_r"]}
-                        ).eq("id", row_id).execute()
-                    except Exception as e:
-                        print(f"\n    eod_pnl_r update error: {e}")
+                if _fetch_status == _FETCH_ERROR:
+                    # Exception raised — transient failure (network/auth/rate-limit).
+                    # Skip without stamping; row remains retriable in future runs.
+                    print("fetch error (transient) — row deferred")
+                    consecutive_errors += 1
+                    if consecutive_errors >= MAX_ERRORS:
+                        print(f"\n  {MAX_ERRORS} consecutive bar-fetch failures.")
+                        print("  Stopping — check Alpaca credentials and retry.")
+                        return stats
+                    skipped_ids.append(row_id)
+                else:
+                    # API returned successfully with zero bars — this ticker/date
+                    # has no data (delisted, pre-listing, holiday gap, etc.).
+                    # Stamp with sentinel so the row exits the IS NULL pending count
+                    # permanently and stops cluttering the warning banner.
+                    print("no bars — stamping sentinel, row permanently retired")
+                    eod_only = backend.compute_trade_sim_tiered(
+                        aft_df    = None,
+                        ib_high   = ib_high,
+                        ib_low    = ib_low,
+                        direction = direction,
+                        close_px  = close_price,
+                    )
+                    if not dry_run:
+                        patch_no_bar: dict = {"tiered_pnl_r": backend.TIERED_PNL_SENTINEL}
+                        if existing_eod is None and eod_only.get("eod_pnl_r") is not None:
+                            patch_no_bar["eod_pnl_r"] = eod_only["eod_pnl_r"]
+                        try:
+                            backend.supabase.table("backtest_sim_runs").update(
+                                patch_no_bar
+                            ).eq("id", row_id).execute()
+                        except Exception as e:
+                            print(f"\n    sentinel stamp error: {e}")
+                    # Always add to skipped_ids so the while-loop's NOT IN filter
+                    # excludes this row in subsequent iterations.  For dry-run this
+                    # is essential for loop termination (no DB write occurs to make
+                    # the row disappear from IS NULL queries).  For live runs it is
+                    # a harmless safety net in case the DB write is slow to commit.
+                    skipped_ids.append(row_id)
                 stats["skipped_no_bars"] += 1
-                skipped_ids.append(row_id)
                 continue
 
             consecutive_errors = 0

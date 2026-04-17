@@ -47,6 +47,29 @@ _SUPABASE_URL_PATTERN = _re.compile(r'^https://[a-z0-9]+\.supabase\.co$')
 
 ALPACA_API_KEY    = os.environ.get("ALPACA_API_KEY", "").strip()
 ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+
+# Sentinel stored in tiered_pnl_r for rows whose bar data will never be
+# available (delisted tickers, data too old, etc.).  The sentinel is written
+# only when Alpaca conclusively returns an empty bar series (not when an
+# exception is raised, which indicates a transient network/auth failure).
+# Once stamped, the row exits the IS NULL pending count permanently.
+# load_backtest_sim_history() replaces sentinel with NaN automatically so
+# downstream .notna()/.dropna() filters exclude such rows without extra handling.
+TIERED_PNL_SENTINEL = -9999.0
+
+# How many times run_backtest_tiered_backfill_batch() retries a bar fetch that
+# raises an exception (transient API/network failure) before giving up on that
+# row for this batch.  Rows that exhaust retries are skipped without stamping
+# the sentinel — they remain retriable in future backfill runs.
+# Rows that conclusively return zero bars (no exception, just no data) are
+# stamped immediately regardless of this counter.
+try:
+    BACKFILL_BAR_FETCH_MAX_RETRIES: int = max(0, int(
+        os.environ.get("BACKFILL_BAR_FETCH_MAX_RETRIES", "2")
+    ))
+except (ValueError, TypeError):
+    BACKFILL_BAR_FETCH_MAX_RETRIES = 2
+
 # IS_PAPER_ALPACA declares the intended trading mode: "true" = paper (default), "false" = live.
 # Set IS_PAPER_ALPACA=false in your environment when using live brokerage keys.
 IS_PAPER_ALPACA = os.environ.get("IS_PAPER_ALPACA", "true").strip().lower() == "true"
@@ -7893,7 +7916,13 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
 
 
 def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
-    """Load saved backtest runs from Supabase (most recent first, up to 1000 rows)."""
+    """Load saved backtest runs from Supabase (most recent first, up to 1000 rows).
+
+    Rows whose tiered_pnl_r equals TIERED_PNL_SENTINEL (-9999) are permanently
+    unfillable (no Alpaca bars available).  The sentinel is replaced with NaN so
+    that all downstream .notna()/.dropna() filters exclude them automatically
+    without any extra handling in the UI layer.
+    """
     if not supabase:
         return pd.DataFrame()
     try:
@@ -7901,7 +7930,12 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
         if user_id:
             q = q.eq("user_id", user_id)
         data = q.order("sim_date", desc=True).limit(5000).execute().data
-        return pd.DataFrame(data) if data else pd.DataFrame()
+        df = pd.DataFrame(data) if data else pd.DataFrame()
+        if not df.empty and "tiered_pnl_r" in df.columns:
+            import numpy as _np
+            df["tiered_pnl_r"] = pd.to_numeric(df["tiered_pnl_r"], errors="coerce")
+            df.loc[df["tiered_pnl_r"] == TIERED_PNL_SENTINEL, "tiered_pnl_r"] = _np.nan
+        return df
     except Exception as e:
         print(f"Backtest load error: {e}")
         return pd.DataFrame()
@@ -8164,20 +8198,45 @@ def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = Fal
             stats["skipped_ids"].append(row_id)
             continue
 
-        try:
-            full_df = fetch_bars(ALPACA_API_KEY, ALPACA_SECRET_KEY, ticker, sim_date)
-        except Exception:
-            full_df = None
+        # ── Fetch Alpaca bars with retry for transient exceptions ────────────
+        # Distinguish two cases:
+        #   • Exception raised            → transient (network/auth); retry up to
+        #     BACKFILL_BAR_FETCH_MAX_RETRIES times, then skip WITHOUT sentinel.
+        #   • No exception, empty result  → conclusive "no data" for this ticker/date;
+        #     stamp sentinel so the row exits the IS NULL pending count permanently.
+        full_df = None
+        _fetch_exception = False
+        for _attempt in range(BACKFILL_BAR_FETCH_MAX_RETRIES + 1):
+            try:
+                _df = fetch_bars(ALPACA_API_KEY, ALPACA_SECRET_KEY, ticker, sim_date)
+                _fetch_exception = False
+                full_df = _df
+                break
+            except Exception:
+                _fetch_exception = True
+                if _attempt < BACKFILL_BAR_FETCH_MAX_RETRIES:
+                    time.sleep(0.5)
+
+        if _fetch_exception:
+            # All retries raised exceptions — transient failure; skip without stamping.
+            stats["errors"] += 1
+            continue
 
         if full_df is None or len(full_df) == 0:
+            # API returned successfully but no bars exist — this ticker/date has no
+            # data (delisted, pre-listing, holiday gap, etc.).  Stamp the sentinel so
+            # the row exits the IS NULL pending count permanently.
             eod_only = compute_trade_sim_tiered(
                 aft_df=None, ib_high=ib_high, ib_low=ib_low,
                 direction=direction, close_px=close_price,
             )
-            if not dry_run and existing_eod is None and eod_only.get("eod_pnl_r") is not None:
+            if not dry_run:
+                patch_no_bar: dict = {"tiered_pnl_r": TIERED_PNL_SENTINEL}
+                if existing_eod is None and eod_only.get("eod_pnl_r") is not None:
+                    patch_no_bar["eod_pnl_r"] = eod_only["eod_pnl_r"]
                 try:
                     supabase.table("backtest_sim_runs").update(
-                        {"eod_pnl_r": eod_only["eod_pnl_r"]}
+                        patch_no_bar
                     ).eq("id", row_id).execute()
                 except Exception:
                     pass
