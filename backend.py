@@ -11057,11 +11057,12 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
         # ── v6: S/R-aware trail tightening (Bullish) ─────────────────────────
         if _use_trail_sim_v6:
             if _mfe_r >= target_r:
-                # Check if nearest_resistance is within 0.3R above entry → tighten trail.
+                # Check if nearest_resistance is within 0.3R ABOVE entry (bounded: 0 ≤ dist ≤ 0.3R).
+                # Level must be above entry (dist >= 0) to avoid false tightening on wrong-side data.
                 _trail_r = 1.0
                 _outcome = "trailing_exit"
                 if (nearest_resistance is not None
-                        and (nearest_resistance - entry) <= 0.3 * ib_range):
+                        and 0.0 <= (nearest_resistance - entry) <= 0.3 * ib_range):
                     _trail_r = 0.5
                     _outcome = "tight_trail_exit"
                 captured_r   = max(0.0, round(_mfe_r - _trail_r, 3))
@@ -11154,11 +11155,12 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
         # ── v6: S/R-aware trail tightening (Bearish) ─────────────────────────
         if _use_trail_sim_v6:
             if _mfe_r >= target_r:
-                # Check if nearest_support is within 0.3R below entry → tighten trail.
+                # Check if nearest_support is within 0.3R BELOW entry (bounded: 0 ≤ dist ≤ 0.3R).
+                # Level must be below entry (dist >= 0) to avoid false tightening on wrong-side data.
                 _trail_r = 1.0
                 _outcome = "trailing_exit"
                 if (nearest_support is not None
-                        and (entry - nearest_support) <= 0.3 * ib_range):
+                        and 0.0 <= (entry - nearest_support) <= 0.3 * ib_range):
                     _trail_r = 0.5
                     _outcome = "tight_trail_exit"
                 captured_r   = max(0.0, round(_mfe_r - _trail_r, 3))

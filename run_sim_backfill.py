@@ -326,6 +326,9 @@ def backfill_table(table: str, id_col: str, user_id: str,
     # Pre-load S/R context levels for v6 trail-tightening sim.
     _load_context_levels()
 
+    # Date column name differs by table: backtest_sim_runs → sim_date, paper_trades → trade_date.
+    _date_col = "trade_date" if table == "paper_trades" else "sim_date"
+
     total_updated = 0
     total_errors  = 0
     dry_run_counts: dict[str, dict] = {}  # populated only when dry_run=True
@@ -366,7 +369,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     backend.supabase.table(table)
                     .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
-                            f"tcs,scan_type,mfe,mae,sim_date,"
+                            f"tcs,scan_type,mfe,mae,{_date_col},"
                             f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
@@ -392,7 +395,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                             backend.supabase.table(table)
                             .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                                     f"follow_thru_pct,false_break_up,false_break_down,"
-                                    f"tcs,scan_type,sim_date")
+                                    f"tcs,scan_type,{_date_col}")
                             .eq("user_id", user_id)
                             .eq("actual_outcome", direction)
                         )
