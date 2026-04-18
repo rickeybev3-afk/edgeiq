@@ -17983,9 +17983,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _exp_vwap_icon   = "🟢" if _exp_vwap_n >= 10  else "🟡" if _exp_vwap_n >= 5   else "🔴"
                         _exp_df["TCS+IB Signals"] = f"{_exp_tcs_ib_icon} {_exp_tcs_ib}"
                         _exp_df["VWAP Signals"]   = f"{_exp_vwap_icon} {_exp_vwap_n}"
+                        _exp_df["VWAP Pass Rate (%)"] = (
+                            f"{round(_exp_vwap_n / _exp_tcs_ib * 100)}%"
+                            if _exp_tcs_ib > 0
+                            else "0%"
+                        )
                     else:
-                        _exp_df["TCS+IB Signals"] = "—"
-                        _exp_df["VWAP Signals"]   = "—"
+                        _exp_df["TCS+IB Signals"]    = "—"
+                        _exp_df["VWAP Signals"]       = "—"
+                        _exp_df["VWAP Pass Rate (%)"] = ""
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
@@ -18113,6 +18119,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "(IB midpoint on the correct side of VWAP). "
                                 "This is the count the live paper-trader would have acted on. "
                                 "🟢 ≥ 10 signals · 🟡 5–9 · 🔴 < 5"
+                            ),
+                        )
+                    if "VWAP Pass Rate (%)" in _detail_df.columns:
+                        _sweep_col_cfg["VWAP Pass Rate (%)"] = st.column_config.TextColumn(
+                            "VWAP Pass Rate (%)",
+                            help=(
+                                "Percentage of TCS+IB signals that also passed the VWAP gate "
+                                "(VWAP Signals ÷ TCS+IB Signals). "
+                                "Higher means VWAP alignment is frequently present for this ticker."
                             ),
                         )
                     st.dataframe(
