@@ -1145,32 +1145,46 @@ export default function Settings() {
             </div>
           )}
 
-          <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid #1a2332", display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "10px", fontWeight: 600, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginRight: "2px" }}>
-              Jump to
-            </span>
-            {(
-              [
-                { id: "trading-mode", label: "Trading Mode" },
-                { id: "credential-alerts", label: "Subscriber Prefs" },
-                { id: "subscriber-opt-out", label: "Credential Status" },
-                { id: "backfill-health", label: "Backfill Health" },
-                { id: "context-dryrun", label: "Context Dry-Run" },
-                { id: "paper-lookback", label: "Paper Lookback" },
-                { id: "backfill-heartbeat-window", label: "Alert Window" },
-                { id: "eod-recalc-health", label: "EOD Recalc" },
-                { id: "rvol-size-tiers", label: "RVOL Tiers" },
-              ] as const
-            ).map(({ id, label }) => (
-              <NavPill
-                key={id}
-                href={`#${id}`}
-                label={label}
-                active={activeSection === id}
-              />
-            ))}
-          </div>
         </section>
+
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 10,
+            background: "#0f1623",
+            borderBottom: "1px solid #1e2d40",
+            padding: "8px 0",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ fontSize: "10px", fontWeight: 600, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginRight: "2px" }}>
+            Jump to
+          </span>
+          {(
+            [
+              { id: "trading-mode", label: "Trading Mode" },
+              { id: "credential-alerts", label: "Subscriber Prefs" },
+              { id: "subscriber-opt-out", label: "Credential Status" },
+              { id: "backfill-health", label: "Backfill Health" },
+              { id: "context-dryrun", label: "Context Dry-Run" },
+              { id: "paper-lookback", label: "Paper Lookback" },
+              { id: "backfill-heartbeat-window", label: "Alert Window" },
+              { id: "eod-recalc-health", label: "EOD Recalc" },
+              { id: "rvol-size-tiers", label: "RVOL Tiers" },
+            ] as const
+          ).map(({ id, label }) => (
+            <NavPill
+              key={id}
+              href={`#${id}`}
+              label={label}
+              active={activeSection === id}
+            />
+          ))}
+        </div>
 
         <section
           id="trading-mode"
