@@ -12728,6 +12728,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _auto_mode_val = st.session_state.get("tkr_div_auto_mode", _auto_alert_modes[0])
                     if _qp_auto_mode_cur != _auto_mode_val:
                         st.query_params["tkr_div_auto_mode"] = _auto_mode_val
+                    if st.session_state.get("tkr_div_auto_mode", "On count change") == "On count change":
+                        st.number_input(
+                            "Min minutes between alerts",
+                            min_value=1,
+                            max_value=1440,
+                            value=15,
+                            step=1,
+                            key="tkr_div_auto_cooldown_mins",
+                            help=(
+                                "Cool-down period: once an alert fires, subsequent alerts "
+                                "are suppressed until this many minutes have elapsed. "
+                                "Prevents flooding your Telegram/Discord channel during "
+                                "active replays or repeated filter adjustments."
+                            ),
+                        )
             _sort_key, _sort_asc = _sort_col_map[_sort_choice]
             _r_filter_key = _r_filter_col_map[_r_filter_col]
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
@@ -13070,34 +13085,55 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                 if _auto_send_on and _any_channel_auto:
                     if _auto_send_mode == "On count change":
-                        # Fire immediately from the session whenever the count changes.
-                        # This covers in-session monitoring; the bot handles end-of-day.
+                        # Fire immediately from the session whenever the count changes,
+                        # subject to the cool-down window. This covers in-session
+                        # monitoring; the bot handles end-of-day.
                         _prev_auto_n = st.session_state.get("_div_auto_last_n", -1)
+                        _cooldown_mins = st.session_state.get("tkr_div_auto_cooldown_mins", 15)
+                        _last_fired_ts = st.session_state.get("_div_auto_last_fired_ts")
+                        _now_ts = datetime.now()
+                        _cooldown_elapsed = (
+                            _last_fired_ts is None
+                            or (_now_ts - _last_fired_ts).total_seconds() >= _cooldown_mins * 60
+                        )
                         if _n_flagged != _prev_auto_n and _n_flagged > 0:
-                            _auto_result = send_divergence_alert(
-                                flagged_rows=_flagged_csv_rows,
-                                threshold=_div_thresh,
-                            )
-                            _auto_sent_to = [ch for ch, ok in _auto_result.items() if ok]
-                            _auto_failed  = [
-                                ch for ch, ok in _auto_result.items()
-                                if not ok and os.environ.get(
-                                    "TELEGRAM_BOT_TOKEN" if ch == "telegram"
-                                    else "DISCORD_WEBHOOK_URL"
+                            if _cooldown_elapsed:
+                                _auto_result = send_divergence_alert(
+                                    flagged_rows=_flagged_csv_rows,
+                                    threshold=_div_thresh,
                                 )
-                            ]
-                            if _auto_sent_to:
-                                st.toast(
-                                    f"Auto-alert dispatched via "
-                                    f"{', '.join(c.title() for c in _auto_sent_to)} "
-                                    f"({_n_flagged} ticker{'s' if _n_flagged != 1 else ''} flagged)",
-                                    icon="📤",
+                                _auto_sent_to = [ch for ch, ok in _auto_result.items() if ok]
+                                _auto_failed  = [
+                                    ch for ch, ok in _auto_result.items()
+                                    if not ok and os.environ.get(
+                                        "TELEGRAM_BOT_TOKEN" if ch == "telegram"
+                                        else "DISCORD_WEBHOOK_URL"
+                                    )
+                                ]
+                                if _auto_sent_to:
+                                    st.toast(
+                                        f"Auto-alert dispatched via "
+                                        f"{', '.join(c.title() for c in _auto_sent_to)} "
+                                        f"({_n_flagged} ticker{'s' if _n_flagged != 1 else ''} flagged)",
+                                        icon="📤",
+                                    )
+                                    st.session_state["_div_auto_last_fired_ts"] = _now_ts
+                                if _auto_failed:
+                                    st.toast(
+                                        f"Auto-alert failed for: "
+                                        f"{', '.join(c.title() for c in _auto_failed)}",
+                                        icon="⚠️",
+                                    )
+                            else:
+                                _secs_remaining = int(
+                                    _cooldown_mins * 60
+                                    - (_now_ts - _last_fired_ts).total_seconds()
                                 )
-                            if _auto_failed:
+                                _mins_remaining = max(1, round(_secs_remaining / 60))
                                 st.toast(
-                                    f"Auto-alert failed for: "
-                                    f"{', '.join(c.title() for c in _auto_failed)}",
-                                    icon="⚠️",
+                                    f"Alert suppressed — cool-down active "
+                                    f"({_mins_remaining} min{'s' if _mins_remaining != 1 else ''} remaining)",
+                                    icon="⏳",
                                 )
                             # Append a record to the session-level dispatch log
                             if "auto_dispatch_log" not in st.session_state:
