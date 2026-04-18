@@ -15468,22 +15468,73 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             unsafe_allow_html=True,
                         )
 
+                        # ── VWAP Pass Rate per TCS floor ─────────────────────────
+                        _tk_vwap_bt_grp = _bt_df[_bt_df["ticker"] == _tk_name]
+                        def _tk_vwap_rate_for_floor(floor):
+                            try:
+                                _vf_tcs, _vf_vwap = _compute_bt_vwap_funnel(
+                                    _tk_vwap_bt_grp,
+                                    tcs_min=int(floor),
+                                    ib_pct_max=_tkr_ib_threshold,
+                                )
+                                if _vf_tcs > 0:
+                                    return round(_vf_vwap / _vf_tcs * 100)
+                            except (ValueError, TypeError, KeyError, AttributeError, ZeroDivisionError):
+                                pass
+                            return None
+
+                        _tk_sw_df = _tk_sw_df.copy()
+                        def _tk_vwap_pct_str(floor):
+                            _r = _tk_vwap_rate_for_floor(floor)
+                            return f"{_r}%" if _r is not None else "—"
+                        _tk_sw_df["VWAP Pass Rate (%)"] = _tk_sw_df["TCS Floor"].apply(_tk_vwap_pct_str)
+
+                        def _tk_vwap_cell_style(val):
+                            try:
+                                _vv = int(str(val).replace("%", "").strip())
+                                if _vv >= 70:
+                                    return "color:#66bb6a;font-weight:700"
+                                elif _vv >= 40:
+                                    return "color:#ffa726;font-weight:700"
+                                else:
+                                    return "color:#ef5350;font-weight:700"
+                            except (ValueError, TypeError):
+                                return ""
+
                         def _tk_sw_style(row):
                             if _tk_has_best and row["Net P&L ($)"] == _tk_best_pnl and row["Sufficient"] == "✓":
                                 return ["background:#1e3a2a;font-weight:bold"] * len(row)
                             return [""] * len(row)
 
+                        _tk_sw_styled = _tk_sw_df.style.apply(_tk_sw_style, axis=1)
+                        if "VWAP Pass Rate (%)" in _tk_sw_df.columns:
+                            try:
+                                _tk_sw_styled = _tk_sw_styled.map(
+                                    _tk_vwap_cell_style, subset=["VWAP Pass Rate (%)"]
+                                )
+                            except AttributeError:
+                                _tk_sw_styled = _tk_sw_styled.applymap(
+                                    _tk_vwap_cell_style, subset=["VWAP Pass Rate (%)"]
+                                )
+
                         st.dataframe(
-                            _tk_sw_df.style.apply(_tk_sw_style, axis=1),
+                            _tk_sw_styled,
                             use_container_width=True,
                             hide_index=True,
                             column_config={
-                                "Net P&L ($)":    st.column_config.NumberColumn(format="$%.0f"),
-                                "Expectancy ($)": st.column_config.NumberColumn(format="$%.2f"),
-                                "Win Rate":       st.column_config.NumberColumn(format="%.1f%%"),
-                                "Sufficient":     st.column_config.TextColumn(
+                                "Net P&L ($)":       st.column_config.NumberColumn(format="$%.0f"),
+                                "Expectancy ($)":    st.column_config.NumberColumn(format="$%.2f"),
+                                "Win Rate":          st.column_config.NumberColumn(format="%.1f%%"),
+                                "Sufficient":        st.column_config.TextColumn(
                                     "Sufficient",
                                     help=f"✓ = at least {_MIN_TCS_TRADES} trades at this floor (eligible for Best TCS); ✗ = fewer than {_MIN_TCS_TRADES} trades (excluded from Best TCS pick)",
+                                ),
+                                "VWAP Pass Rate (%)": st.column_config.TextColumn(
+                                    "VWAP Pass Rate (%)",
+                                    help=(
+                                        "Percentage of TCS+IB signals at this floor that also passed the VWAP gate. "
+                                        "🟢 ≥ 70% · 🟡 40–69% · 🔴 < 40%"
+                                    ),
                                 ),
                             },
                         )
