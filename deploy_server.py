@@ -576,6 +576,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/paper-lookback":
             self._paper_lookback_get()
             return
+        if path == "/api/eod-sweep":
+            self._eod_sweep()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -738,6 +741,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = {"available": False}
         except json.JSONDecodeError:
             data = {"available": False, "error": "history file corrupt"}
+        except Exception as e:
+            data = {"available": False, "error": str(e)}
+        body = json.dumps(data).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _eod_sweep(self):
+        """Return the most recent EOD P&L sweep result written by paper_trader_bot.py.
+
+        paper_trader_bot.py writes /tmp/eod_sweep_status.json after each
+        nightly_recalibration() run with the fields:
+          ran_at         — ISO-8601 UTC timestamp of the run
+          paper_healed   — number of paper-trade rows updated
+          backtest_healed — number of backtest rows updated
+          total_healed   — combined total
+
+        If the file is absent the endpoint returns {"available": false}.
+        """
+        sweep_path = "/tmp/eod_sweep_status.json"
+        try:
+            with open(sweep_path) as f:
+                payload = json.load(f)
+            data = {"available": True, **payload}
+        except FileNotFoundError:
+            data = {"available": False}
+        except json.JSONDecodeError:
+            data = {"available": False, "error": "status file corrupt"}
         except Exception as e:
             data = {"available": False, "error": str(e)}
         body = json.dumps(data).encode()

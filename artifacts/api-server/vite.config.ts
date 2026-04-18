@@ -83,6 +83,18 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: true,
       },
+      "/api/backfill-health": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/api/backfill-error-alerts": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/api/eod-sweep": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
     },
   },
   preview: {

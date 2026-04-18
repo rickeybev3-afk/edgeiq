@@ -3590,6 +3590,23 @@ def nightly_recalibration():
     except Exception as exc:
         log.warning(f"Nightly eod_pnl_r Telegram summary failed: {exc}")
 
+    # ── Persist sweep result to disk so the dashboard can surface it ──────────
+    try:
+        import datetime as _dt
+        _sweep_payload = {
+            "ran_at": _dt.datetime.utcnow().isoformat() + "Z",
+            "paper_healed": paper_written,
+            "backtest_healed": backtest_written,
+            "total_healed": total_written,
+        }
+        _sweep_path = "/tmp/eod_sweep_status.json"
+        with open(_sweep_path, "w") as _sf:
+            import json as _json
+            _json.dump(_sweep_payload, _sf)
+        log.info(f"EOD sweep status written to {_sweep_path}")
+    except Exception as exc:
+        log.warning(f"Could not write EOD sweep status file: {exc}")
+
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def _ensure_alpaca_columns() -> bool:

@@ -33,6 +33,16 @@ interface BackfillHealthData {
   error?: string;
 }
 
+interface EodSweepData {
+  available: boolean;
+  loading: boolean;
+  ran_at?: string;
+  paper_healed?: number;
+  backtest_healed?: number;
+  total_healed?: number;
+  error?: string;
+}
+
 function formatRelativeTime(isoTimestamp: string): string {
   const t = new Date(isoTimestamp);
   if (isNaN(t.getTime())) return isoTimestamp;
@@ -420,6 +430,7 @@ function Home({ health }: { health: HealthState }) {
   const [credAlertsEnabled, setCredAlertsEnabled] = useState<boolean | null>(null);
   const [backfillErrorAlertsEnabled, setBackfillErrorAlertsEnabled] = useState<boolean | null>(null);
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealthData>({ available: false, loading: true });
+  const [eodSweep, setEodSweep] = useState<EodSweepData>({ available: false, loading: true });
   useSecondTick(health.db_checked_at);
 
   useEffect(() => {
@@ -468,6 +479,23 @@ function Home({ health }: { health: HealthState }) {
     };
     fetchBackfill();
     const interval = setInterval(fetchBackfill, 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchEodSweep = () => {
+      fetch("/api/eod-sweep")
+        .then((r) => r.json())
+        .then((data) => {
+          if (!cancelled) setEodSweep({ loading: false, ...data });
+        })
+        .catch(() => {
+          if (!cancelled) setEodSweep({ available: false, loading: false });
+        });
+    };
+    fetchEodSweep();
+    const interval = setInterval(fetchEodSweep, 300_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
@@ -620,6 +648,45 @@ function Home({ health }: { health: HealthState }) {
                     <span style={{ color: "#64748b", fontSize: "12px" }}>· {formatRelativeTime(backfillHealth.completed_at)}</span>
                   )}
                 </a>
+              )}
+            </div>
+
+            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+              {eodSweep.loading ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+              ) : !eodSweep.available ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+              ) : (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #4ade80" }} />
+              )}
+              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>EOD P&amp;L Sweep</span>
+              {eodSweep.loading ? (
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>—</span>
+              ) : !eodSweep.available ? (
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>No data</span>
+              ) : (
+                <span
+                  style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}
+                  title={eodSweep.ran_at ? `Last run: ${formatUtc(eodSweep.ran_at)}` : undefined}
+                >
+                  {(eodSweep.total_healed ?? 0) === 0 ? (
+                    <span style={{ color: "#86efac", fontWeight: 600 }}>All healed</span>
+                  ) : (
+                    <span style={{ color: "#86efac", fontWeight: 600 }}>{eodSweep.total_healed} healed</span>
+                  )}
+                  {(eodSweep.paper_healed ?? 0) > 0 && (
+                    <span style={{ color: "#94a3b8" }}>({eodSweep.paper_healed}p</span>
+                  )}
+                  {(eodSweep.paper_healed ?? 0) > 0 && (eodSweep.backtest_healed ?? 0) > 0 && (
+                    <span style={{ color: "#94a3b8" }}>+{eodSweep.backtest_healed}b)</span>
+                  )}
+                  {(eodSweep.paper_healed ?? 0) > 0 && (eodSweep.backtest_healed ?? 0) === 0 && (
+                    <span style={{ color: "#94a3b8" }}>)</span>
+                  )}
+                  {eodSweep.ran_at && (
+                    <span style={{ color: "#64748b", fontSize: "12px" }}>· {formatRelativeTime(eodSweep.ran_at)}</span>
+                  )}
+                </span>
               )}
             </div>
           </div>
