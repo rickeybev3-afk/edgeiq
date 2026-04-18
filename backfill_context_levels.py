@@ -395,9 +395,26 @@ def main():
                 _macd_str  = macd_dir            if macd_dir is not None else "N/A"
                 log.info(f'  ✓ {ticker} {trade_date} {scan_type} | VWAP={_vwap_str} | MACD={_macd_str}')
             except Exception as e:
-                log.warning(f'  ✗ {ticker} {trade_date} upsert error: {e}')
-                date_errors  += 1
-                total_errors += 1
+                _e_str = str(e)
+                if 'data_quality' in _e_str:
+                    # data_quality column not yet in Supabase schema — retry without it.
+                    # Add column with: ALTER TABLE backtest_context_levels ADD COLUMN data_quality text;
+                    _record_fallback = {k: v for k, v in record.items() if k != 'data_quality'}
+                    try:
+                        SUPABASE.table('backtest_context_levels').upsert(_record_fallback).execute()
+                        date_saved  += 1
+                        total_saved += 1
+                        _vwap_str  = f"{vwap_val:.2f}"  if vwap_val is not None else "N/A"
+                        _macd_str  = macd_dir            if macd_dir is not None else "N/A"
+                        log.info(f'  ✓ {ticker} {trade_date} {scan_type} [no data_quality col] | VWAP={_vwap_str} | MACD={_macd_str}')
+                    except Exception as e2:
+                        log.warning(f'  ✗ {ticker} {trade_date} upsert error: {e2}')
+                        date_errors  += 1
+                        total_errors += 1
+                else:
+                    log.warning(f'  ✗ {ticker} {trade_date} upsert error: {e}')
+                    date_errors  += 1
+                    total_errors += 1
 
         log.info(f'  [{trade_date}] done — saved={date_saved} no-bars={date_no_bars} errors={date_errors}')
 

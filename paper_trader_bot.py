@@ -1773,8 +1773,8 @@ def premarket_scan():
         log.warning(f"Pre-market scan failed (non-fatal): {exc}")
 
 
-def watchlist_refresh():
-    """9:35 AM ET — pull today's movers from Finviz, save to Supabase.
+def watchlist_refresh(midday: bool = False):
+    """9:35 AM ET (or 11:45 AM midday) — pull today's movers from Finviz, save to Supabase.
 
     Runs THREE screener passes and merges them:
       Pass 1 — Gap-of-day plays: ≥3% change · Float ≤100M · $1–$20
@@ -1790,7 +1790,18 @@ def watchlist_refresh():
 
     Gap plays take priority (listed first), then trend, then squeeze.
     Combined list is capped at 100 tickers.
+
+    ``midday=True`` is the 11:45 AM pass.  Each pass has its own daily lock file
+    in /tmp so bot restarts can't fire a duplicate Telegram notification.
     """
+    import os as _os
+    _wl_slot   = "midday" if midday else "morning"
+    _wl_et_date = datetime.now(EASTERN).date()   # use ET date so lock rolls over at ET midnight
+    _wl_lock   = f"/tmp/wl_{_wl_slot}_{_wl_et_date}.lock"
+    if _os.path.exists(_wl_lock):
+        log.info(f"[watchlist_refresh] {_wl_slot} already completed today (ET {_wl_et_date}) — skipping duplicate run")
+        return
+
     global TICKERS
     log.info("=" * 60)
     log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze passes)")
@@ -1856,6 +1867,7 @@ def watchlist_refresh():
                     f"{len(squeeze_tickers)} squeeze) → "
                     f"{', '.join(merged)}"
                 )
+                _scan_note = "Midday refresh complete." if midday else "Morning scan at 10:47 AM ET..."
                 tg_send(
                     f"📋 <b>Watchlist Refreshed — {date.today()}</b>\n"
                     f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
@@ -1863,8 +1875,13 @@ def watchlist_refresh():
                     f"Gap: ≥3% chg · Float ≤100M · $1–$20\n"
                     f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
                     f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
-                    f"Morning scan at 10:47 AM ET..."
+                    f"{_scan_note}"
                 )
+                # Mark this slot done — prevents duplicate TG if bot restarts today
+                try:
+                    open(_wl_lock, 'w').close()
+                except Exception:
+                    pass
             else:
                 log.warning("Finviz returned tickers but Supabase save failed — keeping existing watchlist")
         else:
@@ -4279,7 +4296,7 @@ def main():
             and now_et.minute >= 45
         ):
             log.info("Midday watchlist refresh — catching late movers for 2 PM scan")
-            watchlist_refresh()
+            watchlist_refresh(midday=True)
             _midday_watchlist_done = True
 
         # 2:00 PM — intraday scan
