@@ -21433,12 +21433,21 @@ def render_performance_tab():
         _pt_tcs_ib  = _pace_tgt.get("tcs_ib_count", _pace_tgt["count"])
         _pt_vwap    = _pace_tgt.get("vwap_count",   _pace_tgt["count"])
         _pt_filtered_pct = round((_pt_tcs_ib - _pt_vwap) / _pt_tcs_ib * 100) if _pt_tcs_ib else 0
-        _pace_tgt_source = (
-            f"{_pt_tcs_ib:,} pass TCS+IB filter  →  {_pt_vwap:,} pass VWAP alignment"
-            f" ({_pt_filtered_pct}% filtered)  ·  {_pace_tgt['bdays']:,} trading days"
+        _pt_funnel_html = (
+            f'<span style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;vertical-align:middle;">'
+            f'<span style="background:#0d2537;border:1px solid #0288d1;border-radius:11px;padding:1px 8px;'
+            f'font-size:11px;color:#4fc3f7;white-space:nowrap;"><b>{_pt_tcs_ib:,}</b> TCS+IB</span>'
+            f'<span style="color:#ef6c00;font-size:11px;font-weight:600;">&#x2192; &minus;{_pt_filtered_pct}% &#x2192;</span>'
+            f'<span style="background:#2a1a00;border:1px solid #ef6c00;border-radius:11px;padding:1px 8px;'
+            f'font-size:11px;color:#ffa726;white-space:nowrap;"><b>{_pt_vwap:,}</b> VWAP</span>'
+            f'<span style="color:#546e7a;font-size:11px;">&#x2192;</span>'
+            f'<span style="background:#0a2318;border:1px solid #388e3c;border-radius:11px;padding:1px 8px;'
+            f'font-size:11px;color:#66bb6a;white-space:nowrap;"><b>{_TARGET_PER_DAY:.2f}</b>/day</span>'
+            f'<span style="color:#546e7a;font-size:11px;margin-left:3px;">&#xb7; {_pace_tgt["bdays"]:,} trading days</span>'
+            f'</span>'
         )
     else:
-        _pace_tgt_source = "historical estimate"
+        _pt_funnel_html = '<span style="color:#546e7a;font-size:11px;">historical estimate</span>'
 
     # ── Trades/Day pace row ─────────────────────────────────────────────────────
 
@@ -21463,13 +21472,13 @@ def render_performance_tab():
         _pace_label      = (
             f"{_total_trades} trades / {_td_bdays} trading days"
         )
-        _pace_sub = f"~{_annual_pace}/yr pace  ·  target {_TARGET_PER_DAY:.2f}/day ({_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
+        _pace_sub = f'~{_annual_pace}/yr pace  ·  target {_TARGET_PER_DAY:.2f}/day ({_TARGET_PER_YEAR}/yr)  ·  {_pt_funnel_html}'
     else:
         _trades_per_day  = 0.0
         _annual_pace     = 0
         _pace_color      = "#90a4ae"
         _pace_label      = "no trades yet"
-        _pace_sub        = f"target {_TARGET_PER_DAY:.2f}/day ({_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
+        _pace_sub        = f'target {_TARGET_PER_DAY:.2f}/day ({_TARGET_PER_YEAR}/yr)  ·  {_pt_funnel_html}'
 
     st.markdown(
         f'<div style="background:#151f2e;border:1px solid #1e2a3a;border-radius:8px;'
@@ -24326,13 +24335,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 "#90a4ae"
             )
             _bts_pace_label = f"{_bts_total_n} trades / {_bts_bdays} trading days"
-            _bts_pace_sub   = f"~{_bts_annual_pace}/yr pace  ·  target {_BTS_TARGET_PER_DAY:.2f}/day ({_BTS_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
+            _bts_pace_sub   = f'~{_bts_annual_pace}/yr pace  ·  target {_BTS_TARGET_PER_DAY:.2f}/day ({_BTS_TARGET_PER_YEAR}/yr)  ·  {_pt_funnel_html}'
         else:
             _bts_trades_pd   = 0.0
             _bts_annual_pace = 0
             _bts_pace_color  = "#90a4ae"
             _bts_pace_label  = "no sim runs yet"
-            _bts_pace_sub    = f"target {_BTS_TARGET_PER_DAY:.2f}/day ({_BTS_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
+            _bts_pace_sub    = f'target {_BTS_TARGET_PER_DAY:.2f}/day ({_BTS_TARGET_PER_YEAR}/yr)  ·  {_pt_funnel_html}'
 
         st.markdown(
             f'<div style="background:#151f2e;border:1px solid #1e2a3a;border-radius:8px;'
