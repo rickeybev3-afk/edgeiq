@@ -12,7 +12,7 @@ version = "1.0.0"
 [[services]]
 name = "web"
 paths = [ "/" ]
-localPort = 8080
+localPort = 3001
 
 [services.development]
 run = "pnpm --filter @workspace/api-server run dev"
@@ -21,5 +21,5 @@ run = "pnpm --filter @workspace/api-server run dev"
 run = "bash /home/runner/workspace/start.sh"
 
 [services.env]
-PORT = "8080"
+PORT = "3001"
 BASE_PATH = "/"
