@@ -19591,6 +19591,23 @@ def render_performance_tab():
             f'jump to reset tool \u2193</a></p>',
             unsafe_allow_html=True,
         )
+        _pt_1b_breakdown = list_paper_trades_tiered_sentinel_tickers(
+            user_id=_AUTH_USER_ID, top_n=10
+        )
+        _pt_1b_tickers = _pt_1b_breakdown.get("tickers", [])
+        if _pt_1b_tickers:
+            _pt_1b_total_tickers = _pt_1b_breakdown.get("total_tickers", 0)
+            _pt_1b_parts = [f"{r['ticker']}: {r['count']}" for r in _pt_1b_tickers]
+            _pt_1b_suffix = (
+                f" (+{_pt_1b_total_tickers - len(_pt_1b_tickers)} more)"
+                if _pt_1b_total_tickers > len(_pt_1b_tickers)
+                else ""
+            )
+            st.markdown(
+                f'<p style="margin:0 0 10px 0; font-size:0.82em; color:#b0bec5;">'
+                f'Affected tickers: {", ".join(_pt_1b_parts)}{_pt_1b_suffix}</p>',
+                unsafe_allow_html=True,
+            )
 
     # Safe defaults so P1–P4 block below never hits NameError if no sim data
     _sim_df    = pd.DataFrame()
@@ -20389,6 +20406,23 @@ ALTER TABLE backtest_sim_runs
             f'jump to reset tool \u2193</a></p>',
             unsafe_allow_html=True,
         )
+        _pt_1b2_breakdown = list_paper_trades_tiered_sentinel_tickers(
+            user_id=_AUTH_USER_ID, top_n=10
+        )
+        _pt_1b2_tickers = _pt_1b2_breakdown.get("tickers", [])
+        if _pt_1b2_tickers:
+            _pt_1b2_total_tickers = _pt_1b2_breakdown.get("total_tickers", 0)
+            _pt_1b2_parts = [f"{r['ticker']}: {r['count']}" for r in _pt_1b2_tickers]
+            _pt_1b2_suffix = (
+                f" (+{_pt_1b2_total_tickers - len(_pt_1b2_tickers)} more)"
+                if _pt_1b2_total_tickers > len(_pt_1b2_tickers)
+                else ""
+            )
+            st.markdown(
+                f'<p style="margin:0 0 10px 0; font-size:0.82em; color:#b0bec5;">'
+                f'Affected tickers: {", ".join(_pt_1b2_parts)}{_pt_1b2_suffix}</p>',
+                unsafe_allow_html=True,
+            )
 
     if _tiered_pending_count > 0:
         _tp_col_warn, _tp_col_btn, _tp_col_full = st.columns([3, 1, 1])
