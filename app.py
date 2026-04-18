@@ -179,7 +179,6 @@ def _cached_check_db_connection() -> tuple[bool, str]:
     # a loopback round-trip while keeping the same reachability semantics.
     return check_db_connection()
 
-
 # Exponential back-off constants for the DB status widget
 _DB_RETRY_BASE_S: int = 30   # initial / reset interval (seconds)
 _DB_RETRY_MAX_S: int = 300   # cap at 5 minutes
@@ -8323,6 +8322,69 @@ def _bt_outcome_color(outcome):
     }.get(outcome, _BT_NEUT_CLR)
 
 
+def _compute_bt_vwap_funnel(data, tcs_min=50, ib_pct_max=10):
+    """Compute VWAP funnel counts from raw backtest rows (list-of-dicts) or a DataFrame.
+
+    Applies the same three-stage filter stack used by get_backtest_pace_target():
+      1. TCS >= tcs_min
+      2. IB range < ib_pct_max % of open price (uses ib_range_pct if available,
+         else computes from ib_high / ib_low / open_price)
+      3. VWAP alignment: bullish prediction → IB midpoint > vwap_at_ib,
+         bearish prediction → IB midpoint < vwap_at_ib
+         (rows without usable vwap_at_ib pass through, preserving backward compat)
+
+    Returns (tcs_ib_count, vwap_count) — both 0 on error or empty data.
+    """
+    try:
+        import pandas as _pvf
+        _df = _pvf.DataFrame(data) if isinstance(data, list) else data.copy()
+        if _df.empty:
+            return 0, 0
+        for _c in ("tcs", "ib_high", "ib_low", "open_price", "vwap_at_ib"):
+            if _c in _df.columns:
+                _df[_c] = _pvf.to_numeric(_df[_c], errors="coerce")
+        if "tcs" in _df.columns:
+            _df = _df[_df["tcs"].notna() & (_df["tcs"] >= tcs_min)]
+        if "ib_range_pct" in _df.columns:
+            _df = _df[
+                _pvf.to_numeric(_df["ib_range_pct"], errors="coerce").fillna(float("inf")) < ib_pct_max
+            ]
+        elif all(c in _df.columns for c in ("ib_high", "ib_low", "open_price")):
+            _vf_valid = (
+                _df["open_price"].notna() & (_df["open_price"] > 0) &
+                _df["ib_high"].notna() & _df["ib_low"].notna()
+            )
+            _df = _df[_vf_valid].copy()
+            _df["_ib_pct"] = (_df["ib_high"] - _df["ib_low"]) / _df["open_price"] * 100
+            _df = _df[_df["_ib_pct"] < ib_pct_max]
+        _tcs_ib = len(_df)
+        if _tcs_ib == 0:
+            return 0, 0
+        if "vwap_at_ib" not in _df.columns:
+            return _tcs_ib, _tcs_ib
+        if not all(c in _df.columns for c in ("ib_high", "ib_low")):
+            return _tcs_ib, _tcs_ib
+        _df = _df.copy()
+        _df["_ib_mid"] = (_df["ib_high"] + _df["ib_low"]) / 2
+        _pred_col = next(
+            (c for c in ("predicted", "actual_outcome") if c in _df.columns), None
+        )
+        if _pred_col is None:
+            return _tcs_ib, _tcs_ib
+        _pred_s   = _df[_pred_col].fillna("").str.lower()
+        _bull_m   = _pred_s.str.contains("bullish|long|up", na=False)
+        _bear_m   = _pred_s.str.contains("bearish|short|down", na=False)
+        _has_vwap = _df["vwap_at_ib"].notna() & (_df["vwap_at_ib"] > 0)
+        _vwap_ok  = (
+            (~_has_vwap) |
+            (_has_vwap & _bull_m & (_df["_ib_mid"] > _df["vwap_at_ib"])) |
+            (_has_vwap & _bear_m & (_df["_ib_mid"] < _df["vwap_at_ib"]))
+        )
+        return _tcs_ib, int(_vwap_ok.sum())
+    except Exception:
+        return 0, 0
+
+
 def render_backtest_tab(api_key: str = "", secret_key: str = ""):
     """Render the 🔬 Backtest Engine tab — institutional backtesting terminal."""
 
@@ -11550,6 +11612,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _cs_data[_cs_col_slots[_ci]] = _cv
                                     _summary_rows.append(_cs_data)
 
+                        # ── VWAP Funnel Counts (computed from the same rows as this export) ──
+                        try:
+                            _rp_tcs_ib, _rp_vwap = _compute_bt_vwap_funnel(_rp_rows)
+                            if _rp_tcs_ib > 0:
+                                _rp_vwap_pct    = round((_rp_tcs_ib - _rp_vwap) / _rp_tcs_ib * 100) if _rp_tcs_ib else 0
+                                _rp_scope_label = f"{_rp_start} \u2192 {_rp_end}"
+                                _summary_rows += [
+                                    {c: "" for c in _csv_cols},
+                                    _stat_row(f"--- VWAP FUNNEL COUNTS ({_rp_scope_label}) ---", ""),
+                                    _stat_row("Pass TCS\u226550 + IB<10%", f"{_rp_tcs_ib:,}"),
+                                    _stat_row("Pass VWAP Alignment", f"{_rp_vwap:,}"),
+                                    _stat_row("Filtered by VWAP Gate", f"{_rp_tcs_ib - _rp_vwap:,} ({_rp_vwap_pct}%)"),
+                                ]
+                        except Exception:
+                            pass
+
                         _rp_csv_export = pd.concat(
                             [_rp_csv_df,
                              pd.DataFrame(_summary_rows)],
@@ -11561,7 +11639,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             file_name="replay_trades.csv",
                             mime="text/csv",
                             key="rp_dl_csv",
-                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes overall R-stats summary, per-tier (P1–P4) breakdown, marginal entry analysis, and per-structure marginal breakdown at the bottom",
+                            help="Full trade-by-trade log with R multiples, P&L, and cumulative R — includes overall R-stats summary, per-tier (P1–P4) breakdown, marginal entry analysis, per-structure marginal breakdown, and VWAP funnel counts at the bottom",
                         )
 
                         # ── P1/P2/P3/P4 Priority Tier Breakdown ───────────────────
@@ -12929,6 +13007,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _tkr_max_div_data = {}
             _tkr_delta_data = {}
             _tkr_ib_pass_data = {}
+            _tkr_vwap_funnel_data = {}
             _tkr_ib_threshold = _cached_load_ib_range_pct_threshold()
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
@@ -13010,6 +13089,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _tkr_ib_pass_data[str(_tk)] = (
                     round(_ib_pass_pct / 100, 4) if _ib_pass_pct is not None else None
                 )
+
+                # ── VWAP funnel counts for this ticker (used in CSV/XLSX exports) ──
+                _tkr_vwap_funnel_data[str(_tk)] = _compute_bt_vwap_funnel(_tgrp)
 
                 # ── Per-ticker TCS Optimizer sweep ────────────────────────────
                 _best_tcs_label = "—"
@@ -15771,6 +15853,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _sw_stat_r("Expectancy", f"{_sw_exp_r:+.3f}R/trade"),
                                 _sw_stat_r("Max Drawdown (R)", f"{abs(_sw_max_dd_r)}R"),
                             ]
+                            try:
+                                _sw_tcs_ib, _sw_vwap = _tkr_vwap_funnel_data.get(
+                                    str(_tk_name), (0, 0)
+                                )
+                                if _sw_tcs_ib > 0:
+                                    _sw_vwap_pct = round((_sw_tcs_ib - _sw_vwap) / _sw_tcs_ib * 100) if _sw_tcs_ib else 0
+                                    _sw_summ_rows += [
+                                        {c: "" for c in _sw_sum_cols},
+                                        _sw_stat_r(f"--- VWAP FUNNEL COUNTS ({_tk_name}) ---", ""),
+                                        _sw_stat_r("Pass TCS\u226550 + IB<10%", f"{_sw_tcs_ib:,}"),
+                                        _sw_stat_r("Pass VWAP Alignment", f"{_sw_vwap:,}"),
+                                        _sw_stat_r("Filtered by VWAP Gate", f"{_sw_tcs_ib - _sw_vwap:,} ({_sw_vwap_pct}%)"),
+                                    ]
+                            except Exception:
+                                pass
                             _tk_sw_csv_export = _pd_bt.concat(
                                 [_tk_sw_df, _pd_bt.DataFrame(_sw_summ_rows)],
                                 ignore_index=True,
@@ -17911,6 +18008,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _summary_df.to_excel(
                             _xlsx_writer, sheet_name="Summary", index=False
                         )
+                        try:
+                            _vf_tcs_ib, _vf_vwap = _compute_bt_vwap_funnel(_bt_df)
+                            if _vf_tcs_ib > 0:
+                                _vf_pct = round((_vf_tcs_ib - _vf_vwap) / _vf_tcs_ib * 100) if _vf_tcs_ib else 0
+                                _vf_df  = _pd_bt.DataFrame([
+                                    {"Filter Stage": "Pass TCS\u226550 + IB<10%", "Count": _vf_tcs_ib},
+                                    {"Filter Stage": "Pass VWAP Alignment",       "Count": _vf_vwap},
+                                    {"Filter Stage": "Filtered by VWAP Gate",     "Count": _vf_tcs_ib - _vf_vwap},
+                                    {"Filter Stage": "VWAP Filter Rate (%)",      "Count": f"{_vf_pct}%"},
+                                ])
+                                _vf_df.to_excel(_xlsx_writer, sheet_name="VWAP Funnel", index=False)
+                        except Exception:
+                            pass
                     _xlsx_bytes = _xlsx_buf.getvalue()
                     _xlsx_btn_label = _sweep_btn_label.replace("CSV", "Excel (.xlsx)")
                     _xlsx_fname     = _sweep_fname.replace(".csv", ".xlsx")
@@ -17921,9 +18031,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="_dl_sweep_all_tickers",
                         help=(
-                            "Download an Excel workbook with two sheets: "
-                            "'Detail' (all TCS floor rows with Best TCS Floor and Recommended columns) "
-                            "and 'Summary' (one recommended row per ticker for quick reference)."
+                            "Download an Excel workbook with up to three sheets: "
+                            "'Detail' (all TCS floor rows with Best TCS Floor and Recommended columns), "
+                            "'Summary' (one recommended row per ticker for quick reference), "
+                            "and 'VWAP Funnel' (filter-stage pass counts — TCS+IB, VWAP alignment, and filter rate)."
                         ),
                     )
 
