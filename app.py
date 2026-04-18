@@ -5138,6 +5138,12 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
     if "grid_sync_dismissed_at" in _prefs and "grid_sync_dismissed_at" not in st.session_state:
         _grid_d = _prefs["grid_sync_dismissed_at"]
         st.session_state["grid_sync_dismissed_at"] = tuple(_grid_d) if isinstance(_grid_d, list) else _grid_d
+    if "bts_sync_dismissed_time" in _prefs and "bts_sync_dismissed_time" not in st.session_state:
+        st.session_state["bts_sync_dismissed_time"] = _prefs["bts_sync_dismissed_time"]
+    if "bq_sync_dismissed_time" in _prefs and "bq_sync_dismissed_time" not in st.session_state:
+        st.session_state["bq_sync_dismissed_time"] = _prefs["bq_sync_dismissed_time"]
+    if "grid_sync_dismissed_time" in _prefs and "grid_sync_dismissed_time" not in st.session_state:
+        st.session_state["grid_sync_dismissed_time"] = _prefs["grid_sync_dismissed_time"]
     st.session_state["_pref_div_tg_chat_id"] = str(_prefs.get("div_alert_tg_chat_id", ""))
     st.session_state["_pref_div_tg_token"] = str(_prefs.get("div_alert_tg_token", ""))
     st.session_state["_pref_div_discord_webhook"] = str(_prefs.get("div_alert_discord_webhook", ""))
@@ -6132,22 +6138,44 @@ with st.sidebar:
             "Click **Reset** next to a warning to restore it individually."
         )
         if _either_dismissed:
+            def _fmt_dismiss_ago(ts_str):
+                if not ts_str:
+                    return None
+                try:
+                    _dt = datetime.fromisoformat(ts_str)
+                    _secs = int((datetime.now() - _dt).total_seconds())
+                    if _secs < 60:
+                        return "just now"
+                    elif _secs < 3600:
+                        return f"{_secs // 60} min ago"
+                    elif _secs < 86400:
+                        return f"{_secs // 3600} hr ago"
+                    else:
+                        return _dt.strftime("%-d %b %H:%M")
+                except Exception:
+                    return None
             _individual_warnings = [
-                ("Backtest P&L",       "bts_sync_dismissed_at",  _any_bts_dismissed,  "reset_bts_sync_warning"),
-                ("Screener / Outcome", "bq_sync_dismissed_at",   _any_bq_dismissed,   "reset_bq_sync_warning"),
-                ("Edge Map",           "grid_sync_dismissed_at", _any_grid_dismissed, "reset_grid_sync_warning"),
+                ("Backtest P&L",       "bts_sync_dismissed_at",  "bts_sync_dismissed_time",  _any_bts_dismissed,  "reset_bts_sync_warning"),
+                ("Screener / Outcome", "bq_sync_dismissed_at",   "bq_sync_dismissed_time",   _any_bq_dismissed,   "reset_bq_sync_warning"),
+                ("Edge Map",           "grid_sync_dismissed_at", "grid_sync_dismissed_time", _any_grid_dismissed, "reset_grid_sync_warning"),
             ]
-            for _warn_label, _warn_key, _warn_active, _warn_btn_key in _individual_warnings:
+            for _warn_label, _warn_key, _warn_time_key, _warn_active, _warn_btn_key in _individual_warnings:
                 if _warn_active:
                     _w_col1, _w_col2 = st.columns([3, 1])
                     with _w_col1:
-                        st.markdown(f"**{_warn_label}**")
+                        _ago = _fmt_dismiss_ago(st.session_state.get(_warn_time_key))
+                        if _ago:
+                            st.markdown(f"**{_warn_label}** *(dismissed {_ago})*")
+                        else:
+                            st.markdown(f"**{_warn_label}**")
                     with _w_col2:
                         if st.button("↩ Reset", key=_warn_btn_key, help=f"Restore the {_warn_label} sync warning"):
                             st.session_state[_warn_key] = None
+                            st.session_state[_warn_time_key] = None
                             if _AUTH_USER_ID:
                                 _one_r_prefs = {**st.session_state.get("_cached_prefs", {})}
                                 _one_r_prefs.pop(_warn_key, None)
+                                _one_r_prefs.pop(_warn_time_key, None)
                                 save_user_prefs(_AUTH_USER_ID, _one_r_prefs)
                                 st.session_state["_cached_prefs"] = _one_r_prefs
                             st.rerun()
@@ -6158,14 +6186,20 @@ with st.sidebar:
                     use_container_width=True,
                     help="Clear all dismissed sync-warning states so warnings re-appear immediately",
                 ):
-                    st.session_state["bts_sync_dismissed_at"]  = None
-                    st.session_state["bq_sync_dismissed_at"]   = None
-                    st.session_state["grid_sync_dismissed_at"] = None
+                    st.session_state["bts_sync_dismissed_at"]   = None
+                    st.session_state["bq_sync_dismissed_at"]    = None
+                    st.session_state["grid_sync_dismissed_at"]  = None
+                    st.session_state["bts_sync_dismissed_time"] = None
+                    st.session_state["bq_sync_dismissed_time"]  = None
+                    st.session_state["grid_sync_dismissed_time"] = None
                     if _AUTH_USER_ID:
                         _all_r_prefs = {**st.session_state.get("_cached_prefs", {})}
                         _all_r_prefs.pop("bts_sync_dismissed_at", None)
                         _all_r_prefs.pop("bq_sync_dismissed_at", None)
                         _all_r_prefs.pop("grid_sync_dismissed_at", None)
+                        _all_r_prefs.pop("bts_sync_dismissed_time", None)
+                        _all_r_prefs.pop("bq_sync_dismissed_time", None)
+                        _all_r_prefs.pop("grid_sync_dismissed_time", None)
                         save_user_prefs(_AUTH_USER_ID, _all_r_prefs)
                         st.session_state["_cached_prefs"] = _all_r_prefs
                     st.rerun()
@@ -22703,9 +22737,11 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                             key="bts_dismiss_sync_warning",
                             help="Hide this warning for the current date combination",
                         ):
+                            _bts_dismiss_ts = datetime.now().isoformat()
                             st.session_state["bts_sync_dismissed_at"] = _bts_dismiss_key
+                            st.session_state["bts_sync_dismissed_time"] = _bts_dismiss_ts
                             if _AUTH_USER_ID:
-                                _bts_d_prefs = {**st.session_state.get("_cached_prefs", {}), "bts_sync_dismissed_at": list(_bts_dismiss_key)}
+                                _bts_d_prefs = {**st.session_state.get("_cached_prefs", {}), "bts_sync_dismissed_at": list(_bts_dismiss_key), "bts_sync_dismissed_time": _bts_dismiss_ts}
                                 save_user_prefs(_AUTH_USER_ID, _bts_d_prefs)
                                 st.session_state["_cached_prefs"] = _bts_d_prefs
                             st.rerun()
@@ -22716,9 +22752,11 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                             help="Clear the dismissed state and show the out-of-sync warning again",
                         ):
                             st.session_state["bts_sync_dismissed_at"] = None
+                            st.session_state["bts_sync_dismissed_time"] = None
                             if _AUTH_USER_ID:
                                 _bts_r_prefs = {**st.session_state.get("_cached_prefs", {})}
                                 _bts_r_prefs.pop("bts_sync_dismissed_at", None)
+                                _bts_r_prefs.pop("bts_sync_dismissed_time", None)
                                 save_user_prefs(_AUTH_USER_ID, _bts_r_prefs)
                                 st.session_state["_cached_prefs"] = _bts_r_prefs
                             st.rerun()
@@ -24979,9 +25017,11 @@ function _bqCopyShareLink() {
                                     key="bq_dismiss_sync_warning",
                                     help="Hide this warning for the current date combination",
                                 ):
+                                    _bq_dismiss_ts = datetime.now().isoformat()
                                     st.session_state["bq_sync_dismissed_at"] = _bq_dismiss_key
+                                    st.session_state["bq_sync_dismissed_time"] = _bq_dismiss_ts
                                     if _AUTH_USER_ID:
-                                        _bq_d_prefs = {**st.session_state.get("_cached_prefs", {}), "bq_sync_dismissed_at": list(_bq_dismiss_key)}
+                                        _bq_d_prefs = {**st.session_state.get("_cached_prefs", {}), "bq_sync_dismissed_at": list(_bq_dismiss_key), "bq_sync_dismissed_time": _bq_dismiss_ts}
                                         save_user_prefs(_AUTH_USER_ID, _bq_d_prefs)
                                         st.session_state["_cached_prefs"] = _bq_d_prefs
                                     st.rerun()
@@ -24992,9 +25032,11 @@ function _bqCopyShareLink() {
                                     help="Clear the dismissed state and show the out-of-sync warning again",
                                 ):
                                     st.session_state["bq_sync_dismissed_at"] = None
+                                    st.session_state["bq_sync_dismissed_time"] = None
                                     if _AUTH_USER_ID:
                                         _bq_r_prefs = {**st.session_state.get("_cached_prefs", {})}
                                         _bq_r_prefs.pop("bq_sync_dismissed_at", None)
+                                        _bq_r_prefs.pop("bq_sync_dismissed_time", None)
                                         save_user_prefs(_AUTH_USER_ID, _bq_r_prefs)
                                         st.session_state["_cached_prefs"] = _bq_r_prefs
                                     st.rerun()
@@ -25886,9 +25928,11 @@ function _bqCopyShareLink() {
                     key="grid_dismiss_sync_warning",
                     help="Hide this warning for the current date combination",
                 ):
+                    _grid_dismiss_ts = datetime.now().isoformat()
                     st.session_state["grid_sync_dismissed_at"] = _grid_dismiss_key
+                    st.session_state["grid_sync_dismissed_time"] = _grid_dismiss_ts
                     if _AUTH_USER_ID:
-                        _grid_d_prefs = {**st.session_state.get("_cached_prefs", {}), "grid_sync_dismissed_at": list(_grid_dismiss_key)}
+                        _grid_d_prefs = {**st.session_state.get("_cached_prefs", {}), "grid_sync_dismissed_at": list(_grid_dismiss_key), "grid_sync_dismissed_time": _grid_dismiss_ts}
                         save_user_prefs(_AUTH_USER_ID, _grid_d_prefs)
                         st.session_state["_cached_prefs"] = _grid_d_prefs
                     st.rerun()
@@ -25899,9 +25943,11 @@ function _bqCopyShareLink() {
                     help="Clear the dismissed state and show the out-of-sync warning again",
                 ):
                     st.session_state["grid_sync_dismissed_at"] = None
+                    st.session_state["grid_sync_dismissed_time"] = None
                     if _AUTH_USER_ID:
                         _grid_r_prefs = {**st.session_state.get("_cached_prefs", {})}
                         _grid_r_prefs.pop("grid_sync_dismissed_at", None)
+                        _grid_r_prefs.pop("grid_sync_dismissed_time", None)
                         save_user_prefs(_AUTH_USER_ID, _grid_r_prefs)
                         st.session_state["_cached_prefs"] = _grid_r_prefs
                     st.rerun()
