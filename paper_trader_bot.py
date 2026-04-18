@@ -3678,7 +3678,11 @@ def nightly_recalibration():
             "backtest_healed": backtest_written,
             "total_healed": total_written,
         }
-        _sweep_path = "/tmp/eod_sweep_status.json"
+        import os as _os
+        _default_sweep_path = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)), "eod_sweep_status.json"
+        )
+        _sweep_path = _os.environ.get("EOD_SWEEP_STATUS_PATH", _default_sweep_path)
         with open(_sweep_path, "w") as _sf:
             _json.dump(_sweep_payload, _sf)
         log.info(f"EOD sweep status written to {_sweep_path}")

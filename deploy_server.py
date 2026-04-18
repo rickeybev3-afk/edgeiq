@@ -796,19 +796,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _eod_sweep(self):
         """Return the most recent EOD P&L sweep result written by paper_trader_bot.py.
 
-        paper_trader_bot.py writes /tmp/eod_sweep_status.json after each
+        paper_trader_bot.py writes eod_sweep_status.json after each
         nightly_recalibration() run with the fields:
           ran_at         — ISO-8601 UTC timestamp of the run
           paper_healed   — number of paper-trade rows updated
           backtest_healed — number of backtest rows updated
           total_healed   — combined total
 
+        The path is set by EOD_SWEEP_STATUS_PATH env variable (default:
+        eod_sweep_status.json next to this file).  A legacy /tmp copy is
+        migrated automatically on first read if the primary path is absent.
+
         It also appends each run to eod_sweep_history.json (next to this file).
         The response includes a `history` array (newest first, up to 30 entries).
-
         If the file is absent the endpoint returns {"available": false}.
         """
-        sweep_path = "/tmp/eod_sweep_status.json"
+        _default_sweep_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eod_sweep_status.json')
+        sweep_path = os.environ.get('EOD_SWEEP_STATUS_PATH', _default_sweep_path)
+        _legacy_sweep_path = '/tmp/eod_sweep_status.json'
+        if not os.path.exists(sweep_path) and os.path.exists(_legacy_sweep_path):
+            try:
+                import shutil as _shutil
+                _shutil.copy2(_legacy_sweep_path, sweep_path)
+            except Exception as _me:
+                logging.warning(f'Could not migrate EOD sweep status from {_legacy_sweep_path} to {sweep_path}: {_me}')
         try:
             with open(sweep_path) as f:
                 payload = json.load(f)
