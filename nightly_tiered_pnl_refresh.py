@@ -760,22 +760,17 @@ def run_backfill(date_from: str = "", date_to: str = ""):
         total_errors = bt_errors + pt_errors
         status_icon = "✅" if total_errors == 0 else "⚠️"
 
-        # Report the longest consecutive-failure streak across all alert keys.
-        # Using max() avoids inflating "nights in a row" when several views fail
-        # simultaneously (sum would count each view separately).
+        # Report per-view consecutive-failure streaks so operators can see which
+        # specific cache is repeatedly failing rather than just an aggregate total.
+        _TG_LIMIT = 4096
         alert_state = _read_alert_state()
-        max_suppressed = max(
-            (int(v.get("consecutive_failures", 0)) for v in alert_state.values() if isinstance(v, dict)),
-            default=0,
-        )
-        suppressed_line = (
-            f"\n\u26a0\ufe0f Cache alert suppressed {max_suppressed} night"
-            f"{'s' if max_suppressed != 1 else ''} in a row"
-            if max_suppressed > 0
-            else ""
-        )
+        failing_views = {
+            key: int(v.get("consecutive_failures", 0))
+            for key, v in alert_state.items()
+            if isinstance(v, dict) and int(v.get("consecutive_failures", 0)) > 0
+        }
 
-        msg = (
+        base_msg = (
             f"{status_icon} <b>Nightly Tiered P&amp;L Refresh</b>\n"
             f"Date: {run_date}\n"
             f"\n"
@@ -792,8 +787,31 @@ def run_backfill(date_from: str = "", date_to: str = ""):
             f"  Errors  : {pt_errors}\n"
             f"\n"
             f"Elapsed : {elapsed_str}"
-            f"{suppressed_line}"
         )
+
+        if failing_views:
+            # Sort descending by failure count so the worst offender appears first.
+            sorted_views = sorted(failing_views.items(), key=lambda x: x[1], reverse=True)
+            header = "\n\u26a0\ufe0f Cache alerts suppressed:"
+            remaining = _TG_LIMIT - len(base_msg) - len(header)
+            lines_added: list[str] = []
+            omitted = 0
+            for key, count in sorted_views:
+                entry = f"\n  {key}: {count} night{'s' if count != 1 else ''}"
+                if len(entry) <= remaining:
+                    lines_added.append(entry)
+                    remaining -= len(entry)
+                else:
+                    omitted += 1
+            if omitted:
+                tail = f"\n  \u2026 (+{omitted} more)"
+                if len(tail) <= remaining:
+                    lines_added.append(tail)
+            suppressed_line = header + "".join(lines_added)
+        else:
+            suppressed_line = ""
+
+        msg = base_msg + suppressed_line
 
     _send_telegram(msg)
 
