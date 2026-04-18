@@ -39,12 +39,21 @@ interface BackfillRun {
   script?: string;
 }
 
+interface BackfillScriptRun {
+  completed_at?: string;
+  rows_saved?: number;
+  no_bars?: number;
+  errors?: number;
+  is_overdue?: boolean;
+}
+
 interface BackfillScriptSummary {
   completed_at?: string;
   rows_saved?: number;
   no_bars?: number;
   errors?: number;
   is_overdue?: boolean;
+  history?: BackfillScriptRun[];
 }
 
 interface BackfillErrorAlertsState {
@@ -431,6 +440,16 @@ export default function Settings() {
 
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealth>({ available: false, loading: true });
   const refetchBackfillHealth = useRef<() => void>(() => {});
+  const [expandedScripts, setExpandedScripts] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!backfillHealth.scripts) return;
+    const currentKeys = new Set(Object.keys(backfillHealth.scripts));
+    setExpandedScripts((prev) => {
+      const pruned = new Set([...prev].filter((k) => currentKeys.has(k)));
+      return pruned.size === prev.size ? prev : pruned;
+    });
+  }, [backfillHealth.scripts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1241,7 +1260,7 @@ export default function Settings() {
                       <tbody>
                         {Object.entries(backfillHealth.scripts)
                           .sort(([a], [b]) => (a === "other" ? 1 : b === "other" ? -1 : a.localeCompare(b)))
-                          .map(([scriptName, info]) => {
+                          .flatMap(([scriptName, info]) => {
                             const hasErrors = (info.errors ?? 0) > 0;
                             const hasMissingBars = (info.no_bars ?? 0) > 0;
                             const rowBg = hasErrors
@@ -1249,13 +1268,46 @@ export default function Settings() {
                               : info.is_overdue
                               ? "rgba(251,191,36,0.05)"
                               : "transparent";
-                            return (
+                            const historyRuns = info.history ?? [];
+                            const hasHistory = historyRuns.length > 1;
+                            const isExpanded = expandedScripts.has(scriptName);
+                            const toggleExpand = () => {
+                              setExpandedScripts((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(scriptName)) next.delete(scriptName);
+                                else next.add(scriptName);
+                                return next;
+                              });
+                            };
+                            const rows = [];
+                            rows.push(
                               <tr
                                 key={scriptName}
-                                style={{ borderBottom: "1px solid rgba(45,55,72,0.5)", background: rowBg }}
+                                style={{ borderBottom: isExpanded ? "none" : "1px solid rgba(45,55,72,0.5)", background: rowBg }}
                               >
                                 <td style={{ padding: "7px 10px", color: scriptName === "other" ? "#64748b" : "#cbd5e1", fontStyle: scriptName === "other" ? "italic" : "normal" }}>
-                                  {scriptName}
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                                    {hasHistory && (
+                                      <button
+                                        onClick={toggleExpand}
+                                        title={isExpanded ? "Hide run history" : "Show run history"}
+                                        style={{
+                                          background: "none",
+                                          border: "none",
+                                          cursor: "pointer",
+                                          padding: "0 2px",
+                                          color: "#64748b",
+                                          fontSize: "10px",
+                                          lineHeight: 1,
+                                          flexShrink: 0,
+                                        }}
+                                      >
+                                        {isExpanded ? "▾" : "▸"}
+                                      </button>
+                                    )}
+                                    {!hasHistory && <span style={{ display: "inline-block", width: "14px" }} />}
+                                    {scriptName}
+                                  </span>
                                 </td>
                                 <td style={{ padding: "7px 10px", color: info.is_overdue ? "#fbbf24" : "#94a3b8" }}>
                                   {info.completed_at ? (
@@ -1286,6 +1338,66 @@ export default function Settings() {
                                 </td>
                               </tr>
                             );
+                            if (isExpanded && historyRuns.length > 1) {
+                              rows.push(
+                                <tr key={`${scriptName}-hist-label`} style={{ background: "transparent" }}>
+                                  <td colSpan={6} style={{ padding: "2px 10px 2px 28px", fontSize: "10px", color: "#475569", fontFamily: "sans-serif", letterSpacing: "0.04em" }}>
+                                    previous runs — latest shown above
+                                  </td>
+                                </tr>
+                              );
+                              historyRuns.slice(1).forEach((run, idx) => {
+                                const runHasErrors = (run.errors ?? 0) > 0;
+                                const runHasMissingBars = (run.no_bars ?? 0) > 0;
+                                const runBg = runHasErrors
+                                  ? "rgba(248,113,113,0.04)"
+                                  : run.is_overdue
+                                  ? "rgba(251,191,36,0.04)"
+                                  : "transparent";
+                                const isLast = idx === historyRuns.length - 2;
+                                rows.push(
+                                  <tr
+                                    key={`${scriptName}-hist-${idx}`}
+                                    style={{
+                                      borderBottom: isLast ? "1px solid rgba(45,55,72,0.5)" : "1px solid rgba(45,55,72,0.2)",
+                                      background: runBg,
+                                    }}
+                                  >
+                                    <td style={{ padding: "4px 10px 4px 28px", color: "#475569", fontSize: "11px" }}>
+                                      <span style={{ opacity: 0.6 }}>↳</span>
+                                    </td>
+                                    <td style={{ padding: "4px 10px", color: run.is_overdue ? "#fbbf24" : "#64748b", fontSize: "11px" }}>
+                                      {run.completed_at ? (
+                                        <span title={new Date(run.completed_at).toLocaleString()}>
+                                          {formatRelativeTime(run.completed_at)}
+                                        </span>
+                                      ) : (
+                                        <span style={{ color: "#475569" }}>—</span>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: "4px 10px", textAlign: "right", color: "#4ade80", fontSize: "11px" }}>
+                                      {run.rows_saved != null ? run.rows_saved.toLocaleString() : <span style={{ color: "#475569" }}>—</span>}
+                                    </td>
+                                    <td style={{ padding: "4px 10px", textAlign: "right", color: runHasMissingBars ? "#fbbf24" : "#475569", fontSize: "11px" }}>
+                                      {run.no_bars != null ? run.no_bars.toLocaleString() : <span style={{ color: "#475569" }}>—</span>}
+                                    </td>
+                                    <td style={{ padding: "4px 10px", textAlign: "right", color: runHasErrors ? "#f87171" : "#4ade80", fontSize: "11px" }}>
+                                      {run.errors != null ? run.errors.toLocaleString() : <span style={{ color: "#475569" }}>—</span>}
+                                    </td>
+                                    <td style={{ padding: "4px 10px", textAlign: "center" }}>
+                                      {runHasErrors ? (
+                                        <span style={{ fontSize: "9px", color: "#f87171" }}>error</span>
+                                      ) : run.is_overdue ? (
+                                        <span style={{ fontSize: "9px", color: "#fbbf24" }}>overdue</span>
+                                      ) : (
+                                        <span style={{ fontSize: "9px", color: "#4ade80" }}>ok</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                            }
+                            return rows;
                           })}
                       </tbody>
                     </table>

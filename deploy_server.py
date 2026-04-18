@@ -754,31 +754,71 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "backfill_ib_vwap",
                 }
                 _script_latest: dict = {}
+                _script_history: dict = {}
                 for _entry in history:
                     _raw = _entry.get("script") or ""
                     _sname = _raw if _raw in _KNOWN_SCRIPTS else "other"
                     _script_latest[_sname] = _entry  # last write wins (history is oldest→newest)
+                    _script_history.setdefault(_sname, []).append(_entry)
 
                 import datetime as _dt
+
+                def _compute_overdue(completed_at_str, hb_hours):
+                    if not completed_at_str:
+                        return True
+                    try:
+                        _dt2 = _dt.datetime.fromisoformat(completed_at_str.replace("Z", "+00:00"))
+                        if _dt2.tzinfo is None:
+                            _dt2 = _dt2.replace(tzinfo=_dt.timezone.utc)
+                        _age_h = (_dt.datetime.now(_dt.timezone.utc) - _dt2).total_seconds() / 3600.0
+                        return _age_h > hb_hours
+                    except Exception:
+                        return True
+
                 _scripts_summary: dict = {}
                 for _sname, _entry in _script_latest.items():
                     _cat = _entry.get("completed_at")
-                    _overdue = True
-                    if _cat:
-                        try:
-                            _cat_dt = _dt.datetime.fromisoformat(_cat.replace("Z", "+00:00"))
-                            if _cat_dt.tzinfo is None:
-                                _cat_dt = _cat_dt.replace(tzinfo=_dt.timezone.utc)
-                            _age_h = (_dt.datetime.now(_dt.timezone.utc) - _cat_dt).total_seconds() / 3600.0
-                            _overdue = _age_h > heartbeat_hours
-                        except Exception:
-                            _overdue = True
+                    _overdue = _compute_overdue(_cat, heartbeat_hours)
+                    # Build per-script history (newest first, up to 10 entries).
+                    # is_overdue semantics mirror the main history table:
+                    #   index 0 (latest run)  → age-from-now > heartbeat
+                    #   index i>0 (older run) → gap to next newer run > heartbeat
+                    _hist_entries = list(reversed(_script_history.get(_sname, [])))[:10]
+                    _hist_rows = []
+                    for _hidx, _he in enumerate(_hist_entries):
+                        _he_cat = _he.get("completed_at")
+                        if _hidx == 0:
+                            _he_overdue = _compute_overdue(_he_cat, heartbeat_hours)
+                        else:
+                            _newer_cat = _hist_entries[_hidx - 1].get("completed_at")
+                            if _he_cat and _newer_cat:
+                                try:
+                                    _t_old = _dt.datetime.fromisoformat(_he_cat.replace("Z", "+00:00"))
+                                    _t_new = _dt.datetime.fromisoformat(_newer_cat.replace("Z", "+00:00"))
+                                    if _t_old.tzinfo is None:
+                                        _t_old = _t_old.replace(tzinfo=_dt.timezone.utc)
+                                    if _t_new.tzinfo is None:
+                                        _t_new = _t_new.replace(tzinfo=_dt.timezone.utc)
+                                    _gap_h = (_t_new - _t_old).total_seconds() / 3600.0
+                                    _he_overdue = _gap_h > heartbeat_hours
+                                except Exception:
+                                    _he_overdue = True
+                            else:
+                                _he_overdue = True
+                        _hist_rows.append({
+                            "completed_at": _he_cat,
+                            "rows_saved": _he.get("rows_saved"),
+                            "no_bars": _he.get("no_bars"),
+                            "errors": _he.get("errors"),
+                            "is_overdue": _he_overdue,
+                        })
                     _scripts_summary[_sname] = {
                         "completed_at": _cat,
                         "rows_saved": _entry.get("rows_saved"),
                         "no_bars": _entry.get("no_bars"),
                         "errors": _entry.get("errors"),
                         "is_overdue": _overdue,
+                        "history": _hist_rows,
                     }
 
                 data = {
