@@ -18904,8 +18904,39 @@ Nothing here requires any input from you. All numbers update automatically as yo
         st.markdown("**Cumulative P&L — Equity Curve**")
         _colors_eq = ["#ef5350" if v < 0 else "#4caf50"
                       for v in eq["cumulative_pnl"]]
+        # Compute running high-water mark and drawdown
+        _eq_hwm    = eq["cumulative_pnl"].cummax()
+        _eq_dd_ser = eq["cumulative_pnl"] - _eq_hwm   # always <= 0
+        _eq_max_dd = float(_eq_dd_ser.min())
+        # Index of the trough (deepest drawdown point)
+        _eq_trough_idx = int(_eq_dd_ser.idxmin())
+        _eq_trough_ts  = eq["timestamp"].iloc[_eq_trough_idx]
+        _eq_trough_val = float(eq["cumulative_pnl"].iloc[_eq_trough_idx])
+
         fig_eq = _go.Figure()
-        # Zero line fill area
+
+        # Invisible HWM reference trace — used only as the upper boundary for
+        # the fill="tonexty" drawdown shading added next.
+        fig_eq.add_trace(_go.Scatter(
+            x=eq["timestamp"], y=_eq_hwm,
+            mode="lines",
+            line=dict(color="rgba(0,0,0,0)", width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+        # Drawdown shading: fill from cumulative P&L up to the HWM reference
+        fig_eq.add_trace(_go.Scatter(
+            x=eq["timestamp"], y=eq["cumulative_pnl"],
+            mode="none",
+            fill="tonexty",
+            fillcolor="rgba(239,83,80,0.22)",
+            showlegend=False,
+            hoverinfo="skip",
+            name="Drawdown",
+        ))
+
+        # Main equity curve (zero-fill + line + markers)
         fig_eq.add_trace(_go.Scatter(
             x=eq["timestamp"], y=eq["cumulative_pnl"],
             mode="lines+markers",
@@ -18923,17 +18954,57 @@ Nothing here requires any input from you. All numbers update automatically as yo
             customdata=eq["symbol"],
             text=eq["mfe"].round(2).astype(str),
         ))
+
+        # Visible high-water mark line (dashed, subtle)
+        fig_eq.add_trace(_go.Scatter(
+            x=eq["timestamp"], y=_eq_hwm,
+            mode="lines",
+            line=dict(color="rgba(255,255,255,0.28)", dash="dot", width=1.5),
+            name="High-Water Mark",
+            hovertemplate="Peak: $%{y:.2f}<extra></extra>",
+        ))
+
+        # Annotation arrow pointing to the max-drawdown trough
+        if _eq_max_dd < 0:
+            fig_eq.add_annotation(
+                x=_eq_trough_ts,
+                y=_eq_trough_val,
+                text=f"Max DD: ${_eq_max_dd:,.2f}",
+                showarrow=True,
+                arrowhead=2,
+                arrowcolor="#ef5350",
+                arrowwidth=1.5,
+                ax=0,
+                ay=-36,
+                font=dict(color="#ef5350", size=11),
+                bgcolor="rgba(26,26,46,0.85)",
+                bordercolor="#ef5350",
+                borderwidth=1,
+            )
+
         fig_eq.add_hline(y=0, line=dict(color="rgba(255,255,255,0.15)", dash="dot"))
         fig_eq.update_layout(
             paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
-            font=dict(color="#e0e0e0"), height=280,
+            font=dict(color="#e0e0e0"), height=300,
             xaxis=dict(title="", gridcolor="#2a2a4a", showgrid=True),
             yaxis=dict(title="Cumulative P&L ($)", gridcolor="#2a2a4a"),
             margin=dict(l=10, r=10, t=20, b=30),
-            showlegend=False,
+            showlegend=True,
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02,
+                xanchor="right", x=1,
+                font=dict(size=11),
+                bgcolor="rgba(0,0,0,0)",
+            ),
             hoverlabel=dict(bgcolor="#1a1a2e", font_color="#e0e0e0"),
         )
         st.plotly_chart(fig_eq, use_container_width=True)
+        if _eq_max_dd < 0:
+            st.caption(
+                f"Max drawdown: **${_eq_max_dd:,.2f}** — "
+                f"the largest peak-to-trough decline in cumulative P&L. "
+                f"Red shading shows periods when the curve was below its high-water mark."
+            )
 
     # ── WIN RATE BY STRUCTURE + GRADE DONUT ──────────────────────────────
     col_a, col_b = st.columns([3, 2])
