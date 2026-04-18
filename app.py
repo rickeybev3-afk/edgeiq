@@ -24385,6 +24385,83 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     "Only paired trades where both metrics are recorded are included."
                 )
 
+                # ── Copy-link button ──────────────────────────────────────────
+                import streamlit.components.v1 as _cmp_bq_copy_link
+                _cmp_bq_copy_link.html("""
+<style>
+#bq-copy-toast {
+    display: none;
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #263238;
+    color: #e0f2f1;
+    border: 1px solid #4caf50;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-size: 13px;
+    font-family: sans-serif;
+    z-index: 99999;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    pointer-events: none;
+}
+</style>
+<script>
+function _bqCopyShareLink() {
+    var url = window.parent.location.href;
+    var btn = document.getElementById('bq-copy-link-btn');
+    navigator.clipboard.writeText(url).then(function() {
+        btn.innerHTML = '&#x2705; Copied!';
+        btn.style.color = '#4caf50';
+        btn.style.borderColor = '#4caf50';
+        var toast = window.parent.document.getElementById('bq-share-toast-global');
+        if (!toast) {
+            toast = window.parent.document.createElement('div');
+            toast.id = 'bq-share-toast-global';
+            Object.assign(toast.style, {
+                position: 'fixed', bottom: '24px', left: '50%',
+                transform: 'translateX(-50%)', background: '#263238',
+                color: '#e0f2f1', border: '1px solid #4caf50',
+                borderRadius: '6px', padding: '8px 20px', fontSize: '13px',
+                fontFamily: 'sans-serif', zIndex: '99999',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.4)', pointerEvents: 'none',
+                opacity: '0', transition: 'opacity 0.25s'
+            });
+            window.parent.document.body.appendChild(toast);
+        }
+        toast.textContent = '\u2705 Link copied to clipboard!';
+        toast.style.display = 'block';
+        setTimeout(function() { toast.style.opacity = '1'; }, 10);
+        setTimeout(function() {
+            toast.style.opacity = '0';
+            setTimeout(function() { toast.style.display = 'none'; }, 300);
+        }, 2500);
+        setTimeout(function() {
+            btn.innerHTML = '&#x1F517; Copy link';
+            btn.style.color = '#90a4ae';
+            btn.style.borderColor = '#90a4ae';
+        }, 2500);
+    }).catch(function() {
+        btn.innerHTML = '&#x274C; Copy failed';
+        setTimeout(function() { btn.innerHTML = '&#x1F517; Copy link'; }, 2500);
+    });
+}
+</script>
+<button id="bq-copy-link-btn" onclick="_bqCopyShareLink()" style="
+    background: transparent;
+    border: 1px solid #90a4ae;
+    color: #90a4ae;
+    border-radius: 4px;
+    padding: 3px 12px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    font-family: sans-serif;
+    transition: color 0.2s, border-color 0.2s;
+">&#x1F517; Copy link</button>
+""", height=34)
+
                 # ── Independent date-range filter ─────────────────────────────
                 _bq_td_col      = pd.to_datetime(_bts_df_unfiltered["trade_date"], errors="coerce")
                 _bq_valid_dates = _bq_td_col.dropna()
