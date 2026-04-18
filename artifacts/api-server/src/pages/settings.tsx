@@ -57,6 +57,26 @@ interface BackfillHealth {
   history?: BackfillRun[];
 }
 
+interface EodRecalcRun {
+  completed_at: string;
+  path: string;
+  written: number;
+  skipped: number;
+  elapsed_s: number;
+}
+
+interface EodRecalcHealth {
+  available: boolean;
+  loading: boolean;
+  completed_at?: string;
+  path?: string;
+  written?: number;
+  skipped?: number;
+  elapsed_s?: number;
+  error?: string;
+  history?: EodRecalcRun[];
+}
+
 function formatRelativeTime(isoTimestamp: string): string {
   const t = new Date(isoTimestamp);
   if (isNaN(t.getTime())) return isoTimestamp;
@@ -235,9 +255,32 @@ export default function Settings() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetch("/api/eod-recalc-health")
+        .then((r) => r.json())
+        .then((data) => {
+          if (!cancelled) {
+            setEodRecalcHealth({ loading: false, ...data });
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setEodRecalcHealth({ available: false, loading: false, error: "Could not reach server." });
+          }
+        });
+    };
+    poll();
+    const id = setInterval(poll, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading]
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#eod-recalc-health"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, eodRecalcHealth.loading]
   );
 
   async function handleChange(newMode: TradingMode) {
@@ -676,6 +719,144 @@ export default function Settings() {
                             </td>
                             <td style={{ padding: "6px 10px", textAlign: "right", color: run.errors > 0 ? "#f87171" : "#4ade80" }}>
                               {run.errors.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section
+          id="eod-recalc-health"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "24px",
+            marginTop: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            EOD P&amp;L Recalc
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            Timing and row counts from each nightly end-of-day P&amp;L recalculation run. Refreshes every minute.
+          </p>
+
+          {eodRecalcHealth.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : !eodRecalcHealth.available ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "14px 16px",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #2d3748",
+                borderRadius: "8px",
+                color: "#64748b",
+                fontSize: "13px",
+              }}
+            >
+              <span style={{ fontSize: "16px" }}>—</span>
+              No recalc run recorded yet. Stats will appear here after the next nightly run.
+              {eodRecalcHealth.error && (
+                <span style={{ color: "#f87171", marginLeft: "8px" }}>({eodRecalcHealth.error})</span>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: "12px",
+                  marginBottom: "14px",
+                }}
+              >
+                <BackfillStat
+                  label="Rows updated"
+                  value={eodRecalcHealth.written ?? 0}
+                  color="#4ade80"
+                  prev={eodRecalcHealth.history && eodRecalcHealth.history.length > 1 ? eodRecalcHealth.history[1].written : undefined}
+                  higherIsBetter={true}
+                />
+                <BackfillStat
+                  label="Rows skipped"
+                  value={eodRecalcHealth.skipped ?? 0}
+                  color="#94a3b8"
+                  prev={eodRecalcHealth.history && eodRecalcHealth.history.length > 1 ? eodRecalcHealth.history[1].skipped : undefined}
+                  higherIsBetter={false}
+                />
+                <div
+                  style={{
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid #2d3748",
+                    borderRadius: "8px",
+                    padding: "14px 16px",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: "24px", fontWeight: 700, color: "#818cf8", fontVariantNumeric: "tabular-nums" }}>
+                    {eodRecalcHealth.elapsed_s != null ? `${eodRecalcHealth.elapsed_s.toFixed(2)}s` : "—"}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", letterSpacing: "0.03em" }}>Elapsed</div>
+                </div>
+              </div>
+              {eodRecalcHealth.completed_at && (
+                <p style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", margin: 0 }}>
+                  Completed {formatRelativeTime(eodRecalcHealth.completed_at)} &nbsp;·&nbsp;{" "}
+                  {new Date(eodRecalcHealth.completed_at).toLocaleString()} &nbsp;·&nbsp;{" "}
+                  path: <span style={{ color: "#94a3b8" }}>{eodRecalcHealth.path ?? "—"}</span>
+                </p>
+              )}
+              {eodRecalcHealth.history && eodRecalcHealth.history.length > 1 && (
+                <div style={{ marginTop: "20px" }}>
+                  <p style={{ fontSize: "12px", fontWeight: 600, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Run History
+                  </p>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontFamily: "monospace" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #2d3748" }}>
+                          <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Completed</th>
+                          <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Path</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Updated</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Skipped</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Elapsed</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {eodRecalcHealth.history.map((run, i) => (
+                          <tr
+                            key={run.completed_at + i}
+                            style={{
+                              borderBottom: "1px solid rgba(45,55,72,0.5)",
+                              background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent",
+                            }}
+                          >
+                            <td style={{ padding: "6px 10px", color: i === 0 ? "#cbd5e1" : "#64748b" }}>
+                              {formatRelativeTime(run.completed_at)}
+                              {i === 0 && (
+                                <span style={{ marginLeft: "6px", fontSize: "10px", color: "#4ade80", fontFamily: "sans-serif" }}>latest</span>
+                              )}
+                            </td>
+                            <td style={{ padding: "6px 10px", color: "#94a3b8" }}>{run.path}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#4ade80" }}>
+                              {run.written.toLocaleString()}
+                            </td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#64748b" }}>
+                              {run.skipped.toLocaleString()}
+                            </td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#818cf8" }}>
+                              {run.elapsed_s.toFixed(2)}s
                             </td>
                           </tr>
                         ))}

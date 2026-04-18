@@ -2696,6 +2696,48 @@ def _recalc_eod_pnl_r_recent_backtest(lookback_days: int | None = None) -> dict:
     return {"written": written, "skipped": skipped}
 
 
+def _append_eod_recalc_history(path_label: str, written: int, skipped: int, elapsed_s: float) -> None:
+    """Append one EOD P&L recalc run to the JSON history file read by the dashboard.
+
+    Keeps the most recent 50 entries.  Silently swallows all errors so a
+    file-write problem never interrupts the EOD job.
+
+    Args:
+        path_label: Short string identifying which code path triggered the
+            recalc — "main", "already-resolved", or "scan-failed".
+        written:   Number of rows updated in this run.
+        skipped:   Number of rows skipped (no qualifying data).
+        elapsed_s: Wall-clock time the recalc took, in seconds.
+    """
+    import json as _json
+
+    _default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eod_recalc_history.json")
+    history_path = os.environ.get("EOD_RECALC_HISTORY_PATH", _default_path)
+    try:
+        try:
+            with open(history_path) as _f:
+                _history = _json.load(_f)
+            if not isinstance(_history, list):
+                _history = []
+        except FileNotFoundError:
+            _history = []
+
+        _entry = {
+            "completed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "path": path_label,
+            "written": written,
+            "skipped": skipped,
+            "elapsed_s": round(elapsed_s, 3),
+        }
+        _history.append(_entry)
+        _history = _history[-50:]
+
+        with open(history_path, "w") as _f:
+            _json.dump(_history, _f)
+    except Exception as _he:
+        log.warning(f"_append_eod_recalc_history: could not write history: {_he}")
+
+
 def eod_update():
     """4:20 PM ET — update paper trades with full-day outcomes + send EOD summary."""
     today = date.today()
@@ -2726,6 +2768,12 @@ def eod_update():
                     f"{_rpnl_guard_res.get('written', 0)} row(s) updated, "
                     f"{_rpnl_guard_res.get('skipped', 0)} skipped — "
                     f"{_elapsed_rpnl:.2f}s"
+                )
+                _append_eod_recalc_history(
+                    "already-resolved",
+                    _rpnl_guard_res.get("written", 0),
+                    _rpnl_guard_res.get("skipped", 0),
+                    _elapsed_rpnl,
                 )
             except Exception as _rpnl_guard:
                 log.warning(f"EOD P&L recalc (already-resolved path) failed: {_rpnl_guard}")
@@ -2766,6 +2814,12 @@ def eod_update():
                 f"{_rpnl_early_res.get('written', 0)} row(s) updated, "
                 f"{_rpnl_early_res.get('skipped', 0)} skipped — "
                 f"{_elapsed_rpnl:.2f}s"
+            )
+            _append_eod_recalc_history(
+                "scan-failed",
+                _rpnl_early_res.get("written", 0),
+                _rpnl_early_res.get("skipped", 0),
+                _elapsed_rpnl,
             )
         except Exception as _rpnl_early:
             log.warning(f"EOD P&L recalc (scan-failed path) failed: {_rpnl_early}")
@@ -2849,6 +2903,12 @@ def eod_update():
             f"{_rpnl_res.get('written', 0)} row(s) updated, "
             f"{_rpnl_res.get('skipped', 0)} skipped — "
             f"{_elapsed_rpnl:.2f}s"
+        )
+        _append_eod_recalc_history(
+            "main",
+            _rpnl_res.get("written", 0),
+            _rpnl_res.get("skipped", 0),
+            _elapsed_rpnl,
         )
     except Exception as _rpnl:
         log.warning(f"EOD P&L recalc (main path) failed (non-critical): {_rpnl}")

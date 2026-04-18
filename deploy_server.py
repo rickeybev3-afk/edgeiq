@@ -558,6 +558,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/backfill-health":
             self._backfill_health()
             return
+        if path == "/api/eod-recalc-health":
+            self._eod_recalc_health()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -669,6 +672,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "rows_saved": latest.get("rows_saved"),
                     "no_bars": latest.get("no_bars"),
                     "errors": latest.get("errors"),
+                    "history": list(reversed(history)),
+                }
+        except FileNotFoundError:
+            data = {"available": False}
+        except json.JSONDecodeError:
+            data = {"available": False, "error": "history file corrupt"}
+        except Exception as e:
+            data = {"available": False, "error": str(e)}
+        body = json.dumps(data).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _eod_recalc_health(self):
+        """Return EOD P&L recalc run history written by paper_trader_bot.py.
+
+        Reads the JSON file whose path is set by EOD_RECALC_HISTORY_PATH
+        (default: eod_recalc_history.json next to this file).  The response
+        includes the latest entry's fields at the top level, a 'history' array
+        (newest first), and 'available'.
+        If the file is absent the endpoint returns {"available": false}.
+        """
+        _default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eod_recalc_history.json")
+        history_path = os.environ.get("EOD_RECALC_HISTORY_PATH", _default_path)
+        try:
+            with open(history_path) as f:
+                history = json.load(f)
+            if not isinstance(history, list) or len(history) == 0:
+                data = {"available": False}
+            else:
+                latest = history[-1]
+                data = {
+                    "available": True,
+                    "completed_at": latest.get("completed_at"),
+                    "path": latest.get("path"),
+                    "written": latest.get("written"),
+                    "skipped": latest.get("skipped"),
+                    "elapsed_s": latest.get("elapsed_s"),
                     "history": list(reversed(history)),
                 }
         except FileNotFoundError:
