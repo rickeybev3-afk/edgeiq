@@ -8085,6 +8085,9 @@ def run_pending_migrations() -> dict:
         # is never populated intraday and therefore returns NULL for today's live trades).
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS nearest_resistance REAL",
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS nearest_support    REAL",
+        # Realized R outcome from actual Alpaca fill prices (entry fill vs. exit fill).
+        # Written by _force_close_all_positions() after the 3:30 PM EOD force-close.
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_actual NUMERIC",
     ]
 
     ran = 0
@@ -8214,6 +8217,9 @@ GROUP BY user_id, screener, scan_type, month;
 
 CREATE UNIQUE INDEX IF NOT EXISTS mv_paper_tiered_pnl_summary_uidx
     ON mv_paper_tiered_pnl_summary(user_id, screener, scan_type, month);
+
+-- 9. Realized R from 3:30 PM force-close fills (written by _force_close_all_positions):
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_actual NUMERIC;
 """
 
 

@@ -334,6 +334,8 @@ try:
         cancel_alpaca_day_orders,
         reconcile_alpaca_fills,
         get_alpaca_account_equity,
+        fetch_alpaca_fills,
+        match_fills_to_roundtrips,
         supabase as _supabase_client,
         load_tcs_thresholds,
         append_tcs_threshold_history,
@@ -1110,6 +1112,10 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
 # Prevents re-triggering on every 30-second loop iteration.
 _TRAILING_STOP_ACTIVATED: set = set()
 
+# Session-open equity: date_str → equity float captured at ~9:35 AM ET each day.
+# Used by _force_close_all_positions() to compute equity change vs session open.
+_SESSION_OPEN_EQUITY: dict = {}
+
 
 def _alpaca_get_positions() -> list:
     """Return list of open Alpaca position dicts, or [] on error."""
@@ -1458,6 +1464,9 @@ def _force_close_all_positions() -> None:
 
     After the first pass a 90-second validation loop re-checks for any surviving
     positions and retries once per symbol.
+
+    After closure: computes per-trade realized P&L and R, patches paper_trades
+    rows with win_loss and pnl_r_actual, and sends a day-end P&L card to Telegram.
     """
     if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
         return
@@ -1476,6 +1485,49 @@ def _force_close_all_positions() -> None:
         "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
         "Content-Type":        "application/json",
     }
+
+    # ── Snapshot pre-close state ──────────────────────────────────────────────
+    today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+
+    # Session-open equity captured at 9:35 AM by the main scheduling loop.
+    # Used for the equity change line in the P&L summary.
+    equity_open: float | None = _SESSION_OPEN_EQUITY.get(today_str)
+
+    # Snapshot position data: actual entry price and side from Alpaca (keyed by symbol).
+    # avg_entry_price from Alpaca is correct for both long (buy entry) and short (sell entry).
+    # This is used as the fallback effective_entry when computing stop distance for R.
+    pos_snapshot: dict[str, dict] = {}
+    for pos in positions:
+        sym = (pos.get("symbol") or "").upper()
+        if sym:
+            pos_snapshot[sym] = {
+                "avg_entry_price": float(pos.get("avg_entry_price") or 0),
+                "qty":             float(pos.get("qty") or 0),
+                "unrealized_pl":   float(pos.get("unrealized_pl") or 0),
+                "side":            str(pos.get("side", "long")).lower(),
+            }
+
+    # Fetch today's paper_trades rows for the symbols being closed so we have
+    # entry_price_sim and stop_price_sim for R calculations (stop distance = 1R).
+    pt_rows_by_ticker: dict[str, dict] = {}
+    if _supabase_client:
+        try:
+            pt_data = (
+                _supabase_client
+                .table("paper_trades")
+                .select("ticker,entry_price_sim,stop_price_sim,alpaca_fill_price,alpaca_qty,alpaca_order_id")
+                .eq("user_id", USER_ID)
+                .eq("trade_date", today_str)
+                .in_("ticker", list(pos_snapshot.keys()))
+                .not_.is_("alpaca_order_id", "null")
+                .execute()
+            ).data or []
+            for row in pt_data:
+                sym = (row.get("ticker") or "").upper()
+                if sym:
+                    pt_rows_by_ticker[sym] = row
+        except Exception as _pt_err:
+            log.warning(f"[ForceClose] Could not fetch paper_trades rows: {_pt_err}")
 
     closed   = []
     failed   = []
@@ -1528,12 +1580,176 @@ def _force_close_all_positions() -> None:
             else:
                 log.error(f"[ForceClose] {ticker} — retry FAILED, manual close required")
 
+    # ── P&L computation and paper_trades update ───────────────────────────────
+    # Fetch today's filled orders from Alpaca to get actual exit prices for the
+    # force-close market orders that just filled.
+    trade_summaries: list[dict] = []
+    if closed and _supabase_client:
+        try:
+            fills, fills_err = fetch_alpaca_fills(
+                api_key=ALPACA_API_KEY,
+                secret_key=ALPACA_SECRET_KEY,
+                is_paper=IS_PAPER_ALPACA,
+                trade_date=today_str,
+            )
+            if fills_err:
+                log.warning(f"[ForceClose] Could not fetch fills for P&L: {fills_err}")
+            else:
+                roundtrips = match_fills_to_roundtrips(fills)
+                closed_set = set(t.upper() for t in closed)
+                for rt in roundtrips:
+                    sym = (rt.get("symbol") or "").upper()
+                    if sym not in closed_set:
+                        continue
+
+                    avg_entry    = float(rt.get("avg_entry") or 0)
+                    avg_exit     = float(rt.get("avg_exit")  or 0)
+                    qty          = float(rt.get("qty")        or 0)
+                    pnl_dollars  = float(rt.get("pnl_dollars") or 0)
+                    wl           = str(rt.get("win_loss", ""))
+
+                    # Compute R using stop distance from paper_trades if available.
+                    # pnl_dollars from match_fills_to_roundtrips is correctly signed for
+                    # both long (buy-sell) and short (sell-buy) positions because the
+                    # function labels the sell leg as avg_exit and the buy leg as avg_entry,
+                    # so (avg_exit - avg_entry) * qty is always positive for a winning trade.
+                    #
+                    # effective_entry MUST use avg_entry_price from the Alpaca position
+                    # snapshot (captured before the close) — this is the actual entry price
+                    # for both long (buy price) and short (sell price).  Using avg_entry from
+                    # match_fills_to_roundtrips would be wrong for shorts because the function
+                    # labels the buy-to-cover (exit) as avg_entry.
+                    pnl_r: float | None = None
+                    pt_row     = pt_rows_by_ticker.get(sym, {})
+                    stop_sim   = float(pt_row.get("stop_price_sim")  or 0)
+                    alpaca_fill = float(pt_row.get("alpaca_fill_price") or 0)
+                    snap_entry  = float((pos_snapshot.get(sym) or {}).get("avg_entry_price") or 0)
+
+                    # Priority: actual Alpaca fill entry > position snapshot entry > sim entry
+                    effective_entry = (
+                        alpaca_fill if alpaca_fill > 0
+                        else snap_entry if snap_entry > 0
+                        else float(pt_row.get("entry_price_sim") or 0)
+                    )
+                    stop_dist = abs(effective_entry - stop_sim) if (stop_sim > 0 and effective_entry > 0) else 0
+
+                    if stop_dist > 0 and qty > 0:
+                        pnl_r = round(pnl_dollars / (stop_dist * qty), 3)
+
+                    # Determine the actual exit fill price for this position.
+                    # match_fills_to_roundtrips labels sells as avg_exit and buys as avg_entry
+                    # regardless of strategy direction.  For a long position the force-close
+                    # order is a sell, so avg_exit is the correct exit fill.  For a short
+                    # position the force-close order is a buy-to-cover, so avg_entry (the buy
+                    # leg price from the roundtrip) is the correct exit fill.
+                    pos_side = (pos_snapshot.get(sym) or {}).get("side", "long")
+                    exit_fill = avg_exit if pos_side == "long" else avg_entry
+
+                    trade_summaries.append({
+                        "symbol":       sym,
+                        "avg_entry":    snap_entry if snap_entry > 0 else avg_entry,
+                        "avg_exit":     exit_fill,
+                        "qty":          qty,
+                        "pnl_dollars":  pnl_dollars,
+                        "pnl_r":        pnl_r,
+                        "win_loss":     wl,
+                    })
+
+                    # Patch paper_trades row with win_loss, alpaca_exit_fill_price, pnl_r_actual.
+                    # Use alpaca_order_id as the unique key when available to prevent accidental
+                    # multi-row updates (e.g. if the same ticker appears twice in one day).
+                    patch: dict = {"win_loss": wl, "alpaca_exit_fill_price": exit_fill}
+                    if pnl_r is not None:
+                        patch["pnl_r_actual"] = pnl_r
+                    close_note = (
+                        f"Force-closed at 3:30 PM ET on {today_str} | "
+                        f"exit fill: {exit_fill:.4f} | P&L: ${pnl_dollars:+.2f}"
+                        + (f" | {pnl_r:+.2f}R" if pnl_r is not None else "")
+                    )
+                    patch["notes"] = close_note
+
+                    order_id = pt_row.get("alpaca_order_id")
+                    try:
+                        if order_id:
+                            _supabase_client.table("paper_trades").update(patch).eq(
+                                "user_id", USER_ID
+                            ).eq("trade_date", today_str).eq("alpaca_order_id", order_id).execute()
+                        else:
+                            _supabase_client.table("paper_trades").update(patch).eq(
+                                "user_id", USER_ID
+                            ).eq("trade_date", today_str).eq("ticker", sym).not_.is_(
+                                "alpaca_order_id", "null"
+                            ).execute()
+                        log.info(
+                            f"[ForceClose] {sym} — patched paper_trades: "
+                            f"{wl} | exit={exit_fill:.4f} | ${pnl_dollars:+.2f}"
+                            + (f" | {pnl_r:+.2f}R" if pnl_r is not None else "")
+                        )
+                    except Exception as _patch_err:
+                        log.warning(f"[ForceClose] {sym} — paper_trades patch failed: {_patch_err}")
+
+        except Exception as _pnl_err:
+            log.warning(f"[ForceClose] P&L computation failed (non-critical): {_pnl_err}")
+
+    # Capture account equity after closing (post-force-close = end-of-session equity)
+    equity_close: float | None = None
+    try:
+        equity_close = get_alpaca_account_equity(
+            is_paper=IS_PAPER_ALPACA,
+            api_key=ALPACA_API_KEY,
+            secret_key=ALPACA_SECRET_KEY,
+        )
+    except Exception as _eq_err:
+        log.warning(f"[ForceClose] Could not fetch post-close equity: {_eq_err}")
+
+    # ── Build and send Telegram P&L summary ──────────────────────────────────
     if closed or failed:
         lines = ["🔔 <b>3:30 PM — Positions Force-Closed</b>"]
-        if closed:
-            lines.append(f"✅ Closed: {', '.join(sorted(set(closed)))}")
+
         if failed:
             lines.append(f"⚠️ Failed after retry: {', '.join(sorted(set(failed)))} — check manually")
+
+        if trade_summaries:
+            total_r       = sum(t["pnl_r"] for t in trade_summaries if t["pnl_r"] is not None)
+            total_dollars = sum(t["pnl_dollars"] for t in trade_summaries)
+            r_known       = [t for t in trade_summaries if t["pnl_r"] is not None]
+
+            lines.append("")
+            lines.append("<b>Day-End P&amp;L Summary</b>")
+
+            for t in sorted(trade_summaries, key=lambda x: x["symbol"]):
+                sym = t["symbol"]
+                wl  = t["win_loss"]
+                usd = t["pnl_dollars"]
+                r   = t["pnl_r"]
+                emoji = "🟢" if wl == "Win" else ("🔴" if wl == "Loss" else "⬜")
+                r_str = f" | {r:+.2f}R" if r is not None else ""
+                lines.append(f"  {emoji} {sym}: ${usd:+.2f}{r_str}")
+
+            lines.append("")
+            if r_known:
+                r_emoji = "📈" if total_r > 0 else ("📉" if total_r < 0 else "➡️")
+                lines.append(f"{r_emoji} <b>Total realized R: {total_r:+.2f}R</b>")
+            lines.append(f"💵 Net P&amp;L: <b>${total_dollars:+.2f}</b>")
+
+            # equity_open = session-open equity (captured at 9:35 AM market open).
+            # equity_close = post-force-close equity (filled orders settled ~90 s after 3:30 PM).
+            if equity_open is not None and equity_close is not None:
+                equity_chg = equity_close - equity_open
+                lines.append(
+                    f"🏦 Equity: ${equity_open:,.2f} (open) → ${equity_close:,.2f} (close) "
+                    f"({equity_chg:+.2f})"
+                )
+            elif equity_close is not None:
+                lines.append(f"🏦 Closing equity: ${equity_close:,.2f}")
+        else:
+            # No fill data — just report closed/failed tickers
+            if closed:
+                lines.append(f"✅ Closed: {', '.join(sorted(set(closed)))}")
+            if equity_close is not None:
+                lines.append(f"🏦 Closing equity: ${equity_close:,.2f}")
+
+        lines.append("")
         lines.append("<i>Avoids holding through close-auction spread widening</i>")
         tg_send("\n".join(lines))
 
@@ -4838,6 +5054,20 @@ def main():
             except Exception as _cue:
                 log.warning(f"[Catch-up] Watchlist refresh failed: {_cue}")
             _watchlist_done = True
+            # Capture session-open equity even on restart so the EOD P&L card has a baseline.
+            try:
+                _su_date = _su.strftime("%Y-%m-%d")
+                if _su_date not in _SESSION_OPEN_EQUITY:
+                    _su_eq = get_alpaca_account_equity(
+                        is_paper=IS_PAPER_ALPACA,
+                        api_key=ALPACA_API_KEY,
+                        secret_key=ALPACA_SECRET_KEY,
+                    )
+                    if _su_eq is not None:
+                        _SESSION_OPEN_EQUITY[_su_date] = _su_eq
+                        log.info(f"[Catch-up] Session-open equity captured on restart: ${_su_eq:,.2f}")
+            except Exception as _su_seq_err:
+                log.warning(f"[Catch-up] Session-open equity capture failed: {_su_seq_err}")
         if 10 * 60 + 47 <= _su_hm < 14 * 60 and not _morning_done:
             log.info("[Catch-up] Started after 10:47 AM — running morning scan now...")
             try:
@@ -4999,6 +5229,18 @@ def main():
         ):
             watchlist_refresh()
             _watchlist_done = True
+            # Capture session-open equity for the force-close P&L card.
+            try:
+                _eq = get_alpaca_account_equity(
+                    is_paper=IS_PAPER_ALPACA,
+                    api_key=ALPACA_API_KEY,
+                    secret_key=ALPACA_SECRET_KEY,
+                )
+                if _eq is not None:
+                    _SESSION_OPEN_EQUITY[str(today)] = _eq
+                    log.info(f"[ForceClose] Session-open equity captured: ${_eq:,.2f}")
+            except Exception as _seq_err:
+                log.warning(f"[ForceClose] Could not capture session-open equity: {_seq_err}")
 
         # 10:47 AM — morning scan + Telegram alerts
         # (IB closes 10:30; SIP free tier needs >15 min delay → 10:47 is safe)
