@@ -755,6 +755,9 @@ if __name__ == "__main__":
                 _ts      = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
                 out_file = f"dry_run_context_{_ts}.json"
                 print(f"       No --out specified — report will be saved to: {out_file}")
+        print(f"\n  Flags in effect:")
+        print(f"    --context-only   : yes")
+        print(f"    --dry-run        : {'yes' if dry_run else 'no'}")
         print("=" * 60)
         try:
             import backfill_context_levels as _ctx
@@ -820,6 +823,9 @@ if __name__ == "__main__":
         print("\nMode: --rvol-only — running ONLY the rvol_size_mult backfill.")
         if dry_run:
             print("      Combined with --dry-run: no database writes will occur.")
+        print(f"\n  Flags in effect:")
+        print(f"    --rvol-only      : yes")
+        print(f"    --dry-run        : {'yes' if dry_run else 'no'}")
         backfill_rvol_size_mult(user_ids, dry_run=dry_run)
         sys.exit(0)
 
