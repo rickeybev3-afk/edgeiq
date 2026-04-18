@@ -49,6 +49,14 @@ Related backfill scripts:
     rows inserted before those columns were added (2026-04-17).  Run once:
       python backfill_ib_vwap.py
 
+  run_vwap_backfill.py — backfills vwap_at_ib for backtest_sim_runs rows that
+    pre-date Task 1226.  After running, the pace target in
+    get_backtest_pace_target() drops from ~1.5/day to ~0.81/day because the
+    VWAP-alignment filter now applies to the full historical dataset.  Run once
+    (repeat until "0 NULL rows remain" is printed):
+      python run_vwap_backfill.py
+      python run_vwap_backfill.py --no-ratelimit  # faster on paid Alpaca plan
+
 Uses concurrent threads to run Supabase updates in parallel — much faster
 than sequential updates.
 

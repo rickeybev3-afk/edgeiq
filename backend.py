@@ -58,6 +58,15 @@ ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "").strip()
 # downstream .notna()/.dropna() filters exclude such rows without extra handling.
 TIERED_PNL_SENTINEL = -9999.0
 
+# Sentinel stamped into backtest_sim_runs.vwap_at_ib when Alpaca returns zero
+# bars for that (ticker, sim_date) — meaning data is genuinely unavailable
+# (delisted stock, pre-listing, market holiday gap, etc.).  A real VWAP is
+# always a positive price, so -1.0 is unambiguous.  The value tells the backfill
+# script "this row has been attempted; skip it on future runs".
+# get_backtest_pace_target() treats vwap_at_ib <= 0 the same as NULL so these
+# rows continue to pass the VWAP gate (backward-compat behaviour for unfillable rows).
+VWAP_AT_IB_SENTINEL = -1.0
+
 # How many times run_backtest_tiered_backfill_batch() retries a bar fetch that
 # raises an exception (transient API/network failure) before giving up on that
 # row for this batch.  Rows that exhaust retries are skipped without stamping
@@ -8908,10 +8917,15 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         _pred_s      = _df["predicted"].fillna("").str.lower()
         _bullish_mask = _pred_s.str.contains("bullish|long|up", na=False)
         _bearish_mask = _pred_s.str.contains("bearish|short|down", na=False)
-        _has_vwap    = _df["vwap_at_ib"].notna()
+        # _has_vwap: True only for rows with a real, positive VWAP.
+        # Rows where vwap_at_ib is NULL (old rows without VWAP data) OR where
+        # vwap_at_ib == VWAP_AT_IB_SENTINEL (-1.0, stamped when Alpaca has no
+        # bars for that ticker/date) both pass through unconditionally so that
+        # unfillable rows don't distort the count.
+        _has_vwap    = _df["vwap_at_ib"].notna() & (_df["vwap_at_ib"] > 0)
 
         _vwap_ok = (
-            (~_has_vwap) |  # rows without vwap_at_ib pass through (backward compat)
+            (~_has_vwap) |  # rows without usable vwap_at_ib pass through (backward compat)
             (_has_vwap & _bullish_mask & (_df["_ib_mid"] > _df["vwap_at_ib"])) |
             (_has_vwap & _bearish_mask & (_df["_ib_mid"] < _df["vwap_at_ib"]))
         )
