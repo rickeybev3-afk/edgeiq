@@ -20151,7 +20151,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
     # ── PROJECTED ACCOUNT EQUITY — MONTE CARLO (v6 sim data) ───────────────
     st.markdown("---")
-    with st.expander("📈 Projected Account Growth — Monte Carlo Equity Simulation", expanded=False):
+    with st.expander("📈 Projected Account Growth — Monte Carlo Equity Simulation", expanded=True):
         st.caption(
             "Loads all v6 trailing-stop sim data (S/R-aware trail tightening) from the historical backtest database. "
             "Shuffles the trade sequence 1,000 times to show the range of possible outcomes "

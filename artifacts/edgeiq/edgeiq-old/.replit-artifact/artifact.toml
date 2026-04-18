@@ -1,22 +1,23 @@
 kind = "web"
-previewPath = "/edgeiq/"
-title = "EdgeIQ Dashboard (dev)"
-version = "1.0.0"
-id = "artifacts/edgeiq"
-router = "path"
+  previewPath = "/edgeiq/"
+  title = "EdgeIQ Dashboard (dev)"
+  version = "1.0.0"
+  id = "artifacts/edgeiq"
+  router = "path"
 
-[[integratedSkills]]
-name = "react-vite"
-version = "1.0.0"
+  [[integratedSkills]]
+  name = "react-vite"
+  version = "1.0.0"
 
-[[services]]
-name = "web"
-paths = [ "/edgeiq/" ]
-localPort = 23411
+  [[services]]
+  name = "web"
+  paths = [ "/edgeiq/" ]
+  localPort = 23411
 
-[services.development]
-run = "cd /home/runner/workspace && streamlit run app.py --server.port 23411 --server.baseUrlPath edgeiq"
+  [services.development]
+  run = "cd /home/runner/workspace && streamlit run app.py --server.port 23411 --server.baseUrlPath edgeiq --server.enableCORS false --server.enableXsrfProtection false"
 
-[services.env]
-PORT = "23411"
-BASE_PATH = "/edgeiq/"
+  [services.env]
+  PORT = "23411"
+  BASE_PATH = "/edgeiq/"
+  
