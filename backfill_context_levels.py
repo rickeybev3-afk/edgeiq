@@ -266,13 +266,19 @@ def get_already_processed():
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main():
-    log.info('Loading backtest rows from Supabase…')
-    resp = SUPABASE.table('backtest_sim_runs') \
-        .select('ticker, sim_date, scan_type, ib_high, ib_low, actual_outcome') \
-        .eq('user_id', USER_ID) \
-        .in_('actual_outcome', ['Bullish Break', 'Bearish Break']) \
-        .execute()
+def main(user_ids=None):
+    if user_ids:
+        log.info(f'Loading backtest rows from Supabase for {len(user_ids)} user(s): {user_ids}')
+        query = SUPABASE.table('backtest_sim_runs') \
+            .select('ticker, sim_date, scan_type, ib_high, ib_low, actual_outcome') \
+            .in_('user_id', user_ids) \
+            .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
+    else:
+        log.info('Loading backtest rows from Supabase (all users)…')
+        query = SUPABASE.table('backtest_sim_runs') \
+            .select('ticker, sim_date, scan_type, ib_high, ib_low, actual_outcome') \
+            .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
+    resp = query.execute()
     rows = resp.data or []
     log.info(f'  → {len(rows)} settled breakout rows')
 

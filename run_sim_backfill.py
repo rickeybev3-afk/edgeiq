@@ -716,10 +716,16 @@ if __name__ == "__main__":
     # ── context-only short-circuit ─────────────────────────────────────────────
     if context_only:
         print("Mode: CONTEXT-ONLY — running S/R, VWAP, and MACD context backfill.")
+        if uid_args:
+            _ctx_uids = list(dict.fromkeys(uid_args))
+            print(f"  Scoped to {len(_ctx_uids)} user ID(s): {_ctx_uids}")
+        else:
+            _ctx_uids = None
+            print("  No user IDs specified — running for all users.")
         print("=" * 60)
         try:
             import backfill_context_levels as _ctx
-            _ctx.main()
+            _ctx.main(user_ids=_ctx_uids)
         except Exception as _ctx_err:
             print(f"  Context backfill error: {_ctx_err}")
             sys.exit(1)
