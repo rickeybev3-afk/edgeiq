@@ -23734,6 +23734,26 @@ ALTER TABLE backtest_sim_runs
                                         st.session_state["_cached_prefs"] = _bq_d_prefs
                                     st.rerun()
 
+                if _bq_start or _bq_end:
+                    _bq_from_str = str(_bq_start) if _bq_start else "any"
+                    _bq_to_str   = str(_bq_end)   if _bq_end   else "any"
+                    _bq_ind_cols = st.columns([8, 1])
+                    with _bq_ind_cols[0]:
+                        st.info(
+                            f"Date filter active: **{_bq_from_str} → {_bq_to_str}**",
+                            icon="🗓",
+                        )
+                    with _bq_ind_cols[1]:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button(
+                            "Clear",
+                            key="bq_clear_dates",
+                            help="Remove the Screener × Outcome date filter and show all available data",
+                        ):
+                            st.session_state["bq_dr_start"] = None
+                            st.session_state["bq_dr_end"]   = None
+                            st.rerun()
+
                 if st.session_state.get("bq_link_date_filters", False):
                     st.caption(
                         "🔗 Filters linked — Screener × Outcome dates stay in sync with "
