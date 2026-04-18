@@ -13401,8 +13401,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _dlg_fig.update_layout(**_dlg_layout)
 
                     import streamlit.components.v1 as _cmp_dlg_zoom
-                    # Use the ls_key passed from the mini-chart (respects eq-only prefix)
-                    _dlg_ls_key = _d.get("ls_key") or ("div_zoom_eq_" if _dlg_eq_only else "div_zoom_") + "".join(c if c.isalnum() else "_" for c in _dlg_tk)
+                    # Mini-chart key (read-only from dialog — never written by dialog)
+                    _dlg_mini_ls_key = _d.get("ls_key") or ("div_zoom_eq_" if _dlg_eq_only else "div_zoom_") + "".join(c if c.isalnum() else "_" for c in _dlg_tk)
+                    # Dialog-specific key — independent of the mini-chart key
+                    _dlg_own_ls_key = ("div_zoom_eq_dlg_" if _dlg_eq_only else "div_zoom_dlg_") + "".join(c if c.isalnum() else "_" for c in _dlg_tk)
                     _dlg_sentinel_id = "div-dlg-sentinel-" + "".join(c if c.isalnum() else "-" for c in _dlg_tk)
 
                     # Sentinel element: lets JS find the chart that appears immediately after it
@@ -13427,11 +13429,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.caption("ℹ️ Divergence analysis requires an EOD or tiered-exit R column — showing equity curve only.")
 
                     # ── JS: restore saved zoom range from localStorage ──────────
-                    # Uses the sentinel element to find the dialog's specific chart div
+                    # Dialog reads from its own key first; falls back to the mini-chart key
+                    # on the first open (so the initial view matches). Saves only to the
+                    # dialog-specific key, leaving the mini-chart's key untouched.
                     _cmp_dlg_zoom.html(f"""
 <script>
 (function() {{
-    var _LS_KEY = {repr(_dlg_ls_key)};
+    var _DLG_KEY  = {repr(_dlg_own_ls_key)};
+    var _MINI_KEY = {repr(_dlg_mini_ls_key)};
     var _SENTINEL_ID = {repr(_dlg_sentinel_id)};
     function _findDlgChart() {{
         var sentinel = window.parent.document.getElementById(_SENTINEL_ID);
@@ -13444,7 +13449,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
         return null;
     }}
     function _applyZoom() {{
-        var saved = localStorage.getItem(_LS_KEY);
+        // Prefer the dialog's own saved range; fall back to the mini-chart range
+        var saved = null;
+        try {{ saved = localStorage.getItem(_DLG_KEY); }} catch(e) {{}}
+        if (!saved) {{
+            try {{ saved = localStorage.getItem(_MINI_KEY); }} catch(e) {{}}
+        }}
         if (!saved) return;
         try {{
             var range = JSON.parse(saved);
@@ -13458,7 +13468,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
             window.parent.Plotly.relayout(_pDiv, update);
         }} catch(e) {{ console.warn('div zoom restore failed', e); }}
     }}
+    function _attachSaveListener() {{
+        var _pDiv = _findDlgChart();
+        if (!_pDiv || !_pDiv.on) {{ setTimeout(_attachSaveListener, 400); return; }}
+        _pDiv.on('plotly_relayout', function(ev) {{
+            if (ev['xaxis.autorange'] === true || ev['autosize'] === true) {{
+                try {{ localStorage.removeItem(_DLG_KEY); }} catch(e) {{}}
+                return;
+            }}
+            if (ev['xaxis.range[0]'] !== undefined) {{
+                try {{
+                    localStorage.setItem(_DLG_KEY, JSON.stringify({{
+                        xmin: ev['xaxis.range[0]'],
+                        xmax: ev['xaxis.range[1]'],
+                        ymin: (ev['yaxis.range[0]'] !== undefined ? ev['yaxis.range[0]'] : null),
+                        ymax: (ev['yaxis.range[1]'] !== undefined ? ev['yaxis.range[1]'] : null),
+                    }}));
+                }} catch(e) {{}}
+            }}
+        }});
+    }}
     setTimeout(_applyZoom, 600);
+    setTimeout(_attachSaveListener, 700);
 }})();
 </script>
 """, height=0)
