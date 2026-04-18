@@ -12384,6 +12384,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             if st.query_params.get("rp_log_ticker") != _rp_log_ticker_filter:
                                 st.query_params["rp_log_ticker"] = _rp_log_ticker_filter
+                            st.session_state["_rp_log_ticker_last_url"] = _rp_log_ticker_filter
                         with _rp_log_fcol2:
                             _rp_wl_options = ["All", "Win", "Loss"]
                             _wl_url_val = st.query_params.get("rp_log_wl", "All")
@@ -12402,6 +12403,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             if st.query_params.get("rp_log_wl") != _rp_log_wl_filter:
                                 st.query_params["rp_log_wl"] = _rp_log_wl_filter
+                            st.session_state["_rp_log_wl_last_url"] = _rp_log_wl_filter
                         with _rp_log_fcol3:
                             _rp_log_neutral_url = st.query_params.get("rp_log_neutral", "1")
                             if (
