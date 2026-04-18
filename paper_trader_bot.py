@@ -3373,13 +3373,15 @@ def nightly_recalibration():
     # ── eod_pnl_r recalculation for newly-filled backtest close prices ─────────
     bpr_result: dict = {"written": 0, "skipped": 0}
     try:
+        _t0_bpr = time.monotonic()
         bpr_result = _recalc_eod_pnl_r_recent_backtest()
-        if bpr_result["written"]:
-            log.info(
-                f"Nightly eod_pnl_r recalc (backtest): "
-                f"{bpr_result['written']} row(s) updated, "
-                f"{bpr_result['skipped']} skipped."
-            )
+        _elapsed_bpr = time.monotonic() - _t0_bpr
+        log.info(
+            f"Nightly eod_pnl_r recalc (backtest): "
+            f"{bpr_result.get('written', 0)} row(s) updated, "
+            f"{bpr_result.get('skipped', 0)} skipped — "
+            f"{_elapsed_bpr:.2f}s"
+        )
     except Exception as exc:
         log.warning(f"Nightly eod_pnl_r recalculation (backtest) failed: {exc}")
 
