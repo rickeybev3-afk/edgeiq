@@ -5175,40 +5175,7 @@ with st.sidebar:
     return localStorage.getItem('edgeiq_feed') ||
            localStorage.getItem('global_default_feed') || 'sip';
   }
-  function _sfiSwitch() {
-    var cur  = _sfiRead();
-    var feed = (cur === 'iex') ? 'sip' : 'iex';
-    var ptFeed = feed === 'sip' ? 'SIP (paid \u2014 accurate)' : 'IEX (free \u2014 limited)';
-    localStorage.setItem('edgeiq_feed',        feed);
-    localStorage.setItem('global_default_feed', feed);
-    localStorage.setItem('hist_scan_feed',      feed);
-    localStorage.setItem('replay_feed_sel',     feed);
-    localStorage.setItem('live_scan_feed',      feed);
-    localStorage.setItem('scan_feed_select',    feed);
-    localStorage.setItem('pat_scan_feed',       feed);
-    localStorage.setItem('bt_feed_select',      feed);
-    localStorage.setItem('wpe_feed_select',     feed);
-    localStorage.setItem('pt_feed',             ptFeed);
-    _sfiUpdate(feed);
-    try {
-      var bc = new BroadcastChannel('edgeiq_feed_sync');
-      bc.postMessage({ feed: feed });
-    } catch (e) {}
-    var url = new URL(window.location.href);
-    url.searchParams.set('hist_scan_feed',    feed);
-    url.searchParams.set('replay_scan_feed',  feed);
-    url.searchParams.set('live_scan_feed',    feed);
-    url.searchParams.set('scan_feed',         feed);
-    url.searchParams.set('pat_scan_feed',     feed);
-    url.searchParams.set('bt_batch_feed',     feed);
-    url.searchParams.set('wpe_feed',          feed);
-    url.searchParams.set('pt_feed',           ptFeed);
-    url.searchParams.set('_feed_default',     feed);
-    window.location.replace(url.toString());
-  }
   _sfiUpdate(_sfiRead());
-  var _sfiPill = document.getElementById('_sfi_pill');
-  if (_sfiPill) _sfiPill.addEventListener('click', _sfiSwitch);
   window.addEventListener('storage', function (e) {
     if (e.key === 'edgeiq_feed' || e.key === 'global_default_feed') {
       _sfiUpdate(_sfiRead());
@@ -5325,9 +5292,9 @@ with st.sidebar:
 <div id="_afi_wrap" style="display:none;"></div>
 <script>
 (function() {
-  // _afRender is intentionally retained: it will become active again once
-  // the sticky pill (_sfi_pill) is wired to call window._afSwitch, at which
-  // point visible SIP/IEX buttons can be re-added without rewriting this logic.
+  // _afRender updates the hidden SIP/IEX button styles when feed changes.
+  // The sticky pill (_sfi_pill) is wired to call window._afSwitch via _wirePill()
+  // below, so clicking the pill toggles the active feed across all sections.
   function _afRender(feed) {
     var sipBtn = document.getElementById('_afi_sip');
     var iexBtn = document.getElementById('_afi_iex');
@@ -5380,9 +5347,39 @@ with st.sidebar:
     var _bc2 = new window.parent.BroadcastChannel('edgeiq_feed_sync');
     _bc2.onmessage = function(e) {
       var feed = e.data && e.data.feed;
-      if (feed === 'sip' || feed === 'iex') _afRender(feed);
+      if (feed === 'sip' || feed === 'iex') {
+        _afRender(feed);
+        _sfiPillSync(feed);
+      }
     };
   } catch(e) {}
+
+  function _sfiPillSync(feed) {
+    var pill = window.parent.document.getElementById('_sfi_pill');
+    if (!pill) return;
+    var isSip = !feed || feed.toLowerCase().indexOf('iex') < 0;
+    pill.textContent      = isSip ? 'SIP' : 'IEX';
+    pill.style.background = isSip ? '#1b5e20' : '#0d3b6e';
+    pill.style.color      = isSip ? '#a5d6a7' : '#90caf9';
+  }
+
+  function _wirePill() {
+    var pill = window.parent.document.getElementById('_sfi_pill');
+    if (!pill || pill._afWired) return;
+    pill._afWired = true;
+    pill.onclick = function() {
+      var cur = (window.parent.localStorage.getItem('edgeiq_feed') ||
+                 window.parent.localStorage.getItem('global_default_feed') || 'sip').toLowerCase();
+      var newFeed = cur === 'iex' ? 'sip' : 'iex';
+      _sfiPillSync(newFeed);
+      window._afSwitch(newFeed);
+    };
+    _sfiPillSync(_afGetFeed());
+  }
+
+  _wirePill();
+  setTimeout(_wirePill, 400);
+  setTimeout(_wirePill, 1200);
 })();
 </script>
 """, height=0)
