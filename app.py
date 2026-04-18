@@ -14935,6 +14935,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     },
                                     height=220,
                                 )
+                                _meq_eq_vals = _mini_eq_prev_df["Equity ($)"]
+                                if len(_meq_eq_vals) > 0:
+                                    _meq_summary_df = _pd_bt.DataFrame({
+                                        "": ["Min", "Max", "Final"],
+                                        "Equity ($)": [
+                                            round(_meq_eq_vals.min(), 2),
+                                            round(_meq_eq_vals.max(), 2),
+                                            round(float(_meq_eq_vals.iloc[-1]), 2),
+                                        ],
+                                    })
+                                    st.caption("Summary")
+                                    st.dataframe(
+                                        _meq_summary_df,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config={
+                                            "Equity ($)": st.column_config.NumberColumn(format="$%.2f"),
+                                        },
+                                    )
                             if _meq_flt_active:
                                 st.caption(
                                     f"✂️ Filter active — {_meq_row_count} trade row(s) will be exported"
@@ -15204,6 +15223,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     },
                                     height=220,
                                 )
+                                _mdiv_eq_vals = _mini_div_prev_df["Equity ($)"]
+                                _mdiv_r_vals  = _mini_div_prev_df["Cumulative R"]
+                                if len(_mdiv_eq_vals) > 0:
+                                    _mdiv_summary_df = _pd_bt.DataFrame({
+                                        "": ["Min", "Max", "Final"],
+                                        "Equity ($)": [
+                                            round(_mdiv_eq_vals.min(), 2),
+                                            round(_mdiv_eq_vals.max(), 2),
+                                            round(float(_mdiv_eq_vals.iloc[-1]), 2),
+                                        ],
+                                        "Cumulative R": [
+                                            round(_mdiv_r_vals.min(), 4),
+                                            round(_mdiv_r_vals.max(), 4),
+                                            round(float(_mdiv_r_vals.iloc[-1]), 4),
+                                        ],
+                                    })
+                                    st.caption("Summary")
+                                    st.dataframe(
+                                        _mdiv_summary_df,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config={
+                                            "Equity ($)": st.column_config.NumberColumn(format="$%.2f"),
+                                            "Cumulative R": st.column_config.NumberColumn(format="%.4f"),
+                                        },
+                                    )
                             if _mdiv_flt_active:
                                 st.caption(
                                     f"✂️ Filter active — {_mdiv_row_count} trade row(s) will be exported"
