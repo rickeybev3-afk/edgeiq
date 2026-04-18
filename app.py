@@ -22227,6 +22227,26 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
 
+        if _bts_start or _bts_end:
+            _bts_from_str = str(_bts_start) if _bts_start else "any"
+            _bts_to_str   = str(_bts_end)   if _bts_end   else "any"
+            _bts_ind_cols = st.columns([8, 1])
+            with _bts_ind_cols[0]:
+                st.info(
+                    f"Date filter active: **{_bts_from_str} → {_bts_to_str}**",
+                    icon="🗓",
+                )
+            with _bts_ind_cols[1]:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button(
+                    "Clear",
+                    key="bts_clear_dates",
+                    help="Remove the Backtest P&L date filter and show all time",
+                ):
+                    st.session_state["bts_dr_start"] = None
+                    st.session_state["bts_dr_end"]   = None
+                    st.rerun()
+
         if st.session_state.get("link_date_filters", False):
             _prec_note_cols = st.columns([5, 2])
             with _prec_note_cols[0]:
