@@ -683,8 +683,16 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
     streak_html  = f"\n<b>This view has failed {consecutive} nights in a row.</b>" if consecutive > 1 else ""
     streak_email = f"<p><strong>This view has failed {consecutive} nights in a row.</strong></p>" if consecutive > 1 else ""
 
+    def _ordinal(n: int) -> str:
+        if 11 <= (n % 100) <= 13:
+            return f"{n}th"
+        return f"{n}{['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)]}"
+
+    streak_subject_suffix = f" ({_ordinal(consecutive)} consecutive)" if consecutive > 1 else ""
+    streak_heading_suffix = f" ({_ordinal(consecutive)} consecutive)" if consecutive > 1 else ""
+
     plain_msg = (
-        f"[EdgeIQ] Ladder cache refresh FAILED\n"
+        f"[EdgeIQ] Ladder cache refresh FAILED{streak_heading_suffix}\n"
         f"Time: {timestamp}\n"
         f"Error: {error_msg}"
         f"{streak_plain}"
@@ -699,7 +707,7 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
     )
     _send_telegram(html_msg)
 
-    email_subject = "[EdgeIQ] Ladder cache refresh FAILED"
+    email_subject = f"[EdgeIQ] Ladder cache refresh FAILED{streak_subject_suffix}"
     email_html = (
         f"<p>⚠️ <strong>EdgeIQ — Ladder cache refresh FAILED</strong></p>"
         f"<p><strong>Time:</strong> {timestamp}</p>"
