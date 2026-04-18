@@ -33325,6 +33325,7 @@ with tab_scan:
                                 "win_rate_context": _brief.get("win_rate_context") or "",
                                 "confidence_label": _brief.get("confidence_label") or "LOW",
                                 "rvol":             _brief.get("rvol"),
+                                "gap_pct":          _brief.get("gap_pct"),
                             })
                         _wpe_payload.append(_row)
 

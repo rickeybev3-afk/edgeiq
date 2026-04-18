@@ -4546,6 +4546,38 @@ def fetch_avg_daily_volume(api_key, secret_key, ticker, trade_date, lookback_day
     return float(df["volume"].mean())
 
 
+def fetch_daily_stats(api_key, secret_key, ticker, trade_date, lookback_days=50):
+    """Return (avg_daily_volume, prev_close) for ticker before trade_date in one API call.
+
+    prev_close is the close of the last complete trading day before trade_date.
+    avg_daily_volume is the mean daily volume over the last lookback_days sessions.
+    Either value may be None if data is unavailable.
+    """
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    try:
+        client = StockHistoricalDataClient(api_key, secret_key)
+        start = EASTERN.localize(
+            datetime(trade_date.year, trade_date.month, trade_date.day) - timedelta(days=lookback_days * 2)
+        )
+        end = EASTERN.localize(datetime(trade_date.year, trade_date.month, trade_date.day))
+        req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Day, start=start, end=end)
+        bars = client.get_stock_bars(req)
+        df = bars.df
+        if df.empty:
+            return None, None
+        if isinstance(df.index, pd.MultiIndex):
+            df = df.xs(ticker, level="symbol")
+        df = df.sort_index()
+        prev_close = float(df["close"].iloc[-1]) if not df.empty else None
+        df_vol = df.tail(lookback_days)
+        avg_vol = float(df_vol["volume"].mean()) if not df_vol.empty else None
+        return avg_vol, prev_close
+    except Exception:
+        return None, None
+
+
 def fetch_etf_pct_change(api_key, secret_key, etf, trade_date, feed="iex"):
     """Return today's open-to-close percent change for the given ETF ticker."""
     try:
@@ -7394,17 +7426,19 @@ def compute_setup_brief(api_key: str, secret_key: str, ticker: str,
                 except ValueError:
                     pattern_head = None
 
-        # ── 5. RVOL ──────────────────────────────────────────────────────────
+        # ── 5. RVOL + gap_pct ────────────────────────────────────────────────
         try:
             rvol_curve = build_rvol_intraday_curve(
                 api_key, secret_key, ticker, _dt, lookback_days=10, feed=feed)
         except Exception:
             rvol_curve = None
-        try:
-            avg_vol = fetch_avg_daily_volume(api_key, secret_key, ticker, _dt)
-        except Exception:
-            avg_vol = None
+        avg_vol, _prev_close_brief = fetch_daily_stats(api_key, secret_key, ticker, _dt)
         rvol = compute_rvol(df, intraday_curve=rvol_curve, avg_daily_vol=avg_vol)
+        _open_px_brief = float(df["open"].iloc[0]) if not df.empty else None
+        gap_pct = (
+            round((_open_px_brief - _prev_close_brief) / _prev_close_brief * 100, 2)
+            if _open_px_brief and _prev_close_brief and _prev_close_brief > 0 else None
+        )
         rvol_band_label = _rvol_band(float(rvol)) if rvol else "Normal"
 
         # ── 6. Brain model prediction ─────────────────────────────────────────
@@ -7544,6 +7578,7 @@ def compute_setup_brief(api_key: str, secret_key: str, ticker: str,
             "ib_position":       ib_pos,
             "tcs":               round(tcs, 1),
             "rvol":              rvol,
+            "gap_pct":           gap_pct,
             "rvol_band":         rvol_band_label,
             "pattern":           pattern_name,
             "pattern_neckline":  pattern_neckline,
@@ -8479,11 +8514,12 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
                 _w  = _aft_r.loc[_fi : _fi + 6]
                 false_break_down = bool((_w["close"] > ib_low).any())
 
-        try:
-            _avg_vol = fetch_avg_daily_volume(api_key, secret_key, sym, trade_date)
-        except Exception:
-            _avg_vol = None
+        _avg_vol, _prev_close = fetch_daily_stats(api_key, secret_key, sym, trade_date)
         _rvol_val = compute_rvol(pm_df, avg_daily_vol=_avg_vol)
+        _gap_pct = (
+            round((open_px - _prev_close) / _prev_close * 100, 2)
+            if _prev_close and _prev_close > 0 else None
+        )
 
         _mae_val = None
         _mfe_val = None
@@ -8539,6 +8575,7 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             "ib_low":           round(ib_low, 2),
             "tcs":              round(tcs, 1),
             "rvol":             _rvol_val,
+            "gap_pct":          _gap_pct,
             "predicted":        predicted,
             "predicted_struct": predicted_struct,
             "confidence":       confidence,
