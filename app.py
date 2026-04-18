@@ -10677,6 +10677,61 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     help="Average RVOL size multiplier across the boosted trades only",
                                 )
 
+                                # ── Boosted vs Non-boosted win/loss comparison ────────────────
+                                _boost_mask     = _rvol_mult_ser > 1.0
+                                _noboost_mask   = ~_boost_mask
+                                _has_wl_col     = "W/L" in _rp_df.columns
+
+                                if _has_wl_col:
+                                    _wl_ser = _rp_df["W/L"]
+
+                                    # Win counts
+                                    _boost_wins    = int((_boost_mask   & (_wl_ser == "Win")).sum())
+                                    _noboost_wins  = int((_noboost_mask & (_wl_ser == "Win")).sum())
+                                    _boost_total   = int(_boost_mask.sum())
+                                    _noboost_total = int(_noboost_mask.sum())
+
+                                    _boost_wr    = round(_boost_wins   / _boost_total   * 100, 1) if _boost_total   else None
+                                    _noboost_wr  = round(_noboost_wins / _noboost_total * 100, 1) if _noboost_total else None
+
+                                    # Average R
+                                    _boost_avgr   = None
+                                    _noboost_avgr = None
+                                    if _has_r_col:
+                                        _r_ser_full = pd.to_numeric(_rp_df["R (MFE)"], errors="coerce")
+                                        _boost_r    = _r_ser_full[_boost_mask].dropna()
+                                        _noboost_r  = _r_ser_full[_noboost_mask].dropna()
+                                        if len(_boost_r):
+                                            _boost_avgr   = round(_boost_r.mean(), 2)
+                                        if len(_noboost_r):
+                                            _noboost_avgr = round(_noboost_r.mean(), 2)
+
+                                    st.markdown(
+                                        "<small>**Boosted vs Non-boosted outcomes**</small>",
+                                        unsafe_allow_html=True,
+                                    )
+                                    _rc1, _rc2, _rc3, _rc4 = st.columns(4)
+                                    _rc1.metric(
+                                        "Boosted Win Rate",
+                                        f"{_boost_wr}%" if _boost_wr is not None else "—",
+                                        help=f"{_boost_wins} wins out of {_boost_total} boosted trades",
+                                    )
+                                    _rc2.metric(
+                                        "Non-boosted Win Rate",
+                                        f"{_noboost_wr}%" if _noboost_wr is not None else "—",
+                                        help=f"{_noboost_wins} wins out of {_noboost_total} non-boosted trades",
+                                    )
+                                    _rc3.metric(
+                                        "Boosted Avg R",
+                                        f"{_boost_avgr:+.2f}R" if _boost_avgr is not None else "—",
+                                        help="Average R (MFE) across boosted trades",
+                                    )
+                                    _rc4.metric(
+                                        "Non-boosted Avg R",
+                                        f"{_noboost_avgr:+.2f}R" if _noboost_avgr is not None else "—",
+                                        help="Average R (MFE) across non-boosted trades",
+                                    )
+
                         # ── Win / Loss avg breakdown row ──────────────────────────────────────
                         _avg_loss_display = f"${_avg_loss:,.0f}" if _pnl_losses else "—"
                         _avg_win_display  = f"${_avg_win:,.0f}"  if _pnl_wins  else "—"
