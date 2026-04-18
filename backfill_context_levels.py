@@ -325,7 +325,7 @@ def discover_user_ids() -> list:
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main(user_ids=None):
+def main(user_ids=None, dry_run=False):
     if not user_ids:
         user_ids = discover_user_ids()
 
@@ -344,6 +344,25 @@ def main(user_ids=None):
     todo = [r for r in rows
             if (r['ticker'], r['sim_date'], r['scan_type']) not in already]
     log.info(f'  → {len(todo)} to process')
+
+    if dry_run:
+        tickers = sorted({r['ticker'] for r in todo})
+        dates   = sorted({r['sim_date'] for r in todo})
+        log.info('DRY RUN — no Alpaca API calls or database writes will be performed.')
+        log.info(f'  Would process {len(todo)} row(s) across {len(tickers)} ticker(s) on {len(dates)} date(s).')
+        if tickers:
+            log.info(f'  Tickers : {tickers}')
+        if dates:
+            log.info(f'  Dates   : {dates}')
+        return {
+            'would_process': len(todo),
+            'tickers': tickers,
+            'dates': dates,
+            'rows': [
+                {'ticker': r['ticker'], 'trade_date': r['sim_date'], 'scan_type': r['scan_type']}
+                for r in todo
+            ],
+        }
 
     if not todo:
         log.info('Nothing to do — all rows already have context levels.')

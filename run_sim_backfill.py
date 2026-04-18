@@ -62,14 +62,17 @@ than sequential updates.
 
 Usage
 ─────
-  python run_sim_backfill.py                               # full recompute, all users
-  python run_sim_backfill.py --skip-existing               # only rows missing sim data
-  python run_sim_backfill.py --dry-run                     # preview changes, no writes
-  python run_sim_backfill.py --dry-run --skip-existing     # preview only missing rows
-  python run_sim_backfill.py --dry-run --out=report.json   # save dry-run report to file
-  python run_sim_backfill.py <uid1> [uid2] [uid3]...       # explicit user IDs
-  python run_sim_backfill.py --skip-existing <uid1>        # skip-existing + explicit IDs
-  python run_sim_backfill.py --dry-run <uid1>              # dry-run for specific user
+  python run_sim_backfill.py                                    # full recompute, all users
+  python run_sim_backfill.py --skip-existing                    # only rows missing sim data
+  python run_sim_backfill.py --dry-run                          # preview changes, no writes
+  python run_sim_backfill.py --dry-run --skip-existing          # preview only missing rows
+  python run_sim_backfill.py --dry-run --out=report.json        # save dry-run report to file
+  python run_sim_backfill.py <uid1> [uid2] [uid3]...            # explicit user IDs
+  python run_sim_backfill.py --skip-existing <uid1>             # skip-existing + explicit IDs
+  python run_sim_backfill.py --dry-run <uid1>                   # dry-run for specific user
+  python run_sim_backfill.py --context-only --dry-run           # preview context scope, no writes
+  python run_sim_backfill.py --context-only --dry-run <uid1>    # preview context scope for user
+  python run_sim_backfill.py --context-only --dry-run --out=ctx.json  # save context dry-run report
 
 Flags
 ─────
@@ -85,13 +88,20 @@ Flags
                     anything to the database.  Reads are still performed so the
                     script can inspect each row via compute_trade_sim(), but no
                     UPDATE calls are issued.  Can be combined with --skip-existing.
+                    Also works with --context-only: prints the list of
+                    backtest_context_levels rows that would be processed (tickers,
+                    dates, row count) without calling Alpaca or writing to the DB.
   --out=<file>      Only valid with --dry-run.  Write a JSON summary of the
                     dry-run results to <file>.  The report contains one entry per
                     (table, user_id, direction) with would_update and unfillable
                     counts, plus top-level totals and metadata (generated_at,
-                    sim_version, skip_existing flag).  If --out is omitted the
-                    report is written to a timestamped file such as
-                    dry_run_2026-04-18_123456.json in the current directory.
+                    sim_version, skip_existing flag).  In --context-only mode the
+                    report lists each row that would be processed (ticker,
+                    trade_date, scan_type) with aggregate totals.
+                    If --out is omitted the report is written to a timestamped
+                    file such as dry_run_2026-04-18_123456.json (full pipeline)
+                    or dry_run_context_2026-04-18_123456.json (context-only) in
+                    the current directory.
                     Two reports can be compared with `diff`, `jq`, or any JSON
                     diffing tool to see exactly which rows shifted between runs.
 """
@@ -710,37 +720,75 @@ if __name__ == "__main__":
                   file=sys.stderr)
             out_file = None
 
-        if dry_run:
-            print("Mode: DRY RUN — rows will be inspected but NO database writes will occur.")
-            if skip_existing:
-                print("       Combined with --skip-existing: only rows missing sim data will be counted.")
-            if out_file:
-                print(f"       Report will be saved to: {out_file}")
+        if not context_only:
+            if dry_run:
+                print("Mode: DRY RUN — rows will be inspected but NO database writes will occur.")
+                if skip_existing:
+                    print("       Combined with --skip-existing: only rows missing sim data will be counted.")
+                if out_file:
+                    print(f"       Report will be saved to: {out_file}")
+                else:
+                    _ts       = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+                    out_file  = f"dry_run_{_ts}.json"
+                    print(f"       No --out specified — report will be saved to: {out_file}")
+            elif skip_existing:
+                print("Mode: incremental — rows with sim_outcome AND eod_pnl_r already set will be skipped.")
             else:
-                _ts       = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
-                out_file  = f"dry_run_{_ts}.json"
-                print(f"       No --out specified — report will be saved to: {out_file}")
-        elif skip_existing:
-            print("Mode: incremental — rows with sim_outcome AND eod_pnl_r already set will be skipped.")
-        else:
-            print("Mode: full recompute — all breakout rows will be processed (use --skip-existing for incremental).")
+                print("Mode: full recompute — all breakout rows will be processed (use --skip-existing for incremental).")
 
     # ── context-only short-circuit ─────────────────────────────────────────────
     if context_only:
-        print("Mode: CONTEXT-ONLY — running S/R, VWAP, and MACD context backfill.")
+        if dry_run:
+            print("Mode: CONTEXT-ONLY DRY RUN — rows will be inspected but NO database writes will occur.")
+        else:
+            print("Mode: CONTEXT-ONLY — running S/R, VWAP, and MACD context backfill.")
         if uid_args:
             _ctx_uids = list(dict.fromkeys(uid_args))
             print(f"  Scoped to {len(_ctx_uids)} user ID(s): {_ctx_uids}")
         else:
             _ctx_uids = None
             print("  No user IDs specified — running for all users.")
+        if dry_run:
+            if out_file:
+                print(f"       Report will be saved to: {out_file}")
+            else:
+                _ts      = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+                out_file = f"dry_run_context_{_ts}.json"
+                print(f"       No --out specified — report will be saved to: {out_file}")
         print("=" * 60)
         try:
             import backfill_context_levels as _ctx
-            _ctx.main(user_ids=_ctx_uids)
+            _ctx_result = _ctx.main(user_ids=_ctx_uids, dry_run=dry_run)
         except Exception as _ctx_err:
             print(f"  Context backfill error: {_ctx_err}")
             sys.exit(1)
+        if dry_run and isinstance(_ctx_result, dict):
+            print(f"\n{'='*60}")
+            print(f"  DRY RUN COMPLETE — context-only scope preview")
+            print(f"  Would process : {_ctx_result['would_process']:,} row(s)")
+            print(f"  Tickers       : {len(_ctx_result['tickers'])} unique")
+            print(f"  Dates         : {len(_ctx_result['dates'])} unique")
+            print(f"  No database writes were performed.")
+            print(f"{'='*60}")
+            if out_file:
+                _report = {
+                    "generated_at":  datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "mode":          "dry-run",
+                    "pipeline":      "context-only",
+                    "user_ids":      _ctx_uids,
+                    "totals": {
+                        "would_process": _ctx_result['would_process'],
+                        "tickers":       len(_ctx_result['tickers']),
+                        "dates":         len(_ctx_result['dates']),
+                    },
+                    "rows": _ctx_result['rows'],
+                }
+                try:
+                    with open(out_file, "w") as _f:
+                        json.dump(_report, _f, indent=2, sort_keys=True)
+                    print(f"\n  Report saved → {out_file}")
+                except Exception as _write_err:
+                    print(f"\n  ⚠  Could not write report to {out_file}: {_write_err}")
         sys.exit(0)
 
     # ── Resolve user IDs ───────────────────────────────────────────────────────
