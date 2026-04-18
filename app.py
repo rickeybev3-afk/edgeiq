@@ -20113,7 +20113,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
         _mc_uid = st.session_state.get("auth_user_id", "")
         _mc_cache_key = f"_mc_v6_rows_{_mc_uid}"
 
-        _mc_col1, _mc_col2, _mc_col3 = st.columns([2, 2, 2])
+        _mc_col1, _mc_col2, _mc_col3, _mc_col4 = st.columns([2, 2, 2, 2])
         with _mc_col1:
             _mc_start_equity = st.number_input(
                 "Starting equity ($)",
@@ -20133,6 +20133,14 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 help="P1+P3 = intraday/morning TCS≥70 (highest expectancy). All = full TCS≥50 universe."
             )
         with _mc_col3:
+            _mc_scan_filter = st.selectbox(
+                "Scan type",
+                options=["Intraday only", "Morning only", "Both"],
+                index=0,
+                key="mc_scan_filter",
+                help="Intraday = 2 PM scan (55% WR, +0.34R exp). Morning = 10:47 AM scan (29% WR, −0.37R exp). 'Both' includes all sessions."
+            )
+        with _mc_col4:
             _mc_risk_pct = st.slider(
                 "Risk per trade (%)",
                 min_value=0.5, max_value=3.0, value=1.0, step=0.25,
@@ -20174,12 +20182,18 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 _mc_rows_raw = st.session_state.get(_mc_cache_key, [])
 
             if _mc_rows_raw:
-                # Apply tier filter
+                # Apply tier + scan type filters
                 _mc_tcs_min = 70 if "P1 + P3" in _mc_tier_filter else 50
+                _mc_scan_val = (
+                    "intraday" if "Intraday" in _mc_scan_filter
+                    else "morning" if "Morning" in _mc_scan_filter
+                    else None
+                )
                 _mc_filtered = [
                     r for r in _mc_rows_raw
                     if (r.get("tcs") or 0) >= _mc_tcs_min
                     and (r.get("ib_range_pct") is not None and float(r.get("ib_range_pct", 99)) < 10.0)
+                    and (_mc_scan_val is None or (r.get("scan_type") or "").lower() == _mc_scan_val)
                 ]
                 # Apply IB-range + P-tier sizing multipliers to each trade's R.
                 # This reflects actual position-size scaling so the simulation
@@ -20286,6 +20300,9 @@ Nothing here requires any input from you. All numbers update automatically as yo
                             annotation_font_color="#546e7a",
                         )
                         _tier_label = "P1+P3 (TCS≥70)" if "P1 + P3" in _mc_tier_filter else "TCS≥50"
+                        _scan_label = ("intraday" if "Intraday" in _mc_scan_filter
+                                       else "morning" if "Morning" in _mc_scan_filter
+                                       else "all sessions")
                         _fig_mc_proj.update_layout(
                             paper_bgcolor="#0a0a1a",
                             plot_bgcolor="#0d1117",
@@ -20293,7 +20310,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                             height=350,
                             margin=dict(t=30, b=50, l=70, r=20),
                             title=dict(
-                                text=f"Monte Carlo: {len(_mc_pnl_r):,} {_tier_label} trades · "
+                                text=f"Monte Carlo: {len(_mc_pnl_r):,} {_tier_label} {_scan_label} trades · "
                                      f"{_mc_n_sim:,} simulations · {_mc_risk_pct:.2g}% risk/trade",
                                 font=dict(size=11, color="#90a4ae"),
                                 x=0,
@@ -20316,9 +20333,12 @@ Nothing here requires any input from you. All numbers update automatically as yo
                         )
                         st.plotly_chart(_fig_mc_proj, use_container_width=True)
                         _tier_label = "P1+P3 (TCS≥70)" if "P1 + P3" in _mc_tier_filter else "TCS≥50"
+                        _scan_label_cap = ("intraday" if "Intraday" in _mc_scan_filter
+                                           else "morning" if "Morning" in _mc_scan_filter
+                                           else "all sessions")
                         st.caption(
-                            f"Data: {len(_mc_rows_raw):,} total v5 sim rows loaded · "
-                            f"{len(_mc_filtered):,} passed {_tier_label} filter · "
+                            f"Data: {len(_mc_rows_raw):,} total v6 sim rows loaded · "
+                            f"{len(_mc_filtered):,} passed {_tier_label} + {_scan_label_cap} filter · "
                             f"IB<10% applied · Sequence order shuffled 1,000× per simulation"
                         )
                 else:
