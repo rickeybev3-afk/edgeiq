@@ -135,6 +135,8 @@ _CACHE_ALERT_STATE_FILE = os.path.join(
     ".edgeiq_cache_alert_state.json",
 )
 
+_HEARTBEAT_ALERT_STATE_FILE = "/tmp/backfill_heartbeat_alerted.json"
+
 _DEFAULT_COOLDOWN_HOURS = 23
 
 
@@ -289,11 +291,44 @@ def _check_backfill_heartbeat() -> None:
                     "Backfill heartbeat OK — last run %.1f h ago (threshold: %.0f h).",
                     age_hours, window_hours,
                 )
+                # Fresh run detected — clear any previous alert state so the next
+                # outage triggers a new alert immediately.
+                try:
+                    os.remove(_HEARTBEAT_ALERT_STATE_FILE)
+                    log.info("Cleared heartbeat alert state (backfill is healthy).")
+                except FileNotFoundError:
+                    pass
+                except Exception as _e:
+                    log.warning("Could not remove heartbeat alert state file: %s", _e)
                 return
             age_desc = f"last run completed {age_hours:.1f} h ago (threshold: {window_hours:.0f} h)"
         except Exception as _e:
             log.warning("Could not parse backfill completed_at for heartbeat: %s", _e)
             age_desc = f"backfill completed_at timestamp could not be parsed ({_e})"
+
+    # Deduplication — suppress if an alert was already sent within the same
+    # outage window (< 25 h ago).
+    try:
+        with open(_HEARTBEAT_ALERT_STATE_FILE) as _sf:
+            _hb_state = json.load(_sf)
+        _last_alerted_str = _hb_state.get("last_alerted_utc", "")
+        if _last_alerted_str:
+            _last_alerted = datetime.datetime.fromisoformat(_last_alerted_str)
+            if _last_alerted.tzinfo is None:
+                _last_alerted = _last_alerted.replace(tzinfo=datetime.timezone.utc)
+            _hours_since_alert = (now_utc - _last_alerted).total_seconds() / 3600
+            if _hours_since_alert < window_hours:
+                log.info(
+                    "Heartbeat alert already sent %.1f h ago — suppressing duplicate "
+                    "notification for this outage window (threshold: %.0f h).",
+                    _hours_since_alert,
+                    window_hours,
+                )
+                return
+    except FileNotFoundError:
+        pass  # No state file yet — first alert for this outage.
+    except Exception as _e:
+        log.warning("Could not read heartbeat alert state file: %s", _e)
 
     log.warning("Backfill heartbeat check FAILED: %s — sending Telegram alert.", age_desc)
     _send_telegram(
@@ -303,6 +338,14 @@ def _check_backfill_heartbeat() -> None:
         f"that Alpaca credentials are valid.\n\n"
         f"<i>Heartbeat window: {window_hours:.0f} h — set BACKFILL_HEARTBEAT_HOURS to change.</i>"
     )
+
+    # Persist the alert timestamp so subsequent runs within the outage window
+    # are suppressed.
+    try:
+        with open(_HEARTBEAT_ALERT_STATE_FILE, "w") as _sf:
+            json.dump({"last_alerted_utc": now_utc.isoformat()}, _sf)
+    except Exception as _e:
+        log.warning("Could not write heartbeat alert state file: %s", _e)
 
 
 # ── Email helper ─────────────────────────────────────────────────────────────

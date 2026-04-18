@@ -56,6 +56,40 @@ _DEFAULT_HISTORY_PATH = os.path.join(
 )
 _BACKFILL_HISTORY_PATH = os.getenv("BACKFILL_HISTORY_PATH", _DEFAULT_HISTORY_PATH)
 
+_HEARTBEAT_ALERT_STATE_FILE = "/tmp/backfill_heartbeat_alerted.json"
+
+
+def _read_heartbeat_alert_state() -> dict:
+    """Return the persisted heartbeat alert state, or an empty dict."""
+    try:
+        with open(_HEARTBEAT_ALERT_STATE_FILE) as _sf:
+            return json.load(_sf)
+    except FileNotFoundError:
+        return {}
+    except Exception as _e:
+        log.warning("Could not read heartbeat alert state file: %s", _e)
+        return {}
+
+
+def _write_heartbeat_alert_state(last_alerted_utc: datetime.datetime) -> None:
+    """Persist the timestamp of the most recent heartbeat alert."""
+    try:
+        with open(_HEARTBEAT_ALERT_STATE_FILE, "w") as _sf:
+            json.dump({"last_alerted_utc": last_alerted_utc.isoformat()}, _sf)
+    except Exception as _e:
+        log.warning("Could not write heartbeat alert state file: %s", _e)
+
+
+def _clear_heartbeat_alert_state() -> None:
+    """Remove the heartbeat alert state file when a fresh run is detected."""
+    try:
+        os.remove(_HEARTBEAT_ALERT_STATE_FILE)
+        log.info("Cleared heartbeat alert state (backfill is healthy).")
+    except FileNotFoundError:
+        pass
+    except Exception as _e:
+        log.warning("Could not remove heartbeat alert state file: %s", _e)
+
 
 def _send_telegram(message: str) -> None:
     """Send a Telegram message using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
@@ -131,6 +165,9 @@ def check_heartbeat() -> int:
                     age_hours,
                     window_hours,
                 )
+                # Fresh run detected — clear any previous alert state so the next
+                # outage triggers a new alert immediately.
+                _clear_heartbeat_alert_state()
                 return 0
             age_desc = (
                 f"last run completed {age_hours:.1f} h ago "
@@ -139,6 +176,27 @@ def check_heartbeat() -> int:
         except Exception as exc:
             log.warning("Could not parse completed_at timestamp: %s", exc)
             age_desc = f"backfill completed_at timestamp could not be parsed ({exc})"
+
+    # Deduplication — suppress if an alert was already sent within the same
+    # outage window (< 25 h ago).
+    _hb_state = _read_heartbeat_alert_state()
+    _last_alerted_str = _hb_state.get("last_alerted_utc", "")
+    if _last_alerted_str:
+        try:
+            _last_alerted = datetime.datetime.fromisoformat(_last_alerted_str)
+            if _last_alerted.tzinfo is None:
+                _last_alerted = _last_alerted.replace(tzinfo=datetime.timezone.utc)
+            _hours_since_alert = (now_utc - _last_alerted).total_seconds() / 3600
+            if _hours_since_alert < window_hours:
+                log.info(
+                    "Heartbeat alert already sent %.1f h ago — suppressing duplicate "
+                    "notification for this outage window (threshold: %.0f h).",
+                    _hours_since_alert,
+                    window_hours,
+                )
+                return 1
+        except Exception as exc:
+            log.warning("Could not parse last_alerted_utc from state file: %s", exc)
 
     log.warning(
         "Backfill heartbeat check FAILED: %s — sending Telegram alert.", age_desc
@@ -150,6 +208,10 @@ def check_heartbeat() -> int:
         f"that Alpaca credentials are valid.\n\n"
         f"<i>Heartbeat window: {window_hours:.0f} h — set BACKFILL_HEARTBEAT_HOURS to change.</i>"
     )
+
+    # Persist the alert timestamp so subsequent runs within the outage window
+    # are suppressed.
+    _write_heartbeat_alert_state(now_utc)
     return 1
 
 
