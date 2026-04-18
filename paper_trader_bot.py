@@ -1392,11 +1392,14 @@ def _monitor_trailing_stops() -> None:
         trail_size     = stop_dist       # default: 1R trail
         trail_r_label  = "1R"
         trail_tightened = False
+        _sr_level: float | None = None   # S/R level that triggered tightening
+        _sr_dist:  float | None = None   # distance from cur_px to that level
+        _sr_label: str   | None = None   # "Resistance" or "Support"
+        _ctx_source: str | None = None   # which table the level came from
         try:
             # ── Source 1: paper_trades columns (always current) ───────────────
             _pt_res = row.get("nearest_resistance")
             _pt_sup = row.get("nearest_support")
-            _ctx_source = None
             if _pt_res is not None or _pt_sup is not None:
                 ctx = {"nearest_resistance": _pt_res, "nearest_support": _pt_sup}
                 _ctx_source = "paper_trades"
@@ -1441,10 +1444,13 @@ def _monitor_trailing_stops() -> None:
                         trail_size    = stop_dist * 0.5
                         trail_r_label = "0.5R"
                         trail_tightened = True
+                        _sr_level = float(_nearest)
+                        _sr_dist  = _sr_level - cur_px
+                        _sr_label = "Resistance"
                         log.info(
                             f"[TrailingStop] {ticker} v6 tighten [{_ctx_source}]: "
-                            f"resistance=${float(_nearest):.2f} "
-                            f"is {float(_nearest)-cur_px:.2f} above cur_px=${cur_px:.2f} "
+                            f"resistance=${_sr_level:.2f} "
+                            f"is {_sr_dist:.2f} above cur_px=${cur_px:.2f} "
                             f"(within 0.3R={0.3*stop_dist:.2f}) → trail={trail_r_label}"
                         )
                 else:  # Bearish Break
@@ -1456,10 +1462,13 @@ def _monitor_trailing_stops() -> None:
                         trail_size    = stop_dist * 0.5
                         trail_r_label = "0.5R"
                         trail_tightened = True
+                        _sr_level = float(_nearest)
+                        _sr_dist  = cur_px - _sr_level
+                        _sr_label = "Support"
                         log.info(
                             f"[TrailingStop] {ticker} v6 tighten [{_ctx_source}]: "
-                            f"support=${float(_nearest):.2f} "
-                            f"is {cur_px-float(_nearest):.2f} below cur_px=${cur_px:.2f} "
+                            f"support=${_sr_level:.2f} "
+                            f"is {_sr_dist:.2f} below cur_px=${cur_px:.2f} "
                             f"(within 0.3R={0.3*stop_dist:.2f}) → trail={trail_r_label}"
                         )
         except Exception as _ctx_e:
@@ -1470,7 +1479,15 @@ def _monitor_trailing_stops() -> None:
 
         if ts_result["ok"]:
             _TRAILING_STOP_ACTIVATED.add(guard_key)
-            tighten_note = " 🎯 Tight trail (S/R wall)" if trail_tightened else " — runners run 🚀"
+            if trail_tightened and _sr_level is not None and _sr_dist is not None:
+                _dir_word = "above" if _sr_label == "Resistance" else "below"
+                _src_tag  = f" [{_ctx_source}]" if _ctx_source else ""
+                tighten_note = (
+                    f" 🎯 Tight trail — {_sr_label} at <b>${_sr_level:.2f}</b>"
+                    f" ({_sr_dist:.2f} {_dir_word} price){_src_tag}"
+                )
+            else:
+                tighten_note = " — runners run 🚀"
             tg_send(
                 f"🔄 <b>Trailing Stop Activated — {ticker}</b>\n"
                 f"T1 hit: <b>{unrealized_r:.2f}R</b> unrealized\n"
