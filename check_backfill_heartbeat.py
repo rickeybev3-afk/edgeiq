@@ -143,18 +143,46 @@ def check_heartbeat() -> int:
             "Invalid BACKFILL_HEARTBEAT_HOURS value — falling back to 25 h default."
         )
         window_hours = 25.0
+    _owner_id = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
     _prefs_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
+    _owner_prefs: dict = {}
     try:
         if os.path.exists(_prefs_file):
             with open(_prefs_file) as _pf:
                 _all_prefs = json.load(_pf)
-            _owner_id = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
             _owner_prefs = _all_prefs.get(_owner_id, {})
-            if "backfill_heartbeat_hours" in _owner_prefs:
-                window_hours = float(_owner_prefs["backfill_heartbeat_hours"])
-                log.info("Backfill heartbeat window overridden by dashboard setting: %.1f h.", window_hours)
     except Exception as _pe:
-        log.warning("Could not read owner prefs for heartbeat window: %s", _pe)
+        log.warning("Could not read owner prefs from local file for heartbeat window: %s", _pe)
+    _supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    _supabase_key = (
+        os.environ.get("SUPABASE_KEY") or
+        os.environ.get("SUPABASE_ANON_KEY") or
+        os.environ.get("VITE_SUPABASE_ANON_KEY") or
+        ""
+    )
+    if _supabase_url and _supabase_key:
+        try:
+            _req = urllib.request.Request(
+                f"{_supabase_url}/rest/v1/user_preferences?user_id=eq.{urllib.parse.quote(_owner_id, safe='')}&select=prefs&limit=1",
+                headers={
+                    "apikey": _supabase_key,
+                    "Authorization": f"Bearer {_supabase_key}",
+                    "Accept": "application/json",
+                },
+            )
+            with urllib.request.urlopen(_req, timeout=4) as _resp:
+                _rows = json.loads(_resp.read())
+                if _rows:
+                    _raw = _rows[0].get("prefs", "{}")
+                    _owner_prefs = json.loads(_raw) if isinstance(_raw, str) else (_raw or {})
+        except Exception as _spe:
+            log.warning("Could not read owner prefs from Supabase for heartbeat window: %s", _spe)
+    if "backfill_heartbeat_hours" in _owner_prefs:
+        try:
+            window_hours = float(_owner_prefs["backfill_heartbeat_hours"])
+            log.info("Backfill heartbeat window overridden by dashboard setting: %.1f h.", window_hours)
+        except (TypeError, ValueError) as _pe:
+            log.warning("Could not apply owner pref for heartbeat window: %s", _pe)
     now_utc = datetime.datetime.now(datetime.timezone.utc)
 
     last_completed_at: str | None = None
