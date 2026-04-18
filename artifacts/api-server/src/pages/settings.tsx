@@ -65,6 +65,7 @@ interface BackfillHealth {
   errors?: number;
   error?: string;
   history?: BackfillRun[];
+  history_path?: string;
 }
 
 interface EodRecalcRun {
@@ -733,21 +734,28 @@ export default function Settings() {
           {backfillHealth.loading ? (
             <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
           ) : !backfillHealth.available ? (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                padding: "14px 16px",
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid #2d3748",
-                borderRadius: "8px",
-                color: "#64748b",
-                fontSize: "13px",
-              }}
-            >
-              <span style={{ fontSize: "16px" }}>—</span>
-              No backfill run recorded yet. Stats will appear here after the next run.
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "14px 16px",
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid #2d3748",
+                  borderRadius: "8px",
+                  color: "#64748b",
+                  fontSize: "13px",
+                }}
+              >
+                <span style={{ fontSize: "16px" }}>—</span>
+                No backfill run recorded yet. Stats will appear here after the next run.
+              </div>
+              {backfillHealth.history_path && (
+                <p style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", marginTop: "10px", marginBottom: 0 }}>
+                  History file: {backfillHealth.history_path}
+                </p>
+              )}
             </div>
           ) : (
             <div>
@@ -787,6 +795,11 @@ export default function Settings() {
                 <p style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", margin: 0 }}>
                   Completed {formatRelativeTime(backfillHealth.completed_at)} &nbsp;·&nbsp;{" "}
                   {new Date(backfillHealth.completed_at).toLocaleString()}
+                </p>
+              )}
+              {backfillHealth.history_path && (
+                <p style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", marginTop: "6px", marginBottom: 0 }}>
+                  History file: {backfillHealth.history_path}
                 </p>
               )}
               {backfillHealth.history && backfillHealth.history.length > 1 && (

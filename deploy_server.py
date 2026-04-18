@@ -681,7 +681,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with open(history_path) as f:
                 history = json.load(f)
             if not isinstance(history, list) or len(history) == 0:
-                data = {"available": False}
+                data = {"available": False, "history_path": history_path}
             else:
                 latest = history[-1]
                 data = {
@@ -691,13 +691,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "no_bars": latest.get("no_bars"),
                     "errors": latest.get("errors"),
                     "history": list(reversed(history)),
+                    "history_path": history_path,
                 }
         except FileNotFoundError:
-            data = {"available": False}
+            data = {"available": False, "history_path": history_path}
         except json.JSONDecodeError:
-            data = {"available": False, "error": "history file corrupt"}
+            data = {"available": False, "error": "history file corrupt", "history_path": history_path}
         except Exception as e:
-            data = {"available": False, "error": str(e)}
+            data = {"available": False, "error": str(e), "history_path": history_path}
         body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
