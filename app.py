@@ -10677,59 +10677,74 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     help="Average RVOL size multiplier across the boosted trades only",
                                 )
 
-                                # ── Boosted vs Non-boosted win/loss comparison ────────────────
-                                _boost_mask     = _rvol_mult_ser > 1.0
-                                _noboost_mask   = ~_boost_mask
-                                _has_wl_col     = "W/L" in _rp_df.columns
+                                # ── Per-tier win/loss comparison ──────────────────────────────
+                                _mask_125     = _rvol_mult_ser == 1.25
+                                _mask_150     = _rvol_mult_ser == 1.5
+                                _noboost_mask = _rvol_mult_ser <= 1.0
+                                _has_wl_col   = "W/L" in _rp_df.columns
 
                                 if _has_wl_col:
                                     _wl_ser = _rp_df["W/L"]
 
-                                    # Win counts
-                                    _boost_wins    = int((_boost_mask   & (_wl_ser == "Win")).sum())
-                                    _noboost_wins  = int((_noboost_mask & (_wl_ser == "Win")).sum())
-                                    _boost_total   = int(_boost_mask.sum())
-                                    _noboost_total = int(_noboost_mask.sum())
+                                    # Win counts per tier
+                                    def _tier_wr(mask):
+                                        total = int(mask.sum())
+                                        wins  = int((mask & (_wl_ser == "Win")).sum())
+                                        rate  = round(wins / total * 100, 1) if total else None
+                                        return wins, total, rate
 
-                                    _boost_wr    = round(_boost_wins   / _boost_total   * 100, 1) if _boost_total   else None
-                                    _noboost_wr  = round(_noboost_wins / _noboost_total * 100, 1) if _noboost_total else None
+                                    _nb_wins,  _nb_total,  _nb_wr  = _tier_wr(_noboost_mask)
+                                    _t125_wins, _t125_total, _t125_wr = _tier_wr(_mask_125)
+                                    _t150_wins, _t150_total, _t150_wr = _tier_wr(_mask_150)
 
-                                    # Average R
-                                    _boost_avgr   = None
-                                    _noboost_avgr = None
+                                    # Average R per tier
+                                    _nb_avgr = _t125_avgr = _t150_avgr = None
                                     if _has_r_col:
                                         _r_ser_full = pd.to_numeric(_rp_df["R (MFE)"], errors="coerce")
-                                        _boost_r    = _r_ser_full[_boost_mask].dropna()
-                                        _noboost_r  = _r_ser_full[_noboost_mask].dropna()
-                                        if len(_boost_r):
-                                            _boost_avgr   = round(_boost_r.mean(), 2)
-                                        if len(_noboost_r):
-                                            _noboost_avgr = round(_noboost_r.mean(), 2)
+                                        def _tier_avgr(mask):
+                                            vals = _r_ser_full[mask].dropna()
+                                            return round(vals.mean(), 2) if len(vals) else None
+                                        _nb_avgr   = _tier_avgr(_noboost_mask)
+                                        _t125_avgr = _tier_avgr(_mask_125)
+                                        _t150_avgr = _tier_avgr(_mask_150)
 
                                     st.markdown(
-                                        "<small>**Boosted vs Non-boosted outcomes**</small>",
+                                        "<small>**Per-tier outcomes  (1.00× baseline · 1.25× · 1.50×)**</small>",
                                         unsafe_allow_html=True,
                                     )
-                                    _rc1, _rc2, _rc3, _rc4 = st.columns(4)
+                                    # Row 1 — Win rates
+                                    _rc1, _rc2, _rc3 = st.columns(3)
                                     _rc1.metric(
-                                        "Boosted Win Rate",
-                                        f"{_boost_wr}%" if _boost_wr is not None else "—",
-                                        help=f"{_boost_wins} wins out of {_boost_total} boosted trades",
+                                        "1.00× Win Rate  (baseline)",
+                                        f"{_nb_wr}%" if _nb_wr is not None else "—",
+                                        help=f"{_nb_wins} wins out of {_nb_total} non-boosted trades",
                                     )
                                     _rc2.metric(
-                                        "Non-boosted Win Rate",
-                                        f"{_noboost_wr}%" if _noboost_wr is not None else "—",
-                                        help=f"{_noboost_wins} wins out of {_noboost_total} non-boosted trades",
+                                        "1.25× Win Rate  (RVOL 2–3×)",
+                                        f"{_t125_wr}%" if _t125_wr is not None else "—",
+                                        help=f"{_t125_wins} wins out of {_t125_total} trades in the 1.25× tier",
                                     )
                                     _rc3.metric(
-                                        "Boosted Avg R",
-                                        f"{_boost_avgr:+.2f}R" if _boost_avgr is not None else "—",
-                                        help="Average R (MFE) across boosted trades",
+                                        "1.50× Win Rate  (RVOL ≥ 3×)",
+                                        f"{_t150_wr}%" if _t150_wr is not None else "—",
+                                        help=f"{_t150_wins} wins out of {_t150_total} trades in the 1.50× tier",
                                     )
-                                    _rc4.metric(
-                                        "Non-boosted Avg R",
-                                        f"{_noboost_avgr:+.2f}R" if _noboost_avgr is not None else "—",
+                                    # Row 2 — Average R
+                                    _rd1, _rd2, _rd3 = st.columns(3)
+                                    _rd1.metric(
+                                        "1.00× Avg R  (baseline)",
+                                        f"{_nb_avgr:+.2f}R" if _nb_avgr is not None else "—",
                                         help="Average R (MFE) across non-boosted trades",
+                                    )
+                                    _rd2.metric(
+                                        "1.25× Avg R",
+                                        f"{_t125_avgr:+.2f}R" if _t125_avgr is not None else "—",
+                                        help="Average R (MFE) across 1.25× boosted trades",
+                                    )
+                                    _rd3.metric(
+                                        "1.50× Avg R",
+                                        f"{_t150_avgr:+.2f}R" if _t150_avgr is not None else "—",
+                                        help="Average R (MFE) across 1.50× boosted trades",
                                     )
 
                         # ── Win / Loss avg breakdown row ──────────────────────────────────────
