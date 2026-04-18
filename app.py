@@ -17983,15 +17983,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _exp_vwap_icon   = "🟢" if _exp_vwap_n >= 10  else "🟡" if _exp_vwap_n >= 5   else "🔴"
                         _exp_df["TCS+IB Signals"] = f"{_exp_tcs_ib_icon} {_exp_tcs_ib}"
                         _exp_df["VWAP Signals"]   = f"{_exp_vwap_icon} {_exp_vwap_n}"
-                        _exp_df["VWAP Pass Rate (%)"] = (
-                            f"{round(_exp_vwap_n / _exp_tcs_ib * 100)}%"
+                        _exp_vwap_pass_rate = (
+                            round(_exp_vwap_n / _exp_tcs_ib * 100, 1)
                             if _exp_tcs_ib > 0
-                            else "0%"
+                            else None
+                        )
+                        _exp_df["VWAP Pass Rate (%)"] = (
+                            _exp_vwap_pass_rate if _exp_vwap_pass_rate is not None else "—"
                         )
                     else:
-                        _exp_df["TCS+IB Signals"]    = "—"
-                        _exp_df["VWAP Signals"]       = "—"
-                        _exp_df["VWAP Pass Rate (%)"] = ""
+                        _exp_df["TCS+IB Signals"] = "—"
+                        _exp_df["VWAP Signals"]   = "—"
+                        _exp_df["VWAP Pass Rate (%)"] = "—"
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
@@ -18068,6 +18071,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         except (ValueError, TypeError):
                             return ""
 
+                    def _sweep_style_vwap_pass_rate(val):
+                        if val == "—" or val is None:
+                            return ""
+                        try:
+                            _pct = float(val)
+                            if _pct >= 70:
+                                return "background-color:#1b3a2b;color:#66bb6a;font-weight:700"
+                            elif _pct >= 40:
+                                return "background-color:#3a2e10;color:#ffa726;font-weight:700"
+                            else:
+                                return "background-color:#3a1414;color:#ef5350;font-weight:700"
+                        except (ValueError, TypeError):
+                            return ""
+
                     _sweep_delta_cols_present = [
                         c for c in ["Δ Morn", "Δ Intra"] if c in _detail_df.columns
                     ]
@@ -18080,6 +18097,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         except AttributeError:
                             _sweep_styled = _sweep_styled.applymap(
                                 _sweep_style_delta_cell, subset=_sweep_delta_cols_present
+                            )
+                    if "VWAP Pass Rate (%)" in _detail_df.columns:
+                        try:
+                            _sweep_styled = _sweep_styled.map(
+                                _sweep_style_vwap_pass_rate, subset=["VWAP Pass Rate (%)"]
+                            )
+                        except AttributeError:
+                            _sweep_styled = _sweep_styled.applymap(
+                                _sweep_style_vwap_pass_rate, subset=["VWAP Pass Rate (%)"]
                             )
                     _sweep_col_cfg = {}
                     if "Δ Morn" in _detail_df.columns:
@@ -18125,9 +18151,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sweep_col_cfg["VWAP Pass Rate (%)"] = st.column_config.TextColumn(
                             "VWAP Pass Rate (%)",
                             help=(
-                                "Percentage of TCS+IB signals that also passed the VWAP gate "
-                                "(VWAP Signals ÷ TCS+IB Signals). "
-                                "Higher means VWAP alignment is frequently present for this ticker."
+                                "Percentage of TCS+IB signals that also passed VWAP alignment "
+                                "(VWAP Signals ÷ TCS+IB Signals × 100). "
+                                "Green ≥ 70% · Amber 40–69% · Red < 40%"
                             ),
                         )
                     st.dataframe(
