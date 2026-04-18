@@ -410,6 +410,7 @@ _BACKFILL_START_TIME      = "/tmp/backfill_pipeline.start_time"
 _BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
 _BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
 _BACKFILL_RUN_HISTORY     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backfill_run_history.log")
+_NR_FINISH_FILE           = "/tmp/nightly_refresh.finish_time"
 
 # Module-level lock ensures only one pipeline thread runs at a time.
 # The lock is held for the entire duration of the run and released in the
@@ -6108,6 +6109,28 @@ with st.sidebar:
                 st.success("✅ " + _rv_res["message"])
             else:
                 st.warning(_rv_res["message"])
+        try:
+            if os.path.exists(_NR_FINISH_FILE):
+                import json as _nr_json
+                with open(_NR_FINISH_FILE) as _nr_f:
+                    _nr_info = _nr_json.load(_nr_f)
+                _nr_elapsed_int = max(0, int(_nr_info.get("elapsed_s", 0)))
+                if _nr_elapsed_int < 60:
+                    _nr_dur_str = f"{_nr_elapsed_int}s"
+                elif _nr_elapsed_int < 3600:
+                    _nr_m, _nr_s = divmod(_nr_elapsed_int, 60)
+                    _nr_dur_str = f"{_nr_m}m {_nr_s}s"
+                else:
+                    _nr_h = _nr_elapsed_int // 3600
+                    _nr_m = (_nr_elapsed_int % 3600) // 60
+                    _nr_s = _nr_elapsed_int % 60
+                    _nr_dur_str = f"{_nr_h}h {_nr_m}m {_nr_s}s"
+                if _nr_info.get("success", True):
+                    st.success(f"✅ Refresh complete in {_nr_dur_str}")
+                else:
+                    st.warning(f"⚠️ Last refresh failed (ran for {_nr_dur_str})")
+        except Exception:
+            pass
         with st.expander("📋 View SQL", expanded=False):
             st.code(_ALL_PENDING_MIGRATIONS, language="sql")
 

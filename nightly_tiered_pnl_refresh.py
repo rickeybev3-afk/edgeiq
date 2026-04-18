@@ -130,6 +130,8 @@ def _send_slack(message: str) -> None:
 _STATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            ".edgeiq_tiered_pnl_run_stats.json")
 
+_NR_FINISH_FILE = "/tmp/nightly_refresh.finish_time"
+
 _CACHE_ALERT_STATE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     ".edgeiq_cache_alert_state.json",
@@ -760,6 +762,11 @@ def run_backfill(date_from: str = "", date_to: str = ""):
             f"Elapsed: {elapsed_fmt}\n"
             f"<b>Exception:</b> <code>{html.escape(exception_msg[:300])}</code>"
         )
+        try:
+            with open(_NR_FINISH_FILE, "w") as _nrf:
+                json.dump({"finished_at": time.time(), "elapsed_s": elapsed, "success": False}, _nrf)
+        except Exception:
+            pass
         _send_telegram(msg)
         return
 
@@ -856,6 +863,17 @@ def run_backfill(date_from: str = "", date_to: str = ""):
             suppressed_line = ""
 
         msg = base_msg + suppressed_line
+
+    _nr_elapsed_s = stats.get("elapsed_s", elapsed) if (exit_code == 0 and bool(stats)) else elapsed
+    try:
+        with open(_NR_FINISH_FILE, "w") as _nrf:
+            json.dump({
+                "finished_at": time.time(),
+                "elapsed_s": _nr_elapsed_s,
+                "success": exit_code == 0 and bool(stats),
+            }, _nrf)
+    except Exception:
+        pass
 
     _send_telegram(msg)
 
