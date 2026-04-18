@@ -8050,9 +8050,11 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
     meaningful for data pre-dating bot-side skip_reason logging.
 
     Priority order applied to rows where skip_reason IS NULL:
-      1. alpaca_order_id IS NOT NULL          → order_placed
-      2. predicted contains 'bearish'         → bearish_break_filtered
-      3. everything else                      → unknown
+      1. alpaca_order_id IS NOT NULL                         → order_placed
+      2. predicted contains 'bearish'                        → bearish_break_filtered
+      3. ib_range_pct IS NOT NULL AND ib_range_pct >= 10     → ib_too_wide
+      4. vwap_at_ib/close_price mismatch with direction      → vwap_misaligned
+      5. everything else                                     → unknown
 
     Returns count of rows updated.
     """
@@ -8068,7 +8070,7 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
     while True:
         _page = (
             supabase.table("paper_trades")
-            .select("id,predicted,alpaca_order_id")
+            .select("id,predicted,alpaca_order_id,ib_range_pct,vwap_at_ib,close_price")
             .eq("user_id", user_id)
             .is_("skip_reason", "null")
             .range(_offset, _offset + 499)
@@ -8081,21 +8083,42 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
         _offset += 500
     if not _hist:
         return 0
-    _placed  = [r["id"] for r in _hist if r.get("alpaca_order_id")]
-    _bearish = [
-        r["id"] for r in _hist
-        if not r.get("alpaca_order_id")
-        and "bearish" in str(r.get("predicted") or "").lower()
-    ]
-    _rest = [
-        r["id"] for r in _hist
-        if not r.get("alpaca_order_id")
-        and "bearish" not in str(r.get("predicted") or "").lower()
-    ]
+
+    _placed:    list = []
+    _bearish:   list = []
+    _ib_wide:   list = []
+    _vwap_mis:  list = []
+    _unknown:   list = []
+
+    for _r in _hist:
+        _rid       = _r["id"]
+        _predicted = str(_r.get("predicted") or "").lower()
+        _ib_pct    = _r.get("ib_range_pct")
+        _vwap      = _r.get("vwap_at_ib")
+        _close     = _r.get("close_price")
+
+        if _r.get("alpaca_order_id"):
+            _placed.append(_rid)
+        elif "bearish" in _predicted:
+            _bearish.append(_rid)
+        elif _ib_pct is not None and _ib_pct >= 10:
+            _ib_wide.append(_rid)
+        elif _vwap is not None and _close is not None:
+            # Only bullish-break rows reach here; bearish rows are already
+            # captured by the bearish_break_filtered branch above.
+            if "bullish" in _predicted and _close < _vwap:
+                _vwap_mis.append(_rid)
+            else:
+                _unknown.append(_rid)
+        else:
+            _unknown.append(_rid)
+
     for _ids, _reason in (
-        (_placed, "order_placed"),
-        (_bearish, "bearish_break_filtered"),
-        (_rest, "unknown"),
+        (_placed,   "order_placed"),
+        (_bearish,  "bearish_break_filtered"),
+        (_ib_wide,  "ib_too_wide"),
+        (_vwap_mis, "vwap_misaligned"),
+        (_unknown,  "unknown"),
     ):
         for _i in range(0, len(_ids), 50):
             _chunk = _ids[_i : _i + 50]
