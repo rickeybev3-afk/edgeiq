@@ -8606,6 +8606,10 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 "false_break_up":   bool(r.get("false_break_up", False)),
                 "false_break_down": bool(r.get("false_break_down", False)),
             }
+            for _opt_f in ("vwap_at_ib", "ib_range_pct", "gap_pct", "gap_vs_ib_pct", "scan_type"):
+                _opt_v = r.get(_opt_f)
+                if _opt_v is not None:
+                    rec[_opt_f] = _opt_v
             # Auto-compute pnl_r_sim (simple sim P&L) on insert — no backfill needed for this field.
             # NOTE: tiered_pnl_r is intentionally omitted here; see comment below.
             _sim = compute_trade_sim(rec)
