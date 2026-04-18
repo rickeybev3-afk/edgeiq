@@ -13939,15 +13939,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         if _sw_has_overrides
                         else "↺ Reset all to MC defaults"
                     )
+                    _SW_MAX_TOOLTIP_TICKERS = 20
+                    if _sw_has_overrides:
+                        _sw_sorted_tickers = sorted(_sw_overridden_tickers)
+                        if len(_sw_sorted_tickers) <= _SW_MAX_TOOLTIP_TICKERS:
+                            _sw_ticker_lines = "\n".join(f"• {t}" for t in _sw_sorted_tickers)
+                        else:
+                            _sw_shown = _sw_sorted_tickers[:_SW_MAX_TOOLTIP_TICKERS]
+                            _sw_remaining = len(_sw_sorted_tickers) - _SW_MAX_TOOLTIP_TICKERS
+                            _sw_ticker_lines = "\n".join(f"• {t}" for t in _sw_shown) + f"\n… and {_sw_remaining} more"
+                        _sw_reset_help = (
+                            f"Tickers with active equity or risk overrides:\n{_sw_ticker_lines}\n\n"
+                            "Clear all per-ticker equity and risk overrides at once. "
+                            "All tickers will revert to the global MC defaults set in "
+                            "Backtest → Advanced settings."
+                        )
+                    else:
+                        _sw_reset_help = (
+                            "Clear all per-ticker equity and risk overrides at once. "
+                            "All tickers will revert to the global MC defaults set in "
+                            "Backtest → Advanced settings."
+                        )
                     if st.button(
                         _sw_reset_label,
                         key="opt_both_reset_all",
                         disabled=not _sw_has_overrides,
-                        help=(
-                            "Clear all per-ticker equity and risk overrides at once. "
-                            "All tickers will revert to the global MC defaults set in "
-                            "Backtest → Advanced settings."
-                        ),
+                        help=_sw_reset_help,
                         use_container_width=True,
                     ):
                         for _k in [
