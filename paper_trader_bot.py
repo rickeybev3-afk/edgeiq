@@ -49,6 +49,31 @@ logging.basicConfig(
 )
 log = logging.getLogger("paper_trader_bot")
 
+
+def _levenshtein(a: str, b: str) -> int:
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            curr.append(min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = curr
+    return prev[-1]
+
+
+def _did_you_mean(unknown_key: str, valid_keys: list, display_plain: dict, max_dist: int = 2) -> str:
+    best_key, best_dist = None, max_dist + 1
+    for vk in valid_keys:
+        d = _levenshtein(unknown_key, vk)
+        if d < best_dist:
+            best_dist, best_key = d, vk
+    if best_key is not None and best_dist <= max_dist:
+        friendly = display_plain.get(best_key, best_key)
+        return f'Did you mean <code>{best_key}</code> ({friendly})?'
+    return ""
+
+
 EASTERN = pytz.timezone("America/New_York")
 
 # ── Config from environment ───────────────────────────────────────────────────
@@ -970,12 +995,18 @@ def telegram_listener() -> None:
                             unknown_keys = [k for k in requested_keys if k not in WK_DISPLAY]
                             valid_requested = [k for k in requested_keys if k in WK_DISPLAY]
                             if unknown_keys:
+                                valid_keys_list = sorted(WK_DISPLAY.keys())
                                 valid_keys = ", ".join(
-                                    f"<code>{k}</code>" for k in sorted(WK_DISPLAY.keys())
+                                    f"<code>{k}</code>" for k in valid_keys_list
                                 )
-                                unknown_fmt = ", ".join(
-                                    f"<code>{k}</code>" for k in unknown_keys
-                                )
+                                unknown_parts = []
+                                for uk in unknown_keys:
+                                    hint = _did_you_mean(uk, valid_keys_list, WK_DISPLAY_PLAIN)
+                                    part = f"<code>{uk}</code>"
+                                    if hint:
+                                        part += f" — {hint}"
+                                    unknown_parts.append(part)
+                                unknown_fmt = ", ".join(unknown_parts)
                                 tg_reply(chat_id,
                                     f"⚠️ Unknown structure(s): {unknown_fmt}. No changes were made.\n"
                                     f"Valid keys: {valid_keys}")
