@@ -1272,9 +1272,11 @@ def _monitor_trailing_stops() -> None:
         log.info(f"[TrailingStop] {ticker} — cancelled {cancelled} open bracket order(s)")
 
         # ── v6 S/R-aware trail tightening ────────────────────────────────────
-        # If nearest S/R is within 0.3R of entry, the trade is bumping against
-        # a known wall → tighten trail to 0.5R to lock in more gain sooner.
+        # At T1 hit, if nearest S/R is within 0.3R of the CURRENT PRICE,
+        # the trade has run into a known wall → tighten trail to 0.5R to lock
+        # in more gain before a potential reversal at the S/R level.
         # Falls back to 1.0R (standard) when no context data is available.
+        cur_px         = float(pos.get("current_price", 0) or pos.get("lastday_price", 0) or 0)
         trail_size     = stop_dist       # default: 1R trail
         trail_r_label  = "1R"
         trail_tightened = False
@@ -1290,27 +1292,35 @@ def _monitor_trailing_stops() -> None:
                 .execute()
             )
             ctx_rows = ctx_resp.data or []
-            if ctx_rows:
+            if ctx_rows and cur_px > 0:
                 ctx = ctx_rows[0]
                 if direction == "Bullish Break":
                     _nearest = ctx.get("nearest_resistance")
-                    if _nearest is not None and (float(_nearest) - entry_sim) <= 0.3 * stop_dist:
+                    # Tighten when resistance is within 0.3R above current price at T1
+                    if (_nearest is not None
+                            and float(_nearest) >= cur_px
+                            and (float(_nearest) - cur_px) <= 0.3 * stop_dist):
                         trail_size    = stop_dist * 0.5
                         trail_r_label = "0.5R"
                         trail_tightened = True
                         log.info(
                             f"[TrailingStop] {ticker} v6 tighten: resistance=${float(_nearest):.2f} "
-                            f"within 0.3R of entry=${entry_sim:.2f} → trail={trail_r_label}"
+                            f"is {float(_nearest)-cur_px:.2f} above cur_px=${cur_px:.2f} "
+                            f"(within 0.3R={0.3*stop_dist:.2f}) → trail={trail_r_label}"
                         )
                 else:  # Bearish Break
                     _nearest = ctx.get("nearest_support")
-                    if _nearest is not None and (entry_sim - float(_nearest)) <= 0.3 * stop_dist:
+                    # Tighten when support is within 0.3R below current price at T1
+                    if (_nearest is not None
+                            and float(_nearest) <= cur_px
+                            and (cur_px - float(_nearest)) <= 0.3 * stop_dist):
                         trail_size    = stop_dist * 0.5
                         trail_r_label = "0.5R"
                         trail_tightened = True
                         log.info(
                             f"[TrailingStop] {ticker} v6 tighten: support=${float(_nearest):.2f} "
-                            f"within 0.3R of entry=${entry_sim:.2f} → trail={trail_r_label}"
+                            f"is {cur_px-float(_nearest):.2f} below cur_px=${cur_px:.2f} "
+                            f"(within 0.3R={0.3*stop_dist:.2f}) → trail={trail_r_label}"
                         )
         except Exception as _ctx_e:
             log.warning(f"[TrailingStop] {ticker} S/R context fetch failed (using 1R trail): {_ctx_e}")
@@ -1320,7 +1330,6 @@ def _monitor_trailing_stops() -> None:
 
         if ts_result["ok"]:
             _TRAILING_STOP_ACTIVATED.add(guard_key)
-            cur_px = float(pos.get("current_price", 0) or pos.get("lastday_price", 0) or 0)
             tighten_note = " 🎯 Tight trail (S/R wall)" if trail_tightened else " — runners run 🚀"
             tg_send(
                 f"🔄 <b>Trailing Stop Activated — {ticker}</b>\n"
