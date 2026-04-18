@@ -7819,6 +7819,8 @@ def run_pending_migrations() -> dict:
         # vwap_at_ib   = VWAP of 5-min bars up to IB close; injected by log_context_levels
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS ib_range_pct REAL",
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS vwap_at_ib REAL",
+        # TCS floor — per-structure threshold at trade time; enables Marginal vs Comfortable breakdown
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS tcs_floor SMALLINT",
         # Data quality flag — 'ok' when intraday bars were available, 'no_bars' when not
         "ALTER TABLE backtest_context_levels ADD COLUMN IF NOT EXISTS data_quality TEXT DEFAULT 'ok'",
         # Performance index for Ladder tab — speeds up filtering by outcome + tiered_pnl_r + date
@@ -10585,6 +10587,12 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
             # if it's already in r (e.g. batch backfill path), include it now
             if r.get("vwap_at_ib") is not None:
                 row_record["vwap_at_ib"] = r["vwap_at_ib"]
+            # tcs_floor: the per-structure TCS threshold active when the trade was taken.
+            # Required for the Marginal vs Comfortable breakdown in the sweep tier cards.
+            if r.get("tcs_floor") is not None:
+                row_record["tcs_floor"] = int(r["tcs_floor"])
+            elif r.get("_struct_tcs_floor") is not None:
+                row_record["tcs_floor"] = int(r["_struct_tcs_floor"])
             # Auto-compute pnl_r_sim (simple sim P&L) on insert — no backfill needed for this field.
             # tiered_pnl_r for paper_trades is populated by run_tiered_pnl_backfill.py.
             _sim = compute_trade_sim(row_record)
@@ -10630,7 +10638,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                                   "sim_outcome", "pnl_r_sim", "pnl_pct_sim",
                                   "entry_price_sim", "stop_price_sim",
                                   "stop_dist_pct", "target_price_sim",
-                                  "ib_range_pct", "vwap_at_ib"]
+                                  "ib_range_pct", "vwap_at_ib", "tcs_floor"]
                 if any(col in _err_s for col in _optional_cols):
                     for rec in records:
                         for col in _optional_cols:

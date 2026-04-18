@@ -19582,7 +19582,8 @@ def render_performance_tab():
   ADD COLUMN IF NOT EXISTS stop_dist_pct FLOAT,
   ADD COLUMN IF NOT EXISTS target_price_sim FLOAT,
   ADD COLUMN IF NOT EXISTS eod_pnl_r FLOAT,
-  ADD COLUMN IF NOT EXISTS tiered_pnl_r FLOAT;
+  ADD COLUMN IF NOT EXISTS tiered_pnl_r FLOAT,
+  ADD COLUMN IF NOT EXISTS tcs_floor SMALLINT;
 
 ALTER TABLE backtest_sim_runs
   ADD COLUMN IF NOT EXISTS sim_outcome TEXT,
