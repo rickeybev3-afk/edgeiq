@@ -179,9 +179,21 @@ def _clear_alert_cooldown(alert_key: str) -> None:
 
     Only the entry for `alert_key` is removed; cooldowns for other views are
     left intact so an independent persistent failure continues to be suppressed.
+
+    If at least one failure alert was sent during the streak (i.e. last_sent_utc
+    is present), a one-time recovery notification is dispatched before clearing
+    the state so operators know the issue has resolved.
     """
     state = _read_alert_state()
     if alert_key in state:
+        key_state = state[alert_key]
+        had_alert = isinstance(key_state, dict) and key_state.get("last_sent_utc")
+        if had_alert:
+            recovery_plain = f"Cache healthy again: {alert_key} refreshed successfully."
+            recovery_html  = f"Cache healthy again: <b>{alert_key}</b> refreshed successfully."
+            log.info("Sending cache-recovery notification for '%s'.", alert_key)
+            _send_slack(recovery_plain)
+            _send_telegram(recovery_html)
         del state[alert_key]
         _write_alert_state(state)
 
