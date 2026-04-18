@@ -15533,7 +15533,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     help=f"✓ = at least {_MIN_TCS_TRADES} trades at this floor (eligible for Best TCS); ✗ = fewer than {_MIN_TCS_TRADES} trades (excluded from Best TCS pick)",
                                 ),
                                 "VWAP Pass Rate (%)": st.column_config.TextColumn(
-                                    "VWAP Pass Rate (%)",
+                                    "**VWAP Pass Rate (%)**",
                                     help=(
                                         "Percentage of TCS+IB signals at this floor that also passed the VWAP gate. "
                                         "🟢 ≥ 70% · 🟡 40–69% · 🔴 < 40%"
