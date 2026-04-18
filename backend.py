@@ -8158,6 +8158,14 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
                 _updated += len(_chunk)
             except Exception:
                 pass  # transient batch failure — continue with remaining chunks
+    _still_unknown    = len(_unknown)
+    _reclassified     = len(_hist) - _still_unknown  # in-memory classification outcome
+    logging.info(
+        "[skip_reason backfill] %d row(s) reclassified, %d row(s) still unknown "
+        "(ib_range_pct / vwap_at_ib missing — may resolve after a close-price backfill).",
+        _reclassified,
+        _still_unknown,
+    )
     return _updated
 
 

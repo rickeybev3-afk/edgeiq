@@ -22603,9 +22603,24 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     continue
                 _pct = round(_cnt / _ao_total_signals * 100, 1)
                 _bar_w = round(_cnt / _ao_total_signals * 100)
+                if _key == "unknown":
+                    _unknown_tip = (
+                        "These rows could not be automatically classified. "
+                        "ib_range_pct or vwap_at_ib may be missing for older data. "
+                        "Running a close-price backfill may reduce this count."
+                    )
+                    _label_html = (
+                        f'{_label}'
+                        f' <span title="{_unknown_tip}" style="cursor:help;color:#ffa726;'
+                        f'font-size:11px;margin-left:4px;border-bottom:1px dashed #ffa726;">⚠ {_cnt} unresolved</span>'
+                    )
+                    _cell_style = f'padding:4px 8px;color:{_color};font-size:12px;'
+                else:
+                    _label_html = _label
+                    _cell_style = f'padding:4px 8px;color:{_color};font-size:12px;'
                 _funnel_rows += (
                     f'<tr>'
-                    f'<td style="padding:4px 8px;color:{_color};font-size:12px;">{_label}</td>'
+                    f'<td style="{_cell_style}">{_label_html}</td>'
                     f'<td style="padding:4px 8px;text-align:right;font-weight:600;color:#cfd8dc;font-size:13px;">{_cnt}</td>'
                     f'<td style="padding:4px 8px;width:100px;">'
                     f'<div style="background:#1e2a3a;border-radius:3px;height:8px;">'
