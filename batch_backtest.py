@@ -796,7 +796,7 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             rec["gap_pct"]       = r.get("gap_pct")
             rec["gap_vs_ib_pct"] = r.get("gap_vs_ib_pct")
         if include_sim:
-            sim = backend.compute_trade_sim(r)
+            sim = backend.apply_rvol_sizing_to_sim(backend.compute_trade_sim(r), r.get("rvol"))
             if sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
                 rec["sim_outcome"]      = sim["sim_outcome"]
                 rec["pnl_r_sim"]        = sim.get("pnl_r_sim")

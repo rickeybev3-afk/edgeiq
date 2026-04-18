@@ -8896,13 +8896,13 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 "false_break_up":   bool(r.get("false_break_up", False)),
                 "false_break_down": bool(r.get("false_break_down", False)),
             }
-            for _opt_f in ("vwap_at_ib", "ib_range_pct", "gap_pct", "gap_vs_ib_pct", "scan_type"):
+            for _opt_f in ("vwap_at_ib", "ib_range_pct", "gap_pct", "gap_vs_ib_pct", "scan_type", "rvol"):
                 _opt_v = r.get(_opt_f)
                 if _opt_v is not None:
                     rec[_opt_f] = _opt_v
             # Auto-compute pnl_r_sim (simple sim P&L) on insert — no backfill needed for this field.
             # NOTE: tiered_pnl_r is intentionally omitted here; see comment below.
-            _sim = compute_trade_sim(rec)
+            _sim = apply_rvol_sizing_to_sim(compute_trade_sim(rec), rec.get("rvol"))
             if _sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
                 rec["sim_outcome"]      = _sim["sim_outcome"]
                 rec["pnl_r_sim"]        = _sim.get("pnl_r_sim")
@@ -10440,7 +10440,7 @@ def sync_sim_fields_backtest(user_id: str = "") -> dict:
 
     _SIM_COLS = (
         "id,predicted,actual_outcome,ib_low,ib_high,"
-        "follow_thru_pct,close_price,false_break_up,false_break_down"
+        "follow_thru_pct,close_price,false_break_up,false_break_down,rvol"
     )
 
     last_id = None
@@ -10466,7 +10466,7 @@ def sync_sim_fields_backtest(user_id: str = "") -> dict:
         for row in chunk:
             last_id = row["id"]
             try:
-                sim = compute_trade_sim(row)
+                sim = apply_rvol_sizing_to_sim(compute_trade_sim(row), row.get("rvol"))
                 if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
                     stats["skipped"] += 1
                     continue
@@ -10517,7 +10517,7 @@ def sync_sim_fields_paper(user_id: str = "") -> dict:
 
     _SIM_COLS = (
         "id,predicted,actual_outcome,ib_low,ib_high,"
-        "follow_thru_pct,close_price,false_break_up,false_break_down"
+        "follow_thru_pct,close_price,false_break_up,false_break_down,rvol"
     )
 
     last_id = None
@@ -10543,7 +10543,7 @@ def sync_sim_fields_paper(user_id: str = "") -> dict:
         for row in chunk:
             last_id = row["id"]
             try:
-                sim = compute_trade_sim(row)
+                sim = apply_rvol_sizing_to_sim(compute_trade_sim(row), row.get("rvol"))
                 if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
                     stats["skipped"] += 1
                     continue
@@ -10936,6 +10936,54 @@ def adaptive_target_r(tcs: float, scan_type: str = "", structure: str = "") -> f
             return float(band["target_r"])
 
     return float(cfg.get("global_fallback_target_r", 1.0))
+
+
+def rvol_size_mult(rvol: float) -> float:
+    """Return RVOL bonus position-size multiplier.
+
+    Reads rvol_size_tiers from adaptive_exits.json (loaded into
+    _ADAPTIVE_EXITS_CFG at module start).  Tiers are matched highest-first
+    so rvol=4.0 returns the 3.5× tier multiplier (1.5×), not the 2.5× tier.
+    Returns 1.0 when rvol is below all configured thresholds or config is absent.
+
+    Mirrors paper_trader_bot._rvol_size_mult for use in backtest simulations.
+    """
+    tiers = _ADAPTIVE_EXITS_CFG.get("rvol_size_tiers", [])
+    for tier in sorted(tiers, key=lambda t: t["rvol_min"], reverse=True):
+        if rvol >= tier["rvol_min"]:
+            return float(tier["multiplier"])
+    return 1.0
+
+
+def apply_rvol_sizing_to_sim(sim: dict, rvol_raw) -> dict:
+    """Apply RVOL bonus position-size multiplier to a compute_trade_sim() result.
+
+    Call this after compute_trade_sim() at every site that writes pnl_r_sim to
+    the database so that all sim producers (batch_backtest, live-insert, backfill)
+    consistently model the dollar-scaling effect of high RVOL.
+
+    A 1.25× RVOL size bonus on a +1.5R win → +1.875R effective account R;
+    a 1.25× boost on a -1.0R loss → -1.25R effective loss.
+
+    Returns the original sim dict unchanged when:
+    - rvol_raw is None / falsy (no RVOL data available for this row)
+    - RVOL is below all configured thresholds (multiplier = 1.0)
+    - pnl_r_sim is None (no_trade / missing_data rows)
+    """
+    if not rvol_raw:
+        return sim
+    try:
+        _mult = rvol_size_mult(float(rvol_raw))
+    except (TypeError, ValueError):
+        return sim
+    if _mult == 1.0:
+        return sim
+    _pnl_r = sim.get("pnl_r_sim")
+    if _pnl_r is None:
+        return sim
+    result = dict(sim)
+    result["pnl_r_sim"] = round(float(_pnl_r) * _mult, 4)
+    return result
 
 
 def compute_trade_sim(r: dict, target_r: float = 2.0,
@@ -11553,7 +11601,9 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["tcs_floor"] = int(r["_struct_tcs_floor"])
             # Auto-compute pnl_r_sim (simple sim P&L) on insert — no backfill needed for this field.
             # tiered_pnl_r for paper_trades is populated by run_tiered_pnl_backfill.py.
-            _sim = compute_trade_sim(row_record)
+            _sim = apply_rvol_sizing_to_sim(
+                compute_trade_sim(row_record), row_record.get("rvol")
+            )
             _new_sim_outcome = _sim.get("sim_outcome")
             if _new_sim_outcome not in ("no_trade", "missing_data", "invalid_ib", None):
                 row_record["sim_outcome"]      = _new_sim_outcome
@@ -11940,11 +11990,14 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                 post_alert = None
 
             # ── Compute simulation P&L (IB breakout rules) ───────────────────
-            sim = compute_trade_sim({
-                **r,
-                "follow_thru_pct": r.get("aft_move_pct"),
-                "close_price":     r.get("close_price"),   # EOD close for realistic P&L
-            })
+            sim = apply_rvol_sizing_to_sim(
+                compute_trade_sim({
+                    **r,
+                    "follow_thru_pct": r.get("aft_move_pct"),
+                    "close_price":     r.get("close_price"),   # EOD close for realistic P&L
+                }),
+                r.get("rvol"),
+            )
 
             # ── Tiered exit P&L (50/25/25 ladder) — requires afternoon bars ──
             # Only compute for confirmed breakout directions; gracefully skip on

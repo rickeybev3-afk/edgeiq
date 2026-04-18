@@ -276,9 +276,16 @@ def _sim_patch(r: dict) -> dict | None:
             r["nearest_resistance"] = _ctx.get("nearest_resistance")
             r["nearest_support"]    = _ctx.get("nearest_support")
 
-    sim = backend.compute_trade_sim(r, target_r=_target_r)
-    if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
+    _sim_raw = backend.compute_trade_sim(r, target_r=_target_r)
+    if _sim_raw.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
         return None
+
+    # Apply RVOL bonus sizing multiplier so backfill rows model the same
+    # dollar-scaled R-contribution as the live bot and batch_backtest paths.
+    # Delegates to backend.apply_rvol_sizing_to_sim() — the shared helper used
+    # by all compute_trade_sim() call sites that write pnl_r_sim to the DB.
+    sim = backend.apply_rvol_sizing_to_sim(_sim_raw, r.get("rvol"))
+
     patch = {
         "sim_outcome":      sim["sim_outcome"],
         "pnl_r_sim":        sim.get("pnl_r_sim"),
@@ -393,7 +400,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     backend.supabase.table(table)
                     .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
-                            f"tcs,scan_type,mfe,mae,{_date_col},"
+                            f"tcs,scan_type,mfe,mae,rvol,{_date_col},"
                             f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
@@ -419,7 +426,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                             backend.supabase.table(table)
                             .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                                     f"follow_thru_pct,false_break_up,false_break_down,"
-                                    f"tcs,scan_type,{_date_col}")
+                                    f"tcs,scan_type,rvol,{_date_col}")
                             .eq("user_id", user_id)
                             .eq("actual_outcome", direction)
                         )

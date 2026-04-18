@@ -20,6 +20,11 @@
     { "tcs_min": 50, "tcs_max": 60,  "target_r": 0.8 }
   ],
 
+  "rvol_size_tiers": [
+    { "rvol_min": 3.5, "multiplier": 1.5,  "note": "RVOL ≥ 3.5× — exceptional momentum, 1.5× size" },
+    { "rvol_min": 2.5, "multiplier": 1.25, "note": "RVOL 2.5–3.5× — strong momentum, 1.25× size" }
+  ],
+
   "global_fallback_target_r": 1.0,
 
   "data_sources": {

@@ -473,6 +473,28 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
             return mult
     return 1.00  # fallback — unknown tier, baseline sizing
 
+
+# ── RVOL bonus position-size multiplier ────────────────────────────────────
+# High RVOL confirms institutional participation and momentum follow-through.
+# Tiers sourced from adaptive_exits.json (rvol_size_tiers), sorted descending.
+#   RVOL ≥ 3.5× → 1.50×  (exceptional momentum)
+#   RVOL ≥ 2.5× → 1.25×  (strong momentum)
+#   RVOL <  2.5 → 1.00×  (baseline — no bonus)
+# Applied AFTER IB-range and P-tier mults; only when RVOL data is present.
+
+def _rvol_size_mult(rvol: float) -> float:
+    """Return RVOL bonus position-size multiplier.
+
+    Reads rvol_size_tiers from adaptive_exits.json (loaded into
+    _ADAPTIVE_EXIT_CONFIG at module start).  Falls back to 1.0 when the
+    config key is absent or rvol is below all configured thresholds.
+    """
+    tiers = _ADAPTIVE_EXIT_CONFIG.get("rvol_size_tiers", [])
+    for tier in sorted(tiers, key=lambda t: t["rvol_min"], reverse=True):
+        if rvol >= tier["rvol_min"]:
+            return float(tier["multiplier"])
+    return 1.0
+
 # ── RVOL minimum entry floor ───────────────────────────────────────────────────
 # v5 data: RVOL 0-1.0 → 28.2% WR / -0.513R (85 trades). Clear negative edge.
 # All other RVOL bands ≥ 1.0 are profitable within P1/P3 universe.
@@ -993,7 +1015,8 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     # ── Entry quality filter 3: RVOL minimum floor ────────────────────────────
     # v5 data: RVOL 0-1.0 → 28.2% WR / -0.513R (85 trades). Clear negative edge.
     # Only apply when rvol is available (may be None for new tickers or data gaps).
-    _rvol_val = r.get("rvol")
+    _rvol_val  = r.get("rvol")
+    _rvol_mult = 1.0  # default — no bonus; updated below when RVOL data is present
     if _rvol_val is not None:
         _rvol_float = float(_rvol_val)
         # Block rvol=0 too — 0 means data is present but volume is near-zero;
@@ -1010,6 +1033,18 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             )
             _patch_skip_reason(r, ticker, "rvol_below_floor")
             return
+
+        # ── RVOL bonus position-size multiplier ───────────────────────────────
+        # RVOL ≥ 2.5× confirms strong momentum — scale up size to compound edge.
+        # Tiers in adaptive_exits.json (rvol_size_tiers): 2.5×→1.25×, 3.5×→1.50×.
+        # Applied only when RVOL data is present and setup already passed the floor.
+        _rvol_mult = _rvol_size_mult(_rvol_float)
+        if _rvol_mult != 1.0:
+            risk_dollars = round(risk_dollars * _rvol_mult, 2)
+            log.info(
+                f"  [{ticker}] RVOL {_rvol_float:.2f}× → RVOL bonus mult "
+                f"{_rvol_mult:.2f}× → risk ${risk_dollars:,.0f}"
+            )
 
     # ── P-tier position-size multiplier ───────────────────────────────────────
     # Stack on top of IB-range mult: P3 (morning 70+) → 1.50×; P1 (intraday 70+)
@@ -1081,13 +1116,16 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"qty={qty} | entry=${result['entry']} | stop=${result['stop']} | "
             f"target=${result['target']} | id={order_id}"
         )
+        _rvol_bonus_label = (
+            f" · {_rvol_mult:.2f}× RVOL⚡" if _rvol_mult != 1.0 else ""
+        )
         tg_send(
             f"📋 <b>{acct_type} Order Placed — {ticker}</b>\n"
             f"{'🟡' if direction == 'Bullish Break' else '🔴'} {direction}\n"
             f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
             f"Target: ${result['target']}\n"
             f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} "
-            f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier · 1R base)\n"
+            f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier{_rvol_bonus_label} · 1R base)\n"
             f"<code>{order_id[:8]}…</code>"
         )
         # Patch Supabase paper_trades row with order metadata + skip_reason
