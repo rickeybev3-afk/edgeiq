@@ -1081,6 +1081,44 @@ export default function Settings() {
               })}
             </div>
           )}
+
+          <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid #1a2332", display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
+            <span style={{ fontSize: "10px", fontWeight: 600, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginRight: "2px" }}>
+              Jump to
+            </span>
+            {(
+              [
+                { id: "trading-mode", label: "Trading Mode" },
+                { id: "credential-alerts", label: "Credential Alerts" },
+                { id: "subscriber-opt-out", label: "Subscriber Opt-Out" },
+                { id: "backfill-health", label: "Backfill Health" },
+                { id: "context-dryrun", label: "Context Dry-Run" },
+                { id: "paper-lookback", label: "Paper Lookback" },
+                { id: "backfill-heartbeat-window", label: "Backfill Heartbeat" },
+                { id: "eod-recalc-health", label: "EOD Recalc" },
+                { id: "rvol-size-tiers", label: "RVOL Size Tiers" },
+              ] as const
+            ).map(({ id, label }) => (
+              <a
+                key={id}
+                href={`#${id}`}
+                style={{
+                  padding: "3px 9px",
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid #253247",
+                  borderRadius: "9999px",
+                  color: "#64748b",
+                  fontSize: "11px",
+                  textDecoration: "none",
+                  fontWeight: 500,
+                  letterSpacing: "0.02em",
+                  transition: "color 0.15s, border-color 0.15s",
+                }}
+              >
+                {label}
+              </a>
+            ))}
+          </div>
         </section>
 
         <section
