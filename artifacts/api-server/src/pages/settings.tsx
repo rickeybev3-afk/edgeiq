@@ -1157,9 +1157,11 @@ export default function Settings() {
             padding: "8px 0",
             marginBottom: "20px",
             display: "flex",
-            flexWrap: "wrap",
+            flexWrap: "nowrap",
+            overflowX: "auto",
             gap: "6px",
             alignItems: "center",
+            scrollbarWidth: "none",
           }}
         >
           <span style={{ fontSize: "10px", fontWeight: 600, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginRight: "2px" }}>
