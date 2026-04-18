@@ -22294,7 +22294,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
                 f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Orders Filled</div>'
                 f'<div style="font-size:28px;font-weight:700;color:{_ao_fill_color};">{_ao_total_filled}</div>'
-                f'<div style="font-size:12px;color:#78909c;">{_ao_cancelled} cancelled / expired</div>'
+                f'<div style="font-size:12px;color:#78909c;">{_ao_cancelled} unfilled (cancelled / pending / expired)</div>'
                 f'</div>', unsafe_allow_html=True
             )
         with _ao_c4:
@@ -22312,9 +22312,9 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             _ao_pnl_s = f'{"+" if _ao_realized_pnl >= 0 else ""}${_ao_realized_pnl:,.2f}'
             st.markdown(
                 f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Realized P&L</div>'
+                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Filled P&L (EOD Est)</div>'
                 f'<div style="font-size:24px;font-weight:700;color:{_ao_pnl_color};">{_ao_pnl_s}</div>'
-                f'<div style="font-size:11px;color:#546e7a;">EOD proxy (filled orders)</div>'
+                f'<div style="font-size:11px;color:#546e7a;">fill entry → close price</div>'
                 f'</div>', unsafe_allow_html=True
             )
 
@@ -22469,8 +22469,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                         _ord_status   = "Filled"
                         _ord_stat_col = "#66bb6a"
                     else:
-                        _ord_status   = "Pending"
-                        _ord_stat_col = "#ffa726"
+                        _ord_status   = "Unfilled"
+                        _ord_stat_col = "#78909c"
 
                     # ── EOD close ───────────────────────────────────────────
                     _eod_px = float(_ord.get("close_price") or 0)
