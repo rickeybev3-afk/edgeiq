@@ -13365,18 +13365,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _cd_mins = st.session_state.get("tkr_div_auto_cooldown_mins", 15)
                             _cd_secs_left = int(_cd_mins * 60 - (datetime.now() - _cd_last_fired).total_seconds())
                             if _cd_secs_left > 0:
-                                @st.fragment(run_every=60)
+                                @st.fragment(run_every=10)
                                 def _cooldown_countdown_fragment():
                                     _last = st.session_state.get("_div_auto_last_fired_ts")
                                     _mins = st.session_state.get("tkr_div_auto_cooldown_mins", 15)
                                     if _last is not None:
                                         _secs = int(_mins * 60 - (datetime.now() - _last).total_seconds())
                                         if _secs > 0:
-                                            _m = max(1, round(_secs / 60))
-                                            st.caption(
-                                                f"⏳ Next alert in **{_m} min{'s' if _m != 1 else ''}** "
-                                                f"— cool-down active"
-                                            )
+                                            if _secs <= 120:
+                                                st.caption(
+                                                    f"⏳ Next alert in **{_secs} sec** "
+                                                    f"— cool-down active"
+                                                )
+                                            else:
+                                                _m = max(1, round(_secs / 60))
+                                                st.caption(
+                                                    f"⏳ Next alert in **{_m} min{'s' if _m != 1 else ''}** "
+                                                    f"— cool-down active"
+                                                )
                                 _cooldown_countdown_fragment()
             _sort_key, _sort_asc_default = _sort_col_map[_sort_choice]
             _sort_asc = (not _sort_asc_default) if _sort_reverse else _sort_asc_default
