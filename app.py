@@ -22319,10 +22319,10 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         _ao_fill_r_vals:  list = []
         _ao_sim_r_vals:   list = []
         _ao_sim_pnl = 0.0
-        _ao_pnl_series:   list = []  # list of (trade_date_str, dollar_pnl) for cumulative chart
+        _ao_pnl_series:   list = []  # per-order records for equity curve: {date, ticker, dollar_pnl, fill_r}
         _ao_exit_fill_count = 0   # rows that used an actual Alpaca exit fill (not EOD proxy)
         if "alpaca_fill_price" in _ao_df.columns and "alpaca_qty" in _ao_df.columns:
-            for _, _pnl_row in _ao_df[_ao_has_fill].iterrows():
+            for _, _pnl_row in _ao_df[_ao_has_fill].sort_values("trade_date", ascending=True).iterrows():
                 try:
                     _pnl_fill    = float(_pnl_row.get("alpaca_fill_price") or 0)
                     _pnl_qty     = float(_pnl_row.get("alpaca_qty") or 0)
@@ -22338,6 +22338,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     _pnl_has_exit_fill = bool(_pnl_exit_raw and float(_pnl_exit_raw) > 0)
                     if _pnl_has_exit_fill:
                         _ao_exit_fill_count += 1
+                    _pnl_date    = str(_pnl_row.get("trade_date") or "")[:10]
+                    _pnl_ticker  = str(_pnl_row.get("ticker") or "")
                     if _pnl_fill > 0 and _pnl_qty > 0 and _pnl_exit > 0:
                         # Realized $ P&L (fill entry → actual exit or EOD proxy)
                         _order_pnl = (
@@ -22345,11 +22347,6 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                             else _pnl_qty * (_pnl_fill - _pnl_exit)
                         )
                         _ao_realized_pnl += _order_pnl
-                        _ao_pnl_series.append((
-                            str(_pnl_row.get("trade_date", ""))[:10],
-                            _order_pnl,
-                            str(_pnl_row.get("ticker", "")),
-                        ))
                         if _pnl_range > 0:
                             # Fill-based R (uses actual exit when available)
                             _fr = (
@@ -22366,6 +22363,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                             _ao_sim_r_vals.append(_sr2)
                             # Sim $ P&L
                             _ao_sim_pnl += _pnl_qty * (_pnl_exit - _sim_e) if _pnl_is_bull else _pnl_qty * (_sim_e - _pnl_exit)
+                            # Per-order record for equity curve
+                            _ao_pnl_series.append({
+                                "date":       _pnl_date,
+                                "ticker":     _pnl_ticker,
+                                "dollar_pnl": _order_pnl,
+                                "fill_r":     _fr,
+                            })
                 except Exception:
                     pass
 
@@ -22432,25 +22436,44 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Cumulative P&L chart ─────────────────────────────────────────────
+        # ── Cumulative P&L / R-Multiple chart ───────────────────────────────
         if not _ao_pnl_series and _ao_total_filled > 0:
             st.caption("Cumulative P&L chart: no filled orders with complete price data (fill price, qty, and close price all required).")
         if _ao_pnl_series:
             import plotly.graph_objects as _go_pnl
+
+            _cpnl_tog_col, _ = st.columns([3, 5])
+            with _cpnl_tog_col:
+                _cpnl_mode = st.radio(
+                    "View",
+                    options=["$ P&L", "R-Multiple"],
+                    horizontal=True,
+                    key="ao_pnl_chart_mode",
+                    label_visibility="collapsed",
+                )
+
             _cpnl_sorted = sorted(
                 _ao_pnl_series,
-                key=lambda r: pd.to_datetime(r[0], errors="coerce") if r[0] else pd.Timestamp.min,
+                key=lambda r: pd.to_datetime(r["date"], errors="coerce") if r["date"] else pd.Timestamp.min,
             )
             _cpnl_dates: list = []
             _cpnl_cumulative: list = []
             _cpnl_labels: list = []
             _running = 0.0
-            for _cd, _cv, _ct in _cpnl_sorted:
+            _use_r = _cpnl_mode == "R-Multiple"
+            for _rec in _cpnl_sorted:
+                _cd  = _rec["date"]
+                _cv  = _rec["fill_r"] if _use_r else _rec["dollar_pnl"]
+                _ct  = _rec["ticker"]
                 _running += _cv
                 _cpnl_dates.append(_cd)
-                _cpnl_cumulative.append(round(_running, 2))
-                _pnl_sign = "+" if _cv >= 0 else ""
-                _cpnl_labels.append(f"{_cd} — {_ct}<br>Trade: {_pnl_sign}${_cv:,.2f}<br>Cum: {'+'if _running>=0 else ''}${_running:,.2f}")
+                _cpnl_cumulative.append(round(_running, 4 if _use_r else 2))
+                _val_sign = "+" if _cv >= 0 else ""
+                _cum_sign = "+" if _running >= 0 else ""
+                if _use_r:
+                    _cpnl_labels.append(f"{_cd} — {_ct}<br>Trade: {_val_sign}{_cv:.2f}R<br>Cum: {_cum_sign}{_running:.2f}R")
+                else:
+                    _cpnl_labels.append(f"{_cd} — {_ct}<br>Trade: {_val_sign}${_cv:,.2f}<br>Cum: {_cum_sign}${_running:,.2f}")
 
             _cpnl_fig = _go_pnl.Figure()
 
@@ -22482,6 +22505,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 
             # Main line with hover
             _cpnl_line_colors = ["#66bb6a" if v >= 0 else "#ef5350" for v in _cpnl_cumulative]
+            _cpnl_trace_name = "Cumulative R" if _use_r else "Cumulative P&L"
             _cpnl_fig.add_trace(_go_pnl.Scatter(
                 x=_cpnl_dates,
                 y=_cpnl_cumulative,
@@ -22494,18 +22518,29 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 ),
                 text=_cpnl_labels,
                 hovertemplate="%{text}<extra></extra>",
-                name="Cumulative P&L",
+                name=_cpnl_trace_name,
             ))
 
             _cpnl_final = _cpnl_cumulative[-1] if _cpnl_cumulative else 0.0
             _cpnl_title_color = "#66bb6a" if _cpnl_final >= 0 else "#ef5350"
             _cpnl_sign = "+" if _cpnl_final >= 0 else ""
+            _cpnl_n = len(_cpnl_dates)
+            if _use_r:
+                _cpnl_title_val = f"{_cpnl_sign}{_cpnl_final:.2f}R"
+                _cpnl_title_lbl = "Cumulative R"
+                _cpnl_y_prefix  = ""
+                _cpnl_y_suffix  = "R"
+            else:
+                _cpnl_title_val = f"{_cpnl_sign}${_cpnl_final:,.2f}"
+                _cpnl_title_lbl = "Cumulative P&L"
+                _cpnl_y_prefix  = "$"
+                _cpnl_y_suffix  = ""
 
             _cpnl_fig.add_hline(y=0, line_color="#546e7a", line_width=1, line_dash="dot")
 
             _cpnl_fig.update_layout(
                 title=dict(
-                    text=f'Cumulative P&L — <span style="color:{_cpnl_title_color}">{_cpnl_sign}${_cpnl_final:,.2f}</span> across {len(_cpnl_dates)} filled order{"s" if len(_cpnl_dates) != 1 else ""}',
+                    text=f'{_cpnl_title_lbl} — <span style="color:{_cpnl_title_color}">{_cpnl_title_val}</span> across {_cpnl_n} filled order{"s" if _cpnl_n != 1 else ""}',
                     font=dict(size=13, color="#cfd8dc"),
                     x=0,
                 ),
@@ -22524,8 +22559,10 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     showgrid=True,
                     gridcolor="#1e2a3a",
                     zeroline=False,
-                    tickprefix="$",
+                    tickprefix=_cpnl_y_prefix,
+                    ticksuffix=_cpnl_y_suffix,
                     tickfont=dict(size=10, color="#546e7a"),
+                    title=dict(text=_cpnl_title_lbl, font=dict(size=10, color="#90a4ae")),
                 ),
                 hovermode="x unified",
             )
