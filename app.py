@@ -21039,7 +21039,7 @@ ALTER TABLE backtest_sim_runs
 
         _ts_sort_ind = '<span class="tcs-sort-ind" style="margin-left:4px;opacity:0.5;font-size:10px;"></span>'
         _ts_sort_ind_active = '<span class="tcs-sort-ind" style="margin-left:4px;font-size:10px;">▼</span>'
-        _ts_th_sort_style = 'padding:6px 10px;text-align:right;cursor:pointer;user-select:none;white-space:nowrap;'
+        _ts_th_sort_style = 'padding:6px 10px;text-align:right;cursor:pointer;user-select:none;white-space:nowrap;transition:background 0.15s,color 0.15s;'
         _ts_header = (
             '<tr style="background:#1a2738;font-size:11px;color:#90a4ae;letter-spacing:0.5px;">'
             '<th style="padding:6px 10px;text-align:left;">Tier</th>'
@@ -21093,6 +21093,13 @@ ALTER TABLE backtest_sim_runs
                 f'</tr>'
             )
         _ts_sort_script = """
+<style>
+table[data-tcs-sort] th[data-tcs-col]:hover {
+  background: rgba(144,164,174,0.15) !important;
+  color: #e0e0e0 !important;
+  border-radius: 4px;
+}
+</style>
 <script>
 (function(){
   if (window.__tcsInit) { window.__tcsInit(); return; }
