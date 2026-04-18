@@ -53,6 +53,17 @@ interface EodSweepData {
   history?: EodSweepEntry[];
 }
 
+interface EodRecalcHealth {
+  available: boolean;
+  loading: boolean;
+  completed_at?: string;
+  path?: string;
+  written?: number;
+  skipped?: number;
+  elapsed_s?: number;
+  error?: string;
+}
+
 function formatRelativeTime(isoTimestamp: string): string {
   const t = new Date(isoTimestamp);
   if (isNaN(t.getTime())) return isoTimestamp;
@@ -575,6 +586,7 @@ function Home({ health }: { health: HealthState }) {
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealthData>({ available: false, loading: true });
   const [eodSweep, setEodSweep] = useState<EodSweepData>({ available: false, loading: true });
   const [eodHistoryOpen, setEodHistoryOpen] = useState(false);
+  const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
   useSecondTick(health.db_checked_at);
 
   useEffect(() => {
@@ -640,6 +652,23 @@ function Home({ health }: { health: HealthState }) {
     };
     fetchEodSweep();
     const interval = setInterval(fetchEodSweep, 300_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchEodRecalc = () => {
+      fetch("/api/eod-recalc-health")
+        .then((r) => r.json())
+        .then((data) => {
+          if (!cancelled) setEodRecalcHealth({ loading: false, ...data });
+        })
+        .catch(() => {
+          if (!cancelled) setEodRecalcHealth({ available: false, loading: false });
+        });
+    };
+    fetchEodRecalc();
+    const interval = setInterval(fetchEodRecalc, 300_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
@@ -947,6 +976,40 @@ function Home({ health }: { health: HealthState }) {
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+
+            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+              {eodRecalcHealth.loading ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+              ) : !eodRecalcHealth.available ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+              ) : (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #4ade80" }} />
+              )}
+              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Last P&amp;L Recalc</span>
+              {eodRecalcHealth.loading ? (
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>—</span>
+              ) : !eodRecalcHealth.available ? (
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>No data</span>
+              ) : (
+                <a
+                  href={`${settingsBase}/settings#eod-recalc-health`}
+                  style={{ fontSize: "12px", textDecoration: "none", display: "flex", alignItems: "center", gap: "6px", color: "#64748b" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "#94a3b8"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "#64748b"; }}
+                  title={eodRecalcHealth.completed_at ? `Last run: ${formatUtc(eodRecalcHealth.completed_at)}` : undefined}
+                >
+                  <span style={{ color: "#86efac", fontWeight: 600 }}>
+                    {(eodRecalcHealth.written ?? 0)} rows
+                  </span>
+                  {eodRecalcHealth.elapsed_s != null && (
+                    <span style={{ color: "#94a3b8" }}>· {eodRecalcHealth.elapsed_s.toFixed(1)}s</span>
+                  )}
+                  {eodRecalcHealth.completed_at && (
+                    <span>· {formatRelativeTime(eodRecalcHealth.completed_at)}</span>
+                  )}
+                </a>
               )}
             </div>
           </div>
