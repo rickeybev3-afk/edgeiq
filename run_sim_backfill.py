@@ -668,6 +668,8 @@ if __name__ == "__main__":
     # Flags
     #   --rvol-only      Run ONLY the rvol_size_mult backfill and exit.
     #                    Accepts --dry-run.  Ignores --skip-existing / --out.
+    #   --context-only   Run ONLY the context-level backfill (S/R, VWAP, MACD) and exit.
+    #                    Skips the full sim pipeline entirely.
     #   --skip-existing  Skip rows that already have sim_outcome + eod_pnl_r set.
     #   --dry-run        Inspect rows without writing to the database.
     #   --out=<file>     (dry-run only) Save a JSON report to the given path.
@@ -675,6 +677,7 @@ if __name__ == "__main__":
     skip_existing = "--skip-existing" in raw_args
     dry_run       = "--dry-run"       in raw_args
     rvol_only     = "--rvol-only"     in raw_args
+    context_only  = "--context-only"  in raw_args
 
     # --out=<file>  (dry-run only — ignored in live mode)
     _out_flag = next((a for a in raw_args if a.startswith("--out=")), None)
@@ -703,6 +706,18 @@ if __name__ == "__main__":
             print("Mode: incremental — rows with sim_outcome AND eod_pnl_r already set will be skipped.")
         else:
             print("Mode: full recompute — all breakout rows will be processed (use --skip-existing for incremental).")
+
+    # ── context-only short-circuit ─────────────────────────────────────────────
+    if context_only:
+        print("Mode: CONTEXT-ONLY — running S/R, VWAP, and MACD context backfill.")
+        print("=" * 60)
+        try:
+            import backfill_context_levels as _ctx
+            _ctx.main()
+        except Exception as _ctx_err:
+            print(f"  Context backfill error: {_ctx_err}")
+            sys.exit(1)
+        sys.exit(0)
 
     # ── Resolve user IDs ───────────────────────────────────────────────────────
     if uid_args:
