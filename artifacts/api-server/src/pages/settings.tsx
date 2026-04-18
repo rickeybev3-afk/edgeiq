@@ -1887,12 +1887,19 @@ export default function Settings() {
                 </div>
               )}
 
-              <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px" }}>
-                <p style={{ fontSize: "13px", fontWeight: 700, color: "#dbeafe", margin: 0 }}>
-                  Context Dry-Run Results
-                </p>
-                {contextDryRun.result.elapsed_s != null && (
-                  <span style={{ fontSize: "11px", color: "#64748b" }}>({contextDryRun.result.elapsed_s.toFixed(1)}s elapsed)</span>
+              <div style={{ marginBottom: "14px" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+                  <p style={{ fontSize: "13px", fontWeight: 700, color: "#dbeafe", margin: 0 }}>
+                    Context Dry-Run Results
+                  </p>
+                  {contextDryRun.result.elapsed_s != null && (
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>({contextDryRun.result.elapsed_s.toFixed(1)}s elapsed)</span>
+                  )}
+                </div>
+                {contextDryRun.result.generated_at && (
+                  <p style={{ fontSize: "11px", color: "#64748b", margin: "4px 0 0 0" }}>
+                    Generated at {new Date(contextDryRun.result.generated_at).toLocaleString()}
+                  </p>
                 )}
               </div>
 
