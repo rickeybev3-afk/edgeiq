@@ -5027,6 +5027,20 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["bq_link_date_filters"] = bool(_prefs["bq_link_date_filters"])
         except (ValueError, TypeError):
             pass
+    if "bq_screener_filter" in _prefs:
+        try:
+            _bq_scr_saved = str(_prefs["bq_screener_filter"])
+            if _bq_scr_saved in ("All", "Morning", "Intraday"):
+                st.session_state["bq_screener_filter"] = _bq_scr_saved
+        except (ValueError, TypeError):
+            pass
+    if "bq_tcs_dir_filter" in _prefs:
+        try:
+            _bq_dir_saved = str(_prefs["bq_tcs_dir_filter"])
+            if _bq_dir_saved in ("All", "📈 Bullish Break", "📉 Bearish Break"):
+                st.session_state["bq_tcs_dir_filter"] = _bq_dir_saved
+        except (ValueError, TypeError):
+            pass
     if "rp_start_date" in _prefs:
         try:
             import datetime as _dt_rp
@@ -21828,6 +21842,14 @@ ALTER TABLE backtest_sim_runs
         var bqldf = localStorage.getItem('bq_link_date_filters');
         if (bqldf === '1') { url.searchParams.set('bq_link_filters', '1'); needRedirect = true; }
     }
+    if (!url.searchParams.has('bq_screener')) {
+        var bqscr = localStorage.getItem('bq_screener_filter');
+        if (bqscr) { url.searchParams.set('bq_screener', bqscr); needRedirect = true; }
+    }
+    if (!url.searchParams.has('bq_outcome_type')) {
+        var bqot = localStorage.getItem('bq_tcs_dir_filter');
+        if (bqot) { url.searchParams.set('bq_outcome_type', bqot); needRedirect = true; }
+    }
     if (!url.searchParams.has('link_prec')) {
         var prec = localStorage.getItem('date_link_precedence');
         if (prec && prec !== 'backtest') { url.searchParams.set('link_prec', prec); needRedirect = true; }
@@ -21864,6 +21886,14 @@ ALTER TABLE backtest_sim_runs
         if "bq_link_date_filters" not in st.session_state:
             if st.query_params.get("bq_link_filters") == "1":
                 st.session_state["bq_link_date_filters"] = True
+        if "bq_screener_filter" not in st.session_state:
+            _qp_bq_scr = st.query_params.get("bq_screener")
+            if _qp_bq_scr and _qp_bq_scr in ("All", "Morning", "Intraday"):
+                st.session_state["bq_screener_filter"] = _qp_bq_scr
+        if "bq_tcs_dir_filter" not in st.session_state:
+            _qp_bq_ot = st.query_params.get("bq_outcome_type")
+            if _qp_bq_ot and _qp_bq_ot in ("All", "📈 Bullish Break", "📉 Bearish Break"):
+                st.session_state["bq_tcs_dir_filter"] = _qp_bq_ot
         if "date_link_precedence" not in st.session_state:
             _qp_prec = st.query_params.get("link_prec", "backtest")
             st.session_state["date_link_precedence"] = _qp_prec if _qp_prec in ("backtest", "edge_map") else "backtest"
@@ -23852,6 +23882,14 @@ ALTER TABLE backtest_sim_runs
         if (s) { url.searchParams.set('bq_dr_start', s); needRedirect = true; }
         if (e) { url.searchParams.set('bq_dr_end', e); needRedirect = true; }
     }
+    if (!url.searchParams.has('bq_screener')) {
+        var bqscr = localStorage.getItem('bq_screener_filter');
+        if (bqscr) { url.searchParams.set('bq_screener', bqscr); needRedirect = true; }
+    }
+    if (!url.searchParams.has('bq_outcome_type')) {
+        var bqot = localStorage.getItem('bq_tcs_dir_filter');
+        if (bqot) { url.searchParams.set('bq_outcome_type', bqot); needRedirect = true; }
+    }
     if (needRedirect) window.parent.location.replace(url.toString());
 })();
 </script>
@@ -23873,6 +23911,14 @@ ALTER TABLE backtest_sim_runs
                             st.session_state["bq_dr_end"] = _dt_bq_qp.date.fromisoformat(_qp_bq_end)
                         except (ValueError, TypeError):
                             pass
+                if "bq_screener_filter" not in st.session_state:
+                    _qp_bq_scr2 = st.query_params.get("bq_screener")
+                    if _qp_bq_scr2 and _qp_bq_scr2 in ("All", "Morning", "Intraday"):
+                        st.session_state["bq_screener_filter"] = _qp_bq_scr2
+                if "bq_tcs_dir_filter" not in st.session_state:
+                    _qp_bq_ot2 = st.query_params.get("bq_outcome_type")
+                    if _qp_bq_ot2 and _qp_bq_ot2 in ("All", "📈 Bullish Break", "📉 Bearish Break"):
+                        st.session_state["bq_tcs_dir_filter"] = _qp_bq_ot2
 
                 # Snapshot prev values BEFORE widgets render (used by bq link-filter sync below)
                 _bq_link_prev_bts = st.session_state.get("_bq_link_prev_bts", {})
@@ -24138,11 +24184,55 @@ ALTER TABLE backtest_sim_runs
                     if _bq_df.empty:
                         st.warning("No backtest runs found in the selected date range — try widening the filter.")
 
+                # ── Structure (Screener) filter ───────────────────────────────
+                _bq_screener_sel = st.radio(
+                    "Screener",
+                    options=["All", "Morning", "Intraday"],
+                    index=["All", "Morning", "Intraday"].index(
+                        st.session_state.get("bq_screener_filter", "All")
+                    ) if st.session_state.get("bq_screener_filter", "All") in ("All", "Morning", "Intraday") else 0,
+                    horizontal=True,
+                    key="bq_screener_filter",
+                    help="Filter charts and stats to a single screener type, or show all.",
+                )
+                # Persist structure filter to localStorage + URL + user prefs
+                _bq_scr_val = _bq_screener_sel or "All"
+                if _bq_scr_val and _bq_scr_val != "All":
+                    if st.query_params.get("bq_screener") != _bq_scr_val:
+                        st.query_params["bq_screener"] = _bq_scr_val
+                elif "bq_screener" in st.query_params:
+                    del st.query_params["bq_screener"]
+                _cmp_bq_dr.html(
+                    f"<script>"
+                    f"(function(){{"
+                    f"  var scr = {repr(_bq_scr_val if _bq_scr_val != 'All' else '')};"
+                    f"  if (scr) {{ localStorage.setItem('bq_screener_filter', scr); }}"
+                    f"  else {{ localStorage.removeItem('bq_screener_filter'); }}"
+                    f"  var url = new URL(window.parent.location.href);"
+                    f"  if (scr) {{ url.searchParams.set('bq_screener', scr); }}"
+                    f"  else {{ url.searchParams.delete('bq_screener'); }}"
+                    f"  window.parent.history.replaceState(null, '', url.toString());"
+                    f"}})();"
+                    f"</script>",
+                    height=0,
+                )
+                if _AUTH_USER_ID:
+                    _bq_scr_cached = st.session_state.get("_cached_prefs", {})
+                    if _bq_scr_cached.get("bq_screener_filter") != _bq_scr_val:
+                        _bq_scr_new_prefs = {**_bq_scr_cached, "bq_screener_filter": _bq_scr_val}
+                        save_user_prefs(_AUTH_USER_ID, _bq_scr_new_prefs)
+                        st.session_state["_cached_prefs"] = _bq_scr_new_prefs
+
                 _bq_src = _bq_df[
                     _bq_df["eod_pnl_r"].notna()
                     & _bq_df["tiered_pnl_r"].notna()
                     & _bq_df["actual_outcome"].isin(["Bullish Break", "Bearish Break"])
                 ].copy()
+                # Apply structure filter
+                if _bq_screener_sel and _bq_screener_sel != "All":
+                    _bq_src = _bq_src[
+                        _bq_src["scan_type"].fillna("morning").str.lower() == _bq_screener_sel.lower()
+                    ].reset_index(drop=True)
 
                 if _bq_src.empty:
                     st.info(
@@ -24411,6 +24501,33 @@ ALTER TABLE backtest_sim_runs
                             key="bq_tcs_dir_filter",
                             help="Filter the TCS tier cards and chart to show only Bullish breaks, only Bearish breaks, or both.",
                         )
+                        # Persist outcome-type filter to localStorage + URL + user prefs
+                        _bq_ot_val = _bq_dir_filter or "All"
+                        if _bq_ot_val and _bq_ot_val != "All":
+                            if st.query_params.get("bq_outcome_type") != _bq_ot_val:
+                                st.query_params["bq_outcome_type"] = _bq_ot_val
+                        elif "bq_outcome_type" in st.query_params:
+                            del st.query_params["bq_outcome_type"]
+                        _cmp_bq_dr.html(
+                            f"<script>"
+                            f"(function(){{"
+                            f"  var ot = {repr(_bq_ot_val if _bq_ot_val != 'All' else '')};"
+                            f"  if (ot) {{ localStorage.setItem('bq_tcs_dir_filter', ot); }}"
+                            f"  else {{ localStorage.removeItem('bq_tcs_dir_filter'); }}"
+                            f"  var url = new URL(window.parent.location.href);"
+                            f"  if (ot) {{ url.searchParams.set('bq_outcome_type', ot); }}"
+                            f"  else {{ url.searchParams.delete('bq_outcome_type'); }}"
+                            f"  window.parent.history.replaceState(null, '', url.toString());"
+                            f"}})();"
+                            f"</script>",
+                            height=0,
+                        )
+                        if _AUTH_USER_ID:
+                            _bq_ot_cached = st.session_state.get("_cached_prefs", {})
+                            if _bq_ot_cached.get("bq_tcs_dir_filter") != _bq_ot_val:
+                                _bq_ot_new_prefs = {**_bq_ot_cached, "bq_tcs_dir_filter": _bq_ot_val}
+                                save_user_prefs(_AUTH_USER_ID, _bq_ot_new_prefs)
+                                st.session_state["_cached_prefs"] = _bq_ot_new_prefs
                         _bq_tcs_src = _bq_src.copy()
                         if _bq_dir_filter == "📈 Bullish Break":
                             _bq_tcs_src = _bq_tcs_src[_bq_tcs_src["actual_outcome"] == "Bullish Break"]
