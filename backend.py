@@ -7820,11 +7820,13 @@ def compute_portfolio_metrics(paper_df: "pd.DataFrame",
     trading_days_per_year = 252
     sharpe_annual = round(sharpe * (trading_days_per_year ** 0.5), 3) if sharpe is not None else None
 
-    cum_ret = (1 + returns / 100).cumprod()
+    cum_ret = (1 + returns.fillna(0) / 100).cumprod()
     running_max = cum_ret.cummax()
     drawdown = (cum_ret - running_max) / running_max * 100
-    max_dd = round(float(drawdown.min()), 2)
-    current_dd = round(float(drawdown.iloc[-1]), 2) if len(drawdown) > 0 else 0.0
+    _max_dd_raw = float(drawdown.min())
+    max_dd = round(_max_dd_raw, 2) if _max_dd_raw == _max_dd_raw else 0.0
+    _cur_dd_raw = float(drawdown.iloc[-1]) if len(drawdown) > 0 else 0.0
+    current_dd = round(_cur_dd_raw, 2) if _cur_dd_raw == _cur_dd_raw else 0.0
 
     rolling_dd = daily[["date"]].copy()
     rolling_dd["drawdown_pct"] = drawdown.values

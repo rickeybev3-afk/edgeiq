@@ -26547,7 +26547,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                         _exp_sign = "+" if exp > 0 else ""
                         _tpy_html = (
                             f'<div style="font-size:10px;color:#4db6ac;margin-top:1px;">'
-                            f'~{int(tpy):,} / yr</div>'
+                            f'≈{int(tpy):,} / yr</div>'
                             if tpy is not None else ""
                         )
                         _rm_html = ""
@@ -28832,6 +28832,7 @@ function _bqCopyShareLink() {
     if _at_all_df.empty:
         st.info("No structure predictions logged yet.")
     else:
+        _at_all_df["predicted"] = _at_all_df["predicted"].apply(_clean_structure_label)
         _at_all_df["_correct_bool"] = _at_all_df["correct"] == "✅"
         _by_struct = (
             _at_all_df.groupby("predicted")
@@ -29076,8 +29077,10 @@ function _bqCopyShareLink() {
             )
             st.plotly_chart(_dd_fig, use_container_width=True)
 
+        _dd_val = _pm.get('current_drawdown_pct')
+        _dd_str = f"{_dd_val:.1f}%" if (_dd_val is not None and _dd_val == _dd_val) else "0.0%"
         st.caption(f"Based on {_pm['trade_count']} paper trades. "
-                   f"Current drawdown: {_pm['current_drawdown_pct']:.1f}%")
+                   f"Current drawdown: {_dd_str}")
     else:
         st.info(f"Need at least 3 trading days with P&L data for risk metrics. "
                 f"Currently have {_pm['trade_count']} paper trade(s).")
