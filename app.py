@@ -21449,12 +21449,13 @@ def render_performance_tab():
     if not _pace_tgt["is_fallback"]:
         _pt_tcs_ib  = _pace_tgt.get("tcs_ib_count", _pace_tgt["count"])
         _pt_vwap    = _pace_tgt.get("vwap_count",   _pace_tgt["count"])
-        _pt_filtered_pct = round((_pt_tcs_ib - _pt_vwap) / _pt_tcs_ib * 100) if _pt_tcs_ib else 0
+        _pt_filtered_pct   = round((_pt_tcs_ib - _pt_vwap) / _pt_tcs_ib * 100) if _pt_tcs_ib else 0
+        _pt_filtered_count = max(0, _pt_tcs_ib - _pt_vwap)
         _pt_funnel_html = (
             f'<span style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;vertical-align:middle;">'
             f'<span style="background:#0d2537;border:1px solid #0288d1;border-radius:11px;padding:1px 8px;'
             f'font-size:11px;color:#4fc3f7;white-space:nowrap;"><b>{_pt_tcs_ib:,}</b> TCS+IB</span>'
-            f'<span style="color:#ef6c00;font-size:11px;font-weight:600;">&#x2192; &minus;{_pt_filtered_pct}% &#x2192;</span>'
+            f'<span title="{_pt_filtered_count:,} removed by VWAP alignment filter" style="color:#ef6c00;font-size:11px;font-weight:600;cursor:help;">&#x2192; &minus;{_pt_filtered_pct}% &#x2192;</span>'
             f'<span style="background:#2a1a00;border:1px solid #ef6c00;border-radius:11px;padding:1px 8px;'
             f'font-size:11px;color:#ffa726;white-space:nowrap;"><b>{_pt_vwap:,}</b> VWAP</span>'
             f'<span style="color:#546e7a;font-size:11px;">&#x2192;</span>'
