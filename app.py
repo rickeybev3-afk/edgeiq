@@ -17760,6 +17760,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _dd_stat_r("Expectancy", f"{_dd_exp_r:+.3f}R/trade"),
                                         _dd_stat_r("Max Drawdown (R)", f"{abs(_dd_max_dd_r)}R"),
                                     ]
+                                    # ── VWAP funnel counts ────────────────────────
+                                    _dd_tcs_ib_count, _dd_vwap_count = _compute_bt_vwap_funnel(
+                                        _tk_drill_df,
+                                        tcs_min=_tk_drill_floor,
+                                        ib_pct_max=_dd_ib_threshold,
+                                    )
+                                    _dd_vwap_filt_pct = (
+                                        round((_dd_tcs_ib_count - _dd_vwap_count) / _dd_tcs_ib_count * 100)
+                                        if _dd_tcs_ib_count else 0
+                                    )
+                                    _dd_summ_rows += [
+                                        {c: "" for c in _dd_csv_cols},
+                                        _dd_stat_r("--- VWAP FUNNEL COUNTS ---", ""),
+                                        _dd_stat_r("tcs_ib_count",  str(_dd_tcs_ib_count)),
+                                        _dd_stat_r("vwap_count",    str(_dd_vwap_count)),
+                                        _dd_stat_r("Filtered %",    f"{_dd_vwap_filt_pct}%"),
+                                    ]
                                     # ── Per-structure marginal breakdown ─────────
                                     if "predicted" in _tk_drill_df.columns and _tk_drill_floor is not None:
                                         _dd_marg_mask = _tk_drill_df["tcs"].astype(float) <= float(_tk_drill_floor) + 5
@@ -17843,7 +17860,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     file_name=f"{_tk_name}_TCS{_tk_drill_floor}_trades.csv",
                                     mime="text/csv",
                                     key=f"dl_csv_{_tk_name}_{_tk_drill_floor}",
-                                    help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file — includes R-stats summary and per-structure marginal breakdown at the bottom",
+                                    help=f"Download all {_tk_d_total} filtered trades for {_tk_name} (TCS ≥ {_tk_drill_floor}) as a CSV file — includes R-stats summary, VWAP funnel counts, and per-structure marginal breakdown at the bottom",
                                 )
 
                 # ── Sync open ticker detail expander to URL query param ───────
