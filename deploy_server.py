@@ -261,14 +261,20 @@ def _save_owner_prefs(prefs: dict) -> None:
             pass
 
 
-def _save_subscriber_prefs(user_id: str, prefs: dict) -> None:
+def _save_subscriber_prefs(user_id: str, prefs: dict) -> bool:
     """Persist a single subscriber's user preferences to local file + Supabase.
 
     Mirrors the write path used by backend.py save_user_prefs so the stored
     value is immediately visible to all backend logic.
+
+    Returns True when the write succeeded on every configured store.
+    Returns False when Supabase is configured but the upsert failed — the local
+    file is still updated in that case, but the backend (which reads Supabase
+    first) may continue using stale prefs until Supabase is reachable again.
     """
     import datetime as _dt
     uid = user_id
+    local_ok = False
 
     # Local file first
     try:
@@ -280,6 +286,7 @@ def _save_subscriber_prefs(user_id: str, prefs: dict) -> None:
         os.makedirs(os.path.dirname(_USER_PREFS_FILE), exist_ok=True)
         with open(_USER_PREFS_FILE, "w") as _f:
             json.dump(all_prefs, _f)
+        local_ok = True
     except Exception:
         pass
 
@@ -311,8 +318,12 @@ def _save_subscriber_prefs(user_id: str, prefs: dict) -> None:
                 method="POST",
             )
             _ur.urlopen(req, timeout=4)
-        except Exception:
-            pass
+            return True
+        except Exception as _e:
+            logging.warning("_save_subscriber_prefs: Supabase upsert failed for user_id=%s: %s", uid, _e)
+            return False
+
+    return local_ok
 
 
 def _load_subscriber_prefs(user_id: str) -> dict:
@@ -875,9 +886,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             enabled = payload["enabled"]
             prefs = _load_subscriber_prefs(user_id)
             prefs["credential_alerts_enabled"] = enabled
-            _save_subscriber_prefs(user_id, prefs)
-            body = json.dumps({"user_id": user_id, "enabled": enabled}).encode()
-            self.send_response(200)
+            saved = _save_subscriber_prefs(user_id, prefs)
+            if saved:
+                body = json.dumps({"user_id": user_id, "enabled": enabled}).encode()
+                self.send_response(200)
+            else:
+                body = json.dumps({
+                    "error": "Preference saved to local file but Supabase write failed — backend may read stale value until Supabase recovers",
+                    "user_id": user_id,
+                    "enabled": enabled,
+                }).encode()
+                self.send_response(502)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
