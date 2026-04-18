@@ -13918,6 +13918,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.query_params["tkr_sort"] = _sort_choice
                 st.session_state["_tkr_sort_last_url"] = _sort_choice
                 # Sort direction toggle — restore from URL query params on first load
+                # or whenever the URL value changes (shared link pasted into an active session).
                 _qp_sort_rev = st.query_params.get("tkr_sort_rev", "")
                 if "tkr_summary_sort_reverse" not in st.session_state:
                     st.session_state["tkr_summary_sort_reverse"] = (_qp_sort_rev == "1")
@@ -13943,6 +13944,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.query_params["tkr_sort_rev"] = _sort_rev_str
                     elif "tkr_sort_rev" in st.query_params:
                         del st.query_params["tkr_sort_rev"]
+                # Write back the current widget value so the _last_url guard doesn't
+                # mistake a normal re-render for a new shared-URL navigation.
                 st.session_state["_tkr_sort_rev_last_url"] = _sort_rev_str
                 # Persist sort direction to user prefs whenever it changes
                 if _AUTH_USER_ID:
