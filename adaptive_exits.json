@@ -1,11 +1,31 @@
 {
-  "_note": "MFE-calibrated exit targets per TCS band. Derived from 24,837 backtest rows with intraday bar data. Updated: 2026-04-18.",
-  "_method": "Optimal single-exit: maximizes E[R] = P(MFE>=t)*t - P(MFE<t)*1.0 across historical trades per TCS band.",
-  "tcs_bands": [
-    { "tcs_min": 50, "tcs_max": 60, "target_r": 0.8,  "expected_r": 0.495, "n": 65,  "p50_mfe": 1.24 },
-    { "tcs_min": 60, "tcs_max": 70, "target_r": 1.0,  "expected_r": 0.209, "n": 43,  "p50_mfe": 1.23 },
-    { "tcs_min": 70, "tcs_max": 100,"target_r": 1.5,  "expected_r": 1.056, "n": 45,  "p50_mfe": 2.39 }
+  "_note": "MFE-calibrated exit targets. Derived from 24,837 backtest rows + 314 live paper_trades (qualified: TCS>=50, IB<10%). Updated: 2026-04-18.",
+  "_method": "Primary: scan_type. Secondary: TCS band. Override: structure type (Bearish Break is structurally weaker). Optimal single-exit maximizes E[R] = P(MFE>=t)*t - P(MFE<t)*1.0.",
+  
+  "structure_overrides": {
+    "Bearish Break": 0.5,
+    "Dbl Dist": 1.5
+  },
+
+  "scan_and_tcs": [
+    { "scan_type": "morning",  "tcs_min": 70, "tcs_max": 100, "target_r": 1.5, "note": "Morning 70+ — p75 MFE 3.00R, let runners run" },
+    { "scan_type": "morning",  "tcs_min": 50, "tcs_max": 70,  "target_r": 1.2, "note": "Morning 50-69 — p50 MFE 1.50R" },
+    { "scan_type": "intraday", "tcs_min": 70, "tcs_max": 100, "target_r": 1.3, "note": "Intraday 70+ — p50 MFE 1.67R" },
+    { "scan_type": "intraday", "tcs_min": 50, "tcs_max": 70,  "target_r": 1.0, "note": "Intraday 50-69 — p50 MFE 1.45R" }
   ],
-  "fallback_target_r": 1.0,
+
+  "tcs_fallback": [
+    { "tcs_min": 70, "tcs_max": 100, "target_r": 1.5 },
+    { "tcs_min": 60, "tcs_max": 70,  "target_r": 1.0 },
+    { "tcs_min": 50, "tcs_max": 60,  "target_r": 0.8 }
+  ],
+
+  "global_fallback_target_r": 1.0,
+
+  "data_sources": {
+    "backtest_qualified_rows": 1000,
+    "live_paper_trades_mfe_rows": 314,
+    "date_range": "2021-2026"
+  },
   "last_updated": "2026-04-18"
 }

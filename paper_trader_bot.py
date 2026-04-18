@@ -422,30 +422,49 @@ def _ib_size_mult(ib_pct: float) -> float:
             return mult
     return 0.80  # ≥10% shouldn't pass IB filter, safe fallback
 
-_ADAPTIVE_EXITS: list = []
+_ADAPTIVE_EXIT_CONFIG: dict = {}
 try:
     import json as _json
     with open(os.path.join(os.path.dirname(__file__), "adaptive_exits.json")) as _aef:
-        _ADAPTIVE_EXITS = _json.load(_aef).get("tcs_bands", [])
+        _ADAPTIVE_EXIT_CONFIG = _json.load(_aef)
 except Exception:
     pass
 
 _ADAPTIVE_FALLBACK_TARGET_R = 1.0
 
-def _adaptive_target_r(tcs: float) -> float:
-    """Return MFE-calibrated exit target in R-units for a given TCS score.
+def _adaptive_target_r(tcs: float, scan_type: str = "", structure: str = "") -> float:
+    """Return MFE-calibrated exit target in R-units.
 
-    Reads from adaptive_exits.json (derived from 24,837 backtest rows with
-    intraday bar data).  Falls back to 1.0R if config is missing.
+    3-layer lookup (most specific wins):
+      1. Structure override — Bearish Break (short setups, p50 MFE 0.47R) → 0.5R
+                              Dbl Dist (strongest setup) → 1.5R
+      2. Scan type + TCS band — morning/intraday × TCS tier
+      3. TCS-only fallback
 
-    TCS 50-60 → 0.8R  (p50 MFE 1.24R, optimal E[R] +0.495R)
-    TCS 60-70 → 1.0R  (p50 MFE 1.23R, optimal E[R] +0.209R)
-    TCS 70+   → 1.5R  (p50 MFE 2.39R, optimal E[R] +1.056R)
+    Derived from 24,837 qualified backtest rows + 314 live paper_trades.
+    Config in adaptive_exits.json. Updated 2026-04-18.
     """
-    for band in _ADAPTIVE_EXITS:
+    cfg = _ADAPTIVE_EXIT_CONFIG
+    if not cfg:
+        return _ADAPTIVE_FALLBACK_TARGET_R
+
+    # Layer 1: structure override
+    overrides = cfg.get("structure_overrides", {})
+    for struct_key, target in overrides.items():
+        if struct_key.lower() in structure.lower():
+            return float(target)
+
+    # Layer 2: scan_type + TCS band
+    for band in cfg.get("scan_and_tcs", []):
+        if band["scan_type"] == scan_type and band["tcs_min"] <= tcs < band["tcs_max"]:
+            return float(band["target_r"])
+
+    # Layer 3: TCS-only fallback
+    for band in cfg.get("tcs_fallback", []):
         if band["tcs_min"] <= tcs < band["tcs_max"]:
             return float(band["target_r"])
-    return _ADAPTIVE_FALLBACK_TARGET_R
+
+    return float(cfg.get("global_fallback_target_r", _ADAPTIVE_FALLBACK_TARGET_R))
 
 
 def _tier_priority_key(r: dict) -> tuple:
@@ -886,9 +905,14 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     #         _patch_skip_reason(r, ticker, "vwap_misaligned")
     #         return
 
-    _tcs_for_exit = float(r.get("tcs", 0))
-    _target_r     = _adaptive_target_r(_tcs_for_exit)
-    log.info(f"  [{ticker}] Adaptive exit target: {_target_r:.1f}R (TCS {_tcs_for_exit:.0f})")
+    _tcs_for_exit  = float(r.get("tcs", 0))
+    _scan_for_exit = r.get("scan_type") or scan_label or ""
+    _struct_for_exit = direction or ""
+    _target_r      = _adaptive_target_r(_tcs_for_exit, scan_type=_scan_for_exit, structure=_struct_for_exit)
+    log.info(
+        f"  [{ticker}] Adaptive exit target: {_target_r:.1f}R "
+        f"(TCS {_tcs_for_exit:.0f}, scan={_scan_for_exit}, struct={_struct_for_exit})"
+    )
 
     result = place_alpaca_bracket_order(
         ticker       = ticker,
