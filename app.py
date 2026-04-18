@@ -10326,6 +10326,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _rp_ib_mult = _ib_size_mult(_rp_ib_pct) if _rp_ib_pct > 0 else 1.0
                             _risk_1r   *= _rp_ib_mult
 
+                            # ── RVOL size bonus ────────────────────────────────────────────────
+                            # Mirrors live bot: RVOL ≥ 3.0 → 1.50×; RVOL 2.0-2.99 → 1.25×;
+                            # RVOL < 2.0 or missing → 1.00× (no bonus).
+                            _rp_rvol_raw  = _rp_r.get("rvol")
+                            _rp_rvol_val  = float(_rp_rvol_raw) if _rp_rvol_raw is not None else None
+                            if _rp_rvol_val is not None and _rp_rvol_val >= 3.0:
+                                _rp_rvol_mult = 1.5
+                            elif _rp_rvol_val is not None and _rp_rvol_val >= 2.0:
+                                _rp_rvol_mult = 1.25
+                            else:
+                                _rp_rvol_mult = 1.0
+                            _risk_1r *= _rp_rvol_mult
+
                             # ── P&L: false_break detection + MFE R-multiple ───────────────────
                             # DO NOT use stored pnl_r_sim — it was computed from MFE fallback
                             # (close_price was NULL for all pre-migration rows), so every value
@@ -10389,6 +10402,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "R (Tiered)":  _rp_tiered_display,
                                 "Move %":      round(_ft, 2),
                                 "IB Width %":  round(float(_rp_ib_raw), 2) if _rp_ib_raw is not None else None,
+                                "RVOL":        round(_rp_rvol_val, 2) if _rp_rvol_val is not None else None,
+                                "RVOL Mult":   _rp_rvol_mult,
                                 "P&L ($)":     round(_trade_pnl, 2),
                                 "Equity":      round(_rp_equity_cur, 2),
                             })
@@ -10627,6 +10642,40 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         help="Average R gained per trade — the raw edge, independent of position size")
                             _sm10.metric("Max Drawdown (R)", f"{abs(_max_dd_r)}R",
                                          help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim (shown as a positive magnitude)")
+
+                        # ── RVOL size bonus breakdown (only when data is present) ──────────
+                        _has_rvol_mult = "RVOL Mult" in _rp_df.columns and _rp_df["RVOL Mult"].notna().any()
+                        if _has_rvol_mult:
+                            _rvol_mult_ser = pd.to_numeric(_rp_df["RVOL Mult"], errors="coerce").fillna(1.0)
+                            _rvol_boost_n  = int((_rvol_mult_ser > 1.0).sum())
+                            if _rvol_boost_n > 0:
+                                _rvol_125_n  = int((_rvol_mult_ser == 1.25).sum())
+                                _rvol_150_n  = int((_rvol_mult_ser == 1.5).sum())
+                                _rvol_avg    = round(_rvol_mult_ser[_rvol_mult_ser > 1.0].mean(), 3)
+                                _rvol_pct    = round(_rvol_boost_n / _total_trades * 100, 1) if _total_trades else 0
+                                st.markdown("---")
+                                st.markdown("**📈 RVOL Size Boost** *(trades where RVOL ≥ 2.0 triggered a position-size bonus)*")
+                                _rv1, _rv2, _rv3, _rv4 = st.columns(4)
+                                _rv1.metric(
+                                    "Boosted Trades",
+                                    f"{_rvol_boost_n}  ({_rvol_pct}%)",
+                                    help="Number of trades where the RVOL size bonus fired (RVOL ≥ 2.0)",
+                                )
+                                _rv2.metric(
+                                    "1.25× Tier  (RVOL 2–3×)",
+                                    str(_rvol_125_n),
+                                    help="Trades with RVOL between 2.0 and 2.99 — 1.25× size bonus applied",
+                                )
+                                _rv3.metric(
+                                    "1.50× Tier  (RVOL ≥ 3×)",
+                                    str(_rvol_150_n),
+                                    help="Trades with RVOL ≥ 3.0 — 1.50× size bonus applied",
+                                )
+                                _rv4.metric(
+                                    "Avg Boost (boosted only)",
+                                    f"{_rvol_avg:.2f}×",
+                                    help="Average RVOL size multiplier across the boosted trades only",
+                                )
 
                         # ── Win / Loss avg breakdown row ──────────────────────────────────────
                         _avg_loss_display = f"${_avg_loss:,.0f}" if _pnl_losses else "—"
@@ -12429,6 +12478,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 except (TypeError, ValueError):
                                     _ib_cell_style = "color:#90a4ae"
                                 styles[_ib_col_idx] = _ib_cell_style
+                            # Override RVOL Mult cell: boosted trades get a gold highlight
+                            if "RVOL Mult" in row.index:
+                                _rm_col_idx = list(row.index).index("RVOL Mult")
+                                try:
+                                    _rm_v = float(row["RVOL Mult"])
+                                    if _rm_v >= 1.5:
+                                        styles[_rm_col_idx] = "color:#ffd54f;font-weight:700"
+                                    elif _rm_v >= 1.25:
+                                        styles[_rm_col_idx] = "color:#ffb300;font-weight:700"
+                                except (TypeError, ValueError):
+                                    pass
                             return styles
 
                         _rp_styled_df = _rp_display_df.style.apply(_rp_row_style, axis=1)
@@ -12451,12 +12511,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "IB Width %": st.column_config.NumberColumn(
                                               format="%.2f%%",
                                               help="Initial Balance range as a % of open price. Green = below threshold, orange = near threshold (within 20%), red = at or above threshold."),
+                                "RVOL":       st.column_config.NumberColumn(
+                                              format="%.2f×",
+                                              help="Relative Volume at scan time — today's cumulative volume vs the historical average for the same time of day."),
+                                "RVOL Mult":  st.column_config.NumberColumn(
+                                              format="%.2f×",
+                                              help="RVOL size bonus applied: 1.25× when RVOL 2–3×, 1.50× when RVOL ≥ 3×, 1.00× otherwise. Gold = boosted."),
                             }
                         )
                         if _rp_bot_mode:
                             st.caption(
                                 "🟡 **Amber rows** — TCS cleared the floor by ≤ 5 points (marginal entry). "
                                 "These trades passed the bot's threshold but only barely; review them carefully."
+                            )
+                        _rp_has_rvol_mult = (
+                            "RVOL Mult" in _rp_display_df.columns
+                            and (_rp_display_df["RVOL Mult"] > 1.0).any()
+                        )
+                        if _rp_has_rvol_mult:
+                            st.caption(
+                                "🟡 **RVOL Mult** — gold cell = 1.25× bonus (RVOL 2–3×); "
+                                "bright gold = 1.50× bonus (RVOL ≥ 3×). "
+                                "Multiplier is stacked on top of IB-range and P-tier size factors."
                             )
 
     st.markdown("---")

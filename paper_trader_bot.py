@@ -1086,6 +1086,23 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"(TCS {_tcs_val:.0f}, {_scan_type_v}) → risk ${risk_dollars:,.0f}"
         )
 
+    # ── RVOL size bonus ────────────────────────────────────────────────────────
+    # High participation → higher expected follow-through → scale up size.
+    # RVOL ≥ 3.0 → 1.50×;  RVOL 2.0-2.99 → 1.25×;  RVOL < 2.0 → 1.00× (no bonus).
+    _rvol_mult = 1.0
+    if _rvol_val is not None:
+        _rvol_f = float(_rvol_val)
+        if _rvol_f >= 3.0:
+            _rvol_mult = 1.5
+        elif _rvol_f >= 2.0:
+            _rvol_mult = 1.25
+    if _rvol_mult != 1.0:
+        risk_dollars = round(risk_dollars * _rvol_mult, 2)
+        log.info(
+            f"  [{ticker}] RVOL {float(_rvol_val):.2f}× → RVOL size bonus "
+            f"{_rvol_mult:.2f}× → risk ${risk_dollars:,.0f}"
+        )
+
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
     # DISABLED 2026-04-18: backtest showed removing this filter nearly doubled
     # annual return (+20%+ weekly) — counter-VWAP setups that pass TCS≥50 +
@@ -1165,7 +1182,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     "alpaca_qty":       qty,
                     "order_placed_at":  datetime.utcnow().isoformat(),
                     "skip_reason":      "order_placed",
-                    "rvol_size_mult":   _rvol_mult,
+                    "rvol_mult":        _rvol_mult,
                 }).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date", ""))).eq("ticker", ticker).execute()
             except Exception as _patch_err:
                 log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")

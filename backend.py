@@ -8088,6 +8088,9 @@ def run_pending_migrations() -> dict:
         # Realized R outcome from actual Alpaca fill prices (entry fill vs. exit fill).
         # Written by _force_close_all_positions() after the 3:30 PM EOD force-close.
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_actual NUMERIC",
+        # RVOL size bonus multiplier — written by _place_order_for_setup() in paper_trader_bot.py
+        # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol_mult REAL DEFAULT 1.0",
     ]
 
     ran = 0
