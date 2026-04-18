@@ -30700,12 +30700,19 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         if supabase and _AUTH_USER_ID:
             _gate_resp = (
                 supabase.table("paper_trades")
-                .select("trade_date,win_loss")
+                .select("trade_date,win_loss,tcs,ib_range_pct")
                 .eq("user_id", _AUTH_USER_ID)
                 .in_("win_loss", ["Win", "Loss"])
+                .gte("tcs", 50)
                 .execute()
             )
             _gate_rows = _gate_resp.data or []
+        # Apply IB range filter in-memory (≤ 10%) — exclude only rows where it's
+        # explicitly stored AND fails the threshold; rows with no IB data pass through.
+        _gate_rows = [
+            r for r in _gate_rows
+            if r.get("ib_range_pct") is None or float(r["ib_range_pct"]) < 10.0
+        ]
 
         _gate_settled  = len(_gate_rows)
         _gate_wins     = sum(1 for r in _gate_rows if r.get("win_loss") == "Win")
@@ -30767,12 +30774,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">'
 
             f'<div>'
-            f'<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;letter-spacing:1px;">Settled Trades</div>'
+            f'<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;letter-spacing:1px;">Filtered Trades</div>'
             f'<div style="font-size:22px;font-weight:700;color:{_g_t_c};">{_gate_settled}'
             f'<span style="font-size:13px;color:#546e7a;"> / {_GATE_TRADES}</span></div>'
             f'{_gate_bar(_gate_settled, _GATE_TRADES, _g_t_ok)}'
             f'<div style="font-size:10px;color:#546e7a;margin-top:3px;">'
-            f'{"✓ Gate cleared" if _g_t_ok else f"{_GATE_TRADES - _gate_settled} more needed"}</div>'
+            f'{"✓ Gate cleared" if _g_t_ok else f"{_GATE_TRADES - _gate_settled} more needed"}'
+            f' · TCS ≥ 50 + IB &lt; 10%</div>'
             f'</div>'
 
             f'<div>'
