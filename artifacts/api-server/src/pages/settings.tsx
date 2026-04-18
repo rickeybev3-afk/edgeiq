@@ -238,6 +238,8 @@ export default function Settings() {
     saved: false,
   });
 
+  const [activeSection, setActiveSection] = useState<string>("trading-mode");
+
   const [credAlerts, setCredAlerts] = useState<CredentialAlertsState>({
     enabled: true,
     loading: true,
@@ -707,6 +709,33 @@ export default function Settings() {
     [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading]
   );
 
+  useEffect(() => {
+    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers"];
+    const visibleSections = new Set<string>();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            visibleSections.add(entry.target.id);
+          } else {
+            visibleSections.delete(entry.target.id);
+          }
+        });
+        const first = sectionIds.find((id) => visibleSections.has(id));
+        if (first) setActiveSection(first);
+      },
+      { rootMargin: "-10% 0px -60% 0px", threshold: 0 }
+    );
+
+    sectionIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
   async function handleChange(newMode: TradingMode) {
     setState((s) => ({ ...s, saving: true, error: null, saved: false }));
     try {
@@ -1082,18 +1111,30 @@ export default function Settings() {
             </div>
           )}
 
-          <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-            <span style={{ fontSize: "11px", color: "#334155", fontWeight: 600, marginRight: "2px" }}>Jump to:</span>
-            <NavPill href="#trading-mode" label="Trading Mode" />
-            <NavPill href="#credential-alerts" label="Subscriber Prefs" />
-            <NavPill href="#subscriber-opt-out" label="Credential Status" />
-            <NavPill href="#backfill-health" label="Backfill Health" />
-            <NavPill href="#context-dryrun" label="Context Dry-Run" />
-            <NavPill href="#paper-lookback" label="Paper Lookback" />
-            <NavPill href="#backfill-heartbeat-window" label="Alert Window" />
-            <NavPill href="#eod-recalc-health" label="EOD Recalc" />
-            <NavPill href="#rvol-size-tiers" label="RVOL Tiers" />
-          </div>
+          <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid #1a2332", display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
+            <span style={{ fontSize: "10px", fontWeight: 600, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginRight: "2px" }}>
+              Jump to
+            </span>
+            {(
+              [
+                { id: "trading-mode", label: "Trading Mode" },
+                { id: "credential-alerts", label: "Subscriber Prefs" },
+                { id: "subscriber-opt-out", label: "Credential Status" },
+                { id: "backfill-health", label: "Backfill Health" },
+                { id: "context-dryrun", label: "Context Dry-Run" },
+                { id: "paper-lookback", label: "Paper Lookback" },
+                { id: "backfill-heartbeat-window", label: "Alert Window" },
+                { id: "eod-recalc-health", label: "EOD Recalc" },
+                { id: "rvol-size-tiers", label: "RVOL Tiers" },
+              ] as const
+            ).map(({ id, label }) => (
+              <NavPill
+                key={id}
+                href={`#${id}`}
+                label={label}
+                active={activeSection === id}
+              />
+            ))}
           </div>
         </section>
 
@@ -2585,7 +2626,7 @@ function ToggleSwitch({
   );
 }
 
-function NavPill({ href, label }: { href: string; label: string }) {
+function NavPill({ href, label, active }: { href: string; label: string; active?: boolean }) {
   const [hovered, setHovered] = useState(false);
   return (
     <a
@@ -2595,16 +2636,17 @@ function NavPill({ href, label }: { href: string; label: string }) {
       style={{
         display: "inline-block",
         fontSize: "11px",
-        fontWeight: 500,
-        color: hovered ? "#93c5fd" : "#64748b",
-        background: hovered ? "rgba(147,197,253,0.08)" : "transparent",
-        border: `1px solid ${hovered ? "#3b82f6" : "#1e2d40"}`,
+        fontWeight: active ? 700 : 500,
+        color: active ? "#e2e8f0" : hovered ? "#93c5fd" : "#64748b",
+        background: active ? "rgba(59,130,246,0.15)" : hovered ? "rgba(147,197,253,0.08)" : "transparent",
+        border: `1px solid ${active ? "#3b82f6" : hovered ? "#3b82f6" : "#1e2d40"}`,
         borderRadius: "999px",
         padding: "2px 9px",
         textDecoration: "none",
-        transition: "color 0.12s, background 0.12s, border-color 0.12s",
+        transition: "color 0.15s, background 0.15s, border-color 0.15s",
         cursor: "pointer",
         whiteSpace: "nowrap",
+        letterSpacing: "0.02em",
       }}
     >
       {label}
