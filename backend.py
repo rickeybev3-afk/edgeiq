@@ -8896,6 +8896,13 @@ def get_backtest_pace_target(
         scope        – human-readable description of the active filters
         is_fallback  – True when no data exists and defaults are returned
 
+    Args:
+        user_id    – filter rows to this user (empty = all users)
+        start_date – ISO date string (YYYY-MM-DD); only include rows where
+                     sim_date >= start_date.  Empty string = no lower bound.
+        end_date   – ISO date string (YYYY-MM-DD); only include rows where
+                     sim_date <= end_date.  Empty string = no upper bound.
+
     Falls back to {"per_day": 0.81, "per_year": 202, "is_fallback": True}
     on any error or when the table has no qualifying rows.
     """
