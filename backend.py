@@ -6411,12 +6411,16 @@ def reconcile_alpaca_fills(
     secret_key: str = "",
 ) -> dict:
     """Fetch today's filled orders from Alpaca and patch alpaca_fill_price
-    on matching paper_trades rows (matched by ticker + trade_date + alpaca_order_id).
+    and alpaca_exit_fill_price on matching paper_trades rows.
 
-    Returns dict: matched (int), unmatched (int), errors (int).
+    - alpaca_fill_price      : entry fill (parent bracket order filled_avg_price)
+    - alpaca_exit_fill_price : exit fill from a filled take-profit or stop-loss leg
+
+    Matching is by ticker + trade_date + user_id.
+    Returns dict: matched (int), unmatched (int), errors (int), exit_fills (int).
     """
     if not supabase:
-        return {"matched": 0, "unmatched": 0, "errors": 0}
+        return {"matched": 0, "unmatched": 0, "errors": 0, "exit_fills": 0}
 
     fills, err = fetch_alpaca_fills(
         api_key=api_key or ALPACA_API_KEY,
@@ -6425,19 +6429,38 @@ def reconcile_alpaca_fills(
         trade_date=trade_date,
     )
     if err:
-        return {"matched": 0, "unmatched": 0, "errors": 1, "error": err}
+        return {"matched": 0, "unmatched": 0, "errors": 1, "error": err, "exit_fills": 0}
 
-    matched = unmatched = errors = 0
+    matched = unmatched = errors = exit_fills = 0
     for fill in fills:
         sym        = (fill.get("symbol") or "").upper()
-        order_id   = fill.get("id", "")
         fill_price = float(fill.get("filled_avg_price") or 0)
         if not sym or fill_price <= 0:
             continue
+
+        # ── Extract exit fill from bracket legs ───────────────────────────────
+        # Alpaca bracket orders carry child legs in the `legs` array.
+        # Each leg has a `type` ("limit" = take-profit, "stop"/"stop_limit" = stop-loss)
+        # and a `status`. When exactly one leg is filled the other is cancelled.
+        exit_fill_price: float | None = None
+        legs = fill.get("legs") or []
+        for leg in legs:
+            leg_status = (leg.get("status") or "").lower()
+            if leg_status == "filled":
+                leg_price = float(leg.get("filled_avg_price") or 0)
+                if leg_price > 0:
+                    exit_fill_price = leg_price
+                    exit_fills += 1
+                    break  # only one leg fills in a bracket
+
+        patch: dict = {"alpaca_fill_price": fill_price}
+        if exit_fill_price is not None:
+            patch["alpaca_exit_fill_price"] = exit_fill_price
+
         try:
             (
                 supabase.table("paper_trades")
-                .update({"alpaca_fill_price": fill_price})
+                .update(patch)
                 .eq("user_id", user_id)
                 .eq("trade_date", trade_date)
                 .eq("ticker", sym)
@@ -6447,7 +6470,7 @@ def reconcile_alpaca_fills(
         except Exception:
             errors += 1
 
-    return {"matched": matched, "unmatched": unmatched, "errors": errors}
+    return {"matched": matched, "unmatched": unmatched, "errors": errors, "exit_fills": exit_fills}
 
 
 def match_fills_to_roundtrips(fills: list) -> list:
@@ -7910,6 +7933,9 @@ def run_pending_migrations() -> dict:
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS skip_reason TEXT",
         # paper_trades pnl_r_sim — needed by mv_paper_tiered_pnl_summary materialized view
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT",
+        # Actual exit fill price from Alpaca bracket order legs (take-profit or stop-loss child fill).
+        # When present, used instead of close_price (EOD proxy) for P&L calculation.
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS alpaca_exit_fill_price NUMERIC",
     ]
 
     ran = 0

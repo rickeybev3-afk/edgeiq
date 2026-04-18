@@ -22320,6 +22320,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         _ao_sim_r_vals:   list = []
         _ao_sim_pnl = 0.0
         _ao_pnl_series:   list = []  # list of (trade_date_str, dollar_pnl) for cumulative chart
+        _ao_exit_fill_count = 0   # rows that used an actual Alpaca exit fill (not EOD proxy)
         if "alpaca_fill_price" in _ao_df.columns and "alpaca_qty" in _ao_df.columns:
             for _, _pnl_row in _ao_df[_ao_has_fill].iterrows():
                 try:
@@ -22331,11 +22332,17 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     _pnl_ib_l    = float(_pnl_row.get("ib_low") or 0)
                     _pnl_range   = _pnl_ib_h - _pnl_ib_l if _pnl_ib_h > 0 and _pnl_ib_l > 0 else 0.0
                     _pnl_is_bull = "bullish" in _pnl_dir.lower() or "long" in _pnl_dir.lower()
-                    if _pnl_fill > 0 and _pnl_qty > 0 and _pnl_eod > 0:
-                        # Realized $ P&L (fill entry, EOD exit proxy)
+                    # Use actual Alpaca exit fill if available, else fall back to EOD close
+                    _pnl_exit_raw = _pnl_row.get("alpaca_exit_fill_price")
+                    _pnl_exit     = float(_pnl_exit_raw) if _pnl_exit_raw else _pnl_eod
+                    _pnl_has_exit_fill = bool(_pnl_exit_raw and float(_pnl_exit_raw) > 0)
+                    if _pnl_has_exit_fill:
+                        _ao_exit_fill_count += 1
+                    if _pnl_fill > 0 and _pnl_qty > 0 and _pnl_exit > 0:
+                        # Realized $ P&L (fill entry → actual exit or EOD proxy)
                         _order_pnl = (
-                            _pnl_qty * (_pnl_eod - _pnl_fill) if _pnl_is_bull
-                            else _pnl_qty * (_pnl_fill - _pnl_eod)
+                            _pnl_qty * (_pnl_exit - _pnl_fill) if _pnl_is_bull
+                            else _pnl_qty * (_pnl_fill - _pnl_exit)
                         )
                         _ao_realized_pnl += _order_pnl
                         _ao_pnl_series.append((
@@ -22344,21 +22351,21 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                             str(_pnl_row.get("ticker", "")),
                         ))
                         if _pnl_range > 0:
-                            # Fill-based R
+                            # Fill-based R (uses actual exit when available)
                             _fr = (
-                                (_pnl_eod - _pnl_fill) / _pnl_range if _pnl_is_bull
-                                else (_pnl_fill - _pnl_eod) / _pnl_range
+                                (_pnl_exit - _pnl_fill) / _pnl_range if _pnl_is_bull
+                                else (_pnl_fill - _pnl_exit) / _pnl_range
                             )
                             _ao_fill_r_vals.append(_fr)
-                            # Sim R using IB edge as sim entry
+                            # Sim R using IB edge as sim entry (same exit)
                             _sim_e = _pnl_ib_h if _pnl_is_bull else _pnl_ib_l
                             _sr2   = (
-                                (_pnl_eod - _sim_e) / _pnl_range if _pnl_is_bull
-                                else (_sim_e - _pnl_eod) / _pnl_range
+                                (_pnl_exit - _sim_e) / _pnl_range if _pnl_is_bull
+                                else (_sim_e - _pnl_exit) / _pnl_range
                             )
                             _ao_sim_r_vals.append(_sr2)
                             # Sim $ P&L
-                            _ao_sim_pnl += _pnl_qty * (_pnl_eod - _sim_e) if _pnl_is_bull else _pnl_qty * (_sim_e - _pnl_eod)
+                            _ao_sim_pnl += _pnl_qty * (_pnl_exit - _sim_e) if _pnl_is_bull else _pnl_qty * (_sim_e - _pnl_exit)
                 except Exception:
                     pass
 
@@ -22407,11 +22414,19 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         with _ao_c5:
             _ao_pnl_color = "#66bb6a" if _ao_realized_pnl >= 0 else "#ef5350"
             _ao_pnl_s = f'{"+" if _ao_realized_pnl >= 0 else ""}${_ao_realized_pnl:,.2f}'
+            # Label: "Filled P&L" when any row has a real exit; "(EOD Est)" when all are proxy
+            _ao_all_proxy  = _ao_exit_fill_count == 0
+            _ao_pnl_label  = "Filled P&L (EOD Est)" if _ao_all_proxy else "Filled P&L"
+            _ao_pnl_note   = (
+                "fill entry → close price"
+                if _ao_all_proxy
+                else f"fill entry → actual exit ({_ao_exit_fill_count} real, {max(0, _ao_total_filled - _ao_exit_fill_count)} EOD)"
+            )
             st.markdown(
                 f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
-                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Filled P&L (EOD Est)</div>'
+                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">{_ao_pnl_label}</div>'
                 f'<div style="font-size:24px;font-weight:700;color:{_ao_pnl_color};">{_ao_pnl_s}</div>'
-                f'<div style="font-size:11px;color:#546e7a;">fill entry → close price</div>'
+                f'<div style="font-size:11px;color:#546e7a;">{_ao_pnl_note}</div>'
                 f'</div>', unsafe_allow_html=True
             )
 
@@ -22549,7 +22564,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     f'</div>',
                     unsafe_allow_html=True,
                 )
-            st.caption(f"Aggregates across {_ao_r_n} filled order{'s' if _ao_r_n != 1 else ''} with valid IB data. ΔR = fill − sim (negative = slippage hurt). EOD-proxy only.")
+            st.caption(f"Aggregates across {_ao_r_n} filled order{'s' if _ao_r_n != 1 else ''} with valid IB data. Exit = actual Alpaca bracket-leg fill when recorded, otherwise EOD close proxy. ΔR = fill − sim (negative = slippage hurt).")
             st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Signal → Order funnel breakdown ────────────────────────────────
@@ -22670,27 +22685,35 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                         _ord_status   = "Unfilled"
                         _ord_stat_col = "#78909c"
 
-                    # ── EOD close ───────────────────────────────────────────
+                    # ── EOD close (fallback exit proxy) ─────────────────────
                     _eod_px = float(_ord.get("close_price") or 0)
 
-                    # ── Fill-based EOD R (actual fill entry, EOD exit proxy) ─
+                    # ── Actual exit fill (bracket take-profit or stop leg) ───
+                    # Use alpaca_exit_fill_price when Alpaca recorded a real exit;
+                    # fall back to EOD close price when it is not yet available.
+                    _exit_fill_raw  = _ord.get("alpaca_exit_fill_price")
+                    _exit_fill_f    = float(_exit_fill_raw) if _exit_fill_raw else 0.0
+                    _using_exit_fill = _exit_fill_f > 0
+                    _exit_px         = _exit_fill_f if _using_exit_fill else _eod_px
+
+                    # ── Fill-based R (entry fill → actual exit or EOD proxy) ─
                     _ord_r_s  = "—"
                     _r_val    = None
-                    if _ord_fill_f > 0 and _ib_range > 0 and _eod_px > 0:
+                    if _ord_fill_f > 0 and _ib_range > 0 and _exit_px > 0:
                         _r_val = (
-                            (_eod_px - _ord_fill_f) / _ib_range if _is_bull
-                            else (_ord_fill_f - _eod_px) / _ib_range
+                            (_exit_px - _ord_fill_f) / _ib_range if _is_bull
+                            else (_ord_fill_f - _exit_px) / _ib_range
                         )
                         _r_col   = "#66bb6a" if _r_val >= 0 else "#ef5350"
                         _ord_r_s = f'<span style="color:{_r_col};font-weight:600;">{_r_val:+.2f}R</span>'
 
-                    # ── Sim R (using IB edge as entry, same EOD exit) ────────
+                    # ── Sim R (using IB edge as entry, same exit price) ──────
                     _sim_r_s = "—"
                     _sim_r   = None
-                    if _sim_entry > 0 and _ib_range > 0 and _eod_px > 0:
+                    if _sim_entry > 0 and _ib_range > 0 and _exit_px > 0:
                         _sim_r = (
-                            (_eod_px - _sim_entry) / _ib_range if _is_bull
-                            else (_sim_entry - _eod_px) / _ib_range
+                            (_exit_px - _sim_entry) / _ib_range if _is_bull
+                            else (_sim_entry - _exit_px) / _ib_range
                         )
                         _sr_col  = "#66bb6a" if _sim_r >= 0 else "#ef5350"
                         _sim_r_s = f'<span style="color:{_sr_col};">{_sim_r:+.2f}R</span>'
@@ -22702,15 +22725,20 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                         _dc = "#66bb6a" if _dr >= 0 else "#ef5350"
                         _delta_r_s = f'<span style="color:{_dc};font-size:11px;">{_dr:+.2f}R</span>'
 
-                    # ── Dollar P&L (fill-based, EOD proxy) ──────────────────
+                    # ── Dollar P&L (actual exit fill when available, else EOD proxy) ──
                     _pnl_s = "—"
-                    if _ord_fill_f > 0 and _ord_qty_f > 0 and _eod_px > 0:
+                    if _ord_fill_f > 0 and _ord_qty_f > 0 and _exit_px > 0:
                         _dollar_pnl = (
-                            _ord_qty_f * (_eod_px - _ord_fill_f) if _is_bull
-                            else _ord_qty_f * (_ord_fill_f - _eod_px)
+                            _ord_qty_f * (_exit_px - _ord_fill_f) if _is_bull
+                            else _ord_qty_f * (_ord_fill_f - _exit_px)
                         )
                         _pc = "#66bb6a" if _dollar_pnl >= 0 else "#ef5350"
-                        _pnl_s = f'<span style="color:{_pc};font-weight:600;">{"+" if _dollar_pnl>=0 else ""}${_dollar_pnl:,.2f}</span>'
+                        # Append a small "~" marker for rows still using the EOD proxy
+                        _pnl_proxy_mark = "" if _using_exit_fill else '<span style="color:#546e7a;font-size:10px;" title="EOD close price proxy — actual exit fill not yet recorded"> ~</span>'
+                        _pnl_s = (
+                            f'<span style="color:{_pc};font-weight:600;">{"+" if _dollar_pnl>=0 else ""}${_dollar_pnl:,.2f}</span>'
+                            f'{_pnl_proxy_mark}'
+                        )
 
                     _ord_rows_html += (
                         f'<tr style="border-bottom:1px solid #1e2a3a;">'
@@ -22745,7 +22773,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Fill $</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Qty</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">$ P&L</th>'
-                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">EOD R</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Exit R</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Sim R</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">ΔR</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Order ID</th>'
@@ -22754,7 +22782,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     f'</table></div>',
                     unsafe_allow_html=True,
                 )
-                st.caption("EOD R = fill entry → EOD close / IB range. Sim R = IB edge → EOD close / IB range. ΔR = slippage impact. $ P&L is EOD-proxy until actual exit fill is available.")
+                st.caption("R = fill entry → exit / IB range. Exit is actual Alpaca bracket-leg fill when available, otherwise EOD close proxy (marked ~ in $ P&L). Sim R uses IB edge as entry. ΔR = slippage impact.")
 
     else:
         st.info("No paper trades logged yet — the funnel will populate as the bot runs.", icon="📋")
