@@ -12267,7 +12267,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _rp_marginal_wins_all   = 0
                             _rp_marginal_losses_all = 0
 
-                        _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3 = st.columns([2, 1, 1])
+                        _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3, _rp_log_fcol4 = st.columns([2, 1, 1, 1])
                         with _rp_log_fcol1:
                             if "rp_log_ticker_filter" not in st.session_state:
                                 st.session_state["rp_log_ticker_filter"] = st.query_params.get("rp_log_ticker", "")
@@ -12303,6 +12303,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             if st.query_params.get("rp_log_neutral") != ("1" if _rp_log_show_neutral else "0"):
                                 st.query_params["rp_log_neutral"] = "1" if _rp_log_show_neutral else "0"
+                        with _rp_log_fcol4:
+                            if "rp_log_boosted_only" not in st.session_state:
+                                st.session_state["rp_log_boosted_only"] = (
+                                    st.query_params.get("rp_log_boosted", "0") == "1"
+                                )
+                            _rp_log_boosted_only = st.checkbox(
+                                "RVOL boosted only",
+                                key="rp_log_boosted_only",
+                            )
+                            if st.query_params.get("rp_log_boosted") != ("1" if _rp_log_boosted_only else "0"):
+                                st.query_params["rp_log_boosted"] = "1" if _rp_log_boosted_only else "0"
 
                         if _rp_bot_mode:
                             _rp_marg_label = (
@@ -12394,6 +12405,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             _rp_display_df = _rp_display_df[_rp_marginal_mask]
 
+                        # ── RVOL boosted filter ───────────────────────────────
+                        if _rp_log_boosted_only and "RVOL Mult" in _rp_display_df.columns:
+                            _rp_display_df = _rp_display_df[
+                                pd.to_numeric(_rp_display_df["RVOL Mult"], errors="coerce") > 1.0
+                            ]
+
                         # ── Date range filtering ──────────────────────────────
                         _rp_date_col = "sim_date" if "sim_date" in _rp_display_df.columns else (
                             "trade_date" if "trade_date" in _rp_display_df.columns else None
@@ -12420,11 +12437,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             or _rp_log_wl_filter != "All"
                             or not _rp_log_show_neutral
                             or _rp_log_only_marginal
+                            or _rp_log_boosted_only
                             or bool(_rp_log_from_str.strip())
                             or bool(_rp_log_to_str.strip())
                         )
                         if _rp_any_filter_active:
-                            st.caption(f"Showing {len(_rp_display_df)} of {len(_rp_df)} trades")
+                            if _rp_log_boosted_only and "RVOL Mult" in _rp_df.columns:
+                                _rp_total_boosted = int(
+                                    (pd.to_numeric(_rp_df["RVOL Mult"], errors="coerce") > 1.0).sum()
+                                )
+                                st.caption(
+                                    f"Showing {len(_rp_display_df)} of {_rp_total_boosted} boosted trades"
+                                )
+                            else:
+                                st.caption(f"Showing {len(_rp_display_df)} of {len(_rp_df)} trades")
 
                         if len(_rp_display_df) == 0:
                             st.info("No trades match the current filters.")
