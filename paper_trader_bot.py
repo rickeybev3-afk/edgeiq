@@ -4153,11 +4153,27 @@ def main():
             except Exception as _cue:
                 log.warning(f"[Catch-up] Intraday scan failed: {_cue}")
             _intraday_done = True
-        if _su_hm >= 16 * 60 + 20:
+        if _su_hm >= 16 * 60 + 20 and not _eod_done:
+            log.info("[Catch-up] Past 4:20 PM — running EOD update (idempotent guard inside)...")
+            try:
+                eod_update()
+            except Exception as _cue:
+                log.warning(f"[Catch-up] EOD update failed: {_cue}")
             _eod_done = True
-        if _su_hm >= 16 * 60 + 25:
+        if _su_hm >= 16 * 60 + 25 and not _verify_done:
+            log.info("[Catch-up] Past 4:25 PM — running nightly verify (idempotent guard inside)...")
+            try:
+                nightly_verify()
+            except Exception as _cue:
+                log.warning(f"[Catch-up] Nightly verify failed: {_cue}")
             _verify_done = True
-        if _su_hm >= 16 * 60 + 30:
+        if _su_hm >= 16 * 60 + 30 and not _recalibration_done:
+            log.info("[Catch-up] Past 4:30 PM — running recalibration (idempotent guard inside)...")
+            try:
+                nightly_recalibration()
+                update_daily_build_notes()
+            except Exception as _cue:
+                log.warning(f"[Catch-up] Recalibration failed: {_cue}")
             _recalibration_done = True
         if _su_hm >= 16 * 60 + 35:
             # Past 4:35 PM — attempt dispatch now; _dispatch_scheduled_divergence_alert
@@ -4249,7 +4265,7 @@ def main():
                 premarket_scan()
                 _premarket_done = True
 
-            # 11:59 PM — regenerate PDF exports from markdown docs (every day)
+            # 11:59 PM — regenerate PDF exports + update build notes (every day)
             if (
                 not _pdf_export_done
                 and now_et.hour == 23
@@ -4263,6 +4279,11 @@ def main():
                         log.info(f"[PDF] {r}")
                 except Exception as _pdfe:
                     log.warning(f"PDF export failed (non-fatal): {_pdfe}")
+                try:
+                    update_daily_build_notes()
+                    log.info("11:59 PM — Build notes updated.")
+                except Exception as _bne:
+                    log.warning(f"Build notes update (11:59 PM) failed (non-fatal): {_bne}")
                 _pdf_export_done = True
 
             time.sleep(60)
