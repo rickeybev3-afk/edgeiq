@@ -5716,6 +5716,55 @@ with st.sidebar:
         else:
             st.warning("Sign in to save per-user alert recipients.", icon="⚠️")
 
+    if st.button("🔔 Send test alert", key="_div_test_alert_btn", use_container_width=True):
+        if not _div_uid:
+            st.warning("Sign in to send a test alert.", icon="⚠️")
+        else:
+            _test_tg_chat  = _div_tg_input.strip()
+            _test_dc_hook  = _div_dc_input.strip()
+            _test_tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+            _test_errs = []
+            if _test_tg_chat:
+                try:
+                    int(_test_tg_chat)
+                except ValueError:
+                    _test_errs.append("Telegram Chat ID must be a numeric value (e.g. -1001234567890).")
+                if not _test_tg_token:
+                    _test_errs.append("TELEGRAM_BOT_TOKEN is not configured in Secrets — Telegram alerts cannot be sent.")
+            if _test_dc_hook and not _test_dc_hook.startswith("https://discord.com/api/webhooks/"):
+                _test_errs.append("Discord Webhook URL must start with https://discord.com/api/webhooks/")
+            if not _test_tg_chat and not _test_dc_hook:
+                st.warning("Enter a Telegram Chat ID and/or Discord Webhook URL above before sending a test alert.", icon="⚠️")
+            elif _test_errs:
+                for _test_err in _test_errs:
+                    st.error(_test_err, icon="⚠️")
+            else:
+                _test_result = send_test_alert(
+                    tg_token=_test_tg_token,
+                    tg_chat_id=_test_tg_chat,
+                    discord_webhook_url=_test_dc_hook,
+                )
+                _test_parts = []
+                if _test_tg_chat:
+                    if _test_result.get("telegram"):
+                        _test_parts.append("Telegram ✅")
+                    else:
+                        _test_parts.append("Telegram ❌")
+                if _test_dc_hook:
+                    if _test_result.get("discord"):
+                        _test_parts.append("Discord ✅")
+                    else:
+                        _test_parts.append("Discord ❌")
+                _all_ok = (
+                    (not _test_tg_chat or _test_result.get("telegram")) and
+                    (not _test_dc_hook  or _test_result.get("discord"))
+                )
+                _test_summary = "  |  ".join(_test_parts)
+                if _all_ok:
+                    st.success(f"Test alert sent — {_test_summary}", icon="🔔")
+                else:
+                    st.error(f"Test alert failed for one or more destinations — {_test_summary}. Check your credentials.", icon="⚠️")
+
     st.markdown("---")
     _MODE_OPTS = ["📅 Historical", "🎬 Replay", "🔴 Live Stream"]
     if "dash_mode" not in st.session_state:

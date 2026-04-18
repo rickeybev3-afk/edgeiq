@@ -12238,6 +12238,68 @@ def send_divergence_alert(
     return results
 
 
+def send_test_alert(
+    tg_token: str = "",
+    tg_chat_id: str = "",
+    discord_webhook_url: str = "",
+) -> dict:
+    """Send a short test message to Telegram and/or Discord to verify the connection.
+
+    Parameters
+    ----------
+    tg_token / tg_chat_id : Telegram credentials (read from env if blank)
+    discord_webhook_url : Discord webhook URL
+
+    Returns
+    -------
+    dict with keys ``telegram`` and ``discord`` (True = sent, False = failed/skipped)
+    """
+    tg_token = (tg_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")).strip()
+    tg_chat_id = (tg_chat_id or "").strip()
+    discord_webhook_url = (discord_webhook_url or "").strip()
+
+    results = {"telegram": False, "discord": False}
+
+    if tg_token and tg_chat_id:
+        _msg = (
+            "✅ <b>EdgeIQ — Test Alert</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "EdgeIQ divergence alerts are now routed to this channel."
+        )
+        try:
+            _resp = requests.post(
+                f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                data={"chat_id": tg_chat_id, "text": _msg, "parse_mode": "HTML"},
+                timeout=10,
+            )
+            results["telegram"] = _resp.status_code == 200
+        except Exception:
+            results["telegram"] = False
+
+    if discord_webhook_url and discord_webhook_url.startswith("https://discord.com/api/webhooks/"):
+        _payload = {
+            "username": "VolumeProfile Bot",
+            "embeds": [
+                {
+                    "title": "✅ EdgeIQ — Test Alert",
+                    "description": "EdgeIQ divergence alerts are now routed to this channel.",
+                    "color": 0x00C853,
+                }
+            ],
+        }
+        try:
+            _resp = requests.post(
+                discord_webhook_url,
+                json=_payload,
+                timeout=10,
+            )
+            results["discord"] = _resp.status_code in (200, 204)
+        except Exception:
+            results["discord"] = False
+
+    return results
+
+
 def score_playbook_tickers(rows: list, api_key: str, secret_key: str,
                            feed: str = "iex", max_tickers: int = 20,
                            user_id: str = "",
