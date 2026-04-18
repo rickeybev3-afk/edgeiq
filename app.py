@@ -81,7 +81,7 @@ def _cached_load_journal(user_id: str = ""):
 def _cached_load_accuracy_tracker(user_id: str = ""):
     return load_accuracy_tracker(user_id=user_id)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=10)
 def _cached_load_paper_trades(user_id: str = "", days: int = 365):
     return load_paper_trades(user_id=user_id, days=days)
 
@@ -93,11 +93,11 @@ def _cached_load_user_prefs(user_id: str = ""):
 def _cached_load_watchlist(user_id: str = ""):
     return load_watchlist(user_id=user_id)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=30)
 def _cached_load_watchlist_predictions(user_id: str = "", pred_date=None):
     return load_watchlist_predictions(user_id=user_id, pred_date=pred_date)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=10)
 def _cached_load_eod_notes(user_id: str = "", limit: int = 60):
     return load_eod_notes(user_id=user_id, limit=limit)
 
@@ -117,11 +117,11 @@ def _cached_load_tcs_alert_thresholds():
 def _cached_load_ib_range_pct_threshold():
     return load_ib_range_pct_threshold()
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=10)
 def _cached_load_tcs_threshold_history(days: int = 14):
     return load_tcs_threshold_history(days=days)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=5)
 def _cached_load_tcs_thresholds(default: int = 50):
     return load_tcs_thresholds(default=default)
 
@@ -133,7 +133,7 @@ def _cached_load_high_conviction_log():
 def _cached_load_brain_weights(user_id: str = ""):
     return load_brain_weights(user_id=user_id)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=128)
 def _cached_get_backtest_pace_target(
     user_id: str = "",
     ticker: str = "",
@@ -159,7 +159,7 @@ def _cached_load_sa_journal():
 def _cached_load_ranking_accuracy(user_id: str = ""):
     return load_ranking_accuracy(user_id=user_id)
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False, max_entries=50)
 def _cached_count_missing_close_price_in_range(
     start_date: str | None,
     end_date: str | None,
@@ -173,11 +173,11 @@ def _cached_count_missing_close_price_in_range(
         table=table,
     )
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=30)
 def _cached_load_ticker_rankings(user_id: str = "", rating_date=None):
     return load_ticker_rankings(user_id=user_id, rating_date=rating_date)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False, max_entries=30)
 def _cached_load_cognitive_delta_today(user_id: str = "", trade_date=None):
     return load_cognitive_delta_today(user_id=user_id, trade_date=trade_date)
 
