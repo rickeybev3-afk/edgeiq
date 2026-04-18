@@ -29593,6 +29593,102 @@ function _bqCopyShareLink() {
             )
             st.plotly_chart(_fig_pnl, use_container_width=True, config={"displayModeBar": False})
 
+        # ── RVOL Boost Win-Rate Breakdown ─────────────────────────────────────
+        if "rvol_size_mult" in _verified.columns and "win_loss" in _verified.columns:
+            _rvol_wr_df = _verified.copy()
+            _rvol_wr_df["_rvol_num"] = pd.to_numeric(_rvol_wr_df["rvol_size_mult"], errors="coerce")
+            _rvol_wr_df["_is_win"]   = _rvol_wr_df["win_loss"].isin(["W", "Win"])
+            _r_col = (
+                "tiered_pnl_r" if "tiered_pnl_r" in _rvol_wr_df.columns else
+                "eod_pnl_r"    if "eod_pnl_r"    in _rvol_wr_df.columns else
+                None
+            )
+
+            def _rvol_tier_stats(subset):
+                n = len(subset)
+                if n == 0:
+                    return None
+                wins  = int(subset["_is_win"].sum())
+                wr    = wins / n * 100
+                avg_r = (
+                    pd.to_numeric(subset[_r_col], errors="coerce").mean()
+                    if _r_col else float("nan")
+                )
+                return {"n": n, "wins": wins, "wr": wr, "avg_r": avg_r}
+
+            _boosted_stats  = _rvol_tier_stats(_rvol_wr_df[_rvol_wr_df["_rvol_num"] > 1.0])
+            _baseline_stats = _rvol_tier_stats(_rvol_wr_df[((_rvol_wr_df["_rvol_num"] - 1.0).abs() < 1e-9)])
+
+            if _boosted_stats is not None or _baseline_stats is not None:
+                def _rvol_card_html(label, icon, stats, accent):
+                    if stats is None:
+                        return (
+                            f'<div style="flex:1;min-width:160px;background:#0d1a2a;border:1px solid #1a2744;'
+                            f'border-radius:8px;padding:12px 16px;text-align:center;">'
+                            f'<div style="font-size:9px;color:#37474f;text-transform:uppercase;'
+                            f'letter-spacing:1.2px;font-family:monospace;margin-bottom:4px;">'
+                            f'{icon} {label}</div>'
+                            f'<div style="font-size:20px;font-weight:800;color:#37474f;font-family:monospace;">—</div>'
+                            f'<div style="font-size:9px;color:#263260;margin-top:2px;">no trades</div>'
+                            f'</div>'
+                        )
+                    wr_col = "#66bb6a" if stats["wr"] >= 55 else "#ffa726" if stats["wr"] >= 45 else "#ef5350"
+                    avg_r  = stats["avg_r"]
+                    r_str  = f"{avg_r:+.2f}R" if not pd.isna(avg_r) else "—"
+                    r_col  = (
+                        "#66bb6a" if not pd.isna(avg_r) and avg_r > 0
+                        else "#ef5350" if not pd.isna(avg_r) and avg_r < 0
+                        else "#78909c"
+                    )
+                    return (
+                        f'<div style="flex:1;min-width:160px;background:#0d1a2a;'
+                        f'border:1px solid {accent}33;border-top:2px solid {accent};'
+                        f'border-radius:8px;padding:12px 16px;text-align:center;">'
+                        f'<div style="font-size:9px;color:#78909c;text-transform:uppercase;'
+                        f'letter-spacing:1.2px;font-family:monospace;margin-bottom:4px;">'
+                        f'{icon} {label}</div>'
+                        f'<div style="font-size:24px;font-weight:800;color:{wr_col};'
+                        f'font-family:monospace;">{stats["wr"]:.0f}%</div>'
+                        f'<div style="font-size:10px;color:#90a4ae;margin-top:2px;">'
+                        f'Win Rate &nbsp;·&nbsp; '
+                        f'<span style="color:{r_col};font-weight:700;">{r_str}</span> avg R</div>'
+                        f'<div style="font-size:9px;color:#546e7a;margin-top:3px;">'
+                        f'{stats["wins"]}W / {stats["n"] - stats["wins"]}L &nbsp;·&nbsp; n={stats["n"]}</div>'
+                        f'</div>'
+                    )
+
+                _card_boosted  = _rvol_card_html("RVOL Boosted (>1×)", "🔼", _boosted_stats,  "#29b6f6")
+                _card_baseline = _rvol_card_html("Baseline (=1×)",     "▬",  _baseline_stats, "#78909c")
+
+                _delta_note = ""
+                if _boosted_stats and _baseline_stats:
+                    _wr_diff = _boosted_stats["wr"] - _baseline_stats["wr"]
+                    _wr_sign = "+" if _wr_diff >= 0 else ""
+                    _wr_clr  = (
+                        "#66bb6a" if _wr_diff > 2
+                        else "#ffa726" if _wr_diff > -2
+                        else "#ef5350"
+                    )
+                    _delta_note = (
+                        f'<div style="font-size:10px;color:#546e7a;font-family:monospace;'
+                        f'text-align:center;padding-top:6px;">'
+                        f'Boost vs baseline: <span style="color:{_wr_clr};font-weight:700;">'
+                        f'{_wr_sign}{_wr_diff:.1f}pp win rate</span></div>'
+                    )
+
+                st.markdown(
+                    f'<div style="margin:10px 0 14px 0;">'
+                    f'<div style="font-size:9px;color:#546e7a;text-transform:uppercase;'
+                    f'letter-spacing:1.5px;font-weight:700;font-family:monospace;margin-bottom:8px;">'
+                    f'RVOL Tier Performance Breakdown</div>'
+                    f'<div style="display:flex;gap:10px;flex-wrap:wrap;">'
+                    f'{_card_boosted}{_card_baseline}'
+                    f'</div>'
+                    f'{_delta_note}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
         # Table
         _ib_threshold = _cached_load_ib_range_pct_threshold()
         # ── Build RVOL Tier label from the stored multiplier ─────────────────
