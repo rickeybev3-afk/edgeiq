@@ -137,6 +137,7 @@ interface ConfigSummary {
 interface ConfigSummaryState {
   data: ConfigSummary | null;
   loading: boolean;
+  refreshing: boolean;
   error: string | null;
 }
 
@@ -456,21 +457,25 @@ export default function Settings() {
   const [configSummary, setConfigSummary] = useState<ConfigSummaryState>({
     data: null,
     loading: true,
+    refreshing: false,
     error: null,
   });
 
-  const fetchConfig = () => {
+  const fetchConfig = (isManualRefresh = false) => {
+    if (isManualRefresh) {
+      setConfigSummary((s) => ({ ...s, refreshing: true, error: null }));
+    }
     fetch("/api/config")
       .then((r) => {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();
       })
       .then((data: ConfigSummary) => {
-        setConfigSummary({ data, loading: false, error: null });
+        setConfigSummary({ data, loading: false, refreshing: false, error: null });
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Could not load config.";
-        setConfigSummary({ data: null, loading: false, error: msg });
+        setConfigSummary((s) => ({ ...s, data: isManualRefresh ? s.data : null, loading: false, refreshing: false, error: msg }));
       });
   };
 
@@ -784,9 +789,46 @@ export default function Settings() {
             <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", color: "#475569", textTransform: "uppercase" }}>
               Active Config
             </span>
-            {configSummary.data && !configSummary.loading && (
-              <span style={{ fontSize: "10px", color: "#334155", marginLeft: "auto" }}>read-only</span>
-            )}
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
+              {configSummary.data && !configSummary.loading && (
+                <span style={{ fontSize: "10px", color: "#334155" }}>read-only</span>
+              )}
+              <button
+                onClick={() => fetchConfig(true)}
+                disabled={configSummary.refreshing || configSummary.loading}
+                title="Refresh config"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: configSummary.refreshing || configSummary.loading ? "default" : "pointer",
+                  padding: "2px",
+                  color: configSummary.refreshing ? "#3b82f6" : "#475569",
+                  display: "flex",
+                  alignItems: "center",
+                  opacity: configSummary.refreshing || configSummary.loading ? 0.6 : 1,
+                  transition: "color 0.15s, opacity 0.15s",
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{
+                    animation: configSummary.refreshing ? "spin 0.8s linear infinite" : "none",
+                  }}
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {configSummary.loading && (
