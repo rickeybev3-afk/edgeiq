@@ -9903,7 +9903,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         while True:
                             _rp_q = (
                                 supabase.table("backtest_sim_runs")
-                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down,eod_pnl_r,tiered_pnl_r,ib_range_pct")
+                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down,eod_pnl_r,tiered_pnl_r,ib_range_pct,vwap_at_ib")
                                 .eq("user_id", _rp_uid)
                                 .gte("sim_date", str(_rp_start))
                                 .lte("sim_date", str(_rp_end))
@@ -25138,6 +25138,52 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                         _ff_chart_labels.append(_ff_ib_label)
                         _ff_chart_wr.append(_ff2_wr)
                         _ff_chart_exp.append(_ff2_exp)
+
+                    # Stage 3: + VWAP Aligned
+                    # Same logic as _compute_vwap_aligned in paper-trader log:
+                    #   Long/Up predicted → IB midpoint > vwap_at_ib (consolidated above VWAP)
+                    #   Short/Down predicted → IB midpoint < vwap_at_ib (consolidated below VWAP)
+                    _ff_has_vwap = (
+                        "vwap_at_ib" in _ff2_df.columns
+                        and _ff2_df["vwap_at_ib"].notna().any()
+                        and "ib_high" in _ff2_df.columns
+                        and "ib_low" in _ff2_df.columns
+                        and "predicted" in _ff2_df.columns
+                    )
+                    if _ff_has_vwap:
+                        def _ff_vwap_ok(row):
+                            try:
+                                _vwap = float(row["vwap_at_ib"])
+                                _ib_mid = (float(row["ib_high"]) + float(row["ib_low"])) / 2
+                                _pred = str(row.get("predicted", "")).lower()
+                                if "long" in _pred or "up" in _pred:
+                                    return _ib_mid > _vwap
+                                if "short" in _pred or "down" in _pred:
+                                    return _ib_mid < _vwap
+                            except (TypeError, ValueError):
+                                pass
+                            return None
+                        _ff_vwap_mask = _ff2_df.apply(_ff_vwap_ok, axis=1)
+                        _ff3_df = _ff2_df[_ff_vwap_mask == True]
+                        _ff3_n, _ff3_wr, _ff3_exp, _ff3_tpy = _ff_stats(_ff3_df)
+                        _ff23_rm = _ff2_n - _ff3_n
+                        _ff_rm2_mask = ~_ff2_df.index.isin(_ff3_df.index)
+                        _ff23_rm_wr = (
+                            _ff2_df.loc[_ff_rm2_mask, "_ff_win"].sum()
+                            / _ff23_rm
+                            * 100
+                            if _ff23_rm > 0
+                            else None
+                        )
+                        if _ff3_n > 0:
+                            _ff_cards_html += _ff_card(
+                                "+ VWAP Aligned",
+                                _ff3_n, _ff3_wr, _ff3_exp, _ff3_tpy,
+                                _ff23_rm, _ff23_rm_wr,
+                            )
+                            _ff_chart_labels.append("+ VWAP Aligned")
+                            _ff_chart_wr.append(_ff3_wr)
+                            _ff_chart_exp.append(_ff3_exp)
 
                     _ff_note_html = (
                         f'<span style="font-size:10px;color:#546e7a;"> — {_ff_dr_label}</span>'
