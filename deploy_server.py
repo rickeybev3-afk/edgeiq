@@ -733,6 +733,42 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         is_overdue = age_hours > heartbeat_hours
                     except Exception:
                         is_overdue = True
+                # Build per-script summary (latest entry per script name).
+                # Only recognised script names get their own row; anything
+                # missing, empty, or unrecognised is collapsed into "other".
+                _KNOWN_SCRIPTS = {
+                    "backfill_context_levels",
+                    "backfill_close_prices",
+                    "backfill_ib_vwap",
+                }
+                _script_latest: dict = {}
+                for _entry in history:
+                    _raw = _entry.get("script") or ""
+                    _sname = _raw if _raw in _KNOWN_SCRIPTS else "other"
+                    _script_latest[_sname] = _entry  # last write wins (history is oldest→newest)
+
+                import datetime as _dt
+                _scripts_summary: dict = {}
+                for _sname, _entry in _script_latest.items():
+                    _cat = _entry.get("completed_at")
+                    _overdue = True
+                    if _cat:
+                        try:
+                            _cat_dt = _dt.datetime.fromisoformat(_cat.replace("Z", "+00:00"))
+                            if _cat_dt.tzinfo is None:
+                                _cat_dt = _cat_dt.replace(tzinfo=_dt.timezone.utc)
+                            _age_h = (_dt.datetime.now(_dt.timezone.utc) - _cat_dt).total_seconds() / 3600.0
+                            _overdue = _age_h > heartbeat_hours
+                        except Exception:
+                            _overdue = True
+                    _scripts_summary[_sname] = {
+                        "completed_at": _cat,
+                        "rows_saved": _entry.get("rows_saved"),
+                        "no_bars": _entry.get("no_bars"),
+                        "errors": _entry.get("errors"),
+                        "is_overdue": _overdue,
+                    }
+
                 data = {
                     "available": True,
                     "completed_at": completed_at_str,
@@ -743,6 +779,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "is_overdue": is_overdue,
                     "history": list(reversed(history)),
                     "history_path": history_path,
+                    "scripts": _scripts_summary,
                 }
         except FileNotFoundError:
             data = {"available": False, "heartbeat_hours": heartbeat_hours, "is_overdue": True, "history_path": history_path}

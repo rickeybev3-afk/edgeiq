@@ -36,6 +36,15 @@ interface BackfillRun {
   rows_saved: number;
   no_bars: number;
   errors: number;
+  script?: string;
+}
+
+interface BackfillScriptSummary {
+  completed_at?: string;
+  rows_saved?: number;
+  no_bars?: number;
+  errors?: number;
+  is_overdue?: boolean;
 }
 
 interface BackfillErrorAlertsState {
@@ -82,10 +91,11 @@ interface BackfillHealth {
   no_bars?: number;
   errors?: number;
   error?: string;
-  history?: BackfillRun[];
-  history_path?: string;
   heartbeat_hours?: number;
   is_overdue?: boolean;
+  history?: BackfillRun[];
+  history_path?: string;
+  scripts?: Record<string, BackfillScriptSummary>;
 }
 
 interface DryRunTableResult {
@@ -998,7 +1008,7 @@ export default function Settings() {
             Backfill Health
           </h2>
           <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
-            Summary of the most recent context-levels backfill run. Refreshes every minute.
+            Last-run status for each backfill script. Refreshes every minute.
           </p>
 
           {backfillHealth.loading ? (
@@ -1029,41 +1039,110 @@ export default function Settings() {
             </div>
           ) : (
             <div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(3, 1fr)",
-                  gap: "12px",
-                  marginBottom: "14px",
-                }}
-              >
-                <BackfillStat
-                  label="Rows saved"
-                  value={backfillHealth.rows_saved ?? 0}
-                  color="#4ade80"
-                  prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].rows_saved : undefined}
-                  higherIsBetter={true}
-                />
-                <BackfillStat
-                  label="No-bars"
-                  value={backfillHealth.no_bars ?? 0}
-                  color="#fbbf24"
-                  warn={(backfillHealth.no_bars ?? 0) > 0}
-                  prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].no_bars : undefined}
-                  higherIsBetter={false}
-                />
-                <BackfillStat
-                  label="Errors"
-                  value={backfillHealth.errors ?? 0}
-                  color={(backfillHealth.errors ?? 0) > 0 ? "#f87171" : "#4ade80"}
-                  warn={(backfillHealth.errors ?? 0) > 0}
-                  prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].errors : undefined}
-                  higherIsBetter={false}
-                />
-              </div>
-              {backfillHealth.completed_at && (() => {
+              {backfillHealth.scripts && Object.keys(backfillHealth.scripts).length > 0 ? (
+                <div style={{ marginBottom: "14px" }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontFamily: "monospace" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #2d3748" }}>
+                          <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Script</th>
+                          <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Last ran</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Rows saved</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>No-bars</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Errors</th>
+                          <th style={{ textAlign: "center", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(backfillHealth.scripts)
+                          .sort(([a], [b]) => (a === "other" ? 1 : b === "other" ? -1 : a.localeCompare(b)))
+                          .map(([scriptName, info]) => {
+                            const hasErrors = (info.errors ?? 0) > 0;
+                            const hasMissingBars = (info.no_bars ?? 0) > 0;
+                            const rowBg = hasErrors
+                              ? "rgba(248,113,113,0.05)"
+                              : info.is_overdue
+                              ? "rgba(251,191,36,0.05)"
+                              : "transparent";
+                            return (
+                              <tr
+                                key={scriptName}
+                                style={{ borderBottom: "1px solid rgba(45,55,72,0.5)", background: rowBg }}
+                              >
+                                <td style={{ padding: "7px 10px", color: scriptName === "other" ? "#64748b" : "#cbd5e1", fontStyle: scriptName === "other" ? "italic" : "normal" }}>
+                                  {scriptName}
+                                </td>
+                                <td style={{ padding: "7px 10px", color: info.is_overdue ? "#fbbf24" : "#94a3b8" }}>
+                                  {info.completed_at ? (
+                                    <span title={new Date(info.completed_at).toLocaleString()}>
+                                      {formatRelativeTime(info.completed_at)}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: "#475569" }}>—</span>
+                                  )}
+                                </td>
+                                <td style={{ padding: "7px 10px", textAlign: "right", color: "#4ade80" }}>
+                                  {info.rows_saved != null ? info.rows_saved.toLocaleString() : <span style={{ color: "#475569" }}>—</span>}
+                                </td>
+                                <td style={{ padding: "7px 10px", textAlign: "right", color: hasMissingBars ? "#fbbf24" : "#64748b" }}>
+                                  {info.no_bars != null ? info.no_bars.toLocaleString() : <span style={{ color: "#475569" }}>—</span>}
+                                </td>
+                                <td style={{ padding: "7px 10px", textAlign: "right", color: hasErrors ? "#f87171" : "#4ade80" }}>
+                                  {info.errors != null ? info.errors.toLocaleString() : <span style={{ color: "#475569" }}>—</span>}
+                                </td>
+                                <td style={{ padding: "7px 10px", textAlign: "center" }}>
+                                  {hasErrors ? (
+                                    <span style={{ fontSize: "10px", color: "#f87171" }}>error</span>
+                                  ) : info.is_overdue ? (
+                                    <span style={{ fontSize: "10px", color: "#fbbf24" }}>overdue</span>
+                                  ) : (
+                                    <span style={{ fontSize: "10px", color: "#4ade80" }}>ok</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: "12px",
+                    marginBottom: "14px",
+                  }}
+                >
+                  <BackfillStat
+                    label="Rows saved"
+                    value={backfillHealth.rows_saved ?? 0}
+                    color="#4ade80"
+                    prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].rows_saved : undefined}
+                    higherIsBetter={true}
+                  />
+                  <BackfillStat
+                    label="No-bars"
+                    value={backfillHealth.no_bars ?? 0}
+                    color="#fbbf24"
+                    warn={(backfillHealth.no_bars ?? 0) > 0}
+                    prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].no_bars : undefined}
+                    higherIsBetter={false}
+                  />
+                  <BackfillStat
+                    label="Errors"
+                    value={backfillHealth.errors ?? 0}
+                    color={(backfillHealth.errors ?? 0) > 0 ? "#f87171" : "#4ade80"}
+                    warn={(backfillHealth.errors ?? 0) > 0}
+                    prev={backfillHealth.history && backfillHealth.history.length > 1 ? backfillHealth.history[1].errors : undefined}
+                    higherIsBetter={false}
+                  />
+                </div>
+              )}
+              {backfillHealth.completed_at && !(backfillHealth.scripts && Object.keys(backfillHealth.scripts).length > 0) && (() => {
                 const threshold = backfillHealth.heartbeat_hours ?? 25;
-                const ageHours = (Date.now() - new Date(backfillHealth.completed_at).getTime()) / 3_600_000;
+                const ageHours = (Date.now() - new Date(backfillHealth.completed_at!).getTime()) / 3_600_000;
                 const ageColor = backfillHealth.is_overdue
                   ? "#f87171"
                   : ageHours >= threshold * 0.8
@@ -1072,12 +1151,12 @@ export default function Settings() {
                 return (
                   <p style={{ fontSize: "11px", fontFamily: "monospace", margin: 0, display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                     <span style={{ color: ageColor, fontWeight: backfillHealth.is_overdue || ageHours >= threshold * 0.8 ? 700 : 400 }}>
-                      Last run {formatRelativeTime(backfillHealth.completed_at)}
+                      Last run {formatRelativeTime(backfillHealth.completed_at!)}
                     </span>
                     <span style={{ color: "#475569" }}>·</span>
                     <span style={{ color: "#475569" }}>alert threshold: {threshold} h</span>
                     <span style={{ color: "#334155" }}>·</span>
-                    <span style={{ color: "#475569" }}>{new Date(backfillHealth.completed_at).toLocaleString()}</span>
+                    <span style={{ color: "#475569" }}>{new Date(backfillHealth.completed_at!).toLocaleString()}</span>
                   </p>
                 );
               })()}
@@ -1096,6 +1175,7 @@ export default function Settings() {
                       <thead>
                         <tr style={{ borderBottom: "1px solid #2d3748" }}>
                           <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Completed</th>
+                          <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Script</th>
                           <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Rows saved</th>
                           <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>No-bars</th>
                           <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Errors</th>
@@ -1104,7 +1184,7 @@ export default function Settings() {
                       <tbody>
                         {backfillHealth.history.map((run, i) => (
                           <tr
-                            key={run.completed_at}
+                            key={`${run.completed_at}-${i}`}
                             style={{
                               borderBottom: "1px solid rgba(45,55,72,0.5)",
                               background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent",
@@ -1115,6 +1195,9 @@ export default function Settings() {
                               {i === 0 && (
                                 <span style={{ marginLeft: "6px", fontSize: "10px", color: "#4ade80", fontFamily: "sans-serif" }}>latest</span>
                               )}
+                            </td>
+                            <td style={{ padding: "6px 10px", color: run.script && run.script !== "other" ? "#94a3b8" : "#475569", fontStyle: !run.script || run.script === "other" ? "italic" : "normal" }}>
+                              {run.script ?? "other"}
                             </td>
                             <td style={{ padding: "6px 10px", textAlign: "right", color: "#4ade80" }}>
                               {run.rows_saved.toLocaleString()}
