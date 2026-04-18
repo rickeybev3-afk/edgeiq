@@ -397,6 +397,31 @@ _TIER_EXPECTED_R = {
     "P4": 1.90,
 }
 
+# IB-range position-sizing multiplier table
+# Source: 5-yr backtest, TCS≥50 + IB<10% universe (Apr 2026).
+# Each bucket's half-Kelly fraction normalised to the 4-6% base tier,
+# then blended with Expected-R ratio so the 0-2% tier (4.32R, 89.5% WR)
+# gets genuinely large size while 6-10% buckets get modest reduction.
+#   0–2%:  89.5% WR, +4.32R  → 2.00×  premium  (up to 2× base risk)
+#   2–4%:  85.3% WR, +1.24R  → 1.30×  strong
+#   4–6%:  83.6% WR, +0.99R  → 1.00×  standard (base tier)
+#   6–8%:  82.9% WR, +0.77R  → 0.75×  reduced
+#   8–10%: 82.6% WR, +0.88R  → 0.80×  reduced
+_IB_RANGE_MULT = [
+    (2.0,  2.00),   # IB pct < 2%
+    (4.0,  1.30),   # 2% ≤ IB pct < 4%
+    (6.0,  1.00),   # 4% ≤ IB pct < 6%
+    (8.0,  0.75),   # 6% ≤ IB pct < 8%
+    (10.0, 0.80),   # 8% ≤ IB pct < 10%
+]
+
+def _ib_size_mult(ib_pct: float) -> float:
+    """Return position-size multiplier for a given IB range %."""
+    for ceiling, mult in _IB_RANGE_MULT:
+        if ib_pct < ceiling:
+            return mult
+    return 0.80  # ≥10% shouldn't pass IB filter, safe fallback
+
 def _tier_priority_key(r: dict) -> tuple:
     """Return sort key (priority_int, -tcs) so highest-R tier comes first.
     P3 (Morning 70+) → P1 (Intraday 70+) → P2 (Intraday 50-69) → P4 (Morning 50-69).
@@ -773,6 +798,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         return
 
     risk_dollars = _compute_risk_dollars()
+    _ib_mult     = 1.0          # default if open_px unavailable
 
     # ── Entry quality filter 1: IB range % ────────────────────────────────────
     # Wide IBs (>= 10% of open price) signal chaotic, non-directional days.
@@ -794,6 +820,16 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             )
             _patch_skip_reason(r, ticker, "ib_too_wide")
             return
+
+        # ── IB-range position-size multiplier ─────────────────────────────────
+        # Tighter IB → higher Expected R and WR → scale up; wider → scale down.
+        # 0-2%: 2.00×  |  2-4%: 1.30×  |  4-6%: 1.00×  |  6-8%: 0.75×  |  8-10%: 0.80×
+        _ib_mult     = _ib_size_mult(ib_range_pct_val)
+        risk_dollars = round(risk_dollars * _ib_mult, 2)
+        log.info(
+            f"  [{ticker}] IB range {ib_range_pct_val:.1f}% "
+            f"→ size mult {_ib_mult:.2f}× → risk ${risk_dollars:,.0f}"
+        )
 
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
     # DISABLED 2026-04-18: backtest showed removing this filter nearly doubled
@@ -850,7 +886,8 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"{'🟡' if direction == 'Bullish Break' else '🔴'} {direction}\n"
             f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
             f"Target: ${result['target']}\n"
-            f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} (1% of account = 1R)\n"
+            f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} "
+            f"({_ib_mult:.2f}× IB-size · 1R base)\n"
             f"<code>{order_id[:8]}…</code>"
         )
         # Patch Supabase paper_trades row with order metadata + skip_reason
