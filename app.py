@@ -9696,7 +9696,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         help=f"Average P&L across {_pnl_losses} losing trade(s)")
 
                         # ── Marginal trades summary row (Bot Mode, in stats summary) ─────
-                        if _rp_bot_mode:
+                        if _rp_bot_mode and _has_marginal_data:
                             st.markdown("---")
                             st.markdown("**🟡 Marginal Trades** *(TCS cleared floor by ≤ 5 pts)*")
                             _ms1, _ms2, _ms3 = st.columns(3)
@@ -9715,10 +9715,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"{_marg_avgr_pre:+.2f}R" if _marg_avgr_pre is not None else "—",
                                 help="Average R (MFE) for borderline entries — see the Marginal Entry Analysis section below for a full comfortable vs marginal comparison"
                             )
-                            if not _has_marginal_data:
-                                st.caption(
-                                    "Stats will appear once the bot has taken trades."
-                                )
 
                             # ── Drill-in: individual marginal trades ───────────────────────
                             if _marg_n_pre > 0:
