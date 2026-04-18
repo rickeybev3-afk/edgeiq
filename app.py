@@ -4930,6 +4930,23 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["min_tcs_trades"] = int(_prefs["min_tcs_trades"])
         except (ValueError, TypeError):
             pass
+    if "tkr_summary_sort_reverse" in _prefs:
+        try:
+            _pref_sort_rev = _prefs["tkr_summary_sort_reverse"]
+            if isinstance(_pref_sort_rev, bool):
+                _pref_sort_rev_bool = _pref_sort_rev
+            elif isinstance(_pref_sort_rev, int):
+                _pref_sort_rev_bool = bool(_pref_sort_rev)
+            else:
+                _pref_sort_rev_bool = str(_pref_sort_rev).lower() in ("true", "1", "yes")
+            # URL query param takes precedence over saved pref (supports shared links)
+            _qp_sort_rev = st.query_params.get("tkr_sort_rev", "")
+            if _qp_sort_rev:
+                st.session_state["tkr_summary_sort_reverse"] = (_qp_sort_rev == "1")
+            else:
+                st.session_state["tkr_summary_sort_reverse"] = _pref_sort_rev_bool
+        except (ValueError, TypeError):
+            pass
     if "rp_min_tcs_slider" in _prefs:
         try:
             st.session_state["rp_min_tcs_slider"] = int(_prefs["rp_min_tcs_slider"])
@@ -12769,6 +12786,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.query_params["tkr_sort_rev"] = _sort_rev_str
                     elif "tkr_sort_rev" in st.query_params:
                         del st.query_params["tkr_sort_rev"]
+                # Persist sort direction to user prefs whenever it changes
+                if _AUTH_USER_ID:
+                    _sort_rev_cached = st.session_state.get("_cached_prefs", {})
+                    if _sort_rev_cached.get("tkr_summary_sort_reverse") != _sort_reverse:
+                        _sort_rev_new_prefs = {**_sort_rev_cached, "tkr_summary_sort_reverse": _sort_reverse}
+                        save_user_prefs(_AUTH_USER_ID, _sort_rev_new_prefs)
+                        st.session_state["_cached_prefs"] = _sort_rev_new_prefs
             with _ctrl_col_filter:
                 # Restore filter column from URL query params on first load
                 if "tkr_summary_r_filter_col" not in st.session_state:
