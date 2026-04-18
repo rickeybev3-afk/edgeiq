@@ -12493,8 +12493,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         # ── Date range filter (row 2) ─────────────────────────
                         _rp_log_date_col1, _rp_log_date_col2, _rp_log_date_col3 = st.columns([1, 1, 2])
                         with _rp_log_date_col1:
-                            if "rp_log_from_str" not in st.session_state:
-                                st.session_state["rp_log_from_str"] = st.query_params.get("rp_log_from", "")
+                            _rp_log_from_url = st.query_params.get("rp_log_from", "")
+                            if (
+                                "rp_log_from_str" not in st.session_state
+                                or st.session_state.get("_rp_log_from_last_url") != _rp_log_from_url
+                            ):
+                                st.session_state["rp_log_from_str"] = _rp_log_from_url
+                                st.session_state["_rp_log_from_last_url"] = _rp_log_from_url
                             _rp_log_from_str = st.text_input(
                                 "From (YYYY-MM-DD)",
                                 key="rp_log_from_str",
@@ -12503,9 +12508,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             if st.query_params.get("rp_log_from", "") != _rp_log_from_str:
                                 st.query_params["rp_log_from"] = _rp_log_from_str
+                            st.session_state["_rp_log_from_last_url"] = _rp_log_from_str
                         with _rp_log_date_col2:
-                            if "rp_log_to_str" not in st.session_state:
-                                st.session_state["rp_log_to_str"] = st.query_params.get("rp_log_to", "")
+                            _rp_log_to_url = st.query_params.get("rp_log_to", "")
+                            if (
+                                "rp_log_to_str" not in st.session_state
+                                or st.session_state.get("_rp_log_to_last_url") != _rp_log_to_url
+                            ):
+                                st.session_state["rp_log_to_str"] = _rp_log_to_url
+                                st.session_state["_rp_log_to_last_url"] = _rp_log_to_url
                             _rp_log_to_str = st.text_input(
                                 "To (YYYY-MM-DD)",
                                 key="rp_log_to_str",
@@ -12514,6 +12525,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             if st.query_params.get("rp_log_to", "") != _rp_log_to_str:
                                 st.query_params["rp_log_to"] = _rp_log_to_str
+                            st.session_state["_rp_log_to_last_url"] = _rp_log_to_str
 
                         _rp_display_df = _rp_df.copy()
                         if _rp_log_ticker_filter.strip():
