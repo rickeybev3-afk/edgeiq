@@ -6080,61 +6080,100 @@ with st.sidebar:
                             _progress_current = int(_pm.group(1))
                             _progress_total   = int(_pm.group(2))
                             break
+                    # ── Shared ETA / elapsed helpers ──────────────────────
+                    def _compute_eta(start_file: str, pct: float) -> str:
+                        """Return a human-readable ETA string, or 'estimating…'."""
+                        import time as _t
+                        try:
+                            if not os.path.exists(start_file):
+                                return "estimating…"
+                            with open(start_file) as _sf:
+                                _start_ts = float(_sf.read().strip())
+                            if pct <= 0.005:
+                                return "estimating…"
+                            _elapsed = _t.time() - _start_ts
+                            _remaining = max(0.0, _elapsed / pct - _elapsed)
+                            if _remaining < 60:
+                                return f"~{int(_remaining)}s remaining"
+                            elif _remaining < 3600:
+                                _mins = int(_remaining / 60)
+                                return f"~{_mins}m remaining"
+                            else:
+                                _hr  = int(_remaining // 3600)
+                                _min = int((_remaining % 3600) // 60)
+                                return f"~{_hr}h {_min}m remaining"
+                        except Exception:
+                            return "estimating…"
+
+                    def _compute_elapsed(start_file: str) -> str:
+                        """Return a human-readable elapsed time string, or ''."""
+                        import time as _t
+                        try:
+                            if not os.path.exists(start_file):
+                                return ""
+                            with open(start_file) as _sf:
+                                _start_ts = float(_sf.read().strip())
+                            _elapsed = _t.time() - _start_ts
+                            if _elapsed < 60:
+                                return f"{int(_elapsed)}s elapsed"
+                            elif _elapsed < 3600:
+                                _mins = int(_elapsed / 60)
+                                return f"{_mins}m elapsed"
+                            else:
+                                _hr  = int(_elapsed // 3600)
+                                _min = int((_elapsed % 3600) // 60)
+                                return f"{_hr}h {_min}m elapsed"
+                        except Exception:
+                            return ""
+
                     if _progress_current is not None and _progress_total and _progress_total > 0:
                         _pct = _progress_current / _progress_total
                         st.caption(f"**Step {_current_step} of 2**")
                         st.progress(_pct)
 
-                        # ── Shared ETA helper ─────────────────────────────────
-                        def _compute_eta(start_file: str, pct: float) -> str:
-                            """Return a human-readable ETA string, or 'estimating…'."""
-                            import time as _t
-                            try:
-                                if not os.path.exists(start_file):
-                                    return "estimating…"
-                                with open(start_file) as _sf:
-                                    _start_ts = float(_sf.read().strip())
-                                if pct <= 0.005:
-                                    return "estimating…"
-                                _elapsed = _t.time() - _start_ts
-                                _remaining = max(0.0, _elapsed / pct - _elapsed)
-                                if _remaining < 60:
-                                    return f"~{int(_remaining)}s remaining"
-                                elif _remaining < 3600:
-                                    _mins = int(_remaining / 60)
-                                    return f"~{_mins}m remaining"
-                                else:
-                                    _hr  = int(_remaining // 3600)
-                                    _min = int((_remaining % 3600) // 60)
-                                    return f"~{_hr}h {_min}m remaining"
-                            except Exception:
-                                return "estimating…"
-
                         if _current_step == 2:
-                            _eta_str2 = _compute_eta(_BACKFILL_STEP2_START_TIME, _pct)
+                            _eta_str2     = _compute_eta(_BACKFILL_STEP2_START_TIME, _pct)
+                            _elapsed_str2 = _compute_elapsed(_BACKFILL_STEP2_START_TIME)
                             _progress_caption2 = (
                                 f"⚙️ Row {_progress_current:,} of {_progress_total:,} "
                                 f"({_pct:.0%} complete)"
                             )
-                            _progress_caption2 += f"  ·  ⏱ {_eta_str2}"
+                            _timing2 = "  ·  ⏱ "
+                            if _elapsed_str2:
+                                _timing2 += f"{_elapsed_str2}  ·  {_eta_str2}"
+                            else:
+                                _timing2 += _eta_str2
+                            _progress_caption2 += _timing2
                             st.caption(_progress_caption2)
                         else:
-                            # ── ETA for step 1 ───────────────────────────────
-                            _eta_str = _compute_eta(_BACKFILL_START_TIME, _pct)
+                            # ── ETA / elapsed for step 1 ─────────────────────
+                            _eta_str     = _compute_eta(_BACKFILL_START_TIME, _pct)
+                            _elapsed_str = _compute_elapsed(_BACKFILL_START_TIME)
                             _progress_caption = (
                                 f"📈 Ticker {_progress_current:,} of {_progress_total:,} "
                                 f"({_pct:.0%} complete)"
                             )
-                            _progress_caption += f"  ·  ⏱ {_eta_str}"
+                            _timing = "  ·  ⏱ "
+                            if _elapsed_str:
+                                _timing += f"{_elapsed_str}  ·  {_eta_str}"
+                            else:
+                                _timing += _eta_str
+                            _progress_caption += _timing
                             st.caption(_progress_caption)
                     elif _in_step2:
                         # Step 2 has started but hasn't emitted a PROGRESS line yet
                         st.caption("**Step 2 of 2**")
                         st.progress(0.0)
-                        st.caption("⚙️ P&L recompute starting…  ·  ⏱ estimating…")
+                        _s2_elapsed = _compute_elapsed(_BACKFILL_STEP2_START_TIME)
+                        _s2_caption = "⚙️ P&L recompute starting…  ·  ⏱ "
+                        _s2_caption += f"{_s2_elapsed}  ·  estimating…" if _s2_elapsed else "estimating…"
+                        st.caption(_s2_caption)
                     else:
                         # Step 1 running but no PROGRESS line yet
                         st.caption("**Step 1 of 2**")
+                        _s1_elapsed = _compute_elapsed(_BACKFILL_START_TIME)
+                        if _s1_elapsed:
+                            st.caption(f"📈 Fetching tickers…  ·  ⏱ {_s1_elapsed}  ·  estimating…")
                     st.caption(f"📄 {_total_lines} log line{'s' if _total_lines != 1 else ''} so far — auto-refreshing every 3 s")
                     st.code(_tail_text or "(log initialising…)", language="text")
                 except Exception:
