@@ -759,39 +759,52 @@ if __name__ == "__main__":
         print(f"    --context-only   : yes")
         print(f"    --dry-run        : {'yes' if dry_run else 'no'}")
         print("=" * 60)
+
+        if dry_run:
+            # Dry-run: query the DB for scope without making any writes or API calls.
+            import time as _time
+            _t0 = _time.time()
+            try:
+                import backfill_context_levels as _ctx
+                import backend as _backend
+                _supabase = _backend.supabase
+
+                _resolve_uids = _ctx_uids
+                if not _resolve_uids:
+                    _resolve_uids = _ctx.discover_user_ids()
+
+                _query = _supabase.table('backtest_sim_runs') \
+                    .select('ticker, sim_date, scan_type') \
+                    .in_('user_id', _resolve_uids) \
+                    .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
+                _resp = _query.execute()
+                _all_rows = _resp.data or []
+
+                _already = _ctx.get_already_processed()
+                _todo = [r for r in _all_rows
+                         if (r['ticker'], r['sim_date'], r['scan_type']) not in _already]
+
+                _tickers = sorted({r['ticker'] for r in _todo})
+                _dates   = sorted({r['sim_date'] for r in _todo})
+                _date_start = _dates[0] if _dates else "N/A"
+                _date_end   = _dates[-1] if _dates else "N/A"
+                _elapsed = _time.time() - _t0
+
+                print(f"CONTEXT DRY RUN: {len(_todo)} row(s) would be processed")
+                print(f"CONTEXT DRY RUN unique tickers ({len(_tickers)}): {', '.join(_tickers)}")
+                print(f"CONTEXT DRY RUN date range: {_date_start} to {_date_end}")
+                print(f"CONTEXT DRY RUN COMPLETE — {_elapsed:.2f}s elapsed")
+            except Exception as _ctx_err:
+                print(f"  Context dry-run error: {_ctx_err}")
+                sys.exit(1)
+            sys.exit(0)
+
         try:
             import backfill_context_levels as _ctx
-            _ctx_result = _ctx.main(user_ids=_ctx_uids, dry_run=dry_run)
+            _ctx.main(user_ids=_ctx_uids)
         except Exception as _ctx_err:
             print(f"  Context backfill error: {_ctx_err}")
             sys.exit(1)
-        if dry_run and isinstance(_ctx_result, dict):
-            print(f"\n{'='*60}")
-            print(f"  DRY RUN COMPLETE — context-only scope preview")
-            print(f"  Would process : {_ctx_result['would_process']:,} row(s)")
-            print(f"  Tickers       : {len(_ctx_result['tickers'])} unique")
-            print(f"  Dates         : {len(_ctx_result['dates'])} unique")
-            print(f"  No database writes were performed.")
-            print(f"{'='*60}")
-            if out_file:
-                _report = {
-                    "generated_at":  datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "mode":          "dry-run",
-                    "pipeline":      "context-only",
-                    "user_ids":      _ctx_uids,
-                    "totals": {
-                        "would_process": _ctx_result['would_process'],
-                        "tickers":       len(_ctx_result['tickers']),
-                        "dates":         len(_ctx_result['dates']),
-                    },
-                    "rows": _ctx_result['rows'],
-                }
-                try:
-                    with open(out_file, "w") as _f:
-                        json.dump(_report, _f, indent=2, sort_keys=True)
-                    print(f"\n  Report saved → {out_file}")
-                except Exception as _write_err:
-                    print(f"\n  ⚠  Could not write report to {out_file}: {_write_err}")
         sys.exit(0)
 
     # ── Resolve user IDs ───────────────────────────────────────────────────────

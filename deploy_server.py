@@ -668,6 +668,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/backfill-dryrun":
             self._backfill_dryrun_post()
             return
+        if path == "/api/context-dryrun":
+            self._context_dryrun_post()
+            return
         self._proxy() if streamlit_ready else self._loading()
 
     def do_PUT(self):
@@ -1534,6 +1537,110 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "elapsed_s":   elapsed_s,
             "timed_out":   timed_out,
             "raw_output":  raw,
+        }
+        body = json.dumps(data).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _context_dryrun_post(self):
+        """Run run_sim_backfill.py --context-only --dry-run and return structured JSON.
+
+        Queries the database to report how many rows, unique tickers, and what
+        date range a context-only backfill would cover — without making any DB
+        writes or Alpaca API calls.
+
+        The DASHBOARD_WRITE_SECRET guard is NOT applied here because the
+        dry-run makes no writes; it is purely a preview operation.
+        """
+        import re as _re
+        import subprocess as _sp
+        import sys as _sys
+
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_sim_backfill.py")
+        if not os.path.isfile(script):
+            body = json.dumps({"error": "run_sim_backfill.py not found on server"}).encode()
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        timed_out = False
+        try:
+            result = _sp.run(
+                [_sys.executable, script, "--context-only", "--dry-run"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+            )
+            raw = result.stdout + ("\n" + result.stderr if result.stderr.strip() else "")
+            if result.returncode != 0:
+                body = json.dumps({
+                    "error": f"Context dry-run script exited with code {result.returncode}",
+                    "raw_output": raw,
+                }).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        except _sp.TimeoutExpired as _te:
+            raw = (_te.stdout or "") + ("\n" + (_te.stderr or ""))
+            timed_out = True
+        except Exception as exc:
+            body = json.dumps({"error": f"Failed to start context dry-run: {exc}"}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        row_count = None
+        unique_tickers = None
+        ticker_count = None
+        date_start = None
+        date_end = None
+        elapsed_s = None
+
+        for line in raw.splitlines():
+            m = _re.search(r"CONTEXT DRY RUN:\s*([\d,]+)\s+row\(s\) would be processed", line)
+            if m:
+                row_count = int(m.group(1).replace(",", ""))
+                continue
+            m2 = _re.search(r"CONTEXT DRY RUN unique tickers \((\d+)\):\s*(.*)", line)
+            if m2:
+                ticker_count = int(m2.group(1))
+                unique_tickers = [t.strip() for t in m2.group(2).split(",") if t.strip()]
+                continue
+            m3 = _re.search(r"CONTEXT DRY RUN date range:\s*(\S+)\s+to\s+(\S+)", line)
+            if m3:
+                date_start = m3.group(1)
+                date_end = m3.group(2)
+                continue
+            m4 = _re.search(r"CONTEXT DRY RUN COMPLETE\s*[—-]\s*([\d.]+)s elapsed", line)
+            if m4:
+                elapsed_s = float(m4.group(1))
+
+        data = {
+            "row_count":      row_count,
+            "ticker_count":   ticker_count,
+            "unique_tickers": unique_tickers,
+            "date_start":     date_start,
+            "date_end":       date_end,
+            "elapsed_s":      elapsed_s,
+            "timed_out":      timed_out,
+            "raw_output":     raw,
         }
         body = json.dumps(data).encode()
         self.send_response(200)
