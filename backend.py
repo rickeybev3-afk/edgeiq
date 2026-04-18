@@ -8058,54 +8058,55 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
     """
     if not supabase:
         return 0
-    try:
-        _updated = 0
-        _hist: list = []
-        _offset = 0
-        while True:
-            _page = (
-                supabase.table("paper_trades")
-                .select("id,predicted,alpaca_order_id")
-                .eq("user_id", user_id)
-                .is_("skip_reason", "null")
-                .range(_offset, _offset + 499)
-                .execute()
-            )
-            _rows = _page.data or []
-            _hist.extend(_rows)
-            if len(_rows) < 500:
-                break
-            _offset += 500
-        if not _hist:
-            return 0
-        _placed  = [r["id"] for r in _hist if r.get("alpaca_order_id")]
-        _bearish = [
-            r["id"] for r in _hist
-            if not r.get("alpaca_order_id")
-            and "bearish" in str(r.get("predicted") or "").lower()
-        ]
-        _rest = [
-            r["id"] for r in _hist
-            if not r.get("alpaca_order_id")
-            and "bearish" not in str(r.get("predicted") or "").lower()
-        ]
-        for _ids, _reason in (
-            (_placed, "order_placed"),
-            (_bearish, "bearish_break_filtered"),
-            (_rest, "unknown"),
-        ):
-            for _i in range(0, len(_ids), 50):
-                _chunk = _ids[_i : _i + 50]
-                try:
-                    supabase.table("paper_trades").update(
-                        {"skip_reason": _reason}
-                    ).in_("id", _chunk).execute()
-                    _updated += len(_chunk)
-                except Exception:
-                    pass
-        return _updated
-    except Exception:
+    # NOTE: No outer try/except — schema errors (e.g. "column skip_reason does
+    # not exist") MUST propagate so the app.py startup block leaves the
+    # session flag False and retries on the next render.  Only individual
+    # batch-update failures are silenced (transient network/row-lock issues).
+    _updated = 0
+    _hist: list = []
+    _offset = 0
+    while True:
+        _page = (
+            supabase.table("paper_trades")
+            .select("id,predicted,alpaca_order_id")
+            .eq("user_id", user_id)
+            .is_("skip_reason", "null")
+            .range(_offset, _offset + 499)
+            .execute()
+        )
+        _rows = _page.data or []
+        _hist.extend(_rows)
+        if len(_rows) < 500:
+            break
+        _offset += 500
+    if not _hist:
         return 0
+    _placed  = [r["id"] for r in _hist if r.get("alpaca_order_id")]
+    _bearish = [
+        r["id"] for r in _hist
+        if not r.get("alpaca_order_id")
+        and "bearish" in str(r.get("predicted") or "").lower()
+    ]
+    _rest = [
+        r["id"] for r in _hist
+        if not r.get("alpaca_order_id")
+        and "bearish" not in str(r.get("predicted") or "").lower()
+    ]
+    for _ids, _reason in (
+        (_placed, "order_placed"),
+        (_bearish, "bearish_break_filtered"),
+        (_rest, "unknown"),
+    ):
+        for _i in range(0, len(_ids), 50):
+            _chunk = _ids[_i : _i + 50]
+            try:
+                supabase.table("paper_trades").update(
+                    {"skip_reason": _reason}
+                ).in_("id", _chunk).execute()
+                _updated += len(_chunk)
+            except Exception:
+                pass  # transient batch failure — continue with remaining chunks
+    return _updated
 
 
 # ── Live Playbook Screener ──────────────────────────────────────────────────────
