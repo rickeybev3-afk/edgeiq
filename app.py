@@ -13520,6 +13520,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     st.session_state["_div_auto_last_fired_ts"] = datetime.fromisoformat(_existing_fired_ts_str)
                                 except Exception:
                                     pass
+                            # Seed the previous-count sentinel from disk so that a
+                            # page refresh after a cool-down does not re-fire the
+                            # alert simply because session state reset to -1.
+                            if "_div_auto_last_n" not in st.session_state:
+                                _persisted_count = _existing_state.get("last_alert_count")
+                                if _persisted_count is not None:
+                                    st.session_state["_div_auto_last_n"] = int(_persisted_count)
                     except Exception:
                         pass
                     _session_fired_ts = st.session_state.get("_div_auto_last_fired_ts")
@@ -13531,6 +13538,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "threshold": float(_div_thresh),
                         "flagged_rows": _flagged_csv_rows,
                         "flagged_count": _n_flagged,
+                        "last_alert_count": _n_flagged,
                         "last_updated": datetime.now().isoformat(timespec="seconds"),
                         "last_bot_sent_date": _existing_bot_date,
                         "last_fired_ts": (
