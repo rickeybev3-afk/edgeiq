@@ -12315,6 +12315,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _rp_marginal_wins_all   = 0
                             _rp_marginal_losses_all = 0
 
+                        # Pre-compute boosted count (RVOL Mult > 1.0)
+                        _rp_has_rvol_mult = (
+                            "RVOL Mult" in _rp_df.columns
+                            and _rp_df["RVOL Mult"].notna().any()
+                        )
+                        if _rp_has_rvol_mult:
+                            _rp_boost_mask_all = (
+                                pd.to_numeric(_rp_df["RVOL Mult"], errors="coerce").fillna(1.0) > 1.0
+                            )
+                            _rp_boost_count_all = int(_rp_boost_mask_all.sum())
+                            _rp_boost_df_all = _rp_df[_rp_boost_mask_all]
+                            if "P&L ($)" in _rp_df.columns:
+                                _rp_boost_wins_all   = int((_rp_boost_df_all["P&L ($)"] > 0).sum())
+                                _rp_boost_losses_all = int((_rp_boost_df_all["P&L ($)"] < 0).sum())
+                            else:
+                                _rp_boost_wins_all = _rp_boost_losses_all = 0
+                        else:
+                            _rp_boost_count_all  = 0
+                            _rp_boost_wins_all   = 0
+                            _rp_boost_losses_all = 0
+
                         _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3, _rp_log_fcol4 = st.columns([2, 1, 1, 1])
                         with _rp_log_fcol1:
                             if "rp_log_ticker_filter" not in st.session_state:
@@ -12362,6 +12383,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             if st.query_params.get("rp_log_boosted") != ("1" if _rp_log_boosted_only else "0"):
                                 st.query_params["rp_log_boosted"] = "1" if _rp_log_boosted_only else "0"
+
+                        # Win/loss caption for boosted filter
+                        if _rp_log_boosted_only and _rp_boost_count_all > 0:
+                            _boost_w_pct = round(_rp_boost_wins_all / _rp_boost_count_all * 100, 1)
+                            _boost_l_pct = round(_rp_boost_losses_all / _rp_boost_count_all * 100, 1)
+                            st.caption(
+                                f"🟡 Of {_rp_boost_count_all} boosted trades — "
+                                f"✔ {_rp_boost_wins_all} win{'s' if _rp_boost_wins_all != 1 else ''} ({_boost_w_pct}%) · "
+                                f"✖ {_rp_boost_losses_all} loss{'es' if _rp_boost_losses_all != 1 else ''} ({_boost_l_pct}%)"
+                            )
 
                         if _rp_bot_mode:
                             _rp_marg_label = (
@@ -12452,7 +12483,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 .between(0, 5)
                             )
                             _rp_display_df = _rp_display_df[_rp_marginal_mask]
-
                         # ── RVOL boosted filter ───────────────────────────────
                         if _rp_log_boosted_only and "RVOL Mult" in _rp_display_df.columns:
                             _rp_display_df = _rp_display_df[
