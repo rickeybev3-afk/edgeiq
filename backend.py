@@ -4125,6 +4125,69 @@ def monte_carlo_equity_curves(
     }
 
 
+def monte_carlo_from_r_series(
+    pnl_r_list: list,
+    starting_equity: float = 25_000.0,
+    n_simulations: int = 1_000,
+    risk_pct: float = 0.01,
+) -> dict:
+    """Monte Carlo equity simulation using a direct R-multiple series.
+
+    Unlike monte_carlo_equity_curves(), which requires aft_move_pct + win_loss
+    and assumes ±1R outcomes, this function accepts pnl_r_sim values directly
+    (e.g., +1.5R, -1.0R, +0.75R) as produced by the v5 trailing-stop simulator.
+
+    Each trade compounds as: equity *= (1 + risk_pct * r) where r is pnl_r_sim.
+
+    Returns the same dict schema as monte_carlo_equity_curves():
+    p10, p50, p90, final_equities, pct_profitable, median_final, p10_final,
+    p90_final, n_trades, n_simulations, starting.
+    """
+    import random
+    import numpy as np
+
+    outcomes = [float(r) for r in pnl_r_list if r is not None]
+    if len(outcomes) < 3:
+        return {}
+
+    random.seed(42)
+    all_curves     = []
+    final_equities = []
+
+    for _ in range(n_simulations):
+        shuffled = outcomes.copy()
+        random.shuffle(shuffled)
+        equity = starting_equity
+        curve  = [equity]
+        for r in shuffled:
+            equity = max(0.01, equity * (1.0 + risk_pct * r))
+            curve.append(equity)
+        all_curves.append(curve)
+        final_equities.append(equity)
+
+    arr  = np.array(all_curves)
+    p10  = np.percentile(arr, 10, axis=0).tolist()
+    p50  = np.percentile(arr, 50, axis=0).tolist()
+    p90  = np.percentile(arr, 90, axis=0).tolist()
+
+    final_equities.sort()
+    profitable = sum(1 for e in final_equities if e > starting_equity)
+
+    return {
+        "p10":            p10,
+        "p50":            p50,
+        "p90":            p90,
+        "final_equities": final_equities,
+        "pct_profitable": round(profitable / len(final_equities) * 100, 1),
+        "median_final":   round(float(np.percentile(final_equities, 50)), 2),
+        "p10_final":      round(float(np.percentile(final_equities, 10)), 2),
+        "p90_final":      round(float(np.percentile(final_equities, 90)), 2),
+        "n_trades":       len(outcomes),
+        "n_simulations":  n_simulations,
+        "starting":       starting_equity,
+    }
+
+
 # ── Position state persistence ────────────────────────────────────────────────
 
 def load_position_state():

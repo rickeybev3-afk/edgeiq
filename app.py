@@ -19846,129 +19846,119 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 _mc_pnl_r = [float(r["pnl_r_sim"]) for r in _mc_filtered]
 
                 if len(_mc_pnl_r) >= 5:
-                    import numpy as _np_mc
-                    import random as _rand_mc
-
-                    _mc_n_sim   = 1000
-                    _mc_rp      = _mc_risk_pct / 100.0
-                    _mc_eq0     = float(_mc_start_equity)
-                    _rand_mc.seed(42)
-
-                    _mc_all_curves   = []
-                    _mc_final_equities = []
-
-                    for _ in range(_mc_n_sim):
-                        _shuf = _mc_pnl_r.copy()
-                        _rand_mc.shuffle(_shuf)
-                        _eq = _mc_eq0
-                        _curve = [_eq]
-                        for _r in _shuf:
-                            _eq = max(0.01, _eq * (1.0 + _mc_rp * _r))
-                            _curve.append(_eq)
-                        _mc_all_curves.append(_curve)
-                        _mc_final_equities.append(_eq)
-
-                    _mc_arr     = _np_mc.array(_mc_all_curves)
-                    _mc_p10_arr = _np_mc.percentile(_mc_arr, 10, axis=0).tolist()
-                    _mc_p50_arr = _np_mc.percentile(_mc_arr, 50, axis=0).tolist()
-                    _mc_p90_arr = _np_mc.percentile(_mc_arr, 90, axis=0).tolist()
-                    _mc_x_arr   = list(range(len(_mc_p50_arr)))
-
-                    _mc_final_equities.sort()
-                    _mc_median_fin = float(_np_mc.median(_mc_final_equities))
-                    _mc_p10_fin    = float(_np_mc.percentile(_mc_final_equities, 10))
-                    _mc_p90_fin    = float(_np_mc.percentile(_mc_final_equities, 90))
-                    _mc_pct_prof   = sum(1 for v in _mc_final_equities if v > _mc_eq0) / len(_mc_final_equities) * 100
-
-                    # ── KPI cards ──────────────────────────────────────────────
-                    _mc_kpi = st.columns(4)
-                    _mc_kpi[0].metric(
-                        "Median Final",
-                        f"${_mc_median_fin:,.0f}",
-                        f"{(_mc_median_fin / _mc_eq0 - 1)*100:+.1f}%"
+                    _mc_eq0   = float(_mc_start_equity)
+                    _mc_n_sim = 1000
+                    # Delegate to backend.monte_carlo_from_r_series() which handles
+                    # variable-R trailing-stop outcomes (pnl_r_sim already encodes
+                    # sign + magnitude; simpler and more accurate than the aft_move_pct path).
+                    _mc_result = monte_carlo_from_r_series(
+                        pnl_r_list      = _mc_pnl_r,
+                        starting_equity = _mc_eq0,
+                        n_simulations   = _mc_n_sim,
+                        risk_pct        = _mc_risk_pct / 100.0,
                     )
-                    _mc_kpi[1].metric(
-                        "P90 Final (best 10%)",
-                        f"${_mc_p90_fin:,.0f}",
-                        f"{(_mc_p90_fin / _mc_eq0 - 1)*100:+.1f}%"
-                    )
-                    _mc_kpi[2].metric(
-                        "P10 Final (worst 10%)",
-                        f"${_mc_p10_fin:,.0f}",
-                        f"{(_mc_p10_fin / _mc_eq0 - 1)*100:+.1f}%"
-                    )
-                    _mc_kpi[3].metric("% Simulations Profitable", f"{_mc_pct_prof:.1f}%")
+                    if not _mc_result:
+                        st.info("Not enough valid sim rows to run Monte Carlo (need ≥ 3).")
+                    else:
+                        _mc_p10_arr    = _mc_result["p10"]
+                        _mc_p50_arr    = _mc_result["p50"]
+                        _mc_p90_arr    = _mc_result["p90"]
+                        _mc_x_arr      = list(range(len(_mc_p50_arr)))
+                        _mc_median_fin = _mc_result["median_final"]
+                        _mc_p10_fin    = _mc_result["p10_final"]
+                        _mc_p90_fin    = _mc_result["p90_final"]
+                        _mc_pct_prof   = _mc_result["pct_profitable"]
+                    if _mc_result:
+                        # ── KPI cards ────────────────────────────────────────
+                        _mc_kpi = st.columns(4)
+                        _mc_kpi[0].metric(
+                            "Median Final",
+                            f"${_mc_median_fin:,.0f}",
+                            f"{(_mc_median_fin / _mc_eq0 - 1)*100:+.1f}%"
+                        )
+                        _mc_kpi[1].metric(
+                            "P90 Final (best 10%)",
+                            f"${_mc_p90_fin:,.0f}",
+                            f"{(_mc_p90_fin / _mc_eq0 - 1)*100:+.1f}%"
+                        )
+                        _mc_kpi[2].metric(
+                            "P10 Final (worst 10%)",
+                            f"${_mc_p10_fin:,.0f}",
+                            f"{(_mc_p10_fin / _mc_eq0 - 1)*100:+.1f}%"
+                        )
+                        _mc_kpi[3].metric("% Simulations Profitable", f"{_mc_pct_prof:.1f}%")
 
-                    # ── Chart ──────────────────────────────────────────────────
-                    import plotly.graph_objects as _go_mc
-                    _fig_mc_proj = _go_mc.Figure()
-                    _fig_mc_proj.add_trace(_go_mc.Scatter(
-                        x=_mc_x_arr + _mc_x_arr[::-1],
-                        y=_mc_p90_arr + _mc_p10_arr[::-1],
-                        fill="toself",
-                        fillcolor="rgba(0,188,212,0.07)",
-                        line=dict(color="rgba(0,0,0,0)"),
-                        name="P10–P90 range",
-                        showlegend=True,
-                    ))
-                    _fig_mc_proj.add_trace(_go_mc.Scatter(
-                        x=_mc_x_arr, y=_mc_p90_arr,
-                        line=dict(color="#4caf50", dash="dot", width=1.5),
-                        name="P90 (best 10%)",
-                    ))
-                    _fig_mc_proj.add_trace(_go_mc.Scatter(
-                        x=_mc_x_arr, y=_mc_p50_arr,
-                        line=dict(color="#00bcd4", width=3),
-                        name="Median outcome",
-                    ))
-                    _fig_mc_proj.add_trace(_go_mc.Scatter(
-                        x=_mc_x_arr, y=_mc_p10_arr,
-                        line=dict(color="#ef5350", dash="dot", width=1.5),
-                        name="P10 (worst 10%)",
-                    ))
-                    _fig_mc_proj.add_hline(
-                        y=_mc_eq0,
-                        line_dash="dash",
-                        line_color="#546e7a",
-                        opacity=0.6,
-                        annotation_text=f"Starting: ${_mc_eq0:,.0f}",
-                        annotation_font_color="#546e7a",
-                    )
-                    _tier_label = "P1+P3 (TCS≥70)" if "P1 + P3" in _mc_tier_filter else "TCS≥50"
-                    _fig_mc_proj.update_layout(
-                        paper_bgcolor="#0a0a1a",
-                        plot_bgcolor="#0d1117",
-                        font=dict(color="#e0e0e0"),
-                        height=350,
-                        margin=dict(t=30, b=50, l=70, r=20),
-                        title=dict(
-                            text=f"Monte Carlo: {len(_mc_pnl_r):,} {_tier_label} trades · "
-                                 f"{_mc_n_sim:,} simulations · 1% risk/trade",
-                            font=dict(size=11, color="#90a4ae"),
-                            x=0,
-                        ),
-                        legend=dict(
-                            orientation="h", yanchor="bottom", y=1.02, x=0,
-                            font=dict(size=10),
-                        ),
-                        xaxis=dict(
-                            title="Trade #",
-                            gridcolor="#1a1a2e",
-                            zeroline=False,
-                        ),
-                        yaxis=dict(
-                            title="Account Equity ($)",
-                            gridcolor="#1a1a2e",
-                            zeroline=False,
-                            tickformat="$,.0f",
-                        ),
-                    )
-                    st.plotly_chart(_fig_mc_proj, use_container_width=True)
-                    st.caption(
-                        f"Data: {len(_mc_rows_raw):,} total v5 sim rows loaded · "
-                        f"{len(_mc_filtered):,} passed {_tier_label} filter · "
-                        f"IB<10% applied · Sequence order shuffled 1,000× per simulation"
-                    )
+                        # ── Chart ──────────────────────────────────────────────
+                        import plotly.graph_objects as _go_mc
+                        _fig_mc_proj = _go_mc.Figure()
+                        _fig_mc_proj.add_trace(_go_mc.Scatter(
+                            x=_mc_x_arr + _mc_x_arr[::-1],
+                            y=_mc_p90_arr + _mc_p10_arr[::-1],
+                            fill="toself",
+                            fillcolor="rgba(0,188,212,0.07)",
+                            line=dict(color="rgba(0,0,0,0)"),
+                            name="P10–P90 range",
+                            showlegend=True,
+                        ))
+                        _fig_mc_proj.add_trace(_go_mc.Scatter(
+                            x=_mc_x_arr, y=_mc_p90_arr,
+                            line=dict(color="#4caf50", dash="dot", width=1.5),
+                            name="P90 (best 10%)",
+                        ))
+                        _fig_mc_proj.add_trace(_go_mc.Scatter(
+                            x=_mc_x_arr, y=_mc_p50_arr,
+                            line=dict(color="#00bcd4", width=3),
+                            name="Median outcome",
+                        ))
+                        _fig_mc_proj.add_trace(_go_mc.Scatter(
+                            x=_mc_x_arr, y=_mc_p10_arr,
+                            line=dict(color="#ef5350", dash="dot", width=1.5),
+                            name="P10 (worst 10%)",
+                        ))
+                        _fig_mc_proj.add_hline(
+                            y=_mc_eq0,
+                            line_dash="dash",
+                            line_color="#546e7a",
+                            opacity=0.6,
+                            annotation_text=f"Starting: ${_mc_eq0:,.0f}",
+                            annotation_font_color="#546e7a",
+                        )
+                        _tier_label = "P1+P3 (TCS≥70)" if "P1 + P3" in _mc_tier_filter else "TCS≥50"
+                        _fig_mc_proj.update_layout(
+                            paper_bgcolor="#0a0a1a",
+                            plot_bgcolor="#0d1117",
+                            font=dict(color="#e0e0e0"),
+                            height=350,
+                            margin=dict(t=30, b=50, l=70, r=20),
+                            title=dict(
+                                text=f"Monte Carlo: {len(_mc_pnl_r):,} {_tier_label} trades · "
+                                     f"{_mc_n_sim:,} simulations · 1% risk/trade",
+                                font=dict(size=11, color="#90a4ae"),
+                                x=0,
+                            ),
+                            legend=dict(
+                                orientation="h", yanchor="bottom", y=1.02, x=0,
+                                font=dict(size=10),
+                            ),
+                            xaxis=dict(
+                                title="Trade #",
+                                gridcolor="#1a1a2e",
+                                zeroline=False,
+                            ),
+                            yaxis=dict(
+                                title="Account Equity ($)",
+                                gridcolor="#1a1a2e",
+                                zeroline=False,
+                                tickformat="$,.0f",
+                            ),
+                        )
+                        st.plotly_chart(_fig_mc_proj, use_container_width=True)
+                        _tier_label = "P1+P3 (TCS≥70)" if "P1 + P3" in _mc_tier_filter else "TCS≥50"
+                        st.caption(
+                            f"Data: {len(_mc_rows_raw):,} total v5 sim rows loaded · "
+                            f"{len(_mc_filtered):,} passed {_tier_label} filter · "
+                            f"IB<10% applied · Sequence order shuffled 1,000× per simulation"
+                        )
                 else:
                     st.info("Not enough sim rows pass the current filter (need ≥ 5). "
                             "Run the calibration backtest to build the sim history.")

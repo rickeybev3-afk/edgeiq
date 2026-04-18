@@ -403,6 +403,22 @@ _TIER_EXPECTED_R = {
 # Hard block P4 morning setups — they destroy expectancy without enough WR.
 MORNING_TCS_FLOOR = int(os.environ.get("MORNING_TCS_FLOOR", "70"))
 
+# ── Lunch blackout window ───────────────────────────────────────────────────────
+# Intraday setups firing 11:30 AM–1:30 PM ET have structurally lower follow-through
+# due to light volume, compressed spreads, and absent institutional participation.
+# Configurable via env vars (24-h HH:MM format, ET). Defaults: 11:30–13:30.
+LUNCH_BLACKOUT_START = os.environ.get("LUNCH_BLACKOUT_START", "11:30")
+LUNCH_BLACKOUT_END   = os.environ.get("LUNCH_BLACKOUT_END",   "13:30")
+
+def _in_lunch_blackout() -> bool:
+    """Return True if the current ET time falls inside the configurable lunch blackout."""
+    import datetime as _dt
+    try:
+        _now_et = _dt.datetime.now(EASTERN).strftime("%H:%M")
+        return LUNCH_BLACKOUT_START <= _now_et < LUNCH_BLACKOUT_END
+    except Exception:
+        return False
+
 # IB-range position-sizing multiplier table
 # Source: 5-yr backtest, TCS≥50 + IB<10% universe (Apr 2026).
 # Each bucket's half-Kelly fraction normalised to the 4-6% base tier,
@@ -437,12 +453,12 @@ def _ib_size_mult(ib_pct: float) -> float:
 #   P3: Morning  TCS≥70   → +4.607R / 81.9% WR → 1.50× (premium runners)
 #   P1: Intraday TCS≥70   → +2.998R / 88.8% WR → 1.25× (high-frequency edge)
 #   P2: Intraday TCS50-69 → +0.947R / 75.1% WR → 1.00× (baseline, acceptable)
-#   P4: Morning  TCS50-69 → blocked by MORNING_TCS_FLOOR before sizing; 0.50×
-#                            fallback in case floor is overridden via env var.
+#   P4: Morning  TCS50-69 → blocked by MORNING_TCS_FLOOR before sizing; 1.0× baseline
+#                            if somehow reaches sizing after floor override.
 _PTIER_MULT = [
     # (scan_type, tcs_min, multiplier)
     ("morning",  70, 1.50),
-    ("morning",  50, 0.50),   # P4 — should be blocked; 0.5× if floor is overridden
+    ("morning",  50, 1.00),   # P4 — blocked by MORNING_TCS_FLOOR; baseline if floor overridden
     ("intraday", 70, 1.25),
     ("intraday", 50, 1.00),
 ]
@@ -855,6 +871,22 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"P4 hist: 41.3% WR / +0.324R — skipping to preserve expectancy"
         )
         _patch_skip_reason(r, _ticker_raw, "morning_tcs_below_floor")
+        return
+
+    # ── Lunch blackout (intraday only) ─────────────────────────────────────────
+    # Intraday setups firing during 11:30 AM–1:30 PM ET (default) are skipped.
+    # Morning setups already fire at ~10:00 AM so are never in the window.
+    if _scan_type_v == "intraday" and _in_lunch_blackout():
+        log.info(
+            f"  [{_ticker_raw}] skip order — inside lunch blackout "
+            f"({LUNCH_BLACKOUT_START}–{LUNCH_BLACKOUT_END} ET)"
+        )
+        tg_send(
+            f"⏸ <b>{_ticker_raw} Blocked — Lunch Blackout</b>\n"
+            f"Intraday setup arrived during {LUNCH_BLACKOUT_START}–{LUNCH_BLACKOUT_END} ET.\n"
+            f"Low-volume window — skipping to protect fill quality."
+        )
+        _patch_skip_reason(r, _ticker_raw, "lunch_blackout")
         return
 
     ticker = r.get("ticker", "").upper()
@@ -1294,9 +1326,11 @@ def _force_close_all_positions() -> None:
     failed   = []
 
     for pos in positions:
-        ticker = pos.get("symbol", "").upper()
-        qty    = int(float(pos.get("qty", 0) or 0))
-        side   = pos.get("side", "long")
+        ticker  = pos.get("symbol", "").upper()
+        # Alpaca returns negative qty for short positions — use abs() to get the
+        # correct share count regardless of direction.
+        qty     = abs(int(float(pos.get("qty", 0) or 0)))
+        side    = pos.get("side", "long")
 
         if qty <= 0:
             continue
