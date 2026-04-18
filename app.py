@@ -19763,11 +19763,11 @@ Nothing here requires any input from you. All numbers update automatically as yo
             "Duplicates removed · Hover bars for full breakdown"
         )
 
-    # ── PROJECTED ACCOUNT EQUITY — MONTE CARLO (v5 sim data) ───────────────
+    # ── PROJECTED ACCOUNT EQUITY — MONTE CARLO (v6 sim data) ───────────────
     st.markdown("---")
     with st.expander("📈 Projected Account Growth — Monte Carlo Equity Simulation", expanded=False):
         st.caption(
-            "Loads all v5 trailing-stop sim data from the historical backtest database. "
+            "Loads all v6 trailing-stop sim data (S/R-aware trail tightening) from the historical backtest database. "
             "Shuffles the trade sequence 1,000 times to show the range of possible outcomes "
             "based on real edge — not averages."
         )
@@ -19817,7 +19817,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                                 supabase.table("backtest_sim_runs")
                                 .select(_mc_cols)
                                 .eq("user_id", _mc_uid)
-                                .eq("sim_version", "v5")
+                                .eq("sim_version", "v6")
                                 .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
                                 .not_.is_("pnl_r_sim", "null")
                                 .range(_mc_offset, _mc_offset + _mc_page - 1)
