@@ -12557,7 +12557,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "_sort_tiered_intra_r":_tk_tiered_intra_num,
                     "_sort_delta_morn":    _tk_delta_morn_num,
                     "_sort_delta_intra":   _tk_delta_intra_num,
-                    "_sort_ib_pass":       _ib_pass_pct if _ib_pass_pct is not None else float("inf"),
+                    "_sort_ib_pass":       _ib_pass_pct if _ib_pass_pct is not None else float("nan"),
                 })
             _sort_col_map = {
                 "Win %":            ("_sort_win_pct",        False),
@@ -12594,6 +12594,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # Sync sort choice to URL query params
                 if st.query_params.get("tkr_sort") != _sort_choice:
                     st.query_params["tkr_sort"] = _sort_choice
+                # Sort direction toggle — restore from URL query params on first load
+                if "tkr_summary_sort_reverse" not in st.session_state:
+                    st.session_state["tkr_summary_sort_reverse"] = (
+                        st.query_params.get("tkr_sort_rev", "") == "1"
+                    )
+                _sort_reverse = st.checkbox(
+                    "Reverse order ↕",
+                    key="tkr_summary_sort_reverse",
+                    help=(
+                        "Flip the sort direction. For example, with 'IB Pass %' selected, "
+                        "check this box to see best-passing tickers first (high → low)."
+                    ),
+                )
+                # Sync direction flag to URL query params
+                _qp_sort_rev_cur = st.query_params.get("tkr_sort_rev", "")
+                _sort_rev_str = "1" if _sort_reverse else ""
+                if _qp_sort_rev_cur != _sort_rev_str:
+                    if _sort_rev_str:
+                        st.query_params["tkr_sort_rev"] = _sort_rev_str
+                    elif "tkr_sort_rev" in st.query_params:
+                        del st.query_params["tkr_sort_rev"]
             with _ctrl_col_filter:
                 # Restore filter column from URL query params on first load
                 if "tkr_summary_r_filter_col" not in st.session_state:
@@ -12743,9 +12764,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "active replays or repeated filter adjustments."
                             ),
                         )
-            _sort_key, _sort_asc = _sort_col_map[_sort_choice]
+            _sort_key, _sort_asc_default = _sort_col_map[_sort_choice]
+            _sort_asc = (not _sort_asc_default) if _sort_reverse else _sort_asc_default
             _r_filter_key = _r_filter_col_map[_r_filter_col]
-            _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
+            _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(
+                _sort_key, ascending=_sort_asc, na_position="last"
+            )
             _tkr_total_count = len(_tkr_summary_df)
             _r_filter_mask = _tkr_summary_df[_r_filter_key].isna() | (_tkr_summary_df[_r_filter_key] >= _r_filter_min)
             _tkr_summary_df = _tkr_summary_df[_r_filter_mask]
