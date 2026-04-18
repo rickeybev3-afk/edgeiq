@@ -796,33 +796,33 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             return
 
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
-    # close_price must be on the correct side of VWAP at IB close for the
-    # breakout direction.  vwap_at_ib is populated by log_context_levels()
-    # (which always runs before this function in both morning and intraday flows).
-    # Historical (TCS>=50, IB<10%): aligned → 97.6% WR +2.42R; misaligned → 71.8% WR.
-    # If vwap_at_ib is missing (context logging failed), allow the trade through.
-    vwap_val  = float(r.get("vwap_at_ib") or 0)
-    close_val = float(r.get("close_price") or 0)
-    if vwap_val > 0 and close_val > 0:
-        aligned = (
-            (direction == "Bullish Break" and close_val >= vwap_val) or
-            (direction == "Bearish Break" and close_val <= vwap_val)
-        )
-        if not aligned:
-            _side = "<" if direction == "Bullish Break" else ">"
-            log.info(
-                f"  [{ticker}] skip order — VWAP misaligned: {direction} "
-                f"but close {close_val:.2f} {_side} VWAP {vwap_val:.2f} "
-                f"(hist WR 71.8% vs 97.6% when aligned)"
-            )
-            _side_word = "below" if direction == "Bullish Break" else "above"
-            tg_send(
-                f"⛔ <b>{ticker} Order blocked — VWAP misaligned</b>\n"
-                f"{direction}: close <b>${close_val:.2f}</b> is {_side_word} VWAP <b>${vwap_val:.2f}</b>\n"
-                f"Hist WR 71.8% misaligned vs 97.6% aligned — skipping"
-            )
-            _patch_skip_reason(r, ticker, "vwap_misaligned")
-            return
+    # DISABLED 2026-04-18: backtest showed removing this filter nearly doubled
+    # annual return (+20%+ weekly) — counter-VWAP setups that pass TCS≥50 +
+    # IB<10% are profitable and were being over-filtered.  The simulation toggle
+    # confirmed it.  Left here as a reference; re-enable by uncommenting.
+    #
+    # vwap_val  = float(r.get("vwap_at_ib") or 0)
+    # close_val = float(r.get("close_price") or 0)
+    # if vwap_val > 0 and close_val > 0:
+    #     aligned = (
+    #         (direction == "Bullish Break" and close_val >= vwap_val) or
+    #         (direction == "Bearish Break" and close_val <= vwap_val)
+    #     )
+    #     if not aligned:
+    #         _side = "<" if direction == "Bullish Break" else ">"
+    #         log.info(
+    #             f"  [{ticker}] skip order — VWAP misaligned: {direction} "
+    #             f"but close {close_val:.2f} {_side} VWAP {vwap_val:.2f} "
+    #             f"(hist WR 71.8% vs 97.6% when aligned)"
+    #         )
+    #         _side_word = "below" if direction == "Bullish Break" else "above"
+    #         tg_send(
+    #             f"⛔ <b>{ticker} Order blocked — VWAP misaligned</b>\n"
+    #             f"{direction}: close <b>${close_val:.2f}</b> is {_side_word} VWAP <b>${vwap_val:.2f}</b>\n"
+    #             f"Hist WR 71.8% misaligned vs 97.6% aligned — skipping"
+    #         )
+    #         _patch_skip_reason(r, ticker, "vwap_misaligned")
+    #         return
 
     result = place_alpaca_bracket_order(
         ticker       = ticker,
