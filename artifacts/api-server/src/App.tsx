@@ -31,6 +31,8 @@ interface BackfillHealthData {
   no_bars?: number;
   errors?: number;
   error?: string;
+  heartbeat_hours?: number;
+  is_overdue?: boolean;
 }
 
 interface EodSweepData {
@@ -604,51 +606,90 @@ function Home({ health }: { health: HealthState }) {
               </a>
             </div>
 
-            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "flex-start", gap: "10px" }}>
               {backfillHealth.loading ? (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0, marginTop: "3px" }} />
               ) : !backfillHealth.available ? (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f87171", display: "inline-block", flexShrink: 0, marginTop: "3px", boxShadow: "0 0 6px #f87171" }} />
               ) : (backfillHealth.errors ?? 0) > 0 ? (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f87171", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #f87171" }} />
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f87171", display: "inline-block", flexShrink: 0, marginTop: "3px", boxShadow: "0 0 6px #f87171" }} />
+              ) : backfillHealth.is_overdue ? (
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f97316", display: "inline-block", flexShrink: 0, marginTop: "3px", boxShadow: "0 0 6px #f97316" }} />
               ) : (backfillHealth.no_bars ?? 0) > 0 ? (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#fbbf24", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #fbbf24" }} />
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#fbbf24", display: "inline-block", flexShrink: 0, marginTop: "3px", boxShadow: "0 0 6px #fbbf24" }} />
               ) : (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #4ade80" }} />
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, marginTop: "3px", boxShadow: "0 0 6px #4ade80" }} />
               )}
-              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Backfill</span>
-              {backfillHealth.loading ? (
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>—</span>
-              ) : !backfillHealth.available ? (
-                <a
-                  href={`${settingsBase}/settings#backfill-health`}
-                  style={{ fontSize: "13px", color: "#475569", fontWeight: 600, textDecoration: "none" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
-                  title="No backfill run recorded yet"
-                >
-                  No data
-                </a>
-              ) : (
-                <a
-                  href={`${settingsBase}/settings#backfill-health`}
-                  style={{ fontSize: "13px", textDecoration: "none", display: "flex", alignItems: "center", gap: "6px" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
-                  title="Go to backfill health details"
-                >
-                  <span style={{ color: "#86efac", fontWeight: 600 }}>{(backfillHealth.rows_saved ?? 0).toLocaleString()} rows</span>
-                  {(backfillHealth.no_bars ?? 0) > 0 && (
-                    <span style={{ color: "#fbbf24", fontWeight: 600 }}>· {backfillHealth.no_bars} no-bars</span>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Backfill</span>
+                  {backfillHealth.loading ? (
+                    <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>—</span>
+                  ) : !backfillHealth.available ? (
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        color: "#fca5a5",
+                        background: "rgba(239,68,68,0.12)",
+                        border: "1px solid #7f1d1d",
+                        borderRadius: "4px",
+                        padding: "2px 7px",
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                      }}
+                      title={`No backfill run recorded — threshold is ${backfillHealth.heartbeat_hours ?? 25} h`}
+                    >
+                      Overdue
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        color: backfillHealth.is_overdue ? "#fdba74" : "#86efac",
+                        background: backfillHealth.is_overdue ? "rgba(249,115,22,0.12)" : "rgba(74,222,128,0.1)",
+                        border: backfillHealth.is_overdue ? "1px solid #9a3412" : "1px solid #14532d",
+                        borderRadius: "4px",
+                        padding: "2px 7px",
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                      }}
+                      title={`Heartbeat threshold: ${backfillHealth.heartbeat_hours ?? 25} h`}
+                    >
+                      {backfillHealth.is_overdue ? "Overdue" : "OK"}
+                    </span>
                   )}
-                  {(backfillHealth.errors ?? 0) > 0 && (
-                    <span style={{ color: "#f87171", fontWeight: 600 }}>· {backfillHealth.errors} err</span>
-                  )}
-                  {backfillHealth.completed_at && (
-                    <span style={{ color: "#64748b", fontSize: "12px" }}>· {formatRelativeTime(backfillHealth.completed_at)}</span>
-                  )}
-                </a>
-              )}
+                </div>
+                {!backfillHealth.loading && backfillHealth.available && (
+                  <a
+                    href={`${settingsBase}/settings#backfill-health`}
+                    style={{ fontSize: "12px", textDecoration: "none", display: "flex", alignItems: "center", gap: "6px", color: "#64748b" }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "#94a3b8"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "#64748b"; }}
+                    title="Go to backfill health details"
+                  >
+                    <span style={{ color: "#94a3b8" }}>{(backfillHealth.rows_saved ?? 0).toLocaleString()} rows</span>
+                    {(backfillHealth.no_bars ?? 0) > 0 && (
+                      <span style={{ color: "#fbbf24" }}>· {backfillHealth.no_bars} no-bars</span>
+                    )}
+                    {(backfillHealth.errors ?? 0) > 0 && (
+                      <span style={{ color: "#f87171" }}>· {backfillHealth.errors} err</span>
+                    )}
+                    {backfillHealth.completed_at && (
+                      <span>· {formatRelativeTime(backfillHealth.completed_at)}</span>
+                    )}
+                    {backfillHealth.heartbeat_hours != null && (
+                      <span style={{ color: "#475569" }}>· {backfillHealth.heartbeat_hours} h window</span>
+                    )}
+                  </a>
+                )}
+                {!backfillHealth.loading && !backfillHealth.available && (
+                  <span style={{ fontSize: "12px", color: "#475569" }}>
+                    No run recorded — threshold {backfillHealth.heartbeat_hours ?? 25} h
+                  </span>
+                )}
+              </div>
             </div>
 
             <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>

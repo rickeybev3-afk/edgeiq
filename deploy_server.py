@@ -681,27 +681,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as _me:
                 logging.warning(f'Could not migrate backfill history from {_legacy_path} to {history_path}: {_me}')
         try:
+            heartbeat_hours = float(os.environ.get("BACKFILL_HEARTBEAT_HOURS", "25"))
+        except (ValueError, TypeError):
+            heartbeat_hours = 25.0
+        try:
             with open(history_path) as f:
                 history = json.load(f)
             if not isinstance(history, list) or len(history) == 0:
-                data = {"available": False, "history_path": history_path}
+                data = {"available": False, "heartbeat_hours": heartbeat_hours, "is_overdue": True, "history_path": history_path}
             else:
                 latest = history[-1]
+                completed_at_str = latest.get("completed_at")
+                is_overdue = True
+                if completed_at_str:
+                    try:
+                        import datetime as _dt
+                        completed_at = _dt.datetime.fromisoformat(completed_at_str.replace("Z", "+00:00"))
+                        if completed_at.tzinfo is None:
+                            completed_at = completed_at.replace(tzinfo=_dt.timezone.utc)
+                        age_hours = (_dt.datetime.now(_dt.timezone.utc) - completed_at).total_seconds() / 3600.0
+                        is_overdue = age_hours > heartbeat_hours
+                    except Exception:
+                        is_overdue = True
                 data = {
                     "available": True,
-                    "completed_at": latest.get("completed_at"),
+                    "completed_at": completed_at_str,
                     "rows_saved": latest.get("rows_saved"),
                     "no_bars": latest.get("no_bars"),
                     "errors": latest.get("errors"),
+                    "heartbeat_hours": heartbeat_hours,
+                    "is_overdue": is_overdue,
                     "history": list(reversed(history)),
                     "history_path": history_path,
                 }
         except FileNotFoundError:
-            data = {"available": False, "history_path": history_path}
+            data = {"available": False, "heartbeat_hours": heartbeat_hours, "is_overdue": True, "history_path": history_path}
         except json.JSONDecodeError:
-            data = {"available": False, "error": "history file corrupt", "history_path": history_path}
+            data = {"available": False, "error": "history file corrupt", "heartbeat_hours": heartbeat_hours, "is_overdue": True, "history_path": history_path}
         except Exception as e:
-            data = {"available": False, "error": str(e), "history_path": history_path}
+            data = {"available": False, "error": str(e), "heartbeat_hours": heartbeat_hours, "is_overdue": True, "history_path": history_path}
         body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
