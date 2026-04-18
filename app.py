@@ -20529,7 +20529,7 @@ ALTER TABLE backtest_sim_runs
             '</tr>'
         )
         _ts_body = ""
-        for _tsr in _tbl_rows:
+        for _ts_row_idx, _tsr in enumerate(_tbl_rows):
             _ts_eod_wr_str  = f'<span style="color:{_ts_wr_col(_tsr["eod_wr"])};font-weight:600;">{_tsr["eod_wr"]}%</span>'  if _tsr["eod_wr"]  is not None else '<span style="color:#546e7a;">—</span>'
             _ts_eod_exp_str = f'<span style="color:{_ts_exp_col(_tsr["eod_exp"])};font-weight:600;">{_tsr["eod_exp"]:+.3f}R</span>' if _tsr["eod_exp"] is not None else '<span style="color:#546e7a;">—</span>'
             _ts_tier_wr_str  = f'<span style="color:{_ts_wr_col(_tsr["tier_wr"])};font-weight:600;">{_tsr["tier_wr"]}%</span>'  if _tsr["tier_wr"]  is not None else '<span style="color:#546e7a;">—</span>'
@@ -20545,8 +20545,14 @@ ALTER TABLE backtest_sim_runs
             else:
                 _ts_badge = '<span style="color:#546e7a;">—</span>'
             _ts_n_str = f'<span style="color:#cfd8dc;">{_tsr["n"]}</span>' if _tsr["n"] > 0 else '<span style="color:#546e7a;">0</span>'
+            _ts_is_top = _ts_row_idx == 0 and (_tsr["eod_exp"] is not None or _tsr["tier_exp"] is not None)
+            _ts_row_style = (
+                'border-top:1px solid #1e2a3a;border-left:3px solid #ffd54f;background:rgba(255,213,79,0.06);'
+                if _ts_is_top else
+                'border-top:1px solid #1e2a3a;border-left:3px solid transparent;'
+            )
             _ts_body += (
-                f'<tr style="border-top:1px solid #1e2a3a;">'
+                f'<tr style="{_ts_row_style}">'
                 f'<td style="padding:6px 10px;"><span style="color:{_tsr["color"]};font-weight:700;">{_tsr["emoji"]} {_tsr["label"]}</span></td>'
                 f'<td style="padding:6px 10px;font-size:11px;color:#90a4ae;">{_tsr["desc"]}</td>'
                 f'<td style="padding:6px 10px;text-align:right;">{_ts_n_str}</td>'
