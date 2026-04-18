@@ -1203,9 +1203,11 @@ if not st.session_state.skip_reason_backfill_done:
         _sr_uid = st.session_state.get("auth_user_id", "")
         if _sr_uid:
             backfill_paper_trades_skip_reason(user_id=_sr_uid)
+        # Only mark done on success — if skip_reason column doesn't exist yet
+        # (migrations not run), the function raises and we retry next render.
+        st.session_state.skip_reason_backfill_done = True
     except Exception:
-        pass
-    st.session_state.skip_reason_backfill_done = True
+        pass  # retry on next render (e.g., after migrations add the column)
 
 # ── Audio JS (Web Audio API, synthesised tones — no external files) ────────────
 _CHIME_JS = """(function(){
@@ -22217,22 +22219,52 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         _ao_cancelled      = _ao_total_placed - _ao_total_filled
         _ao_filtered_out   = _ao_total_signals - _ao_total_placed
 
-        # ── Realized $ P&L across filled orders (EOD-proxy: eod_close - fill_price × qty) ──
+        # ── Aggregate fill-vs-sim metrics across filled orders ──────────────
+        # Computes: realized $ P&L, avg fill-based EOD R, avg sim R (same rows),
+        # avg ΔR (slippage impact). All EOD-proxy until actual exit fills available.
         _ao_realized_pnl = 0.0
+        _ao_fill_r_vals:  list = []
+        _ao_sim_r_vals:   list = []
+        _ao_sim_pnl = 0.0
         if "alpaca_fill_price" in _ao_df.columns and "alpaca_qty" in _ao_df.columns:
             for _, _pnl_row in _ao_df[_ao_has_fill].iterrows():
                 try:
-                    _pnl_fill = float(_pnl_row.get("alpaca_fill_price") or 0)
-                    _pnl_qty  = float(_pnl_row.get("alpaca_qty") or 0)
-                    _pnl_eod  = float(_pnl_row.get("close_price") or 0)
-                    _pnl_dir  = str(_pnl_row.get("predicted") or "")
+                    _pnl_fill    = float(_pnl_row.get("alpaca_fill_price") or 0)
+                    _pnl_qty     = float(_pnl_row.get("alpaca_qty") or 0)
+                    _pnl_eod     = float(_pnl_row.get("close_price") or 0)
+                    _pnl_dir     = str(_pnl_row.get("predicted") or "")
+                    _pnl_ib_h    = float(_pnl_row.get("ib_high") or 0)
+                    _pnl_ib_l    = float(_pnl_row.get("ib_low") or 0)
+                    _pnl_range   = _pnl_ib_h - _pnl_ib_l if _pnl_ib_h > 0 and _pnl_ib_l > 0 else 0.0
+                    _pnl_is_bull = "bullish" in _pnl_dir.lower() or "long" in _pnl_dir.lower()
                     if _pnl_fill > 0 and _pnl_qty > 0 and _pnl_eod > 0:
-                        if "bullish" in _pnl_dir.lower() or "long" in _pnl_dir.lower():
-                            _ao_realized_pnl += _pnl_qty * (_pnl_eod - _pnl_fill)
-                        else:
-                            _ao_realized_pnl += _pnl_qty * (_pnl_fill - _pnl_eod)
+                        # Realized $ P&L (fill entry, EOD exit proxy)
+                        _ao_realized_pnl += (
+                            _pnl_qty * (_pnl_eod - _pnl_fill) if _pnl_is_bull
+                            else _pnl_qty * (_pnl_fill - _pnl_eod)
+                        )
+                        if _pnl_range > 0:
+                            # Fill-based R
+                            _fr = (
+                                (_pnl_eod - _pnl_fill) / _pnl_range if _pnl_is_bull
+                                else (_pnl_fill - _pnl_eod) / _pnl_range
+                            )
+                            _ao_fill_r_vals.append(_fr)
+                            # Sim R using IB edge as sim entry
+                            _sim_e = _pnl_ib_h if _pnl_is_bull else _pnl_ib_l
+                            _sr2   = (
+                                (_pnl_eod - _sim_e) / _pnl_range if _pnl_is_bull
+                                else (_sim_e - _pnl_eod) / _pnl_range
+                            )
+                            _ao_sim_r_vals.append(_sr2)
+                            # Sim $ P&L
+                            _ao_sim_pnl += _pnl_qty * (_pnl_eod - _sim_e) if _pnl_is_bull else _pnl_qty * (_sim_e - _pnl_eod)
                 except Exception:
                     pass
+
+        _ao_avg_fill_r = sum(_ao_fill_r_vals) / len(_ao_fill_r_vals) if _ao_fill_r_vals else None
+        _ao_avg_sim_r  = sum(_ao_sim_r_vals)  / len(_ao_sim_r_vals)  if _ao_sim_r_vals  else None
+        _ao_avg_delta_r = (_ao_avg_fill_r - _ao_avg_sim_r) if (_ao_avg_fill_r is not None and _ao_avg_sim_r is not None) else None
 
         # ── Summary cards ───────────────────────────────────────────────────
         _ao_c1, _ao_c2, _ao_c3, _ao_c4, _ao_c5 = st.columns(5)
@@ -22284,6 +22316,40 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Fill vs Sim R comparison (aggregate across filled orders) ────────
+        if _ao_avg_fill_r is not None:
+            def _r_badge(val: float, label: str) -> str:
+                col = "#66bb6a" if val >= 0 else "#ef5350"
+                return (
+                    f'<div style="text-align:center;padding:8px 0;">'
+                    f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">{label}</div>'
+                    f'<div style="font-size:22px;font-weight:700;color:{col};">{val:+.2f}R</div>'
+                    f'</div>'
+                )
+            _ao_r_n = len(_ao_fill_r_vals)
+            _ao_ra, _ao_rb, _ao_rc, _ao_rd = st.columns([2, 2, 2, 3])
+            with _ao_ra:
+                st.markdown(_r_badge(_ao_avg_fill_r, "Avg Fill R"), unsafe_allow_html=True)
+            with _ao_rb:
+                _sim_r_disp = _ao_avg_sim_r if _ao_avg_sim_r is not None else 0.0
+                st.markdown(_r_badge(_sim_r_disp, "Avg Sim R"), unsafe_allow_html=True)
+            with _ao_rc:
+                _dr_disp = _ao_avg_delta_r if _ao_avg_delta_r is not None else 0.0
+                st.markdown(_r_badge(_dr_disp, "Avg ΔR (slip)"), unsafe_allow_html=True)
+            with _ao_rd:
+                _ao_sim_pnl_col = "#66bb6a" if _ao_sim_pnl >= 0 else "#ef5350"
+                _ao_sim_pnl_s   = f'{"+" if _ao_sim_pnl >= 0 else ""}${_ao_sim_pnl:,.2f}'
+                st.markdown(
+                    f'<div style="text-align:center;padding:8px 0;background:#1e2a3a;border-radius:6px;">'
+                    f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Sim $ P&L (same {_ao_r_n} rows)</div>'
+                    f'<div style="font-size:18px;font-weight:700;color:{_ao_sim_pnl_col};">{_ao_sim_pnl_s}</div>'
+                    f'<div style="font-size:10px;color:#546e7a;">vs fill P&L {("+" if _ao_realized_pnl >= 0 else "")}${_ao_realized_pnl:,.2f}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            st.caption(f"Aggregates across {_ao_r_n} filled order{'s' if _ao_r_n != 1 else ''} with valid IB data. ΔR = fill − sim (negative = slippage hurt). EOD-proxy only.")
+            st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Signal → Order funnel breakdown ────────────────────────────────
         _ao_col_left, _ao_col_right = st.columns([1, 1])
