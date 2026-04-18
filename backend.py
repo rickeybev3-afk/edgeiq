@@ -8078,6 +8078,13 @@ def run_pending_migrations() -> dict:
         # Actual exit fill price from Alpaca bracket order legs (take-profit or stop-loss child fill).
         # When present, used instead of close_price (EOD proxy) for P&L calculation.
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS alpaca_exit_fill_price NUMERIC",
+        # Intraday S/R levels written by log_context_levels() at scan time.
+        # Nearest key level (prev_day_high, prev_day_low, VWAP) above/below the IB break price.
+        # Read directly by _monitor_trailing_stops() so the v6 trail-tightening logic
+        # does not have to fall back to the nightly backtest_context_levels table (which
+        # is never populated intraday and therefore returns NULL for today's live trades).
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS nearest_resistance REAL",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS nearest_support    REAL",
     ]
 
     ran = 0

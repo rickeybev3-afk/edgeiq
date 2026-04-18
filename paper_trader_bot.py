@@ -658,19 +658,41 @@ def log_context_levels(results: list, trade_date_str: str) -> None:
             key_lvls = [l for l in [pd.get('high'), pd.get('low'), vwap] if l]
             above    = [l for l in key_lvls if ib_break and l > ib_break]
             below    = [l for l in key_lvls if ib_break and l <= ib_break]
+            nearest_res = round(min(above), 4) if above else None
+            nearest_sup = round(max(below), 4) if below else None
             # Write VWAP back to r so _place_order_for_setup can use it as an
             # entry quality filter (VWAP directional alignment).
             r['vwap_at_ib'] = round(vwap, 4) if vwap else None
-            # Patch vwap_at_ib onto the paper_trades row (inserted before this
-            # function runs, so we update rather than insert).
-            if _supabase_client and r['vwap_at_ib'] is not None:
-                try:
-                    _supabase_client.table('paper_trades').update({
-                        'vwap_at_ib': r['vwap_at_ib'],
-                    }).eq('user_id', USER_ID).eq('trade_date', trade_date_str).eq(
-                        'ticker', ticker).eq('scan_type', scan_type).execute()
-                except Exception as _vwap_patch_err:
-                    log.warning(f'  context levels: {ticker} vwap_at_ib patch failed: {_vwap_patch_err}')
+            # Also store S/R levels on r so they are available to callers.
+            r['nearest_resistance'] = nearest_res
+            r['nearest_support']    = nearest_sup
+            # Patch vwap_at_ib, nearest_resistance and nearest_support onto the
+            # paper_trades row (inserted before this function runs, so we update
+            # rather than insert).  All three are written in a single round-trip
+            # so the trailing-stop monitor can read S/R levels directly from the
+            # paper_trades row instead of doing a secondary backtest_context_levels
+            # lookup that returns NULL for today's live trades (the nightly backfill
+            # hasn't run yet).
+            if _supabase_client:
+                _pt_patch: dict = {}
+                if r['vwap_at_ib'] is not None:
+                    _pt_patch['vwap_at_ib'] = r['vwap_at_ib']
+                if nearest_res is not None:
+                    _pt_patch['nearest_resistance'] = nearest_res
+                if nearest_sup is not None:
+                    _pt_patch['nearest_support'] = nearest_sup
+                if _pt_patch:
+                    try:
+                        _supabase_client.table('paper_trades').update(
+                            _pt_patch
+                        ).eq('user_id', USER_ID).eq('trade_date', trade_date_str).eq(
+                            'ticker', ticker).eq('scan_type', scan_type).execute()
+                        log.info(
+                            f'  context levels: {ticker} patched paper_trades '
+                            f'vwap={r["vwap_at_ib"]} res={nearest_res} sup={nearest_sup}'
+                        )
+                    except Exception as _pt_patch_err:
+                        log.warning(f'  context levels: {ticker} paper_trades patch failed: {_pt_patch_err}')
             rows_to_upsert.append({
                 'ticker':             ticker,
                 'trade_date':         trade_date_str,
@@ -684,8 +706,8 @@ def log_context_levels(results: list, trade_date_str: str) -> None:
                 'macd_signal_line':   round(sl, 6) if sl is not None else None,
                 'macd_histogram':     round(hist, 6) if hist is not None else None,
                 'macd_direction':     direction,
-                'nearest_resistance': round(min(above), 4) if above else None,
-                'nearest_support':    round(max(below), 4) if below else None,
+                'nearest_resistance': nearest_res,
+                'nearest_support':    nearest_sup,
             })
         except Exception as e:
             log.warning(f'  context levels: {ticker} error: {e}')
@@ -1202,12 +1224,26 @@ def _monitor_trailing_stops() -> None:
 
     today_str = str(now_et.date())
 
-    # Fetch open paper_trades for today
+    # Fetch open paper_trades for today.
+    # nearest_resistance and nearest_support are written by log_context_levels()
+    # at scan time so the v6 trail-tightening logic below can read them without
+    # a secondary backtest_context_levels lookup (which returns NULL for today's
+    # live trades until the nightly backfill runs).
+    # The select is tried with the new S/R columns first; if the schema migration
+    # has not yet been applied (column unknown → PostgREST 400) we fall back to
+    # the legacy column list so trailing-stop monitoring is never disabled solely
+    # by a missing migration.
+    _BASE_SELECT = (
+        "ticker,predicted,scan_type,"
+        "entry_price_sim,stop_price_sim,target_price_sim,"
+        "alpaca_order_id,alpaca_qty,win_loss,trade_date"
+    )
+    _SR_COLS  = ",nearest_resistance,nearest_support"
     try:
         open_trades = (
             _supabase_client
             .table("paper_trades")
-            .select("ticker,predicted,scan_type,entry_price_sim,stop_price_sim,target_price_sim,alpaca_order_id,alpaca_qty,win_loss,trade_date")
+            .select(_BASE_SELECT + _SR_COLS)
             .eq("user_id", USER_ID)
             .eq("trade_date", today_str)
             .not_.is_("alpaca_order_id", "null")
@@ -1215,8 +1251,32 @@ def _monitor_trailing_stops() -> None:
             .execute()
         ).data or []
     except Exception as _e:
-        log.warning(f"[TrailingStop] DB fetch error: {_e}")
-        return
+        _es = str(_e)
+        # Column-not-found error from PostgREST (schema cache miss or missing
+        # migration) — retry without the new S/R columns so monitoring continues.
+        if "nearest_resistance" in _es or "nearest_support" in _es or "PGRST" in _es:
+            log.warning(
+                f"[TrailingStop] S/R columns not in DB schema yet — retrying without them. "
+                f"Run migration add_sr_levels_paper_trades.sql to enable v6 trail-tightening "
+                f"from paper_trades. Error: {_e}"
+            )
+            try:
+                open_trades = (
+                    _supabase_client
+                    .table("paper_trades")
+                    .select(_BASE_SELECT)
+                    .eq("user_id", USER_ID)
+                    .eq("trade_date", today_str)
+                    .not_.is_("alpaca_order_id", "null")
+                    .is_("win_loss", "null")
+                    .execute()
+                ).data or []
+            except Exception as _e2:
+                log.warning(f"[TrailingStop] DB fetch error (fallback): {_e2}")
+                return
+        else:
+            log.warning(f"[TrailingStop] DB fetch error: {_e}")
+            return
 
     if not open_trades:
         return
@@ -1276,24 +1336,58 @@ def _monitor_trailing_stops() -> None:
         # the trade has run into a known wall → tighten trail to 0.5R to lock
         # in more gain before a potential reversal at the S/R level.
         # Falls back to 1.0R (standard) when no context data is available.
+        #
+        # Level source priority:
+        #   1. nearest_resistance / nearest_support on the paper_trades row itself —
+        #      written by log_context_levels() at scan time so it is always fresh
+        #      for today's live trades.
+        #   2. backtest_context_levels table — populated by the nightly backfill;
+        #      used as a fallback in case the paper_trades columns are NULL (e.g.
+        #      for older rows inserted before this feature was deployed).
         cur_px         = float(pos.get("current_price", 0) or pos.get("lastday_price", 0) or 0)
         trail_size     = stop_dist       # default: 1R trail
         trail_r_label  = "1R"
         trail_tightened = False
         try:
-            ctx_resp = (
-                _supabase_client
-                .table("backtest_context_levels")
-                .select("nearest_resistance,nearest_support")
-                .eq("ticker", ticker)
-                .eq("trade_date", today_str)
-                .eq("scan_type", scan_type)
-                .limit(1)
-                .execute()
-            )
-            ctx_rows = ctx_resp.data or []
-            if ctx_rows and cur_px > 0:
-                ctx = ctx_rows[0]
+            # ── Source 1: paper_trades columns (always current) ───────────────
+            _pt_res = row.get("nearest_resistance")
+            _pt_sup = row.get("nearest_support")
+            _ctx_source = None
+            if _pt_res is not None or _pt_sup is not None:
+                ctx = {"nearest_resistance": _pt_res, "nearest_support": _pt_sup}
+                _ctx_source = "paper_trades"
+                log.info(
+                    f"[TrailingStop] {ticker} S/R from paper_trades: "
+                    f"res={_pt_res} sup={_pt_sup}"
+                )
+            else:
+                # ── Source 2: backtest_context_levels (nightly backfill) ──────
+                ctx_resp = (
+                    _supabase_client
+                    .table("backtest_context_levels")
+                    .select("nearest_resistance,nearest_support")
+                    .eq("ticker", ticker)
+                    .eq("trade_date", today_str)
+                    .eq("scan_type", scan_type)
+                    .limit(1)
+                    .execute()
+                )
+                ctx_rows = ctx_resp.data or []
+                ctx = ctx_rows[0] if ctx_rows else {}
+                if ctx:
+                    _ctx_source = "backtest_context_levels"
+                    log.info(
+                        f"[TrailingStop] {ticker} S/R from backtest_context_levels "
+                        f"(paper_trades columns were NULL): "
+                        f"res={ctx.get('nearest_resistance')} sup={ctx.get('nearest_support')}"
+                    )
+                else:
+                    log.info(
+                        f"[TrailingStop] {ticker} no S/R context found in either source "
+                        f"— using default 1R trail"
+                    )
+
+            if _ctx_source and cur_px > 0:
                 if direction == "Bullish Break":
                     _nearest = ctx.get("nearest_resistance")
                     # Tighten when resistance is within 0.3R above current price at T1
@@ -1304,7 +1398,8 @@ def _monitor_trailing_stops() -> None:
                         trail_r_label = "0.5R"
                         trail_tightened = True
                         log.info(
-                            f"[TrailingStop] {ticker} v6 tighten: resistance=${float(_nearest):.2f} "
+                            f"[TrailingStop] {ticker} v6 tighten [{_ctx_source}]: "
+                            f"resistance=${float(_nearest):.2f} "
                             f"is {float(_nearest)-cur_px:.2f} above cur_px=${cur_px:.2f} "
                             f"(within 0.3R={0.3*stop_dist:.2f}) → trail={trail_r_label}"
                         )
@@ -1318,7 +1413,8 @@ def _monitor_trailing_stops() -> None:
                         trail_r_label = "0.5R"
                         trail_tightened = True
                         log.info(
-                            f"[TrailingStop] {ticker} v6 tighten: support=${float(_nearest):.2f} "
+                            f"[TrailingStop] {ticker} v6 tighten [{_ctx_source}]: "
+                            f"support=${float(_nearest):.2f} "
                             f"is {cur_px-float(_nearest):.2f} below cur_px=${cur_px:.2f} "
                             f"(within 0.3R={0.3*stop_dist:.2f}) → trail={trail_r_label}"
                         )
