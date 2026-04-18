@@ -10134,6 +10134,12 @@ def ensure_paper_trades_table() -> bool:
         return False
 
 
+# Formula version stamped on every sim row by _sim_patch().
+# Bump this string whenever compute_trade_sim() logic changes so that
+# --skip-existing automatically re-processes stale (old-version) rows.
+SIM_VERSION = "v1"
+
+
 def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     """Simulate an IB-breakout paper trade from an EdgeIQ structure setup.
 
@@ -10200,7 +10206,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
                     "pnl_pct_sim": round(pnl_pct, 2), "pnl_r_sim": pnl_r,
-                    "sim_outcome": sim_outcome,
+                    "sim_outcome": sim_outcome, "sim_version": SIM_VERSION,
                 }
             pnl_pct = (close_price - ib_high) / ib_high * 100
         elif ft_pct is not None:
@@ -10212,7 +10218,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
                     "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
-                    "sim_outcome": "stopped_out",
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             pnl_pct = float(ft_pct)
         else:
@@ -10234,7 +10240,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
                     "pnl_pct_sim": round(pnl_pct, 2), "pnl_r_sim": pnl_r,
-                    "sim_outcome": sim_outcome,
+                    "sim_outcome": sim_outcome, "sim_version": SIM_VERSION,
                 }
             pnl_pct = (ib_low - close_price) / ib_low * 100   # positive when price fell
         elif ft_pct is not None:
@@ -10246,7 +10252,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
                     "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
-                    "sim_outcome": "stopped_out",
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             pnl_pct = -float(ft_pct)   # negative ft_pct = price fell = profit for short
         else:
@@ -10278,6 +10284,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
         "pnl_pct_sim":      round(pnl_pct, 2),
         "pnl_r_sim":        round(pnl_r, 3),
         "sim_outcome":      sim_outcome,
+        "sim_version":      SIM_VERSION,
     }
 
 

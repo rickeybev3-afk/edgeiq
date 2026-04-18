@@ -64,10 +64,13 @@ Usage
 
 Flags
 ─────
-  --skip-existing   Skip rows where both sim_outcome and eod_pnl_r are already
-                    populated.  Rows missing either field are still processed.
-                    Use this for incremental runs after the initial full backfill.
-                    Omit to force a full recompute (e.g. after a formula change).
+  --skip-existing   Skip rows where sim_outcome and eod_pnl_r are already
+                    populated AND sim_version matches the current SIM_VERSION
+                    constant in backend.py.  Rows missing any field or stamped
+                    with an older version are re-processed automatically — no
+                    need to drop the flag after a formula change; just bump
+                    SIM_VERSION and re-run with --skip-existing.
+                    Omit to force a full recompute of every breakout row.
   --dry-run         Count and print the rows that would be changed without writing
                     anything to the database.  Reads are still performed so the
                     script can inspect each row via compute_trade_sim(), but no
@@ -147,8 +150,8 @@ def count_rows_to_process(user_ids: list[str], skip_existing: bool = False) -> i
     genuine zero-work result from a count error (which would also return 0
     and could otherwise cause a silent no-op in --skip-existing mode).
 
-    When skip_existing=True, only counts rows that are missing sim_outcome
-    or eod_pnl_r (i.e. rows that actually need work).
+    When skip_existing=True, only counts rows that are missing sim_outcome,
+    eod_pnl_r, or have a stale sim_version (i.e. rows that actually need work).
     """
     if not backend.supabase:
         return None
@@ -164,8 +167,13 @@ def count_rows_to_process(user_ids: list[str], skip_existing: bool = False) -> i
                         .eq("actual_outcome", direction)
                     )
                     if skip_existing:
-                        # Only count rows where at least one sim field is missing
-                        q = q.or_("sim_outcome.is.null,eod_pnl_r.is.null")
+                        # Count rows that are missing a sim field OR have a stale version.
+                        # sim_version.neq.<ver> also matches NULLs in PostgREST, so the
+                        # explicit sim_version.is.null guard is included for clarity.
+                        q = q.or_(
+                            f"sim_outcome.is.null,eod_pnl_r.is.null,"
+                            f"sim_version.is.null,sim_version.neq.{backend.SIM_VERSION}"
+                        )
                     resp = q.limit(0).execute()
                     total += resp.count or 0
                 except Exception:
@@ -189,6 +197,7 @@ def _sim_patch(r: dict) -> dict | None:
         "stop_price_sim":   sim.get("stop_price_sim"),
         "stop_dist_pct":    sim.get("stop_dist_pct"),
         "target_price_sim": sim.get("target_price_sim"),
+        "sim_version":      sim.get("sim_version"),
     }
     # EOD Hold P&L from stored close_price (no bars needed — computable from DB data).
     # Tiered P&L cannot be backfilled (requires intraday bars that aren't stored).
@@ -221,12 +230,15 @@ def backfill_table(table: str, id_col: str, user_id: str,
     """Recompute sim fields for all breakout rows belonging to *user_id*.
 
     Args:
-        skip_existing: When True, only fetch rows where sim_outcome IS NULL or
-                       eod_pnl_r IS NULL.  Rows that already have both fields
-                       populated are not re-fetched or re-written, making
-                       incremental runs significantly faster on large datasets.
+        skip_existing: When True, only fetch rows where sim_outcome IS NULL,
+                       eod_pnl_r IS NULL, sim_version IS NULL, or sim_version
+                       does not match the current SIM_VERSION constant.  This
+                       means stale rows (written by an older formula) are
+                       automatically re-processed even in skip-existing mode —
+                       operators no longer need to remember to drop the flag
+                       after a formula change.
                        When False (default), every breakout row is recomputed
-                       and overwritten — use this after a formula change.
+                       and overwritten.
         dry_run:       When True, rows are fetched and inspected via _sim_patch()
                        so the script can report exactly what would change, but no
                        UPDATE calls are issued.  Returns the total number of rows
@@ -256,30 +268,37 @@ def backfill_table(table: str, id_col: str, user_id: str,
         #                  (we're matching on actual_outcome which never changes).
         # Skip-existing:   keyset (cursor) — offset-based pagination is UNSAFE
         #                  here because updating a row removes it from the
-        #                  "sim_outcome IS NULL OR eod_pnl_r IS NULL" filter set,
-        #                  causing the next offset window to skip forward over
-        #                  rows that haven't been processed yet.
+        #                  "sim_outcome IS NULL OR eod_pnl_r IS NULL OR stale
+        #                  sim_version" filter set, causing the next offset window
+        #                  to skip forward over rows not yet processed.
         #                  Keyset: ORDER BY id + id > last_seen_id keeps the
         #                  cursor stable regardless of filter-set mutations.
         offset   = 0        # used in full-recompute mode
         last_id  = None     # used in skip-existing mode (keyset cursor)
 
+        # PostgREST or_ string shared between main and fallback query paths.
+        _SKIP_FILTER = (
+            f"sim_outcome.is.null,eod_pnl_r.is.null,"
+            f"sim_version.is.null,sim_version.neq.{backend.SIM_VERSION}"
+        )
+
         while True:
             # Build base query — fetch fields needed by _sim_patch / compute_trade_sim.
-            # Includes close_price if the column exists — falls back gracefully.
+            # Includes close_price and sim_version if the columns exist — falls back gracefully.
             try:
                 q = (
                     backend.supabase.table(table)
                     .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
-                            f"sim_outcome,eod_pnl_r")
+                            f"sim_outcome,eod_pnl_r,sim_version")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
                 )
                 if skip_existing:
-                    # Only return rows where at least one sim field still needs filling.
+                    # Only return rows where a sim field is missing OR sim_version
+                    # is stale — automatically re-processes rows after formula changes.
                     # Use keyset pagination to avoid offset drift on a mutating set.
-                    q = q.or_("sim_outcome.is.null,eod_pnl_r.is.null").order(id_col)
+                    q = q.or_(_SKIP_FILTER).order(id_col)
                     if last_id is not None:
                         q = q.gt(id_col, last_id)
                     resp = q.limit(PAGE_SZ).execute()
@@ -287,8 +306,8 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     resp = q.range(offset, offset + PAGE_SZ - 1).execute()
             except Exception as e:
                 err = str(e)
-                if "close_price" in err or "column" in err.lower():
-                    # close_price (or sim_outcome/eod_pnl_r) column not yet added
+                if "close_price" in err or "sim_version" in err or "column" in err.lower():
+                    # close_price / sim_version (or sim_outcome/eod_pnl_r) column not yet added
                     print(f"  ⚠  Column missing in query — falling back to minimal select")
                     try:
                         q2 = (
@@ -299,10 +318,10 @@ def backfill_table(table: str, id_col: str, user_id: str,
                             .eq("actual_outcome", direction)
                         )
                         if skip_existing:
-                            # Preserve skip-existing semantics even in the fallback
-                            # path.  sim_outcome/eod_pnl_r are not in SELECT but
+                            # Preserve skip-existing semantics even in the fallback path.
+                            # sim_outcome/eod_pnl_r/sim_version are not in SELECT but
                             # the DB can still filter on them.
-                            q2 = q2.or_("sim_outcome.is.null,eod_pnl_r.is.null").order(id_col)
+                            q2 = q2.or_(_SKIP_FILTER).order(id_col)
                             if last_id is not None:
                                 q2 = q2.gt(id_col, last_id)
                             resp = q2.limit(PAGE_SZ).execute()
