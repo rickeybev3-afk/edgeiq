@@ -216,6 +216,82 @@ def _send_telegram(message: str) -> None:
         log.warning("Telegram send error: %s", exc)
 
 
+# ── Backfill heartbeat check ──────────────────────────────────────────────────
+
+
+def _check_backfill_heartbeat() -> None:
+    """Send a Telegram alert if the backfill history file is stale or absent.
+
+    Resolves the history file path the same way backfill_context_levels.py does:
+    1. BACKFILL_HISTORY_PATH env var (if set)
+    2. <repo>/backfill_history.json (default)
+
+    Compares the latest completed_at timestamp against the current UTC time.
+    If the gap exceeds the configurable window (BACKFILL_HEARTBEAT_HOURS,
+    default 25 h), or the file does not exist at all, a Telegram alert is sent
+    so the operator knows a run was skipped.
+
+    This catches silent failures such as:
+      • The cron / Replit workflow never started the backfill script.
+      • The script crashed before reaching the health-file write.
+      • Alpaca credentials were missing and the script exited early.
+    """
+    _default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "backfill_history.json")
+    history_path = os.getenv("BACKFILL_HISTORY_PATH", _default_path)
+    try:
+        window_hours = float(os.getenv("BACKFILL_HEARTBEAT_HOURS", "25"))
+    except (ValueError, TypeError):
+        log.warning(
+            "Invalid BACKFILL_HEARTBEAT_HOURS value — falling back to 25 h default."
+        )
+        window_hours = 25.0
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+    last_completed_at: str | None = None
+    read_error: str = ""
+    try:
+        with open(history_path) as _hf:
+            _history = json.load(_hf)
+        if isinstance(_history, list) and len(_history) > 0:
+            last_completed_at = _history[-1].get("completed_at")
+    except FileNotFoundError:
+        pass  # treated as "no record" below
+    except Exception as _e:
+        log.warning("Could not read backfill history for heartbeat check: %s", _e)
+        read_error = str(_e)
+
+    if read_error:
+        age_desc = f"backfill history file could not be read ({read_error})"
+    elif last_completed_at is None:
+        age_desc = "no record of a previous backfill run found"
+    else:
+        try:
+            last_dt = datetime.datetime.fromisoformat(last_completed_at)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=datetime.timezone.utc)
+            age_hours = (now_utc - last_dt).total_seconds() / 3600
+            if age_hours <= window_hours:
+                log.info(
+                    "Backfill heartbeat OK — last run %.1f h ago (threshold: %.0f h).",
+                    age_hours, window_hours,
+                )
+                return
+            age_desc = f"last run completed {age_hours:.1f} h ago (threshold: {window_hours:.0f} h)"
+        except Exception as _e:
+            log.warning("Could not parse backfill completed_at for heartbeat: %s", _e)
+            age_desc = f"backfill completed_at timestamp could not be parsed ({_e})"
+
+    log.warning("Backfill heartbeat check FAILED: %s — sending Telegram alert.", age_desc)
+    _send_telegram(
+        f"\U0001f6a8 <b>Backfill appears to have been skipped</b>\n\n"
+        f"{html.escape(age_desc)}\n\n"
+        f"Check that <code>backfill_context_levels.py</code> is running correctly and "
+        f"that Alpaca credentials are valid.\n\n"
+        f"<i>Heartbeat window: {window_hours:.0f} h — set BACKFILL_HEARTBEAT_HOURS to change.</i>"
+    )
+
+
 # ── Email helper ─────────────────────────────────────────────────────────────
 
 
@@ -692,7 +768,9 @@ def main():
         )
 
     # Run backfill immediately on startup to catch any rows written since last run.
+    # Check heartbeat first so a missed run is flagged before fresh history is written.
     log.info("─── Startup run ──────────────────────────────────────────────")
+    _check_backfill_heartbeat()
     run_backfill(date_from=date_from, date_to=date_to)
     refresh_summary_cache()
 
@@ -730,6 +808,7 @@ def main():
                  run_number, next_event)
 
         if do_backfill:
+            _check_backfill_heartbeat()
             run_backfill(date_from=date_from, date_to=date_to)
             if _shutdown.is_set():
                 break
