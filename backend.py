@@ -7828,6 +7828,22 @@ def run_pending_migrations() -> dict:
             "CREATE INDEX IF NOT EXISTS idx_bsr_outcome_tiered_date "
             "ON backtest_sim_runs(actual_outcome, tiered_pnl_r, sim_date)"
         ),
+        # Batch backtest sim columns — written by batch_backtest.py and run_sim_backfill.py
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS scan_type TEXT DEFAULT 'morning'",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS sim_outcome TEXT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS pnl_pct_sim FLOAT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS entry_price_sim FLOAT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS stop_price_sim FLOAT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS stop_dist_pct FLOAT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS target_price_sim FLOAT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS gap_pct FLOAT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS gap_vs_ib_pct FLOAT",
+        # Version stamps — used by run_sim_backfill.py to detect stale rows
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS sim_version TEXT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS tiered_sim_version TEXT",
+        # paper_trades pnl_r_sim — needed by mv_paper_tiered_pnl_summary materialized view
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT",
     ]
 
     ran = 0
