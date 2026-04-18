@@ -7829,7 +7829,9 @@ def compute_portfolio_metrics(paper_df: "pd.DataFrame",
     current_dd = round(_cur_dd_raw, 2) if _cur_dd_raw == _cur_dd_raw else 0.0
 
     rolling_dd = daily[["date"]].copy()
-    rolling_dd["drawdown_pct"] = drawdown.values
+    rolling_dd["drawdown_pct"] = (
+        drawdown.replace([float("inf"), float("-inf")], float("nan")).fillna(0).values
+    )
 
     alpha_spy = None
     alpha_iwm = None
