@@ -676,11 +676,14 @@ if __name__ == "__main__":
     #   --skip-context   Skip the context-level backfill (S/R, VWAP, MACD) at the end
     #                    of a full sim run.  Useful when context data was already
     #                    refreshed via --context-only.
+    #   --skip-rvol      Skip the RVOL size-mult backfill at the end of a full sim run.
+    #                    Useful when this step was already run separately.
     #   --dry-run        Inspect rows without writing to the database.
     #   --out=<file>     (dry-run only) Save a JSON report to the given path.
     raw_args      = sys.argv[1:]
     skip_existing = "--skip-existing" in raw_args
     skip_context  = "--skip-context"  in raw_args
+    skip_rvol     = "--skip-rvol"     in raw_args
     dry_run       = "--dry-run"       in raw_args
     rvol_only     = "--rvol-only"     in raw_args
     context_only  = "--context-only"  in raw_args
@@ -877,7 +880,10 @@ if __name__ == "__main__":
         # ── RVOL size-mult backfill — paper_trades only ────────────────────────
         # Copies rvol → rvol_size_mult for historical rows where RVOL data exists
         # but rvol_size_mult was not yet recorded (rows predating this feature).
-        backfill_rvol_size_mult(user_ids, dry_run=False)
+        if skip_rvol:
+            print("\n  --skip-rvol passed — RVOL size-mult backfill skipped.")
+        else:
+            backfill_rvol_size_mult(user_ids, dry_run=False)
 
         # ── Context level backfill (S/R, VWAP, MACD for adaptive exit analysis) ──
         if skip_context:
