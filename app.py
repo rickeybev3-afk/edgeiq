@@ -12752,15 +12752,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             or bool(_rp_log_to_str.strip())
                         )
                         if _rp_any_filter_active:
-                            if _rp_log_boosted_only and "RVOL Mult" in _rp_df.columns:
-                                _rp_total_boosted = int(
-                                    (pd.to_numeric(_rp_df["RVOL Mult"], errors="coerce") > 1.0).sum()
+                            _rp_visible_count = len(_rp_display_df)
+                            _rp_total_count = len(_rp_df)
+                            with _rp_log_date_col3:
+                                st.markdown(
+                                    f'<span style="background:rgba(30,58,95,0.85);color:#93c5fd;'
+                                    f'padding:2px 8px;border-radius:12px;font-size:0.78rem;font-weight:600;">'
+                                    f'{_rp_visible_count} of {_rp_total_count} trades</span>',
+                                    unsafe_allow_html=True,
                                 )
-                                st.caption(
-                                    f"Showing {len(_rp_display_df)} of {_rp_total_boosted} boosted trades"
-                                )
-                            else:
-                                st.caption(f"Showing {len(_rp_display_df)} of {len(_rp_df)} trades")
 
                         if len(_rp_display_df) == 0:
                             st.info("No trades match the current filters.")
