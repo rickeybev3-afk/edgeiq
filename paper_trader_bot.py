@@ -1380,7 +1380,7 @@ def _monitor_trailing_stops() -> None:
     _BASE_SELECT = (
         "ticker,predicted,scan_type,"
         "entry_price_sim,stop_price_sim,target_price_sim,"
-        "alpaca_order_id,alpaca_qty,win_loss,trade_date"
+        "alpaca_order_id,alpaca_qty,alpaca_fill_price,win_loss,trade_date"
     )
     _SR_COLS  = ",nearest_resistance,nearest_support"
     try:
@@ -1436,30 +1436,134 @@ def _monitor_trailing_stops() -> None:
         pos = pos_by_ticker.get(ticker)
 
         if guard_key in _TRAILING_STOP_ACTIVATED:
-            # Trailing stop was already placed.  If the position has since
-            # disappeared (Alpaca filled / stopped out), fire the stop-out alert.
-            if not pos and guard_key not in _TRAILING_STOP_STOPOUT_ALERTED:
-                _TRAILING_STOP_STOPOUT_ALERTED.add(guard_key)
-                sr_ctx = _TRAILING_STOP_SR_CONTEXT.get(guard_key)
-                if sr_ctx:
-                    lvl_type = sr_ctx["level_type"]
-                    lvl_px   = sr_ctx["level"]
-                    lvl_gap  = sr_ctx["gap"]
-                    sr_line  = (
-                        f"🎯 Tightened to 0.5R at T1: {lvl_type} wall @ "
-                        f"<b>${lvl_px:.2f}</b> ({lvl_gap:.2f} away)\n"
+            # Trailing stop was activated earlier for this ticker.
+            # If the position is still open in Alpaca, nothing more to do yet.
+            if pos is not None:
+                continue
+
+            # ── Position is gone → trailing stop filled intraday ─────────────
+            # Patch paper_trades immediately with the realized P&L so the row
+            # doesn't sit with win_loss=NULL until 3:30 PM.
+            # _TRAILING_STOP_STOPOUT_ALERTED guards against double-processing on
+            # subsequent 30-second monitoring cycles before the DB row is patched.
+            if guard_key in _TRAILING_STOP_STOPOUT_ALERTED:
+                continue
+            _TRAILING_STOP_STOPOUT_ALERTED.add(guard_key)
+            log.info(
+                f"[TrailingStop] {ticker} — position no longer in Alpaca: "
+                f"trailing stop filled intraday. Patching paper_trades now."
+            )
+            try:
+                fills, fills_err = fetch_alpaca_fills(
+                    api_key=ALPACA_API_KEY,
+                    secret_key=ALPACA_SECRET_KEY,
+                    is_paper=IS_PAPER_ALPACA,
+                    trade_date=today_str,
+                )
+                if fills_err:
+                    log.warning(
+                        f"[TrailingStop] {ticker} — fill fetch error: {fills_err}"
                     )
                 else:
-                    sr_line = ""
-                tg_send(
-                    f"🛑 <b>Trailing Stop Hit — {ticker}</b>\n"
-                    f"Position stopped out — trailing stop filled\n"
-                    + sr_line
-                    + "<i>Final P&amp;L in the 3:30 PM close summary</i>"
-                )
-                log.info(
-                    f"[TrailingStop] {ticker} — stop-out detected (position gone)"
-                    + (f" — S/R wall was {sr_ctx['level_type']} @ ${sr_ctx['level']:.2f}" if sr_ctx else "")
+                    roundtrips = match_fills_to_roundtrips(fills)
+                    rt = next(
+                        (r for r in roundtrips if (r.get("symbol") or "").upper() == ticker),
+                        None,
+                    )
+                    if not rt:
+                        log.warning(
+                            f"[TrailingStop] {ticker} — no matching roundtrip in fills yet; "
+                            f"will be patched at 3:30 PM sweep."
+                        )
+                    else:
+                        avg_entry   = float(rt.get("avg_entry")   or 0)
+                        avg_exit    = float(rt.get("avg_exit")    or 0)
+                        rt_qty      = float(rt.get("qty")         or 0)
+                        pnl_dollars = float(rt.get("pnl_dollars") or 0)
+                        wl          = str(rt.get("win_loss", ""))
+
+                        # For a long (Bullish Break), the trailing stop sells
+                        # → avg_exit is the exit fill.  For a short (Bearish
+                        # Break), the trailing stop buys-to-cover → avg_entry
+                        # is the exit fill (same convention as ForceClose).
+                        direction   = row.get("predicted", "")
+                        exit_fill   = avg_exit if direction == "Bullish Break" else avg_entry
+
+                        # R calculation: prefer actual Alpaca entry fill over sim
+                        entry_sim         = float(row.get("entry_price_sim")  or 0)
+                        stop_sim          = float(row.get("stop_price_sim")   or 0)
+                        alpaca_fill_entry = float(row.get("alpaca_fill_price") or 0)
+                        effective_entry   = (
+                            alpaca_fill_entry if alpaca_fill_entry > 0 else entry_sim
+                        )
+                        stop_dist = (
+                            abs(effective_entry - stop_sim)
+                            if (stop_sim > 0 and effective_entry > 0) else 0
+                        )
+                        pnl_r: float | None = None
+                        if stop_dist > 0 and rt_qty > 0:
+                            pnl_r = round(pnl_dollars / (stop_dist * rt_qty), 3)
+
+                        patch: dict = {
+                            "win_loss":               wl,
+                            "alpaca_exit_fill_price": exit_fill,
+                        }
+                        if pnl_r is not None:
+                            patch["pnl_r_actual"] = pnl_r
+                        patch["notes"] = (
+                            f"Trailing stop filled intraday at "
+                            f"{now_et.strftime('%H:%M ET')} on {today_str} | "
+                            f"exit fill: {exit_fill:.4f} | P&L: ${pnl_dollars:+.2f}"
+                            + (f" | {pnl_r:+.2f}R" if pnl_r is not None else "")
+                        )
+
+                        order_id = row.get("alpaca_order_id")
+                        try:
+                            if order_id:
+                                _supabase_client.table("paper_trades").update(patch).eq(
+                                    "user_id", USER_ID
+                                ).eq("trade_date", today_str).eq(
+                                    "alpaca_order_id", order_id
+                                ).execute()
+                            else:
+                                _supabase_client.table("paper_trades").update(patch).eq(
+                                    "user_id", USER_ID
+                                ).eq("trade_date", today_str).eq(
+                                    "ticker", ticker
+                                ).not_.is_("alpaca_order_id", "null").execute()
+                            log.info(
+                                f"[TrailingStop] {ticker} — paper_trades patched intraday: "
+                                f"{wl} | exit={exit_fill:.4f} | ${pnl_dollars:+.2f}"
+                                + (f" | {pnl_r:+.2f}R" if pnl_r is not None else "")
+                            )
+                        except Exception as _patch_err:
+                            log.warning(
+                                f"[TrailingStop] {ticker} — paper_trades patch failed: {_patch_err}"
+                            )
+
+                        # Build enriched stop-out alert; include S/R context if available
+                        wl_emoji = "🟢" if wl == "Win" else ("🔴" if wl == "Loss" else "⬜")
+                        r_line   = (
+                            f"\nRealized R: <b>{pnl_r:+.2f}R</b>" if pnl_r is not None else ""
+                        )
+                        sr_ctx  = _TRAILING_STOP_SR_CONTEXT.get(guard_key)
+                        if sr_ctx:
+                            sr_line = (
+                                f"\n🎯 S/R wall: {sr_ctx['level_type']} @ "
+                                f"<b>${sr_ctx['level']:.2f}</b>"
+                            )
+                        else:
+                            sr_line = ""
+                        tg_send(
+                            f"{wl_emoji} <b>Trailing Stop Filled — {ticker}</b>\n"
+                            f"Exit fill: <b>${exit_fill:.2f}</b>"
+                            f" | Qty: {int(rt_qty)} shares\n"
+                            f"P&amp;L: <b>${pnl_dollars:+.2f}</b>{r_line}{sr_line}\n"
+                            f"Filled at {now_et.strftime('%H:%M ET')} — DB updated ✅"
+                        )
+            except Exception as _fill_err:
+                log.warning(
+                    f"[TrailingStop] {ticker} — intraday fill reconciliation failed: {_fill_err}"
                 )
             continue
 
