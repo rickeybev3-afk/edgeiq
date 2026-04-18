@@ -4964,25 +4964,19 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             pass
     if "tkr_summary_r_filter_col" in _prefs:
         try:
-            _pref_r_col = str(_prefs["tkr_summary_r_filter_col"])
-            # URL query param takes precedence over saved pref (supports shared links)
-            _qp_r_col = st.query_params.get("tkr_r_col", "")
-            if _qp_r_col:
-                st.session_state["tkr_summary_r_filter_col"] = _qp_r_col
-            else:
-                st.session_state["tkr_summary_r_filter_col"] = _pref_r_col
+            # Store raw pref value under a temp key; validation against valid options
+            # happens later in the initialization block where _r_filter_col_map is available.
+            st.session_state["_pref_tkr_summary_r_filter_col"] = str(_prefs["tkr_summary_r_filter_col"])
         except (ValueError, TypeError):
             pass
     if "tkr_summary_r_filter_min" in _prefs:
         try:
-            _qp_r_min_str = st.query_params.get("tkr_r_min", "")
-            if _qp_r_min_str:
-                st.session_state["tkr_summary_r_filter_min"] = float(_qp_r_min_str)
-            else:
-                _pref_r_min = _prefs["tkr_summary_r_filter_min"]
-                st.session_state["tkr_summary_r_filter_min"] = (
-                    float(_pref_r_min) if _pref_r_min is not None else None
-                )
+            _pref_r_min = _prefs["tkr_summary_r_filter_min"]
+            # Store raw pref value under a temp key; final assignment with URL fallback
+            # happens later in the initialization block.
+            st.session_state["_pref_tkr_summary_r_filter_min"] = (
+                float(_pref_r_min) if _pref_r_min is not None else None
+            )
         except (ValueError, TypeError):
             pass
     if "tkr_summary_sort_radio" in _prefs:
@@ -13198,22 +13192,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         save_user_prefs(_AUTH_USER_ID, _sort_col_new_prefs)
                         st.session_state["_cached_prefs"] = _sort_col_new_prefs
             with _ctrl_col_filter:
-                # Restore filter column from URL query params on first load
+                # Restore filter column on first load.
+                # Priority: saved pref → URL query param → first option (default).
                 if "tkr_summary_r_filter_col" not in st.session_state:
                     _qp_r_col = st.query_params.get("tkr_r_col", "")
                     _r_col_opts = list(_r_filter_col_map.keys())
-                    st.session_state["tkr_summary_r_filter_col"] = (
-                        _qp_r_col if _qp_r_col in _r_col_opts else _r_col_opts[0]
-                    )
-                # Restore min-R value from URL query params on first load
+                    _pref_r_col = st.session_state.get("_pref_tkr_summary_r_filter_col", "")
+                    if _pref_r_col in _r_col_opts:
+                        st.session_state["tkr_summary_r_filter_col"] = _pref_r_col
+                    elif _qp_r_col in _r_col_opts:
+                        st.session_state["tkr_summary_r_filter_col"] = _qp_r_col
+                    else:
+                        st.session_state["tkr_summary_r_filter_col"] = _r_col_opts[0]
+                # Restore min-R value on first load.
+                # Priority: saved pref → URL query param → no filter (None).
                 if "tkr_summary_r_filter_min" not in st.session_state:
                     _qp_r_min_str = st.query_params.get("tkr_r_min", "")
-                    try:
-                        st.session_state["tkr_summary_r_filter_min"] = (
-                            float(_qp_r_min_str) if _qp_r_min_str else None
-                        )
-                    except (ValueError, TypeError):
-                        st.session_state["tkr_summary_r_filter_min"] = None
+                    _pref_r_min = st.session_state.get("_pref_tkr_summary_r_filter_min", "NOT_SET")
+                    if _pref_r_min != "NOT_SET":
+                        st.session_state["tkr_summary_r_filter_min"] = _pref_r_min
+                    else:
+                        try:
+                            st.session_state["tkr_summary_r_filter_min"] = (
+                                float(_qp_r_min_str) if _qp_r_min_str else None
+                            )
+                        except (ValueError, TypeError):
+                            st.session_state["tkr_summary_r_filter_min"] = None
                 _r_filter_col = st.radio(
                     "Min-R filter column",
                     list(_r_filter_col_map.keys()),
