@@ -60,7 +60,13 @@ _DEFAULT_HISTORY_PATH = os.path.join(
 )
 _BACKFILL_HISTORY_PATH = os.getenv("BACKFILL_HISTORY_PATH", _DEFAULT_HISTORY_PATH)
 
-_HEARTBEAT_ALERT_STATE_FILE = "/tmp/backfill_heartbeat_alerted.json"
+_HEARTBEAT_ALERT_STATE_FILE = os.getenv(
+    "BACKFILL_HEARTBEAT_STATE_PATH",
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        ".backfill_heartbeat_alerted.json",
+    ),
+)
 
 
 def _read_heartbeat_alert_state() -> dict:

@@ -135,7 +135,13 @@ _CACHE_ALERT_STATE_FILE = os.path.join(
     ".edgeiq_cache_alert_state.json",
 )
 
-_HEARTBEAT_ALERT_STATE_FILE = "/tmp/backfill_heartbeat_alerted.json"
+_HEARTBEAT_ALERT_STATE_FILE = os.getenv(
+    "BACKFILL_HEARTBEAT_STATE_PATH",
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        ".backfill_heartbeat_alerted.json",
+    ),
+)
 
 _DEFAULT_COOLDOWN_HOURS = 23
 
