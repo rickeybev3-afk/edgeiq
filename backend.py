@@ -3732,16 +3732,20 @@ def compute_structure_tcs_thresholds() -> list[dict]:
         b_acc = (b["wins"] / b_n) if b_n > 0 else None
         h_acc = (h["wins"] / h_n) if h_n > 0 else None
 
-        # Live-first weighted blend across all 3 sources.
-        # Backtest (hist) is capped so it can't drown out live data:
-        #   h_eff = min(actual_hist_n, max(_HIST_MIN_PRIOR, live_n * _HIST_CAP_MULT))
-        # At 0 live trades  → backtest gets up to 30 records of influence (pure prior)
-        # At 10 live trades → backtest capped at 20 records
-        # At 100 live trades→ backtest capped at 200 records (vs 29k raw)
-        # Live data (journal + paper_trades) is NEVER discounted.
-        _HIST_CAP_MULT  = 2.0   # backtest counts at most 2× the live sample
-        _HIST_MIN_PRIOR = 30    # always keep at least 30 records as a prior baseline
-        h_eff_n = min(h_n, max(_HIST_MIN_PRIOR, int(live_n * _HIST_CAP_MULT))) if h_n > 0 else 0
+        # Graduated live-first blend:
+        #   - Below _LIVE_MIN_OVERRIDE trades: live sample too thin → backtest dominates fully (no cap)
+        #   - At or above _LIVE_MIN_OVERRIDE trades: live is statistically meaningful → backtest capped at 2× live
+        # This prevents a handful of live trades from overriding thousands of validated backtest records,
+        # while still ensuring live data takes over once it reaches a meaningful sample size.
+        _HIST_CAP_MULT     = 2.0   # once live ≥ threshold, backtest capped at 2× live
+        _LIVE_MIN_OVERRIDE = 30    # minimum live trades before live overrides backtest
+        if h_n > 0:
+            if live_n >= _LIVE_MIN_OVERRIDE:
+                h_eff_n = min(h_n, int(live_n * _HIST_CAP_MULT))
+            else:
+                h_eff_n = h_n   # live too thin — backtest dominates as prior
+        else:
+            h_eff_n = 0
 
         numerator   = 0.0
         denominator = 0.0
