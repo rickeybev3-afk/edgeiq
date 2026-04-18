@@ -227,9 +227,8 @@ def _sim_patch(r: dict) -> dict | None:
         "stop_price_sim":   sim.get("stop_price_sim"),
         "stop_dist_pct":    sim.get("stop_dist_pct"),
         "target_price_sim": sim.get("target_price_sim"),
+        "sim_version":      sim.get("sim_version"),
     }
-    # sim_version omitted — column was just added via ALTER TABLE and PostgREST
-    # schema cache takes ~5 min to refresh. Stamped on next run once cache is live.
     # EOD Hold P&L from stored close_price (no bars needed — computable from DB data).
     # Tiered P&L cannot be backfilled (requires intraday bars that aren't stored).
     # New batch backtest runs will populate tiered_pnl_r going forward.
@@ -328,6 +327,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     backend.supabase.table(table)
                     .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
+                            f"tcs,scan_type,mfe,mae,"
                             f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)

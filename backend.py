@@ -10794,7 +10794,7 @@ def ensure_paper_trades_table() -> bool:
 # Formula version stamped on every sim row by _sim_patch().
 # Bump this string whenever compute_trade_sim() logic changes so that
 # --skip-existing automatically re-processes stale (old-version) rows.
-SIM_VERSION = "v2"  # bumped 2026-04-18: adaptive target_r per row (3-layer calibration)
+SIM_VERSION = "v3"  # bumped 2026-04-18: intraday MFE/MAE bracket sim (apples-to-apples with adaptive targets)
 
 # Formula version stamped on every row that writes eod_pnl_r.
 # Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
@@ -10901,23 +10901,22 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
         target        = entry + target_r * ib_range
         stop_dist_pct = ib_range / entry * 100
 
-        # ── Prefer EOD close for realistic P&L ───────────────────────────────
+        # ── EOD close for realistic P&L ──────────────────────────────────────
+        # NOTE: Intraday bracket sim (MFE/MAE) is deferred — backtest MAE data
+        # requires re-backfill with post-IB-only bars before it can be trusted.
         if close_price is not None:
             close_price = float(close_price)
             if close_price <= ib_low:
                 # EOD close below stop → full stop out
-                pnl_r, pnl_pct, sim_outcome = -1.0, -stop_dist_pct, "stopped_out"
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(pnl_pct, 2), "pnl_r_sim": pnl_r,
-                    "sim_outcome": sim_outcome, "sim_version": SIM_VERSION,
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             pnl_pct = (close_price - ib_high) / ib_high * 100
         elif ft_pct is not None:
-            # Fallback to MFE when no close_price. MFE for Bullish Break is ALWAYS >= 0.
-            # false_break_up = price broke IB high then reversed back below IB low → stop out.
-            # The old check (false_up and ft_pct < 0) never fired because MFE is always positive.
+            # Fallback to follow_thru_pct when no close_price.
             if false_up:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
@@ -10935,23 +10934,20 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
         target        = entry - target_r * ib_range
         stop_dist_pct = ib_range / entry * 100
 
-        # ── Prefer EOD close for realistic P&L ───────────────────────────────
+        # ── EOD close ─────────────────────────────────────────────────────────
         if close_price is not None:
             close_price = float(close_price)
             if close_price >= ib_high:
                 # EOD close above stop → full stop out
-                pnl_r, pnl_pct, sim_outcome = -1.0, -stop_dist_pct, "stopped_out"
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(pnl_pct, 2), "pnl_r_sim": pnl_r,
-                    "sim_outcome": sim_outcome, "sim_version": SIM_VERSION,
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             pnl_pct = (ib_low - close_price) / ib_low * 100   # positive when price fell
         elif ft_pct is not None:
-            # MFE for Bearish Break is ALWAYS <= 0 (price went down).
             # false_break_down = price broke IB low then recovered back above IB high → stop out.
-            # The old check (false_dn and ft_pct > 0) never fired because MFE is always negative.
             if false_dn:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),

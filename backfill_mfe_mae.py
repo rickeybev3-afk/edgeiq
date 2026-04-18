@@ -149,7 +149,7 @@ def _compute_mfe_mae(bars: list, entry_price: float, stop_price: float, directio
         try:
             hm_part = ts[11:16]
             hm = int(hm_part[:2]) * 60 + int(hm_part[3:5])
-            if hm >= entry_hm:
+            if hm > entry_hm:
                 relevant.append(bar)
         except Exception:
             continue
