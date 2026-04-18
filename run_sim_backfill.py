@@ -665,9 +665,16 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # ── Parse flags ────────────────────────────────────────────────────────────
+    # Flags
+    #   --rvol-only      Run ONLY the rvol_size_mult backfill and exit.
+    #                    Accepts --dry-run.  Ignores --skip-existing / --out.
+    #   --skip-existing  Skip rows that already have sim_outcome + eod_pnl_r set.
+    #   --dry-run        Inspect rows without writing to the database.
+    #   --out=<file>     (dry-run only) Save a JSON report to the given path.
     raw_args      = sys.argv[1:]
     skip_existing = "--skip-existing" in raw_args
     dry_run       = "--dry-run"       in raw_args
+    rvol_only     = "--rvol-only"     in raw_args
 
     # --out=<file>  (dry-run only — ignored in live mode)
     _out_flag = next((a for a in raw_args if a.startswith("--out=")), None)
@@ -676,25 +683,26 @@ if __name__ == "__main__":
     uid_args  = [a for a in raw_args
                  if not a.startswith("--")]
 
-    if not dry_run and out_file:
-        print("⚠  --out is only valid with --dry-run and will be ignored in live mode.",
-              file=sys.stderr)
-        out_file = None
+    if not rvol_only:
+        if not dry_run and out_file:
+            print("⚠  --out is only valid with --dry-run and will be ignored in live mode.",
+                  file=sys.stderr)
+            out_file = None
 
-    if dry_run:
-        print("Mode: DRY RUN — rows will be inspected but NO database writes will occur.")
-        if skip_existing:
-            print("       Combined with --skip-existing: only rows missing sim data will be counted.")
-        if out_file:
-            print(f"       Report will be saved to: {out_file}")
+        if dry_run:
+            print("Mode: DRY RUN — rows will be inspected but NO database writes will occur.")
+            if skip_existing:
+                print("       Combined with --skip-existing: only rows missing sim data will be counted.")
+            if out_file:
+                print(f"       Report will be saved to: {out_file}")
+            else:
+                _ts       = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+                out_file  = f"dry_run_{_ts}.json"
+                print(f"       No --out specified — report will be saved to: {out_file}")
+        elif skip_existing:
+            print("Mode: incremental — rows with sim_outcome AND eod_pnl_r already set will be skipped.")
         else:
-            _ts       = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
-            out_file  = f"dry_run_{_ts}.json"
-            print(f"       No --out specified — report will be saved to: {out_file}")
-    elif skip_existing:
-        print("Mode: incremental — rows with sim_outcome AND eod_pnl_r already set will be skipped.")
-    else:
-        print("Mode: full recompute — all breakout rows will be processed (use --skip-existing for incremental).")
+            print("Mode: full recompute — all breakout rows will be processed (use --skip-existing for incremental).")
 
     # ── Resolve user IDs ───────────────────────────────────────────────────────
     if uid_args:
@@ -712,6 +720,16 @@ if __name__ == "__main__":
             print("No users found in the database. Nothing to backfill.")
             sys.exit(0)
         print(f"Found {len(user_ids)} user(s): {user_ids}")
+
+    # ── RVOL-only fast path ────────────────────────────────────────────────────
+    # When --rvol-only is set, skip the full simulation backfill entirely and
+    # run just backfill_rvol_size_mult(), then exit.
+    if rvol_only:
+        print("\nMode: --rvol-only — running ONLY the rvol_size_mult backfill.")
+        if dry_run:
+            print("      Combined with --dry-run: no database writes will occur.")
+        backfill_rvol_size_mult(user_ids, dry_run=dry_run)
+        sys.exit(0)
 
     t0 = time.time()
 
