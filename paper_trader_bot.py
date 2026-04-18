@@ -3349,16 +3349,16 @@ def nightly_recalibration():
     # invocations.  Window is controlled by BACKTEST_CLOSE_LOOKBACK_DAYS (default 60).
     try:
         log.info(
-            f"Nightly close-price catch-up sweep (backtest): "
+            f"EOD close-price catch-up sweep (backtest): "
             f"checking last {BACKTEST_CLOSE_LOOKBACK_DAYS} days…"
         )
         bcp_result = _eod_collect_close_prices_backtest(lookback_days=BACKTEST_CLOSE_LOOKBACK_DAYS)
         log.info(
-            f"Nightly close-price catch-up (backtest): "
+            f"EOD close-price catch-up (backtest): "
             f"{bcp_result['written']} filled, {bcp_result['skipped']} skipped."
         )
     except Exception as exc:
-        log.warning(f"Nightly close-price catch-up sweep (backtest) failed: {exc}")
+        log.warning(f"EOD close-price catch-up sweep (backtest) failed: {exc}")
 
     # ── Stale-row warning: flag any backtest rows that are still NULL after N days ─
     # Rows that survive BACKTEST_STALE_THRESHOLD_DAYS without a close price are
@@ -3377,13 +3377,13 @@ def nightly_recalibration():
         bpr_result = _recalc_eod_pnl_r_recent_backtest()
         _elapsed_bpr = time.monotonic() - _t0_bpr
         log.info(
-            f"Nightly eod_pnl_r recalc (backtest): "
+            f"EOD eod_pnl_r recalc (backtest): "
             f"{bpr_result.get('written', 0)} row(s) updated, "
             f"{bpr_result.get('skipped', 0)} skipped — "
             f"{_elapsed_bpr:.2f}s"
         )
     except Exception as exc:
-        log.warning(f"Nightly eod_pnl_r recalculation (backtest) failed: {exc}")
+        log.warning(f"EOD eod_pnl_r recalculation (backtest) failed: {exc}")
 
     # ── Telegram summary: how many old paper trades had P&L healed overnight ──
     try:
