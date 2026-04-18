@@ -214,17 +214,39 @@ _CTX_LEVELS: dict = {}   # module-level cache; reset per call
 
 
 def _load_context_levels() -> None:
-    """Load all backtest_context_levels rows into _CTX_LEVELS."""
+    """Load ALL backtest_context_levels rows into _CTX_LEVELS via keyset pagination.
+
+    Keys are normalized: ticker.upper().strip(), trade_date as-is, scan_type.strip().
+    This avoids silent cache misses from inconsistent casing in the source data.
+    """
     global _CTX_LEVELS
     _CTX_LEVELS = {}
     try:
-        resp = backend.supabase.table("backtest_context_levels") \
-            .select("ticker,trade_date,scan_type,nearest_resistance,nearest_support") \
-            .execute()
-        for row in (resp.data or []):
-            key = (row["ticker"], row["trade_date"], row["scan_type"])
-            _CTX_LEVELS[key] = row
-        print(f"  [v6] Context levels loaded: {len(_CTX_LEVELS)} rows")
+        last_id = None
+        while True:
+            q = (
+                backend.supabase.table("backtest_context_levels")
+                .select("id,ticker,trade_date,scan_type,nearest_resistance,nearest_support")
+                .order("id")
+                .limit(1000)
+            )
+            if last_id is not None:
+                q = q.gt("id", last_id)
+            resp = q.execute()
+            batch = resp.data or []
+            if not batch:
+                break
+            for row in batch:
+                key = (
+                    (row["ticker"] or "").upper().strip(),
+                    row["trade_date"],
+                    (row["scan_type"] or "").strip(),
+                )
+                _CTX_LEVELS[key] = row
+            last_id = batch[-1]["id"]
+            if len(batch) < 1000:
+                break
+        print(f"  [v6] Context levels loaded: {len(_CTX_LEVELS)} rows (paginated)")
     except Exception as e:
         print(f"  [v6] Could not load context levels (non-fatal — v6 falls back to 1R trail): {e}")
 
@@ -243,10 +265,12 @@ def _sim_patch(r: dict) -> dict | None:
 
     # Enrich row with S/R context levels for v6 trail-tightening logic.
     # sim_date (backtest_sim_runs) or trade_date (paper_trades) is the date key.
+    # Keys are normalized identically to _load_context_levels() to avoid silent misses.
     _trade_date = (r.get("sim_date") or r.get("trade_date") or "")
-    _ticker     = (r.get("ticker") or "").upper()
-    if _CTX_LEVELS and _trade_date and _ticker and _scan:
-        _ctx = _CTX_LEVELS.get((_ticker, _trade_date, _scan))
+    _ticker     = (r.get("ticker") or "").upper().strip()
+    _scan_norm  = _scan.strip()
+    if _CTX_LEVELS and _trade_date and _ticker and _scan_norm:
+        _ctx = _CTX_LEVELS.get((_ticker, _trade_date, _scan_norm))
         if _ctx:
             r = dict(r)  # shallow copy — do not mutate original row
             r["nearest_resistance"] = _ctx.get("nearest_resistance")

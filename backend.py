@@ -10870,11 +10870,11 @@ SIM_VERSION = "v6"  # v6 = S/R-aware trail tightening: same as v5 but when neare
 #                   # Falls back to 1.0R trail when context level data is absent.
 #                   # sim_outcome = "tight_trail_exit" for tightened cases.
 #
-#                   # Validated 2026-04-18 on 991 matched trades (1000 rows w/ context data):
+#                   # Validated 2026-04-18 on 991 trades (full 2930-row paginated context):
 #                   #   v5 expectancy: +0.0514R/trade (432W/552L, +50.97R total)
-#                   #   v6 expectancy: +0.0580R/trade (433W/552L, +57.47R total)
-#                   #   delta: +0.0066R/trade (+6.50R) — v6 > v5 ✅ kept as production
-#                   #   tight_trail_exit fires: 13/991 = 1.3% of trades (very selective)
+#                   #   v6 expectancy: +0.0661R/trade (433W/552L, +65.47R total)
+#                   #   delta: +0.0146R/trade (+14.50R) — v6 > v5 ✅ kept as production
+#                   #   tight_trail_exit fires: 29/991 = 2.93% of trades (very selective)
 
 # Formula version stamped on every row that writes eod_pnl_r.
 # Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
