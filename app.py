@@ -10699,6 +10699,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                                     # Average R per tier
                                     _nb_avgr = _t125_avgr = _t150_avgr = None
+                                    _nb_exp = _t125_exp = _t150_exp = None
                                     if _has_r_col:
                                         _r_ser_full = pd.to_numeric(_rp_df["R (MFE)"], errors="coerce")
                                         def _tier_avgr(mask):
@@ -10707,6 +10708,31 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         _nb_avgr   = _tier_avgr(_noboost_mask)
                                         _t125_avgr = _tier_avgr(_mask_125)
                                         _t150_avgr = _tier_avgr(_mask_150)
+
+                                        # Per-tier expectancy = win_rate × avg_win_R + loss_rate × avg_loss_R
+                                        def _tier_expectancy(mask, wins, total):
+                                            if total == 0:
+                                                return None
+                                            losses = total - wins
+                                            win_mask  = mask & (_wl_ser == "Win")
+                                            loss_mask = mask & (_wl_ser != "Win")
+                                            win_vals  = _r_ser_full[win_mask].dropna()
+                                            loss_vals = _r_ser_full[loss_mask].dropna()
+                                            # Treat as insufficient when a side has trades but all R are NaN
+                                            if wins  > 0 and len(win_vals)  == 0:
+                                                return None
+                                            if losses > 0 and len(loss_vals) == 0:
+                                                return None
+                                            if len(win_vals) == 0 and len(loss_vals) == 0:
+                                                return None
+                                            wr = wins / total
+                                            lr = 1.0 - wr
+                                            avg_wr = win_vals.mean() if len(win_vals) else 0.0
+                                            avg_lr = loss_vals.mean() if len(loss_vals) else 0.0
+                                            return round(wr * avg_wr + lr * avg_lr, 2)
+                                        _nb_exp   = _tier_expectancy(_noboost_mask, _nb_wins,   _nb_total)
+                                        _t125_exp = _tier_expectancy(_mask_125,    _t125_wins, _t125_total)
+                                        _t150_exp = _tier_expectancy(_mask_150,    _t150_wins, _t150_total)
 
                                     st.markdown(
                                         "<small>**Per-tier outcomes  (1.00× baseline · 1.25× · 1.50×)**</small>",
@@ -10735,6 +10761,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     st.dataframe(
                                         _tier_table,
                                         use_container_width=True,
+                                    )
+                                    # Row 3 — Expectancy
+                                    _re1, _re2, _re3 = st.columns(3)
+                                    _re1.metric(
+                                        "1.00× Expectancy  (baseline)",
+                                        f"{_nb_exp:+.2f}R" if _nb_exp is not None else "—",
+                                        help="Expected R per trade in the 1.00× tier: win rate × avg win R + loss rate × avg loss R",
+                                    )
+                                    _re2.metric(
+                                        "1.25× Expectancy",
+                                        f"{_t125_exp:+.2f}R" if _t125_exp is not None else "—",
+                                        help="Expected R per trade in the 1.25× tier: win rate × avg win R + loss rate × avg loss R",
+                                    )
+                                    _re3.metric(
+                                        "1.50× Expectancy",
+                                        f"{_t150_exp:+.2f}R" if _t150_exp is not None else "—",
+                                        help="Expected R per trade in the 1.50× tier: win rate × avg win R + loss rate × avg loss R",
                                     )
 
                         # ── Win / Loss avg breakdown row ──────────────────────────────────────
