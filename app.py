@@ -21479,6 +21479,36 @@ ALTER TABLE backtest_sim_runs
             _sim_df["scan_type"] = "morning"
         _sim_df["scan_type"] = _sim_df["scan_type"].fillna("morning")
 
+        # ── Bot filter: same gate as the live paper-trader bot ───────────────
+        # TCS >= 50, IB range < 10%, VWAP aligned (backward compat — rows
+        # missing vwap_at_ib pass the gate, identical to get_backtest_pace_target)
+        _bot_df = _sim_df.copy()
+        if "tcs" in _bot_df.columns:
+            _bot_df = _bot_df[_bot_df["tcs"].fillna(0) >= 50]
+        if "ib_range_pct" in _bot_df.columns:
+            _bot_df = _bot_df[
+                pd.to_numeric(_bot_df["ib_range_pct"], errors="coerce").fillna(999) < 10
+            ]
+        _bot_has_vwap_cols = all(
+            c in _bot_df.columns for c in ("vwap_at_ib", "ib_high", "ib_low", "predicted")
+        )
+        if _bot_has_vwap_cols:
+            def _bot_vwap_ok(row):
+                try:
+                    _v = row.get("vwap_at_ib")
+                    if _v is None or pd.isna(_v):
+                        return True
+                    _mid = (float(row["ib_high"]) + float(row["ib_low"])) / 2
+                    _p = str(row.get("predicted", "")).lower()
+                    if "bull" in _p or "long" in _p or "up" in _p:
+                        return _mid > float(_v)
+                    if "bear" in _p or "short" in _p or "down" in _p:
+                        return _mid < float(_v)
+                except (TypeError, ValueError):
+                    pass
+                return True
+            _bot_df = _bot_df[_bot_df.apply(_bot_vwap_ok, axis=1)]
+
         # ── Task #83: tickers with trades logged but no sim data yet ─────────
         _missing_sim_tickers = (
             _pt_df[_pt_df["pnl_r_sim"].isna()]["ticker"].dropna().unique().tolist()
@@ -21600,6 +21630,25 @@ ALTER TABLE backtest_sim_runs
                     f'<div style="font-size:10px;color:#546e7a;text-align:right;margin-top:4px;">{_sc_total} trades · {len(_sc_wins)}W / {len(_sc_losses)}L</div>'
                     f'</div>', unsafe_allow_html=True
                 )
+                # ── Bot-filtered sub-line ─────────────────────────────────────
+                _bot_sc_df = _bot_df[_bot_df[_scol].notna()].copy() if _scol in _bot_df.columns else pd.DataFrame()
+                if not _bot_sc_df.empty:
+                    _bot_sc_df[_scol] = _bot_sc_df[_scol].astype(float)
+                    _bot_sc_n   = len(_bot_sc_df)
+                    _bot_sc_wr  = len(_bot_sc_df[_bot_sc_df[_scol] > 0]) / _bot_sc_n * 100
+                    _bot_sc_exp = float(_bot_sc_df[_scol].mean())
+                    _bot_sc_wr_c  = "#2e7d32" if _bot_sc_wr >= 60 else ("#ef6c00" if _bot_sc_wr >= 50 else "#c62828")
+                    _bot_sc_ex_c  = "#4caf50" if _bot_sc_exp > 0 else "#ef5350"
+                    st.markdown(
+                        f'<div style="background:rgba(38,198,218,0.06);border-left:2px solid #26c6da;'
+                        f'border-radius:0 4px 4px 0;padding:5px 10px;margin-top:4px;font-size:11px;">'
+                        f'<span style="color:#26c6da;font-weight:700;">🤖 Bot Filter</span>'
+                        f'<span style="color:#78909c;"> &nbsp;{_bot_sc_n}n</span>'
+                        f' &nbsp;·&nbsp; WR <span style="color:{_bot_sc_wr_c};font-weight:600;">{_bot_sc_wr:.1f}%</span>'
+                        f' &nbsp;·&nbsp; Exp <span style="color:{_bot_sc_ex_c};font-weight:600;">{"+" if _bot_sc_exp >= 0 else ""}{_bot_sc_exp:.3f}R</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
                 _scen_data_cache[_scol] = (_sc_df, _sclr, _slabel.split(" ", 1)[-1].strip())
 
         # ── Ladder Screener Breakdown ────────────────────────────────────────
@@ -22192,6 +22241,37 @@ ALTER TABLE backtest_sim_runs
                 f'<td style="padding:6px 10px;text-align:center;">{_ts_badge}</td>'
                 f'</tr>'
             )
+        # ── Bot-filter row (appended after P1-P4 rows) ───────────────────────
+        _bot_eod_ser_ts  = pd.to_numeric(
+            _bot_df["eod_pnl_r"]    if "eod_pnl_r"    in _bot_df.columns else pd.Series(dtype=float),
+            errors="coerce"
+        ).dropna()
+        _bot_tier_ser_ts = pd.to_numeric(
+            _bot_df["tiered_pnl_r"] if "tiered_pnl_r" in _bot_df.columns else pd.Series(dtype=float),
+            errors="coerce"
+        ).dropna()
+        _bot_ts_n        = len(_bot_df)
+        _bot_ts_eod_wr   = round((_bot_eod_ser_ts  > 0).sum() / len(_bot_eod_ser_ts)  * 100, 1) if len(_bot_eod_ser_ts)  else None
+        _bot_ts_eod_exp  = round(float(_bot_eod_ser_ts.mean()),  3) if len(_bot_eod_ser_ts)  else None
+        _bot_ts_tier_wr  = round((_bot_tier_ser_ts > 0).sum() / len(_bot_tier_ser_ts) * 100, 1) if len(_bot_tier_ser_ts) else None
+        _bot_ts_tier_exp = round(float(_bot_tier_ser_ts.mean()), 3) if len(_bot_tier_ser_ts) else None
+        _bot_ts_eod_wr_str   = f'<span style="color:{_ts_wr_col(_bot_ts_eod_wr)};font-weight:600;">{_bot_ts_eod_wr}%</span>'    if _bot_ts_eod_wr   is not None else '<span style="color:#546e7a;">—</span>'
+        _bot_ts_eod_exp_str  = f'<span style="color:{_ts_exp_col(_bot_ts_eod_exp)};font-weight:600;">{_bot_ts_eod_exp:+.3f}R</span>' if _bot_ts_eod_exp  is not None else '<span style="color:#546e7a;">—</span>'
+        _bot_ts_tier_wr_str  = f'<span style="color:{_ts_wr_col(_bot_ts_tier_wr)};font-weight:600;">{_bot_ts_tier_wr}%</span>'   if _bot_ts_tier_wr  is not None else '<span style="color:#546e7a;">—</span>'
+        _bot_ts_tier_exp_str = f'<span style="color:{_ts_exp_col(_bot_ts_tier_exp)};font-weight:600;">{_bot_ts_tier_exp:+.3f}R</span>' if _bot_ts_tier_exp is not None else '<span style="color:#546e7a;">—</span>'
+        _bot_ts_n_str = f'<span style="color:#cfd8dc;">{_bot_ts_n}</span>' if _bot_ts_n > 0 else '<span style="color:#546e7a;">0</span>'
+        _ts_body += (
+            f'<tr style="border-top:2px solid #26c6da;border-left:3px solid #26c6da;background:rgba(38,198,218,0.07);">'
+            f'<td style="padding:6px 10px;"><span style="color:#26c6da;font-weight:700;">🤖 Bot Filter</span></td>'
+            f'<td style="padding:6px 10px;font-size:11px;color:#78909c;">TCS≥50 · IB&lt;10% · VWAP aligned</td>'
+            f'<td style="padding:6px 10px;text-align:right;" data-val="{_bot_ts_n}">{_bot_ts_n_str}</td>'
+            f'<td style="padding:6px 10px;text-align:right;" data-val="{_bot_ts_eod_wr if _bot_ts_eod_wr is not None else -9999999}">{_bot_ts_eod_wr_str}</td>'
+            f'<td style="padding:6px 10px;text-align:right;" data-val="{_bot_ts_eod_exp if _bot_ts_eod_exp is not None else -9999999}">{_bot_ts_eod_exp_str}</td>'
+            f'<td style="padding:6px 10px;text-align:right;" data-val="{_bot_ts_tier_wr if _bot_ts_tier_wr is not None else -9999999}">{_bot_ts_tier_wr_str}</td>'
+            f'<td style="padding:6px 10px;text-align:right;" data-val="{_bot_ts_tier_exp if _bot_ts_tier_exp is not None else -9999999}">{_bot_ts_tier_exp_str}</td>'
+            f'<td style="padding:6px 10px;text-align:center;"><span style="color:#26c6da;font-size:10px;font-weight:600;">Live Gate</span></td>'
+            f'</tr>'
+        )
         _ts_sort_script = """
 <style>
 table[data-tcs-sort] th[data-tcs-col]:hover {
@@ -23588,6 +23668,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         if "scan_type" not in _bts_df.columns:
             _bts_df["scan_type"] = "morning"
         _bts_df["scan_type"] = _bts_df["scan_type"].fillna("morning")
+
         # Normalise date column — backtest uses sim_date
         if "sim_date" in _bts_df.columns and "trade_date" not in _bts_df.columns:
             _bts_df = _bts_df.rename(columns={"sim_date": "trade_date"})
@@ -23951,6 +24032,35 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             if _bts_df.empty:
                 st.warning("No backtest runs found in the selected date range — try widening the filter.")
 
+        # ── Bot filter for backtest sim (same gate as the live bot) ─────────
+        # Applied AFTER the date-range filter so _bts_bot_df respects the active window.
+        _bts_bot_df = _bts_df.copy()
+        if "tcs" in _bts_bot_df.columns:
+            _bts_bot_df = _bts_bot_df[_bts_bot_df["tcs"].fillna(0) >= 50]
+        if "ib_range_pct" in _bts_bot_df.columns:
+            _bts_bot_df = _bts_bot_df[
+                pd.to_numeric(_bts_bot_df["ib_range_pct"], errors="coerce").fillna(999) < 10
+            ]
+        _bts_bot_has_vwap_cols = all(
+            c in _bts_bot_df.columns for c in ("vwap_at_ib", "ib_high", "ib_low", "predicted")
+        )
+        if _bts_bot_has_vwap_cols:
+            def _bts_bot_vwap_ok(row):
+                try:
+                    _v = row.get("vwap_at_ib")
+                    if _v is None or pd.isna(_v):
+                        return True
+                    _mid = (float(row["ib_high"]) + float(row["ib_low"])) / 2
+                    _p = str(row.get("predicted", "")).lower()
+                    if "bull" in _p or "long" in _p or "up" in _p:
+                        return _mid > float(_v)
+                    if "bear" in _p or "short" in _p or "down" in _p:
+                        return _mid < float(_v)
+                except (TypeError, ValueError):
+                    pass
+                return True
+            _bts_bot_df = _bts_bot_df[_bts_bot_df.apply(_bts_bot_vwap_ok, axis=1)]
+
         # ── Trades / Day pace row (mirrors paper trades section) ────────────────
         # _pace_tgt / _TARGET_PER_DAY / _TARGET_PER_YEAR are set above in the
         # paper trades section from get_backtest_pace_target() (5-min cache).
@@ -24167,6 +24277,25 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     f'{_ldr_cache_age_html}'
                     f'</div>', unsafe_allow_html=True
                 )
+                # ── Bot-filtered sub-line ─────────────────────────────────────
+                _bts_bot_sc_df = _bts_bot_df[_bts_bot_df[_bscol].notna()].copy() if _bscol in _bts_bot_df.columns else pd.DataFrame()
+                if not _bts_bot_sc_df.empty:
+                    _bts_bot_sc_df[_bscol] = _bts_bot_sc_df[_bscol].astype(float)
+                    _bts_bot_sc_n   = len(_bts_bot_sc_df)
+                    _bts_bot_sc_wr  = len(_bts_bot_sc_df[_bts_bot_sc_df[_bscol] > 0]) / _bts_bot_sc_n * 100
+                    _bts_bot_sc_exp = float(_bts_bot_sc_df[_bscol].mean())
+                    _bts_bot_sc_wr_c  = "#2e7d32" if _bts_bot_sc_wr >= 60 else ("#ef6c00" if _bts_bot_sc_wr >= 50 else "#c62828")
+                    _bts_bot_sc_ex_c  = "#4caf50" if _bts_bot_sc_exp > 0 else "#ef5350"
+                    st.markdown(
+                        f'<div style="background:rgba(38,198,218,0.06);border-left:2px solid #26c6da;'
+                        f'border-radius:0 4px 4px 0;padding:5px 10px;margin-top:4px;font-size:11px;">'
+                        f'<span style="color:#26c6da;font-weight:700;">🤖 Bot Filter</span>'
+                        f'<span style="color:#78909c;"> &nbsp;{_bts_bot_sc_n}n</span>'
+                        f' &nbsp;·&nbsp; WR <span style="color:{_bts_bot_sc_wr_c};font-weight:600;">{_bts_bot_sc_wr:.1f}%</span>'
+                        f' &nbsp;·&nbsp; Exp <span style="color:{_bts_bot_sc_ex_c};font-weight:600;">{"+" if _bts_bot_sc_exp >= 0 else ""}{_bts_bot_sc_exp:.3f}R</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
                 _bts_cache[_bscol] = (_bsc_df, _bsclr, _bslabel.split(" ", 1)[-1].strip())
 
         # ── Row 2 — Overlay equity curve ─────────────────────────────────────
@@ -25206,6 +25335,37 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                         f'<td style="padding:6px 10px;text-align:center;">{_bts_cs_badge}</td>'
                         f'</tr>'
                     )
+                # ── Bot-filter row (appended after P1-P4 tier rows) ──────────
+                _bts_cs_eod_ser_bot  = pd.to_numeric(
+                    _bts_bot_df["eod_pnl_r"]    if "eod_pnl_r"    in _bts_bot_df.columns else pd.Series(dtype=float),
+                    errors="coerce",
+                ).dropna()
+                _bts_cs_tier_ser_bot = pd.to_numeric(
+                    _bts_bot_df["tiered_pnl_r"] if "tiered_pnl_r" in _bts_bot_df.columns else pd.Series(dtype=float),
+                    errors="coerce",
+                ).dropna()
+                _bts_cs_bot_n        = len(_bts_bot_df)
+                _bts_cs_bot_eod_wr   = round((_bts_cs_eod_ser_bot  > 0).sum() / len(_bts_cs_eod_ser_bot)  * 100, 1) if len(_bts_cs_eod_ser_bot)  else None
+                _bts_cs_bot_eod_exp  = round(float(_bts_cs_eod_ser_bot.mean()),  3) if len(_bts_cs_eod_ser_bot)  else None
+                _bts_cs_bot_tier_wr  = round((_bts_cs_tier_ser_bot > 0).sum() / len(_bts_cs_tier_ser_bot) * 100, 1) if len(_bts_cs_tier_ser_bot) else None
+                _bts_cs_bot_tier_exp = round(float(_bts_cs_tier_ser_bot.mean()), 3) if len(_bts_cs_tier_ser_bot) else None
+                _bts_cs_bot_eod_wr_str   = f'<span style="color:{_ts_wr_col(_bts_cs_bot_eod_wr)};font-weight:600;">{_bts_cs_bot_eod_wr}%</span>'     if _bts_cs_bot_eod_wr   is not None else '<span style="color:#546e7a;">—</span>'
+                _bts_cs_bot_eod_exp_str  = f'<span style="color:{_ts_exp_col(_bts_cs_bot_eod_exp)};font-weight:600;">{_bts_cs_bot_eod_exp:+.3f}R</span>'  if _bts_cs_bot_eod_exp  is not None else '<span style="color:#546e7a;">—</span>'
+                _bts_cs_bot_tier_wr_str  = f'<span style="color:{_ts_wr_col(_bts_cs_bot_tier_wr)};font-weight:600;">{_bts_cs_bot_tier_wr}%</span>'    if _bts_cs_bot_tier_wr  is not None else '<span style="color:#546e7a;">—</span>'
+                _bts_cs_bot_tier_exp_str = f'<span style="color:{_ts_exp_col(_bts_cs_bot_tier_exp)};font-weight:600;">{_bts_cs_bot_tier_exp:+.3f}R</span>' if _bts_cs_bot_tier_exp is not None else '<span style="color:#546e7a;">—</span>'
+                _bts_cs_bot_n_str = f'<span style="color:#cfd8dc;">{_bts_cs_bot_n}</span>' if _bts_cs_bot_n > 0 else '<span style="color:#546e7a;">0</span>'
+                _bts_cs_body += (
+                    f'<tr style="border-top:2px solid #26c6da;border-left:3px solid #26c6da;background:rgba(38,198,218,0.07);">'
+                    f'<td style="padding:6px 10px;"><span style="color:#26c6da;font-weight:700;">🤖 Bot Filter</span></td>'
+                    f'<td style="padding:6px 10px;font-size:11px;color:#78909c;">TCS≥50 · IB&lt;10% · VWAP aligned</td>'
+                    f'<td style="padding:6px 10px;text-align:right;" data-val="{_bts_cs_bot_n}">{_bts_cs_bot_n_str}</td>'
+                    f'<td style="padding:6px 10px;text-align:right;" data-val="{_bts_cs_bot_eod_wr if _bts_cs_bot_eod_wr is not None else -9999999}">{_bts_cs_bot_eod_wr_str}</td>'
+                    f'<td style="padding:6px 10px;text-align:right;" data-val="{_bts_cs_bot_eod_exp if _bts_cs_bot_eod_exp is not None else -9999999}">{_bts_cs_bot_eod_exp_str}</td>'
+                    f'<td style="padding:6px 10px;text-align:right;" data-val="{_bts_cs_bot_tier_wr if _bts_cs_bot_tier_wr is not None else -9999999}">{_bts_cs_bot_tier_wr_str}</td>'
+                    f'<td style="padding:6px 10px;text-align:right;" data-val="{_bts_cs_bot_tier_exp if _bts_cs_bot_tier_exp is not None else -9999999}">{_bts_cs_bot_tier_exp_str}</td>'
+                    f'<td style="padding:6px 10px;text-align:center;"><span style="color:#26c6da;font-size:10px;font-weight:600;">Live Gate</span></td>'
+                    f'</tr>'
+                )
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown(
                     '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
