@@ -12912,6 +12912,50 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ),
                 },
             )
+            # ── Per-Ticker Summary CSV download ─────────────────────────────────
+            _tkr_csv_df = _tkr_display_df.copy()
+            # Strip medal emoji prefixes from Ticker column (🥇 🥈 🥉)
+            import re as _re_tkr_csv
+            if "Ticker" in _tkr_csv_df.columns:
+                _tkr_csv_df["Ticker"] = (
+                    _tkr_csv_df["Ticker"]
+                    .astype(str)
+                    .str.replace(r"^(🥇|🥈|🥉)\s*", "", regex=True)
+                )
+            # Export IB Pass % as a decimal (e.g. 0.753) rather than the
+            # display string ("🟢 75.3%").  Fall back to empty string when
+            # the raw sort value is missing / infinite.
+            if "IB Pass %" in _tkr_csv_df.columns and "_sort_ib_pass" in _tkr_summary_df.columns:
+                def _ib_to_dec(idx):
+                    _raw = _tkr_summary_df.loc[idx, "_sort_ib_pass"]
+                    try:
+                        _f = float(_raw)
+                    except (TypeError, ValueError):
+                        return ""
+                    if _f != _f or _f == float("inf"):  # NaN or inf → missing
+                        return ""
+                    return round(_f / 100.0, 6)
+                _tkr_csv_df["IB Pass %"] = [_ib_to_dec(i) for i in _tkr_csv_df.index]
+            # Strip traffic-light icon prefixes from any remaining text columns;
+            # only transform non-null string values to avoid converting NaN → "nan".
+            _tkr_csv_icon_re = _re_tkr_csv.compile(r"^[🟢🟡🔴⚠️✅❌ℹ️]+\s*")
+            for _tkr_csv_col in _tkr_csv_df.select_dtypes(include="object").columns:
+                if _tkr_csv_col == "Ticker":
+                    continue
+                _tkr_csv_df[_tkr_csv_col] = _tkr_csv_df[_tkr_csv_col].where(
+                    _tkr_csv_df[_tkr_csv_col].isna(),
+                    _tkr_csv_df[_tkr_csv_col]
+                    .astype(str)
+                    .str.replace(_tkr_csv_icon_re, "", regex=True),
+                )
+            _tkr_csv_bytes = _tkr_csv_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="⬇️ Download Per-Ticker Summary CSV",
+                data=_tkr_csv_bytes,
+                file_name="per_ticker_summary.csv",
+                mime="text/csv",
+                help="Export the Per-Ticker Breakdown table to CSV for offline analysis.",
+            )
             if _div_thresh is not None and _flagged_div_indices:
                 # Threshold is set — list every ticker that exceeds it
                 _flagged_tkrs = []
