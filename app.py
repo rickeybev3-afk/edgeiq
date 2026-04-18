@@ -117,6 +117,15 @@ def _cached_load_tcs_alert_thresholds():
 def _cached_load_ib_range_pct_threshold():
     return load_ib_range_pct_threshold()
 
+# IB-range position-sizing multiplier — mirrors paper_trader_bot._ib_size_mult.
+# 0-2%: 2.00× | 2-4%: 1.30× | 4-6%: 1.00× | 6-8%: 0.75× | 8-10%: 0.80×
+_IB_RANGE_MULT_APP = [(2.0,2.00),(4.0,1.30),(6.0,1.00),(8.0,0.75),(10.0,0.80)]
+def _ib_size_mult(ib_pct: float) -> float:
+    for _ceil, _m in _IB_RANGE_MULT_APP:
+        if ib_pct < _ceil:
+            return _m
+    return 0.80
+
 @st.cache_data(ttl=300, show_spinner=False, max_entries=10)
 def _cached_load_tcs_threshold_history(days: int = 14):
     return load_tcs_threshold_history(days=days)
@@ -10310,6 +10319,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _shares  = _fixed_risk_amt / _stop_dist
                                 _risk_1r = _fixed_risk_amt
 
+                            # ── IB-range position-size multiplier ─────────────────────────────
+                            # Mirrors live bot: tighter IB → bigger size (0-2%: 2×, 2-4%: 1.3×,
+                            # 4-6%: 1×, 6-8%: 0.75×, 8-10%: 0.8×).  ib_range_pct=0 → no scale.
+                            _rp_ib_pct  = float(_rp_r.get("ib_range_pct") or 0)
+                            _rp_ib_mult = _ib_size_mult(_rp_ib_pct) if _rp_ib_pct > 0 else 1.0
+                            _risk_1r   *= _rp_ib_mult
+
                             # ── P&L: false_break detection + MFE R-multiple ───────────────────
                             # DO NOT use stored pnl_r_sim — it was computed from MFE fallback
                             # (close_price was NULL for all pre-migration rows), so every value
@@ -13132,12 +13148,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _sw_wins_n = (_sw_sub["win_loss"] == "Win").sum()
                             _sw_wr_n   = _sw_wins_n / len(_sw_sub) * 100
                             _ft_col    = "follow_thru_pct" if "follow_thru_pct" in _sw_sub.columns else "aft_move_pct"
+                            _ib_col_ok = "ib_range_pct" in _sw_sub.columns
                             _sw_pnl_n  = sum(
-                                _tk_pos_size * abs(float(ft) if ft == ft else 0) / 100
+                                _tk_pos_size
+                                * _ib_size_mult(float(ib) if _ib_col_ok and ib == ib else 0)
+                                * abs(float(ft) if ft == ft else 0) / 100
                                 * (1 if wl == "Win" else -1)
-                                for ft, wl in zip(
+                                for ft, wl, ib in zip(
                                     _sw_sub[_ft_col].fillna(0) if _ft_col in _sw_sub.columns else [0] * len(_sw_sub),
-                                    _sw_sub["win_loss"]
+                                    _sw_sub["win_loss"],
+                                    _sw_sub["ib_range_pct"].fillna(0) if _ib_col_ok else [0] * len(_sw_sub),
                                 )
                             )
                             _sw_exp_n = _sw_pnl_n / len(_sw_sub)
