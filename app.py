@@ -14098,6 +14098,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _mini_eq_csv_rows = "\n".join(
                                 f"{i},{v:.2f}" for i, v in enumerate(_mini_eq)
                             )
+                            with st.expander("🔍 Preview trade-by-trade data", expanded=False):
+                                _mini_eq_prev_df = _pd_bt.DataFrame({
+                                    "Trade #": list(range(len(_mini_eq))),
+                                    "Equity ($)": [round(v, 2) for v in _mini_eq],
+                                })
+                                st.dataframe(
+                                    _mini_eq_prev_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "Equity ($)": st.column_config.NumberColumn(format="$%.2f"),
+                                    },
+                                    height=220,
+                                )
                             st.download_button(
                                 label="⬇️ Download Equity Curve CSV",
                                 data=f"trade_index,equity_usd\n{_mini_eq_csv_rows}",
@@ -14294,6 +14308,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"{i},{_mini_eq[i]:.2f},{_mini_r[i]:.4f}"
                                 for i in range(_mini_csv_len)
                             )
+                            with st.expander("🔍 Preview trade-by-trade data", expanded=False):
+                                _mini_div_prev_df = _pd_bt.DataFrame({
+                                    "Trade #": list(range(_mini_csv_len)),
+                                    "Equity ($)": [round(_mini_eq[i], 2) for i in range(_mini_csv_len)],
+                                    "Cumulative R": [round(_mini_r[i], 4) for i in range(_mini_csv_len)],
+                                })
+                                st.dataframe(
+                                    _mini_div_prev_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "Equity ($)": st.column_config.NumberColumn(format="$%.2f"),
+                                        "Cumulative R": st.column_config.NumberColumn(format="%.4f"),
+                                    },
+                                    height=220,
+                                )
                             st.download_button(
                                 label="⬇️ Download Curve Data CSV",
                                 data=f"trade_index,equity_usd,cum_r\n{_mini_div_csv_rows}",
