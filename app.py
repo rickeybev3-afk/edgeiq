@@ -19400,6 +19400,11 @@ ALTER TABLE backtest_sim_runs
                     "tier_exp": round(_ts_tier_ser.mean(), 3) if len(_ts_tier_ser) else None,
                 })
 
+        _tbl_rows.sort(key=lambda r: (
+            0 if (r["eod_exp"] is not None or r["tier_exp"] is not None) else 1,
+            -(r["eod_exp"] if r["eod_exp"] is not None else r["tier_exp"] if r["tier_exp"] is not None else 0),
+        ))
+
         _ts_valid_exps = [r["eod_exp"] for r in _tbl_rows if r["eod_exp"] is not None]
         _ts_best_eod_exp = max(_ts_valid_exps) if len(_ts_valid_exps) > 1 else None
         _ts_valid_tier_exps = [r["tier_exp"] for r in _tbl_rows if r["tier_exp"] is not None]
