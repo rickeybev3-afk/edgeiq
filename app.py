@@ -6256,8 +6256,9 @@ with st.sidebar:
                         # Step 1 running but no PROGRESS line yet
                         st.caption("**Step 1 of 2**")
                         _s1_elapsed = _compute_elapsed(_BACKFILL_START_TIME)
-                        if _s1_elapsed:
-                            st.caption(f"📈 Fetching tickers…  ·  ⏱ {_s1_elapsed}  ·  estimating…")
+                        _s1_caption = "📈 Fetching tickers…  ·  ⏱ "
+                        _s1_caption += f"{_s1_elapsed}  ·  estimating…" if _s1_elapsed else "estimating…"
+                        st.caption(_s1_caption)
                     st.caption(f"📄 {_total_lines} log line{'s' if _total_lines != 1 else ''} so far — auto-refreshing every 3 s")
                     st.code(_tail_text or "(log initialising…)", language="text")
                 except Exception:
