@@ -5042,6 +5042,9 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
     if "bts_sync_dismissed_at" in _prefs and "bts_sync_dismissed_at" not in st.session_state:
         _bts_d = _prefs["bts_sync_dismissed_at"]
         st.session_state["bts_sync_dismissed_at"] = tuple(_bts_d) if isinstance(_bts_d, list) else _bts_d
+    if "bq_sync_dismissed_at" in _prefs and "bq_sync_dismissed_at" not in st.session_state:
+        _bq_sd = _prefs["bq_sync_dismissed_at"]
+        st.session_state["bq_sync_dismissed_at"] = tuple(_bq_sd) if isinstance(_bq_sd, list) else _bq_sd
     if "grid_sync_dismissed_at" in _prefs and "grid_sync_dismissed_at" not in st.session_state:
         _grid_d = _prefs["grid_sync_dismissed_at"]
         st.session_state["grid_sync_dismissed_at"] = tuple(_grid_d) if isinstance(_grid_d, list) else _grid_d
@@ -22568,6 +22571,30 @@ ALTER TABLE backtest_sim_runs
                             st.session_state["bq_dr_start"] = _clamp_bq(_bq_bts_sync_start)
                             st.session_state["bq_dr_end"]   = _clamp_bq(_bq_bts_sync_end)
                             st.rerun()
+                        _bq_out_of_sync = (
+                            _bq_start != _bq_bts_sync_start or _bq_end != _bq_bts_sync_end
+                        )
+                        if _bq_out_of_sync:
+                            _bq_dismiss_key = (
+                                str(_bq_start), str(_bq_end),
+                                str(_bq_bts_sync_start), str(_bq_bts_sync_end),
+                            )
+                            _bq_warning_dismissed = (
+                                st.session_state.get("bq_sync_dismissed_at") == _bq_dismiss_key
+                            )
+                            if not _bq_warning_dismissed:
+                                st.caption("⚠️ Backtest P&L dates differ")
+                                if st.button(
+                                    "Dismiss",
+                                    key="bq_dismiss_sync_warning",
+                                    help="Hide this warning for the current date combination",
+                                ):
+                                    st.session_state["bq_sync_dismissed_at"] = _bq_dismiss_key
+                                    if _AUTH_USER_ID:
+                                        _bq_d_prefs = {**st.session_state.get("_cached_prefs", {}), "bq_sync_dismissed_at": list(_bq_dismiss_key)}
+                                        save_user_prefs(_AUTH_USER_ID, _bq_d_prefs)
+                                        st.session_state["_cached_prefs"] = _bq_d_prefs
+                                    st.rerun()
 
                 if st.session_state.get("bq_link_date_filters", False):
                     st.caption(
