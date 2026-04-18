@@ -21440,7 +21440,75 @@ def render_performance_tab():
     st.caption(f"Last loaded: {now_et.strftime('%b %d, %Y  %I:%M:%S %p')} ET")
 
     # ── Load paper trades ───────────────────────────────────────────────────────
-    _pt_df = _cached_load_paper_trades(user_id=_AUTH_USER_ID, days=365)
+    _pt_df_full = _cached_load_paper_trades(user_id=_AUTH_USER_ID, days=365)
+
+    # ── Page-wide bot-filter toggle (affects ALL sections below) ────────────
+    _ib_thr_kpi = _cached_load_ib_range_pct_threshold()
+    _pt_tog_l, _pt_tog_r = st.columns([3, 2])
+    with _pt_tog_l:
+        st.markdown(
+            '<div style="font-size:13px;font-weight:700;color:#cfd8dc;margin-top:6px;">'
+            '📊 Performance view</div>',
+            unsafe_allow_html=True,
+        )
+    with _pt_tog_r:
+        _kpi_view = st.radio(
+            "Performance view",
+            options=["Bot-Filtered (TCS ≥ 50)", "All Signals"],
+            index=0,
+            horizontal=True,
+            key="perf_kpi_view",
+            help=(
+                "Bot-Filtered: only trades that passed TCS ≥ 50 + IB range gate — "
+                "the same criteria that gate actual Alpaca orders. "
+                "All Signals: every scan hit logged for research."
+            ),
+            label_visibility="collapsed",
+        )
+    _kpi_bot_filter = (_kpi_view == "Bot-Filtered (TCS ≥ 50)")
+
+    # Apply filter — every section in this tab reads from _pt_df
+    if _kpi_bot_filter and not _pt_df_full.empty:
+        _kpi_mask = pd.Series(True, index=_pt_df_full.index)
+        if "tcs" in _pt_df_full.columns:
+            _kpi_mask &= pd.to_numeric(_pt_df_full["tcs"], errors="coerce").fillna(0) >= 50
+        if "ib_range_pct" in _pt_df_full.columns:
+            _kpi_mask &= (
+                pd.to_numeric(_pt_df_full["ib_range_pct"], errors="coerce").fillna(999)
+                < _ib_thr_kpi
+            )
+        _pt_df = _pt_df_full[_kpi_mask].copy()
+    else:
+        _pt_df = _pt_df_full.copy()
+
+    # Context badge
+    _kpi_total_all = (
+        int((_pt_df_full["win_loss"].isin(["Win", "W", "Loss", "L"])).sum())
+        if not _pt_df_full.empty and "win_loss" in _pt_df_full.columns else 0
+    )
+    _kpi_filtered_count = (
+        int((_pt_df["win_loss"].isin(["Win", "W", "Loss", "L"])).sum())
+        if not _pt_df.empty and "win_loss" in _pt_df.columns else 0
+    )
+    if _kpi_bot_filter:
+        _excluded = _kpi_total_all - _kpi_filtered_count
+        st.markdown(
+            f'<div style="font-size:11px;color:#4fc3f7;margin-bottom:10px;">'
+            f'🔵 Bot-filter active — all sections show <b>{_kpi_filtered_count}</b> filtered trades '
+            f'(TCS ≥ 50 + IB ≤ {_ib_thr_kpi:.0f}%). '
+            f'<span style="color:#546e7a;">{_excluded} low-TCS/wide-IB signals excluded '
+            f'({_kpi_total_all} total in research pool).</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="font-size:11px;color:#546e7a;margin-bottom:10px;">'
+            f'📋 All signals — <b>{_kpi_total_all}</b> verified trades including unfiltered scan hits. '
+            f'Switch to <b>Bot-Filtered</b> to see only the trades that match your strategy criteria.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     # ── Load backtest sim history (backtest_sim_runs) ────────────────────────
     @st.cache_data(ttl=300, show_spinner=False)
@@ -21489,80 +21557,29 @@ def render_performance_tab():
     # ════════════════════════════════════════════════════════════════════════════
     # SECTION 1 — KPI STRIP
     # ════════════════════════════════════════════════════════════════════════════
-    # ── KPI view toggle ────────────────────────────────────────────────────────
-    _kpi_hn_col, _kpi_tog_col = st.columns([3, 2])
-    with _kpi_hn_col:
-        st.markdown("### Key Numbers")
-    with _kpi_tog_col:
-        _kpi_view = st.radio(
-            "View",
-            options=["Bot-Filtered (TCS ≥ 50)", "All Signals"],
-            index=0,
-            horizontal=True,
-            key="perf_kpi_view",
-            help="Bot-Filtered shows only trades that pass the TCS ≥ 50 + IB range gate — the same criteria that control actual Alpaca orders. All Signals includes every scan hit logged for research.",
-            label_visibility="collapsed",
-        )
-    _kpi_bot_filter = (_kpi_view == "Bot-Filtered (TCS ≥ 50)")
+    st.markdown("### Key Numbers")
 
-    # Build filtered view for KPI headline numbers
-    _pt_kpi_df = _pt_df.copy()
-    _ib_thr_kpi = _cached_load_ib_range_pct_threshold()
-    if _kpi_bot_filter and not _pt_df.empty:
-        _kpi_mask = pd.Series(True, index=_pt_df.index)
-        if "tcs" in _pt_df.columns:
-            _kpi_mask &= pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0) >= 50
-        if "ib_range_pct" in _pt_df.columns:
-            _kpi_mask &= pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce").fillna(999) < _ib_thr_kpi
-        _pt_kpi_df = _pt_df[_kpi_mask].copy()
-
-    _kpi_total_all = (
-        int((_pt_df["win_loss"].isin(["Win", "W", "Loss", "L"])).sum())
-        if not _pt_df.empty and "win_loss" in _pt_df.columns else 0
-    )
-
-    # Paper trade stats
+    # Paper trade stats — _pt_df is already filtered by the toggle above
     _total_trades = 0
     _wins = 0
     _losses = 0
     _net_pnl = 0.0
     _sim_per_trade = 500.0  # $500/trade simulation
 
-    if not _pt_kpi_df.empty and "win_loss" in _pt_kpi_df.columns:
-        _wl = _pt_kpi_df["win_loss"].dropna()
+    if not _pt_df.empty and "win_loss" in _pt_df.columns:
+        _wl = _pt_df["win_loss"].dropna()
         _wins    = int((_wl == "Win").sum()) + int((_wl == "W").sum())
         _losses  = int((_wl == "Loss").sum()) + int((_wl == "L").sum())
         _total_trades = _wins + _losses
         _wl_map = {"Win": 1, "W": 1, "Loss": -1, "L": -1}
-        if "follow_thru_pct" in _pt_kpi_df.columns:
-            _ft = _pt_kpi_df["follow_thru_pct"].fillna(0).astype(float)
-            _wl_num = _pt_kpi_df["win_loss"].map(_wl_map).fillna(0)
+        if "follow_thru_pct" in _pt_df.columns:
+            _ft = _pt_df["follow_thru_pct"].fillna(0).astype(float)
+            _wl_num = _pt_df["win_loss"].map(_wl_map).fillna(0)
             _net_pnl = float((_wl_num * _ft / 100 * _sim_per_trade).sum())
         else:
             _net_pnl = (_wins - _losses) * _sim_per_trade * 0.06
 
     _pt_rate = (_wins / _total_trades * 100) if _total_trades else 0.0
-
-    # Filter context badge
-    if _kpi_bot_filter:
-        _excluded = _kpi_total_all - _total_trades
-        st.markdown(
-            f'<div style="font-size:11px;color:#4fc3f7;margin-bottom:6px;">'
-            f'🔵 Bot-filter active — showing <b>{_total_trades}</b> trades '
-            f'(TCS ≥ 50 + IB ≤ {_ib_thr_kpi:.0f}%). '
-            f'<span style="color:#546e7a;">{_excluded} low-TCS/wide-IB signals excluded '
-            f'({_kpi_total_all} total in research pool).</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f'<div style="font-size:11px;color:#546e7a;margin-bottom:6px;">'
-            f'📋 All signals — <b>{_kpi_total_all}</b> verified trades including '
-            f'unfiltered scan hits. Toggle to Bot-Filtered to see strategy performance.'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
 
     # Structure prediction stats (bot-only = watchlist_pred)
     _struct_total = 0
