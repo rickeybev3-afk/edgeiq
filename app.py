@@ -18602,7 +18602,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                     zeroline=False,
                 ),
                 legend=dict(
-                    bgcolor="#12122288",
+                    bgcolor="rgba(18,18,34,0.53)",
                     bordercolor="#2a2a4a",
                     borderwidth=1,
                     orientation="h",
