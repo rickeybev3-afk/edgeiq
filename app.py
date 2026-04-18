@@ -17991,10 +17991,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _exp_df["VWAP Pass Rate (%)"] = (
                             _exp_vwap_pass_rate if _exp_vwap_pass_rate is not None else "—"
                         )
+                        _exp_vwap_rate_pct = _exp_vwap_pass_rate if _exp_vwap_pass_rate is not None else 0
+                        if _exp_vwap_rate_pct >= 70:
+                            _exp_df["VWAP Pass Rate Band"] = "Strong (≥70%)"
+                        elif _exp_vwap_rate_pct >= 40:
+                            _exp_df["VWAP Pass Rate Band"] = "Moderate (40–69%)"
+                        else:
+                            _exp_df["VWAP Pass Rate Band"] = "Weak (<40%)"
                     else:
                         _exp_df["TCS+IB Signals"] = "—"
                         _exp_df["VWAP Signals"]   = "—"
                         _exp_df["VWAP Pass Rate (%)"] = "—"
+                        _exp_df["VWAP Pass Rate Band"] = "—"
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
