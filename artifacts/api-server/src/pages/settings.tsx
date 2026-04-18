@@ -131,12 +131,23 @@ interface DryRunState {
   showRaw: boolean;
 }
 
+interface ContextDryRunTotals {
+  candidates: number;
+  already_done: number;
+  would_update: number;
+}
+
+interface ContextDryRunRow {
+  user_id: string;
+  would_update: number;
+}
+
 interface ContextDryRunResult {
-  row_count: number | null;
-  ticker_count: number | null;
-  unique_tickers: string[] | null;
-  date_start: string | null;
-  date_end: string | null;
+  generated_at: string | null;
+  mode: string;
+  pipeline: string;
+  totals: ContextDryRunTotals | null;
+  rows: ContextDryRunRow[];
   elapsed_s: number | null;
   timed_out: boolean;
   raw_output: string;
@@ -692,7 +703,7 @@ export default function Settings() {
   }
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers"],
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers"],
     [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading]
   );
 
@@ -1727,28 +1738,6 @@ export default function Settings() {
                 <span style={{ fontSize: "15px" }}>🔍</span>
                 {dryRun.running ? "Running dry-run preview… (this may take a minute)" : "Preview Dry Run"}
               </button>
-              <button
-                onClick={handleContextDryRun}
-                disabled={contextDryRun.running}
-                style={{
-                  padding: "9px 18px",
-                  background: contextDryRun.running ? "#1e3a5f" : "#1e40af",
-                  border: "1px solid #60a5fa",
-                  borderRadius: "7px",
-                  color: "#dbeafe",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  cursor: contextDryRun.running ? "not-allowed" : "pointer",
-                  opacity: contextDryRun.running ? 0.7 : 1,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "7px",
-                  transition: "opacity 0.15s",
-                }}
-              >
-                <span style={{ fontSize: "15px" }}>🔎</span>
-                {contextDryRun.running ? "Scanning context scope… (this may take a moment)" : "Preview Context Dry Run"}
-              </button>
             </div>
 
             {dryRun.error && (
@@ -1833,90 +1822,149 @@ export default function Settings() {
               </div>
             )}
 
-            {contextDryRun.error && (
-              <div style={{ marginTop: "14px", padding: "12px 14px", background: "rgba(248,113,113,0.1)", border: "1px solid #f87171", borderRadius: "7px", color: "#f87171", fontSize: "13px" }}>
-                ⚠ {contextDryRun.error}
-              </div>
-            )}
-
-            {contextDryRun.result && !contextDryRun.error && (
-              <div style={{ marginTop: "16px" }}>
-                {contextDryRun.result.timed_out && (
-                  <div style={{ marginBottom: "12px", padding: "10px 14px", background: "rgba(96,165,250,0.08)", border: "1px solid #60a5fa", borderRadius: "7px", color: "#60a5fa", fontSize: "12px" }}>
-                    ⚠ Context dry-run timed out after 120s — results below may be partial.
-                  </div>
-                )}
-
-                <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px" }}>
-                  <p style={{ fontSize: "13px", fontWeight: 700, color: "#dbeafe", margin: 0 }}>
-                    Context Dry-Run Scope
-                  </p>
-                  {contextDryRun.result.elapsed_s != null && (
-                    <span style={{ fontSize: "11px", color: "#64748b" }}>({contextDryRun.result.elapsed_s.toFixed(1)}s elapsed)</span>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginBottom: "14px" }}>
-                  {contextDryRun.result.row_count != null && (
-                    <div style={{ padding: "12px 16px", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: "8px", minWidth: "140px" }}>
-                      <div style={{ fontSize: "22px", fontWeight: 700, color: "#60a5fa", fontFamily: "monospace" }}>
-                        {contextDryRun.result.row_count.toLocaleString()}
-                      </div>
-                      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>rows to process</div>
-                    </div>
-                  )}
-                  {contextDryRun.result.ticker_count != null && (
-                    <div style={{ padding: "12px 16px", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: "8px", minWidth: "140px" }}>
-                      <div style={{ fontSize: "22px", fontWeight: 700, color: "#60a5fa", fontFamily: "monospace" }}>
-                        {contextDryRun.result.ticker_count.toLocaleString()}
-                      </div>
-                      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>unique tickers</div>
-                    </div>
-                  )}
-                  {contextDryRun.result.date_start && contextDryRun.result.date_end && (
-                    <div style={{ padding: "12px 16px", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: "8px" }}>
-                      <div style={{ fontSize: "13px", fontWeight: 700, color: "#60a5fa", fontFamily: "monospace" }}>
-                        {contextDryRun.result.date_start} → {contextDryRun.result.date_end}
-                      </div>
-                      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>date range</div>
-                    </div>
-                  )}
-                </div>
-
-                {contextDryRun.result.unique_tickers && contextDryRun.result.unique_tickers.length > 0 && (
-                  <div style={{ marginBottom: "12px" }}>
-                    <p style={{ fontSize: "11px", color: "#64748b", marginBottom: "6px", margin: "0 0 6px" }}>Tickers in scope:</p>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                      {contextDryRun.result.unique_tickers.map((t) => (
-                        <span key={t} style={{ padding: "2px 7px", background: "rgba(96,165,250,0.1)", border: "1px solid rgba(96,165,250,0.25)", borderRadius: "4px", fontSize: "11px", color: "#93c5fd", fontFamily: "monospace" }}>
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {contextDryRun.result.row_count === null && (
-                  <p style={{ fontSize: "13px", color: "#64748b", marginTop: "8px" }}>
-                    No summary lines were found in the output.
-                  </p>
-                )}
-
-                <button
-                  onClick={() => setContextDryRun((s) => ({ ...s, showRaw: !s.showRaw }))}
-                  style={{ marginTop: "12px", background: "none", border: "none", color: "#64748b", fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}
-                >
-                  {contextDryRun.showRaw ? "Hide raw output" : "Show raw output"}
-                </button>
-
-                {contextDryRun.showRaw && (
-                  <pre style={{ marginTop: "8px", padding: "12px", background: "#0e1117", border: "1px solid #2d3748", borderRadius: "6px", fontSize: "11px", color: "#94a3b8", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "300px", overflowY: "auto" }}>
-                    {contextDryRun.result.raw_output}
-                  </pre>
-                )}
-              </div>
-            )}
           </div>
+        </section>
+
+        <section
+          id="context-dryrun"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "24px",
+            marginTop: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Context Dry-Run Preview
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "16px", lineHeight: "1.6" }}>
+            Preview how many context-level rows (S/R, VWAP, MACD) would be updated without
+            making any database writes.
+          </p>
+
+          <button
+            onClick={handleContextDryRun}
+            disabled={contextDryRun.running}
+            style={{
+              padding: "9px 18px",
+              background: contextDryRun.running ? "#1e3a5f" : "#1e40af",
+              border: "1px solid #60a5fa",
+              borderRadius: "7px",
+              color: "#dbeafe",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: contextDryRun.running ? "not-allowed" : "pointer",
+              opacity: contextDryRun.running ? 0.7 : 1,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "7px",
+              transition: "opacity 0.15s",
+            }}
+          >
+            <span style={{ fontSize: "15px" }}>🔎</span>
+            {contextDryRun.running ? "Scanning context scope… (this may take a moment)" : "Run Preview"}
+          </button>
+
+          {contextDryRun.running && (
+            <p style={{ marginTop: "12px", fontSize: "13px", color: "#64748b" }}>
+              Counting rows — this may take up to a minute…
+            </p>
+          )}
+
+          {contextDryRun.error && (
+            <div style={{ marginTop: "14px", padding: "12px 14px", background: "rgba(248,113,113,0.1)", border: "1px solid #f87171", borderRadius: "7px", color: "#f87171", fontSize: "13px" }}>
+              ⚠ {contextDryRun.error}
+            </div>
+          )}
+
+          {contextDryRun.result && !contextDryRun.error && (
+            <div style={{ marginTop: "20px" }}>
+              {contextDryRun.result.timed_out && (
+                <div style={{ marginBottom: "12px", padding: "10px 14px", background: "rgba(251,191,36,0.08)", border: "1px solid #fbbf24", borderRadius: "7px", color: "#fbbf24", fontSize: "12px" }}>
+                  ⚠ Context dry-run timed out after 300s — results below may be partial.
+                </div>
+              )}
+
+              <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px" }}>
+                <p style={{ fontSize: "13px", fontWeight: 700, color: "#dbeafe", margin: 0 }}>
+                  Context Dry-Run Results
+                </p>
+                {contextDryRun.result.elapsed_s != null && (
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>({contextDryRun.result.elapsed_s.toFixed(1)}s elapsed)</span>
+                )}
+              </div>
+
+              {contextDryRun.result.totals ? (
+                <>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginBottom: "20px" }}>
+                    <div style={{ padding: "14px 18px", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: "8px", minWidth: "140px" }}>
+                      <div style={{ fontSize: "24px", fontWeight: 700, color: "#60a5fa", fontFamily: "monospace" }}>
+                        {contextDryRun.result.totals.candidates.toLocaleString()}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "3px" }}>candidates</div>
+                    </div>
+                    <div style={{ padding: "14px 18px", background: "rgba(100,116,139,0.08)", border: "1px solid rgba(100,116,139,0.3)", borderRadius: "8px", minWidth: "140px" }}>
+                      <div style={{ fontSize: "24px", fontWeight: 700, color: "#94a3b8", fontFamily: "monospace" }}>
+                        {contextDryRun.result.totals.already_done.toLocaleString()}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px" }}>already done</div>
+                    </div>
+                    <div style={{ padding: "14px 18px", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.3)", borderRadius: "8px", minWidth: "140px" }}>
+                      <div style={{ fontSize: "24px", fontWeight: 700, color: "#4ade80", fontFamily: "monospace" }}>
+                        {contextDryRun.result.totals.would_update.toLocaleString()}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "3px" }}>would update</div>
+                    </div>
+                  </div>
+
+                  {contextDryRun.result.rows && contextDryRun.result.rows.length > 0 && (
+                    <div style={{ marginBottom: "14px" }}>
+                      <p style={{ fontSize: "12px", fontWeight: 600, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        Per-User Breakdown
+                      </p>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontFamily: "monospace" }}>
+                          <thead>
+                            <tr style={{ borderBottom: "1px solid #2d3748" }}>
+                              <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>User ID</th>
+                              <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Would Update</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {contextDryRun.result.rows.map((row) => (
+                              <tr key={row.user_id} style={{ borderBottom: "1px solid rgba(45,55,72,0.5)" }}>
+                                <td style={{ padding: "6px 10px", color: "#cbd5e1" }}>{row.user_id}</td>
+                                <td style={{ padding: "6px 10px", textAlign: "right", color: "#4ade80", fontWeight: 600 }}>{row.would_update.toLocaleString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p style={{ fontSize: "13px", color: "#64748b", marginTop: "8px" }}>
+                  No summary data was returned from the server.
+                </p>
+              )}
+
+              <button
+                onClick={() => setContextDryRun((s) => ({ ...s, showRaw: !s.showRaw }))}
+                style={{ marginTop: "4px", background: "none", border: "none", color: "#64748b", fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+              >
+                {contextDryRun.showRaw ? "Hide raw output" : "Show raw output"}
+              </button>
+
+              {contextDryRun.showRaw && (
+                <pre style={{ marginTop: "8px", padding: "12px", background: "#0e1117", border: "1px solid #2d3748", borderRadius: "6px", fontSize: "11px", color: "#94a3b8", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "300px", overflowY: "auto" }}>
+                  {contextDryRun.result.raw_output}
+                </pre>
+              )}
+            </div>
+          )}
         </section>
 
         <section
