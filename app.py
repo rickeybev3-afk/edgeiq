@@ -11369,6 +11369,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "tier_exp": round(_rp_ts_tier_ser.mean(), 3) if len(_rp_ts_tier_ser) else None,
                                 })
 
+                        # Sort rows by best edge (eod_exp primary, tier_exp fallback), matching TCS table logic
+                        _rp_tbl_rows.sort(key=lambda _r: (
+                            0 if (_r["eod_exp"] is not None or _r["tier_exp"] is not None) else 1,
+                            -(_r["eod_exp"] if _r["eod_exp"] is not None else _r["tier_exp"] if _r["tier_exp"] is not None else 0),
+                        ))
+
                         _rp_ts_valid_eod  = [r["eod_exp"]  for r in _rp_tbl_rows if r["eod_exp"]  is not None]
                         _rp_ts_valid_tier = [r["tier_exp"] for r in _rp_tbl_rows if r["tier_exp"] is not None]
                         _rp_ts_best_eod_exp  = max(_rp_ts_valid_eod)  if len(_rp_ts_valid_eod)  > 1 else None
@@ -11395,7 +11401,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             '</tr>'
                         )
                         _rp_ts_body = ""
-                        for _rp_tsr in _rp_tbl_rows:
+                        for _rp_ts_row_idx, _rp_tsr in enumerate(_rp_tbl_rows):
+                            _rp_ts_is_top = (
+                                _rp_ts_row_idx == 0
+                                and (_rp_tsr["eod_exp"] is not None or _rp_tsr["tier_exp"] is not None)
+                            )
+                            _rp_ts_row_style = (
+                                'border-top:1px solid #1e2a3a;border-left:3px solid #ffd54f;background:rgba(255,213,79,0.06);'
+                                if _rp_ts_is_top else
+                                'border-top:1px solid #1e2a3a;border-left:3px solid transparent;'
+                            )
                             _rp_ts_eod_wr_str  = (
                                 f'<span style="color:{_rp_ts_wr_col(_rp_tsr["eod_wr"])};font-weight:600;">{_rp_tsr["eod_wr"]}%</span>'
                                 if _rp_tsr["eod_wr"] is not None else '<span style="color:#546e7a;">—</span>'
@@ -11433,7 +11448,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 if _rp_tsr["n"] > 0 else '<span style="color:#546e7a;">0</span>'
                             )
                             _rp_ts_body += (
-                                f'<tr style="border-top:1px solid #1e2a3a;">'
+                                f'<tr style="{_rp_ts_row_style}">'
                                 f'<td style="padding:6px 10px;"><span style="color:{_rp_tsr["color"]};font-weight:700;">{_rp_tsr["emoji"]} {_rp_tsr["label"]}</span></td>'
                                 f'<td style="padding:6px 10px;font-size:11px;color:#90a4ae;">{_rp_tsr["desc"]}</td>'
                                 f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_n_str}</td>'
