@@ -92,6 +92,65 @@ PAPER_CLOSE_LOOKBACK_DAYS       = int(os.getenv("PAPER_CLOSE_LOOKBACK_DAYS", "60
 _USER_PREFS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
 _OWNER_USER_ID        = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
 
+# Known NYSE market holidays (observed dates) for 2024-2028.
+# When an official holiday falls on a Saturday the exchange is closed the
+# preceding Friday; when it falls on a Sunday it is observed the following
+# Monday.  This list is sourced from NYSE's published holiday schedule.
+_NYSE_MARKET_HOLIDAYS: frozenset = frozenset({
+    # 2024
+    "2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29",
+    "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02",
+    "2024-11-28", "2024-12-25",
+    # 2025
+    "2025-01-01", "2025-01-09", "2025-01-20", "2025-02-17",
+    "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04",
+    "2025-09-01", "2025-11-27", "2025-12-25",
+    # 2026
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+    "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
+    "2026-11-26", "2026-12-25",
+    # 2027
+    "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26",
+    "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06",
+    "2027-11-25", "2027-12-24",
+    # 2028
+    "2028-01-03", "2028-01-17", "2028-02-21", "2028-04-14",
+    "2028-05-29", "2028-06-19", "2028-07-04", "2028-09-04",
+    "2028-11-23", "2028-12-25",
+})
+
+
+def _is_nyse_trading_day(d) -> bool:
+    """Return True if *d* is a NYSE equity market trading day.
+
+    Checks both weekends and the hardcoded holiday list above.  Falls back to
+    True (assume trading day) for dates beyond the range of the holiday list so
+    that the zero-row alert is never silently suppressed due to a missing entry.
+    """
+    if hasattr(d, "date"):
+        d = d.date()
+    if d.weekday() >= 5:
+        return False
+    return d.isoformat() not in _NYSE_MARKET_HOLIDAYS
+
+
+def _get_recalc_zero_alerts_enabled() -> bool:
+    """Return the recalc_zero_alerts_enabled preference (default True).
+
+    Reads from .local/user_prefs.json using the same pattern as other alert
+    preferences so deploy_server.py can toggle it from the Settings page.
+    """
+    try:
+        import json as _json
+        if os.path.exists(_USER_PREFS_FILE_PATH):
+            with open(_USER_PREFS_FILE_PATH) as _f:
+                _all = _json.load(_f)
+            _owner_prefs = _all.get(_OWNER_USER_ID, {})
+            return _owner_prefs.get("recalc_zero_alerts_enabled", True) is not False
+    except Exception:
+        pass
+    return True
+
 
 def _get_effective_paper_lookback_days() -> int:
     """Return the effective paper-trades close-price look-back window.
@@ -2935,6 +2994,25 @@ def eod_update():
             _rpnl_res.get("skipped", 0),
             _elapsed_rpnl,
         )
+        _written_main  = _rpnl_res.get("written", 0)
+        _skipped_main  = _rpnl_res.get("skipped", 0)
+        if (
+            _written_main == 0
+            and _skipped_main > 0
+            and _is_nyse_trading_day(today)
+            and _get_recalc_zero_alerts_enabled()
+        ):
+            log.warning(
+                f"EOD P&L recalc (main path): zero rows written on a trading day "
+                f"({_skipped_main} skipped) — sending Telegram alert."
+            )
+            tg_send(
+                f"⚠️ <b>EOD Recalc — Zero Rows Written</b>\n"
+                f"Date: {today}\n"
+                f"Written: 0 · Skipped: {_skipped_main}\n"
+                f"The nightly P&amp;L recalculation updated no rows on a trading day. "
+                f"Check for stale data or a Supabase issue."
+            )
     except Exception as _rpnl:
         log.warning(f"EOD P&L recalc (main path) failed (non-critical): {_rpnl}")
 

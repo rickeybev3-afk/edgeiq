@@ -46,6 +46,14 @@ interface BackfillErrorAlertsState {
   saved: boolean;
 }
 
+interface RecalcZeroAlertsState {
+  enabled: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface PaperLookbackState {
   days: number;
   source: "env" | "override";
@@ -167,6 +175,14 @@ export default function Settings() {
     saved: false,
   });
 
+  const [recalcZeroAlerts, setRecalcZeroAlerts] = useState<RecalcZeroAlertsState>({
+    enabled: true,
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/trading-mode")
@@ -266,6 +282,37 @@ export default function Settings() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : "Could not load backfill error alert preference.";
           setBackfillErrAlerts((s) => ({
+            ...s,
+            loading: false,
+            error: msg,
+          }));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/recalc-zero-alerts")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setRecalcZeroAlerts((s) => ({
+            ...s,
+            enabled: data.enabled !== false,
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load recalc zero-row alert preference.";
+          setRecalcZeroAlerts((s) => ({
             ...s,
             loading: false,
             error: msg,
@@ -416,7 +463,7 @@ export default function Settings() {
 
   useHashScroll(
     ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading]
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading]
   );
 
   async function handleChange(newMode: TradingMode) {
@@ -494,6 +541,32 @@ export default function Settings() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setBackfillErrAlerts((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handleRecalcZeroAlertsToggle(newEnabled: boolean) {
+    setRecalcZeroAlerts((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/recalc-zero-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setRecalcZeroAlerts((s) => ({
+        ...s,
+        enabled: data.enabled !== false,
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setRecalcZeroAlerts((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setRecalcZeroAlerts((s) => ({ ...s, saving: false, error: msg }));
     }
   }
 
@@ -797,6 +870,52 @@ export default function Settings() {
           {backfillErrAlerts.error && (
             <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
               ⚠ {backfillErrAlerts.error}
+            </p>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "16px",
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid #2d3748",
+              borderRadius: "8px",
+              marginTop: "12px",
+            }}
+          >
+            <div style={{ flex: 1, marginRight: "16px" }}>
+              <div style={{ fontSize: "14px", fontWeight: 600, color: "#e2e8f0", marginBottom: "4px" }}>
+                Recalc zero-row alerts
+              </div>
+              <div style={{ fontSize: "12px", color: "#64748b", lineHeight: "1.5" }}>
+                Send a Telegram message when the nightly P&amp;L recalculation writes zero rows on a trading day (suppressed on weekends and market holidays).
+              </div>
+            </div>
+
+            {recalcZeroAlerts.loading ? (
+              <span style={{ fontSize: "12px", color: "#475569" }}>Loading…</span>
+            ) : (
+              <ToggleSwitch
+                enabled={recalcZeroAlerts.enabled}
+                disabled={recalcZeroAlerts.saving}
+                onChange={handleRecalcZeroAlertsToggle}
+              />
+            )}
+          </div>
+
+          {recalcZeroAlerts.saving && (
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "14px" }}>Saving…</p>
+          )}
+          {recalcZeroAlerts.saved && (
+            <p style={{ fontSize: "13px", color: "#4ade80", marginTop: "14px" }}>
+              ✓ Preference saved.
+            </p>
+          )}
+          {recalcZeroAlerts.error && (
+            <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
+              ⚠ {recalcZeroAlerts.error}
             </p>
           )}
         </section>
