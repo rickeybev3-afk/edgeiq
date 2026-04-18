@@ -18049,26 +18049,37 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _exp_vwap_icon   = "🟢" if _exp_vwap_n >= 10  else "🟡" if _exp_vwap_n >= 5   else "🔴"
                         _exp_df["TCS+IB Signals"] = f"{_exp_tcs_ib_icon} {_exp_tcs_ib}"
                         _exp_df["VWAP Signals"]   = f"{_exp_vwap_icon} {_exp_vwap_n}"
-                        _exp_vwap_pass_rate = (
-                            round(_exp_vwap_n / _exp_tcs_ib * 100, 1)
-                            if _exp_tcs_ib > 0
-                            else None
-                        )
-                        _exp_df["VWAP Pass Rate (%)"] = (
-                            _exp_vwap_pass_rate if _exp_vwap_pass_rate is not None else "—"
-                        )
-                        _exp_vwap_rate_pct = _exp_vwap_pass_rate if _exp_vwap_pass_rate is not None else 0
-                        if _exp_vwap_rate_pct >= 70:
-                            _exp_df["VWAP Pass Rate Band"] = "Strong (≥70%)"
-                        elif _exp_vwap_rate_pct >= 40:
-                            _exp_df["VWAP Pass Rate Band"] = "Moderate (40–69%)"
-                        else:
-                            _exp_df["VWAP Pass Rate Band"] = "Weak (<40%)"
                     else:
                         _exp_df["TCS+IB Signals"] = "—"
                         _exp_df["VWAP Signals"]   = "—"
-                        _exp_df["VWAP Pass Rate (%)"] = "—"
-                        _exp_df["VWAP Pass Rate Band"] = "—"
+                    # Compute VWAP Pass Rate per TCS floor from backtest data
+                    # (consistent with the per-ticker floor-by-floor breakdown)
+                    _exp_bt_grp = _bt_df[_bt_df["ticker"] == _exp_tk]
+                    def _exp_vwap_pct_str(floor, _grp=_exp_bt_grp):
+                        try:
+                            _vf_tcs, _vf_vwap = _compute_bt_vwap_funnel(
+                                _grp, tcs_min=int(floor), ib_pct_max=_tkr_ib_threshold
+                            )
+                            if _vf_tcs > 0:
+                                return f"{round(_vf_vwap / _vf_tcs * 100)}%"
+                        except Exception:
+                            pass
+                        return "—"
+                    _exp_df["VWAP Pass Rate (%)"] = _exp_df["TCS Floor"].apply(_exp_vwap_pct_str)
+                    def _exp_vwap_band_str(val):
+                        if not val or val == "—":
+                            return "—"
+                        try:
+                            _pct = int(str(val).replace("%", "").strip())
+                            if _pct >= 70:
+                                return "Strong (≥70%)"
+                            elif _pct >= 40:
+                                return "Moderate (40–69%)"
+                            else:
+                                return "Weak (<40%)"
+                        except Exception:
+                            return "—"
+                    _exp_df["VWAP Pass Rate Band"] = _exp_df["VWAP Pass Rate (%)"].apply(_exp_vwap_band_str)
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
@@ -18246,8 +18257,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sweep_col_cfg["VWAP Pass Rate (%)"] = st.column_config.TextColumn(
                             "VWAP Pass Rate (%)",
                             help=(
-                                "Percentage of TCS+IB signals that also passed VWAP alignment "
-                                "(VWAP Signals ÷ TCS+IB Signals × 100). "
+                                "Percentage of TCS+IB signals at this specific TCS floor that also "
+                                "passed VWAP alignment (computed from backtest data, consistent with "
+                                "the per-ticker floor-by-floor breakdown). "
                                 "Green ≥ 70% · Amber 40–69% · Red < 40%"
                             ),
                         )
