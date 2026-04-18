@@ -1151,14 +1151,15 @@ export default function Settings() {
           style={{
             position: "sticky",
             top: 0,
-            zIndex: 10,
-            background: "#0f1623",
-            borderBottom: "1px solid #1e2d40",
+            zIndex: 20,
+            background: "#0e1117",
+            borderBottom: "1px solid #1a2332",
             padding: "8px 0",
+            marginBottom: "20px",
             display: "flex",
-            alignItems: "center",
-            gap: "6px",
             flexWrap: "wrap",
+            gap: "6px",
+            alignItems: "center",
           }}
         >
           <span style={{ fontSize: "10px", fontWeight: 600, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginRight: "2px" }}>
@@ -1193,7 +1194,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
             marginBottom: "20px",
           }}
         >
@@ -1250,7 +1251,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
             marginBottom: "20px",
           }}
         >
@@ -1406,7 +1407,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
             marginBottom: "20px",
           }}
         >
@@ -1468,7 +1469,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
           }}
         >
           <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
@@ -1935,7 +1936,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
             marginTop: "20px",
           }}
         >
@@ -2084,7 +2085,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
             marginTop: "20px",
           }}
         >
@@ -2197,7 +2198,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
             marginTop: "20px",
           }}
         >
@@ -2313,7 +2314,7 @@ export default function Settings() {
             border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "24px",
-            scrollMarginTop: "24px",
+            scrollMarginTop: "60px",
             marginTop: "20px",
           }}
         >
