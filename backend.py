@@ -11878,6 +11878,14 @@ def update_decision_outcome(
     """
     if not supabase:
         return False
+    import re as _re
+    _UUID_RE = _re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        _re.IGNORECASE,
+    )
+    if not _UUID_RE.match(str(decision_id)) or not _UUID_RE.match(str(user_id)):
+        print("update_decision_outcome: invalid UUID format in decision_id or user_id")
+        return False
     try:
         if outcome == "Pending":
             patch = {
@@ -11888,14 +11896,15 @@ def update_decision_outcome(
                 "reopen_notes": reopen_notes.strip() or None,
             }
             supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
+            # Atomically increment reopen_count at the DB level.
+            # decision_id and user_id are validated as strict UUID format above
+            # (hex digits and hyphens only), so interpolation here is safe.
             _inc_sql = (
-                f"UPDATE decision_log SET reopen_count = COALESCE(reopen_count, 0) + 1 "
+                "UPDATE decision_log "
+                "SET reopen_count = COALESCE(reopen_count, 0) + 1 "
                 f"WHERE id = '{decision_id}' AND user_id = '{user_id}'"
             )
-            try:
-                supabase.rpc("exec_sql", {"query": _inc_sql}).execute()
-            except Exception as _e:
-                print(f"update_decision_outcome reopen_count increment warning: {_e}")
+            supabase.rpc("exec_sql", {"query": _inc_sql}).execute()
         else:
             patch = {
                 "outcome": outcome,
