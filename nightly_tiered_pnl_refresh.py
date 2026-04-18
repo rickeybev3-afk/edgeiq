@@ -98,13 +98,14 @@ def _interruptible_sleep(seconds: float) -> bool:
 # ── Slack helper ──────────────────────────────────────────────────────────────
 
 
-def _send_slack(message: str) -> None:
+def _send_slack(message: str, webhook_url: str = "") -> None:
     """Send a plain-text message via a Slack incoming webhook.
 
-    Reads SLACK_WEBHOOK_URL from the environment.  Silently skips (log-only)
-    if the variable is absent or empty.
+    Reads SLACK_WEBHOOK_URL from the environment when *webhook_url* is not
+    supplied explicitly.  Silently skips (log-only) if the resolved URL is
+    absent or empty.
     """
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+    webhook_url = (webhook_url or os.getenv("SLACK_WEBHOOK_URL", "")).strip()
     if not webhook_url:
         log.info("SLACK_WEBHOOK_URL not set — skipping Slack notification.")
         return
@@ -691,29 +692,66 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
     streak_subject_suffix = f" ({_ordinal(consecutive)} consecutive)" if consecutive > 1 else ""
     streak_heading_suffix = f" ({_ordinal(consecutive)} consecutive)" if consecutive > 1 else ""
 
-    plain_msg = (
-        f"[EdgeIQ] Ladder cache refresh FAILED{streak_heading_suffix}\n"
-        f"Time: {timestamp}\n"
-        f"Error: {error_msg}"
-        f"{streak_plain}"
-    )
-    _send_slack(plain_msg)
+    escalation_threshold = int(os.getenv("CACHE_ALERT_ESCALATION_THRESHOLD", "3"))
+    is_critical = consecutive >= escalation_threshold
 
-    html_msg = (
-        f"⚠️ <b>EdgeIQ — Ladder cache refresh FAILED</b>\n"
-        f"Time: {timestamp}\n"
-        f"<b>Error:</b> <code>{html.escape(error_msg[:400])}</code>"
-        f"{streak_html}"
-    )
+    if is_critical:
+        plain_msg = (
+            f"[EdgeIQ CRITICAL] Ladder cache refresh FAILED ({consecutive} consecutive)\n"
+            f"Time: {timestamp}\n"
+            f"Error: {error_msg}"
+            f"{streak_plain}"
+        )
+    else:
+        plain_msg = (
+            f"[EdgeIQ] Ladder cache refresh FAILED\n"
+            f"Time: {timestamp}\n"
+            f"Error: {error_msg}"
+            f"{streak_plain}"
+        )
+
+    _send_slack(plain_msg)
+    if is_critical:
+        escalation_webhook = os.getenv("SLACK_ESCALATION_WEBHOOK_URL", "").strip()
+        if escalation_webhook:
+            log.info(
+                "Escalating to SLACK_ESCALATION_WEBHOOK_URL after %d consecutive failures.",
+                consecutive,
+            )
+            _send_slack(plain_msg, webhook_url=escalation_webhook)
+
+    if is_critical:
+        html_msg = (
+            f"🚨 <b>EdgeIQ CRITICAL — Ladder cache refresh FAILED ({consecutive} consecutive)</b>\n"
+            f"Time: {timestamp}\n"
+            f"<b>Error:</b> <code>{html.escape(error_msg[:400])}</code>"
+            f"{streak_html}"
+        )
+    else:
+        html_msg = (
+            f"⚠️ <b>EdgeIQ — Ladder cache refresh FAILED</b>\n"
+            f"Time: {timestamp}\n"
+            f"<b>Error:</b> <code>{html.escape(error_msg[:400])}</code>"
+            f"{streak_html}"
+        )
     _send_telegram(html_msg)
 
-    email_subject = f"[EdgeIQ] Ladder cache refresh FAILED{streak_subject_suffix}"
-    email_html = (
-        f"<p>⚠️ <strong>EdgeIQ — Ladder cache refresh FAILED</strong></p>"
-        f"<p><strong>Time:</strong> {timestamp}</p>"
-        f"<p><strong>Error:</strong> <code>{html.escape(error_msg[:400])}</code></p>"
-        f"{streak_email}"
-    )
+    if is_critical:
+        email_subject = f"[EdgeIQ CRITICAL] Ladder cache refresh FAILED ({consecutive} consecutive)"
+        email_html = (
+            f"<p>🚨 <strong>EdgeIQ CRITICAL — Ladder cache refresh FAILED ({consecutive} consecutive)</strong></p>"
+            f"<p><strong>Time:</strong> {timestamp}</p>"
+            f"<p><strong>Error:</strong> <code>{html.escape(error_msg[:400])}</code></p>"
+            f"{streak_email}"
+        )
+    else:
+        email_subject = f"[EdgeIQ] Ladder cache refresh FAILED{streak_subject_suffix}"
+        email_html = (
+            f"<p>⚠️ <strong>EdgeIQ — Ladder cache refresh FAILED</strong></p>"
+            f"<p><strong>Time:</strong> {timestamp}</p>"
+            f"<p><strong>Error:</strong> <code>{html.escape(error_msg[:400])}</code></p>"
+            f"{streak_email}"
+        )
     _send_email_alert(email_subject, plain_msg, email_html)
 
     key_state["last_sent_utc"] = now_utc.isoformat()
