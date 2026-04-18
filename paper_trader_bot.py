@@ -961,6 +961,218 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         _patch_skip_reason(r, ticker, "order_failed")
 
 
+# ── Trailing stop monitoring ──────────────────────────────────────────────────
+# Guard set: (ticker, trade_date) pairs that already have trailing stop active.
+# Prevents re-triggering on every 30-second loop iteration.
+_TRAILING_STOP_ACTIVATED: set = set()
+
+
+def _alpaca_get_positions() -> list:
+    """Return list of open Alpaca position dicts, or [] on error."""
+    base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+    }
+    try:
+        import requests as _req
+        resp = _req.get(f"{base}/v2/positions", headers=headers, timeout=8)
+        if resp.status_code == 200:
+            return resp.json() or []
+    except Exception as _e:
+        log.warning(f"[TrailingStop] positions fetch error: {_e}")
+    return []
+
+
+def _alpaca_cancel_orders_for_ticker(ticker: str) -> int:
+    """Cancel all open orders for a ticker. Returns count cancelled."""
+    base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+    }
+    try:
+        import requests as _req
+        resp = _req.get(
+            f"{base}/v2/orders",
+            headers=headers,
+            params={"status": "open", "symbols": ticker.upper(), "limit": 50},
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            return 0
+        orders = resp.json() or []
+        cancelled = 0
+        for o in orders:
+            oid = o.get("id", "")
+            if not oid:
+                continue
+            dr = _req.delete(f"{base}/v2/orders/{oid}", headers=headers, timeout=8)
+            if dr.status_code in (200, 204):
+                cancelled += 1
+        return cancelled
+    except Exception as _e:
+        log.warning(f"[TrailingStop] cancel orders error for {ticker}: {_e}")
+    return 0
+
+
+def _alpaca_place_trailing_stop(
+    ticker: str,
+    qty: int,
+    trail_price: float,
+    side: str = "sell",
+) -> dict:
+    """Place a trailing stop order.
+
+    trail_price = fixed dollar trail amount (e.g. original stop distance = 1R).
+    When price hits T1 and we trail, the stop follows the price up by trail_price.
+    Returns {'ok': bool, 'order_id': str, 'error': str}.
+    """
+    base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+        "Content-Type":        "application/json",
+    }
+    payload = {
+        "symbol":        ticker.upper(),
+        "qty":           str(qty),
+        "side":          side,
+        "type":          "trailing_stop",
+        "time_in_force": "day",
+        "trail_price":   f"{trail_price:.4f}",
+    }
+    try:
+        import requests as _req
+        resp = _req.post(f"{base}/v2/orders", headers=headers, json=payload, timeout=10)
+        data = resp.json() if resp.content else {}
+        if resp.status_code in (200, 201):
+            return {"ok": True, "order_id": data.get("id", ""), "error": ""}
+        return {"ok": False, "order_id": "", "error": data.get("message", str(resp.status_code))}
+    except Exception as _e:
+        return {"ok": False, "order_id": "", "error": str(_e)}
+
+
+def _monitor_trailing_stops() -> None:
+    """Check all open Alpaca positions — if any have hit T1 (target_r), cancel
+    the bracket and replace with a trailing stop so runners can extend.
+
+    Runs every 30 seconds during market hours from the main scheduling loop.
+
+    Logic:
+      1. Fetch open paper_trades today with alpaca_order_id set and no fill yet.
+      2. Fetch current Alpaca positions.
+      3. Cross-reference by ticker.
+      4. Compute unrealized R = unrealized_pl_per_share / stop_dist.
+      5. If unrealized_R >= target_r (T1): cancel bracket, place trailing stop.
+      6. Guard via _TRAILING_STOP_ACTIVATED to avoid double-firing.
+    """
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        return
+
+    now_et = datetime.now(EASTERN)
+    # Only run during market hours 9:35 → 15:58
+    mkt_open_min  = 9 * 60 + 35
+    mkt_close_min = 15 * 60 + 58
+    cur_min       = now_et.hour * 60 + now_et.minute
+    if cur_min < mkt_open_min or cur_min > mkt_close_min:
+        return
+
+    today_str = str(now_et.date())
+
+    # Fetch open paper_trades for today
+    try:
+        open_trades = (
+            _supabase_client
+            .table("paper_trades")
+            .select("ticker,predicted,entry_price_sim,stop_price_sim,target_price_sim,alpaca_order_id,alpaca_qty,win_loss,trade_date")
+            .eq("user_id", USER_ID)
+            .eq("trade_date", today_str)
+            .not_.is_("alpaca_order_id", "null")
+            .is_("win_loss", "null")
+            .execute()
+        ).data or []
+    except Exception as _e:
+        log.warning(f"[TrailingStop] DB fetch error: {_e}")
+        return
+
+    if not open_trades:
+        return
+
+    # Fetch live Alpaca positions
+    positions = _alpaca_get_positions()
+    pos_by_ticker = {p["symbol"].upper(): p for p in positions}
+
+    for row in open_trades:
+        ticker    = (row.get("ticker") or "").upper()
+        guard_key = (ticker, today_str)
+
+        if guard_key in _TRAILING_STOP_ACTIVATED:
+            continue
+
+        pos = pos_by_ticker.get(ticker)
+        if not pos:
+            continue
+
+        entry_sim  = float(row.get("entry_price_sim") or 0)
+        stop_sim   = float(row.get("stop_price_sim")  or 0)
+        target_sim = float(row.get("target_price_sim") or 0)
+        qty        = int(row.get("alpaca_qty") or 0)
+        direction  = row.get("predicted", "")
+
+        if not entry_sim or not stop_sim or qty <= 0:
+            continue
+
+        stop_dist = abs(entry_sim - stop_sim)
+        if stop_dist <= 0:
+            continue
+
+        unrealized_pl = float(pos.get("unrealized_pl", 0) or 0)
+        unrealized_r  = unrealized_pl / (stop_dist * qty) if qty > 0 else 0
+
+        # T1 target in R (use stored target_price_sim to back-calculate)
+        if target_sim and entry_sim and stop_dist:
+            target_r_actual = abs(target_sim - entry_sim) / stop_dist
+        else:
+            target_r_actual = 1.0
+
+        if unrealized_r < target_r_actual:
+            continue
+
+        # ── T1 HIT — convert to trailing stop ────────────────────────────────
+        log.info(
+            f"[TrailingStop] {ticker} hit T1 — unrealized={unrealized_r:.2f}R "
+            f"(target={target_r_actual:.1f}R) — converting bracket → trailing stop"
+        )
+
+        cancelled = _alpaca_cancel_orders_for_ticker(ticker)
+        log.info(f"[TrailingStop] {ticker} — cancelled {cancelled} open bracket order(s)")
+
+        # Trail by the original stop distance (1R) so we risk 1R of gains
+        # for unlimited upside. Side is always "sell" (closing a long position).
+        ts_side   = "sell" if direction == "Bullish Break" else "buy"
+        ts_result = _alpaca_place_trailing_stop(ticker, qty, stop_dist, side=ts_side)
+
+        if ts_result["ok"]:
+            _TRAILING_STOP_ACTIVATED.add(guard_key)
+            cur_px = float(pos.get("current_price", 0) or pos.get("lastday_price", 0) or 0)
+            tg_send(
+                f"🔄 <b>Trailing Stop Activated — {ticker}</b>\n"
+                f"T1 hit: <b>{unrealized_r:.2f}R</b> unrealized\n"
+                f"Current: <b>${cur_px:.2f}</b> | Qty: {qty} shares\n"
+                f"Now trailing by <b>${stop_dist:.2f}/share</b> (1R) — runners run 🚀\n"
+                f"<code>{ts_result['order_id'][:8]}…</code>"
+            )
+            log.info(f"[TrailingStop] {ticker} — trailing stop placed ✅ (order {ts_result['order_id'][:8]})")
+        else:
+            log.warning(f"[TrailingStop] {ticker} — trailing stop FAILED: {ts_result['error']}")
+            tg_send(
+                f"⚠️ <b>Trailing Stop Failed — {ticker}</b>\n"
+                f"T1 hit at {unrealized_r:.2f}R but couldn't place trailing order.\n"
+                f"Error: {ts_result['error']}"
+            )
+
+
 def tg_send(message: str) -> bool:
     """Send a Telegram message. Returns True on success, False on failure.
     Silently skips if credentials are not configured.
@@ -4474,6 +4686,13 @@ def main():
                 update_daily_build_notes()
             except Exception as _bne:
                 log.warning(f"Build notes update failed (non-fatal): {_bne}")
+
+        # Every 30-second cycle — check if any open positions hit T1 and need
+        # the bracket order swapped for a trailing stop.
+        try:
+            _monitor_trailing_stops()
+        except Exception as _tse:
+            log.warning(f"[TrailingStop] monitor error (non-fatal): {_tse}")
 
         time.sleep(30)
 
