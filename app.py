@@ -11547,6 +11547,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "desc": _rp_tsd, "color": _rp_tsc, "n": 0,
                                     "eod_wr": None, "eod_exp": None,
                                     "tier_wr": None, "tier_exp": None,
+                                    "mfe_wr": None, "mfe_exp": None,
                                 })
                             else:
                                 _rp_ts_n = len(_rp_tsdf)
@@ -11558,6 +11559,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _rp_tsdf["R (Tiered)"] if "R (Tiered)" in _rp_tsdf.columns else pd.Series(dtype=float),
                                     errors="coerce"
                                 ).dropna()
+                                _rp_ts_mfe_ser  = pd.to_numeric(
+                                    _rp_tsdf["R (MFE)"]    if "R (MFE)"    in _rp_tsdf.columns else pd.Series(dtype=float),
+                                    errors="coerce"
+                                ).dropna()
                                 _rp_tbl_rows.append({
                                     "idx": _rp_tsi, "label": _rp_tsl, "emoji": _rp_tse,
                                     "desc": _rp_tsd, "color": _rp_tsc, "n": _rp_ts_n,
@@ -11565,18 +11570,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "eod_exp":  round(_rp_ts_eod_ser.mean(),  3) if len(_rp_ts_eod_ser)  else None,
                                     "tier_wr":  round((_rp_ts_tier_ser > 0).sum() / len(_rp_ts_tier_ser) * 100, 1) if len(_rp_ts_tier_ser) else None,
                                     "tier_exp": round(_rp_ts_tier_ser.mean(), 3) if len(_rp_ts_tier_ser) else None,
+                                    "mfe_wr":   round((_rp_ts_mfe_ser  > 0).sum() / len(_rp_ts_mfe_ser)  * 100, 1) if len(_rp_ts_mfe_ser)  else None,
+                                    "mfe_exp":  round(_rp_ts_mfe_ser.mean(),  3) if len(_rp_ts_mfe_ser)  else None,
                                 })
 
-                        # Sort rows by best edge (eod_exp primary, tier_exp fallback), matching TCS table logic
+                        # Sort rows by best edge (mfe_exp primary, eod_exp secondary, tier_exp fallback)
                         _rp_tbl_rows.sort(key=lambda _r: (
-                            0 if (_r["eod_exp"] is not None or _r["tier_exp"] is not None) else 1,
-                            -(_r["eod_exp"] if _r["eod_exp"] is not None else _r["tier_exp"] if _r["tier_exp"] is not None else 0),
+                            0 if (_r["mfe_exp"] is not None or _r["eod_exp"] is not None or _r["tier_exp"] is not None) else 1,
+                            -(_r["mfe_exp"] if _r["mfe_exp"] is not None else _r["eod_exp"] if _r["eod_exp"] is not None else _r["tier_exp"] if _r["tier_exp"] is not None else 0),
                         ))
 
                         _rp_ts_valid_eod  = [r["eod_exp"]  for r in _rp_tbl_rows if r["eod_exp"]  is not None]
                         _rp_ts_valid_tier = [r["tier_exp"] for r in _rp_tbl_rows if r["tier_exp"] is not None]
+                        _rp_ts_valid_mfe  = [r["mfe_exp"]  for r in _rp_tbl_rows if r["mfe_exp"]  is not None]
                         _rp_ts_best_eod_exp  = max(_rp_ts_valid_eod)  if len(_rp_ts_valid_eod)  > 1 else None
                         _rp_ts_best_tier_exp = max(_rp_ts_valid_tier) if len(_rp_ts_valid_tier) > 1 else None
+                        _rp_ts_best_mfe_exp  = max(_rp_ts_valid_mfe)  if len(_rp_ts_valid_mfe)  > 1 else None
 
                         def _rp_ts_wr_col(v):
                             if v is None: return "#546e7a"
@@ -11595,6 +11604,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Exp</th>'
                             '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Win%</th>'
                             '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Exp</th>'
+                            '<th style="padding:6px 10px;text-align:right;color:#4fc3f7;">MFE Exp</th>'
                             '<th style="padding:6px 10px;text-align:center;">Edge Winner</th>'
                             '</tr>'
                         )
@@ -11602,7 +11612,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         for _rp_ts_row_idx, _rp_tsr in enumerate(_rp_tbl_rows):
                             _rp_ts_is_top = (
                                 _rp_ts_row_idx == 0
-                                and (_rp_tsr["eod_exp"] is not None or _rp_tsr["tier_exp"] is not None)
+                                and (_rp_tsr["mfe_exp"] is not None or _rp_tsr["eod_exp"] is not None or _rp_tsr["tier_exp"] is not None)
                             )
                             _rp_ts_row_style = (
                                 'border-top:1px solid #1e2a3a;border-left:3px solid #ffd54f;background:rgba(255,213,79,0.06);'
@@ -11625,6 +11635,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f'<span style="color:{_rp_ts_exp_col(_rp_tsr["tier_exp"])};font-weight:600;">{_rp_tsr["tier_exp"]:+.3f}R</span>'
                                 if _rp_tsr["tier_exp"] is not None else '<span style="color:#546e7a;">—</span>'
                             )
+                            _rp_ts_mfe_exp_str = (
+                                f'<span style="color:{_rp_ts_exp_col(_rp_tsr["mfe_exp"])};font-weight:600;">{_rp_tsr["mfe_exp"]:+.3f}R</span>'
+                                if _rp_tsr["mfe_exp"] is not None else '<span style="color:#546e7a;">—</span>'
+                            )
                             _rp_ts_is_best_eod  = (
                                 _rp_ts_best_eod_exp  is not None and _rp_tsr["eod_exp"]  is not None
                                 and abs(_rp_tsr["eod_exp"]  - _rp_ts_best_eod_exp)  < 1e-9
@@ -11633,12 +11647,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _rp_ts_best_tier_exp is not None and _rp_tsr["tier_exp"] is not None
                                 and abs(_rp_tsr["tier_exp"] - _rp_ts_best_tier_exp) < 1e-9
                             )
-                            if _rp_ts_is_best_eod and _rp_ts_is_best_tier:
-                                _rp_ts_badge = '<span style="color:#ffd54f;font-weight:700;">⭐ Both</span>'
+                            _rp_ts_is_best_mfe  = (
+                                _rp_ts_best_mfe_exp  is not None and _rp_tsr["mfe_exp"]  is not None
+                                and abs(_rp_tsr["mfe_exp"]  - _rp_ts_best_mfe_exp)  < 1e-9
+                            )
+                            _rp_ts_wins = sum([_rp_ts_is_best_eod, _rp_ts_is_best_tier, _rp_ts_is_best_mfe])
+                            if _rp_ts_wins == 3:
+                                _rp_ts_badge = '<span style="color:#ffd54f;font-weight:700;">⭐ All 3</span>'
+                            elif _rp_ts_wins == 2:
+                                _parts = []
+                                if _rp_ts_is_best_eod:  _parts.append('<span style="color:#80cbc4;">EOD</span>')
+                                if _rp_ts_is_best_tier: _parts.append('<span style="color:#ce93d8;">Tiered</span>')
+                                if _rp_ts_is_best_mfe:  _parts.append('<span style="color:#4fc3f7;">MFE</span>')
+                                _rp_ts_badge = f'<span style="font-weight:700;">⭐ {" + ".join(_parts)}</span>'
                             elif _rp_ts_is_best_eod:
                                 _rp_ts_badge = '<span style="color:#80cbc4;font-weight:700;">⭐ EOD</span>'
                             elif _rp_ts_is_best_tier:
                                 _rp_ts_badge = '<span style="color:#ce93d8;font-weight:700;">⭐ Tiered</span>'
+                            elif _rp_ts_is_best_mfe:
+                                _rp_ts_badge = '<span style="color:#4fc3f7;font-weight:700;">⭐ MFE</span>'
                             else:
                                 _rp_ts_badge = '<span style="color:#546e7a;">—</span>'
                             _rp_ts_n_str = (
@@ -11654,6 +11681,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_eod_exp_str}</td>'
                                 f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_tier_wr_str}</td>'
                                 f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_tier_exp_str}</td>'
+                                f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_mfe_exp_str}</td>'
                                 f'<td style="padding:6px 10px;text-align:center;">{_rp_ts_badge}</td>'
                                 f'</tr>'
                             )
