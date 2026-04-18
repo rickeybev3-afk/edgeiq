@@ -2859,6 +2859,26 @@ def eod_update():
                     _rpnl_guard_res.get("skipped", 0),
                     _elapsed_rpnl,
                 )
+                _written_guard = _rpnl_guard_res.get("written", 0)
+                _skipped_guard = _rpnl_guard_res.get("skipped", 0)
+                if (
+                    _written_guard == 0
+                    and _skipped_guard > 0
+                    and _is_nyse_trading_day(today)
+                    and _get_recalc_zero_alerts_enabled()
+                ):
+                    log.warning(
+                        f"EOD P&L recalc (already-resolved path): zero rows written on a trading day "
+                        f"({_skipped_guard} skipped) — sending Telegram alert."
+                    )
+                    tg_send(
+                        f"⚠️ <b>EOD Recalc — Zero Rows Written</b>\n"
+                        f"Date: {today}\n"
+                        f"Path: already-resolved\n"
+                        f"Written: 0 · Skipped: {_skipped_guard}\n"
+                        f"The nightly P&amp;L recalculation updated no rows on a trading day. "
+                        f"Check for stale data or a Supabase issue."
+                    )
             except Exception as _rpnl_guard:
                 log.warning(f"EOD P&L recalc (already-resolved path) failed: {_rpnl_guard}")
             return
@@ -2905,6 +2925,26 @@ def eod_update():
                 _rpnl_early_res.get("skipped", 0),
                 _elapsed_rpnl,
             )
+            _written_early = _rpnl_early_res.get("written", 0)
+            _skipped_early = _rpnl_early_res.get("skipped", 0)
+            if (
+                _written_early == 0
+                and _skipped_early > 0
+                and _is_nyse_trading_day(today)
+                and _get_recalc_zero_alerts_enabled()
+            ):
+                log.warning(
+                    f"EOD P&L recalc (scan-failed path): zero rows written on a trading day "
+                    f"({_skipped_early} skipped) — sending Telegram alert."
+                )
+                tg_send(
+                    f"⚠️ <b>EOD Recalc — Zero Rows Written</b>\n"
+                    f"Date: {today}\n"
+                    f"Path: scan-failed\n"
+                    f"Written: 0 · Skipped: {_skipped_early}\n"
+                    f"The nightly P&amp;L recalculation updated no rows on a trading day. "
+                    f"Check for stale data or a Supabase issue."
+                )
         except Exception as _rpnl_early:
             log.warning(f"EOD P&L recalc (scan-failed path) failed: {_rpnl_early}")
         return
@@ -3009,6 +3049,7 @@ def eod_update():
             tg_send(
                 f"⚠️ <b>EOD Recalc — Zero Rows Written</b>\n"
                 f"Date: {today}\n"
+                f"Path: main\n"
                 f"Written: 0 · Skipped: {_skipped_main}\n"
                 f"The nightly P&amp;L recalculation updated no rows on a trading day. "
                 f"Check for stale data or a Supabase issue."
