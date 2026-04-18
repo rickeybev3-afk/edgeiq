@@ -794,6 +794,13 @@ def main():
         help="Skip the backtest_sim_runs backfill (paper_trades only).",
     )
     parser.add_argument(
+        "--paper-only",
+        action="store_true",
+        help="Only backfill paper_trades; skip backtest_sim_runs entirely.  "
+             "Equivalent to --skip-backtest; provided as a clearer alias for "
+             "the nightly scheduler.",
+    )
+    parser.add_argument(
         "--backtest-only",
         action="store_true",
         help="Only backfill backtest_sim_runs; skip paper_trades entirely.",
@@ -844,9 +851,16 @@ def main():
     )
     args = parser.parse_args()
 
+    # Guard against contradictory mode flags that would result in a silent no-op.
+    if args.backtest_only and (args.skip_backtest or args.paper_only):
+        parser.error(
+            "--backtest-only cannot be combined with --skip-backtest / --paper-only "
+            "(they select opposite phases and together would skip everything)."
+        )
+
     dry_run         = args.dry_run
     rate_limit      = not args.no_ratelimit
-    skip_backtest   = args.skip_backtest
+    skip_backtest   = args.skip_backtest or args.paper_only
     backtest_only   = args.backtest_only
     reset_sentinel  = args.reset_sentinel
     rs_table        = args.table

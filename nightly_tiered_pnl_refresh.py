@@ -469,14 +469,19 @@ def refresh_summary_cache():
 # ── Backfill runner ───────────────────────────────────────────────────────────
 
 def run_backfill(date_from: str = "", date_to: str = ""):
-    """Invoke run_tiered_pnl_backfill.py --backtest-only as a subprocess.
+    """Invoke run_tiered_pnl_backfill.py (combined backtest + paper pass) as a subprocess.
+
+    Running without --backtest-only ensures both backtest_sim_runs rows *and*
+    paper_trades rows are kept up-to-date, so mv_paper_tiered_pnl_summary
+    (and the Ladder cache) always reflects the latest paper trade activity.
 
     Using subprocess (rather than importing the module) keeps each run in a
     fresh interpreter context, which avoids any state leakage between nightly
     runs and makes it trivial to read the output as a stream.
 
     After each run a Telegram summary is sent (if credentials are available)
-    with rows fetched, updated, skipped, errors, and elapsed time.
+    with rows fetched, updated, skipped, errors, and elapsed time for both
+    the backtest and paper-trades phases.
 
     date_from / date_to: optional ISO date strings (YYYY-MM-DD) forwarded to
     run_tiered_pnl_backfill.py to scope the rescan to a specific sim_date
@@ -484,7 +489,7 @@ def run_backfill(date_from: str = "", date_to: str = ""):
     """
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "run_tiered_pnl_backfill.py")
-    cmd = [sys.executable, script, "--backtest-only"]
+    cmd = [sys.executable, script]
 
     # Honour --no-ratelimit if this wrapper was started with it.
     if "--no-ratelimit" in sys.argv:
@@ -562,6 +567,7 @@ def run_backfill(date_from: str = "", date_to: str = ""):
         log.warning("Could not read stats file: %s", _read_err)
 
     bt = stats.get("backtest") or {}
+    pt = stats.get("paper_trades") or {}
 
     if exit_code != 0 or not stats:
         # Backfill exited with an error or produced no stats; include output tail.
@@ -574,23 +580,40 @@ def run_backfill(date_from: str = "", date_to: str = ""):
             f"<b>Last output:</b>\n<code>{error_excerpt}</code>"
         )
     else:
-        fetched  = bt.get("fetched", 0)
-        updated  = bt.get("updated", 0)
-        skipped  = (bt.get("skipped_no_bars", 0) + bt.get("skipped_no_tiered", 0))
-        errors   = bt.get("errors", 0)
         elapsed_s = stats.get("elapsed_s", elapsed)
         mins, secs = divmod(int(elapsed_s), 60)
         elapsed_str = f"{mins}m {secs}s" if mins else f"{secs}s"
 
-        status_icon = "✅" if errors == 0 else "⚠️"
+        bt_fetched  = bt.get("fetched", 0)
+        bt_updated  = bt.get("updated", 0)
+        bt_skipped  = bt.get("skipped_no_bars", 0) + bt.get("skipped_no_tiered", 0)
+        bt_errors   = bt.get("errors", 0)
+
+        pt_fetched  = pt.get("fetched", 0)
+        pt_updated  = pt.get("updated", 0)
+        pt_skipped  = pt.get("skipped_no_bars", 0) + pt.get("skipped_no_tiered", 0)
+        pt_errors   = pt.get("errors", 0)
+
+        total_errors = bt_errors + pt_errors
+        status_icon = "✅" if total_errors == 0 else "⚠️"
+
         msg = (
             f"{status_icon} <b>Nightly Tiered P&amp;L Refresh</b>\n"
             f"Date: {run_date}\n"
-            f"Rows fetched : {fetched}\n"
-            f"Rows updated : {updated}\n"
-            f"Rows skipped : {skipped}\n"
-            f"Errors       : {errors}\n"
-            f"Elapsed      : {elapsed_str}"
+            f"\n"
+            f"<b>backtest_sim_runs</b>\n"
+            f"  Fetched : {bt_fetched}\n"
+            f"  Updated : {bt_updated}\n"
+            f"  Skipped : {bt_skipped}\n"
+            f"  Errors  : {bt_errors}\n"
+            f"\n"
+            f"<b>paper_trades</b>\n"
+            f"  Fetched : {pt_fetched}\n"
+            f"  Updated : {pt_updated}\n"
+            f"  Skipped : {pt_skipped}\n"
+            f"  Errors  : {pt_errors}\n"
+            f"\n"
+            f"Elapsed : {elapsed_str}"
         )
 
     _send_telegram(msg)
