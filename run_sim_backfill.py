@@ -54,10 +54,13 @@ than sequential updates.
 
 Usage
 ─────
-  python run_sim_backfill.py                           # full recompute, all users
-  python run_sim_backfill.py --skip-existing           # only rows missing sim data
-  python run_sim_backfill.py <uid1> [uid2] [uid3]...   # explicit user IDs
-  python run_sim_backfill.py --skip-existing <uid1>    # skip-existing + explicit IDs
+  python run_sim_backfill.py                               # full recompute, all users
+  python run_sim_backfill.py --skip-existing               # only rows missing sim data
+  python run_sim_backfill.py --dry-run                     # preview changes, no writes
+  python run_sim_backfill.py --dry-run --skip-existing     # preview only missing rows
+  python run_sim_backfill.py <uid1> [uid2] [uid3]...       # explicit user IDs
+  python run_sim_backfill.py --skip-existing <uid1>        # skip-existing + explicit IDs
+  python run_sim_backfill.py --dry-run <uid1>              # dry-run for specific user
 
 Flags
 ─────
@@ -65,6 +68,10 @@ Flags
                     populated.  Rows missing either field are still processed.
                     Use this for incremental runs after the initial full backfill.
                     Omit to force a full recompute (e.g. after a formula change).
+  --dry-run         Count and print the rows that would be changed without writing
+                    anything to the database.  Reads are still performed so the
+                    script can inspect each row via compute_trade_sim(), but no
+                    UPDATE calls are issued.  Can be combined with --skip-existing.
 """
 
 import sys, os, time
@@ -209,7 +216,8 @@ def _update_one(table: str, id_col: str, row_id, patch: dict):
     return True
 
 
-def backfill_table(table: str, id_col: str, user_id: str, skip_existing: bool = False):
+def backfill_table(table: str, id_col: str, user_id: str,
+                   skip_existing: bool = False, dry_run: bool = False):
     """Recompute sim fields for all breakout rows belonging to *user_id*.
 
     Args:
@@ -219,22 +227,29 @@ def backfill_table(table: str, id_col: str, user_id: str, skip_existing: bool = 
                        incremental runs significantly faster on large datasets.
                        When False (default), every breakout row is recomputed
                        and overwritten — use this after a formula change.
+        dry_run:       When True, rows are fetched and inspected via _sim_patch()
+                       so the script can report exactly what would change, but no
+                       UPDATE calls are issued.  Returns the total number of rows
+                       that would have been updated (same type as normal mode).
     """
     if not backend.supabase:
         print("No Supabase connection.")
         return 0
 
+    dry_label  = " [DRY RUN — no writes]" if dry_run else ""
     mode_label = "incremental (skip-existing)" if skip_existing else "full recompute"
     print(f"\n{'='*60}")
-    print(f"  Backfilling: {table}  (user {user_id})  [{mode_label}]")
+    print(f"  {'DRY RUN — ' if dry_run else ''}Backfilling: {table}  (user {user_id})  [{mode_label}]{dry_label}")
     print(f"{'='*60}")
 
     total_updated = 0
     total_errors  = 0
+    dry_run_counts: dict[str, dict] = {}  # populated only when dry_run=True
 
     for direction in ("Bullish Break", "Bearish Break"):
-        dir_updated = 0
-        dir_errors  = 0
+        dir_updated    = 0
+        dir_errors     = 0
+        dir_unfillable = 0   # rows skipped because IB data is missing (dry-run tracking)
 
         # ── Pagination strategy ────────────────────────────────────────────────
         # Full-recompute:  offset-based — safe because the filter set is stable
@@ -316,25 +331,31 @@ def backfill_table(table: str, id_col: str, user_id: str, skip_existing: bool = 
 
             skipped_no_ib = len(rows) - len(updates)
 
-            # Run updates concurrently
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-                futures = {
-                    pool.submit(_update_one, table, id_col, row_id, patch): row_id
-                    for row_id, patch in updates
-                }
-                for fut in as_completed(futures):
-                    try:
-                        fut.result()
-                        dir_updated  += 1
-                        total_updated += 1
-                    except Exception as e:
-                        dir_errors  += 1
-                        total_errors += 1
-                        if total_errors <= 3:
-                            print(f"  Update error: {e}")
-                            if "column" in str(e).lower():
-                                print("  → Columns missing — run the SQL migrations first.")
-                                return 0
+            if dry_run:
+                # Dry-run: tally what would be updated without issuing any writes.
+                dir_updated    += len(updates)
+                total_updated  += len(updates)
+                dir_unfillable += skipped_no_ib
+            else:
+                # Run updates concurrently
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                    futures = {
+                        pool.submit(_update_one, table, id_col, row_id, patch): row_id
+                        for row_id, patch in updates
+                    }
+                    for fut in as_completed(futures):
+                        try:
+                            fut.result()
+                            dir_updated  += 1
+                            total_updated += 1
+                        except Exception as e:
+                            dir_errors  += 1
+                            total_errors += 1
+                            if total_errors <= 3:
+                                print(f"  Update error: {e}")
+                                if "column" in str(e).lower():
+                                    print("  → Columns missing — run the SQL migrations first.")
+                                    return 0
 
             # Emit progress for the sidebar to parse
             _PROGRESS["current"] += len(rows)
@@ -350,16 +371,33 @@ def backfill_table(table: str, id_col: str, user_id: str, skip_existing: bool = 
                 pos_label = f"+{offset:5d}"
                 offset += PAGE_SZ
 
-            skip_note = f"{skipped_no_ib} skipped (no IB data)"
+            skip_note  = f"{skipped_no_ib} skipped (no IB data)"
+            action_lbl = "would update" if dry_run else "updated"
             print(f"  [{direction:15s}] {pos_label} | {len(rows):4d} rows fetched | "
-                  f"{len(updates)} updated | {skip_note}")
+                  f"{len(updates)} {action_lbl} | {skip_note}")
 
             if len(rows) < PAGE_SZ:
                 break
 
-        print(f"  [{direction}] done — {dir_updated} updated, {dir_errors} errors")
+        if dry_run:
+            dry_run_counts[direction] = {
+                "would_update": dir_updated,
+                "unfillable":   dir_unfillable,
+            }
+            print(f"  [{direction}] DRY RUN — would update {dir_updated:,} row(s), "
+                  f"{dir_unfillable:,} unfillable (no IB data)")
+        else:
+            print(f"  [{direction}] done — {dir_updated} updated, {dir_errors} errors")
 
-    if skip_existing:
+    if dry_run:
+        bullish_u  = dry_run_counts.get("Bullish Break", {}).get("would_update", 0)
+        bearish_u  = dry_run_counts.get("Bearish Break", {}).get("would_update", 0)
+        total_skip = sum(v.get("unfillable", 0) for v in dry_run_counts.values())
+        skip_note  = "  (rows already filled excluded)" if skip_existing else ""
+        print(f"\n  DRY RUN total for {table}: {total_updated:,} row(s) would be updated"
+              f"  (Bullish Break: {bullish_u:,} | Bearish Break: {bearish_u:,})"
+              f"  + {total_skip:,} unfillable skipped{skip_note}")
+    elif skip_existing:
         print(f"\n  Total: {total_updated} updated | {total_errors} errors"
               f"  (rows already filled were not fetched)")
     else:
@@ -431,11 +469,16 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # ── Parse flags ────────────────────────────────────────────────────────────
-    raw_args     = sys.argv[1:]
+    raw_args      = sys.argv[1:]
     skip_existing = "--skip-existing" in raw_args
+    dry_run       = "--dry-run"       in raw_args
     uid_args      = [a for a in raw_args if not a.startswith("--")]
 
-    if skip_existing:
+    if dry_run:
+        print("Mode: DRY RUN — rows will be inspected but NO database writes will occur.")
+        if skip_existing:
+            print("       Combined with --skip-existing: only rows missing sim data will be counted.")
+    elif skip_existing:
         print("Mode: incremental — rows with sim_outcome AND eod_pnl_r already set will be skipped.")
     else:
         print("Mode: full recompute — all breakout rows will be processed (use --skip-existing for incremental).")
@@ -463,7 +506,14 @@ if __name__ == "__main__":
     # In skip-existing mode the count only covers rows that actually need work.
     # count_rows_to_process() returns None when a query error occurs, so we can
     # distinguish "no rows to process" from "count unavailable".
-    count_label = "rows needing update" if skip_existing else "rows to recompute"
+    if dry_run and skip_existing:
+        count_label = "candidate rows to inspect (missing sim data)"
+    elif dry_run:
+        count_label = "candidate rows to inspect"
+    elif skip_existing:
+        count_label = "rows needing update"
+    else:
+        count_label = "rows to recompute"
     print(f"\nCounting {count_label}…", flush=True)
     _total = count_rows_to_process(user_ids, skip_existing=skip_existing)
 
@@ -488,26 +538,41 @@ if __name__ == "__main__":
         print(f"PROGRESS: 0/{_total}", flush=True)
         print(f"Total {count_label}: {_total:,}", flush=True)
 
+    grand_total_would_update = 0
     for uid in user_ids:
         print(f"\n{'#'*60}")
-        print(f"  Processing user: {uid}")
+        if dry_run:
+            print(f"  DRY RUN — inspecting user: {uid}")
+        else:
+            print(f"  Processing user: {uid}")
         print(f"{'#'*60}")
         for table, id_col in BACKFILL_TABLES:
-            backfill_table(table, id_col, uid, skip_existing=skip_existing)
+            n = backfill_table(table, id_col, uid,
+                               skip_existing=skip_existing, dry_run=dry_run)
+            if dry_run:
+                grand_total_would_update += (n or 0)
 
     elapsed = time.time() - t0
 
-    for uid in user_ids:
-        print_summary(uid)
+    if dry_run:
+        skip_note = " (--skip-existing: already-filled rows excluded)" if skip_existing else ""
+        print(f"\n{'='*60}")
+        print(f"  DRY RUN COMPLETE — {elapsed:.0f}s elapsed")
+        print(f"  {grand_total_would_update:,} row(s) across all users/tables would be updated{skip_note}")
+        print(f"  No database writes were performed.")
+        print(f"{'='*60}")
+    else:
+        for uid in user_ids:
+            print_summary(uid)
 
-    print(f"\n✅ Backfill complete for {len(user_ids)} user(s) in {elapsed:.0f}s")
+        print(f"\n✅ Backfill complete for {len(user_ids)} user(s) in {elapsed:.0f}s")
 
-    # ── Context level backfill (S/R, VWAP, MACD for adaptive exit analysis) ──
-    print("\n" + "=" * 60)
-    print("  Context Level Backfill (S/R, VWAP, MACD)")
-    print("=" * 60)
-    try:
-        import backfill_context_levels as _ctx
-        _ctx.main()
-    except Exception as _ctx_err:
-        print(f"  Context backfill error (non-critical): {_ctx_err}")
+        # ── Context level backfill (S/R, VWAP, MACD for adaptive exit analysis) ──
+        print("\n" + "=" * 60)
+        print("  Context Level Backfill (S/R, VWAP, MACD)")
+        print("=" * 60)
+        try:
+            import backfill_context_levels as _ctx
+            _ctx.main()
+        except Exception as _ctx_err:
+            print(f"  Context backfill error (non-critical): {_ctx_err}")
