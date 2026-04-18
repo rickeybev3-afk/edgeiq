@@ -21312,6 +21312,7 @@ def render_performance_tab():
             _at_df = pd.DataFrame(_at_raw) if _at_raw else pd.DataFrame()
             if not _at_df.empty and "predicted" in _at_df.columns:
                 _at_df = _at_df[_at_df["predicted"].notna() & (_at_df["predicted"] != "—")]
+                _at_df["predicted"] = _at_df["predicted"].apply(_clean_structure_label)
         except Exception:
             _at_df = pd.DataFrame()
         try:

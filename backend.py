@@ -2067,12 +2067,21 @@ def load_accuracy_tracker(user_id: str = "") -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
 
+def _clean_structure_label(raw: str) -> str:
+    """Strip emoji/special chars and truncate to 30 chars for a canonical label."""
+    import re
+    s = re.sub(r"[^\w\s()/\-]", "", str(raw)).strip()
+    return s[:30] if len(s) > 30 else s
+
+
 def log_accuracy_entry(symbol, predicted, actual, compare_key="",
                        entry_price=0.0, exit_price=0.0, mfe=0.0,
                        user_id: str = ""):
     """Log Predicted vs Actual structure to Supabase."""
     if not supabase:
         return
+    predicted = _clean_structure_label(predicted)
+    actual    = _clean_structure_label(actual)
     correct = "✅" if _strip_emoji(predicted) in _strip_emoji(actual) or \
                      _strip_emoji(actual) in _strip_emoji(predicted) else "❌"
     row = {
