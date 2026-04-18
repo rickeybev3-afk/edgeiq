@@ -18341,6 +18341,77 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         except Exception:
                             return "—"
                     _exp_df["VWAP Pass Rate Band"] = _exp_df["VWAP Pass Rate (%)"].apply(_exp_vwap_band_str)
+
+                    # ── RVOL size-boost breakdown per TCS floor ───────────────
+                    _exp_has_rvol = (
+                        "rvol" in _exp_bt_grp.columns
+                        and _exp_bt_grp["rvol"].notna().any()
+                    )
+                    if _exp_has_rvol:
+                        def _exp_rvol_boost_cols(floor, _grp=_exp_bt_grp):
+                            try:
+                                _floor_int = int(floor)
+                                _fl_mask = (
+                                    _grp["win_loss"].str.strip().isin(["Win", "Loss"])
+                                    & (_grp["tcs"].astype(float) >= _floor_int)
+                                )
+                                if "actual_outcome" in _grp.columns:
+                                    _fl_mask &= _grp["actual_outcome"].str.lower().str.contains(
+                                        "bullish|bearish", na=False
+                                    )
+                                _fl = _grp[_fl_mask].copy()
+                                if _fl.empty:
+                                    return ("—", "—", "—", "—", "—")
+                                _rv = _pd_bt.to_numeric(_fl["rvol"], errors="coerce").fillna(0.0)
+                                _mult = _rv.apply(
+                                    lambda v: 1.5 if v >= 3.0 else (1.25 if v >= 2.0 else 1.0)
+                                )
+                                _boost_m = _mult > 1.0
+                                _boost_n = int(_boost_m.sum())
+                                _tot = len(_fl)
+                                _boost_pct = round(_boost_n / _tot * 100, 1) if _tot else 0
+                                _wl = _fl["win_loss"].str.strip()
+                                _noboost_m = ~_boost_m
+                                _boost_wins = int((_boost_m & (_wl == "Win")).sum())
+                                _boost_tot = int(_boost_m.sum())
+                                _noboost_wins = int((_noboost_m & (_wl == "Win")).sum())
+                                _noboost_tot = int(_noboost_m.sum())
+                                _boost_wr = (
+                                    f"{round(_boost_wins / _boost_tot * 100, 1)}%"
+                                    if _boost_tot else "—"
+                                )
+                                _noboost_wr = (
+                                    f"{round(_noboost_wins / _noboost_tot * 100, 1)}%"
+                                    if _noboost_tot else "—"
+                                )
+                                _boost_avgr = "—"
+                                _noboost_avgr = "—"
+                                if "eod_pnl_r" in _fl.columns:
+                                    _r_ser = _pd_bt.to_numeric(_fl["eod_pnl_r"], errors="coerce")
+                                    _br = _r_ser[_boost_m].dropna()
+                                    _nbr = _r_ser[_noboost_m].dropna()
+                                    if len(_br):
+                                        _v = round(_br.mean(), 2)
+                                        _boost_avgr = f"{_v:+.2f}R"
+                                    if len(_nbr):
+                                        _v = round(_nbr.mean(), 2)
+                                        _noboost_avgr = f"{_v:+.2f}R"
+                                return (
+                                    f"{_boost_n} ({_boost_pct}%)",
+                                    _boost_wr,
+                                    _noboost_wr,
+                                    _boost_avgr,
+                                    _noboost_avgr,
+                                )
+                            except Exception:
+                                return ("—", "—", "—", "—", "—")
+                        _exp_rvol_cols = _exp_df["TCS Floor"].apply(_exp_rvol_boost_cols)
+                        _exp_df["RVOL Boosted Trades"]       = _exp_rvol_cols.apply(lambda x: x[0])
+                        _exp_df["RVOL Boosted Win Rate"]     = _exp_rvol_cols.apply(lambda x: x[1])
+                        _exp_df["RVOL Non-Boosted Win Rate"] = _exp_rvol_cols.apply(lambda x: x[2])
+                        _exp_df["RVOL Boosted Avg R"]        = _exp_rvol_cols.apply(lambda x: x[3])
+                        _exp_df["RVOL Non-Boosted Avg R"]    = _exp_rvol_cols.apply(lambda x: x[4])
+
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
