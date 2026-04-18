@@ -4962,6 +4962,29 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
                 st.session_state["tkr_summary_sort_reverse"] = _pref_sort_rev_bool
         except (ValueError, TypeError):
             pass
+    if "tkr_summary_r_filter_col" in _prefs:
+        try:
+            _pref_r_col = str(_prefs["tkr_summary_r_filter_col"])
+            # URL query param takes precedence over saved pref (supports shared links)
+            _qp_r_col = st.query_params.get("tkr_r_col", "")
+            if _qp_r_col:
+                st.session_state["tkr_summary_r_filter_col"] = _qp_r_col
+            else:
+                st.session_state["tkr_summary_r_filter_col"] = _pref_r_col
+        except (ValueError, TypeError):
+            pass
+    if "tkr_summary_r_filter_min" in _prefs:
+        try:
+            _qp_r_min_str = st.query_params.get("tkr_r_min", "")
+            if _qp_r_min_str:
+                st.session_state["tkr_summary_r_filter_min"] = float(_qp_r_min_str)
+            else:
+                _pref_r_min = _prefs["tkr_summary_r_filter_min"]
+                st.session_state["tkr_summary_r_filter_min"] = (
+                    float(_pref_r_min) if _pref_r_min is not None else None
+                )
+        except (ValueError, TypeError):
+            pass
     if "rp_min_tcs_slider" in _prefs:
         try:
             st.session_state["rp_min_tcs_slider"] = int(_prefs["rp_min_tcs_slider"])
@@ -13031,6 +13054,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.query_params["tkr_r_min"] = _r_min_str
                     elif "tkr_r_min" in st.query_params:
                         del st.query_params["tkr_r_min"]
+                # Persist R-filter settings to user prefs whenever they change
+                if _AUTH_USER_ID:
+                    _r_filter_cached = st.session_state.get("_cached_prefs", {})
+                    if (
+                        _r_filter_cached.get("tkr_summary_r_filter_col") != _r_filter_col
+                        or _r_filter_cached.get("tkr_summary_r_filter_min") != _r_filter_min
+                    ):
+                        _r_filter_new_prefs = {
+                            **_r_filter_cached,
+                            "tkr_summary_r_filter_col": _r_filter_col,
+                            "tkr_summary_r_filter_min": _r_filter_min,
+                        }
+                        save_user_prefs(_AUTH_USER_ID, _r_filter_new_prefs)
+                        st.session_state["_cached_prefs"] = _r_filter_new_prefs
                 _r_filter_is_active = _r_filter_min is not None
                 if _r_filter_min is None:
                     _r_filter_min = float("-inf")
