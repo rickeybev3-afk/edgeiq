@@ -12618,8 +12618,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     st.rerun()
 
                         if _rp_preset_names and not _rp_load_disabled:
-                            _rp_del_spacer, _rp_del_col = st.columns([5, 1])
+                            _rp_act_spacer, _rp_rename_inp_col, _rp_rename_btn_col, _rp_del_col = st.columns([2, 2, 1, 1])
+                            with _rp_rename_inp_col:
+                                _rp_new_name_input = st.text_input(
+                                    "Rename preset",
+                                    key="_rp_rename_input",
+                                    placeholder=f'Rename "{_rp_selected_preset}"…',
+                                    label_visibility="collapsed",
+                                )
+                            with _rp_rename_btn_col:
+                                st.write("")
+                                _rp_rename_disabled = (
+                                    not _rp_new_name_input.strip()
+                                    or _rp_new_name_input.strip() == _rp_selected_preset
+                                )
+                                if st.button("✏️ Rename", key="_rp_rename_btn", disabled=_rp_rename_disabled):
+                                    _rp_new_name = _rp_new_name_input.strip()
+                                    _rp_values = _rp_presets.pop(_rp_selected_preset)
+                                    _rp_presets[_rp_new_name] = _rp_values
+                                    if _rp_save_presets_to_file(_rp_presets):
+                                        st.toast(f'Preset renamed to "{_rp_new_name}".', icon="✏️")
+                                        st.session_state["_rp_rename_input"] = ""
+                                        st.rerun()
                             with _rp_del_col:
+                                st.write("")
                                 if st.button("🗑 Delete", key="_rp_preset_delete_btn"):
                                     _rp_presets.pop(_rp_selected_preset, None)
                                     if _rp_save_presets_to_file(_rp_presets):
