@@ -14682,6 +14682,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _dlg_n         = _d["n"]
                     _dlg_msg       = _d.get("msg", "")
                     _dlg_band_half = _d.get("band_half", 1)
+                    _dlg_flt_prefix    = "_flt_meq" if _dlg_eq_only else "_flt_mdiv"
+                    _dlg_trade_dates   = _d.get("trade_dates", [])
+                    _dlg_trade_tcs_vals = _d.get("trade_tcs", [])
 
                     st.markdown(
                         f'<div style="font-size:13px;font-weight:700;color:#90caf9;margin-bottom:8px;">'
@@ -14689,6 +14692,90 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f' — <span style="color:#ffd600;">{_dlg_tk}</span></div>',
                         unsafe_allow_html=True,
                     )
+
+                    # ── Filter controls — dialog uses its own widget keys to avoid
+                    #    any Streamlit key-collision with the mini-chart widgets.
+                    #    Values are seeded from the shared mini-chart keys on first
+                    #    open and synced back after each render so mini-chart state
+                    #    always reflects what the trader set in the dialog.
+                    _dlg_shared_from_key = f"{_dlg_flt_prefix}_from_{_dlg_tk}"
+                    _dlg_shared_to_key   = f"{_dlg_flt_prefix}_to_{_dlg_tk}"
+                    _dlg_shared_tcs_key  = f"{_dlg_flt_prefix}_tcs_{_dlg_tk}"
+                    _dlg_own_from_key = f"_dlg{_dlg_flt_prefix}_from_{_dlg_tk}"
+                    _dlg_own_to_key   = f"_dlg{_dlg_flt_prefix}_to_{_dlg_tk}"
+                    _dlg_own_tcs_key  = f"_dlg{_dlg_flt_prefix}_tcs_{_dlg_tk}"
+                    # Seed dialog keys from shared keys on first open
+                    if _dlg_own_from_key not in st.session_state:
+                        st.session_state[_dlg_own_from_key] = st.session_state.get(_dlg_shared_from_key)
+                    if _dlg_own_to_key not in st.session_state:
+                        st.session_state[_dlg_own_to_key] = st.session_state.get(_dlg_shared_to_key)
+                    if _dlg_own_tcs_key not in st.session_state:
+                        st.session_state[_dlg_own_tcs_key] = st.session_state.get(_dlg_shared_tcs_key) or 0
+
+                    _dlg_flt_cols = st.columns([1, 1, 1, 0.7])
+                    with _dlg_flt_cols[0]:
+                        _dlg_flt_from = st.date_input(
+                            "From date",
+                            value=None,
+                            key=_dlg_own_from_key,
+                            help="Filter: only include trades on or after this date",
+                        )
+                    with _dlg_flt_cols[1]:
+                        _dlg_flt_to = st.date_input(
+                            "To date",
+                            value=None,
+                            key=_dlg_own_to_key,
+                            help="Filter: only include trades on or before this date",
+                        )
+                    with _dlg_flt_cols[2]:
+                        _dlg_flt_tcs = st.number_input(
+                            "Min TCS floor",
+                            min_value=0,
+                            max_value=100,
+                            value=0,
+                            step=5,
+                            key=_dlg_own_tcs_key,
+                            help="Filter: only include trades at this TCS floor or higher (0 = no filter)",
+                        )
+                    with _dlg_flt_cols[3]:
+                        _dlg_any_flt = bool(_dlg_flt_from or _dlg_flt_to or _dlg_flt_tcs > 0)
+                        st.write("")
+                        if st.button(
+                            "↺ Reset",
+                            key=f"_dlg{_dlg_flt_prefix}_reset_{_dlg_tk}",
+                            disabled=not _dlg_any_flt,
+                            help="Clear all filters",
+                            use_container_width=True,
+                        ):
+                            for _drk in [
+                                _dlg_own_from_key, _dlg_own_to_key, _dlg_own_tcs_key,
+                                _dlg_shared_from_key, _dlg_shared_to_key, _dlg_shared_tcs_key,
+                            ]:
+                                st.session_state.pop(_drk, None)
+                            st.rerun()
+                    # Sync dialog widget values back to shared mini-chart keys so the
+                    # mini-chart overlay reflects dialog changes when the dialog closes.
+                    st.session_state[_dlg_shared_from_key] = _dlg_flt_from or None
+                    st.session_state[_dlg_shared_to_key]   = _dlg_flt_to or None
+                    st.session_state[_dlg_shared_tcs_key]  = _dlg_flt_tcs
+
+                    # ── Dynamically compute filter set from live widget values ──────────
+                    _dlg_csv_len_pre = _d.get("csv_len_pre") or _dlg_n
+                    _dlg_flt_on  = bool(_dlg_flt_from or _dlg_flt_to or _dlg_flt_tcs > 0)
+                    _dlg_flt_set = set()
+                    if _dlg_flt_on:
+                        _dlg_loop_len = _dlg_n if _dlg_eq_only else _dlg_csv_len_pre
+                        for _dfi in range(1, _dlg_loop_len):
+                            _dft_idx  = _dfi - 1
+                            _dft_date = _dlg_trade_dates[_dft_idx] if _dft_idx < len(_dlg_trade_dates) else ""
+                            _dft_tcs  = int(_dlg_trade_tcs_vals[_dft_idx]) if _dft_idx < len(_dlg_trade_tcs_vals) else 0
+                            if _dlg_flt_from and _dft_date and _dft_date < str(_dlg_flt_from):
+                                continue
+                            if _dlg_flt_to and _dft_date and _dft_date > str(_dlg_flt_to):
+                                continue
+                            if _dlg_flt_tcs > 0 and _dft_tcs < _dlg_flt_tcs:
+                                continue
+                            _dlg_flt_set.add(_dfi)
 
                     _dlg_fig = go.Figure()
                     if not _dlg_eq_only and _dlg_idx is not None:
@@ -14727,9 +14814,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             yaxis="y2",
                         ))
 
-                    _dlg_flt_on      = _d.get("flt_on", False)
-                    _dlg_flt_set     = set(_d.get("flt_set") or [])
-                    _dlg_csv_len_pre = _d.get("csv_len_pre") or _dlg_n
                     if _dlg_flt_on:
                         if _dlg_flt_set:
                             _dlg_eq_overlay = [
@@ -15741,7 +15825,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         "flt_on": _meq_pre_flt_on,
                                         "flt_set": sorted(_meq_flt_set),
                                         "csv_len_pre": _mini_n,
+                                        "trade_dates": list(_meq_pre_dates),
+                                        "trade_tcs": list(_meq_pre_tcs_vals),
                                     }
+                                    # Clear dialog-own keys so they re-seed from shared on open
+                                    for _dk in [
+                                        f"_dlg_flt_meq_from_{_tk_name}",
+                                        f"_dlg_flt_meq_to_{_tk_name}",
+                                        f"_dlg_flt_meq_tcs_{_tk_name}",
+                                    ]:
+                                        st.session_state.pop(_dk, None)
                                     _div_fullscreen_dlg()
                             # Sentinel for deterministic Plotly div lookup
                             st.markdown(
@@ -16183,7 +16276,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         "flt_on": _mdiv_pre_flt_on,
                                         "flt_set": sorted(_mdiv_flt_set),
                                         "csv_len_pre": _mini_csv_len_pre,
+                                        "trade_dates": list(_mdiv_pre_dates),
+                                        "trade_tcs": list(_mdiv_pre_tcs_vals),
                                     }
+                                    # Clear dialog-own keys so they re-seed from shared on open
+                                    for _dk in [
+                                        f"_dlg_flt_mdiv_from_{_tk_name}",
+                                        f"_dlg_flt_mdiv_to_{_tk_name}",
+                                        f"_dlg_flt_mdiv_tcs_{_tk_name}",
+                                    ]:
+                                        st.session_state.pop(_dk, None)
                                     _div_fullscreen_dlg()
                             # Sentinel: zero-height marker used by JS to locate this chart's Plotly div
                             st.markdown(
