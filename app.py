@@ -5394,6 +5394,38 @@ with st.sidebar:
     pill.style.color      = isSip ? '#a5d6a7' : '#90caf9';
   }
 
+  function _showFeedToast(feed) {
+    var pd = window.parent.document;
+    var existing = pd.getElementById('_afi_feed_toast');
+    if (existing) existing.remove();
+    var label = feed === 'iex' ? 'IEX' : 'SIP';
+    var bg    = feed === 'iex' ? '#0d3b6e' : '#1b5e20';
+    var fg    = feed === 'iex' ? '#90caf9' : '#a5d6a7';
+    var toast = pd.createElement('div');
+    toast.id = '_afi_feed_toast';
+    toast.textContent = 'Switched to ' + label;
+    toast.style.cssText = [
+      'position:fixed',
+      'bottom:28px',
+      'left:50%',
+      'transform:translateX(-50%)',
+      'background:' + bg,
+      'color:' + fg,
+      'font-size:13px',
+      'font-weight:600',
+      'padding:8px 20px',
+      'border-radius:20px',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.35)',
+      'z-index:2147483647',
+      'pointer-events:none',
+      'opacity:1',
+      'transition:opacity 0.4s ease'
+    ].join(';');
+    pd.body.appendChild(toast);
+    setTimeout(function() { toast.style.opacity = '0'; }, 1100);
+    setTimeout(function() { if (toast.parentNode) toast.remove(); }, 1250);
+  }
+
   function _wirePill() {
     var pill = window.parent.document.getElementById('_sfi_pill');
     if (!pill || pill._afWired) return;
@@ -5403,7 +5435,8 @@ with st.sidebar:
                  window.parent.localStorage.getItem('global_default_feed') || 'sip').toLowerCase();
       var newFeed = cur === 'iex' ? 'sip' : 'iex';
       _sfiPillSync(newFeed);
-      window._afSwitch(newFeed);
+      _showFeedToast(newFeed);
+      setTimeout(function() { window._afSwitch(newFeed); }, 1300);
     };
     _sfiPillSync(_afGetFeed());
   }
