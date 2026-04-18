@@ -433,6 +433,7 @@ _BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
 _BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
 _BACKFILL_RUN_HISTORY     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backfill_run_history.log")
 _NR_FINISH_FILE           = "/tmp/nightly_refresh.finish_time"
+_FILTER_PRESETS_FILE      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_log_filter_presets.json")
 # Sentinel written by _backfill_pipeline_thread on success so that the next
 # Streamlit render re-runs the skip_reason backfill with newly populated IB/VWAP data.
 _SKIP_REASON_RERUN_TRIGGER = "/tmp/skip_reason_rerun.trigger"
@@ -445,6 +446,25 @@ _BACKFILL_LOCK: threading.Lock = threading.Lock()
 # Cancel flag: set this event to request a graceful stop after the current
 # subprocess finishes its current batch iteration.
 _BACKFILL_CANCEL: threading.Event = threading.Event()
+
+
+def _load_filter_presets() -> dict:
+    """Return the saved filter presets dict, or {} if the file is missing/corrupt."""
+    try:
+        if os.path.exists(_FILTER_PRESETS_FILE):
+            with open(_FILTER_PRESETS_FILE, "r", encoding="utf-8") as _fp_f:
+                _fp_data = json.load(_fp_f)
+                if isinstance(_fp_data, dict):
+                    return _fp_data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_filter_presets(presets: dict) -> None:
+    """Persist the filter presets dict to disk."""
+    with open(_FILTER_PRESETS_FILE, "w", encoding="utf-8") as _fp_f:
+        json.dump(presets, _fp_f, indent=2)
 
 
 def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | None = None, table: str | None = None):
@@ -12800,6 +12820,168 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     if _ss_key in st.session_state:
                                         del st.session_state[_ss_key]
                                 st.rerun()
+
+                        # ── Filter Presets ────────────────────────────────────
+                        with st.expander("⭐ Filter Presets — save, load, share", expanded=False):
+                            _fp_all = _load_filter_presets()
+                            _fp_names = list(_fp_all.keys())
+
+                            # --- Load / Delete a saved preset ---
+                            if _fp_names:
+                                _fp_ld_col1, _fp_ld_col2, _fp_ld_col3 = st.columns([3, 1, 1])
+                                with _fp_ld_col1:
+                                    _fp_selected = st.selectbox(
+                                        "Select preset",
+                                        options=["— select a preset —"] + _fp_names,
+                                        key="_rp_preset_selectbox",
+                                        label_visibility="collapsed",
+                                    )
+                                _fp_is_valid = _fp_selected != "— select a preset —"
+                                with _fp_ld_col2:
+                                    if st.button("Apply", key="_rp_preset_apply_btn", disabled=not _fp_is_valid):
+                                        _p = _fp_all[_fp_selected]
+                                        st.session_state["rp_log_ticker_filter"] = _p.get("ticker", "")
+                                        st.session_state["rp_log_wl_filter"]     = _p.get("wl", "All")
+                                        st.session_state["rp_log_show_neutral"]  = _p.get("show_neutral", True)
+                                        st.session_state["rp_log_boosted_only"]  = _p.get("boosted_only", False)
+                                        st.session_state["rp_log_only_marginal"] = _p.get("only_marginal", False)
+                                        st.session_state["rp_log_from_str"]      = _p.get("from_str", "")
+                                        st.session_state["rp_log_to_str"]        = _p.get("to_str", "")
+                                        st.query_params["rp_log_ticker"]  = _p.get("ticker", "")
+                                        st.query_params["rp_log_wl"]      = _p.get("wl", "All")
+                                        st.query_params["rp_log_neutral"] = "1" if _p.get("show_neutral", True) else "0"
+                                        st.query_params["rp_log_boosted"] = "1" if _p.get("boosted_only", False) else "0"
+                                        st.query_params["rp_log_marginal"] = "1" if _p.get("only_marginal", False) else "0"
+                                        st.query_params["rp_log_from"]    = _p.get("from_str", "")
+                                        st.query_params["rp_log_to"]      = _p.get("to_str", "")
+                                        st.rerun()
+                                with _fp_ld_col3:
+                                    if st.button("🗑 Delete", key="_rp_preset_delete_btn", disabled=not _fp_is_valid):
+                                        if _fp_selected in _fp_all:
+                                            del _fp_all[_fp_selected]
+                                            _save_filter_presets(_fp_all)
+                                            st.rerun()
+                            else:
+                                st.caption("No saved presets yet — use the form below to save your first one.")
+
+                            st.markdown("---")
+
+                            # --- Save current filters as a new preset ---
+                            _fp_sv_col1, _fp_sv_col2 = st.columns([3, 1])
+                            with _fp_sv_col1:
+                                _fp_new_name = st.text_input(
+                                    "New preset name",
+                                    placeholder="e.g. Boosted losses Q1 2026",
+                                    key="_rp_preset_new_name",
+                                    label_visibility="collapsed",
+                                )
+                            with _fp_sv_col2:
+                                if st.button("💾 Save filters", key="_rp_preset_save_btn"):
+                                    if _fp_new_name.strip():
+                                        _fp_all[_fp_new_name.strip()] = {
+                                            "ticker":       _rp_log_ticker_filter,
+                                            "wl":           _rp_log_wl_filter,
+                                            "show_neutral": _rp_log_show_neutral,
+                                            "boosted_only": _rp_log_boosted_only,
+                                            "only_marginal": _rp_log_only_marginal,
+                                            "from_str":     _rp_log_from_str,
+                                            "to_str":       _rp_log_to_str,
+                                        }
+                                        _save_filter_presets(_fp_all)
+                                        st.success(f"Saved preset \"{_fp_new_name.strip()}\"")
+                                        st.rerun()
+                                    else:
+                                        st.warning("Enter a name before saving.")
+
+                            st.markdown("---")
+
+                            # --- Export & Import ---
+                            _fp_exp_col, _fp_imp_col = st.columns(2)
+                            with _fp_exp_col:
+                                _fp_export_bytes = json.dumps(_fp_all, indent=2).encode("utf-8")
+                                st.download_button(
+                                    "⬇ Export presets",
+                                    data=_fp_export_bytes,
+                                    file_name="trade_log_filter_presets.json",
+                                    mime="application/json",
+                                    key="_rp_preset_export_btn",
+                                    help="Download all saved presets as a JSON file to share with teammates",
+                                    disabled=not _fp_names,
+                                )
+                            with _fp_imp_col:
+                                _fp_uploaded = st.file_uploader(
+                                    "⬆ Import presets (.json)",
+                                    type=["json"],
+                                    key="_rp_preset_import_uploader",
+                                    label_visibility="collapsed",
+                                    help="Upload a presets JSON file — duplicates will be handled gracefully",
+                                )
+                                if _fp_uploaded is not None:
+                                    try:
+                                        _fp_incoming_raw = json.loads(_fp_uploaded.read().decode("utf-8"))
+                                        if not isinstance(_fp_incoming_raw, dict):
+                                            st.error("Invalid presets file — expected a JSON object.")
+                                        else:
+                                            # Drop any entries whose value is not a mapping (malformed presets)
+                                            _fp_incoming = {
+                                                k: v for k, v in _fp_incoming_raw.items()
+                                                if isinstance(v, dict)
+                                            }
+                                            _fp_skipped_malformed = len(_fp_incoming_raw) - len(_fp_incoming)
+                                            if _fp_skipped_malformed:
+                                                st.warning(
+                                                    f"{_fp_skipped_malformed} entr"
+                                                    f"{'y was' if _fp_skipped_malformed == 1 else 'ies were'} "
+                                                    f"skipped because they had an unexpected format."
+                                                )
+                                            _fp_conflicts = [k for k in _fp_incoming if k in _fp_all]
+                                            _fp_new_only  = [k for k in _fp_incoming if k not in _fp_all]
+                                            if _fp_conflicts:
+                                                _dup_label = (
+                                                    ", ".join(f"'{c}'" for c in _fp_conflicts[:4])
+                                                    + (f" and {len(_fp_conflicts)-4} more" if len(_fp_conflicts) > 4 else "")
+                                                )
+                                                st.warning(
+                                                    f"**{len(_fp_conflicts)} duplicate{'s' if len(_fp_conflicts) != 1 else ''} "
+                                                    f"found:** {_dup_label}"
+                                                )
+                                                _fp_dc1, _fp_dc2 = st.columns(2)
+                                                with _fp_dc1:
+                                                    if st.button("Overwrite duplicates", key="_rp_preset_overwrite_btn"):
+                                                        _fp_all.update(_fp_incoming)
+                                                        _save_filter_presets(_fp_all)
+                                                        st.success(
+                                                            f"Imported {len(_fp_incoming)} preset{'s' if len(_fp_incoming) != 1 else ''} "
+                                                            f"(duplicates overwritten)."
+                                                        )
+                                                        st.rerun()
+                                                with _fp_dc2:
+                                                    if st.button("Skip duplicates", key="_rp_preset_skip_btn"):
+                                                        for _fp_k, _fp_v in _fp_incoming.items():
+                                                            if _fp_k not in _fp_all:
+                                                                _fp_all[_fp_k] = _fp_v
+                                                        _save_filter_presets(_fp_all)
+                                                        st.success(
+                                                            f"Imported {len(_fp_new_only)} new preset{'s' if len(_fp_new_only) != 1 else ''}, "
+                                                            f"skipped {len(_fp_conflicts)} duplicate{'s' if len(_fp_conflicts) != 1 else ''}."
+                                                        )
+                                                        st.rerun()
+                                            else:
+                                                if st.button(
+                                                    f"Confirm import ({len(_fp_incoming)} preset{'s' if len(_fp_incoming) != 1 else ''})",
+                                                    key="_rp_preset_confirm_import_btn",
+                                                ):
+                                                    _fp_all.update(_fp_incoming)
+                                                    _save_filter_presets(_fp_all)
+                                                    st.success(
+                                                        f"Imported {len(_fp_incoming)} preset{'s' if len(_fp_incoming) != 1 else ''}."
+                                                    )
+                                                    st.rerun()
+                                    except Exception:
+                                        st.error(
+                                            "Could not read the presets file. "
+                                            "Make sure it's a valid export from this tool."
+                                        )
 
                         _rp_display_df = _rp_df.copy()
                         if _rp_log_ticker_filter.strip():
