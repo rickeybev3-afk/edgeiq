@@ -764,6 +764,11 @@ if __name__ == "__main__":
     # When --rvol-only is set, skip the full simulation backfill entirely and
     # run just backfill_rvol_size_mult(), then exit.
     if rvol_only:
+        if skip_rvol:
+            print("\nMode: --rvol-only + --skip-rvol — nothing to do.")
+            print("      --skip-rvol suppresses the rvol_size_mult backfill, which is the")
+            print("      only step that --rvol-only would run.  Exiting without changes.")
+            sys.exit(0)
         print("\nMode: --rvol-only — running ONLY the rvol_size_mult backfill.")
         if dry_run:
             print("      Combined with --dry-run: no database writes will occur.")
