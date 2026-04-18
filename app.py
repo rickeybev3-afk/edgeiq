@@ -15841,6 +15841,59 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         if _detail_parts
                         else _all_sweep_export_df
                     )
+                    # ── On-screen all-tickers sweep table ────────────────────
+                    def _sweep_style_delta_cell(val):
+                        if val == "—" or val is None:
+                            return ""
+                        try:
+                            _num = float(str(val).replace("R", "").replace("+", ""))
+                            if _num >= 0:
+                                return "color:#66bb6a;font-weight:700"
+                            else:
+                                return "color:#ef5350;font-weight:700"
+                        except (ValueError, TypeError):
+                            return ""
+
+                    _sweep_delta_cols_present = [
+                        c for c in ["Δ Morn", "Δ Intra"] if c in _detail_df.columns
+                    ]
+                    _sweep_styled = _detail_df.style
+                    if _sweep_delta_cols_present:
+                        try:
+                            _sweep_styled = _sweep_styled.map(
+                                _sweep_style_delta_cell, subset=_sweep_delta_cols_present
+                            )
+                        except AttributeError:
+                            _sweep_styled = _sweep_styled.applymap(
+                                _sweep_style_delta_cell, subset=_sweep_delta_cols_present
+                            )
+                    _sweep_col_cfg = {}
+                    if "Δ Morn" in _detail_df.columns:
+                        _sweep_col_cfg["Δ Morn"] = st.column_config.TextColumn(
+                            "Δ Morn",
+                            help=(
+                                "Tiered R (Morn) − EOD R (Morn): how much tiered exits add or subtract "
+                                "versus holding to close on morning scan trades. "
+                                "Green = tiered exits win; red = EOD hold wins. "
+                                "'—' when either side has no data."
+                            ),
+                        )
+                    if "Δ Intra" in _detail_df.columns:
+                        _sweep_col_cfg["Δ Intra"] = st.column_config.TextColumn(
+                            "Δ Intra",
+                            help=(
+                                "Tiered R (Intra) − EOD R (Intra): how much tiered exits add or subtract "
+                                "versus holding to close on intraday scan trades. "
+                                "Green = tiered exits win; red = EOD hold wins. "
+                                "'—' when either side has no data."
+                            ),
+                        )
+                    st.dataframe(
+                        _sweep_styled,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=_sweep_col_cfg if _sweep_col_cfg else None,
+                    )
                     # ── Build two-sheet XLSX (Detail + Summary) ───────────────
                     import io as _io_bt
                     _xlsx_buf = _io_bt.BytesIO()
