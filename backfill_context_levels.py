@@ -33,7 +33,7 @@ ALPACA_SECRET = os.environ.get('ALPACA_SECRET_KEY', '')
 DATA_BASE     = 'https://data.alpaca.markets'
 ET            = pytz.timezone('America/New_York')
 SUPABASE      = backend.supabase
-USER_ID       = 'a5e1fcab-8369-42c4-8550-a8a19734510c'
+USER_ID       = os.environ.get('OWNER_USER_ID', '')   # emergency fallback only — do not set for normal runs
 
 MORNING_SIGNAL_ET  = '09:35:00'
 INTRADAY_SIGNAL_ET = '10:47:00'
@@ -263,21 +263,77 @@ def get_already_processed():
     return {(r['ticker'], r['trade_date'], r['scan_type']) for r in (resp.data or [])}
 
 # ─────────────────────────────────────────────────────────────────────────────
+# User discovery
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PAGE_SZ = 1000
+
+def discover_user_ids() -> list:
+    """Return all distinct user_ids found in backtest_sim_runs.
+
+    Paginates exhaustively so no user is silently missed regardless of table
+    size.  Falls back to [USER_ID] (env-var) if the table cannot be scanned
+    and USER_ID is set; aborts otherwise.
+    """
+    if not SUPABASE:
+        log.error('No Supabase connection — cannot discover user IDs.')
+        sys.exit(1)
+
+    uid_set = set()
+    offset = 0
+    rows_scanned = 0
+    log.info('Discovering user IDs from backtest_sim_runs…')
+    try:
+        while True:
+            resp = (
+                SUPABASE.table('backtest_sim_runs')
+                .select('user_id')
+                .range(offset, offset + _PAGE_SZ - 1)
+                .execute()
+            )
+            rows = resp.data or []
+            for row in rows:
+                uid = row.get('user_id')
+                if uid:
+                    uid_set.add(uid)
+            rows_scanned += len(rows)
+            if len(rows) < _PAGE_SZ:
+                break
+            offset += _PAGE_SZ
+    except Exception as e:
+        log.error(f'ERROR: could not fully scan backtest_sim_runs for user_ids: {e}')
+        if USER_ID:
+            log.warning(f'Falling back to OWNER_USER_ID env-var: {USER_ID}')
+            return [USER_ID]
+        log.error('No OWNER_USER_ID env-var set — aborting. Pass user IDs explicitly to bypass discovery.')
+        sys.exit(1)
+
+    discovered = sorted(uid_set)
+    log.info(f'  → {rows_scanned} rows scanned, {len(discovered)} distinct user(s) found: {discovered}')
+
+    if not discovered:
+        if USER_ID:
+            log.warning(f'No users found in DB — falling back to OWNER_USER_ID env-var: {USER_ID}')
+            return [USER_ID]
+        log.error('No users found in backtest_sim_runs and no OWNER_USER_ID env-var set — nothing to do.')
+        sys.exit(1)
+
+    return discovered
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main(user_ids=None):
-    if user_ids:
-        log.info(f'Loading backtest rows from Supabase for {len(user_ids)} user(s): {user_ids}')
-        query = SUPABASE.table('backtest_sim_runs') \
-            .select('ticker, sim_date, scan_type, ib_high, ib_low, actual_outcome') \
-            .in_('user_id', user_ids) \
-            .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
-    else:
-        log.info('Loading backtest rows from Supabase (all users)…')
-        query = SUPABASE.table('backtest_sim_runs') \
-            .select('ticker, sim_date, scan_type, ib_high, ib_low, actual_outcome') \
-            .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
+    if not user_ids:
+        user_ids = discover_user_ids()
+
+    log.info(f'Loading backtest rows from Supabase for {len(user_ids)} user(s): {user_ids}')
+    query = SUPABASE.table('backtest_sim_runs') \
+        .select('ticker, sim_date, scan_type, ib_high, ib_low, actual_outcome') \
+        .in_('user_id', user_ids) \
+        .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
     resp = query.execute()
     rows = resp.data or []
     log.info(f'  → {len(rows)} settled breakout rows')
