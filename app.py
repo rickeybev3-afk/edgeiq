@@ -6231,52 +6231,60 @@ with st.sidebar:
             else:
                 st.warning(_rv_res["message"])
         try:
-            if os.path.exists(_NR_FINISH_FILE):
-                import json as _nr_json
+            import json as _nr_json
+            import time as _nr_time_mod
+            _NR_STALE_THRESHOLD = 25 * 3600  # 25 hours in seconds
+            if not os.path.exists(_NR_FINISH_FILE):
+                st.warning("⚠️ Nightly refresh hasn't run in over a day")
+            else:
                 with open(_NR_FINISH_FILE) as _nr_f:
                     _nr_info = _nr_json.load(_nr_f)
-                _nr_elapsed_int = max(0, int(_nr_info.get("elapsed_s", 0)))
-                if _nr_elapsed_int < 60:
-                    _nr_dur_str = f"{_nr_elapsed_int}s"
-                elif _nr_elapsed_int < 3600:
-                    _nr_m, _nr_s = divmod(_nr_elapsed_int, 60)
-                    _nr_dur_str = f"{_nr_m}m {_nr_s}s"
+                _nr_finished_at = _nr_info.get("finished_at", 0)
+                _nr_age = _nr_time_mod.time() - _nr_finished_at
+                if _nr_age > _NR_STALE_THRESHOLD:
+                    st.warning("⚠️ Nightly refresh hasn't run in over a day")
                 else:
-                    _nr_h = _nr_elapsed_int // 3600
-                    _nr_m = (_nr_elapsed_int % 3600) // 60
-                    _nr_s = _nr_elapsed_int % 60
-                    _nr_dur_str = f"{_nr_h}h {_nr_m}m {_nr_s}s"
-                _nr_finished_at = _nr_info.get("finished_at")
-                if _nr_finished_at:
-                    import datetime as _nr_dt
-                    _nr_fin_utc = _nr_dt.datetime.fromtimestamp(_nr_finished_at, tz=_nr_dt.timezone.utc)
-                    try:
-                        import zoneinfo as _nr_zi
-                        _nr_et_tz = _nr_zi.ZoneInfo("America/New_York")
-                    except Exception:
-                        _nr_et_tz = _nr_dt.timezone(
-                            _nr_dt.timedelta(hours=-5), "ET"
-                        )
-                    _nr_fin_et = _nr_fin_utc.astimezone(_nr_et_tz)
-                    _nr_time_str = _nr_fin_et.strftime("%I:%M %p ET").lstrip("0") or _nr_fin_et.strftime("%I:%M %p ET")
-                    _nr_ago_secs = max(0, int(_nr_dt.datetime.now(_nr_dt.timezone.utc).timestamp() - _nr_finished_at))
-                    if _nr_ago_secs < 60:
-                        _nr_ago_str = "just now"
-                    elif _nr_ago_secs < 3600:
-                        _nr_ago_str = f"{_nr_ago_secs // 60}m ago"
-                    elif _nr_ago_secs < 86400:
-                        _nr_ago_str = f"{_nr_ago_secs // 3600}h ago"
+                    _nr_elapsed_int = max(0, int(_nr_info.get("elapsed_s", 0)))
+                    if _nr_elapsed_int < 60:
+                        _nr_dur_str = f"{_nr_elapsed_int}s"
+                    elif _nr_elapsed_int < 3600:
+                        _nr_m, _nr_s = divmod(_nr_elapsed_int, 60)
+                        _nr_dur_str = f"{_nr_m}m {_nr_s}s"
                     else:
-                        _nr_ago_str = f"{_nr_ago_secs // 86400}d ago"
-                    _nr_when_str = f"Completed at {_nr_time_str} ({_nr_ago_str})"
-                else:
-                    _nr_when_str = None
-                if _nr_info.get("success", True):
-                    st.success(f"✅ Refresh complete in {_nr_dur_str}")
-                else:
-                    st.warning(f"⚠️ Last refresh failed (ran for {_nr_dur_str})")
-                if _nr_when_str:
-                    st.caption(_nr_when_str)
+                        _nr_h = _nr_elapsed_int // 3600
+                        _nr_m = (_nr_elapsed_int % 3600) // 60
+                        _nr_s = _nr_elapsed_int % 60
+                        _nr_dur_str = f"{_nr_h}h {_nr_m}m {_nr_s}s"
+                    if _nr_finished_at:
+                        import datetime as _nr_dt
+                        _nr_fin_utc = _nr_dt.datetime.fromtimestamp(_nr_finished_at, tz=_nr_dt.timezone.utc)
+                        try:
+                            import zoneinfo as _nr_zi
+                            _nr_et_tz = _nr_zi.ZoneInfo("America/New_York")
+                        except Exception:
+                            _nr_et_tz = _nr_dt.timezone(
+                                _nr_dt.timedelta(hours=-5), "ET"
+                            )
+                        _nr_fin_et = _nr_fin_utc.astimezone(_nr_et_tz)
+                        _nr_time_str = _nr_fin_et.strftime("%I:%M %p ET").lstrip("0") or _nr_fin_et.strftime("%I:%M %p ET")
+                        _nr_ago_secs = max(0, int(_nr_dt.datetime.now(_nr_dt.timezone.utc).timestamp() - _nr_finished_at))
+                        if _nr_ago_secs < 60:
+                            _nr_ago_str = "just now"
+                        elif _nr_ago_secs < 3600:
+                            _nr_ago_str = f"{_nr_ago_secs // 60}m ago"
+                        elif _nr_ago_secs < 86400:
+                            _nr_ago_str = f"{_nr_ago_secs // 3600}h ago"
+                        else:
+                            _nr_ago_str = f"{_nr_ago_secs // 86400}d ago"
+                        _nr_when_str = f"Completed at {_nr_time_str} ({_nr_ago_str})"
+                    else:
+                        _nr_when_str = None
+                    if _nr_info.get("success", True):
+                        st.success(f"✅ Refresh complete in {_nr_dur_str}")
+                    else:
+                        st.warning(f"⚠️ Last refresh failed (ran for {_nr_dur_str})")
+                    if _nr_when_str:
+                        st.caption(_nr_when_str)
         except Exception:
             pass
         with st.expander("📋 View SQL", expanded=False):
