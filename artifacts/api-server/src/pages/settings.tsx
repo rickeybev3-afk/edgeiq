@@ -78,6 +78,30 @@ interface BackfillHealth {
   history_path?: string;
 }
 
+interface DryRunTableResult {
+  table: string;
+  total: number;
+  bullish: number;
+  bearish: number;
+  unfillable: number;
+}
+
+interface DryRunResult {
+  tables: DryRunTableResult[];
+  grand_total: number | null;
+  elapsed_s: number | null;
+  timed_out: boolean;
+  raw_output: string;
+  error?: string;
+}
+
+interface DryRunState {
+  running: boolean;
+  result: DryRunResult | null;
+  error: string | null;
+  showRaw: boolean;
+}
+
 interface EodRecalcRun {
   completed_at: string;
   path: string;
@@ -349,6 +373,23 @@ export default function Settings() {
     const id = setInterval(poll, 60_000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  const [dryRun, setDryRun] = useState<DryRunState>({ running: false, result: null, error: null, showRaw: false });
+
+  const handleDryRun = async () => {
+    setDryRun({ running: true, result: null, error: null, showRaw: false });
+    try {
+      const res = await fetch("/api/backfill-dryrun", { method: "POST" });
+      const data: DryRunResult = await res.json();
+      if (data.error) {
+        setDryRun((s) => ({ ...s, running: false, error: data.error ?? "Unknown error", result: null }));
+      } else {
+        setDryRun((s) => ({ ...s, running: false, result: data, error: null }));
+      }
+    } catch (err) {
+      setDryRun((s) => ({ ...s, running: false, error: "Could not reach server.", result: null }));
+    }
+  };
 
   const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
 
@@ -958,6 +999,117 @@ export default function Settings() {
               )}
             </div>
           )}
+
+          <div style={{ marginTop: "24px", borderTop: "1px solid #2d3748", paddingTop: "20px" }}>
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "14px", lineHeight: "1.6" }}>
+              Run a <strong style={{ color: "#fbbf24" }}>dry-run preview</strong> to see how many rows would be
+              updated without making any database writes.
+            </p>
+            <button
+              onClick={handleDryRun}
+              disabled={dryRun.running}
+              style={{
+                padding: "9px 18px",
+                background: dryRun.running ? "#78350f" : "#92400e",
+                border: "1px solid #fbbf24",
+                borderRadius: "7px",
+                color: "#fef3c7",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: dryRun.running ? "not-allowed" : "pointer",
+                opacity: dryRun.running ? 0.7 : 1,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "7px",
+                transition: "opacity 0.15s",
+              }}
+            >
+              <span style={{ fontSize: "15px" }}>🔍</span>
+              {dryRun.running ? "Running dry-run preview… (this may take a minute)" : "Preview Dry Run"}
+            </button>
+
+            {dryRun.error && (
+              <div style={{ marginTop: "14px", padding: "12px 14px", background: "rgba(248,113,113,0.1)", border: "1px solid #f87171", borderRadius: "7px", color: "#f87171", fontSize: "13px" }}>
+                ⚠ {dryRun.error}
+              </div>
+            )}
+
+            {dryRun.result && !dryRun.error && (
+              <div style={{ marginTop: "16px" }}>
+                {dryRun.result.timed_out && (
+                  <div style={{ marginBottom: "12px", padding: "10px 14px", background: "rgba(251,191,36,0.08)", border: "1px solid #fbbf24", borderRadius: "7px", color: "#fbbf24", fontSize: "12px" }}>
+                    ⚠ Dry-run timed out after 300s — results below may be partial.
+                  </div>
+                )}
+
+                <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px" }}>
+                  <p style={{ fontSize: "13px", fontWeight: 700, color: "#fef3c7", margin: 0 }}>
+                    Dry-Run Preview Results
+                  </p>
+                  {dryRun.result.elapsed_s != null && (
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>({dryRun.result.elapsed_s.toFixed(0)}s elapsed)</span>
+                  )}
+                </div>
+
+                {dryRun.result.grand_total != null && (
+                  <div style={{ marginBottom: "14px", padding: "12px 16px", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: "8px" }}>
+                    <span style={{ fontSize: "22px", fontWeight: 700, color: "#fbbf24", fontFamily: "monospace" }}>
+                      {dryRun.result.grand_total.toLocaleString()}
+                    </span>
+                    <span style={{ fontSize: "13px", color: "#94a3b8", marginLeft: "8px" }}>
+                      total row(s) would be updated across all users &amp; tables
+                    </span>
+                  </div>
+                )}
+
+                {dryRun.result.tables.length > 0 && (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontFamily: "monospace" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #2d3748" }}>
+                          <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Table</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Would update</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Bullish Break</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Bearish Break</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Unfillable</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dryRun.result.tables.map((t) => (
+                          <tr key={t.table} style={{ borderBottom: "1px solid rgba(45,55,72,0.5)" }}>
+                            <td style={{ padding: "6px 10px", color: "#cbd5e1" }}>{t.table}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#fbbf24", fontWeight: 600 }}>{t.total.toLocaleString()}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#7dd3fc" }}>{t.bullish.toLocaleString()}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#a78bfa" }}>{t.bearish.toLocaleString()}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: t.unfillable > 0 ? "#f87171" : "#64748b" }}>{t.unfillable.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {dryRun.result.tables.length === 0 && dryRun.result.grand_total === null && (
+                  <p style={{ fontSize: "13px", color: "#64748b", marginTop: "8px" }}>
+                    No structured summary lines were found in the output.
+                  </p>
+                )}
+
+                <button
+                  onClick={() => setDryRun((s) => ({ ...s, showRaw: !s.showRaw }))}
+                  style={{ marginTop: "12px", background: "none", border: "none", color: "#64748b", fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+                >
+                  {dryRun.showRaw ? "Hide raw output" : "Show raw output"}
+                </button>
+
+                {dryRun.showRaw && (
+                  <pre style={{ marginTop: "8px", padding: "12px", background: "#0e1117", border: "1px solid #2d3748", borderRadius: "6px", fontSize: "11px", color: "#94a3b8", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "300px", overflowY: "auto" }}>
+                    {dryRun.result.raw_output}
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
         </section>
 
         <section

@@ -631,6 +631,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/backfill-heartbeat-window":
             self._backfill_heartbeat_window_post()
             return
+        if path == "/api/backfill-dryrun":
+            self._backfill_dryrun_post()
+            return
         self._proxy() if streamlit_ready else self._loading()
 
     def do_PUT(self):
@@ -1232,6 +1235,100 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
             self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _backfill_dryrun_post(self):
+        """Run run_sim_backfill.py --dry-run and return a structured JSON summary.
+
+        This endpoint is intentionally read-only — it passes --dry-run so no
+        database writes are performed.  The raw stdout is captured, key summary
+        lines are parsed, and the result is returned as JSON.
+
+        Because the dry-run may take a while (it queries the database), the
+        request has a 300-second subprocess timeout.  On timeout the partial
+        output that was already collected is returned with a 'timed_out' flag.
+
+        The DASHBOARD_WRITE_SECRET guard is NOT applied here because the
+        dry-run makes no writes; it is purely a preview operation.
+        """
+        import re as _re
+        import subprocess as _sp
+        import sys as _sys
+
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_sim_backfill.py")
+        if not os.path.isfile(script):
+            body = json.dumps({"error": "run_sim_backfill.py not found on server"}).encode()
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        timed_out = False
+        try:
+            result = _sp.run(
+                [_sys.executable, script, "--dry-run"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+            )
+            raw = result.stdout + ("\n" + result.stderr if result.stderr.strip() else "")
+        except _sp.TimeoutExpired as _te:
+            raw = (_te.stdout or "") + ("\n" + (_te.stderr or ""))
+            timed_out = True
+        except Exception as exc:
+            body = json.dumps({"error": f"Failed to start dry-run: {exc}"}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        tables = []
+        grand_total = None
+        elapsed_s = None
+
+        for line in raw.splitlines():
+            m = _re.search(
+                r"DRY RUN total for (\S+):\s+([\d,]+)\s+row\(s\) would be updated"
+                r".*?Bullish Break:\s*([\d,]+).*?Bearish Break:\s*([\d,]+)"
+                r".*?\+\s*([\d,]+)\s+unfillable",
+                line,
+            )
+            if m:
+                tables.append({
+                    "table":    m.group(1),
+                    "total":    int(m.group(2).replace(",", "")),
+                    "bullish":  int(m.group(3).replace(",", "")),
+                    "bearish":  int(m.group(4).replace(",", "")),
+                    "unfillable": int(m.group(5).replace(",", "")),
+                })
+                continue
+            m2 = _re.search(r"([\d,]+)\s+row\(s\) across all users/tables would be updated", line)
+            if m2:
+                grand_total = int(m2.group(1).replace(",", ""))
+            m3 = _re.search(r"DRY RUN COMPLETE\s*[—-]\s*([\d.]+)s elapsed", line)
+            if m3:
+                elapsed_s = float(m3.group(1))
+
+        data = {
+            "tables":      tables,
+            "grand_total": grand_total,
+            "elapsed_s":   elapsed_s,
+            "timed_out":   timed_out,
+            "raw_output":  raw,
+        }
+        body = json.dumps(data).encode()
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
