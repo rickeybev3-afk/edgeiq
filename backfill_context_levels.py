@@ -404,41 +404,16 @@ def main():
     log.info('=' * 60)
     log.info(f'COMPLETE — {total_saved} rows saved, {total_no_bars} no-bars, {total_errors} errors')
 
-    import json as _json
-    import datetime as _dt
-    _health = {
-        'completed_at': _dt.datetime.now(_dt.timezone.utc).isoformat(),
-        'rows_saved': total_saved,
-        'no_bars': total_no_bars,
-        'errors': total_errors,
-    }
-    try:
-        _default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backfill_history.json')
-        _history_path = os.environ.get('BACKFILL_HISTORY_PATH', _default_path)
-        _legacy_path = '/tmp/backfill_history.json'
-        if not os.path.exists(_history_path) and os.path.exists(_legacy_path):
-            try:
-                import shutil as _shutil
-                _shutil.copy2(_legacy_path, _history_path)
-                log.info(f'Migrated backfill history from {_legacy_path} to {_history_path}')
-            except Exception as _me:
-                log.warning(f'Could not migrate backfill history from /tmp: {_me}')
-        try:
-            with open(_history_path) as _hf:
-                _history = _json.load(_hf)
-            if not isinstance(_history, list):
-                _history = []
-        except FileNotFoundError:
-            _history = []
-        except _json.JSONDecodeError:
-            log.warning('backfill_history.json was corrupt — resetting history')
-            _history = []
-        _history.append(_health)
-        _history = _history[-10:]
-        with open(_history_path, 'w') as _hf:
-            _json.dump(_history, _hf)
-    except Exception as _e:
-        log.warning(f'Could not write backfill history file: {_e}')
+    from backfill_utils import append_backfill_history
+    append_backfill_history(
+        script='backfill_context_levels',
+        health={
+            'rows_saved': total_saved,
+            'no_bars': total_no_bars,
+            'errors': total_errors,
+        },
+        logger=log,
+    )
 
     if total_errors > 0:
         _send_backfill_alert(total_saved, total_no_bars, total_errors)

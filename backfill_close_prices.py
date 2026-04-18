@@ -23,13 +23,17 @@ Usage
   python backfill_close_prices.py --dry-run  # print plan, no writes
 """
 
-import sys, os, time, argparse
+import sys, os, time, argparse, logging
 from datetime import datetime, timedelta, date as date_type
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
+from backfill_utils import append_backfill_history
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+_log = logging.getLogger(__name__)
 
 PAGE_SZ       = 1000
 BATCH_TICKERS = 50    # Alpaca multi-symbol batch size
@@ -347,6 +351,17 @@ def main():
         print()
         print("Next step: run  python run_sim_backfill.py")
         print("That will compute eod_pnl_r for all newly filled close prices.")
+
+    if not args.dry_run:
+        append_backfill_history(
+            script='backfill_close_prices',
+            health={
+                'rows_written': grand_updated,
+                'rows_no_data': grand_skipped,
+                'elapsed_s': round(elapsed, 1),
+            },
+            logger=_log,
+        )
 
 
 if __name__ == "__main__":

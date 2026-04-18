@@ -38,6 +38,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
+from backfill_utils import append_backfill_history
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
@@ -538,3 +539,13 @@ if __name__ == '__main__':
 
     mode_label = "VWAP retry" if retry_vwap else "Backfill"
     print(f"\n✅ {mode_label} complete for {len(user_ids)} user(s) in {elapsed:.0f}s")
+
+    append_backfill_history(
+        script='backfill_ib_vwap',
+        health={
+            'mode': 'retry_vwap' if retry_vwap else 'full',
+            'users_processed': len(user_ids),
+            'elapsed_s': round(elapsed, 1),
+        },
+        logger=log,
+    )
