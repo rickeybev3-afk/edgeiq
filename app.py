@@ -13358,9 +13358,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             yaxis="y2",
                         ))
 
+                    _dlg_chart_title = (
+                        f"Equity Curve — {_dlg_tk}"
+                        if _dlg_eq_only
+                        else f"Divergence: Equity ($) vs Cumulative R — {_dlg_tk}"
+                    )
                     _dlg_layout = dict(
                         height=560,
-                        margin=dict(l=10, r=10, t=20, b=40),
+                        title=dict(
+                            text=_dlg_chart_title,
+                            font=dict(color="#90caf9", size=13),
+                            x=0.5,
+                            xanchor="center",
+                        ),
+                        margin=dict(l=10, r=10, t=44, b=40),
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
                         dragmode="zoom",
@@ -13412,6 +13423,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f'<div id="{_dlg_sentinel_id}" style="height:0;overflow:hidden;"></div>',
                         unsafe_allow_html=True,
                     )
+                    _dlg_img_filename = (
+                        ("equity_curve_" if _dlg_eq_only else "divergence_")
+                        + "".join(c if c.isalnum() else "_" for c in _dlg_tk)
+                    )
                     st.plotly_chart(
                         _dlg_fig,
                         use_container_width=True,
@@ -13420,6 +13435,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "displayModeBar": True,
                             "modeBarButtonsToRemove": ["sendDataToCloud"],
                             "displaylogo": False,
+                            "toImageButtonOptions": {
+                                "format": "png",
+                                "filename": _dlg_img_filename,
+                                "scale": 2,
+                            },
                         },
                     )
 
