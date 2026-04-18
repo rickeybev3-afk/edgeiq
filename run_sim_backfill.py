@@ -314,8 +314,17 @@ def _sim_patch(r: dict) -> dict | None:
             direction = actual_outcome,
             close_px  = close_price,
         )
-        if tiered.get("eod_pnl_r") is not None:
-            patch["eod_pnl_r"] = tiered["eod_pnl_r"]
+        _eod_r = tiered.get("eod_pnl_r")
+        if _eod_r is not None:
+            _rvol_raw = r.get("rvol")
+            if _rvol_raw is not None:
+                try:
+                    _rvol_mult = backend.rvol_size_mult(float(_rvol_raw))
+                    if _rvol_mult != 1.0:
+                        _eod_r = round(float(_eod_r) * _rvol_mult, 4)
+                except (TypeError, ValueError):
+                    pass
+            patch["eod_pnl_r"] = _eod_r
             patch["tiered_sim_version"] = backend.TIERED_SIM_VERSION
     return patch
 

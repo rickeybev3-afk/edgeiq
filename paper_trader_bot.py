@@ -482,19 +482,6 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
 #   RVOL <  2.5 → 1.00×  (baseline — no bonus)
 # Applied AFTER IB-range and P-tier mults; only when RVOL data is present.
 
-def _rvol_size_mult(rvol: float) -> float:
-    """Return RVOL bonus position-size multiplier.
-
-    Reads rvol_size_tiers from adaptive_exits.json (loaded into
-    _ADAPTIVE_EXIT_CONFIG at module start).  Falls back to 1.0 when the
-    config key is absent or rvol is below all configured thresholds.
-    """
-    tiers = _ADAPTIVE_EXIT_CONFIG.get("rvol_size_tiers", [])
-    for tier in sorted(tiers, key=lambda t: t["rvol_min"], reverse=True):
-        if rvol >= tier["rvol_min"]:
-            return float(tier["multiplier"])
-    return 1.0
-
 # ── RVOL minimum entry floor ───────────────────────────────────────────────────
 # v5 data: RVOL 0-1.0 → 28.2% WR / -0.513R (85 trades). Clear negative edge.
 # All other RVOL bands ≥ 1.0 are profitable within P1/P3 universe.
@@ -1047,7 +1034,6 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     _rvol_mult = None  # None = RVOL data unavailable; updated below when data is present
     if _rvol_val is not None:
         _rvol_float = float(_rvol_val)
-        _rvol_mult  = _rvol_float
         # Block rvol=0 too — 0 means data is present but volume is near-zero;
         # only None (no data at all) is the bypass case, guarded by outer if-not-None.
         if _rvol_float < RVOL_MIN_FLOOR:
@@ -1084,23 +1070,6 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         log.info(
             f"  [{ticker}] P-tier mult {_ptier_mult:.2f}× "
             f"(TCS {_tcs_val:.0f}, {_scan_type_v}) → risk ${risk_dollars:,.0f}"
-        )
-
-    # ── RVOL size bonus ────────────────────────────────────────────────────────
-    # High participation → higher expected follow-through → scale up size.
-    # RVOL ≥ 3.0 → 1.50×;  RVOL 2.0-2.99 → 1.25×;  RVOL < 2.0 → 1.00× (no bonus).
-    _rvol_mult = 1.0
-    if _rvol_val is not None:
-        _rvol_f = float(_rvol_val)
-        if _rvol_f >= 3.0:
-            _rvol_mult = 1.5
-        elif _rvol_f >= 2.0:
-            _rvol_mult = 1.25
-    if _rvol_mult != 1.0:
-        risk_dollars = round(risk_dollars * _rvol_mult, 2)
-        log.info(
-            f"  [{ticker}] RVOL {float(_rvol_val):.2f}× → RVOL size bonus "
-            f"{_rvol_mult:.2f}× → risk ${risk_dollars:,.0f}"
         )
 
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
@@ -1163,7 +1132,9 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"target=${result['target']} | id={order_id}"
         )
         _rvol_bonus_label = (
-            f" · {_rvol_mult:.2f}× RVOL⚡" if _rvol_mult != 1.0 else ""
+            f" · {_rvol_mult:.2f}× RVOL⚡"
+            if _rvol_mult is not None and _rvol_mult != 1.0
+            else ""
         )
         tg_send(
             f"📋 <b>{acct_type} Order Placed — {ticker}</b>\n"

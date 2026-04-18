@@ -296,7 +296,7 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
         try:
             q = (
                 backend.supabase.table("paper_trades")
-                .select("id,ticker,trade_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r")
+                .select("id,ticker,trade_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r,rvol")
                 .eq("user_id", user_id)
                 .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
                 .is_("tiered_pnl_r", "null")
@@ -328,6 +328,7 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
             ib_low         = row.get("ib_low")
             close_price    = row.get("close_price")
             existing_eod   = row.get("eod_pnl_r")
+            rvol_raw       = row.get("rvol")
 
             try:
                 if isinstance(trade_date_raw, str):
@@ -371,6 +372,13 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
                         close_px  = close_price,
                     )
                     eod_r = eod_only.get("eod_pnl_r")
+                    if eod_r is not None and rvol_raw is not None:
+                        try:
+                            _rvol_mult = backend.rvol_size_mult(float(rvol_raw))
+                            if _rvol_mult != 1.0:
+                                eod_r = round(float(eod_r) * _rvol_mult, 4)
+                        except (TypeError, ValueError):
+                            pass
                     patch_no_bars: dict = {"tiered_pnl_r": backend.TIERED_PNL_SENTINEL}
                     if existing_eod is None and eod_r is not None:
                         patch_no_bars["eod_pnl_r"] = eod_r
@@ -401,6 +409,20 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
 
             tiered_pnl_r = result.get("tiered_pnl_r")
             eod_pnl_r    = result.get("eod_pnl_r")
+
+            # Apply RVOL bonus position-size multiplier so tiered/EOD R values
+            # reflect the same dollar-scaled contribution as the live bot and
+            # the pnl_r_sim column (which is RVOL-adjusted via apply_rvol_sizing_to_sim).
+            if rvol_raw is not None:
+                try:
+                    _rvol_mult = backend.rvol_size_mult(float(rvol_raw))
+                    if _rvol_mult != 1.0:
+                        if tiered_pnl_r is not None:
+                            tiered_pnl_r = round(float(tiered_pnl_r) * _rvol_mult, 4)
+                        if eod_pnl_r is not None:
+                            eod_pnl_r = round(float(eod_pnl_r) * _rvol_mult, 4)
+                except (TypeError, ValueError):
+                    pass
 
             if tiered_pnl_r is None:
                 print("no entry cross — tiered stays NULL (matches live path)")
@@ -530,7 +552,7 @@ def backfill_backtest_sim_runs(
         try:
             q = (
                 backend.supabase.table("backtest_sim_runs")
-                .select("id,ticker,sim_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r")
+                .select("id,ticker,sim_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r,rvol")
                 .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
                 .is_("tiered_pnl_r", "null")
                 .not_.is_("close_price", "null")
@@ -595,6 +617,7 @@ def backfill_backtest_sim_runs(
                 ib_low       = row.get("ib_low")
                 close_price  = row.get("close_price")
                 existing_eod = row.get("eod_pnl_r")
+                rvol_raw     = row.get("rvol")
 
                 # ── Parse sim_date ────────────────────────────────────────────
                 try:
@@ -658,6 +681,13 @@ def backfill_backtest_sim_runs(
                         close_px  = close_price,
                     )
                     eod_r = eod_only.get("eod_pnl_r")
+                    if eod_r is not None and rvol_raw is not None:
+                        try:
+                            _rvol_mult = backend.rvol_size_mult(float(rvol_raw))
+                            if _rvol_mult != 1.0:
+                                eod_r = round(float(eod_r) * _rvol_mult, 4)
+                        except (TypeError, ValueError):
+                            pass
                     patch_no_bars: dict = {"id": row_id,
                                           "tiered_pnl_r": backend.TIERED_PNL_SENTINEL}
                     if existing_eod is None and eod_r is not None:
@@ -685,6 +715,19 @@ def backfill_backtest_sim_runs(
 
                 tiered_pnl_r = result.get("tiered_pnl_r")
                 eod_pnl_r    = result.get("eod_pnl_r")
+
+                # Apply RVOL bonus position-size multiplier so tiered/EOD R values
+                # reflect the same dollar-scaled contribution as pnl_r_sim.
+                if rvol_raw is not None:
+                    try:
+                        _rvol_mult = backend.rvol_size_mult(float(rvol_raw))
+                        if _rvol_mult != 1.0:
+                            if tiered_pnl_r is not None:
+                                tiered_pnl_r = round(float(tiered_pnl_r) * _rvol_mult, 4)
+                            if eod_pnl_r is not None:
+                                eod_pnl_r = round(float(eod_pnl_r) * _rvol_mult, 4)
+                    except (TypeError, ValueError):
+                        pass
 
                 if tiered_pnl_r is None:
                     tiered_pnl_r = 0.0

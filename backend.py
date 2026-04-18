@@ -10973,23 +10973,6 @@ def adaptive_target_r(tcs: float, scan_type: str = "", structure: str = "") -> f
     return float(cfg.get("global_fallback_target_r", 1.0))
 
 
-def rvol_size_mult(rvol: float) -> float:
-    """Return RVOL bonus position-size multiplier.
-
-    Reads rvol_size_tiers from adaptive_exits.json (loaded into
-    _ADAPTIVE_EXITS_CFG at module start).  Tiers are matched highest-first
-    so rvol=4.0 returns the 3.5× tier multiplier (1.5×), not the 2.5× tier.
-    Returns 1.0 when rvol is below all configured thresholds or config is absent.
-
-    Mirrors paper_trader_bot._rvol_size_mult for use in backtest simulations.
-    """
-    tiers = _ADAPTIVE_EXITS_CFG.get("rvol_size_tiers", [])
-    for tier in sorted(tiers, key=lambda t: t["rvol_min"], reverse=True):
-        if rvol >= tier["rvol_min"]:
-            return float(tier["multiplier"])
-    return 1.0
-
-
 def apply_rvol_sizing_to_sim(sim: dict, rvol_raw) -> dict:
     """Apply RVOL bonus position-size multiplier to a compute_trade_sim() result.
 
