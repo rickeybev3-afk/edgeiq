@@ -7904,6 +7904,10 @@ def run_pending_migrations() -> dict:
         # vwap_at_ib for backtest_sim_runs — written by batch_backtest.py (optional field)
         # used by get_backtest_pace_target() to apply full live filter stack (TCS+IB+VWAP)
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS vwap_at_ib FLOAT",
+        # skip_reason — written by _place_order_for_setup() in paper_trader_bot.py
+        # values: order_placed | orders_disabled | non_directional | bearish_break_filtered
+        #         ib_too_wide | vwap_misaligned | pdt_blocked | concurrent_cap | order_failed | unknown
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS skip_reason TEXT",
         # paper_trades pnl_r_sim — needed by mv_paper_tiered_pnl_summary materialized view
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT",
     ]

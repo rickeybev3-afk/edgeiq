@@ -22177,6 +22177,268 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
+    # SECTION 1b1b — ALPACA ORDERS PANEL
+    # Shows the signal→order funnel: which paper_trades rows became real Alpaca
+    # bracket orders and why the rest were filtered out.
+    # ════════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📋 Alpaca Orders — Signal → Order Funnel")
+    st.caption(
+        "Every logged signal (paper_trades) vs. actual Alpaca bracket orders placed. "
+        "Rows without skip_reason are historical — backfill runs automatically on first view."
+    )
+
+    if not _pt_df.empty:
+        _ao_df = _pt_df.copy()
+
+        # ── One-time historical backfill of skip_reason ─────────────────────
+        # For rows that pre-date skip_reason logging, infer the reason from
+        # available columns so the funnel is meaningful even for old data.
+        @st.cache_data(ttl=600, show_spinner=False)
+        def _backfill_skip_reason_once(uid: str) -> int:
+            """Infer skip_reason for historical rows that have none.
+
+            Rules (applied in priority order):
+              1. alpaca_order_id IS NOT NULL          → order_placed
+              2. predicted = 'Bearish Break'           → bearish_break_filtered
+              3. everything else with no order         → unknown
+            Returns count of rows updated.
+            """
+            if not supabase:
+                return 0
+            try:
+                _updated = 0
+                _q_null = (
+                    supabase.table("paper_trades")
+                    .select("id,predicted,alpaca_order_id")
+                    .eq("user_id", uid)
+                    .is_("skip_reason", "null")
+                    .limit(5000)
+                )
+                _hist = _q_null.execute().data or []
+                if not _hist:
+                    return 0
+                _placed  = [r["id"] for r in _hist if r.get("alpaca_order_id")]
+                _bearish = [r["id"] for r in _hist
+                            if not r.get("alpaca_order_id") and r.get("predicted") == "Bearish Break"]
+                _rest    = [r["id"] for r in _hist
+                            if not r.get("alpaca_order_id") and r.get("predicted") != "Bearish Break"]
+                for _ids, _reason in ((_placed, "order_placed"), (_bearish, "bearish_break_filtered"), (_rest, "unknown")):
+                    for _i in range(0, len(_ids), 50):
+                        _chunk = _ids[_i:_i + 50]
+                        supabase.table("paper_trades").update(
+                            {"skip_reason": _reason}
+                        ).in_("id", _chunk).execute()
+                        _updated += len(_chunk)
+                return _updated
+            except Exception as _bf_err:
+                return 0
+
+        _backfill_skip_reason_once(uid=_AUTH_USER_ID)
+
+        # Re-freshen skip_reason from live data now that backfill ran
+        if "skip_reason" not in _ao_df.columns:
+            _ao_df["skip_reason"] = None
+
+        # ── Summary numbers ─────────────────────────────────────────────────
+        _ao_total_signals  = len(_ao_df)
+        _ao_has_order      = _ao_df["alpaca_order_id"].notna() if "alpaca_order_id" in _ao_df.columns else pd.Series([False]*len(_ao_df))
+        _ao_total_placed   = int(_ao_has_order.sum())
+        _ao_has_fill       = (_ao_df["alpaca_fill_price"].notna() if "alpaca_fill_price" in _ao_df.columns
+                              else pd.Series([False]*len(_ao_df)))
+        _ao_total_filled   = int(_ao_has_fill.sum())
+        _ao_cancelled      = _ao_total_placed - _ao_total_filled
+        _ao_filtered_out   = _ao_total_signals - _ao_total_placed
+
+        # ── Summary cards ───────────────────────────────────────────────────
+        _ao_c1, _ao_c2, _ao_c3, _ao_c4 = st.columns(4)
+        with _ao_c1:
+            st.markdown(
+                f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Signals Logged</div>'
+                f'<div style="font-size:28px;font-weight:700;color:#cfd8dc;">{_ao_total_signals}</div>'
+                f'<div style="font-size:12px;color:#78909c;">paper_trades rows</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+        with _ao_c2:
+            _ao_placed_color = "#66bb6a" if _ao_total_placed > 0 else "#90a4ae"
+            st.markdown(
+                f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Orders Placed</div>'
+                f'<div style="font-size:28px;font-weight:700;color:{_ao_placed_color};">{_ao_total_placed}</div>'
+                f'<div style="font-size:12px;color:#78909c;">{_ao_filtered_out} filtered out</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+        with _ao_c3:
+            _ao_fill_color = "#66bb6a" if _ao_total_filled > 0 else "#90a4ae"
+            st.markdown(
+                f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Orders Filled</div>'
+                f'<div style="font-size:28px;font-weight:700;color:{_ao_fill_color};">{_ao_total_filled}</div>'
+                f'<div style="font-size:12px;color:#78909c;">{_ao_cancelled} cancelled / expired</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+        with _ao_c4:
+            _ao_funnel_pct = round(_ao_total_placed / _ao_total_signals * 100, 1) if _ao_total_signals else 0
+            _ao_fp_color   = "#66bb6a" if _ao_funnel_pct >= 30 else ("#ef6c00" if _ao_funnel_pct >= 10 else "#90a4ae")
+            st.markdown(
+                f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Order Rate</div>'
+                f'<div style="font-size:28px;font-weight:700;color:{_ao_fp_color};">{_ao_funnel_pct}%</div>'
+                f'<div style="font-size:12px;color:#78909c;">signals → orders</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Signal → Order funnel breakdown ────────────────────────────────
+        _ao_col_left, _ao_col_right = st.columns([1, 1])
+
+        with _ao_col_left:
+            st.markdown(
+                '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                'text-transform:uppercase;margin-bottom:8px;">Filter Funnel Breakdown</div>',
+                unsafe_allow_html=True,
+            )
+
+            _skip_labels = {
+                "order_placed":          ("✅ Order Placed",         "#66bb6a"),
+                "orders_disabled":       ("⏸ Orders Disabled",      "#78909c"),
+                "non_directional":       ("↔ Non-Directional",       "#90a4ae"),
+                "bearish_break_filtered":("🔴 Bearish Break (skip)", "#ef5350"),
+                "ib_too_wide":           ("📏 IB Too Wide (≥10%)",   "#ef6c00"),
+                "vwap_misaligned":       ("📉 VWAP Misaligned",      "#ffa726"),
+                "pdt_blocked":           ("🚫 PDT Blocked",          "#ab47bc"),
+                "concurrent_cap":        ("🔒 Position Cap",         "#7e57c2"),
+                "invalid_ib":            ("⚠ Invalid IB",            "#546e7a"),
+                "order_failed":          ("❌ Order Failed",          "#c62828"),
+                "unknown":               ("❓ Unknown / Historical",  "#607d8b"),
+            }
+
+            _sr_counts = {}
+            if "skip_reason" in _ao_df.columns:
+                _sr_counts = _ao_df["skip_reason"].value_counts().to_dict()
+
+            _funnel_rows = ""
+            _funnel_total = sum(_sr_counts.values()) or 1
+            for _key, (_label, _color) in _skip_labels.items():
+                _cnt = _sr_counts.get(_key, 0)
+                if _cnt == 0:
+                    continue
+                _pct = round(_cnt / _ao_total_signals * 100, 1)
+                _bar_w = round(_cnt / _ao_total_signals * 100)
+                _funnel_rows += (
+                    f'<tr>'
+                    f'<td style="padding:4px 8px;color:{_color};font-size:12px;">{_label}</td>'
+                    f'<td style="padding:4px 8px;text-align:right;font-weight:600;color:#cfd8dc;font-size:13px;">{_cnt}</td>'
+                    f'<td style="padding:4px 8px;width:100px;">'
+                    f'<div style="background:#1e2a3a;border-radius:3px;height:8px;">'
+                    f'<div style="background:{_color};width:{_bar_w}%;height:8px;border-radius:3px;"></div>'
+                    f'</div></td>'
+                    f'<td style="padding:4px 8px;color:#78909c;font-size:11px;">{_pct}%</td>'
+                    f'</tr>'
+                )
+            if not _funnel_rows:
+                _funnel_rows = '<tr><td colspan="4" style="color:#78909c;padding:8px;font-size:12px;">No skip_reason data yet — will populate as bot runs</td></tr>'
+
+            st.markdown(
+                f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;">'
+                f'<thead><tr>'
+                f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Reason</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Count</th>'
+                f'<th style="padding:6px 8px;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Share</th>'
+                f'<th style="padding:6px 8px;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">%</th>'
+                f'</tr></thead>'
+                f'<tbody>{_funnel_rows}</tbody>'
+                f'</table>',
+                unsafe_allow_html=True,
+            )
+
+        with _ao_col_right:
+            # ── Placed orders detail table ──────────────────────────────────
+            st.markdown(
+                '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                'text-transform:uppercase;margin-bottom:8px;">Placed Order Details</div>',
+                unsafe_allow_html=True,
+            )
+
+            _placed_df = _ao_df[_ao_has_order].copy() if _ao_total_placed > 0 else pd.DataFrame()
+
+            if _placed_df.empty:
+                st.markdown(
+                    '<div style="background:#131f2e;border-radius:8px;padding:16px;'
+                    'color:#78909c;font-size:13px;text-align:center;">'
+                    'No Alpaca orders placed yet — orders appear here once LIVE_ORDERS_ENABLED=true</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                _ord_rows_html = ""
+                for _, _ord in _placed_df.sort_values("trade_date", ascending=False).iterrows():
+                    _ord_ticker  = str(_ord.get("ticker", "—"))
+                    _ord_date    = str(_ord.get("trade_date", "—"))[:10]
+                    _ord_dir     = str(_ord.get("predicted", "—"))
+                    _ord_dir_col = "#66bb6a" if "Bullish" in _ord_dir else "#ef5350"
+                    _ord_dir_lbl = "▲ Bull" if "Bullish" in _ord_dir else "▼ Bear"
+                    _ord_ib_h    = float(_ord.get("ib_high") or 0)
+                    _ord_ib_l    = float(_ord.get("ib_low")  or 0)
+                    _ord_fill    = _ord.get("alpaca_fill_price")
+                    _ord_fill_s  = f"${float(_ord_fill):.2f}" if _ord_fill else "—"
+                    _ord_qty     = _ord.get("alpaca_qty", "—")
+                    _ord_wl      = str(_ord.get("win_loss", "—"))
+                    _ord_wl_col  = "#66bb6a" if _ord_wl in ("Win","W") else ("#ef5350" if _ord_wl in ("Loss","L") else "#78909c")
+                    _ord_oid     = str(_ord.get("alpaca_order_id", ""))
+                    _ord_oid_s   = _ord_oid[:8] + "…" if len(_ord_oid) > 8 else _ord_oid
+
+                    # R multiple from fill price
+                    _ord_r_s = "—"
+                    if _ord_fill and _ord_ib_h > 0 and _ord_ib_l > 0:
+                        _ib_range = _ord_ib_h - _ord_ib_l
+                        _fill_f   = float(_ord_fill)
+                        _eod_px   = float(_ord.get("close_price") or 0)
+                        if _eod_px > 0 and _ib_range > 0:
+                            if "Bullish" in _ord_dir:
+                                _r_val = (_eod_px - _fill_f) / _ib_range
+                            else:
+                                _r_val = (_fill_f - _eod_px) / _ib_range
+                            _r_col = "#66bb6a" if _r_val >= 0 else "#ef5350"
+                            _ord_r_s = f'<span style="color:{_r_col};font-weight:600;">{_r_val:+.2f}R</span>'
+
+                    _ord_rows_html += (
+                        f'<tr style="border-bottom:1px solid #1e2a3a;">'
+                        f'<td style="padding:5px 8px;font-size:12px;color:#cfd8dc;">{_ord_date}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;font-weight:600;color:#4fc3f7;">{_ord_ticker}</td>'
+                        f'<td style="padding:5px 8px;font-size:11px;color:{_ord_dir_col};">{_ord_dir_lbl}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;color:#cfd8dc;">{_ord_fill_s}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;color:#cfd8dc;">{_ord_qty}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;">{_ord_r_s}</td>'
+                        f'<td style="padding:5px 8px;font-size:11px;color:{_ord_wl_col};">{_ord_wl}</td>'
+                        f'<td style="padding:5px 8px;font-size:10px;color:#546e7a;font-family:monospace;">{_ord_oid_s}</td>'
+                        f'</tr>'
+                    )
+
+                st.markdown(
+                    f'<div style="overflow-x:auto;">'
+                    f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;">'
+                    f'<thead><tr style="background:#1a2636;">'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Date</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Ticker</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Dir</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Fill $</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Qty</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">EOD R</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">W/L</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Order ID</th>'
+                    f'</tr></thead>'
+                    f'<tbody>{_ord_rows_html}</tbody>'
+                    f'</table></div>',
+                    unsafe_allow_html=True,
+                )
+
+    else:
+        st.info("No paper trades logged yet — the funnel will populate as the bot runs.", icon="📋")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════════
     # SECTION 1b2 — BACKTEST SIM P&L (from backtest_sim_runs)
     # Shows the same three-scenario layout as SECTION 1b (paper trades) but
     # sourced from historical batch-backtest data.

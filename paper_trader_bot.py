@@ -676,19 +676,43 @@ def _warn_pdt_equity_floor(equity: float | None = None) -> None:
     )
 
 
+def _patch_skip_reason(r: dict, ticker: str, reason: str) -> None:
+    """Write skip_reason onto the matching paper_trades row.
+
+    Matches on (user_id, trade_date, ticker) — the same key the order-metadata
+    patch uses.  Failures are silently swallowed so the main scan loop is never
+    blocked by a DB write error.
+    """
+    if not _supabase_client:
+        return
+    try:
+        _supabase_client.table("paper_trades").update(
+            {"skip_reason": reason}
+        ).eq("user_id", USER_ID).eq(
+            "trade_date", str(r.get("sim_date") or r.get("trade_date") or "")
+        ).eq("ticker", ticker.upper()).execute()
+    except Exception as _sr_err:
+        log.debug(f"  [{ticker}] skip_reason patch failed (non-fatal): {_sr_err}")
+
+
 def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
 
     Only runs when LIVE_ORDERS_ENABLED=true.  Skips non-directional predictions.
     Sizes at 1% of current account equity (capped $250–$2,000).
-    Patches the paper_trades row with alpaca_order_id, alpaca_qty, order_placed_at.
+    Patches the paper_trades row with alpaca_order_id, alpaca_qty, order_placed_at,
+    and skip_reason (always written so the funnel panel can count every row).
     """
+    _ticker_raw = r.get("ticker", "unknown")
+
     if not LIVE_ORDERS_ENABLED:
+        _patch_skip_reason(r, _ticker_raw, "orders_disabled")
         return
 
     direction = r.get("predicted", "")
     if direction not in ("Bullish Break", "Bearish Break"):
-        log.info(f"  [{r.get('ticker')}] skip order — prediction is '{direction}' (not directional)")
+        log.info(f"  [{_ticker_raw}] skip order — prediction is '{direction}' (not directional)")
+        _patch_skip_reason(r, _ticker_raw, "non_directional")
         return
 
     # ── Universe-alignment filter ─────────────────────────────────────────────
@@ -699,9 +723,10 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     # Skip all Bearish Break signals until we build a dedicated gap-down universe.
     if direction == "Bearish Break":
         log.info(
-            f"  [{r.get('ticker')}] skip order — Bearish Break filtered: "
+            f"  [{_ticker_raw}] skip order — Bearish Break filtered: "
             f"gap-up universe hist WR 40% (vs 71% Bullish). Re-enable with gap-down screener."
         )
+        _patch_skip_reason(r, _ticker_raw, "bearish_break_filtered")
         return
 
     ticker = r.get("ticker", "").upper()
@@ -719,6 +744,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"No new orders will be placed until a trade day rolls off.\n"
             f"<i>FINRA PDT rule: &lt;$25k accounts limited to 3 round-trips / 5 days.</i>"
         )
+        _patch_skip_reason(r, ticker, "pdt_blocked")
         return
 
     # ── PDT equity floor warning (fires if equity near $25k boundary) ──────────
@@ -736,12 +762,14 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"Open positions: <b>{_pos_count}/{MAX_CONCURRENT_POSITIONS}</b>\n"
             f"Waiting for an existing position to close before adding new exposure."
         )
+        _patch_skip_reason(r, ticker, "concurrent_cap")
         return
 
     ib_high = float(r.get("ib_high") or 0)
     ib_low  = float(r.get("ib_low")  or 0)
     if ib_high <= 0 or ib_low <= 0 or ib_high <= ib_low:
         log.warning(f"  [{ticker}] skip order — invalid IB ({ib_low}–{ib_high})")
+        _patch_skip_reason(r, ticker, "invalid_ib")
         return
 
     risk_dollars = _compute_risk_dollars()
@@ -764,6 +792,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"IB range <b>{ib_range_pct_val:.1f}%</b> of price (≥ {_ib_threshold:.1f}% threshold)\n"
                 f"Chaotic structure — hist WR 54-68% vs 72-86% when narrow"
             )
+            _patch_skip_reason(r, ticker, "ib_too_wide")
             return
 
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
@@ -792,6 +821,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"{direction}: close <b>${close_val:.2f}</b> is {_side_word} VWAP <b>${vwap_val:.2f}</b>\n"
                 f"Hist WR 71.8% misaligned vs 97.6% aligned — skipping"
             )
+            _patch_skip_reason(r, ticker, "vwap_misaligned")
             return
 
     result = place_alpaca_bracket_order(
@@ -823,19 +853,21 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} (1% of account = 1R)\n"
             f"<code>{order_id[:8]}…</code>"
         )
-        # Patch Supabase paper_trades row with order metadata
+        # Patch Supabase paper_trades row with order metadata + skip_reason
         if _supabase_client:
             try:
                 _supabase_client.table("paper_trades").update({
                     "alpaca_order_id":  order_id,
                     "alpaca_qty":       qty,
                     "order_placed_at":  datetime.utcnow().isoformat(),
+                    "skip_reason":      "order_placed",
                 }).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date", ""))).eq("ticker", ticker).execute()
             except Exception as _patch_err:
                 log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")
     else:
         log.warning(f"  ❌ [{ticker}] Order failed: {result.get('error')}")
         tg_send(f"⚠️ <b>{acct_type} Order Failed — {ticker}</b>\n{result.get('error','unknown error')}")
+        _patch_skip_reason(r, ticker, "order_failed")
 
 
 def tg_send(message: str) -> bool:
