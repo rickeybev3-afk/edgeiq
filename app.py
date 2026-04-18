@@ -24346,6 +24346,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                 _bq_sync_prefs = {k: v for k, v in st.session_state.get("_cached_prefs", {}).items() if k != "bq_sync_dismissed_at"}
                                 save_user_prefs(_AUTH_USER_ID, _bq_sync_prefs)
                                 st.session_state["_cached_prefs"] = _bq_sync_prefs
+                            st.toast("Dates synced ✓", icon="✅")
                             st.rerun()
                         _bq_out_of_sync = (
                             _bq_start != _bq_bts_sync_start or _bq_end != _bq_bts_sync_end
