@@ -11644,7 +11644,8 @@ CREATE TABLE IF NOT EXISTS decision_log (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ,
   last_reopened_at TIMESTAMPTZ,
-  reopen_count     INTEGER NOT NULL DEFAULT 0
+  reopen_count     INTEGER NOT NULL DEFAULT 0,
+  reopen_notes     TEXT
 );
 """.strip()
 
@@ -11793,6 +11794,14 @@ def ensure_decision_log_table() -> bool:
     except Exception as e:
         print(f"ensure_decision_log_table migration (reopen_count) warning: {e}")
 
+    try:
+        supabase.rpc(
+            "exec_sql",
+            {"query": "ALTER TABLE decision_log ADD COLUMN IF NOT EXISTS reopen_notes TEXT"},
+        ).execute()
+    except Exception as e:
+        print(f"ensure_decision_log_table migration (reopen_notes) warning: {e}")
+
     return True
 
 
@@ -11842,6 +11851,7 @@ def update_decision_outcome(
     outcome_date,
     outcome_notes: str = "",
     is_edit: bool = False,
+    reopen_notes: str = "",
 ) -> bool:
     """Update outcome fields for an existing decision.
 
@@ -11852,22 +11862,21 @@ def update_decision_outcome(
     UTC time so the UI can display an "edited <date>" label.
 
     When ``outcome=="Pending"`` (a reopen) ``last_reopened_at`` is stamped with
-    the current UTC time so the UI can show a distinct "reopened" indicator.
+    the current UTC time, ``reopen_notes`` is written with the trader's optional
+    reason, and ``outcome_notes`` is left untouched so the original outcome
+    annotation is preserved.
     """
     if not supabase:
         return False
     try:
-        patch = {
-            "outcome": outcome,
-            "outcome_date": str(outcome_date) if outcome_date else None,
-            "outcome_notes": outcome_notes.strip() or None,
-        }
-        if is_edit:
-            patch["updated_at"] = datetime.utcnow().isoformat()
-            supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
-        elif outcome == "Pending":
-            patch["updated_at"] = None
-            patch["last_reopened_at"] = datetime.utcnow().isoformat()
+        if outcome == "Pending":
+            patch = {
+                "outcome": outcome,
+                "outcome_date": None,
+                "updated_at": None,
+                "last_reopened_at": datetime.utcnow().isoformat(),
+                "reopen_notes": reopen_notes.strip() or None,
+            }
             supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
             _inc_sql = (
                 f"UPDATE decision_log SET reopen_count = COALESCE(reopen_count, 0) + 1 "
@@ -11878,6 +11887,13 @@ def update_decision_outcome(
             except Exception as _e:
                 print(f"update_decision_outcome reopen_count increment warning: {_e}")
         else:
+            patch = {
+                "outcome": outcome,
+                "outcome_date": str(outcome_date) if outcome_date else None,
+                "outcome_notes": outcome_notes.strip() or None,
+            }
+            if is_edit:
+                patch["updated_at"] = datetime.utcnow().isoformat()
             supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
         return True
     except Exception as e:

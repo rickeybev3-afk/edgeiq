@@ -25915,6 +25915,7 @@ def render_decision_log_tab():
         _reason    = _dlr.get("reasoning") or ""
         _out_date  = _dlr.get("outcome_date") or ""
         _out_notes = _dlr.get("outcome_notes") or ""
+        _reopen_notes = _dlr.get("reopen_notes") or ""
         _dec_date  = _dlr.get("decision_date", "")
         _dec_id    = _dlr.get("id", "")
         _updated_at_raw = _dlr.get("updated_at") or ""
@@ -25965,6 +25966,14 @@ def render_decision_log_tab():
                 f'background:#0d1117; border-radius:4px; padding:6px 10px;">'
                 f'{_out_notes}</div>'
             )
+        if _reopen_notes:
+            _header_html += (
+                f'<div style="font-size:11px; color:#e65100; margin-top:6px; '
+                f'background:#1a0d00; border-radius:4px; padding:5px 10px;">'
+                f'<span style="font-size:10px; color:#bf360c; text-transform:uppercase; '
+                f'letter-spacing:0.5px; font-weight:700;">Reopen reason &nbsp;▸&nbsp;</span>'
+                f'{_reopen_notes}</div>'
+            )
         _header_html += '</div>'
         st.markdown(_header_html, unsafe_allow_html=True)
 
@@ -25996,7 +26005,7 @@ def render_decision_log_tab():
                     st.session_state[_reopen_key] = True
                     st.rerun()
             else:
-                st.warning("Reset outcome to Pending? This will clear the outcome date. Any reason you enter below will replace the existing notes.")
+                st.warning("Reset outcome to Pending? This will clear the outcome date. The existing outcome notes will be preserved.")
                 _ro_reason_key = f"dl_reopen_reason_{_dec_id}"
                 _ro_reason = st.text_input(
                     "Reason for reopening (optional)",
@@ -26006,7 +26015,7 @@ def render_decision_log_tab():
                 _ro_c1, _ro_c2 = st.columns([1, 5])
                 with _ro_c1:
                     if st.button("Yes, reopen", key=f"dl_reopen_yes_{_dec_id}", type="primary"):
-                        _ro_ok = update_decision_outcome(_dec_id, _dl_uid, "Pending", None, _ro_reason.strip())
+                        _ro_ok = update_decision_outcome(_dec_id, _dl_uid, "Pending", None, reopen_notes=_ro_reason.strip())
                         st.session_state[_reopen_key] = False
                         st.session_state.pop(_ro_reason_key, None)
                         if _ro_ok:
