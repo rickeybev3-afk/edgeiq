@@ -6453,6 +6453,25 @@ with st.sidebar:
 
         elif _bf_file_status == "cancelled":
             st.warning("⏹ Backfill was cancelled by the operator.")
+            try:
+                if os.path.exists(_BACKFILL_START_TIME) and os.path.exists(_BACKFILL_STATUS):
+                    with open(_BACKFILL_START_TIME) as _bf_cst_f:
+                        _bf_c_start = float(_bf_cst_f.read().strip())
+                    _bf_c_end = os.path.getmtime(_BACKFILL_STATUS)
+                    _bf_c_elapsed = max(0.0, _bf_c_end - _bf_c_start)
+                    _bf_c_int = int(_bf_c_elapsed)
+                    if _bf_c_int < 60:
+                        _bf_c_str = f"{_bf_c_int}s"
+                    elif _bf_c_int < 3600:
+                        _bf_c_str = f"{_bf_c_int // 60}m {_bf_c_int % 60:02d}s"
+                    else:
+                        _bf_c_h = _bf_c_int // 3600
+                        _bf_c_m = (_bf_c_int % 3600) // 60
+                        _bf_c_s = _bf_c_int % 60
+                        _bf_c_str = f"{_bf_c_h}h {_bf_c_m}m {_bf_c_s:02d}s"
+                    st.caption(f"⏱ Ran for {_bf_c_str} before being cancelled")
+            except Exception:
+                pass
             if not st.session_state.get("_bf_confirm_after_cancel"):
                 if st.button(
                     "▶️ Start New Run",
@@ -6491,6 +6510,25 @@ with st.sidebar:
 
         elif _bf_file_status == "error":
             st.error("❌ Backfill encountered an error. Check the log below.")
+            try:
+                if os.path.exists(_BACKFILL_START_TIME) and os.path.exists(_BACKFILL_STATUS):
+                    with open(_BACKFILL_START_TIME) as _bf_est_f:
+                        _bf_e_start = float(_bf_est_f.read().strip())
+                    _bf_e_end = os.path.getmtime(_BACKFILL_STATUS)
+                    _bf_e_elapsed = max(0.0, _bf_e_end - _bf_e_start)
+                    _bf_e_int = int(_bf_e_elapsed)
+                    if _bf_e_int < 60:
+                        _bf_e_str = f"{_bf_e_int}s"
+                    elif _bf_e_int < 3600:
+                        _bf_e_str = f"{_bf_e_int // 60}m {_bf_e_int % 60:02d}s"
+                    else:
+                        _bf_e_h = _bf_e_int // 3600
+                        _bf_e_m = (_bf_e_int % 3600) // 60
+                        _bf_e_s = _bf_e_int % 60
+                        _bf_e_str = f"{_bf_e_h}h {_bf_e_m}m {_bf_e_s:02d}s"
+                    st.caption(f"⏱ Ran for {_bf_e_str} before the error")
+            except Exception:
+                pass
             if st.button(
                 "🔄 Retry",
                 use_container_width=True,
