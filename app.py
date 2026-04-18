@@ -5827,8 +5827,21 @@ with st.sidebar:
                     int(_div_tg_clean)
                 except ValueError:
                     _div_errs.append("Telegram Chat ID must be a numeric value (e.g. -1001234567890).")
+            _div_dc_verified = False
+            _div_dc_name = None
             if _div_dc_clean and not _div_dc_clean.startswith("https://discord.com/api/webhooks/"):
                 _div_errs.append("Discord Webhook URL must start with https://discord.com/api/webhooks/")
+            elif _div_dc_clean:
+                with st.spinner("Validating Discord webhook…"):
+                    _div_dc_info = validate_discord_webhook(_div_dc_clean)
+                if _div_dc_info is None:
+                    _div_errs.append(
+                        "Could not connect to Discord with that webhook URL. "
+                        "Please check the URL and try again."
+                    )
+                else:
+                    _div_dc_verified = True
+                    _div_dc_name = _div_dc_info.get("name") or _div_dc_info.get("id", "")
             _div_tg_bot_name = None
             if _div_tg_token_clean:
                 with st.spinner("Validating Telegram bot token…"):
@@ -5856,8 +5869,14 @@ with st.sidebar:
                 st.session_state["_pref_div_tg_chat_id"] = _div_tg_clean
                 st.session_state["_pref_div_tg_token"] = _div_tg_token_clean
                 st.session_state["_pref_div_discord_webhook"] = _div_dc_clean
+                _div_success_parts = []
                 if _div_tg_bot_name:
-                    st.success(f"Connected to @{_div_tg_bot_name} — recipients saved.", icon="✅")
+                    _div_success_parts.append(f"Telegram bot @{_div_tg_bot_name} verified")
+                if _div_dc_verified:
+                    _div_dc_label = f'"{_div_dc_name}"' if _div_dc_name else "webhook"
+                    _div_success_parts.append(f"Discord {_div_dc_label} verified")
+                if _div_success_parts:
+                    st.success(", ".join(_div_success_parts) + " — recipients saved.", icon="✅")
                 else:
                     st.success("Divergence alert recipients saved.", icon="✅")
         else:

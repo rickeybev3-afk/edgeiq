@@ -12352,6 +12352,25 @@ def validate_tg_bot_token(token: str) -> dict | None:
     return None
 
 
+def validate_discord_webhook(url: str) -> dict | None:
+    """Send a GET request to a Discord webhook URL to verify it is live.
+
+    Returns the webhook info dict (keys: id, name, channel_id, …) on success,
+    or None on any failure (revoked webhook, bad URL, network error, etc.).
+    """
+    if not url:
+        return None
+    try:
+        _resp = requests.get(url, timeout=8)
+        if _resp.status_code == 200:
+            _data = _resp.json()
+            if _data.get("id"):
+                return _data
+    except Exception:
+        pass
+    return None
+
+
 def send_divergence_alert(
     flagged_rows: list,
     threshold: float,
