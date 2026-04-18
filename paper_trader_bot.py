@@ -1206,6 +1206,50 @@ _TRAILING_STOP_SR_CONTEXT: dict = {}
 # has already been sent.  Prevents duplicate alerts on successive 30-s loops.
 _TRAILING_STOP_STOPOUT_ALERTED: set = set()
 
+
+def _restore_trailing_stop_guard() -> None:
+    """Re-populate _TRAILING_STOP_ACTIVATED from DB on startup.
+
+    Queries paper_trades for today's rows that already have trail_activated=TRUE.
+    This means a bot restart won't re-fire trail placement on trades where a
+    trailing stop was already placed earlier in the same session.
+
+    Silently skips if the trail_activated column doesn't exist yet (migration not
+    yet applied) so the bot continues to function without it.
+    """
+    if not _supabase_client:
+        return
+    today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+    try:
+        rows = (
+            _supabase_client
+            .table("paper_trades")
+            .select("ticker")
+            .eq("user_id", USER_ID)
+            .eq("trade_date", today_str)
+            .eq("trail_activated", True)
+            .execute()
+        ).data or []
+        for row in rows:
+            ticker = (row.get("ticker") or "").upper()
+            if ticker:
+                _TRAILING_STOP_ACTIVATED.add((ticker, today_str))
+        if rows:
+            log.info(
+                f"[TrailingStop] Restored {len(rows)} guard key(s) from DB on startup: "
+                f"{[r.get('ticker') for r in rows]}"
+            )
+    except Exception as _e:
+        _es = str(_e)
+        if "trail_activated" in _es or "PGRST" in _es:
+            log.info(
+                "[TrailingStop] trail_activated column not in DB yet — "
+                "run migration add_trail_tighten_context_paper_trades.sql. "
+                "Guard set will be empty (no trailing-stop re-guard on restart)."
+            )
+        else:
+            log.warning(f"[TrailingStop] Could not restore guard set from DB: {_e}")
+
 # Session-open equity: date_str → equity float captured at ~9:35 AM ET each day.
 # Used by _force_close_all_positions() to compute equity change vs session open.
 _SESSION_OPEN_EQUITY: dict = {}
@@ -1474,10 +1518,10 @@ def _monitor_trailing_stops() -> None:
         trail_size     = stop_dist       # default: 1R trail
         trail_r_label  = "1R"
         trail_tightened = False
-        _sr_level: float | None = None   # S/R level that triggered tightening
-        _sr_dist:  float | None = None   # distance from cur_px to that level
+        _sr_level: float | None = None   # S/R level that triggered tightening (persisted to DB)
+        _sr_dist:  float | None = None   # distance from cur_px to that level (persisted to DB)
         _sr_label: str   | None = None   # "Resistance" or "Support"
-        _ctx_source: str | None = None   # which table the level came from
+        _ctx_source: str | None = None   # which table the level came from (persisted to DB)
         try:
             # ── Source 1: paper_trades columns (always current) ───────────────
             _pt_res = row.get("nearest_resistance")
@@ -1571,6 +1615,45 @@ def _monitor_trailing_stops() -> None:
 
         if ts_result["ok"]:
             _TRAILING_STOP_ACTIVATED.add(guard_key)
+
+            # ── Persist trail context to paper_trades ─────────────────────────
+            # Stored so the reason for tightening survives a bot restart and is
+            # available for post-trade analysis and close-out Telegram alerts.
+            if _supabase_client:
+                _trail_patch: dict = {
+                    "trail_activated": True,
+                    "trail_size_r":    trail_r_label,
+                }
+                if _sr_level is not None:
+                    _trail_patch["trail_sr_level"]    = round(_sr_level, 4)
+                if _sr_dist is not None:
+                    _trail_patch["trail_sr_distance"] = round(_sr_dist, 4)
+                if _ctx_source is not None:
+                    _trail_patch["trail_sr_source"]   = _ctx_source
+                _trail_order_id = row.get("alpaca_order_id")
+                try:
+                    if _trail_order_id:
+                        _supabase_client.table("paper_trades").update(_trail_patch).eq(
+                            "user_id", USER_ID
+                        ).eq("trade_date", today_str).eq(
+                            "alpaca_order_id", _trail_order_id
+                        ).execute()
+                    else:
+                        _supabase_client.table("paper_trades").update(_trail_patch).eq(
+                            "user_id", USER_ID
+                        ).eq("trade_date", today_str).eq("ticker", ticker).not_.is_(
+                            "alpaca_order_id", "null"
+                        ).execute()
+                    log.info(
+                        f"[TrailingStop] {ticker} — trail context persisted to paper_trades "
+                        f"(trail={trail_r_label}, sr_level={_sr_level}, source={_ctx_source})"
+                    )
+                except Exception as _persist_e:
+                    log.warning(
+                        f"[TrailingStop] {ticker} — could not persist trail context "
+                        f"(non-critical, likely missing migration): {_persist_e}"
+                    )
+
             if trail_tightened and _sr_level is not None and _sr_dist is not None:
                 _dir_word = "above" if _sr_label == "Resistance" else "below"
                 _src_tag  = f" [{_ctx_source}]" if _ctx_source else ""
@@ -1658,11 +1741,13 @@ def _force_close_all_positions() -> None:
     # entry_price_sim and stop_price_sim for R calculations (stop distance = 1R).
     pt_rows_by_ticker: dict[str, dict] = {}
     if _supabase_client:
+        _fc_base_cols = "ticker,entry_price_sim,stop_price_sim,alpaca_fill_price,alpaca_qty,alpaca_order_id"
+        _fc_trail_cols = ",trail_size_r,trail_sr_level,trail_sr_distance,trail_sr_source"
         try:
             pt_data = (
                 _supabase_client
                 .table("paper_trades")
-                .select("ticker,entry_price_sim,stop_price_sim,alpaca_fill_price,alpaca_qty,alpaca_order_id")
+                .select(_fc_base_cols + _fc_trail_cols)
                 .eq("user_id", USER_ID)
                 .eq("trade_date", today_str)
                 .in_("ticker", list(pos_snapshot.keys()))
@@ -1674,7 +1759,31 @@ def _force_close_all_positions() -> None:
                 if sym:
                     pt_rows_by_ticker[sym] = row
         except Exception as _pt_err:
-            log.warning(f"[ForceClose] Could not fetch paper_trades rows: {_pt_err}")
+            _pt_es = str(_pt_err)
+            if any(c in _pt_es for c in ("trail_size_r", "trail_sr_level", "trail_sr_distance", "trail_sr_source", "PGRST")):
+                log.info(
+                    "[ForceClose] Trail context columns not in DB yet — retrying without them. "
+                    "Run migration add_trail_tighten_context_paper_trades.sql to enable trail context in close-out alerts."
+                )
+                try:
+                    pt_data = (
+                        _supabase_client
+                        .table("paper_trades")
+                        .select(_fc_base_cols)
+                        .eq("user_id", USER_ID)
+                        .eq("trade_date", today_str)
+                        .in_("ticker", list(pos_snapshot.keys()))
+                        .not_.is_("alpaca_order_id", "null")
+                        .execute()
+                    ).data or []
+                    for row in pt_data:
+                        sym = (row.get("ticker") or "").upper()
+                        if sym:
+                            pt_rows_by_ticker[sym] = row
+                except Exception as _pt_err2:
+                    log.warning(f"[ForceClose] Could not fetch paper_trades rows (fallback): {_pt_err2}")
+            else:
+                log.warning(f"[ForceClose] Could not fetch paper_trades rows: {_pt_err}")
 
     closed   = []
     failed   = []
@@ -1793,13 +1902,16 @@ def _force_close_all_positions() -> None:
                     exit_fill = avg_exit if pos_side == "long" else avg_entry
 
                     trade_summaries.append({
-                        "symbol":       sym,
-                        "avg_entry":    snap_entry if snap_entry > 0 else avg_entry,
-                        "avg_exit":     exit_fill,
-                        "qty":          qty,
-                        "pnl_dollars":  pnl_dollars,
-                        "pnl_r":        pnl_r,
-                        "win_loss":     wl,
+                        "symbol":          sym,
+                        "avg_entry":       snap_entry if snap_entry > 0 else avg_entry,
+                        "avg_exit":        exit_fill,
+                        "qty":             qty,
+                        "pnl_dollars":     pnl_dollars,
+                        "pnl_r":           pnl_r,
+                        "win_loss":        wl,
+                        "trail_size_r":    pt_row.get("trail_size_r"),
+                        "trail_sr_level":  pt_row.get("trail_sr_level"),
+                        "trail_sr_source": pt_row.get("trail_sr_source"),
                     })
 
                     # Patch paper_trades row with win_loss, alpaca_exit_fill_price, pnl_r_actual.
@@ -1871,7 +1983,15 @@ def _force_close_all_positions() -> None:
                 r   = t["pnl_r"]
                 emoji = "🟢" if wl == "Win" else ("🔴" if wl == "Loss" else "⬜")
                 r_str = f" | {r:+.2f}R" if r is not None else ""
-                lines.append(f"  {emoji} {sym}: ${usd:+.2f}{r_str}")
+                # Trail context note (populated from the persisted columns)
+                _t_trail = t.get("trail_size_r")
+                _t_level = t.get("trail_sr_level")
+                trail_str = ""
+                if _t_trail:
+                    trail_str = f" | trail {_t_trail}"
+                    if _t_level is not None:
+                        trail_str += f" (S/R ${float(_t_level):.2f})"
+                lines.append(f"  {emoji} {sym}: ${usd:+.2f}{r_str}{trail_str}")
 
             lines.append("")
             if r_known:
@@ -5165,6 +5285,10 @@ def main():
 
     # Ensure cognitive delta log table exists
     ensure_cognitive_delta_table()
+
+    # Restore trailing-stop guard set from DB so trades already converted to a
+    # trailing stop before this restart are not re-triggered on the next loop.
+    _restore_trailing_stop_guard()
 
     # Start Telegram listener in background daemon thread
     import threading as _threading
