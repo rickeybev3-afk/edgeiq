@@ -56,6 +56,16 @@ interface PaperLookbackState {
   saved: boolean;
 }
 
+interface BackfillHeartbeatWindowState {
+  hours: number;
+  source: "env" | "override";
+  draft: string;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface BackfillHealth {
   available: boolean;
   loading: boolean;
@@ -253,6 +263,43 @@ export default function Settings() {
     saved: false,
   });
 
+  const [heartbeatWindow, setHeartbeatWindow] = useState<BackfillHeartbeatWindowState>({
+    hours: 25,
+    source: "env",
+    draft: "25",
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/backfill-heartbeat-window")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setHeartbeatWindow((s) => ({
+            ...s,
+            hours: data.hours,
+            source: data.source === "override" ? "override" : "env",
+            draft: String(data.hours),
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load heartbeat window.";
+          setHeartbeatWindow((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/paper-lookback")
@@ -327,8 +374,8 @@ export default function Settings() {
   }, []);
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#paper-lookback", "#eod-recalc-health"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, paperLookback.loading, eodRecalcHealth.loading]
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading]
   );
 
   async function handleChange(newMode: TradingMode) {
@@ -406,6 +453,67 @@ export default function Settings() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setBackfillErrAlerts((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handleHeartbeatWindowSave() {
+    const parsed = parseFloat(heartbeatWindow.draft);
+    if (isNaN(parsed) || parsed < 1 || parsed > 8760) {
+      setHeartbeatWindow((s) => ({ ...s, error: "Enter a number between 1 and 8760." }));
+      return;
+    }
+    setHeartbeatWindow((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/backfill-heartbeat-window", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours: parsed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setHeartbeatWindow((s) => ({
+        ...s,
+        hours: data.hours,
+        source: data.source === "override" ? "override" : "env",
+        draft: String(data.hours),
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setHeartbeatWindow((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setHeartbeatWindow((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handleHeartbeatWindowReset() {
+    setHeartbeatWindow((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/backfill-heartbeat-window", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setHeartbeatWindow((s) => ({
+        ...s,
+        hours: data.hours,
+        source: "env",
+        draft: String(data.hours),
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setHeartbeatWindow((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setHeartbeatWindow((s) => ({ ...s, saving: false, error: msg }));
     }
   }
 
@@ -961,6 +1069,122 @@ export default function Settings() {
           {paperLookback.error && (
             <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
               ⚠ {paperLookback.error}
+            </p>
+          )}
+        </section>
+
+        <section
+          id="backfill-heartbeat-window"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "24px",
+            marginTop: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Backfill Alert Window
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            How many hours can pass since the last successful backfill before a Telegram alert is sent.
+            Corresponds to{" "}
+            <code style={{ fontFamily: "monospace", color: "#7dd3fc" }}>BACKFILL_HEARTBEAT_HOURS</code>{" "}
+            on the server. The default is 25 h (24-hour cycle plus a 1-hour grace period).
+          </p>
+
+          {heartbeatWindow.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  marginBottom: "14px",
+                }}
+              >
+                <input
+                  type="number"
+                  min={1}
+                  max={8760}
+                  step={0.5}
+                  value={heartbeatWindow.draft}
+                  disabled={heartbeatWindow.saving}
+                  onChange={(e) =>
+                    setHeartbeatWindow((s) => ({ ...s, draft: e.target.value, error: null }))
+                  }
+                  onKeyDown={(e) => e.key === "Enter" && handleHeartbeatWindowSave()}
+                  style={{
+                    width: "100px",
+                    padding: "8px 12px",
+                    background: "#0e1117",
+                    border: "1px solid #3d4f6b",
+                    borderRadius: "6px",
+                    color: "#f1f5f9",
+                    fontSize: "15px",
+                    fontFamily: "monospace",
+                    outline: "none",
+                  }}
+                />
+                <span style={{ fontSize: "13px", color: "#64748b" }}>hours</span>
+                <button
+                  onClick={handleHeartbeatWindowSave}
+                  disabled={heartbeatWindow.saving || heartbeatWindow.draft === String(heartbeatWindow.hours)}
+                  style={{
+                    padding: "8px 16px",
+                    background: "#2563eb",
+                    border: "none",
+                    borderRadius: "6px",
+                    color: "#fff",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: heartbeatWindow.saving || heartbeatWindow.draft === String(heartbeatWindow.hours) ? "not-allowed" : "pointer",
+                    opacity: heartbeatWindow.saving || heartbeatWindow.draft === String(heartbeatWindow.hours) ? 0.5 : 1,
+                  }}
+                >
+                  Save
+                </button>
+                {heartbeatWindow.source === "override" && (
+                  <button
+                    onClick={handleHeartbeatWindowReset}
+                    disabled={heartbeatWindow.saving}
+                    style={{
+                      padding: "8px 14px",
+                      background: "transparent",
+                      border: "1px solid #475569",
+                      borderRadius: "6px",
+                      color: "#94a3b8",
+                      fontSize: "13px",
+                      cursor: heartbeatWindow.saving ? "not-allowed" : "pointer",
+                      opacity: heartbeatWindow.saving ? 0.5 : 1,
+                    }}
+                  >
+                    Reset to env default
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: "12px", color: "#475569", margin: 0 }}>
+                {heartbeatWindow.source === "override"
+                  ? "Using a dashboard override. The server env var is ignored until reset."
+                  : `Reading from server environment (BACKFILL_HEARTBEAT_HOURS=${heartbeatWindow.hours}).`}
+              </p>
+            </div>
+          )}
+
+          {heartbeatWindow.saving && (
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "14px" }}>Saving…</p>
+          )}
+          {heartbeatWindow.saved && (
+            <p style={{ fontSize: "13px", color: "#4ade80", marginTop: "14px" }}>
+              ✓ Alert window updated.
+            </p>
+          )}
+          {heartbeatWindow.error && (
+            <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
+              ⚠ {heartbeatWindow.error}
             </p>
           )}
         </section>

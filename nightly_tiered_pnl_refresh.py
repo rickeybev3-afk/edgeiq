@@ -261,6 +261,18 @@ def _check_backfill_heartbeat() -> None:
             "Invalid BACKFILL_HEARTBEAT_HOURS value — falling back to 25 h default."
         )
         window_hours = 25.0
+    _prefs_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
+    try:
+        if os.path.exists(_prefs_file):
+            with open(_prefs_file) as _pf:
+                _all_prefs = json.load(_pf)
+            _owner_id = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
+            _owner_prefs = _all_prefs.get(_owner_id, {})
+            if "backfill_heartbeat_hours" in _owner_prefs:
+                window_hours = float(_owner_prefs["backfill_heartbeat_hours"])
+                log.info("Backfill heartbeat window overridden by dashboard setting: %.1f h.", window_hours)
+    except Exception as _pe:
+        log.warning("Could not read owner prefs for heartbeat window: %s", _pe)
     now_utc = datetime.datetime.now(datetime.timezone.utc)
 
     last_completed_at: str | None = None

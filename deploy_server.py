@@ -28,6 +28,10 @@ _TRADING_WRITE_SECRET = os.environ.get("DASHBOARD_WRITE_SECRET", "").strip()
 _USER_PREFS_FILE = ".local/user_prefs.json"
 _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
 _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
+try:
+    _DEFAULT_HEARTBEAT_HOURS = float(os.environ.get("BACKFILL_HEARTBEAT_HOURS", "25"))
+except (ValueError, TypeError):
+    _DEFAULT_HEARTBEAT_HOURS = 25.0
 
 
 def _get_trading_mode() -> str:
@@ -579,6 +583,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/eod-sweep":
             self._eod_sweep()
             return
+        if path == "/api/backfill-heartbeat-window":
+            self._backfill_heartbeat_window_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -620,6 +627,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/paper-lookback":
             self._paper_lookback_post()
+            return
+        if path == "/api/backfill-heartbeat-window":
+            self._backfill_heartbeat_window_post()
             return
         self._proxy() if streamlit_ready else self._loading()
 
@@ -1187,6 +1197,115 @@ class Handler(http.server.BaseHTTPRequestHandler):
             prefs["paper_close_lookback_days"] = days
             _save_owner_prefs(prefs)
             body = json.dumps({"days": days, "source": "override"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+    def _backfill_heartbeat_window_get(self):
+        """Return the effective backfill heartbeat window.
+
+        Reads backfill_heartbeat_hours from owner prefs when set, otherwise
+        returns the value of the BACKFILL_HEARTBEAT_HOURS env var (default 25).
+        Response: {"hours": float, "source": "override"|"env"}
+        """
+        try:
+            prefs = _load_owner_prefs()
+            if "backfill_heartbeat_hours" in prefs:
+                hours = float(prefs["backfill_heartbeat_hours"])
+                source = "override"
+            else:
+                hours = _DEFAULT_HEARTBEAT_HOURS
+                source = "env"
+            body = json.dumps({"hours": hours, "source": source}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _backfill_heartbeat_window_post(self):
+        """Accept {"hours": float|null} and persist backfill_heartbeat_hours in owner's user prefs.
+
+        Accepts a positive number between 1 and 8760 (365 days).  Passing null
+        for hours clears the override and reverts to the env-var default.
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "hours" not in payload:
+                body = json.dumps({"error": "'hours' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            raw_hours = payload["hours"]
+            if raw_hours is None:
+                prefs = _load_owner_prefs()
+                prefs.pop("backfill_heartbeat_hours", None)
+                _save_owner_prefs(prefs)
+                body = json.dumps({"hours": _DEFAULT_HEARTBEAT_HOURS, "source": "env"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            try:
+                hours = float(raw_hours)
+            except (TypeError, ValueError):
+                body = json.dumps({"error": "'hours' must be a number"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if hours < 1 or hours > 8760:
+                body = json.dumps({"error": "'hours' must be between 1 and 8760"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            prefs = _load_owner_prefs()
+            prefs["backfill_heartbeat_hours"] = hours
+            _save_owner_prefs(prefs)
+            body = json.dumps({"hours": hours, "source": "override"}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
