@@ -15118,6 +15118,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         )
                         _tk_persist_key = f"_drill_tcs_persist_{_tk_name}"
                         _tk_persisted_val = st.session_state.get(_tk_persist_key)
+                        # Seed from URL param `tkr_floor` when session_state has no value yet
+                        if _tk_persisted_val is None:
+                            _tk_url_floor_raw = st.query_params.get("tkr_floor", "")
+                            if _tk_url_floor_raw:
+                                try:
+                                    _tk_url_floor_int = int(_tk_url_floor_raw)
+                                    if _tk_url_floor_int in _tk_drill_floors:
+                                        _tk_persisted_val = _tk_url_floor_int
+                                        st.session_state[_tk_persist_key] = _tk_url_floor_int
+                                except (ValueError, TypeError):
+                                    pass
                         if _tk_persisted_val is not None and _tk_persisted_val in _tk_drill_floors:
                             _tk_drill_default_idx = _tk_drill_floors.index(_tk_persisted_val)
                         else:
@@ -15129,11 +15140,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         _dd_dr_filter_key = f"dd_delta_r_filter_{_tk_name}"
 
-                        def _make_drill_tcs_on_change(_widget_key, _pkey, _dr_fkey):
+                        def _make_drill_tcs_on_change(_widget_key, _pkey, _tk_prefix):
                             def _on_change():
-                                st.session_state[_pkey] = st.session_state[_widget_key]
-                                if _dr_fkey in st.session_state:
-                                    del st.session_state[_dr_fkey]
+                                _new_val = st.session_state[_widget_key]
+                                st.session_state[_pkey] = _new_val
+                                st.query_params["tkr_floor"] = str(_new_val)
+                                # Clear all delta-R filter keys for this ticker
+                                # (key format is dd_delta_r_filter_{ticker}_{floor})
+                                _dr_keys = [
+                                    k for k in list(st.session_state.keys())
+                                    if k.startswith(f"dd_delta_r_filter_{_tk_prefix}")
+                                ]
+                                for _k in _dr_keys:
+                                    del st.session_state[_k]
+                                if st.query_params.get("dd_dr_filter"):
+                                    del st.query_params["dd_dr_filter"]
                             return _on_change
 
                         _show_reset_btn = (
@@ -15154,13 +15175,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 index=_tk_drill_default_idx,
                                 key=f"drill_tcs_{_tk_name}",
                                 on_change=_make_drill_tcs_on_change(
-                                    f"drill_tcs_{_tk_name}", _tk_persist_key, _dd_dr_filter_key
+                                    f"drill_tcs_{_tk_name}", _tk_persist_key, _tk_name
                                 ),
                                 help=(
                                     "Select a TCS floor to view all individual trades for this "
                                     "ticker where TCS is at or above that cutoff."
                                 ),
                             )
+                        # Sync current floor value to URL param on every render
+                        if st.query_params.get("tkr_floor") != str(_tk_drill_floor):
+                            st.query_params["tkr_floor"] = str(_tk_drill_floor)
                         if _drill_btn_col is not None and _tk_drill_floor != _tk_drill_default:
                             with _drill_btn_col:
                                 st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
@@ -15176,8 +15200,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     _drill_widget_key = f"drill_tcs_{_tk_name}"
                                     if _drill_widget_key in st.session_state:
                                         del st.session_state[_drill_widget_key]
-                                    if _dd_dr_filter_key in st.session_state:
-                                        del st.session_state[_dd_dr_filter_key]
+                                    for _k in [
+                                        k for k in list(st.session_state.keys())
+                                        if k.startswith(f"dd_delta_r_filter_{_tk_name}")
+                                    ]:
+                                        del st.session_state[_k]
+                                    if "tkr_floor" in st.query_params:
+                                        del st.query_params["tkr_floor"]
+                                    if "dd_dr_filter" in st.query_params:
+                                        del st.query_params["dd_dr_filter"]
                                     st.rerun()
                         _tk_drill_mask = (
                             (_bt_df["ticker"] == _tk_name)
@@ -15371,6 +15402,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _dd_result_filter_key = f"dd_result_filter_{_tk_name}_{_tk_drill_floor}"
                             _dd_dr_filter     = "All"
                             _dd_result_filter = "All"
+                            # Seed Delta R filter from URL param `dd_dr_filter` if not yet in session
+                            _DD_DR_OPTS = ["All", "Tiered won (ΔR > 0)", "EOD won (ΔR < 0)"]
+                            _dd_url_dr = st.query_params.get("dd_dr_filter", "All")
+                            if _dd_url_dr not in _DD_DR_OPTS:
+                                _dd_url_dr = "All"
+                            if _dd_dr_filter_key not in st.session_state and _dd_url_dr != "All":
+                                st.session_state[_dd_dr_filter_key] = _dd_url_dr
                             _dd_unfiltered_total = len(_tk_drill_display)
                             if _dd_show_delta_r:
                                 _dd_fcol_result, _dd_fcol_dr = st.columns([2, 3])
@@ -15385,11 +15423,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 with _dd_fcol_dr:
                                     _dd_dr_filter = st.radio(
                                         "Filter by Delta R:",
-                                        ["All", "Tiered won (ΔR > 0)", "EOD won (ΔR < 0)"],
+                                        _DD_DR_OPTS,
                                         horizontal=True,
                                         key=_dd_dr_filter_key,
                                         label_visibility="visible",
                                     )
+                                # Sync Delta R filter selection to URL param
+                                if st.query_params.get("dd_dr_filter") != _dd_dr_filter:
+                                    st.query_params["dd_dr_filter"] = _dd_dr_filter
                             else:
                                 _dd_result_filter = st.radio(
                                     "Filter by Result:",
