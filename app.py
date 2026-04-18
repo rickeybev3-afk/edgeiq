@@ -14945,6 +14945,26 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             # Equity-only fallback: no R column available
                             _mini_eq  = _mini_div_data["eq_curve"]
                             _mini_n   = len(_mini_eq)
+                            # Pre-read filter state from session_state so chart reflects current filter
+                            _meq_pre_from     = st.session_state.get(f"_flt_meq_from_{_tk_name}")
+                            _meq_pre_to       = st.session_state.get(f"_flt_meq_to_{_tk_name}")
+                            _meq_pre_tcs      = st.session_state.get(f"_flt_meq_tcs_{_tk_name}") or 0
+                            _meq_pre_dates    = _mini_div_data.get("trade_dates", [])
+                            _meq_pre_tcs_vals = _mini_div_data.get("trade_tcs", [])
+                            _meq_pre_flt_on   = bool(_meq_pre_from or _meq_pre_to or _meq_pre_tcs > 0)
+                            _meq_flt_set = set()
+                            if _meq_pre_flt_on:
+                                for _pmi in range(1, _mini_n):
+                                    _ptd_idx  = _pmi - 1
+                                    _ptd_date = _meq_pre_dates[_ptd_idx] if _ptd_idx < len(_meq_pre_dates) else ""
+                                    _ptd_tcs  = int(_meq_pre_tcs_vals[_ptd_idx]) if _ptd_idx < len(_meq_pre_tcs_vals) else 0
+                                    if _meq_pre_from and _ptd_date and _ptd_date < str(_meq_pre_from):
+                                        continue
+                                    if _meq_pre_to and _ptd_date and _ptd_date > str(_meq_pre_to):
+                                        continue
+                                    if _meq_pre_tcs > 0 and _ptd_tcs < _meq_pre_tcs:
+                                        continue
+                                    _meq_flt_set.add(_pmi)
                             _mini_fig = go.Figure()
                             _mini_fig.add_trace(go.Scatter(
                                 x=list(range(_mini_n)),
@@ -14953,6 +14973,33 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 mode="lines",
                                 line=dict(color="#4fc3f7", width=1.5),
                             ))
+                            if _meq_pre_flt_on:
+                                if _meq_flt_set:
+                                    _meq_overlay_y = [
+                                        _mini_eq[i] if i in _meq_flt_set else None
+                                        for i in range(_mini_n)
+                                    ]
+                                    _mini_fig.add_trace(go.Scatter(
+                                        x=list(range(_mini_n)),
+                                        y=_meq_overlay_y,
+                                        name=f"Exported ({len(_meq_flt_set)} of {_mini_n - 1})",
+                                        mode="lines",
+                                        connectgaps=False,
+                                        line=dict(color="#ff9800", width=3),
+                                        showlegend=False,
+                                    ))
+                                _mini_fig.add_annotation(
+                                    text=f"✂️ {len(_meq_flt_set)} of {_mini_n - 1} trades",
+                                    xref="paper", yref="paper",
+                                    x=0.01, y=0.97,
+                                    xanchor="left", yanchor="top",
+                                    showarrow=False,
+                                    font=dict(color="#ff9800", size=11, family="monospace"),
+                                    bgcolor="rgba(0,0,0,0.45)",
+                                    borderpad=4,
+                                    bordercolor="rgba(255,152,0,0.4)",
+                                    borderwidth=1,
+                                )
                             _mini_fig.update_layout(
                                 height=240,
                                 margin=dict(l=10, r=10, t=10, b=10),
@@ -15220,6 +15267,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             else:
                                 _mini_div_msg = "Position sizing dampened raw edge here (equity lagged R)"
                             _mini_band_half = max(1, round(_mini_n * 0.015))
+                            # Pre-read filter state from session_state so chart reflects current filter
+                            _mdiv_pre_from     = st.session_state.get(f"_flt_mdiv_from_{_tk_name}")
+                            _mdiv_pre_to       = st.session_state.get(f"_flt_mdiv_to_{_tk_name}")
+                            _mdiv_pre_tcs      = st.session_state.get(f"_flt_mdiv_tcs_{_tk_name}") or 0
+                            _mdiv_pre_dates    = _mini_div_data.get("trade_dates", [])
+                            _mdiv_pre_tcs_vals = _mini_div_data.get("trade_tcs", [])
+                            _mdiv_pre_flt_on   = bool(_mdiv_pre_from or _mdiv_pre_to or _mdiv_pre_tcs > 0)
+                            _mdiv_flt_set = set()
+                            _mini_csv_len_pre = min(len(_mini_eq), len(_mini_r))
+                            if _mdiv_pre_flt_on:
+                                for _pdi in range(1, _mini_csv_len_pre):
+                                    _pdt_idx  = _pdi - 1
+                                    _pdt_date = _mdiv_pre_dates[_pdt_idx] if _pdt_idx < len(_mdiv_pre_dates) else ""
+                                    _pdt_tcs  = int(_mdiv_pre_tcs_vals[_pdt_idx]) if _pdt_idx < len(_mdiv_pre_tcs_vals) else 0
+                                    if _mdiv_pre_from and _pdt_date and _pdt_date < str(_mdiv_pre_from):
+                                        continue
+                                    if _mdiv_pre_to and _pdt_date and _pdt_date > str(_mdiv_pre_to):
+                                        continue
+                                    if _mdiv_pre_tcs > 0 and _pdt_tcs < _mdiv_pre_tcs:
+                                        continue
+                                    _mdiv_flt_set.add(_pdi)
                             _mini_fig = go.Figure()
                             _mini_fig.add_vrect(
                                 x0=max(0, _mini_idx - _mini_band_half),
@@ -15251,6 +15319,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 line=dict(color="#ef9a9a", width=1.5),
                                 yaxis="y2",
                             ))
+                            if _mdiv_pre_flt_on:
+                                if _mdiv_flt_set:
+                                    _mdiv_eq_overlay = [
+                                        _mini_eq[i] if i in _mdiv_flt_set else None
+                                        for i in range(_mini_csv_len_pre)
+                                    ]
+                                    _mdiv_r_overlay = [
+                                        _mini_r[i] if i in _mdiv_flt_set else None
+                                        for i in range(_mini_csv_len_pre)
+                                    ]
+                                    _mini_fig.add_trace(go.Scatter(
+                                        x=list(range(_mini_csv_len_pre)),
+                                        y=_mdiv_eq_overlay,
+                                        name=f"Exported equity ({len(_mdiv_flt_set)} trades)",
+                                        mode="lines",
+                                        connectgaps=False,
+                                        line=dict(color="#ff9800", width=3),
+                                        yaxis="y1",
+                                        showlegend=False,
+                                    ))
+                                    _mini_fig.add_trace(go.Scatter(
+                                        x=list(range(_mini_csv_len_pre)),
+                                        y=_mdiv_r_overlay,
+                                        name=f"Exported R ({len(_mdiv_flt_set)} trades)",
+                                        mode="lines",
+                                        connectgaps=False,
+                                        line=dict(color="#ff9800", width=3, dash="dot"),
+                                        yaxis="y2",
+                                        showlegend=False,
+                                    ))
+                                _mini_fig.add_annotation(
+                                    text=f"✂️ {len(_mdiv_flt_set)} of {_mini_csv_len_pre - 1} trades",
+                                    xref="paper", yref="paper",
+                                    x=0.01, y=0.97,
+                                    xanchor="left", yanchor="top",
+                                    showarrow=False,
+                                    font=dict(color="#ff9800", size=11, family="monospace"),
+                                    bgcolor="rgba(0,0,0,0.45)",
+                                    borderpad=4,
+                                    bordercolor="rgba(255,152,0,0.4)",
+                                    borderwidth=1,
+                                )
                             _mini_fig.update_layout(
                                 height=240,
                                 margin=dict(l=10, r=10, t=10, b=10),
