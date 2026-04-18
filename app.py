@@ -14926,8 +14926,29 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "Trade #": list(range(len(_mini_eq))),
                                     "Equity ($)": [round(v, 2) for v in _mini_eq],
                                 })
+                                _meq_prev_flt_col1, _ = st.columns([2, 2])
+                                with _meq_prev_flt_col1:
+                                    _meq_prev_eq_max = st.number_input(
+                                        "Show trades where equity ≤ ($)",
+                                        value=None,
+                                        placeholder="No filter",
+                                        key=f"_prev_eq_max_{_tk_name}",
+                                        help="Only show rows where Equity ($) is at or below this value",
+                                        label_visibility="visible",
+                                    )
+                                _meq_prev_filtered = _mini_eq_prev_df.copy()
+                                if _meq_prev_eq_max is not None:
+                                    _meq_prev_filtered = _meq_prev_filtered[
+                                        _meq_prev_filtered["Equity ($)"] <= _meq_prev_eq_max
+                                    ]
+                                _meq_prev_count = len(_meq_prev_filtered)
+                                _meq_prev_total = len(_mini_eq_prev_df)
+                                if _meq_prev_eq_max is not None:
+                                    st.caption(f"Showing {_meq_prev_count} of {_meq_prev_total} trades · click column headers to sort")
+                                else:
+                                    st.caption("Click column headers to sort")
                                 st.dataframe(
-                                    _mini_eq_prev_df,
+                                    _meq_prev_filtered,
                                     use_container_width=True,
                                     hide_index=True,
                                     column_config={
@@ -15213,8 +15234,43 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "Equity ($)": [round(_mini_eq[i], 2) for i in range(_mini_csv_len)],
                                     "Cumulative R": [round(_mini_r[i], 4) for i in range(_mini_csv_len)],
                                 })
+                                _mdiv_prev_flt_col1, _mdiv_prev_flt_col2 = st.columns([2, 2])
+                                with _mdiv_prev_flt_col1:
+                                    _mdiv_prev_eq_max = st.number_input(
+                                        "Show trades where equity ≤ ($)",
+                                        value=None,
+                                        placeholder="No filter",
+                                        key=f"_prev_div_eq_max_{_tk_name}",
+                                        help="Only show rows where Equity ($) is at or below this value",
+                                        label_visibility="visible",
+                                    )
+                                with _mdiv_prev_flt_col2:
+                                    _mdiv_prev_r_max = st.number_input(
+                                        "Show trades where Cumulative R ≤",
+                                        value=None,
+                                        placeholder="No filter",
+                                        key=f"_prev_div_r_max_{_tk_name}",
+                                        help="Only show rows where Cumulative R is at or below this value",
+                                        label_visibility="visible",
+                                    )
+                                _mdiv_prev_filtered = _mini_div_prev_df.copy()
+                                if _mdiv_prev_eq_max is not None:
+                                    _mdiv_prev_filtered = _mdiv_prev_filtered[
+                                        _mdiv_prev_filtered["Equity ($)"] <= _mdiv_prev_eq_max
+                                    ]
+                                if _mdiv_prev_r_max is not None:
+                                    _mdiv_prev_filtered = _mdiv_prev_filtered[
+                                        _mdiv_prev_filtered["Cumulative R"] <= _mdiv_prev_r_max
+                                    ]
+                                _mdiv_prev_count = len(_mdiv_prev_filtered)
+                                _mdiv_prev_total = len(_mini_div_prev_df)
+                                _mdiv_prev_any_filter = _mdiv_prev_eq_max is not None or _mdiv_prev_r_max is not None
+                                if _mdiv_prev_any_filter:
+                                    st.caption(f"Showing {_mdiv_prev_count} of {_mdiv_prev_total} trades · click column headers to sort")
+                                else:
+                                    st.caption("Click column headers to sort")
                                 st.dataframe(
-                                    _mini_div_prev_df,
+                                    _mdiv_prev_filtered,
                                     use_container_width=True,
                                     hide_index=True,
                                     column_config={
