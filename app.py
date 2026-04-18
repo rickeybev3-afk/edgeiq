@@ -5992,15 +5992,21 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    with st.sidebar.expander("⚠️ Sync Warning Resets", expanded=False):
+    _any_bts_dismissed  = bool(st.session_state.get("bts_sync_dismissed_at"))
+    _any_bq_dismissed   = bool(st.session_state.get("bq_sync_dismissed_at"))
+    _any_grid_dismissed = bool(st.session_state.get("grid_sync_dismissed_at"))
+    _either_dismissed = _any_bts_dismissed or _any_bq_dismissed or _any_grid_dismissed
+    _dismissed_count = sum([_any_bts_dismissed, _any_bq_dismissed, _any_grid_dismissed])
+    _sync_expander_label = (
+        f"⚠️ Sync Warning Resets ({_dismissed_count} dismissed)"
+        if _dismissed_count > 0
+        else "⚠️ Sync Warning Resets"
+    )
+    with st.sidebar.expander(_sync_expander_label, expanded=_either_dismissed):
         st.caption(
             "Dismissing a date-sync warning hides it until you reset it here. "
             "Use **Reset all** to restore Backtest P&L, Edge Map, and Screener / Outcome warnings at once."
         )
-        _any_bts_dismissed  = bool(st.session_state.get("bts_sync_dismissed_at"))
-        _any_bq_dismissed   = bool(st.session_state.get("bq_sync_dismissed_at"))
-        _any_grid_dismissed = bool(st.session_state.get("grid_sync_dismissed_at"))
-        _either_dismissed = _any_bts_dismissed or _any_bq_dismissed or _any_grid_dismissed
         if _either_dismissed:
             _dismissed_labels = []
             if _any_bts_dismissed:
