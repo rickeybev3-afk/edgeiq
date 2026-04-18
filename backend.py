@@ -9849,6 +9849,160 @@ def recompute_eod_pnl_for_filled_rows(user_id: str = "", progress_callback=None)
     return stats
 
 
+def sync_sim_fields_backtest(user_id: str = "") -> dict:
+    """Fill sim_outcome and related sim fields for backtest_sim_runs rows where
+    sim_outcome IS NULL.
+
+    Computes sim fields via compute_trade_sim() and writes a patch that includes
+    sim_version so that subsequent --skip-existing runs in run_sim_backfill.py
+    correctly skip the rows that were filled here.
+
+    Uses keyset (cursor) pagination ordered by id so that updating rows mid-loop
+    does not cause the offset window to skip un-processed rows.
+
+    Returns a dict with keys:
+      updated  – rows successfully patched
+      skipped  – rows where sim computation returned no_trade / missing / invalid
+      errors   – write errors encountered
+    """
+    PAGE_SZ = 1000
+    stats = {"updated": 0, "skipped": 0, "errors": 0}
+
+    if not supabase:
+        stats["errors"] = 1
+        return stats
+
+    _SIM_COLS = (
+        "id,predicted,actual_outcome,ib_low,ib_high,"
+        "follow_thru_pct,close_price,false_break_up,false_break_down"
+    )
+
+    last_id = None
+    while True:
+        try:
+            q = (
+                supabase.table("backtest_sim_runs")
+                .select(_SIM_COLS)
+                .is_("sim_outcome", "null")
+                .order("id")
+                .limit(PAGE_SZ)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            if last_id is not None:
+                q = q.gt("id", last_id)
+            chunk = q.execute().data or []
+        except Exception as _fetch_err:
+            print(f"sync_sim_fields_backtest fetch error: {_fetch_err}")
+            stats["errors"] += 1
+            break
+
+        for row in chunk:
+            last_id = row["id"]
+            try:
+                sim = compute_trade_sim(row)
+                if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
+                    stats["skipped"] += 1
+                    continue
+                patch = {
+                    "sim_outcome":      sim["sim_outcome"],
+                    "pnl_r_sim":        sim.get("pnl_r_sim"),
+                    "pnl_pct_sim":      sim.get("pnl_pct_sim"),
+                    "entry_price_sim":  sim.get("entry_price_sim"),
+                    "stop_price_sim":   sim.get("stop_price_sim"),
+                    "stop_dist_pct":    sim.get("stop_dist_pct"),
+                    "target_price_sim": sim.get("target_price_sim"),
+                    "sim_version":      SIM_VERSION,
+                }
+                supabase.table("backtest_sim_runs").update(patch).eq("id", row["id"]).execute()
+                stats["updated"] += 1
+            except Exception as _upd_err:
+                print(f"sync_sim_fields_backtest update error id={row.get('id')}: {_upd_err}")
+                stats["errors"] += 1
+
+        if len(chunk) < PAGE_SZ:
+            break
+
+    return stats
+
+
+def sync_sim_fields_paper(user_id: str = "") -> dict:
+    """Fill sim_outcome and related sim fields for paper_trades rows where
+    sim_outcome IS NULL.
+
+    Computes sim fields via compute_trade_sim() and writes a patch that includes
+    sim_version so that subsequent --skip-existing runs in run_sim_backfill.py
+    correctly skip the rows that were filled here.
+
+    Uses keyset (cursor) pagination ordered by id so that updating rows mid-loop
+    does not cause the offset window to skip un-processed rows.
+
+    Returns a dict with keys:
+      updated  – rows successfully patched
+      skipped  – rows where sim computation returned no_trade / missing / invalid
+      errors   – write errors encountered
+    """
+    PAGE_SZ = 1000
+    stats = {"updated": 0, "skipped": 0, "errors": 0}
+
+    if not supabase:
+        stats["errors"] = 1
+        return stats
+
+    _SIM_COLS = (
+        "id,predicted,actual_outcome,ib_low,ib_high,"
+        "follow_thru_pct,close_price,false_break_up,false_break_down"
+    )
+
+    last_id = None
+    while True:
+        try:
+            q = (
+                supabase.table("paper_trades")
+                .select(_SIM_COLS)
+                .is_("sim_outcome", "null")
+                .order("id")
+                .limit(PAGE_SZ)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            if last_id is not None:
+                q = q.gt("id", last_id)
+            chunk = q.execute().data or []
+        except Exception as _fetch_err:
+            print(f"sync_sim_fields_paper fetch error: {_fetch_err}")
+            stats["errors"] += 1
+            break
+
+        for row in chunk:
+            last_id = row["id"]
+            try:
+                sim = compute_trade_sim(row)
+                if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
+                    stats["skipped"] += 1
+                    continue
+                patch = {
+                    "sim_outcome":      sim["sim_outcome"],
+                    "pnl_r_sim":        sim.get("pnl_r_sim"),
+                    "pnl_pct_sim":      sim.get("pnl_pct_sim"),
+                    "entry_price_sim":  sim.get("entry_price_sim"),
+                    "stop_price_sim":   sim.get("stop_price_sim"),
+                    "stop_dist_pct":    sim.get("stop_dist_pct"),
+                    "target_price_sim": sim.get("target_price_sim"),
+                    "sim_version":      SIM_VERSION,
+                }
+                supabase.table("paper_trades").update(patch).eq("id", row["id"]).execute()
+                stats["updated"] += 1
+            except Exception as _upd_err:
+                print(f"sync_sim_fields_paper update error id={row.get('id')}: {_upd_err}")
+                stats["errors"] += 1
+
+        if len(chunk) < PAGE_SZ:
+            break
+
+    return stats
+
+
 def run_backtest_tiered_backfill_batch(batch_size: int = 25, dry_run: bool = False,
                                        user_id: str = "",
                                        exclude_ids: list | None = None) -> dict:
