@@ -12680,6 +12680,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.query_params["tkr_div_thresh"] = _div_thresh_str
                     elif "tkr_div_thresh" in st.query_params:
                         del st.query_params["tkr_div_thresh"]
+                # Restore auto-send settings from URL query params on first load
+                _auto_alert_modes = ["On count change", "Once per day"]
+                if "tkr_div_auto_alert" not in st.session_state:
+                    _qp_auto_alert = st.query_params.get("tkr_div_auto_alert", "")
+                    st.session_state["tkr_div_auto_alert"] = (_qp_auto_alert == "1")
+                if "tkr_div_auto_mode" not in st.session_state:
+                    _qp_auto_mode = st.query_params.get("tkr_div_auto_mode", "")
+                    st.session_state["tkr_div_auto_mode"] = (
+                        _qp_auto_mode if _qp_auto_mode in _auto_alert_modes
+                        else _auto_alert_modes[0]
+                    )
                 st.checkbox(
                     "Auto-send alerts",
                     value=False,
@@ -12690,10 +12701,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "below controls when the alert fires."
                     ),
                 )
+                # Sync auto-send enabled flag to query params
+                _qp_auto_alert_cur = st.query_params.get("tkr_div_auto_alert", "")
+                _auto_alert_val = "1" if st.session_state.get("tkr_div_auto_alert") else ""
+                if _qp_auto_alert_cur != _auto_alert_val:
+                    if _auto_alert_val:
+                        st.query_params["tkr_div_auto_alert"] = _auto_alert_val
+                    elif "tkr_div_auto_alert" in st.query_params:
+                        del st.query_params["tkr_div_auto_alert"]
                 if st.session_state.get("tkr_div_auto_alert"):
                     st.radio(
                         "Auto-send trigger",
-                        ["On count change", "Once per day"],
+                        _auto_alert_modes,
                         horizontal=True,
                         key="tkr_div_auto_mode",
                         help=(
@@ -12704,6 +12723,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "least one ticker is flagged."
                         ),
                     )
+                    # Sync auto-send mode to query params
+                    _qp_auto_mode_cur = st.query_params.get("tkr_div_auto_mode", "")
+                    _auto_mode_val = st.session_state.get("tkr_div_auto_mode", _auto_alert_modes[0])
+                    if _qp_auto_mode_cur != _auto_mode_val:
+                        st.query_params["tkr_div_auto_mode"] = _auto_mode_val
             _sort_key, _sort_asc = _sort_col_map[_sort_choice]
             _r_filter_key = _r_filter_col_map[_r_filter_col]
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
