@@ -95,6 +95,14 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: true,
       },
+      "/api/eod-recalc-health": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/api/subscribers/credential-alerts": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
     },
   },
   preview: {
