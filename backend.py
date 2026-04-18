@@ -10151,6 +10151,11 @@ def ensure_paper_trades_table() -> bool:
 # --skip-existing automatically re-processes stale (old-version) rows.
 SIM_VERSION = "v1"
 
+# Formula version stamped on every row that writes eod_pnl_r.
+# Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
+# that --skip-existing can detect stale eod_pnl_r values and re-process them.
+TIERED_SIM_VERSION = "v1"
+
 
 def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     """Simulate an IB-breakout paper trade from an EdgeIQ structure setup.

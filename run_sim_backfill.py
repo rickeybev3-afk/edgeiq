@@ -66,11 +66,12 @@ Usage
 Flags
 ─────
   --skip-existing   Skip rows where sim_outcome and eod_pnl_r are already
-                    populated AND sim_version matches the current SIM_VERSION
-                    constant in backend.py.  Rows missing any field or stamped
-                    with an older version are re-processed automatically — no
-                    need to drop the flag after a formula change; just bump
-                    SIM_VERSION and re-run with --skip-existing.
+                    populated AND sim_version matches SIM_VERSION AND
+                    tiered_sim_version matches TIERED_SIM_VERSION (both
+                    constants in backend.py).  Rows missing any field or
+                    stamped with an older version are re-processed
+                    automatically — no need to drop the flag after a formula
+                    change; just bump the relevant version and re-run.
                     Omit to force a full recompute of every breakout row.
   --dry-run         Count and print the rows that would be changed without writing
                     anything to the database.  Reads are still performed so the
@@ -180,9 +181,13 @@ def count_rows_to_process(user_ids: list[str], skip_existing: bool = False) -> i
                         # Count rows that are missing a sim field OR have a stale version.
                         # sim_version.neq.<ver> also matches NULLs in PostgREST, so the
                         # explicit sim_version.is.null guard is included for clarity.
+                        # tiered_sim_version guards are added so rows with a stale
+                        # eod_pnl_r formula are also re-processed after logic changes.
                         q = q.or_(
                             f"sim_outcome.is.null,eod_pnl_r.is.null,"
-                            f"sim_version.is.null,sim_version.neq.{backend.SIM_VERSION}"
+                            f"sim_version.is.null,sim_version.neq.{backend.SIM_VERSION},"
+                            f"tiered_sim_version.is.null,"
+                            f"tiered_sim_version.neq.{backend.TIERED_SIM_VERSION}"
                         )
                     resp = q.limit(0).execute()
                     total += resp.count or 0
@@ -227,6 +232,7 @@ def _sim_patch(r: dict) -> dict | None:
         )
         if tiered.get("eod_pnl_r") is not None:
             patch["eod_pnl_r"] = tiered["eod_pnl_r"]
+            patch["tiered_sim_version"] = backend.TIERED_SIM_VERSION
     return patch
 
 
@@ -241,9 +247,11 @@ def backfill_table(table: str, id_col: str, user_id: str,
 
     Args:
         skip_existing: When True, only fetch rows where sim_outcome IS NULL,
-                       eod_pnl_r IS NULL, sim_version IS NULL, or sim_version
-                       does not match the current SIM_VERSION constant.  This
-                       means stale rows (written by an older formula) are
+                       eod_pnl_r IS NULL, sim_version IS NULL, sim_version
+                       does not match the current SIM_VERSION constant,
+                       tiered_sim_version IS NULL, or tiered_sim_version does
+                       not match the current TIERED_SIM_VERSION constant.
+                       Stale rows (written by an older formula) are
                        automatically re-processed even in skip-existing mode —
                        operators no longer need to remember to drop the flag
                        after a formula change.
@@ -287,9 +295,13 @@ def backfill_table(table: str, id_col: str, user_id: str,
         last_id  = None     # used in skip-existing mode (keyset cursor)
 
         # PostgREST or_ string shared between main and fallback query paths.
+        # Catches rows missing any sim field, or with a stale sim_version OR
+        # tiered_sim_version so eod_pnl_r is re-computed after formula changes.
         _SKIP_FILTER = (
             f"sim_outcome.is.null,eod_pnl_r.is.null,"
-            f"sim_version.is.null,sim_version.neq.{backend.SIM_VERSION}"
+            f"sim_version.is.null,sim_version.neq.{backend.SIM_VERSION},"
+            f"tiered_sim_version.is.null,"
+            f"tiered_sim_version.neq.{backend.TIERED_SIM_VERSION}"
         )
 
         while True:
@@ -300,7 +312,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     backend.supabase.table(table)
                     .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
-                            f"sim_outcome,eod_pnl_r,sim_version")
+                            f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
                 )
@@ -316,7 +328,8 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     resp = q.range(offset, offset + PAGE_SZ - 1).execute()
             except Exception as e:
                 err = str(e)
-                if "close_price" in err or "sim_version" in err or "column" in err.lower():
+                if ("close_price" in err or "sim_version" in err
+                        or "tiered_sim_version" in err or "column" in err.lower()):
                     # close_price / sim_version (or sim_outcome/eod_pnl_r) column not yet added
                     print(f"  ⚠  Column missing in query — falling back to minimal select")
                     try:
