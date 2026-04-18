@@ -22229,6 +22229,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         _ao_fill_r_vals:  list = []
         _ao_sim_r_vals:   list = []
         _ao_sim_pnl = 0.0
+        _ao_pnl_series:   list = []  # list of (trade_date_str, dollar_pnl) for cumulative chart
         if "alpaca_fill_price" in _ao_df.columns and "alpaca_qty" in _ao_df.columns:
             for _, _pnl_row in _ao_df[_ao_has_fill].iterrows():
                 try:
@@ -22242,10 +22243,16 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     _pnl_is_bull = "bullish" in _pnl_dir.lower() or "long" in _pnl_dir.lower()
                     if _pnl_fill > 0 and _pnl_qty > 0 and _pnl_eod > 0:
                         # Realized $ P&L (fill entry, EOD exit proxy)
-                        _ao_realized_pnl += (
+                        _order_pnl = (
                             _pnl_qty * (_pnl_eod - _pnl_fill) if _pnl_is_bull
                             else _pnl_qty * (_pnl_fill - _pnl_eod)
                         )
+                        _ao_realized_pnl += _order_pnl
+                        _ao_pnl_series.append((
+                            str(_pnl_row.get("trade_date", ""))[:10],
+                            _order_pnl,
+                            str(_pnl_row.get("ticker", "")),
+                        ))
                         if _pnl_range > 0:
                             # Fill-based R
                             _fr = (
@@ -22319,6 +22326,107 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Cumulative P&L chart ─────────────────────────────────────────────
+        if not _ao_pnl_series and _ao_total_filled > 0:
+            st.caption("Cumulative P&L chart: no filled orders with complete price data (fill price, qty, and close price all required).")
+        if _ao_pnl_series:
+            import plotly.graph_objects as _go_pnl
+            _cpnl_sorted = sorted(
+                _ao_pnl_series,
+                key=lambda r: pd.to_datetime(r[0], errors="coerce") if r[0] else pd.Timestamp.min,
+            )
+            _cpnl_dates: list = []
+            _cpnl_cumulative: list = []
+            _cpnl_labels: list = []
+            _running = 0.0
+            for _cd, _cv, _ct in _cpnl_sorted:
+                _running += _cv
+                _cpnl_dates.append(_cd)
+                _cpnl_cumulative.append(round(_running, 2))
+                _pnl_sign = "+" if _cv >= 0 else ""
+                _cpnl_labels.append(f"{_cd} — {_ct}<br>Trade: {_pnl_sign}${_cv:,.2f}<br>Cum: {'+'if _running>=0 else ''}${_running:,.2f}")
+
+            _cpnl_fig = _go_pnl.Figure()
+
+            # Green fill above zero
+            _cpnl_y_pos = [max(v, 0) for v in _cpnl_cumulative]
+            _cpnl_fig.add_trace(_go_pnl.Scatter(
+                x=_cpnl_dates,
+                y=_cpnl_y_pos,
+                fill="tozeroy",
+                fillcolor="rgba(102,187,106,0.18)",
+                line=dict(color="#66bb6a", width=0),
+                mode="lines",
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+            # Red fill below zero
+            _cpnl_y_neg = [min(v, 0) for v in _cpnl_cumulative]
+            _cpnl_fig.add_trace(_go_pnl.Scatter(
+                x=_cpnl_dates,
+                y=_cpnl_y_neg,
+                fill="tozeroy",
+                fillcolor="rgba(239,83,80,0.18)",
+                line=dict(color="#ef5350", width=0),
+                mode="lines",
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+            # Main line with hover
+            _cpnl_line_colors = ["#66bb6a" if v >= 0 else "#ef5350" for v in _cpnl_cumulative]
+            _cpnl_fig.add_trace(_go_pnl.Scatter(
+                x=_cpnl_dates,
+                y=_cpnl_cumulative,
+                mode="lines+markers",
+                line=dict(color="#4fc3f7", width=2),
+                marker=dict(
+                    size=7,
+                    color=_cpnl_line_colors,
+                    line=dict(color="#131f2e", width=1),
+                ),
+                text=_cpnl_labels,
+                hovertemplate="%{text}<extra></extra>",
+                name="Cumulative P&L",
+            ))
+
+            _cpnl_final = _cpnl_cumulative[-1] if _cpnl_cumulative else 0.0
+            _cpnl_title_color = "#66bb6a" if _cpnl_final >= 0 else "#ef5350"
+            _cpnl_sign = "+" if _cpnl_final >= 0 else ""
+
+            _cpnl_fig.add_hline(y=0, line_color="#546e7a", line_width=1, line_dash="dot")
+
+            _cpnl_fig.update_layout(
+                title=dict(
+                    text=f'Cumulative P&L — <span style="color:{_cpnl_title_color}">{_cpnl_sign}${_cpnl_final:,.2f}</span> across {len(_cpnl_dates)} filled order{"s" if len(_cpnl_dates) != 1 else ""}',
+                    font=dict(size=13, color="#cfd8dc"),
+                    x=0,
+                ),
+                paper_bgcolor="#131f2e",
+                plot_bgcolor="#131f2e",
+                font=dict(color="#90a4ae", size=11),
+                margin=dict(l=10, r=10, t=45, b=10),
+                height=260,
+                xaxis=dict(
+                    showgrid=False,
+                    zeroline=False,
+                    tickfont=dict(size=10, color="#546e7a"),
+                    linecolor="#1e2a3a",
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor="#1e2a3a",
+                    zeroline=False,
+                    tickprefix="$",
+                    tickfont=dict(size=10, color="#546e7a"),
+                ),
+                hovermode="x unified",
+            )
+
+            st.plotly_chart(_cpnl_fig, use_container_width=True, config={"displayModeBar": False})
+            st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Fill vs Sim R comparison (aggregate across filled orders) ────────
         if _ao_avg_fill_r is not None:
