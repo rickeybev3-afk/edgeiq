@@ -28,6 +28,8 @@ _TRADING_WRITE_SECRET = os.environ.get("DASHBOARD_WRITE_SECRET", "").strip()
 _USER_PREFS_FILE = ".local/user_prefs.json"
 _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
 _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
+_DEFAULT_BACKTEST_LOOKBACK_DAYS = int(os.environ.get("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
+_DEFAULT_MIN_TCS = int(os.environ.get("PAPER_TRADE_MIN_TCS", "50"))
 try:
     _DEFAULT_HEARTBEAT_HOURS = float(os.environ.get("BACKFILL_HEARTBEAT_HOURS", "25"))
 except (ValueError, TypeError):
@@ -588,6 +590,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/backfill-heartbeat-window":
             self._backfill_heartbeat_window_get()
+            return
+        if path == "/api/config":
+            self._config_get()
             return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
@@ -1503,6 +1508,54 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+
+    def _config_get(self):
+        """Return a snapshot of all key configuration values active at runtime.
+
+        Combines environment-variable defaults with any user-pref overrides so
+        traders can verify the live values without reading logs or env files.
+
+        Response schema:
+        {
+          "paper_close_lookback_days":  {"value": int,   "source": "override"|"env"},
+          "backtest_close_lookback_days": {"value": int, "source": "env"},
+          "paper_trade_min_tcs":        {"value": int,   "source": "env"},
+          "backfill_heartbeat_hours":   {"value": float, "source": "override"|"env"}
+        }
+        """
+        try:
+            prefs = _load_owner_prefs()
+
+            if "paper_close_lookback_days" in prefs:
+                paper_days = int(prefs["paper_close_lookback_days"])
+                paper_source = "override"
+            else:
+                paper_days = _DEFAULT_PAPER_LOOKBACK_DAYS
+                paper_source = "env"
+
+            if "backfill_heartbeat_hours" in prefs:
+                heartbeat_hours = float(prefs["backfill_heartbeat_hours"])
+                heartbeat_source = "override"
+            else:
+                heartbeat_hours = _DEFAULT_HEARTBEAT_HOURS
+                heartbeat_source = "env"
+
+            payload = {
+                "paper_close_lookback_days": {"value": paper_days, "source": paper_source},
+                "backtest_close_lookback_days": {"value": _DEFAULT_BACKTEST_LOOKBACK_DAYS, "source": "env"},
+                "paper_trade_min_tcs": {"value": _DEFAULT_MIN_TCS, "source": "env"},
+                "backfill_heartbeat_hours": {"value": heartbeat_hours, "source": heartbeat_source},
+            }
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _loading(self):
         self.send_response(200)

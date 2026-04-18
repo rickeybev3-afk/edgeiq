@@ -421,6 +421,139 @@ function DbEventsPanel() {
   );
 }
 
+interface ConfigEntry {
+  value: number;
+  source: "env" | "override";
+}
+
+interface BotConfig {
+  paper_close_lookback_days: ConfigEntry;
+  backtest_close_lookback_days: ConfigEntry;
+  paper_trade_min_tcs: ConfigEntry;
+  backfill_heartbeat_hours: ConfigEntry;
+}
+
+function ConfigPanel() {
+  const [config, setConfig] = useState<BotConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/config");
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) {
+          setConfig(data);
+          setError(null);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not load config values.");
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const rows: Array<{ label: string; key: keyof BotConfig; unit: string }> = [
+    { label: "Paper close look-back", key: "paper_close_lookback_days", unit: "days" },
+    { label: "Backtest close look-back", key: "backtest_close_lookback_days", unit: "days" },
+    { label: "Min TCS threshold", key: "paper_trade_min_tcs", unit: "" },
+    { label: "Backfill heartbeat window", key: "backfill_heartbeat_hours", unit: "h" },
+  ];
+
+  return (
+    <div
+      style={{
+        background: "#1e2435",
+        border: "1px solid #2d3748",
+        borderRadius: "10px",
+        padding: "20px 24px",
+        maxWidth: "640px",
+        width: "100%",
+      }}
+    >
+      <h2
+        style={{
+          fontSize: "13px",
+          fontWeight: 700,
+          color: "#94a3b8",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          marginBottom: "16px",
+          marginTop: 0,
+        }}
+      >
+        Active Configuration
+      </h2>
+
+      {loading && (
+        <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>Loading…</p>
+      )}
+      {error && (
+        <p style={{ fontSize: "13px", color: "#f87171", margin: 0 }}>⚠ {error}</p>
+      )}
+      {!loading && !error && config && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+          {rows.map(({ label, key, unit }, idx) => {
+            const entry = config[key];
+            const isOverride = entry.source === "override";
+            return (
+              <div
+                key={key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "10px 0",
+                  borderTop: idx > 0 ? "1px solid #2d3748" : undefined,
+                }}
+              >
+                <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>{label}</span>
+                <span
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    color: "#e2e8f0",
+                    fontFamily: "monospace",
+                  }}
+                >
+                  {entry.value}{unit ? ` ${unit}` : ""}
+                </span>
+                <span
+                  title={isOverride ? "Set via user-pref override (not the env var)" : "From environment variable"}
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    color: isOverride ? "#fdba74" : "#475569",
+                    background: isOverride ? "rgba(251,191,36,0.08)" : "rgba(255,255,255,0.04)",
+                    border: isOverride ? "1px solid #92400e" : "1px solid #334155",
+                    borderRadius: "4px",
+                    padding: "2px 7px",
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    cursor: "default",
+                    flexShrink: 0,
+                  }}
+                >
+                  {isOverride ? "override" : "env"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span
@@ -818,6 +951,8 @@ function Home({ health }: { health: HealthState }) {
             </div>
           </div>
         </div>
+
+        <ConfigPanel />
 
         <DbEventsPanel />
       </div>
