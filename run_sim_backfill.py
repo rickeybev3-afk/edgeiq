@@ -768,13 +768,25 @@ if __name__ == "__main__":
                 _ctx_total_candidates   = 0
                 _ctx_total_already      = 0
                 _ctx_total_would_update = 0
-                # Fetch settled breakout rows for discovered users
-                _ctx_resp = _ctx.SUPABASE.table("backtest_sim_runs") \
-                    .select("ticker, sim_date, scan_type, user_id") \
-                    .in_("user_id", _ctx_discovered) \
-                    .in_("actual_outcome", ["Bullish Break", "Bearish Break"]) \
-                    .execute()
-                _ctx_all_rows = _ctx_resp.data or []
+                # Fetch settled breakout rows for discovered users — paginated to
+                # avoid the silent 1 000-row cap on unpaginated Supabase queries.
+                _CTX_PAGE_SZ  = 1000
+                _ctx_all_rows = []
+                _ctx_offset   = 0
+                while True:
+                    _ctx_page_resp = (
+                        _ctx.SUPABASE.table("backtest_sim_runs")
+                        .select("ticker, sim_date, scan_type, user_id")
+                        .in_("user_id", _ctx_discovered)
+                        .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+                        .range(_ctx_offset, _ctx_offset + _CTX_PAGE_SZ - 1)
+                        .execute()
+                    )
+                    _ctx_page = _ctx_page_resp.data or []
+                    _ctx_all_rows.extend(_ctx_page)
+                    if len(_ctx_page) < _CTX_PAGE_SZ:
+                        break
+                    _ctx_offset += _CTX_PAGE_SZ
                 _ctx_total_candidates = len(_ctx_all_rows)
                 # Fetch already-processed keys
                 _ctx_already = _ctx.get_already_processed()
