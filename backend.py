@@ -8690,6 +8690,88 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+def get_backtest_pace_target(user_id: str = "") -> dict:
+    """Compute the live-filter pace target from backtest_sim_runs.
+
+    Applies the bot's entry quality filters:
+      • TCS >= 50
+      • IB range < 10% of open price
+    (VWAP alignment is not stored in backtest_sim_runs, so this gives the
+    pre-VWAP upper-bound count; VWAP alignment historically trims ~46%.)
+
+    Returns a dict:
+        per_day     – avg qualifying setups per trading day  (float)
+        per_year    – per_day × 250  (int)
+        count       – total qualifying rows
+        bdays       – trading-day span (min→max sim_date)
+        min_date    – earliest sim_date in the qualifying set
+        max_date    – latest sim_date in the qualifying set
+        is_fallback – True when no data exists and defaults are returned
+
+    Falls back to {"per_day": 0.81, "per_year": 202, "is_fallback": True}
+    on any error or when the table has no qualifying rows.
+    """
+    _default: dict = {
+        "count": 0, "bdays": 0,
+        "per_day": 0.81, "per_year": 202,
+        "min_date": "", "max_date": "",
+        "is_fallback": True,
+    }
+    if not supabase:
+        return _default
+    try:
+        q = (
+            supabase.table("backtest_sim_runs")
+            .select("sim_date,tcs,ib_high,ib_low,open_price")
+            .gte("tcs", 50)
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        rows = q.limit(20000).execute().data or []
+        if not rows:
+            return _default
+
+        import pandas as _pd_bpt
+        _df = _pd_bpt.DataFrame(rows)
+        for _col in ("tcs", "ib_high", "ib_low", "open_price"):
+            _df[_col] = _pd_bpt.to_numeric(_df[_col], errors="coerce")
+
+        _valid = (
+            _df["open_price"].notna() & (_df["open_price"] > 0) &
+            _df["ib_high"].notna() & _df["ib_low"].notna()
+        )
+        _df = _df[_valid].copy()
+        _df["_ib_pct"] = (_df["ib_high"] - _df["ib_low"]) / _df["open_price"] * 100
+        _df = _df[_df["_ib_pct"] < 10]
+
+        if _df.empty:
+            return _default
+
+        _cnt = len(_df)
+        _dates = _pd_bpt.to_datetime(_df["sim_date"], errors="coerce").dropna()
+        if _dates.empty:
+            return _default
+
+        _min_d = _dates.min().date()
+        _max_d = _dates.max().date()
+        _bdays = max(1, len(_pd_bpt.bdate_range(str(_min_d), str(_max_d))))
+        _per_day = round(_cnt / _bdays, 2)
+        _per_year = round(_per_day * 250)
+
+        return {
+            "count":       _cnt,
+            "bdays":       _bdays,
+            "per_day":     _per_day,
+            "per_year":    _per_year,
+            "min_date":    str(_min_d),
+            "max_date":    str(_max_d),
+            "is_fallback": False,
+        }
+    except Exception as _bpt_err:
+        logging.warning("get_backtest_pace_target: %s", _bpt_err)
+        return _default
+
+
 def get_ladder_pnl_summary(
     user_id: str = "",
     start_date: str = "",

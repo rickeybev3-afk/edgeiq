@@ -21201,9 +21201,20 @@ def render_performance_tab():
             f'</div>', unsafe_allow_html=True
         )
 
+    # ── Live-filter pace target (cached, computed from backtest_sim_runs) ────────
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _load_pace_target(uid):
+        return get_backtest_pace_target(user_id=uid)
+
+    _pace_tgt = _load_pace_target(uid=_AUTH_USER_ID)
+    _TARGET_PER_DAY  = _pace_tgt["per_day"]
+    _TARGET_PER_YEAR = _pace_tgt["per_year"]
+    _pace_tgt_source = (
+        f"TCS≥50 + IB<10%  ·  {_pace_tgt['count']:,} setups / {_pace_tgt['bdays']:,} days"
+        if not _pace_tgt["is_fallback"] else "historical estimate"
+    )
+
     # ── Trades/Day pace row ─────────────────────────────────────────────────────
-    _TARGET_PER_DAY  = 0.81   # best-only target (P3→P1→P4→P2 priority, backtest)
-    _TARGET_PER_YEAR = 202    # 0.81 × 250 trading days
 
     # Count actual trading days elapsed since first settled trade
     _td_first = None
@@ -21226,13 +21237,13 @@ def render_performance_tab():
         _pace_label      = (
             f"{_total_trades} trades / {_td_bdays} trading days"
         )
-        _pace_sub = f"~{_annual_pace}/yr pace  ·  target {_TARGET_PER_DAY}/day ({_TARGET_PER_YEAR}/yr)"
+        _pace_sub = f"~{_annual_pace}/yr pace  ·  target {_TARGET_PER_DAY:.2f}/day ({_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
     else:
         _trades_per_day  = 0.0
         _annual_pace     = 0
         _pace_color      = "#90a4ae"
         _pace_label      = "no trades yet"
-        _pace_sub        = f"target {_TARGET_PER_DAY}/day ({_TARGET_PER_YEAR}/yr)"
+        _pace_sub        = f"target {_TARGET_PER_DAY:.2f}/day ({_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
 
     st.markdown(
         f'<div style="background:#151f2e;border:1px solid #1e2a3a;border-radius:8px;'
@@ -23270,8 +23281,10 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 st.warning("No backtest runs found in the selected date range — try widening the filter.")
 
         # ── Trades / Day pace row (mirrors paper trades section) ────────────────
-        _BTS_TARGET_PER_DAY  = 0.81   # best-only backtest target
-        _BTS_TARGET_PER_YEAR = 202    # 0.81 × 250 trading days
+        # _pace_tgt / _TARGET_PER_DAY / _TARGET_PER_YEAR are set above in the
+        # paper trades section from get_backtest_pace_target() (5-min cache).
+        _BTS_TARGET_PER_DAY  = _TARGET_PER_DAY
+        _BTS_TARGET_PER_YEAR = _TARGET_PER_YEAR
 
         _bts_total_n = len(_bts_df)
         _bts_td_first = None
@@ -23296,13 +23309,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 "#90a4ae"
             )
             _bts_pace_label = f"{_bts_total_n} trades / {_bts_bdays} trading days"
-            _bts_pace_sub   = f"~{_bts_annual_pace}/yr pace  ·  target {_BTS_TARGET_PER_DAY}/day ({_BTS_TARGET_PER_YEAR}/yr)"
+            _bts_pace_sub   = f"~{_bts_annual_pace}/yr pace  ·  target {_BTS_TARGET_PER_DAY:.2f}/day ({_BTS_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
         else:
             _bts_trades_pd   = 0.0
             _bts_annual_pace = 0
             _bts_pace_color  = "#90a4ae"
             _bts_pace_label  = "no sim runs yet"
-            _bts_pace_sub    = f"target {_BTS_TARGET_PER_DAY}/day ({_BTS_TARGET_PER_YEAR}/yr)"
+            _bts_pace_sub    = f"target {_BTS_TARGET_PER_DAY:.2f}/day ({_BTS_TARGET_PER_YEAR}/yr)  ·  {_pace_tgt_source}"
 
         st.markdown(
             f'<div style="background:#151f2e;border:1px solid #1e2a3a;border-radius:8px;'
