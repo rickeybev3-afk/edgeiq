@@ -995,6 +995,6 @@ if __name__ == "__main__":
             print("=" * 60)
             try:
                 import backfill_context_levels as _ctx
-                _ctx.main()
+                _ctx.main(user_ids=user_ids)
             except Exception as _ctx_err:
                 print(f"  Context backfill error (non-critical): {_ctx_err}")
