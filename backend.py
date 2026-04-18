@@ -11633,7 +11633,8 @@ CREATE TABLE IF NOT EXISTS decision_log (
   outcome_date     DATE,
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ,
-  last_reopened_at TIMESTAMPTZ
+  last_reopened_at TIMESTAMPTZ,
+  reopen_count     INTEGER NOT NULL DEFAULT 0
 );
 """.strip()
 
@@ -11774,6 +11775,14 @@ def ensure_decision_log_table() -> bool:
     except Exception as e:
         print(f"ensure_decision_log_table migration (last_reopened_at) warning: {e}")
 
+    try:
+        supabase.rpc(
+            "exec_sql",
+            {"query": "ALTER TABLE decision_log ADD COLUMN IF NOT EXISTS reopen_count INTEGER NOT NULL DEFAULT 0"},
+        ).execute()
+    except Exception as e:
+        print(f"ensure_decision_log_table migration (reopen_count) warning: {e}")
+
     return True
 
 
@@ -11845,10 +11854,21 @@ def update_decision_outcome(
         }
         if is_edit:
             patch["updated_at"] = datetime.utcnow().isoformat()
+            supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
         elif outcome == "Pending":
             patch["updated_at"] = None
             patch["last_reopened_at"] = datetime.utcnow().isoformat()
-        supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
+            supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
+            _inc_sql = (
+                f"UPDATE decision_log SET reopen_count = COALESCE(reopen_count, 0) + 1 "
+                f"WHERE id = '{decision_id}' AND user_id = '{user_id}'"
+            )
+            try:
+                supabase.rpc("exec_sql", {"query": _inc_sql}).execute()
+            except Exception as _e:
+                print(f"update_decision_outcome reopen_count increment warning: {_e}")
+        else:
+            supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
         return True
     except Exception as e:
         print(f"update_decision_outcome error: {e}")

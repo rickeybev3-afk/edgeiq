@@ -25885,6 +25885,7 @@ def render_decision_log_tab():
                 _edited_label = "edited"
 
         _last_reopened_raw = _dlr.get("last_reopened_at") or ""
+        _reopen_count = int(_dlr.get("reopen_count") or 0)
         _reopened_label = ""
         if _last_reopened_raw:
             try:
@@ -25893,6 +25894,8 @@ def render_decision_log_tab():
                 _reopened_label = "↩ reopened " + _ro_dt.strftime("%b") + " " + str(_ro_dt.day)
             except Exception:
                 _reopened_label = "↩ reopened"
+            if _reopen_count > 1:
+                _reopened_label += f" ×{_reopen_count}"
 
         _header_html = (
             f'<div style="border-left:3px solid {_border_c}; background:#12121e; '
