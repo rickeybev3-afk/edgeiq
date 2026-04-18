@@ -95,7 +95,8 @@ _OWNER_USER_ID        = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
 # Known NYSE market holidays (observed dates) for 2024-2028.
 # When an official holiday falls on a Saturday the exchange is closed the
 # preceding Friday; when it falls on a Sunday it is observed the following
-# Monday.  This list is sourced from NYSE's published holiday schedule.
+# Monday.  This list is sourced from NYSE's published holiday schedule and
+# serves as a fallback when the live Alpaca calendar fetch fails.
 _NYSE_MARKET_HOLIDAYS: frozenset = frozenset({
     # 2024
     "2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29",
@@ -119,19 +120,91 @@ _NYSE_MARKET_HOLIDAYS: frozenset = frozenset({
     "2028-11-23", "2028-12-25",
 })
 
+# Process-level cache for Alpaca /v2/calendar results.
+#
+# Successful fetches (frozenset) are stored permanently for the process
+# lifetime — a year's trading days never change once published.
+#
+# Failed fetches are stored as a negative-cache entry (None) with an
+# expiry timestamp so transient API outages self-heal: the entry is
+# evicted after _CALENDAR_RETRY_SECS seconds and the next call retries.
+#
+# Layout: {year: frozenset} for hits, {year: (None, expire_at)} for misses.
+_alpaca_calendar_cache: dict = {}
+_CALENDAR_RETRY_SECS   = 15 * 60   # retry failed fetches after 15 minutes
+
+
+def _get_alpaca_trading_days_for_year(year: int):
+    """Return a frozenset of ISO date strings on which NYSE is open for *year*.
+
+    Fetches Alpaca's /v2/calendar endpoint using the correct paper/live base URL
+    per IS_PAPER_ALPACA.  Successful results are cached permanently for the
+    process lifetime.  Failed results are cached for _CALENDAR_RETRY_SECS so
+    transient outages self-heal without a restart.  Returns None on failure so
+    the caller can fall back to the hardcoded list.
+    """
+    cached = _alpaca_calendar_cache.get(year)
+    if cached is not None and not isinstance(cached, tuple):
+        return cached                            # valid frozenset from prior fetch
+    if isinstance(cached, tuple):
+        _none, expire_at = cached
+        if time.monotonic() < expire_at:
+            return None                          # still within retry back-off window
+        # Back-off expired — evict stale failure and try again
+        del _alpaca_calendar_cache[year]
+
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        _alpaca_calendar_cache[year] = (None, time.monotonic() + _CALENDAR_RETRY_SECS)
+        return None
+
+    try:
+        import requests as _req
+        base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+        r = _req.get(
+            f"{base}/v2/calendar",
+            params={"start": f"{year}-01-01", "end": f"{year}-12-31"},
+            headers={
+                "APCA-API-KEY-ID":     ALPACA_API_KEY,
+                "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+            },
+            timeout=10,
+        )
+        if r.status_code == 200:
+            trading_days = frozenset(c["date"] for c in r.json())
+            _alpaca_calendar_cache[year] = trading_days
+            return trading_days
+        log.warning(
+            "NYSE calendar live fetch returned HTTP %d for %d — falling back to hardcoded list",
+            r.status_code, year,
+        )
+    except Exception as _exc:
+        log.warning("NYSE calendar live fetch failed for %d: %s — falling back to hardcoded list", year, _exc)
+
+    _alpaca_calendar_cache[year] = (None, time.monotonic() + _CALENDAR_RETRY_SECS)
+    return None
+
 
 def _is_nyse_trading_day(d) -> bool:
     """Return True if *d* is a NYSE equity market trading day.
 
-    Checks both weekends and the hardcoded holiday list above.  Falls back to
-    True (assume trading day) for dates beyond the range of the holiday list so
-    that the zero-row alert is never silently suppressed due to a missing entry.
+    Checks weekends first, then queries Alpaca's /v2/calendar endpoint for a
+    live, authoritative answer so the check stays correct without manual code
+    updates (handles ad-hoc closures and years beyond 2028).  Falls back to the
+    hardcoded _NYSE_MARKET_HOLIDAYS set when credentials are absent or the
+    request fails so the guard never silently disappears.
     """
     if hasattr(d, "date"):
         d = d.date()
     if d.weekday() >= 5:
         return False
-    return d.isoformat() not in _NYSE_MARKET_HOLIDAYS
+
+    iso = d.isoformat()
+
+    trading_days = _get_alpaca_trading_days_for_year(d.year)
+    if trading_days is not None:
+        return iso in trading_days
+
+    return iso not in _NYSE_MARKET_HOLIDAYS
 
 
 def _get_recalc_zero_alerts_enabled() -> bool:
