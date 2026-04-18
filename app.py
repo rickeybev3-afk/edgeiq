@@ -26914,7 +26914,7 @@ def render_decision_log_tab():
                 f'background:#0d1117; border-radius:4px; padding:6px 10px;">'
                 f'{_out_notes}</div>'
             )
-        if _reopen_notes:
+        if _reopen_notes and _outcome == "Pending":
             _header_html += (
                 f'<div style="font-size:11px; color:#e65100; margin-top:6px; '
                 f'background:#1a0d00; border-radius:4px; padding:5px 10px;">'

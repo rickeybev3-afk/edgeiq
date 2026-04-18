@@ -11901,6 +11901,7 @@ def update_decision_outcome(
                 "outcome": outcome,
                 "outcome_date": str(outcome_date) if outcome_date else None,
                 "outcome_notes": outcome_notes.strip() or None,
+                "reopen_notes": None,
             }
             if is_edit:
                 patch["updated_at"] = datetime.utcnow().isoformat()
