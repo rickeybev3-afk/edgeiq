@@ -5422,9 +5422,19 @@ def main():
             except Exception as _cue:
                 log.warning(f"[Catch-up] Watchlist refresh failed: {_cue}")
             _watchlist_done = True
+            # Clear stale S/R-tightened context on restart so yesterday's tightened
+            # tickers never bleed into today's stop logic or P&L summary.
+            _su_date = _su.strftime("%Y-%m-%d")
+            _stale_sr_keys = [k for k in _TRAILING_STOP_SR_CONTEXT if k[1] != _su_date]
+            for _k in _stale_sr_keys:
+                del _TRAILING_STOP_SR_CONTEXT[_k]
+            if _stale_sr_keys:
+                log.info(
+                    f"[Catch-up] Cleared {len(_stale_sr_keys)} stale S/R-tightened "
+                    f"context entry(ies) from previous session(s) on restart."
+                )
             # Capture session-open equity even on restart so the EOD P&L card has a baseline.
             try:
-                _su_date = _su.strftime("%Y-%m-%d")
                 if _su_date not in _SESSION_OPEN_EQUITY:
                     _su_eq = get_alpaca_account_equity(
                         is_paper=IS_PAPER_ALPACA,
@@ -5597,6 +5607,17 @@ def main():
         ):
             watchlist_refresh()
             _watchlist_done = True
+            # Clear stale S/R-tightened context from previous sessions so yesterday's
+            # tightened tickers never bleed into today's P&L card or stop alerts.
+            _today_str = str(today)
+            stale_sr_keys = [k for k in _TRAILING_STOP_SR_CONTEXT if k[1] != _today_str]
+            for _k in stale_sr_keys:
+                del _TRAILING_STOP_SR_CONTEXT[_k]
+            if stale_sr_keys:
+                log.info(
+                    f"[SessionOpen] Cleared {len(stale_sr_keys)} stale S/R-tightened "
+                    f"context entry(ies) from previous session(s)."
+                )
             # Capture session-open equity for the force-close P&L card.
             try:
                 _eq = get_alpaca_account_equity(
