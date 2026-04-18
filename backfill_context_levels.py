@@ -388,7 +388,9 @@ def main():
             }
 
             try:
-                SUPABASE.table('backtest_context_levels').upsert(record).execute()
+                SUPABASE.table('backtest_context_levels').upsert(
+                    record, on_conflict='ticker,trade_date,scan_type'
+                ).execute()
                 date_saved  += 1
                 total_saved += 1
                 _vwap_str  = f"{vwap_val:.2f}"  if vwap_val is not None else "N/A"
@@ -401,7 +403,9 @@ def main():
                     # Add column with: ALTER TABLE backtest_context_levels ADD COLUMN data_quality text;
                     _record_fallback = {k: v for k, v in record.items() if k != 'data_quality'}
                     try:
-                        SUPABASE.table('backtest_context_levels').upsert(_record_fallback).execute()
+                        SUPABASE.table('backtest_context_levels').upsert(
+                            _record_fallback, on_conflict='ticker,trade_date,scan_type'
+                        ).execute()
                         date_saved  += 1
                         total_saved += 1
                         _vwap_str  = f"{vwap_val:.2f}"  if vwap_val is not None else "N/A"
