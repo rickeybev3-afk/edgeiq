@@ -22785,8 +22785,20 @@ ALTER TABLE backtest_sim_runs
         _sim_df["scan_type"] = _sim_df["scan_type"].fillna("morning")
 
         # ── Bot filter: same gate as the live paper-trader bot ───────────────
-        # TCS >= 50, IB range < configured threshold, VWAP aligned (backward compat — rows
-        # missing vwap_at_ib pass the gate, identical to get_backtest_pace_target)
+        # TCS >= 50, IB range < configured threshold, VWAP aligned optional
+        # (VWAP gate defaults OFF — backtest showed it over-filters and removing
+        # it nearly doubles projected annual return)
+        _perf_require_vwap = st.checkbox(
+            "Require VWAP side alignment",
+            value=False,
+            key="perf_require_vwap",
+            help=(
+                "When ON: only include setups where IB midpoint is above VWAP (bullish) "
+                "or below VWAP (bearish). "
+                "Historically this gate over-filters — disabling it increases trade count "
+                "by ~46% while maintaining positive expectancy. Default: OFF."
+            ),
+        )
         _bot_df = _sim_df.copy()
         if "tcs" in _bot_df.columns:
             _bot_df = _bot_df[_bot_df["tcs"].fillna(0) >= 50]
@@ -22797,7 +22809,7 @@ ALTER TABLE backtest_sim_runs
         _bot_has_vwap_cols = all(
             c in _bot_df.columns for c in ("vwap_at_ib", "ib_high", "ib_low", "predicted")
         )
-        if _bot_has_vwap_cols:
+        if _perf_require_vwap and _bot_has_vwap_cols:
             def _bot_vwap_ok(row):
                 try:
                     _v = row.get("vwap_at_ib")
@@ -25464,6 +25476,9 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 
         # ── Bot filter for backtest sim (same gate as the live bot) ─────────
         # Applied AFTER the date-range filter so _bts_bot_df respects the active window.
+        # VWAP gate controlled by the "Require VWAP side alignment" checkbox above
+        # (session key perf_require_vwap, default OFF).
+        _bts_perf_require_vwap = st.session_state.get("perf_require_vwap", False)
         _bts_bot_df = _bts_df.copy()
         if "tcs" in _bts_bot_df.columns:
             _bts_bot_df = _bts_bot_df[_bts_bot_df["tcs"].fillna(0) >= 50]
@@ -25474,7 +25489,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         _bts_bot_has_vwap_cols = all(
             c in _bts_bot_df.columns for c in ("vwap_at_ib", "ib_high", "ib_low", "predicted")
         )
-        if _bts_bot_has_vwap_cols:
+        if _bts_perf_require_vwap and _bts_bot_has_vwap_cols:
             def _bts_bot_vwap_ok(row):
                 try:
                     _v = row.get("vwap_at_ib")
