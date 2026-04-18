@@ -21,7 +21,7 @@ Core purpose: identify and automate IB-breakout strategies in high-TCS small-cap
 - [x] `LIVE_ORDERS_ENABLED=true` (paper bracket orders firing in Alpaca paper-api)
 - [ ] API key swap (ALPACA_API_KEY/SECRET_KEY → live values)
 - [ ] Set `IS_PAPER_ALPACA=false`
-- [ ] Kill switch UI button verified end-to-end
+- [x] Kill switch UI built — sidebar expander "🚨 Kill Switch [PAPER]", two-step ARM → CONFIRM, calls DELETE /v2/orders + DELETE /v2/positions. Updates label to LIVE ⚠️ when live mode is active.
 
 ## User Preferences
 

@@ -6137,6 +6137,65 @@ def fetch_live_quote(ticker: str) -> dict:
         return {"price": None, "volume": None, "error": str(e)}
 
 
+def alpaca_kill_switch(api_key: str, secret_key: str, is_paper: bool = True) -> dict:
+    """Cancel ALL open Alpaca orders and close ALL open positions.
+
+    Returns a dict with keys:
+        orders_cancelled  : int   — number of orders cancelled
+        positions_closed  : int   — number of positions closed
+        errors            : list  — any per-item error messages
+        ok                : bool  — True if no errors at all
+    """
+    import requests as _req
+
+    base = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     api_key,
+        "APCA-API-SECRET-KEY": secret_key,
+        "accept":              "application/json",
+    }
+    result = {"orders_cancelled": 0, "positions_closed": 0, "errors": [], "ok": True}
+
+    # 1. Cancel all open orders (DELETE /v2/orders)
+    try:
+        r = _req.delete(f"{base}/v2/orders", headers=headers, timeout=10)
+        if r.status_code in (200, 207):
+            cancelled = r.json() if r.content else []
+            if isinstance(cancelled, list):
+                result["orders_cancelled"] = len(cancelled)
+            else:
+                result["orders_cancelled"] = 1
+        elif r.status_code == 422:
+            result["orders_cancelled"] = 0  # no open orders — fine
+        else:
+            result["errors"].append(f"Cancel orders HTTP {r.status_code}: {r.text[:120]}")
+            result["ok"] = False
+    except Exception as exc:
+        result["errors"].append(f"Cancel orders exception: {exc}")
+        result["ok"] = False
+
+    # 2. Close all positions (DELETE /v2/positions — liquidates all immediately)
+    try:
+        r = _req.delete(f"{base}/v2/positions", headers=headers,
+                        params={"cancel_orders": "true"}, timeout=10)
+        if r.status_code in (200, 207):
+            closed = r.json() if r.content else []
+            if isinstance(closed, list):
+                result["positions_closed"] = len(closed)
+            else:
+                result["positions_closed"] = 1
+        elif r.status_code == 422:
+            result["positions_closed"] = 0  # no open positions — fine
+        else:
+            result["errors"].append(f"Close positions HTTP {r.status_code}: {r.text[:120]}")
+            result["ok"] = False
+    except Exception as exc:
+        result["errors"].append(f"Close positions exception: {exc}")
+        result["ok"] = False
+
+    return result
+
+
 def fetch_alpaca_fills(api_key: str, secret_key: str,
                        is_paper: bool = True,
                        trade_date: str = None) -> tuple:

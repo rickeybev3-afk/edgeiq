@@ -5668,6 +5668,80 @@ with st.sidebar:
             )
 
     st.markdown("---")
+
+    # ── 🚨 Kill Switch ────────────────────────────────────────────────────────
+    _ks_is_paper = _effective_is_paper
+    _ks_label    = "PAPER" if _ks_is_paper else "LIVE ⚠️"
+    _ks_border   = "#1565c0" if _ks_is_paper else "#b71c1c"
+    _ks_color    = "#90caf9" if _ks_is_paper else "#ef5350"
+    with st.expander(f"🚨 Kill Switch [{_ks_label}]", expanded=False):
+        st.markdown(
+            f'<div style="background:#1a0a0a; border:1px solid {_ks_border}; '
+            f'border-radius:8px; padding:8px 12px; margin-bottom:8px;">'
+            f'<span style="font-size:12px; font-weight:700; color:{_ks_color};">'
+            f'Cancel all open orders + close all positions on the {_ks_label} account.'
+            f'</span><br>'
+            f'<span style="font-size:11px; color:#aaa;">'
+            f'Uses DELETE /v2/orders and DELETE /v2/positions (Alpaca). '
+            f'Irreversible — use in emergencies only.'
+            f'</span></div>',
+            unsafe_allow_html=True,
+        )
+        _ks_api    = api_key
+        _ks_secret = secret_key
+        if not _ks_api or not _ks_secret:
+            st.warning("Enter your Alpaca credentials below first.", icon="⚠️")
+        else:
+            # Two-step: arm then fire
+            if not st.session_state.get("_ks_armed"):
+                if st.button("🔴 ARM Kill Switch", use_container_width=True, type="secondary"):
+                    st.session_state["_ks_armed"] = True
+                    st.rerun()
+            else:
+                st.warning(
+                    "⚠️ **ARMED** — This will immediately cancel all open orders "
+                    "and close all open positions. Are you sure?",
+                )
+                _ks_col1, _ks_col2 = st.columns(2)
+                with _ks_col1:
+                    if st.button("💥 CONFIRM — Execute Kill", use_container_width=True, type="primary"):
+                        from backend import alpaca_kill_switch as _ks_fn
+                        with st.spinner("Executing kill switch…"):
+                            _ks_result = _ks_fn(
+                                api_key=_ks_api,
+                                secret_key=_ks_secret,
+                                is_paper=_ks_is_paper,
+                            )
+                        st.session_state["_ks_armed"] = False
+                        st.session_state["_ks_last_result"] = _ks_result
+                        if _ks_result["ok"]:
+                            st.success(
+                                f"✅ Kill switch executed — "
+                                f"{_ks_result['orders_cancelled']} order(s) cancelled, "
+                                f"{_ks_result['positions_closed']} position(s) closed."
+                            )
+                        else:
+                            st.error(
+                                f"⚠️ Kill switch completed with errors:\n"
+                                + "\n".join(_ks_result["errors"])
+                            )
+                        st.rerun()
+                with _ks_col2:
+                    if st.button("❌ Cancel", use_container_width=True):
+                        st.session_state["_ks_armed"] = False
+                        st.rerun()
+
+            # Show last result if available
+            _ks_last = st.session_state.get("_ks_last_result")
+            if _ks_last:
+                _ks_icon = "✅" if _ks_last["ok"] else "⚠️"
+                st.caption(
+                    f"{_ks_icon} Last run: {_ks_last['orders_cancelled']} orders cancelled, "
+                    f"{_ks_last['positions_closed']} positions closed"
+                    + (f" | Errors: {'; '.join(_ks_last['errors'])}" if _ks_last['errors'] else "")
+                )
+
+    st.markdown("---")
     st.header("📱 Telegram Alerts")
     import os as _os_tg
     _tg_live = bool(
