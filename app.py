@@ -12390,16 +12390,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if st.query_params.get("rp_log_neutral") != ("1" if _rp_log_show_neutral else "0"):
                                 st.query_params["rp_log_neutral"] = "1" if _rp_log_show_neutral else "0"
                         with _rp_log_fcol4:
-                            if "rp_log_boosted_only" not in st.session_state:
-                                st.session_state["rp_log_boosted_only"] = (
-                                    st.query_params.get("rp_log_boosted", "0") == "1"
-                                )
+                            _boosted_url_val = st.query_params.get("rp_log_boosted", "0")
+                            if (
+                                "rp_log_boosted_only" not in st.session_state
+                                or st.session_state.get("_rp_log_boosted_last_url") != _boosted_url_val
+                            ):
+                                st.session_state["rp_log_boosted_only"] = _boosted_url_val == "1"
+                                st.session_state["_rp_log_boosted_last_url"] = _boosted_url_val
                             _rp_log_boosted_only = st.checkbox(
                                 "RVOL boosted only",
                                 key="rp_log_boosted_only",
                             )
-                            if st.query_params.get("rp_log_boosted") != ("1" if _rp_log_boosted_only else "0"):
-                                st.query_params["rp_log_boosted"] = "1" if _rp_log_boosted_only else "0"
+                            _boosted_write_val = "1" if _rp_log_boosted_only else "0"
+                            if st.query_params.get("rp_log_boosted") != _boosted_write_val:
+                                st.query_params["rp_log_boosted"] = _boosted_write_val
+                            st.session_state["_rp_log_boosted_last_url"] = _boosted_write_val
 
                         # Win/loss caption for boosted filter
                         if _rp_log_boosted_only and _rp_boost_count_all > 0:
