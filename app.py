@@ -17942,6 +17942,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # ── Export All Tickers Sweep CSV ──────────────────────────────────
                 # Build a ticker → best TCS floor lookup from the earlier sweep
                 _best_tcs_map = {_btk: _bfloor for _btk, _bfloor in _best_tcs_options}
+
+                # ── Batch-prefetch per-ticker VWAP signal counts ──────────────
+                # Done once here (before the frame-building loop) so each call
+                # goes through the cache and avoids separate DB round-trips
+                # when the same ticker is hit again inside the per-ticker UI.
+                _all_tkr_signal_counts: dict = {}
+                for _sc_tk in _tkr_sweep_data:
+                    _sc_ft = _cached_get_backtest_pace_target(
+                        user_id=_AUTH_USER_ID,
+                        ticker=str(_sc_tk),
+                        start_date=str(_bt_date),
+                        end_date=str(_bt_end_date),
+                    )
+                    _all_tkr_signal_counts[str(_sc_tk)] = _sc_ft
+
                 _all_sweep_frames = []
                 for _exp_tk, _exp_rows in _tkr_sweep_data.items():
                     _exp_df = _pd_bt.DataFrame(_exp_rows)
@@ -17960,6 +17975,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _exp_df["Δ Intra"] = _exp_delta.get("delta_intra", "—")
                     _exp_ib_pass = _tkr_ib_pass_data.get(str(_exp_tk))
                     _exp_df["IB Pass %"] = _exp_ib_pass if _exp_ib_pass is not None else ""
+                    _exp_sc = _all_tkr_signal_counts.get(str(_exp_tk), {})
+                    if not _exp_sc.get("is_fallback", True):
+                        _exp_df["TCS+IB Signals"] = _exp_sc.get("tcs_ib_count", "")
+                        _exp_df["VWAP Signals"]   = _exp_sc.get("vwap_count", "")
+                    else:
+                        _exp_df["TCS+IB Signals"] = ""
+                        _exp_df["VWAP Signals"]   = ""
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
@@ -18068,6 +18090,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "versus holding to close on intraday scan trades. "
                                 "Green = tiered exits win; red = EOD hold wins. "
                                 "'—' when either side has no data."
+                            ),
+                        )
+                    if "TCS+IB Signals" in _detail_df.columns:
+                        _sweep_col_cfg["TCS+IB Signals"] = st.column_config.NumberColumn(
+                            "TCS+IB Signals",
+                            help=(
+                                "Number of historical setups for this ticker (in the selected date range) "
+                                "that passed TCS ≥ 50 and the IB range filter — before the VWAP gate."
+                            ),
+                        )
+                    if "VWAP Signals" in _detail_df.columns:
+                        _sweep_col_cfg["VWAP Signals"] = st.column_config.NumberColumn(
+                            "VWAP Signals",
+                            help=(
+                                "Qualifying signals for this ticker that also passed VWAP alignment "
+                                "(IB midpoint on the correct side of VWAP). "
+                                "This is the count the live paper-trader would have acted on."
                             ),
                         )
                     st.dataframe(
