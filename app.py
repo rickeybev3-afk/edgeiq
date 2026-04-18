@@ -13248,6 +13248,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.success(f"Alert sent via {', '.join(c.title() for c in _sent_to)}.", icon="✅")
                             if _failed:
                                 st.warning(f"Could not send via {', '.join(c.title() for c in _failed)}.", icon="⚠️")
+                        # Live routing badge — shows exactly where the alert will go
+                        _badge_parts = []
+                        if _tg_configured:
+                            _badge_parts.append(
+                                "your Telegram" if _user_div_tg_chat_id else "global Telegram"
+                            )
+                        if _dc_configured:
+                            _badge_parts.append(
+                                "your Discord" if _user_div_dc_webhook else "global Discord"
+                            )
+                        st.caption("→ " + " · ".join(_badge_parts))
                     else:
                         st.caption(
                             "Set your Telegram Chat ID or Discord Webhook URL in the sidebar "
