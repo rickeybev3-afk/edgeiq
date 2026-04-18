@@ -20392,8 +20392,8 @@ ALTER TABLE backtest_sim_runs
     # ── Tiered P&L backfill warning ─────────────────────────────────────────────
     _tiered_pending_count = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
 
-    # ── paper_trades sentinel count (unavailable rows flagged with -9999) ────────
-    _pt_sentinel_total = count_paper_trades_tiered_sentinel(user_id=_AUTH_USER_ID)
+    # ── paper_trades sentinel count (reuses value already fetched in SECTION 1b) ──
+    _pt_sentinel_total = _pt_sentinel_total_1b
     if _pt_sentinel_total > 0:
         _pt_reset_qp = {**dict(st.query_params), "pt_reset_open": "1"}
         _pt_reset_qs = "&".join(f"{k}={v}" for k, v in _pt_reset_qp.items())
