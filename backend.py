@@ -8090,7 +8090,8 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
     Priority order applied to rows where skip_reason IS NULL **or 'unknown'**:
       1. alpaca_order_id IS NOT NULL                         → order_placed
       2. predicted contains 'bearish'                        → bearish_break_filtered
-      3. ib_range_pct IS NOT NULL AND ib_range_pct >= 10     → ib_too_wide
+      3. ib_range_pct IS NOT NULL AND ib_range_pct >= threshold → ib_too_wide
+         (threshold = load_ib_range_pct_threshold(), default 10.0)
       4. vwap_at_ib/close_price mismatch with direction      → vwap_misaligned
       5. everything else                                     → unknown
 
@@ -8102,6 +8103,7 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
     # not exist") MUST propagate so the app.py startup block leaves the
     # session flag False and retries on the next render.  Only individual
     # batch-update failures are silenced (transient network/row-lock issues).
+    _ib_threshold = load_ib_range_pct_threshold()
     _updated = 0
     _hist: list = []
     _offset = 0
@@ -8139,7 +8141,7 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
             _placed.append(_rid)
         elif "bearish" in _predicted:
             _bearish.append(_rid)
-        elif _ib_pct is not None and _ib_pct >= 10:
+        elif _ib_pct is not None and float(_ib_pct) >= _ib_threshold:
             _ib_wide.append(_rid)
         elif _vwap is not None and _close is not None:
             # Only bullish-break rows reach here; bearish rows are already
@@ -8843,7 +8845,12 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
     Applies the same entry-quality filter stack used by the live paper-trader
     bot:
       1. TCS >= 50
-      2. IB range < 10% of open price  (computed from ib_high, ib_low, open_price)
+      2. IB range < configured threshold % of open price  (computed from
+         ib_high, ib_low, open_price).  The threshold is read from
+         ``load_ib_range_pct_threshold()`` (Supabase app_config → local JSON
+         → compile-time default of 10.0) so that changing the IB threshold
+         in the UI is immediately reflected in the pace target on the next
+         cache-TTL cycle.
       3. VWAP alignment: Bullish → IB midpoint > vwap_at_ib
                          Bearish → IB midpoint < vwap_at_ib
          (only applied to rows where vwap_at_ib IS NOT NULL — older rows that
@@ -8860,18 +8867,21 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         bdays        – trading-day span (min→max sim_date of qualifying rows)
         min_date     – earliest qualifying sim_date
         max_date     – latest qualifying sim_date
-        tcs_ib_count – rows passing TCS≥50 + IB<10% (before VWAP gate)
+        tcs_ib_count – rows passing TCS≥50 + IB < threshold (before VWAP gate)
         vwap_count   – rows passing all three filters (same as count)
+        ib_threshold – the IB range % threshold used for this computation
         is_fallback  – True when no data exists and defaults are returned
 
     Falls back to {"per_day": 0.81, "per_year": 202, "is_fallback": True}
     on any error or when the table has no qualifying rows.
     """
+    _ib_threshold = load_ib_range_pct_threshold()
     _default: dict = {
         "count": 0, "bdays": 0,
         "per_day": 0.81, "per_year": 202,
         "min_date": "", "max_date": "",
         "tcs_ib_count": 0, "vwap_count": 0,
+        "ib_threshold": _ib_threshold,
         "is_fallback": True,
     }
     if not supabase:
@@ -8910,7 +8920,7 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         _df = _df[_valid].copy()
 
         _df["_ib_pct"] = (_df["ib_high"] - _df["ib_low"]) / _df["open_price"] * 100
-        _df = _df[_df["_ib_pct"] < 10]
+        _df = _df[_df["_ib_pct"] < _ib_threshold]
 
         if _df.empty:
             return _default
@@ -8966,6 +8976,7 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
             "max_date":      str(_max_d),
             "tcs_ib_count":  _tcs_ib_count,
             "vwap_count":    _cnt,
+            "ib_threshold":  _ib_threshold,
             "is_fallback":   False,
         }
     except Exception as _bpt_err:

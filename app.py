@@ -22369,6 +22369,131 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             unsafe_allow_html=True,
         )
 
+        # ── IB Range Breakdown Table ─────────────────────────────────────────
+        # Shows win% and expectancy per fixed IB-range bucket so traders can
+        # judge whether the configured threshold aligns with the actual edge
+        # cliff in the data.  Each bucket shows n and a ⚠ when n < 50.
+        if "ib_range_pct" in _sim_df.columns:
+            _ib_thr_disp = _cached_load_ib_range_pct_threshold()
+            _ib_bd_df = _sim_df.copy()
+            _ib_bd_df["_ib_pct"] = pd.to_numeric(
+                _ib_bd_df["ib_range_pct"], errors="coerce"
+            )
+            _ib_bd_df = _ib_bd_df[_ib_bd_df["_ib_pct"].notna()]
+
+            _ib_buckets = [
+                ("0–5%",  (0,  5)),
+                ("5–10%", (5,  10)),
+                ("10–15%",(10, 15)),
+                ("15%+",  (15, None)),
+            ]
+
+            _ib_bd_has_eod    = "eod_pnl_r"    in _ib_bd_df.columns and _ib_bd_df["eod_pnl_r"].notna().any()
+            _ib_bd_has_tiered = "tiered_pnl_r"  in _ib_bd_df.columns and _ib_bd_df["tiered_pnl_r"].notna().any()
+
+            if not _ib_bd_df.empty and (_ib_bd_has_eod or _ib_bd_has_tiered):
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-bottom:6px;">IB Range Breakdown</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    f"Performance split by IB range % bucket — "
+                    f"active threshold: **{_ib_thr_disp:.1f}%** (buckets at/above threshold are filtered out by the bot). "
+                    f"⚠ = fewer than 50 trades (treat with caution)."
+                )
+
+                _ib_bd_hdr = (
+                    f'<tr style="background:#0d2137;">'
+                    f'<th style="padding:7px 10px;text-align:left;font-weight:700;color:#90a4ae;font-size:11px;">IB Range Bucket</th>'
+                    f'<th style="padding:7px 10px;text-align:left;font-size:11px;color:#90a4ae;">Bot Gate</th>'
+                    f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#90a4ae;">n</th>'
+                )
+                if _ib_bd_has_eod:
+                    _ib_bd_hdr += (
+                        f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#81c784;">EOD WR%</th>'
+                        f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#81c784;">EOD Exp</th>'
+                    )
+                if _ib_bd_has_tiered:
+                    _ib_bd_hdr += (
+                        f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#ffb74d;">Tiered WR%</th>'
+                        f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#ffb74d;">Tiered Exp</th>'
+                    )
+                _ib_bd_hdr += f'<th style="padding:7px 10px;text-align:center;font-size:11px;color:#90a4ae;">Confidence</th></tr>'
+
+                _ib_bd_body = ""
+                for _bkt_label, (_bkt_lo, _bkt_hi) in _ib_buckets:
+                    if _bkt_hi is None:
+                        _bkt_mask = _ib_bd_df["_ib_pct"] >= _bkt_lo
+                    else:
+                        _bkt_mask = (_ib_bd_df["_ib_pct"] >= _bkt_lo) & (_ib_bd_df["_ib_pct"] < _bkt_hi)
+                    _bkt_sub = _ib_bd_df[_bkt_mask]
+                    _bkt_n = len(_bkt_sub)
+                    if _bkt_n == 0:
+                        continue
+
+                    # Bot gate: bucket is fully below, fully above, or straddles threshold
+                    if _bkt_hi is not None and _bkt_hi <= _ib_thr_disp:
+                        _bkt_gate = f'<span style="color:#66bb6a;font-size:11px;font-weight:600;">✓ Pass</span>'
+                        _bkt_row_bg = "background:rgba(76,175,80,0.04);"
+                    elif _bkt_lo >= _ib_thr_disp:
+                        _bkt_gate = f'<span style="color:#ef5350;font-size:11px;font-weight:600;">✗ Filtered</span>'
+                        _bkt_row_bg = "background:rgba(239,83,80,0.04);"
+                    else:
+                        _bkt_gate = f'<span style="color:#ff9800;font-size:11px;font-weight:600;">~ Partial</span>'
+                        _bkt_row_bg = "background:rgba(255,152,0,0.04);"
+
+                    _bkt_conf = '<span style="color:#ef5350;font-weight:700;">⚠ Low n</span>' if _bkt_n < 50 else '<span style="color:#546e7a;">OK</span>'
+
+                    _ib_bd_body += f'<tr style="border-top:1px solid #1e2a3a;{_bkt_row_bg}">'
+                    _ib_bd_body += f'<td style="padding:6px 10px;font-weight:700;color:#cfd8dc;">{_bkt_label}</td>'
+                    _ib_bd_body += f'<td style="padding:6px 10px;">{_bkt_gate}</td>'
+                    _ib_bd_body += f'<td style="padding:6px 10px;text-align:right;color:#cfd8dc;">{_bkt_n}</td>'
+
+                    if _ib_bd_has_eod:
+                        _bkt_eod = pd.to_numeric(_bkt_sub["eod_pnl_r"], errors="coerce").dropna()
+                        if len(_bkt_eod) > 0:
+                            _bkt_eod_wr  = (_bkt_eod > 0).sum() / len(_bkt_eod) * 100
+                            _bkt_eod_exp = float(_bkt_eod.mean())
+                            _bkt_eod_wr_c  = "#2e7d32" if _bkt_eod_wr >= 60 else ("#ef6c00" if _bkt_eod_wr >= 50 else "#c62828")
+                            _bkt_eod_ex_c  = "#4caf50" if _bkt_eod_exp > 0 else "#ef5350"
+                            _ib_bd_body += (
+                                f'<td style="padding:6px 10px;text-align:right;">'
+                                f'<span style="color:{_bkt_eod_wr_c};font-weight:600;">{_bkt_eod_wr:.1f}%</span></td>'
+                                f'<td style="padding:6px 10px;text-align:right;">'
+                                f'<span style="color:{_bkt_eod_ex_c};font-weight:600;">{"+" if _bkt_eod_exp >= 0 else ""}{_bkt_eod_exp:.3f}R</span></td>'
+                            )
+                        else:
+                            _ib_bd_body += '<td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td><td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td>'
+                    if _ib_bd_has_tiered:
+                        _bkt_tier = pd.to_numeric(_bkt_sub["tiered_pnl_r"], errors="coerce").dropna()
+                        if len(_bkt_tier) > 0:
+                            _bkt_tier_wr  = (_bkt_tier > 0).sum() / len(_bkt_tier) * 100
+                            _bkt_tier_exp = float(_bkt_tier.mean())
+                            _bkt_tier_wr_c = "#2e7d32" if _bkt_tier_wr >= 60 else ("#ef6c00" if _bkt_tier_wr >= 50 else "#c62828")
+                            _bkt_tier_ex_c = "#4caf50" if _bkt_tier_exp > 0 else "#ef5350"
+                            _ib_bd_body += (
+                                f'<td style="padding:6px 10px;text-align:right;">'
+                                f'<span style="color:{_bkt_tier_wr_c};font-weight:600;">{_bkt_tier_wr:.1f}%</span></td>'
+                                f'<td style="padding:6px 10px;text-align:right;">'
+                                f'<span style="color:{_bkt_tier_ex_c};font-weight:600;">{"+" if _bkt_tier_exp >= 0 else ""}{_bkt_tier_exp:.3f}R</span></td>'
+                            )
+                        else:
+                            _ib_bd_body += '<td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td><td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td>'
+                    _ib_bd_body += f'<td style="padding:6px 10px;text-align:center;">{_bkt_conf}</td>'
+                    _ib_bd_body += "</tr>"
+
+                if _ib_bd_body:
+                    st.markdown(
+                        f'<div style="overflow-x:auto;">'
+                        f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
+                        f'<thead>{_ib_bd_hdr}</thead>'
+                        f'<tbody>{_ib_bd_body}</tbody>'
+                        f'</table></div>',
+                        unsafe_allow_html=True,
+                    )
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
