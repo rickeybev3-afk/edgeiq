@@ -408,6 +408,7 @@ _BACKFILL_LOG             = "/tmp/backfill_pipeline.log"
 _BACKFILL_STATUS          = "/tmp/backfill_pipeline.status"
 _BACKFILL_START_TIME      = "/tmp/backfill_pipeline.start_time"
 _BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
+_BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
 
 # Module-level lock ensures only one pipeline thread runs at a time.
 # The lock is held for the entire duration of the run and released in the
@@ -527,6 +528,12 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
                     sf.write("error")
                 return
             lf.write("=== Backfill pipeline finished successfully ===\n")
+        import time as _finish_time_mod
+        try:
+            with open(_BACKFILL_FINISH_TIME, "w") as _ftf:
+                _ftf.write(str(_finish_time_mod.time()))
+        except Exception:
+            pass
         with open(_BACKFILL_STATUS, "w") as sf:
             sf.write("done")
     except Exception as _exc:
@@ -6003,7 +6010,7 @@ with st.sidebar:
             """Clear old logs/status and start a new pipeline thread."""
             if _bf_range_invalid:
                 return False  # Blocked by invalid date range shown above
-            for _p in [_BACKFILL_LOG, _BACKFILL_STATUS, _BACKFILL_START_TIME, _BACKFILL_STEP2_START_TIME]:
+            for _p in [_BACKFILL_LOG, _BACKFILL_STATUS, _BACKFILL_START_TIME, _BACKFILL_STEP2_START_TIME, _BACKFILL_FINISH_TIME]:
                 try:
                     os.remove(_p)
                 except FileNotFoundError:
@@ -6227,6 +6234,28 @@ with st.sidebar:
 
         elif _bf_file_status == "done":
             st.success("✅ Backfill complete!")
+
+            # ── Show total elapsed time ─────────────────────────────────────
+            try:
+                if os.path.exists(_BACKFILL_START_TIME) and os.path.exists(_BACKFILL_FINISH_TIME):
+                    with open(_BACKFILL_START_TIME) as _bf_st_f:
+                        _bf_start_ts = float(_bf_st_f.read().strip())
+                    with open(_BACKFILL_FINISH_TIME) as _bf_ft_f:
+                        _bf_finish_ts = float(_bf_ft_f.read().strip())
+                    _bf_elapsed = max(0.0, _bf_finish_ts - _bf_start_ts)
+                    _bf_elapsed_int = int(_bf_elapsed)
+                    if _bf_elapsed_int < 60:
+                        _bf_elapsed_str = f"{_bf_elapsed_int}s"
+                    elif _bf_elapsed_int < 3600:
+                        _bf_elapsed_str = f"{_bf_elapsed_int // 60}m {_bf_elapsed_int % 60:02d}s"
+                    else:
+                        _bf_h = _bf_elapsed_int // 3600
+                        _bf_m = (_bf_elapsed_int % 3600) // 60
+                        _bf_s = _bf_elapsed_int % 60
+                        _bf_elapsed_str = f"{_bf_h}h {_bf_m}m {_bf_s:02d}s"
+                    st.caption(f"⏱ Completed in {_bf_elapsed_str}")
+            except Exception:
+                pass
 
             # ── Parse summary numbers from the log ─────────────────────────
             import re as _re
