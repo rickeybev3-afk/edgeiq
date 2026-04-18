@@ -673,10 +673,14 @@ if __name__ == "__main__":
     #   --context-only   Run ONLY the context-level backfill (S/R, VWAP, MACD) and exit.
     #                    Skips the full sim pipeline entirely.
     #   --skip-existing  Skip rows that already have sim_outcome + eod_pnl_r set.
+    #   --skip-context   Skip the context-level backfill (S/R, VWAP, MACD) at the end
+    #                    of a full sim run.  Useful when context data was already
+    #                    refreshed via --context-only.
     #   --dry-run        Inspect rows without writing to the database.
     #   --out=<file>     (dry-run only) Save a JSON report to the given path.
     raw_args      = sys.argv[1:]
     skip_existing = "--skip-existing" in raw_args
+    skip_context  = "--skip-context"  in raw_args
     dry_run       = "--dry-run"       in raw_args
     rvol_only     = "--rvol-only"     in raw_args
     context_only  = "--context-only"  in raw_args
@@ -870,11 +874,14 @@ if __name__ == "__main__":
         backfill_rvol_size_mult(user_ids, dry_run=False)
 
         # ── Context level backfill (S/R, VWAP, MACD for adaptive exit analysis) ──
-        print("\n" + "=" * 60)
-        print("  Context Level Backfill (S/R, VWAP, MACD)")
-        print("=" * 60)
-        try:
-            import backfill_context_levels as _ctx
-            _ctx.main()
-        except Exception as _ctx_err:
-            print(f"  Context backfill error (non-critical): {_ctx_err}")
+        if skip_context:
+            print("\n  --skip-context passed — context-level backfill skipped.")
+        else:
+            print("\n" + "=" * 60)
+            print("  Context Level Backfill (S/R, VWAP, MACD)")
+            print("=" * 60)
+            try:
+                import backfill_context_levels as _ctx
+                _ctx.main()
+            except Exception as _ctx_err:
+                print(f"  Context backfill error (non-critical): {_ctx_err}")
