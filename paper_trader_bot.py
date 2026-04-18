@@ -972,7 +972,9 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     _rvol_val = r.get("rvol")
     if _rvol_val is not None:
         _rvol_float = float(_rvol_val)
-        if _rvol_float > 0 and _rvol_float < RVOL_MIN_FLOOR:
+        # Block rvol=0 too — 0 means data is present but volume is near-zero;
+        # only None (no data at all) is the bypass case, guarded by outer if-not-None.
+        if _rvol_float < RVOL_MIN_FLOOR:
             log.info(
                 f"  [{ticker}] skip order — RVOL {_rvol_float:.2f} < floor {RVOL_MIN_FLOOR:.1f} "
                 f"(hist WR 28.2% / -0.513R at RVOL 0-1.0)"

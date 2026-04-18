@@ -19843,7 +19843,31 @@ Nothing here requires any input from you. All numbers update automatically as yo
                     if (r.get("tcs") or 0) >= _mc_tcs_min
                     and (r.get("ib_range_pct") is not None and float(r.get("ib_range_pct", 99)) < 10.0)
                 ]
-                _mc_pnl_r = [float(r["pnl_r_sim"]) for r in _mc_filtered]
+                # Apply IB-range + P-tier sizing multipliers to each trade's R.
+                # This reflects actual position-size scaling so the simulation
+                # shows compounding as the live bot would compound it.
+                def _mc_ib_mult(ib_pct):
+                    v = float(ib_pct or 5.0)
+                    if v < 2:   return 2.00
+                    if v < 4:   return 1.30
+                    if v < 6:   return 1.00
+                    if v < 8:   return 0.75
+                    return 0.80
+
+                def _mc_ptier_mult(tcs, scan):
+                    st = (scan or "").lower()
+                    t  = float(tcs or 0)
+                    if st == "morning"  and t >= 70: return 1.50
+                    if st == "morning"  and t >= 50: return 1.00
+                    if st == "intraday" and t >= 70: return 1.25
+                    return 1.00
+
+                _mc_pnl_r = [
+                    float(r["pnl_r_sim"])
+                    * _mc_ib_mult(r.get("ib_range_pct"))
+                    * _mc_ptier_mult(r.get("tcs"), r.get("scan_type"))
+                    for r in _mc_filtered
+                ]
 
                 if len(_mc_pnl_r) >= 5:
                     _mc_eq0   = float(_mc_start_equity)
