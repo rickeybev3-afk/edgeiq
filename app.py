@@ -4985,6 +4985,13 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
                 )
         except (ValueError, TypeError):
             pass
+    if "tkr_summary_sort_radio" in _prefs:
+        try:
+            # Store raw pref value under a temp key; validation against valid options
+            # happens later in the initialization block where _sort_col_map is available.
+            st.session_state["_pref_tkr_summary_sort_radio"] = str(_prefs["tkr_summary_sort_radio"])
+        except (ValueError, TypeError):
+            pass
     if "rp_min_tcs_slider" in _prefs:
         try:
             st.session_state["rp_min_tcs_slider"] = int(_prefs["rp_min_tcs_slider"])
@@ -12990,13 +12997,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
             }
             _ctrl_col_sort, _ctrl_col_filter, _ctrl_col_div = st.columns([3, 2, 2])
             with _ctrl_col_sort:
-                # Restore sort choice from URL query params on first load
+                # Restore sort choice on first load.
+                # Priority: saved pref → URL query param → first option (default).
                 if "tkr_summary_sort_radio" not in st.session_state:
                     _qp_sort = st.query_params.get("tkr_sort", "")
                     _sort_opts = list(_sort_col_map.keys())
-                    st.session_state["tkr_summary_sort_radio"] = (
-                        _qp_sort if _qp_sort in _sort_opts else _sort_opts[0]
-                    )
+                    _pref_sort_col = st.session_state.get("_pref_tkr_summary_sort_radio", "")
+                    if _pref_sort_col in _sort_opts:
+                        st.session_state["tkr_summary_sort_radio"] = _pref_sort_col
+                    elif _qp_sort in _sort_opts:
+                        st.session_state["tkr_summary_sort_radio"] = _qp_sort
+                    else:
+                        st.session_state["tkr_summary_sort_radio"] = _sort_opts[0]
                 _sort_choice = st.radio(
                     "Sort table by",
                     list(_sort_col_map.keys()),
@@ -13034,6 +13046,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _sort_rev_new_prefs = {**_sort_rev_cached, "tkr_summary_sort_reverse": _sort_reverse}
                         save_user_prefs(_AUTH_USER_ID, _sort_rev_new_prefs)
                         st.session_state["_cached_prefs"] = _sort_rev_new_prefs
+                # Persist sort column to user prefs whenever it changes
+                if _AUTH_USER_ID:
+                    _sort_col_cached = st.session_state.get("_cached_prefs", {})
+                    if _sort_col_cached.get("tkr_summary_sort_radio") != _sort_choice:
+                        _sort_col_new_prefs = {**_sort_col_cached, "tkr_summary_sort_radio": _sort_choice}
+                        save_user_prefs(_AUTH_USER_ID, _sort_col_new_prefs)
+                        st.session_state["_cached_prefs"] = _sort_col_new_prefs
             with _ctrl_col_filter:
                 # Restore filter column from URL query params on first load
                 if "tkr_summary_r_filter_col" not in st.session_state:
