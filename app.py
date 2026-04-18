@@ -22708,6 +22708,139 @@ ALTER TABLE backtest_sim_runs
                                     )
                                     st.caption("Weekly Ladder win rate")
 
+            # ── Tier Comparison Summary Table (Sweep) ────────────────────────
+            _bts_cs_has_eod    = "eod_pnl_r"   in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
+            _bts_cs_has_tiered = "tiered_pnl_r" in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
+            if _bts_has_tcs2 and (_bts_cs_has_eod or _bts_cs_has_tiered):
+                _bts_cs_tier_defs = [
+                    ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
+                    ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
+                    ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                    ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
+                ]
+                _bts_cs_rows = []
+                for _bts_csi, (_bts_csl, _bts_cse, _bts_csst, _bts_cslo, _bts_cshi, _bts_csc, _bts_csd) in enumerate(_bts_cs_tier_defs):
+                    _bts_csdf = _bts_df[
+                        (_bts_df["scan_type"].fillna("morning") == _bts_csst) &
+                        (_bts_df["tcs"].fillna(0) >= _bts_cslo) &
+                        (_bts_df["tcs"].fillna(0) <= _bts_cshi)
+                    ]
+                    if _bts_csdf.empty:
+                        _bts_cs_rows.append({
+                            "idx": _bts_csi, "label": _bts_csl, "emoji": _bts_cse,
+                            "desc": _bts_csd, "color": _bts_csc, "n": 0,
+                            "eod_wr": None, "eod_exp": None,
+                            "tier_wr": None, "tier_exp": None,
+                        })
+                    else:
+                        _bts_cs_n = len(_bts_csdf)
+                        _bts_cs_eod_ser  = pd.to_numeric(
+                            _bts_csdf["eod_pnl_r"]    if "eod_pnl_r"    in _bts_csdf.columns else pd.Series(dtype=float),
+                            errors="coerce"
+                        ).dropna()
+                        _bts_cs_tier_ser = pd.to_numeric(
+                            _bts_csdf["tiered_pnl_r"] if "tiered_pnl_r" in _bts_csdf.columns else pd.Series(dtype=float),
+                            errors="coerce"
+                        ).dropna()
+                        _bts_cs_rows.append({
+                            "idx": _bts_csi, "label": _bts_csl, "emoji": _bts_cse,
+                            "desc": _bts_csd, "color": _bts_csc, "n": _bts_cs_n,
+                            "eod_wr":   round((_bts_cs_eod_ser  > 0).sum() / len(_bts_cs_eod_ser)  * 100, 1) if len(_bts_cs_eod_ser)  else None,
+                            "eod_exp":  round(_bts_cs_eod_ser.mean(),  3) if len(_bts_cs_eod_ser)  else None,
+                            "tier_wr":  round((_bts_cs_tier_ser > 0).sum() / len(_bts_cs_tier_ser) * 100, 1) if len(_bts_cs_tier_ser) else None,
+                            "tier_exp": round(_bts_cs_tier_ser.mean(), 3) if len(_bts_cs_tier_ser) else None,
+                        })
+
+                _bts_cs_valid_eod  = [r["eod_exp"]  for r in _bts_cs_rows if r["eod_exp"]  is not None]
+                _bts_cs_valid_tier = [r["tier_exp"] for r in _bts_cs_rows if r["tier_exp"] is not None]
+                _bts_cs_best_eod_exp  = max(_bts_cs_valid_eod)  if len(_bts_cs_valid_eod)  > 1 else None
+                _bts_cs_best_tier_exp = max(_bts_cs_valid_tier) if len(_bts_cs_valid_tier) > 1 else None
+
+                def _bts_cs_wr_col(v):
+                    if v is None: return "#546e7a"
+                    return "#2e7d32" if v >= 60 else ("#ef6c00" if v >= 50 else "#c62828")
+
+                def _bts_cs_exp_col(v):
+                    if v is None: return "#546e7a"
+                    return "#2e7d32" if v > 0 else ("#ef6c00" if v == 0 else "#c62828")
+
+                _bts_cs_header = (
+                    '<tr style="background:#1a2738;font-size:11px;color:#90a4ae;letter-spacing:0.5px;">'
+                    '<th style="padding:6px 10px;text-align:left;">Tier</th>'
+                    '<th style="padding:6px 10px;text-align:left;">Description</th>'
+                    '<th style="padding:6px 10px;text-align:right;">Trades</th>'
+                    '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Win%</th>'
+                    '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Exp</th>'
+                    '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Win%</th>'
+                    '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Exp</th>'
+                    '<th style="padding:6px 10px;text-align:center;">Edge Winner</th>'
+                    '</tr>'
+                )
+                _bts_cs_body = ""
+                for _bts_csr in _bts_cs_rows:
+                    _bts_cs_eod_wr_str  = (
+                        f'<span style="color:{_bts_cs_wr_col(_bts_csr["eod_wr"])};font-weight:600;">{_bts_csr["eod_wr"]}%</span>'
+                        if _bts_csr["eod_wr"] is not None else '<span style="color:#546e7a;">—</span>'
+                    )
+                    _bts_cs_eod_exp_str = (
+                        f'<span style="color:{_bts_cs_exp_col(_bts_csr["eod_exp"])};font-weight:600;">{_bts_csr["eod_exp"]:+.3f}R</span>'
+                        if _bts_csr["eod_exp"] is not None else '<span style="color:#546e7a;">—</span>'
+                    )
+                    _bts_cs_tier_wr_str  = (
+                        f'<span style="color:{_bts_cs_wr_col(_bts_csr["tier_wr"])};font-weight:600;">{_bts_csr["tier_wr"]}%</span>'
+                        if _bts_csr["tier_wr"] is not None else '<span style="color:#546e7a;">—</span>'
+                    )
+                    _bts_cs_tier_exp_str = (
+                        f'<span style="color:{_bts_cs_exp_col(_bts_csr["tier_exp"])};font-weight:600;">{_bts_csr["tier_exp"]:+.3f}R</span>'
+                        if _bts_csr["tier_exp"] is not None else '<span style="color:#546e7a;">—</span>'
+                    )
+                    _bts_cs_is_best_eod  = (
+                        _bts_cs_best_eod_exp  is not None and _bts_csr["eod_exp"]  is not None
+                        and abs(_bts_csr["eod_exp"]  - _bts_cs_best_eod_exp)  < 1e-9
+                    )
+                    _bts_cs_is_best_tier = (
+                        _bts_cs_best_tier_exp is not None and _bts_csr["tier_exp"] is not None
+                        and abs(_bts_csr["tier_exp"] - _bts_cs_best_tier_exp) < 1e-9
+                    )
+                    if _bts_cs_is_best_eod and _bts_cs_is_best_tier:
+                        _bts_cs_badge = '<span style="color:#ffd54f;font-weight:700;">⭐ Both</span>'
+                    elif _bts_cs_is_best_eod:
+                        _bts_cs_badge = '<span style="color:#80cbc4;font-weight:700;">⭐ EOD</span>'
+                    elif _bts_cs_is_best_tier:
+                        _bts_cs_badge = '<span style="color:#ce93d8;font-weight:700;">⭐ Tiered</span>'
+                    else:
+                        _bts_cs_badge = '<span style="color:#546e7a;">—</span>'
+                    _bts_cs_n_str = (
+                        f'<span style="color:#cfd8dc;">{_bts_csr["n"]}</span>'
+                        if _bts_csr["n"] > 0 else '<span style="color:#546e7a;">0</span>'
+                    )
+                    _bts_cs_body += (
+                        f'<tr style="border-top:1px solid #1e2a3a;">'
+                        f'<td style="padding:6px 10px;"><span style="color:{_bts_csr["color"]};font-weight:700;">{_bts_csr["emoji"]} {_bts_csr["label"]}</span></td>'
+                        f'<td style="padding:6px 10px;font-size:11px;color:#90a4ae;">{_bts_csr["desc"]}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;">{_bts_cs_n_str}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;">{_bts_cs_eod_wr_str}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;">{_bts_cs_eod_exp_str}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;">{_bts_cs_tier_wr_str}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;">{_bts_cs_tier_exp_str}</td>'
+                        f'<td style="padding:6px 10px;text-align:center;">{_bts_cs_badge}</td>'
+                        f'</tr>'
+                    )
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                    'text-transform:uppercase;margin-bottom:6px;">Tier Comparison Summary</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<div style="overflow-x:auto;">'
+                    f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
+                    f'{_bts_cs_header}'
+                    f'<tbody>{_bts_cs_body}</tbody>'
+                    f'</table></div>',
+                    unsafe_allow_html=True,
+                )
+
             # ── Row 4 — Tiered vs EOD Head-to-Head Comparison ────────────────
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(
