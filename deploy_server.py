@@ -27,6 +27,7 @@ _TRADING_MODE_FILE = "/tmp/trading_mode.json"
 _TRADING_WRITE_SECRET = os.environ.get("DASHBOARD_WRITE_SECRET", "").strip()
 _USER_PREFS_FILE = ".local/user_prefs.json"
 _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
+_DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
 
 
 def _get_trading_mode() -> str:
@@ -572,6 +573,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/eod-recalc-health":
             self._eod_recalc_health()
             return
+        if path == "/api/paper-lookback":
+            self._paper_lookback_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -610,6 +614,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/subscribers/credential-alerts":
             self._subscribers_credential_alerts_post()
+            return
+        if path == "/api/paper-lookback":
+            self._paper_lookback_post()
             return
         self._proxy() if streamlit_ready else self._loading()
 
@@ -1018,6 +1025,115 @@ class Handler(http.server.BaseHTTPRequestHandler):
             prefs["backfill_error_alerts_enabled"] = enabled
             _save_owner_prefs(prefs)
             body = json.dumps({"enabled": enabled}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+    def _paper_lookback_get(self):
+        """Return the effective paper-trades look-back window.
+
+        Reads paper_close_lookback_days from owner prefs when set, otherwise
+        returns the value of the PAPER_CLOSE_LOOKBACK_DAYS env var (default 60).
+        Response: {"days": int, "source": "override"|"env"}
+        """
+        try:
+            prefs = _load_owner_prefs()
+            if "paper_close_lookback_days" in prefs:
+                days = int(prefs["paper_close_lookback_days"])
+                source = "override"
+            else:
+                days = _DEFAULT_PAPER_LOOKBACK_DAYS
+                source = "env"
+            body = json.dumps({"days": days, "source": source}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _paper_lookback_post(self):
+        """Accept {"days": int} and persist paper_close_lookback_days in owner's user prefs.
+
+        Accepts a positive integer between 1 and 3650 (10 years).  Passing null
+        for days clears the override and reverts to the env-var default.
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "days" not in payload:
+                body = json.dumps({"error": "'days' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            raw_days = payload["days"]
+            if raw_days is None:
+                prefs = _load_owner_prefs()
+                prefs.pop("paper_close_lookback_days", None)
+                _save_owner_prefs(prefs)
+                body = json.dumps({"days": _DEFAULT_PAPER_LOOKBACK_DAYS, "source": "env"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            try:
+                days = int(raw_days)
+            except (TypeError, ValueError):
+                body = json.dumps({"error": "'days' must be an integer"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if days < 1 or days > 3650:
+                body = json.dumps({"error": "'days' must be between 1 and 3650"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            prefs = _load_owner_prefs()
+            prefs["paper_close_lookback_days"] = days
+            _save_owner_prefs(prefs)
+            body = json.dumps({"days": days, "source": "override"}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

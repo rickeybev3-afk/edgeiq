@@ -46,6 +46,16 @@ interface BackfillErrorAlertsState {
   saved: boolean;
 }
 
+interface PaperLookbackState {
+  days: number;
+  source: "env" | "override";
+  draft: string;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface BackfillHealth {
   available: boolean;
   loading: boolean;
@@ -232,6 +242,43 @@ export default function Settings() {
     };
   }, []);
 
+  const [paperLookback, setPaperLookback] = useState<PaperLookbackState>({
+    days: 60,
+    source: "env",
+    draft: "60",
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/paper-lookback")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setPaperLookback((s) => ({
+            ...s,
+            days: data.days,
+            source: data.source === "override" ? "override" : "env",
+            draft: String(data.days),
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load look-back window.";
+          setPaperLookback((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealth>({ available: false, loading: true });
 
   useEffect(() => {
@@ -279,8 +326,8 @@ export default function Settings() {
   }, []);
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#eod-recalc-health"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, eodRecalcHealth.loading]
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#paper-lookback", "#eod-recalc-health"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, paperLookback.loading, eodRecalcHealth.loading]
   );
 
   async function handleChange(newMode: TradingMode) {
@@ -358,6 +405,67 @@ export default function Settings() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setBackfillErrAlerts((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handlePaperLookbackSave() {
+    const parsed = parseInt(paperLookback.draft, 10);
+    if (isNaN(parsed) || parsed < 1 || parsed > 3650) {
+      setPaperLookback((s) => ({ ...s, error: "Enter a whole number between 1 and 3650." }));
+      return;
+    }
+    setPaperLookback((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/paper-lookback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days: parsed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setPaperLookback((s) => ({
+        ...s,
+        days: data.days,
+        source: data.source === "override" ? "override" : "env",
+        draft: String(data.days),
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setPaperLookback((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setPaperLookback((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handlePaperLookbackReset() {
+    setPaperLookback((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/paper-lookback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setPaperLookback((s) => ({
+        ...s,
+        days: data.days,
+        source: "env",
+        draft: String(data.days),
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setPaperLookback((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setPaperLookback((s) => ({ ...s, saving: false, error: msg }));
     }
   }
 
@@ -728,6 +836,119 @@ export default function Settings() {
                 </div>
               )}
             </div>
+          )}
+        </section>
+
+        <section
+          id="paper-lookback"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "24px",
+            marginTop: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Paper Trades Look-back Window
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            How many calendar days the nightly EOD sweep looks back to fill in missing
+            paper-trade close prices. Corresponds to <code style={{ fontFamily: "monospace", color: "#7dd3fc" }}>PAPER_CLOSE_LOOKBACK_DAYS</code> on the server.
+          </p>
+
+          {paperLookback.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  marginBottom: "14px",
+                }}
+              >
+                <input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  value={paperLookback.draft}
+                  disabled={paperLookback.saving}
+                  onChange={(e) =>
+                    setPaperLookback((s) => ({ ...s, draft: e.target.value, error: null }))
+                  }
+                  onKeyDown={(e) => e.key === "Enter" && handlePaperLookbackSave()}
+                  style={{
+                    width: "100px",
+                    padding: "8px 12px",
+                    background: "#0e1117",
+                    border: "1px solid #3d4f6b",
+                    borderRadius: "6px",
+                    color: "#f1f5f9",
+                    fontSize: "15px",
+                    fontFamily: "monospace",
+                    outline: "none",
+                  }}
+                />
+                <span style={{ fontSize: "13px", color: "#64748b" }}>days</span>
+                <button
+                  onClick={handlePaperLookbackSave}
+                  disabled={paperLookback.saving || paperLookback.draft === String(paperLookback.days)}
+                  style={{
+                    padding: "8px 16px",
+                    background: "#2563eb",
+                    border: "none",
+                    borderRadius: "6px",
+                    color: "#fff",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: paperLookback.saving || paperLookback.draft === String(paperLookback.days) ? "not-allowed" : "pointer",
+                    opacity: paperLookback.saving || paperLookback.draft === String(paperLookback.days) ? 0.5 : 1,
+                  }}
+                >
+                  Save
+                </button>
+                {paperLookback.source === "override" && (
+                  <button
+                    onClick={handlePaperLookbackReset}
+                    disabled={paperLookback.saving}
+                    style={{
+                      padding: "8px 14px",
+                      background: "transparent",
+                      border: "1px solid #475569",
+                      borderRadius: "6px",
+                      color: "#94a3b8",
+                      fontSize: "13px",
+                      cursor: paperLookback.saving ? "not-allowed" : "pointer",
+                      opacity: paperLookback.saving ? 0.5 : 1,
+                    }}
+                  >
+                    Reset to env default
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: "12px", color: "#475569", margin: 0 }}>
+                {paperLookback.source === "override"
+                  ? "Using a dashboard override. The server env var is ignored until reset."
+                  : `Reading from server environment (PAPER_CLOSE_LOOKBACK_DAYS=${paperLookback.days}).`}
+              </p>
+            </div>
+          )}
+
+          {paperLookback.saving && (
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "14px" }}>Saving…</p>
+          )}
+          {paperLookback.saved && (
+            <p style={{ fontSize: "13px", color: "#4ade80", marginTop: "14px" }}>
+              ✓ Look-back window updated.
+            </p>
+          )}
+          {paperLookback.error && (
+            <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
+              ⚠ {paperLookback.error}
+            </p>
           )}
         </section>
 

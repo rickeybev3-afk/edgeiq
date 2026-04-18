@@ -89,6 +89,31 @@ BACKTEST_CLOSE_LOOKBACK_DAYS    = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", 
 BACKTEST_STALE_THRESHOLD_DAYS   = int(os.getenv("BACKTEST_STALE_THRESHOLD_DAYS", "3"))
 PAPER_CLOSE_LOOKBACK_DAYS       = int(os.getenv("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
 
+_USER_PREFS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
+_OWNER_USER_ID        = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
+
+
+def _get_effective_paper_lookback_days() -> int:
+    """Return the effective paper-trades close-price look-back window.
+
+    Checks the dashboard prefs store (.local/user_prefs.json, written by
+    deploy_server.py) for a 'paper_close_lookback_days' override first.
+    Falls back to PAPER_CLOSE_LOOKBACK_DAYS (the env-var constant) when
+    no override is present or the file cannot be read.
+    """
+    try:
+        import json as _json
+        if os.path.exists(_USER_PREFS_FILE_PATH):
+            with open(_USER_PREFS_FILE_PATH) as _f:
+                all_prefs = _json.load(_f)
+            owner_prefs = all_prefs.get(_OWNER_USER_ID, {})
+            if "paper_close_lookback_days" in owner_prefs:
+                return int(owner_prefs["paper_close_lookback_days"])
+    except Exception:
+        pass
+    return PAPER_CLOSE_LOOKBACK_DAYS
+
+
 # ── Alpaca live execution config ───────────────────────────────────────────────
 # Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
 # IS_PAPER_ALPACA=true  → paper-api.alpaca.markets  (safe, simulated fills)
@@ -3400,13 +3425,16 @@ def nightly_recalibration():
     # The 4:20 PM eod_update() sweep covers today's rows.  Any day the bot was
     # down or the sweep itself failed will leave NULLs behind.  Re-running with
     # a look-back window here heals those stragglers automatically every evening.
-    # Window is controlled by PAPER_CLOSE_LOOKBACK_DAYS (default 60).
+    # Window is read at runtime via _get_effective_paper_lookback_days() so that
+    # a value saved in the dashboard settings panel takes effect immediately on
+    # the next nightly run without requiring a server restart.
     try:
+        _effective_lookback = _get_effective_paper_lookback_days()
         log.info(
             f"Nightly close-price catch-up sweep: "
-            f"checking last {PAPER_CLOSE_LOOKBACK_DAYS} days…"
+            f"checking last {_effective_lookback} days…"
         )
-        cp_result = _eod_collect_close_prices(lookback_days=PAPER_CLOSE_LOOKBACK_DAYS)
+        cp_result = _eod_collect_close_prices(lookback_days=_effective_lookback)
         log.info(
             f"Nightly close-price catch-up: "
             f"{cp_result['written']} filled, {cp_result['skipped']} skipped."
