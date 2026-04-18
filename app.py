@@ -15529,7 +15529,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Expectancy ($)":    st.column_config.NumberColumn(format="$%.2f"),
                                 "Win Rate":          st.column_config.NumberColumn(format="%.1f%%"),
                                 "Sufficient":        st.column_config.TextColumn(
-                                    "Sufficient",
+                                    "**Sufficient**",
                                     help=f"✓ = at least {_MIN_TCS_TRADES} trades at this floor (eligible for Best TCS); ✗ = fewer than {_MIN_TCS_TRADES} trades (excluded from Best TCS pick)",
                                 ),
                                 "VWAP Pass Rate (%)": st.column_config.TextColumn(
