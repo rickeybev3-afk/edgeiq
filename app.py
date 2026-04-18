@@ -20424,6 +20424,21 @@ ALTER TABLE backtest_sim_runs
                 unsafe_allow_html=True,
             )
 
+    # ── backtest sentinel count (unavailable rows flagged with -9999) ────────────
+    _bt_sentinel_total = count_backtest_tiered_sentinel(user_id=_AUTH_USER_ID)
+    if _bt_sentinel_total > 0:
+        _bt_reset_qp = {**dict(st.query_params), "bt_reset_open": "1"}
+        _bt_reset_qs = "&".join(f"{k}={v}" for k, v in _bt_reset_qp.items())
+        st.markdown(
+            f'<p style="margin:0 0 6px 0; font-size:0.9em; color:#ef9a9a;">'
+            f'\u26a0 <strong>{_bt_sentinel_total:,} backtest row'
+            f'{"s" if _bt_sentinel_total != 1 else ""} flagged unavailable</strong>'
+            f' (sentinel <code>-9999</code>) \u2014 '
+            f'<a href="?{_bt_reset_qs}#bt-sentinel-reset" style="color:#90caf9; text-decoration:underline;">'
+            f'jump to reset tool \u2193</a></p>',
+            unsafe_allow_html=True,
+        )
+
     if _tiered_pending_count > 0:
         _tp_col_warn, _tp_col_btn, _tp_col_full = st.columns([3, 1, 1])
         with _tp_col_warn:
@@ -20568,7 +20583,9 @@ ALTER TABLE backtest_sim_runs
                     st.rerun()
 
     # ── Reset sentinel-stamped (unavailable) rows ────────────────────────────────
-    with st.expander("🔄 Reset Unavailable Rows (re-queue for backfill)", expanded=False):
+    st.markdown('<a id="bt-sentinel-reset"></a>', unsafe_allow_html=True)
+    _bt_reset_open = st.query_params.get("bt_reset_open", "") == "1"
+    with st.expander("🔄 Reset Unavailable Rows (re-queue for backfill)", expanded=_bt_reset_open):
         st.markdown(
             "Rows where Alpaca returned no bar data are permanently stamped with a sentinel "
             "value (`tiered_pnl_r = -9999`) so they stop appearing in the backfill queue. "
