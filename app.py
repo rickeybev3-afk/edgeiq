@@ -12369,8 +12369,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3, _rp_log_fcol4 = st.columns([2, 1, 1, 1])
                         with _rp_log_fcol1:
-                            if "rp_log_ticker_filter" not in st.session_state:
-                                st.session_state["rp_log_ticker_filter"] = st.query_params.get("rp_log_ticker", "")
+                            _ticker_url_val = st.query_params.get("rp_log_ticker", "")
+                            if (
+                                "rp_log_ticker_filter" not in st.session_state
+                                or st.session_state.get("_rp_log_ticker_last_url") != _ticker_url_val
+                            ):
+                                st.session_state["rp_log_ticker_filter"] = _ticker_url_val
+                                st.session_state["_rp_log_ticker_last_url"] = _ticker_url_val
                             _rp_log_ticker_filter = st.text_input(
                                 "Filter by ticker",
                                 key="rp_log_ticker_filter",
@@ -12381,9 +12386,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.query_params["rp_log_ticker"] = _rp_log_ticker_filter
                         with _rp_log_fcol2:
                             _rp_wl_options = ["All", "Win", "Loss"]
-                            if "rp_log_wl_filter" not in st.session_state:
-                                _rp_wl_param = st.query_params.get("rp_log_wl", "All")
-                                st.session_state["rp_log_wl_filter"] = _rp_wl_param if _rp_wl_param in _rp_wl_options else "All"
+                            _wl_url_val = st.query_params.get("rp_log_wl", "All")
+                            _wl_url_val = _wl_url_val if _wl_url_val in _rp_wl_options else "All"
+                            if (
+                                "rp_log_wl_filter" not in st.session_state
+                                or st.session_state.get("_rp_log_wl_last_url") != _wl_url_val
+                            ):
+                                st.session_state["rp_log_wl_filter"] = _wl_url_val
+                                st.session_state["_rp_log_wl_last_url"] = _wl_url_val
                             _rp_log_wl_filter = st.selectbox(
                                 "W/L filter",
                                 options=_rp_wl_options,
