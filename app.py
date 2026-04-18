@@ -5799,6 +5799,28 @@ with st.sidebar:
     _div_tg_val = st.session_state.get("_pref_div_tg_chat_id", "")
     _div_tg_token_val = st.session_state.get("_pref_div_tg_token", "")
     _div_dc_val = st.session_state.get("_pref_div_discord_webhook", "")
+
+    # Resolve the connected bot name once per session (cached by token value).
+    _div_checked_token = st.session_state.get("_div_tg_bot_name_checked_token", "")
+    if _div_tg_token_val and _div_tg_token_val != _div_checked_token:
+        with st.spinner("Checking connected Telegram bot…"):
+            _div_load_bot_info = validate_tg_bot_token(_div_tg_token_val)
+        if _div_load_bot_info:
+            st.session_state["_div_tg_bot_username"] = _div_load_bot_info.get("username") or ""
+            st.session_state["_div_tg_bot_first_name"] = _div_load_bot_info.get("first_name") or ""
+            st.session_state["_div_tg_bot_valid"] = True
+        else:
+            st.session_state["_div_tg_bot_username"] = ""
+            st.session_state["_div_tg_bot_first_name"] = ""
+            st.session_state["_div_tg_bot_valid"] = False
+        st.session_state["_div_tg_bot_name_checked_token"] = _div_tg_token_val
+    elif not _div_tg_token_val:
+        for _k in ("_div_tg_bot_username", "_div_tg_bot_first_name", "_div_tg_bot_valid", "_div_tg_bot_name_checked_token"):
+            st.session_state.pop(_k, None)
+    _div_tg_bot_valid = st.session_state.get("_div_tg_bot_valid", None) if _div_tg_token_val else None
+    _div_tg_bot_username = st.session_state.get("_div_tg_bot_username", "") if _div_tg_token_val else ""
+    _div_tg_bot_first_name = st.session_state.get("_div_tg_bot_first_name", "") if _div_tg_token_val else ""
+
     _div_tg_input = st.text_input(
         "Telegram Chat ID",
         value=_div_tg_val,
@@ -5814,6 +5836,16 @@ with st.sidebar:
         type="password",
         help="Your own Telegram bot token. When set, alerts are sent from your private bot instead of the shared one. Leave blank to use the shared bot.",
     )
+    if _div_tg_token_val:
+        if _div_tg_bot_valid:
+            if _div_tg_bot_username:
+                st.caption(f"Currently connected: @{_div_tg_bot_username}")
+            elif _div_tg_bot_first_name:
+                st.caption(f"Currently connected: {_div_tg_bot_first_name}")
+            else:
+                st.caption("Currently connected: (bot identity unknown)")
+        elif _div_tg_bot_valid is False:
+            st.caption("⚠️ Saved token could not be verified — the bot may be invalid or revoked.")
     _div_dc_input = st.text_input(
         "Discord Webhook URL",
         value=_div_dc_val,
@@ -5848,7 +5880,9 @@ with st.sidebar:
                 else:
                     _div_dc_verified = True
                     _div_dc_name = _div_dc_info.get("name") or _div_dc_info.get("id", "")
-            _div_tg_bot_name = None
+            _div_tg_bot_username_saved = ""
+            _div_tg_bot_first_name_saved = ""
+            _div_bot_info = None
             if _div_tg_token_clean:
                 with st.spinner("Validating Telegram bot token…"):
                     _div_bot_info = validate_tg_bot_token(_div_tg_token_clean)
@@ -5858,7 +5892,8 @@ with st.sidebar:
                         "Please check the token and try again."
                     )
                 else:
-                    _div_tg_bot_name = _div_bot_info.get("username") or _div_bot_info.get("first_name", "")
+                    _div_tg_bot_username_saved = _div_bot_info.get("username") or ""
+                    _div_tg_bot_first_name_saved = _div_bot_info.get("first_name") or ""
             if _div_errs:
                 for _div_err in _div_errs:
                     st.error(_div_err, icon="⚠️")
@@ -5876,8 +5911,18 @@ with st.sidebar:
                 st.session_state["_pref_div_tg_token"] = _div_tg_token_clean
                 st.session_state["_pref_div_discord_webhook"] = _div_dc_clean
                 _div_success_parts = []
-                if _div_tg_bot_name:
-                    _div_success_parts.append(f"Telegram bot @{_div_tg_bot_name} verified")
+                if _div_tg_token_clean and _div_bot_info is not None:
+                    st.session_state["_div_tg_bot_username"] = _div_tg_bot_username_saved
+                    st.session_state["_div_tg_bot_first_name"] = _div_tg_bot_first_name_saved
+                    st.session_state["_div_tg_bot_valid"] = True
+                    st.session_state["_div_tg_bot_name_checked_token"] = _div_tg_token_clean
+                elif not _div_tg_token_clean:
+                    for _k in ("_div_tg_bot_username", "_div_tg_bot_first_name", "_div_tg_bot_valid", "_div_tg_bot_name_checked_token"):
+                        st.session_state.pop(_k, None)
+                if _div_tg_bot_username_saved:
+                    _div_success_parts.append(f"Telegram bot @{_div_tg_bot_username_saved} verified")
+                elif _div_tg_bot_first_name_saved:
+                    _div_success_parts.append(f"Telegram bot {_div_tg_bot_first_name_saved} verified")
                 if _div_dc_verified:
                     _div_dc_label = f'"{_div_dc_name}"' if _div_dc_name else "webhook"
                     _div_success_parts.append(f"Discord {_div_dc_label} verified")
