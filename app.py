@@ -5302,30 +5302,17 @@ with st.sidebar:
             st.session_state["_pref_alpaca_secret"] = secret_key
 
     # ── Active Feed indicator ──────────────────────────────────────────────────
+    # The visible toggle is hidden (display:none) because the sticky pill at the
+    # top of the sidebar already shows the active feed without duplication.
+    # The _afSwitch function is kept on window so it can be wired up later.
     import streamlit.components.v1 as _cmp_feed_ind
     _cmp_feed_ind.html("""
-<div id="_afi_wrap" style="
-    display:flex; align-items:center; justify-content:space-between;
-    background:#0d1117; border:1px solid #1f2937; border-radius:8px;
-    padding:8px 12px; margin:10px 0 4px 0; gap:10px;">
-  <span style="font-size:11px; font-weight:600; color:#9ca3af; white-space:nowrap; letter-spacing:0.03em;">
-    ACTIVE FEED
-  </span>
-  <div style="display:flex; gap:6px;">
-    <button id="_afi_sip" onclick="_afSwitch('sip')" style="
-      font-size:11px; font-weight:700; padding:3px 10px; border-radius:5px;
-      border:none; cursor:pointer; transition:all 0.15s; letter-spacing:0.04em;">
-      SIP
-    </button>
-    <button id="_afi_iex" onclick="_afSwitch('iex')" style="
-      font-size:11px; font-weight:700; padding:3px 10px; border-radius:5px;
-      border:none; cursor:pointer; transition:all 0.15s; letter-spacing:0.04em;">
-      IEX
-    </button>
-  </div>
-</div>
+<div id="_afi_wrap" style="display:none;"></div>
 <script>
 (function() {
+  // _afRender is intentionally retained: it will become active again once
+  // the sticky pill (_sfi_pill) is wired to call window._afSwitch, at which
+  // point visible SIP/IEX buttons can be re-added without rewriting this logic.
   function _afRender(feed) {
     var sipBtn = document.getElementById('_afi_sip');
     var iexBtn = document.getElementById('_afi_iex');
@@ -5383,12 +5370,7 @@ with st.sidebar:
   } catch(e) {}
 })();
 </script>
-""", height=52)
-    st.caption(
-        "SIP = full national tape, pre-market RVOL included (paid Alpaca subscription).  \n"
-        "IEX = free real-time tier, regular hours only.  \n"
-        "Click to switch the default feed used across all sections.",
-    )
+""", height=0)
 
     st.markdown("---")
     st.markdown(
