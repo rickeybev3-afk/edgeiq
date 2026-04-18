@@ -11809,7 +11809,8 @@ CREATE TABLE IF NOT EXISTS decision_log (
   updated_at       TIMESTAMPTZ,
   last_reopened_at TIMESTAMPTZ,
   reopen_count     INTEGER NOT NULL DEFAULT 0,
-  reopen_notes     TEXT
+  reopen_notes     TEXT,
+  reopen_history   JSONB NOT NULL DEFAULT '[]'
 );
 """.strip()
 
@@ -11966,6 +11967,19 @@ def ensure_decision_log_table() -> bool:
     except Exception as e:
         print(f"ensure_decision_log_table migration (reopen_notes) warning: {e}")
 
+    try:
+        supabase.rpc(
+            "exec_sql",
+            {
+                "query": (
+                    "ALTER TABLE decision_log "
+                    "ADD COLUMN IF NOT EXISTS reopen_history JSONB NOT NULL DEFAULT '[]'"
+                )
+            },
+        ).execute()
+    except Exception as e:
+        print(f"ensure_decision_log_table migration (reopen_history) warning: {e}")
+
     return True
 
 
@@ -12042,20 +12056,25 @@ def update_decision_outcome(
         return False
     try:
         if outcome == "Pending":
+            _reopen_ts = datetime.utcnow().isoformat()
             patch = {
                 "outcome": outcome,
                 "outcome_date": None,
                 "updated_at": None,
-                "last_reopened_at": datetime.utcnow().isoformat(),
+                "last_reopened_at": _reopen_ts,
                 "reopen_notes": reopen_notes.strip() or None,
             }
             supabase.table("decision_log").update(patch).eq("id", decision_id).eq("user_id", user_id).execute()
-            # Atomically increment reopen_count at the DB level.
+            # Atomically increment reopen_count and append to reopen_history at the DB level.
             # decision_id and user_id are validated as strict UUID format above
             # (hex digits and hyphens only), so interpolation here is safe.
+            # reopen_notes is passed via jsonb_build_object to avoid SQL injection.
+            _safe_notes = reopen_notes.strip().replace("'", "''")
             _inc_sql = (
                 "UPDATE decision_log "
-                "SET reopen_count = COALESCE(reopen_count, 0) + 1 "
+                "SET reopen_count = COALESCE(reopen_count, 0) + 1, "
+                "    reopen_history = COALESCE(reopen_history, '[]'::jsonb) || "
+                f"        jsonb_build_array(jsonb_build_object('at', '{_reopen_ts}'::text, 'notes', '{_safe_notes}'::text)) "
                 f"WHERE id = '{decision_id}' AND user_id = '{user_id}'"
             )
             supabase.rpc("exec_sql", {"query": _inc_sql}).execute()

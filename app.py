@@ -27697,6 +27697,7 @@ def render_decision_log_tab():
         _out_date  = _dlr.get("outcome_date") or ""
         _out_notes = _dlr.get("outcome_notes") or ""
         _reopen_notes = _dlr.get("reopen_notes") or ""
+        _reopen_history = _dlr.get("reopen_history") or []
         _dec_date  = _dlr.get("decision_date", "")
         _dec_id    = _dlr.get("id", "")
         _updated_at_raw = _dlr.get("updated_at") or ""
@@ -27757,6 +27758,35 @@ def render_decision_log_tab():
             )
         _header_html += '</div>'
         st.markdown(_header_html, unsafe_allow_html=True)
+
+        if _reopen_history and isinstance(_reopen_history, list):
+            import datetime as _dt_mod
+            with st.expander(f"↩ Reopen history ({len(_reopen_history)})", expanded=False):
+                for _rh_entry in reversed(_reopen_history):
+                    _rh_at = _rh_entry.get("at", "")
+                    _rh_notes = (_rh_entry.get("notes") or "").strip()
+                    _rh_label = ""
+                    if _rh_at:
+                        try:
+                            _rh_dt = _dt_mod.datetime.fromisoformat(_rh_at.replace("Z", "+00:00"))
+                            _rh_label = _rh_dt.strftime("%b ") + str(_rh_dt.day) + _rh_dt.strftime(", %Y at %H:%M UTC")
+                        except Exception:
+                            _rh_label = _rh_at
+                    _rh_html = (
+                        f'<div style="border-left:2px solid #e65100; background:#12121e; '
+                        f'border-radius:0 4px 4px 0; padding:5px 10px; margin-bottom:6px;">'
+                        f'<span style="font-size:11px; color:#e65100;">{_rh_label}</span>'
+                    )
+                    if _rh_notes:
+                        _rh_html += (
+                            f'<br><span style="font-size:12px; color:#b0bec5;">{_rh_notes}</span>'
+                        )
+                    else:
+                        _rh_html += (
+                            f'<br><span style="font-size:11px; color:#546e7a; font-style:italic;">No reason given</span>'
+                        )
+                    _rh_html += '</div>'
+                    st.markdown(_rh_html, unsafe_allow_html=True)
 
         if _outcome == "Pending" and _dec_id:
             with st.expander("Mark outcome", expanded=False):
