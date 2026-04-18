@@ -18072,10 +18072,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             return ""
 
                     def _sweep_style_vwap_pass_rate(val):
-                        if val == "—" or val is None:
+                        if not val or val == "—" or val is None:
                             return ""
                         try:
-                            _pct = float(val)
+                            _pct = float(str(val).replace("%", "").strip())
                             if _pct >= 70:
                                 return "background-color:#1b3a2b;color:#66bb6a;font-weight:700"
                             elif _pct >= 40:
