@@ -58,6 +58,7 @@ Usage
   python run_sim_backfill.py --skip-existing               # only rows missing sim data
   python run_sim_backfill.py --dry-run                     # preview changes, no writes
   python run_sim_backfill.py --dry-run --skip-existing     # preview only missing rows
+  python run_sim_backfill.py --dry-run --out=report.json   # save dry-run report to file
   python run_sim_backfill.py <uid1> [uid2] [uid3]...       # explicit user IDs
   python run_sim_backfill.py --skip-existing <uid1>        # skip-existing + explicit IDs
   python run_sim_backfill.py --dry-run <uid1>              # dry-run for specific user
@@ -75,9 +76,18 @@ Flags
                     anything to the database.  Reads are still performed so the
                     script can inspect each row via compute_trade_sim(), but no
                     UPDATE calls are issued.  Can be combined with --skip-existing.
+  --out=<file>      Only valid with --dry-run.  Write a JSON summary of the
+                    dry-run results to <file>.  The report contains one entry per
+                    (table, user_id, direction) with would_update and unfillable
+                    counts, plus top-level totals and metadata (generated_at,
+                    sim_version, skip_existing flag).  If --out is omitted the
+                    report is written to a timestamped file such as
+                    dry_run_2026-04-18_123456.json in the current directory.
+                    Two reports can be compared with `diff`, `jq`, or any JSON
+                    diffing tool to see exactly which rows shifted between runs.
 """
 
-import sys, os, time
+import sys, os, time, json, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -416,6 +426,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
         print(f"\n  DRY RUN total for {table}: {total_updated:,} row(s) would be updated"
               f"  (Bullish Break: {bullish_u:,} | Bearish Break: {bearish_u:,})"
               f"  + {total_skip:,} unfillable skipped{skip_note}")
+        return {"total_updated": total_updated, "per_direction": dry_run_counts}
     elif skip_existing:
         print(f"\n  Total: {total_updated} updated | {total_errors} errors"
               f"  (rows already filled were not fetched)")
@@ -491,12 +502,29 @@ if __name__ == "__main__":
     raw_args      = sys.argv[1:]
     skip_existing = "--skip-existing" in raw_args
     dry_run       = "--dry-run"       in raw_args
-    uid_args      = [a for a in raw_args if not a.startswith("--")]
+
+    # --out=<file>  (dry-run only — ignored in live mode)
+    _out_flag = next((a for a in raw_args if a.startswith("--out=")), None)
+    out_file  = _out_flag[len("--out="):] if _out_flag else None
+
+    uid_args  = [a for a in raw_args
+                 if not a.startswith("--")]
+
+    if not dry_run and out_file:
+        print("⚠  --out is only valid with --dry-run and will be ignored in live mode.",
+              file=sys.stderr)
+        out_file = None
 
     if dry_run:
         print("Mode: DRY RUN — rows will be inspected but NO database writes will occur.")
         if skip_existing:
             print("       Combined with --skip-existing: only rows missing sim data will be counted.")
+        if out_file:
+            print(f"       Report will be saved to: {out_file}")
+        else:
+            _ts       = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+            out_file  = f"dry_run_{_ts}.json"
+            print(f"       No --out specified — report will be saved to: {out_file}")
     elif skip_existing:
         print("Mode: incremental — rows with sim_outcome AND eod_pnl_r already set will be skipped.")
     else:
@@ -546,6 +574,21 @@ if __name__ == "__main__":
     elif _total == 0:
         if skip_existing:
             print("No rows need updating — all breakout rows are already fully populated.", flush=True)
+            if dry_run and out_file:
+                _zero_report = {
+                    "generated_at":  datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "mode":          "dry-run",
+                    "skip_existing": skip_existing,
+                    "sim_version":   getattr(backend, "SIM_VERSION", None),
+                    "rows":          [],
+                    "totals":        {"would_update": 0, "unfillable": 0},
+                }
+                try:
+                    with open(out_file, "w") as _f:
+                        json.dump(_zero_report, _f, indent=2, sort_keys=True)
+                    print(f"  Report saved → {out_file}  (zero rows to update)")
+                except Exception as _we:
+                    print(f"  ⚠  Could not write report to {out_file}: {_we}")
             sys.exit(0)
         else:
             print("Row count returned 0 — nothing to recompute (or count unavailable).", flush=True)
@@ -558,6 +601,8 @@ if __name__ == "__main__":
         print(f"Total {count_label}: {_total:,}", flush=True)
 
     grand_total_would_update = 0
+    _report_rows: list[dict] = []   # populated in dry-run mode
+
     for uid in user_ids:
         print(f"\n{'#'*60}")
         if dry_run:
@@ -566,10 +611,22 @@ if __name__ == "__main__":
             print(f"  Processing user: {uid}")
         print(f"{'#'*60}")
         for table, id_col in BACKFILL_TABLES:
-            n = backfill_table(table, id_col, uid,
-                               skip_existing=skip_existing, dry_run=dry_run)
+            result = backfill_table(table, id_col, uid,
+                                    skip_existing=skip_existing, dry_run=dry_run)
             if dry_run:
-                grand_total_would_update += (n or 0)
+                if isinstance(result, dict):
+                    n = result.get("total_updated", 0)
+                    for direction, counts in result.get("per_direction", {}).items():
+                        _report_rows.append({
+                            "table":        table,
+                            "user_id":      uid,
+                            "direction":    direction,
+                            "would_update": counts.get("would_update", 0),
+                            "unfillable":   counts.get("unfillable",   0),
+                        })
+                else:
+                    n = result or 0
+                grand_total_would_update += n
 
     elapsed = time.time() - t0
 
@@ -580,6 +637,26 @@ if __name__ == "__main__":
         print(f"  {grand_total_would_update:,} row(s) across all users/tables would be updated{skip_note}")
         print(f"  No database writes were performed.")
         print(f"{'='*60}")
+
+        # ── Write JSON report ──────────────────────────────────────────────────
+        if out_file:
+            report = {
+                "generated_at":  datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "mode":          "dry-run",
+                "skip_existing": skip_existing,
+                "sim_version":   getattr(backend, "SIM_VERSION", None),
+                "rows": _report_rows,
+                "totals": {
+                    "would_update": grand_total_would_update,
+                    "unfillable":   sum(r["unfillable"] for r in _report_rows),
+                },
+            }
+            try:
+                with open(out_file, "w") as _f:
+                    json.dump(report, _f, indent=2, sort_keys=True)
+                print(f"\n  Report saved → {out_file}")
+            except Exception as _write_err:
+                print(f"\n  ⚠  Could not write report to {out_file}: {_write_err}")
     else:
         for uid in user_ids:
             print_summary(uid)
