@@ -18258,7 +18258,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         )
                     if "VWAP Pass Rate (%)" in _detail_df.columns:
                         _sweep_col_cfg["VWAP Pass Rate (%)"] = st.column_config.TextColumn(
-                            "VWAP Pass Rate (%)",
+                            "**VWAP Pass Rate (%)**",
                             help=(
                                 "Percentage of TCS+IB signals at this specific TCS floor that also "
                                 "passed VWAP alignment (computed from backtest data, consistent with "
