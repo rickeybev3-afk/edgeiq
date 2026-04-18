@@ -21443,6 +21443,9 @@ def render_performance_tab():
             f'<span style="color:#546e7a;font-size:11px;">&#x2192;</span>'
             f'<span style="background:#0a2318;border:1px solid #388e3c;border-radius:11px;padding:1px 8px;'
             f'font-size:11px;color:#66bb6a;white-space:nowrap;"><b>{_TARGET_PER_DAY:.2f}</b>/day</span>'
+            f'<span style="color:#546e7a;font-size:11px;">&#x2192;</span>'
+            f'<span style="background:#0a2318;border:1px solid #388e3c;border-radius:11px;padding:1px 8px;'
+            f'font-size:11px;color:#66bb6a;white-space:nowrap;">~<b>{_TARGET_PER_YEAR:,}</b>/yr</span>'
             f'<span style="color:#546e7a;font-size:11px;margin-left:3px;">&#xb7; {_pace_tgt["bdays"]:,} trading days</span>'
             f'</span>'
         )
