@@ -13667,10 +13667,44 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     else:
                         # "Once per day" mode — the bot (paper_trader_bot.py) dispatches
                         # the alert at 4:35 PM ET using the state file written above.
-                        # Show the last bot dispatch date so traders can confirm it fired.
+                        # Show a countdown to 4:35 PM ET (or confirmation if already fired).
+                        _now_et_sched = datetime.now(EASTERN)
+                        _today_et_str = _now_et_sched.strftime("%Y-%m-%d")
+                        _already_fired_today = bool(
+                            _existing_bot_date and _existing_bot_date == _today_et_str
+                        )
+                        _target_dt = EASTERN.localize(
+                            datetime(
+                                _now_et_sched.year,
+                                _now_et_sched.month,
+                                _now_et_sched.day,
+                                16, 35, 0,
+                            )
+                        )
+                        if _already_fired_today:
+                            _bot_countdown_str = f"✅ Already sent today (**{_existing_bot_date}**)"
+                        else:
+                            _secs_to_target = int(
+                                (_target_dt - _now_et_sched).total_seconds()
+                            )
+                            if _secs_to_target <= 0:
+                                # Past today's 4:35 PM — point to tomorrow's dispatch
+                                from datetime import timedelta as _td_sched
+                                _tomorrow_target = _target_dt + _td_sched(days=1)
+                                _secs_to_target = int(
+                                    (_tomorrow_target - _now_et_sched).total_seconds()
+                                )
+                            _hrs_to  = _secs_to_target // 3600
+                            _mins_to = max(1, (_secs_to_target % 3600) // 60)
+                            if _hrs_to > 0:
+                                _countdown_label = f"{_hrs_to} h {_mins_to} min"
+                            else:
+                                _countdown_label = f"{_mins_to} min"
+                            _bot_countdown_str = (
+                                f"⏳ Next scheduled alert in **{_countdown_label}** (4:35 PM ET)"
+                            )
                         _bot_status_msg = (
-                            "📅 Scheduled for **4:35 PM ET** by the Paper Trader Bot · "
-                            + (f"Last sent: **{_existing_bot_date}**" if _existing_bot_date else "Not yet sent today")
+                            _bot_countdown_str
                             + " · Note: the bot reads today's flagged-ticker data from this "
                             "session — open the dashboard at least once on trading days so "
                             "it has current data to dispatch."
