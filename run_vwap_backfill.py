@@ -27,12 +27,20 @@ Sentinel handling:
   • get_backtest_pace_target() treats vwap_at_ib <= 0 as "no VWAP" (pass
     through), so sentinel rows do not distort the count.
 
-Results of the initial run
-──────────────────────────
-  (To be filled in after the first production run)
+Results of the initial run  (2026-04-18)
+──────────────────────────────────────────
+  Elapsed                : 259s
+  Rows fetched           : 2,924
+  Rows updated (VWAP)    : 2,924
+  Rows sentinel-stamped  : 0
+  Rows deferred (errors) : 0
+  DB errors              : 0
+  vwap_at_ib NULL remaining  : 0
+  Verification           : PASS
+
   Verification SQL:
     SELECT COUNT(*) FROM backtest_sim_runs WHERE vwap_at_ib IS NULL;
-    → Should approach 0 after a complete run (modulo transient errors).
+    → 0 (complete)
 
 Usage
 ─────

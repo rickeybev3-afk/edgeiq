@@ -8932,6 +8932,11 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         _pred_s      = _df["predicted"].fillna("").str.lower()
         _bullish_mask = _pred_s.str.contains("bullish|long|up", na=False)
         _bearish_mask = _pred_s.str.contains("bearish|short|down", na=False)
+        # Neutral / unknown direction: neither bullish nor bearish label.
+        # The VWAP gate is directional (mid > vwap for longs, mid < vwap for
+        # shorts), so it cannot be meaningfully applied to Neutral predictions.
+        # Neutral rows pass through regardless of vwap_at_ib.
+        _no_direction = ~_bullish_mask & ~_bearish_mask
         # _has_vwap: True only for rows with a real, positive VWAP.
         # Rows where vwap_at_ib is NULL (old rows without VWAP data) OR where
         # vwap_at_ib == VWAP_AT_IB_SENTINEL (-1.0, stamped when Alpaca has no
@@ -8940,7 +8945,8 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         _has_vwap    = _df["vwap_at_ib"].notna() & (_df["vwap_at_ib"] > 0)
 
         _vwap_ok = (
-            (~_has_vwap) |  # rows without usable vwap_at_ib pass through (backward compat)
+            (~_has_vwap) |                                                     # no VWAP data → pass through
+            (_no_direction) |                                                  # Neutral predictions → pass through
             (_has_vwap & _bullish_mask & (_df["_ib_mid"] > _df["vwap_at_ib"])) |
             (_has_vwap & _bearish_mask & (_df["_ib_mid"] < _df["vwap_at_ib"]))
         )
