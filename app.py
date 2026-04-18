@@ -8241,6 +8241,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         ['rp_pos_size',      'rp_pos_size'],
         ['rp_compound',      'rp_compound'],
         ['rp_equity',        'rp_equity'],
+        ['rp_risk_pct',      'rp_risk_pct'],
     ];
     var changed = false;
     params.forEach(function(pair) {
@@ -8474,9 +8475,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rp_min_tcs = 0
             else:
                 _rp_tcs_offset = 0
+                if "rp_risk_pct" not in st.session_state:
+                    try:
+                        st.session_state["rp_risk_pct"] = float(st.query_params.get("rp_risk_pct", 2.0))
+                    except (ValueError, TypeError):
+                        st.session_state["rp_risk_pct"] = 2.0
                 _rp_risk_pct = st.number_input(
                     "Risk per Trade (%)", min_value=0.5, max_value=10.0,
                     value=2.0, step=0.5, key="rp_risk_pct",
+                )
+                if st.query_params.get("rp_risk_pct") != str(_rp_risk_pct):
+                    st.query_params["rp_risk_pct"] = str(_rp_risk_pct)
+                _cmp_rp_filters.html(
+                    f"<script>localStorage.setItem('rp_risk_pct', {repr(str(_rp_risk_pct))});</script>",
+                    height=0,
                 )
                 if "rp_min_tcs_slider" not in st.session_state:
                     try:
