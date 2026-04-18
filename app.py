@@ -7509,6 +7509,71 @@ def _clean_structure_label(raw):
     return s[:30] if len(s) > 30 else s
 
 
+def _inject_scroll_and_pulse(raw_anchor_name: str) -> None:
+    """Scroll to a ``tk-anchor-{id}`` element and trigger the amber pulse.
+
+    Pass the raw ticker / identifier string; the function sanitises it to a
+    safe HTML id (matching the ``tk-anchor-`` divs rendered in the sweep grid)
+    and injects the necessary JavaScript via a zero-height HTML component.
+
+    The ``@keyframes _eqPulseAmber`` style is injected once into the parent
+    document ``<head>`` and reused on every subsequent call, so there is no
+    style duplication when multiple jumps occur in the same session.
+    """
+    import streamlit.components.v1 as _cmp_scroll
+    _safe_id = "tk-anchor-" + "".join(
+        c if c.isalnum() or c in "-_." else "-" for c in raw_anchor_name
+    )
+    _cmp_scroll.html(
+        f"""<script>
+(function() {{
+    var _id = {repr(_safe_id)};
+    function _pulseHeader(anchorEl) {{
+        var targetDetails = null;
+        var node = anchorEl;
+        while (node && !targetDetails) {{
+            var sib = node.nextElementSibling;
+            while (sib) {{
+                if (sib.tagName === 'DETAILS') {{ targetDetails = sib; break; }}
+                var det = sib.querySelector('details');
+                if (det) {{ targetDetails = det; break; }}
+                sib = sib.nextElementSibling;
+            }}
+            if (!targetDetails) {{ node = node.parentElement; }}
+        }}
+        if (!targetDetails) return;
+        var summary = targetDetails.querySelector('summary');
+        if (!summary) return;
+        var styleId = '_eq_pulse_kf';
+        if (!window.parent.document.getElementById(styleId)) {{
+            var styleEl = window.parent.document.createElement('style');
+            styleEl.id = styleId;
+            styleEl.textContent = '@keyframes _eqPulseAmber {{' +
+                '0%,100%{{box-shadow:none;background:transparent}}' +
+                '30%{{box-shadow:0 0 0 3px rgba(255,179,0,0.55);background:rgba(255,179,0,0.18)}}' +
+                '}}';
+            window.parent.document.head.appendChild(styleEl);
+        }}
+        summary.style.borderRadius = '4px';
+        summary.style.animation = '_eqPulseAmber 1.5s ease-out';
+        setTimeout(function() {{ summary.style.animation = ''; }}, 1600);
+    }}
+    function _doScroll() {{
+        var el = window.parent.document.getElementById(_id);
+        if (el) {{
+            el.scrollIntoView({{behavior:'smooth', block:'start'}});
+            setTimeout(function() {{ _pulseHeader(el); }}, 900);
+        }} else {{
+            setTimeout(_doScroll, 150);
+        }}
+    }}
+    setTimeout(_doScroll, 200);
+}})();
+</script>""",
+        height=0,
+    )
+
+
 # ── Historical Backtester Tab ───────────────────────────────────────────────────
 _BT_DEFAULT_TICKERS = (
     "GME,AMC,SOFI,SPCE,SNDL,TLRY,XELA,OCGN,CLOV,MVIS,"
@@ -13323,58 +13388,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # ── Scroll to worst-divergence ticker after jump button click ─
                 _scroll_target = st.session_state.pop("_scroll_to_worst_div", None)
                 if _scroll_target:
-                    import streamlit.components.v1 as _cmp_scroll_div
-                    _safe_scroll_id = "tk-anchor-" + "".join(
-                        c if c.isalnum() or c in "-_." else "-" for c in _scroll_target
-                    )
-                    _cmp_scroll_div.html(
-                        f"""<script>
-(function() {{
-    var _id = {repr(_safe_scroll_id)};
-    function _pulseHeader(anchorEl) {{
-        var targetDetails = null;
-        var node = anchorEl;
-        while (node && !targetDetails) {{
-            var sib = node.nextElementSibling;
-            while (sib) {{
-                if (sib.tagName === 'DETAILS') {{ targetDetails = sib; break; }}
-                var det = sib.querySelector('details');
-                if (det) {{ targetDetails = det; break; }}
-                sib = sib.nextElementSibling;
-            }}
-            if (!targetDetails) {{ node = node.parentElement; }}
-        }}
-        if (!targetDetails) return;
-        var summary = targetDetails.querySelector('summary');
-        if (!summary) return;
-        var styleId = '_eq_pulse_kf';
-        if (!window.parent.document.getElementById(styleId)) {{
-            var styleEl = window.parent.document.createElement('style');
-            styleEl.id = styleId;
-            styleEl.textContent = '@keyframes _eqPulseAmber {{' +
-                '0%,100%{{box-shadow:none;background:transparent}}' +
-                '30%{{box-shadow:0 0 0 3px rgba(255,179,0,0.55);background:rgba(255,179,0,0.18)}}' +
-                '}}';
-            window.parent.document.head.appendChild(styleEl);
-        }}
-        summary.style.borderRadius = '4px';
-        summary.style.animation = '_eqPulseAmber 1.5s ease-out';
-        setTimeout(function() {{ summary.style.animation = ''; }}, 1600);
-    }}
-    function _doScroll() {{
-        var el = window.parent.document.getElementById(_id);
-        if (el) {{
-            el.scrollIntoView({{behavior:'smooth', block:'start'}});
-            setTimeout(function() {{ _pulseHeader(el); }}, 900);
-        }} else {{
-            setTimeout(_doScroll, 150);
-        }}
-    }}
-    setTimeout(_doScroll, 200);
-}})();
-</script>""",
-                        height=0,
-                    )
+                    _inject_scroll_and_pulse(_scroll_target)
 
                 # ── Divergence full-screen dialog (defined once, shared across tickers) ─
                 @st.dialog("📉 Divergence — Full Screen", width="large")
