@@ -20702,15 +20702,18 @@ ALTER TABLE backtest_sim_runs
             if v is None: return "#546e7a"
             return "#2e7d32" if v > 0 else ("#ef6c00" if v == 0 else "#c62828")
 
+        _ts_sort_ind = '<span class="tcs-sort-ind" style="margin-left:4px;opacity:0.5;font-size:10px;"></span>'
+        _ts_sort_ind_active = '<span class="tcs-sort-ind" style="margin-left:4px;font-size:10px;">▼</span>'
+        _ts_th_sort_style = 'padding:6px 10px;text-align:right;cursor:pointer;user-select:none;white-space:nowrap;'
         _ts_header = (
             '<tr style="background:#1a2738;font-size:11px;color:#90a4ae;letter-spacing:0.5px;">'
             '<th style="padding:6px 10px;text-align:left;">Tier</th>'
             '<th style="padding:6px 10px;text-align:left;">Description</th>'
-            '<th style="padding:6px 10px;text-align:right;">Trades</th>'
-            '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Win%</th>'
-            '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Exp</th>'
-            '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Win%</th>'
-            '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Exp</th>'
+            f'<th data-tcs-col="2" style="{_ts_th_sort_style}" title="Sort by Trades">Trades{_ts_sort_ind}</th>'
+            f'<th data-tcs-col="3" style="{_ts_th_sort_style}color:#80cbc4;" title="Sort by EOD Win%">EOD Win%{_ts_sort_ind}</th>'
+            f'<th data-tcs-col="4" style="{_ts_th_sort_style}color:#80cbc4;" title="Sort by EOD Exp">EOD Exp{_ts_sort_ind_active}</th>'
+            f'<th data-tcs-col="5" style="{_ts_th_sort_style}color:#ce93d8;" title="Sort by Tiered Win%">Tiered Win%{_ts_sort_ind}</th>'
+            f'<th data-tcs-col="6" style="{_ts_th_sort_style}color:#ce93d8;" title="Sort by Tiered Exp">Tiered Exp{_ts_sort_ind}</th>'
             '<th style="padding:6px 10px;text-align:center;">Edge Winner</th>'
             '</tr>'
         )
@@ -20737,18 +20740,77 @@ ALTER TABLE backtest_sim_runs
                 if _ts_is_top else
                 'border-top:1px solid #1e2a3a;border-left:3px solid transparent;'
             )
+            _ts_nodata_attr = ' data-nodata="1"' if _tsr["n"] == 0 else ''
+            _ts_eod_wr_val  = _tsr["eod_wr"]  if _tsr["eod_wr"]  is not None else -9999999
+            _ts_eod_exp_val = _tsr["eod_exp"] if _tsr["eod_exp"] is not None else -9999999
+            _ts_tier_wr_val  = _tsr["tier_wr"]  if _tsr["tier_wr"]  is not None else -9999999
+            _ts_tier_exp_val = _tsr["tier_exp"] if _tsr["tier_exp"] is not None else -9999999
             _ts_body += (
-                f'<tr style="{_ts_row_style}">'
+                f'<tr style="{_ts_row_style}"{_ts_nodata_attr}>'
                 f'<td style="padding:6px 10px;"><span style="color:{_tsr["color"]};font-weight:700;">{_tsr["emoji"]} {_tsr["label"]}</span></td>'
                 f'<td style="padding:6px 10px;font-size:11px;color:#90a4ae;">{_tsr["desc"]}</td>'
-                f'<td style="padding:6px 10px;text-align:right;">{_ts_n_str}</td>'
-                f'<td style="padding:6px 10px;text-align:right;">{_ts_eod_wr_str}</td>'
-                f'<td style="padding:6px 10px;text-align:right;">{_ts_eod_exp_str}</td>'
-                f'<td style="padding:6px 10px;text-align:right;">{_ts_tier_wr_str}</td>'
-                f'<td style="padding:6px 10px;text-align:right;">{_ts_tier_exp_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;" data-val="{_tsr["n"]}">{_ts_n_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;" data-val="{_ts_eod_wr_val}">{_ts_eod_wr_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;" data-val="{_ts_eod_exp_val}">{_ts_eod_exp_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;" data-val="{_ts_tier_wr_val}">{_ts_tier_wr_str}</td>'
+                f'<td style="padding:6px 10px;text-align:right;" data-val="{_ts_tier_exp_val}">{_ts_tier_exp_str}</td>'
                 f'<td style="padding:6px 10px;text-align:center;">{_ts_badge}</td>'
                 f'</tr>'
             )
+        _ts_sort_script = """
+<script>
+(function(){
+  if (window.__tcsInit) { window.__tcsInit(); return; }
+  var _tcsSortCol = 4, _tcsSortAsc = false;
+  function _tcsApplySort(tbl) {
+    var tbody = tbl.querySelector('tbody');
+    var rows = Array.from(tbody.querySelectorAll('tr'));
+    var dataRows = rows.filter(function(r){ return !r.hasAttribute('data-nodata'); });
+    var noDataRows = rows.filter(function(r){ return r.hasAttribute('data-nodata'); });
+    dataRows.sort(function(a, b){
+      var av = parseFloat(a.cells[_tcsSortCol].getAttribute('data-val'));
+      var bv = parseFloat(b.cells[_tcsSortCol].getAttribute('data-val'));
+      return _tcsSortAsc ? av - bv : bv - av;
+    });
+    dataRows.concat(noDataRows).forEach(function(r){ tbody.appendChild(r); });
+    var ths = tbl.querySelectorAll('th[data-tcs-col]');
+    ths.forEach(function(th){
+      var ind = th.querySelector('.tcs-sort-ind');
+      if (!ind) return;
+      if (parseInt(th.getAttribute('data-tcs-col')) === _tcsSortCol) {
+        ind.textContent = _tcsSortAsc ? '▲' : '▼';
+        ind.style.opacity = '1';
+      } else {
+        ind.textContent = '';
+        ind.style.opacity = '0.5';
+      }
+    });
+  }
+  function _tcsAttach() {
+    var tbls = document.querySelectorAll('table[data-tcs-sort]');
+    tbls.forEach(function(tbl){
+      if (tbl.__tcsAttached) return;
+      tbl.__tcsAttached = true;
+      var ths = tbl.querySelectorAll('th[data-tcs-col]');
+      ths.forEach(function(th){
+        th.addEventListener('click', function(){
+          var col = parseInt(th.getAttribute('data-tcs-col'));
+          if (col === _tcsSortCol) { _tcsSortAsc = !_tcsSortAsc; }
+          else { _tcsSortCol = col; _tcsSortAsc = false; }
+          _tcsApplySort(tbl);
+        });
+      });
+      _tcsApplySort(tbl);
+    });
+  }
+  window.__tcsInit = _tcsAttach;
+  if (window.__tcsObs) { window.__tcsObs.disconnect(); }
+  window.__tcsObs = new MutationObserver(_tcsAttach);
+  window.__tcsObs.observe(document.body, {childList:true, subtree:true});
+  _tcsAttach();
+})();
+</script>
+"""
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
             '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
@@ -20757,10 +20819,11 @@ ALTER TABLE backtest_sim_runs
         )
         st.markdown(
             f'<div style="overflow-x:auto;">'
-            f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
+            f'<table data-tcs-sort="1" style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
             f'{_ts_header}'
             f'<tbody>{_ts_body}</tbody>'
-            f'</table></div>',
+            f'</table></div>'
+            f'{_ts_sort_script}',
             unsafe_allow_html=True,
         )
 
