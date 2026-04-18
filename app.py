@@ -5157,6 +5157,33 @@ if _gdf_for_seed in ("sip", "iex"):
 </script>""",
         height=0,
     )
+else:
+    # No DB preference loaded for this session (anonymous or new user).
+    # Restore the last-used feed from localStorage so all feed-sensitive widgets
+    # initialise with the correct value without the trader having to click the pill again.
+    # The JS reads localStorage once at the very top of the page and, when a saved feed
+    # value is found, injects it as `_feed_default` into the URL and reloads — the
+    # existing `_af_feed_param` handler (just above) will pick it up on the reloaded
+    # run, set `_global_default_feed` in session state, and propagate it to every widget.
+    import streamlit.components.v1 as _cmp_feed_restore
+    _cmp_feed_restore.html(
+        """<script>
+(function () {
+    var url = new URL(window.parent.location.href);
+    // Already carrying the param — let the Python handler consume it; don't loop.
+    if (url.searchParams.has('_feed_default')) return;
+    var saved = localStorage.getItem('edgeiq_feed') ||
+                localStorage.getItem('global_default_feed') ||
+                localStorage.getItem('hist_scan_feed') ||
+                localStorage.getItem('scan_feed_select') ||
+                localStorage.getItem('replay_feed_sel');
+    if (!saved || (saved !== 'sip' && saved !== 'iex')) return;
+    url.searchParams.set('_feed_default', saved);
+    window.parent.location.replace(url.toString());
+})();
+</script>""",
+        height=0,
+    )
 
 if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
     _early_wl = _cached_load_watchlist(user_id=_AUTH_USER_ID)
