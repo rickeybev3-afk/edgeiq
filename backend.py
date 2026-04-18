@@ -8786,7 +8786,7 @@ _BACKTEST_SIM_COLS = (
     "id,user_id,sim_date,ticker,open_price,close_price,ib_low,ib_high,"
     "tcs,predicted,actual_outcome,win_loss,follow_thru_pct,false_break_up,"
     "false_break_down,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,pnl_pct_sim,"
-    "eod_pnl_r,tiered_pnl_r"
+    "eod_pnl_r,tiered_pnl_r,vwap_at_ib"
 )
 
 
@@ -8830,8 +8830,8 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
       3. VWAP alignment: Bullish → IB midpoint > vwap_at_ib
                          Bearish → IB midpoint < vwap_at_ib
          (only applied to rows where vwap_at_ib IS NOT NULL — older rows that
-          pre-date vwap_at_ib logging fall through and are excluded from the
-          count to avoid inflating the target)
+          pre-date vwap_at_ib logging fall through and are still counted,
+          preserving backward compatibility with pre-vwap batch runs)
 
     Rows are fetched via offset pagination so there is no hard row-cap; the
     function always reflects the full table regardless of dataset size.
@@ -8903,6 +8903,7 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         _has_vwap    = _df["vwap_at_ib"].notna()
 
         _vwap_ok = (
+            (~_has_vwap) |  # rows without vwap_at_ib pass through (backward compat)
             (_has_vwap & _bullish_mask & (_df["_ib_mid"] > _df["vwap_at_ib"])) |
             (_has_vwap & _bearish_mask & (_df["_ib_mid"] < _df["vwap_at_ib"]))
         )
