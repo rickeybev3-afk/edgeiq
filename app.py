@@ -13891,21 +13891,29 @@ Measures how accurately the 7-structure framework classified those days in hinds
             }
             _ctrl_col_sort, _ctrl_col_filter, _ctrl_col_div = st.columns([3, 2, 2])
             with _ctrl_col_sort:
-                # Restore sort choice on first load.
-                # Priority: saved pref → URL query param → first option (default).
+                # Restore sort choice on first load or when the shared URL changes.
+                # Priority: URL query param → saved pref → first option (default).
+                # The _last_url guard ensures a shared link pasted into an active
+                # session always wins, matching the tkr_sort_rev pattern.
                 _qp_sort = st.query_params.get("tkr_sort", "")
                 _sort_opts = list(_sort_col_map.keys())
-                if (
-                    "tkr_summary_sort_radio" not in st.session_state
-                    or st.session_state.get("_tkr_sort_last_url") != _qp_sort
-                ):
-                    _pref_sort_col = st.session_state.get("_pref_tkr_summary_sort_radio", "")
-                    if "tkr_summary_sort_radio" not in st.session_state and _pref_sort_col in _sort_opts:
-                        st.session_state["tkr_summary_sort_radio"] = _pref_sort_col
-                    elif _qp_sort in _sort_opts:
+                if "tkr_summary_sort_radio" not in st.session_state:
+                    # First load: URL param takes priority, then saved pref, then default.
+                    if _qp_sort in _sort_opts:
                         st.session_state["tkr_summary_sort_radio"] = _qp_sort
-                    elif "tkr_summary_sort_radio" not in st.session_state:
-                        st.session_state["tkr_summary_sort_radio"] = _sort_opts[0]
+                    else:
+                        _pref_sort_col = st.session_state.get("_pref_tkr_summary_sort_radio", "")
+                        if _pref_sort_col in _sort_opts:
+                            st.session_state["tkr_summary_sort_radio"] = _pref_sort_col
+                        else:
+                            st.session_state["tkr_summary_sort_radio"] = _sort_opts[0]
+                    st.session_state["_tkr_sort_last_url"] = _qp_sort
+                elif "_tkr_sort_last_url" not in st.session_state:
+                    st.session_state["_tkr_sort_last_url"] = _qp_sort
+                elif st.session_state["_tkr_sort_last_url"] != _qp_sort:
+                    # URL changed in an active session (shared link pasted in).
+                    if _qp_sort in _sort_opts:
+                        st.session_state["tkr_summary_sort_radio"] = _qp_sort
                     st.session_state["_tkr_sort_last_url"] = _qp_sort
                 _sort_choice = st.radio(
                     "Sort table by",
