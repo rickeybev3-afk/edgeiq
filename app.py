@@ -29284,6 +29284,7 @@ function _bqCopyShareLink() {
                                       "actual_outcome", "win_loss", "follow_thru_pct",
                                       "mae", "mfe",
                                       "ib_range_pct",
+                                      "rvol_size_mult",
                                       "sim_pnl_100sh",
                                       "eod_pnl_r", "tiered_pnl_r"] if c in _verified.columns]
         _show = _verified[_display_cols].rename(columns={
@@ -29292,6 +29293,7 @@ function _bqCopyShareLink() {
             "win_loss": "W/L", "follow_thru_pct": "FT %",
             "mae": "MAE %", "mfe": "MFE %",
             "ib_range_pct": "IB Width %",
+            "rvol_size_mult": "RVOL Mult",
             "sim_pnl_100sh": "P&L (100sh)",
             "eod_pnl_r": "EOD Hold R", "tiered_pnl_r": "Tiered Exit R",
         }).reset_index(drop=True)
@@ -29300,8 +29302,8 @@ function _bqCopyShareLink() {
             _tiered_vals = pd.to_numeric(_show["Tiered Exit R"], errors="coerce")
             _show["Delta R"] = (_tiered_vals - _eod_vals).where(_eod_vals.notna() & _tiered_vals.notna())
 
-        # ── Ticker / Structure filters for the sweep table ────────────────────
-        _sw_filt_cols = st.columns([1, 1, 2])
+        # ── Ticker / Structure / RVOL filters for the sweep table ─────────────
+        _sw_filt_cols = st.columns([1, 1, 1])
         with _sw_filt_cols[0]:
             _sw_all_tickers = sorted(_show["Ticker"].dropna().unique().tolist()) if "Ticker" in _show.columns else []
             _sw_sel_tickers = st.multiselect(
@@ -29320,11 +29322,38 @@ function _bqCopyShareLink() {
                 key="pt_sweep_struct_filter",
                 placeholder="All structures",
             )
+        with _sw_filt_cols[2]:
+            _sw_rvol_options = ["All", "Boosted (>1×)", "Baseline (=1×)", "Reduced (<1×)", "No data (—)"]
+            _sw_sel_rvol = st.selectbox(
+                "Filter by RVOL Mult",
+                options=_sw_rvol_options,
+                index=0,
+                key="pt_sweep_rvol_filter",
+                help="RVOL position-size multiplier applied at trade time. >1× means high volume boosted the position size.",
+            )
         _show_vis = _show.copy()
         if _sw_sel_tickers:
             _show_vis = _show_vis[_show_vis["Ticker"].isin(_sw_sel_tickers)]
         if _sw_sel_structs:
             _show_vis = _show_vis[_show_vis["Predicted"].isin(_sw_sel_structs)]
+        if "RVOL Mult" in _show_vis.columns and _sw_sel_rvol != "All":
+            _rvol_num_filt = pd.to_numeric(_show_vis["RVOL Mult"], errors="coerce")
+            if _sw_sel_rvol == "Boosted (>1×)":
+                _show_vis = _show_vis[_rvol_num_filt > 1.0]
+            elif _sw_sel_rvol == "Baseline (=1×)":
+                _show_vis = _show_vis[_rvol_num_filt == 1.0]
+            elif _sw_sel_rvol == "Reduced (<1×)":
+                _show_vis = _show_vis[_rvol_num_filt < 1.0]
+            elif _sw_sel_rvol == "No data (—)":
+                _show_vis = _show_vis[_rvol_num_filt.isna()]
+
+        # ── Format RVOL Mult for display (numeric → "X.XX×" or "—") ──────────
+        if "RVOL Mult" in _show_vis.columns:
+            _rvol_disp = pd.to_numeric(_show_vis["RVOL Mult"], errors="coerce")
+            _show_vis = _show_vis.copy()
+            _show_vis["RVOL Mult"] = _rvol_disp.apply(
+                lambda v: f"{v:.2f}×" if pd.notna(v) else "—"
+            )
 
         def _color_wl(val):
             if val in ("W", "Win"):   return "color: #66bb6a; font-weight:700"
@@ -29379,6 +29408,21 @@ function _bqCopyShareLink() {
             except (ValueError, TypeError):
                 return ""
 
+        def _color_rvol(val):
+            if str(val) == "—":
+                return "color: #546e7a"
+            try:
+                v = float(str(val).replace("×", ""))
+                if v > 1.2:
+                    return "color: #ffa726; font-weight:700"
+                if v > 1.0:
+                    return "color: #81c784"
+                if v < 1.0:
+                    return "color: #ef5350"
+                return "color: #78909c"
+            except (ValueError, TypeError):
+                return ""
+
         _style_map = {}
         if "W/L" in _show.columns:
             _style_map["W/L"] = _color_wl
@@ -29388,6 +29432,8 @@ function _bqCopyShareLink() {
             _style_map["MFE %"] = _color_mfe
         if "IB Width %" in _show.columns:
             _style_map["IB Width %"] = _color_ib_pct
+        if "RVOL Mult" in _show.columns:
+            _style_map["RVOL Mult"] = _color_rvol
         if "EOD Hold R" in _show.columns:
             _style_map["EOD Hold R"] = _color_r
         if "Tiered Exit R" in _show.columns:
