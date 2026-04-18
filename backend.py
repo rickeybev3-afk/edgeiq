@@ -3712,17 +3712,18 @@ def compute_structure_tcs_thresholds() -> list[dict]:
 
         if total_n == 0:
             results.append({
-                "wk":              wk,
-                "structure":       label,
-                "hit_rate":        None,
-                "sample_count":    0,
-                "journal_n":       0,
-                "bot_n":           0,
-                "historical_n":    0,
-                "brain_weight":    blended_weights.get(wk, 1.0),
-                "recommended_tcs": BASE_TCS,
-                "confidence":      "No Data",
-                "status":          "⏳",
+                "wk":                    wk,
+                "structure":             label,
+                "hit_rate":              None,
+                "sample_count":          0,
+                "journal_n":             0,
+                "bot_n":                 0,
+                "historical_n":          0,
+                "historical_n_raw":      0,
+                "brain_weight":          blended_weights.get(wk, 1.0),
+                "recommended_tcs":       BASE_TCS,
+                "confidence":            "No Data",
+                "status":                "⏳",
             })
             continue
 
@@ -3731,7 +3732,17 @@ def compute_structure_tcs_thresholds() -> list[dict]:
         b_acc = (b["wins"] / b_n) if b_n > 0 else None
         h_acc = (h["wins"] / h_n) if h_n > 0 else None
 
-        # Volume-weighted blend across all 3 sources
+        # Live-first weighted blend across all 3 sources.
+        # Backtest (hist) is capped so it can't drown out live data:
+        #   h_eff = min(actual_hist_n, max(_HIST_MIN_PRIOR, live_n * _HIST_CAP_MULT))
+        # At 0 live trades  → backtest gets up to 30 records of influence (pure prior)
+        # At 10 live trades → backtest capped at 20 records
+        # At 100 live trades→ backtest capped at 200 records (vs 29k raw)
+        # Live data (journal + paper_trades) is NEVER discounted.
+        _HIST_CAP_MULT  = 2.0   # backtest counts at most 2× the live sample
+        _HIST_MIN_PRIOR = 30    # always keep at least 30 records as a prior baseline
+        h_eff_n = min(h_n, max(_HIST_MIN_PRIOR, int(live_n * _HIST_CAP_MULT))) if h_n > 0 else 0
+
         numerator   = 0.0
         denominator = 0.0
         if j_n > 0 and j_acc is not None:
@@ -3740,9 +3751,9 @@ def compute_structure_tcs_thresholds() -> list[dict]:
         if b_n > 0 and b_acc is not None:
             numerator   += b_n * b_acc
             denominator += b_n
-        if h_n > 0 and h_acc is not None:
-            numerator   += h_n * h_acc
-            denominator += h_n
+        if h_eff_n > 0 and h_acc is not None:
+            numerator   += h_eff_n * h_acc
+            denominator += h_eff_n
 
         hit_rate = (numerator / denominator) if denominator > 0 else 0.5
         hit_pct  = hit_rate * 100
@@ -3766,17 +3777,18 @@ def compute_structure_tcs_thresholds() -> list[dict]:
         else:               status = "🔴"
 
         results.append({
-            "wk":              wk,
-            "structure":       label,
-            "hit_rate":        round(hit_pct, 1),
-            "sample_count":    total_n,
-            "journal_n":       j_n,
-            "bot_n":           b_n,
-            "historical_n":    h_n,
-            "brain_weight":    round(blended_weights.get(wk, 1.0), 4),
-            "recommended_tcs": rec_tcs,
-            "confidence":      conf,
-            "status":          status,
+            "wk":                    wk,
+            "structure":             label,
+            "hit_rate":              round(hit_pct, 1),
+            "sample_count":          j_n + b_n + h_eff_n,  # effective total used in blend
+            "journal_n":             j_n,
+            "bot_n":                 b_n,
+            "historical_n":          h_eff_n,   # capped effective count used in blend
+            "historical_n_raw":      h_n,       # actual backtest records available
+            "brain_weight":          round(blended_weights.get(wk, 1.0), 4),
+            "recommended_tcs":       rec_tcs,
+            "confidence":            conf,
+            "status":                status,
         })
 
     results.sort(key=lambda x: x["recommended_tcs"])
