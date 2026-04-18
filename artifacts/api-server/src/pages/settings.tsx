@@ -429,6 +429,7 @@ export default function Settings() {
   }, []);
 
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealth>({ available: false, loading: true });
+  const refetchBackfillHealth = useRef<() => void>(() => {});
 
   useEffect(() => {
     let cancelled = false;
@@ -446,6 +447,7 @@ export default function Settings() {
           }
         });
     };
+    refetchBackfillHealth.current = poll;
     poll();
     const id = setInterval(poll, 60_000);
     return () => { cancelled = true; clearInterval(id); };
@@ -653,6 +655,7 @@ export default function Settings() {
         saved: true,
       }));
       fetchConfig();
+      refetchBackfillHealth.current();
       setTimeout(() => setHeartbeatWindow((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -682,6 +685,7 @@ export default function Settings() {
         saved: true,
       }));
       fetchConfig();
+      refetchBackfillHealth.current();
       setTimeout(() => setHeartbeatWindow((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
