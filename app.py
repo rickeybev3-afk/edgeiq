@@ -14285,6 +14285,53 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             yaxis="y2",
                         ))
 
+                    _dlg_flt_on      = _d.get("flt_on", False)
+                    _dlg_flt_set     = set(_d.get("flt_set") or [])
+                    _dlg_csv_len_pre = _d.get("csv_len_pre") or _dlg_n
+                    if _dlg_flt_on:
+                        if _dlg_flt_set:
+                            _dlg_eq_overlay = [
+                                _dlg_eq[i] if i in _dlg_flt_set else None
+                                for i in range(min(_dlg_csv_len_pre, len(_dlg_eq)))
+                            ]
+                            _dlg_fig.add_trace(go.Scatter(
+                                x=list(range(min(_dlg_csv_len_pre, len(_dlg_eq)))),
+                                y=_dlg_eq_overlay,
+                                name=f"Exported equity ({len(_dlg_flt_set)} trades)",
+                                mode="lines",
+                                connectgaps=False,
+                                line=dict(color="#ff9800", width=3),
+                                yaxis="y1",
+                                showlegend=False,
+                            ))
+                            if not _dlg_eq_only and _dlg_r is not None:
+                                _dlg_r_overlay = [
+                                    _dlg_r[i] if i in _dlg_flt_set else None
+                                    for i in range(min(_dlg_csv_len_pre, len(_dlg_r)))
+                                ]
+                                _dlg_fig.add_trace(go.Scatter(
+                                    x=list(range(min(_dlg_csv_len_pre, len(_dlg_r)))),
+                                    y=_dlg_r_overlay,
+                                    name=f"Exported R ({len(_dlg_flt_set)} trades)",
+                                    mode="lines",
+                                    connectgaps=False,
+                                    line=dict(color="#ff9800", width=3, dash="dot"),
+                                    yaxis="y2",
+                                    showlegend=False,
+                                ))
+                        _dlg_fig.add_annotation(
+                            text=f"✂️ {len(_dlg_flt_set)} of {_dlg_csv_len_pre - 1} trades",
+                            xref="paper", yref="paper",
+                            x=0.01, y=0.97,
+                            xanchor="left", yanchor="top",
+                            showarrow=False,
+                            font=dict(color="#ff9800", size=12, family="monospace"),
+                            bgcolor="rgba(0,0,0,0.45)",
+                            borderpad=4,
+                            bordercolor="rgba(255,152,0,0.4)",
+                            borderwidth=1,
+                        )
+
                     _dlg_chart_title = (
                         f"Equity Curve — {_dlg_tk}"
                         if _dlg_eq_only
@@ -15244,6 +15291,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         "msg": "",
                                         "band_half": 1,
                                         "ls_key": _mini_eq_ls_key,
+                                        "flt_on": _meq_pre_flt_on,
+                                        "flt_set": sorted(_meq_flt_set),
+                                        "csv_len_pre": _mini_n,
                                     }
                                     _div_fullscreen_dlg()
                             # Sentinel for deterministic Plotly div lookup
@@ -15638,6 +15688,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         "n": _mini_n,
                                         "msg": _mini_div_msg,
                                         "band_half": _mini_band_half,
+                                        "flt_on": _mdiv_pre_flt_on,
+                                        "flt_set": sorted(_mdiv_flt_set),
+                                        "csv_len_pre": _mini_csv_len_pre,
                                     }
                                     _div_fullscreen_dlg()
                             # Sentinel: zero-height marker used by JS to locate this chart's Plotly div
