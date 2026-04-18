@@ -12495,6 +12495,118 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _rp_boost_wins_all   = 0
                             _rp_boost_losses_all = 0
 
+                        # ── Filter presets ───────────────────────────────────
+                        _rp_presets_path = os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "trade_log_filter_presets.json",
+                        )
+
+                        def _rp_load_presets():
+                            try:
+                                if os.path.exists(_rp_presets_path):
+                                    with open(_rp_presets_path, "r") as _pf:
+                                        _data = json.load(_pf)
+                                        if isinstance(_data, dict):
+                                            return _data
+                                        st.warning("Filter preset file has unexpected format — presets reset.")
+                            except Exception as _e:
+                                st.warning(f"Could not load filter presets: {_e}")
+                            return {}
+
+                        def _rp_save_presets_to_file(_presets_data):
+                            try:
+                                with open(_rp_presets_path, "w") as _pf:
+                                    json.dump(_presets_data, _pf, indent=2)
+                                return True
+                            except Exception as _e:
+                                st.error(f"Could not save preset: {_e}")
+                                return False
+
+                        _rp_presets = _rp_load_presets()
+                        _rp_preset_names = list(_rp_presets.keys())
+
+                        _rp_pc1, _rp_pc2, _rp_pc3, _rp_pc4 = st.columns([2, 1, 2, 1])
+                        with _rp_pc1:
+                            _rp_preset_options = ["— load preset —"] + _rp_preset_names
+                            _rp_selected_preset = st.selectbox(
+                                "Load preset",
+                                options=_rp_preset_options,
+                                key="_rp_preset_selector",
+                                label_visibility="collapsed",
+                            )
+                        with _rp_pc2:
+                            st.write("")
+                            _rp_load_disabled = _rp_selected_preset == "— load preset —"
+                            if st.button("Load", key="_rp_preset_load_btn", disabled=_rp_load_disabled):
+                                _rp_p = _rp_presets.get(_rp_selected_preset, {})
+                                # --- text / selectbox values ---
+                                _rp_lp_ticker  = _rp_p.get("ticker", "")
+                                _rp_lp_wl      = _rp_p.get("wl", "All")
+                                _rp_lp_from    = _rp_p.get("from_str", "")
+                                _rp_lp_to      = _rp_p.get("to_str", "")
+                                # --- checkbox values as URL strings ---
+                                _rp_lp_neutral  = "1" if _rp_p.get("show_neutral", True) else "0"
+                                _rp_lp_boosted  = "1" if _rp_p.get("boosted_only", False) else "0"
+                                _rp_lp_marginal = "1" if _rp_p.get("marginal_only", False) else "0"
+                                # Write preset into query_params so URL sync is satisfied on rerun
+                                st.query_params["rp_log_ticker"]  = _rp_lp_ticker
+                                st.query_params["rp_log_wl"]      = _rp_lp_wl
+                                st.query_params["rp_log_neutral"] = _rp_lp_neutral
+                                st.query_params["rp_log_boosted"] = _rp_lp_boosted
+                                st.query_params["rp_log_marginal"]= _rp_lp_marginal
+                                st.query_params["rp_log_from"]    = _rp_lp_from
+                                st.query_params["rp_log_to"]      = _rp_lp_to
+                                # Set _last_url tracking keys to match, so sync blocks see no diff
+                                st.session_state["_rp_log_ticker_last_url"]   = _rp_lp_ticker
+                                st.session_state["_rp_log_wl_last_url"]       = _rp_lp_wl
+                                st.session_state["_rp_log_neutral_last_url"]  = _rp_lp_neutral
+                                st.session_state["_rp_log_boosted_last_url"]  = _rp_lp_boosted
+                                st.session_state["_rp_log_marginal_last_url"] = _rp_lp_marginal
+                                st.session_state["_rp_log_from_last_url"]     = _rp_lp_from
+                                st.session_state["_rp_log_to_last_url"]       = _rp_lp_to
+                                # Set widget session_state keys directly
+                                st.session_state["rp_log_ticker_filter"]  = _rp_lp_ticker
+                                st.session_state["rp_log_wl_filter"]      = _rp_lp_wl
+                                st.session_state["rp_log_show_neutral"]   = _rp_p.get("show_neutral", True)
+                                st.session_state["rp_log_boosted_only"]   = _rp_p.get("boosted_only", False)
+                                st.session_state["rp_log_only_marginal"]  = _rp_p.get("marginal_only", False)
+                                st.session_state["rp_log_from_str"]       = _rp_lp_from
+                                st.session_state["rp_log_to_str"]         = _rp_lp_to
+                                st.rerun()
+                        with _rp_pc3:
+                            _rp_preset_name_input = st.text_input(
+                                "Preset name",
+                                key="_rp_preset_name_input",
+                                placeholder="Name this preset…",
+                                label_visibility="collapsed",
+                            )
+                        with _rp_pc4:
+                            st.write("")
+                            _rp_save_disabled = not _rp_preset_name_input.strip()
+                            if st.button("💾 Save", key="_rp_preset_save_btn", disabled=_rp_save_disabled):
+                                _rp_presets[_rp_preset_name_input.strip()] = {
+                                    "ticker": st.session_state.get("rp_log_ticker_filter", ""),
+                                    "wl": st.session_state.get("rp_log_wl_filter", "All"),
+                                    "show_neutral": st.session_state.get("rp_log_show_neutral", True),
+                                    "boosted_only": st.session_state.get("rp_log_boosted_only", False),
+                                    "marginal_only": st.session_state.get("rp_log_only_marginal", False),
+                                    "from_str": st.session_state.get("rp_log_from_str", ""),
+                                    "to_str": st.session_state.get("rp_log_to_str", ""),
+                                }
+                                if _rp_save_presets_to_file(_rp_presets):
+                                    st.toast(f"Preset \"{_rp_preset_name_input.strip()}\" saved.", icon="✅")
+                                    st.rerun()
+
+                        if _rp_preset_names and not _rp_load_disabled:
+                            _rp_del_spacer, _rp_del_col = st.columns([5, 1])
+                            with _rp_del_col:
+                                if st.button("🗑 Delete", key="_rp_preset_delete_btn"):
+                                    _rp_presets.pop(_rp_selected_preset, None)
+                                    if _rp_save_presets_to_file(_rp_presets):
+                                        st.toast(f"Preset \"{_rp_selected_preset}\" deleted.", icon="🗑")
+                                        st.rerun()
+
+                        st.divider()
                         _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3, _rp_log_fcol4 = st.columns([2, 1, 1, 1])
                         with _rp_log_fcol1:
                             _ticker_url_val = st.query_params.get("rp_log_ticker", "")
