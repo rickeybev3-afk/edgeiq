@@ -6350,29 +6350,32 @@ with st.sidebar:
                     st.warning("Could not acquire lock — please try again.")
 
         elif _bf_file_status == "done":
-            st.success("✅ Backfill complete!")
-
-            # ── Show total elapsed time ─────────────────────────────────────
+            # ── Compute total wall-clock duration from start/finish files ───
+            _bf_duration_str = ""
             try:
                 if os.path.exists(_BACKFILL_START_TIME) and os.path.exists(_BACKFILL_FINISH_TIME):
                     with open(_BACKFILL_START_TIME) as _bf_st_f:
                         _bf_start_ts = float(_bf_st_f.read().strip())
                     with open(_BACKFILL_FINISH_TIME) as _bf_ft_f:
                         _bf_finish_ts = float(_bf_ft_f.read().strip())
-                    _bf_elapsed = max(0.0, _bf_finish_ts - _bf_start_ts)
-                    _bf_elapsed_int = int(_bf_elapsed)
+                    _bf_elapsed_int = max(0, int(_bf_finish_ts - _bf_start_ts))
                     if _bf_elapsed_int < 60:
-                        _bf_elapsed_str = f"{_bf_elapsed_int}s"
+                        _bf_duration_str = f"{_bf_elapsed_int}s"
                     elif _bf_elapsed_int < 3600:
-                        _bf_elapsed_str = f"{_bf_elapsed_int // 60}m {_bf_elapsed_int % 60:02d}s"
+                        _bf_duration_str = f"{_bf_elapsed_int // 60}m"
                     else:
                         _bf_h = _bf_elapsed_int // 3600
                         _bf_m = (_bf_elapsed_int % 3600) // 60
-                        _bf_s = _bf_elapsed_int % 60
-                        _bf_elapsed_str = f"{_bf_h}h {_bf_m}m {_bf_s:02d}s"
-                    st.caption(f"⏱ Completed in {_bf_elapsed_str}")
+                        _bf_duration_str = f"{_bf_h}h {_bf_m}m"
             except Exception:
                 pass
+
+            _bf_success_msg = (
+                f"✅ Backfill complete in {_bf_duration_str}"
+                if _bf_duration_str
+                else "✅ Backfill complete!"
+            )
+            st.success(_bf_success_msg)
 
             # ── Parse summary numbers from the log ─────────────────────────
             import re as _re
