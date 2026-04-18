@@ -5045,6 +5045,8 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
     if "grid_sync_dismissed_at" in _prefs and "grid_sync_dismissed_at" not in st.session_state:
         _grid_d = _prefs["grid_sync_dismissed_at"]
         st.session_state["grid_sync_dismissed_at"] = tuple(_grid_d) if isinstance(_grid_d, list) else _grid_d
+    st.session_state["_pref_div_tg_chat_id"] = str(_prefs.get("div_alert_tg_chat_id", ""))
+    st.session_state["_pref_div_discord_webhook"] = str(_prefs.get("div_alert_discord_webhook", ""))
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
 
@@ -5613,6 +5615,61 @@ with st.sidebar:
             st.success(f"IB range % threshold saved: {_ib_new_val:.1f}%", icon="✅")
         else:
             st.error("Could not save — database and local file both failed.", icon="⚠️")
+
+    st.markdown("---")
+    st.markdown("**Divergence Alert Recipients**")
+    st.caption(
+        "Enter your personal Telegram Chat ID and/or Discord Webhook URL. "
+        "When set, the '📤 Send divergence alert' button in the sweep view will "
+        "deliver to your own channel instead of the shared global destination."
+    )
+    _div_uid = st.session_state.get("auth_user_id", "")
+    _div_tg_val = st.session_state.get("_pref_div_tg_chat_id", "")
+    _div_dc_val = st.session_state.get("_pref_div_discord_webhook", "")
+    _div_tg_input = st.text_input(
+        "Telegram Chat ID",
+        value=_div_tg_val,
+        placeholder="e.g. -1001234567890",
+        key="_sb_div_tg_chat_id",
+        help="Your Telegram chat/channel ID. The shared bot token is used automatically.",
+    )
+    _div_dc_input = st.text_input(
+        "Discord Webhook URL",
+        value=_div_dc_val,
+        placeholder="https://discord.com/api/webhooks/…",
+        key="_sb_div_discord_webhook",
+        type="password",
+        help="Your personal Discord incoming webhook URL. Masked for security.",
+    )
+    if st.button("💾 Save divergence recipients", key="_div_recip_save_btn", use_container_width=True):
+        if _div_uid:
+            _div_tg_clean = _div_tg_input.strip()
+            _div_dc_clean = _div_dc_input.strip()
+            _div_errs = []
+            if _div_tg_clean:
+                try:
+                    int(_div_tg_clean)
+                except ValueError:
+                    _div_errs.append("Telegram Chat ID must be a numeric value (e.g. -1001234567890).")
+            if _div_dc_clean and not _div_dc_clean.startswith("https://discord.com/api/webhooks/"):
+                _div_errs.append("Discord Webhook URL must start with https://discord.com/api/webhooks/")
+            if _div_errs:
+                for _div_err in _div_errs:
+                    st.error(_div_err, icon="⚠️")
+            else:
+                _div_cur_prefs = st.session_state.get("_cached_prefs", {})
+                _div_new_prefs = {
+                    **_div_cur_prefs,
+                    "div_alert_tg_chat_id": _div_tg_clean,
+                    "div_alert_discord_webhook": _div_dc_clean,
+                }
+                save_user_prefs(_div_uid, _div_new_prefs)
+                st.session_state["_cached_prefs"] = _div_new_prefs
+                st.session_state["_pref_div_tg_chat_id"] = _div_tg_clean
+                st.session_state["_pref_div_discord_webhook"] = _div_dc_clean
+                st.success("Divergence alert recipients saved.", icon="✅")
+        else:
+            st.warning("Sign in to save per-user alert recipients.", icon="⚠️")
 
     st.markdown("---")
     _MODE_OPTS = ["📅 Historical", "🎬 Replay", "🔴 Live Stream"]
@@ -6780,7 +6837,9 @@ with st.sidebar:
                        "_prefs_loaded", "_restore_tried",
                        "watchlist_raw", "watchlist_textarea",
                        "_cached_prefs", "_pref_alpaca_key", "_pref_alpaca_secret",
-                       "min_tcs_trades"):
+                       "min_tcs_trades",
+                       "_pref_div_tg_chat_id", "_pref_div_discord_webhook",
+                       "_sb_div_tg_chat_id", "_sb_div_discord_webhook"):
                 st.session_state.pop(_k, None)
             st.rerun()
     else:
@@ -12696,15 +12755,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         key="_dl_flagged_tickers",
                     )
                 with _div_alert_send_col:
-                    _tg_configured  = bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
-                    _dc_configured  = bool(os.environ.get("DISCORD_WEBHOOK_URL"))
-                    _any_channel    = _tg_configured or _dc_configured
+                    # Per-user recipients take priority; fall back to global env vars
+                    _user_div_tg_chat_id = st.session_state.get("_pref_div_tg_chat_id", "").strip()
+                    _user_div_dc_webhook = st.session_state.get("_pref_div_discord_webhook", "").strip()
+                    _global_tg_token     = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+                    _global_tg_chat_id   = os.environ.get("TELEGRAM_CHAT_ID",    "").strip()
+                    _global_dc_webhook   = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+
+                    # Effective credentials: prefer per-user, fall back to global
+                    _eff_tg_chat_id = _user_div_tg_chat_id or _global_tg_chat_id
+                    _eff_dc_webhook = _user_div_dc_webhook or _global_dc_webhook
+
+                    _tg_configured = bool(_global_tg_token and _eff_tg_chat_id)
+                    _dc_configured = bool(_eff_dc_webhook and _eff_dc_webhook.startswith("http"))
+                    _any_channel   = _tg_configured or _dc_configured
+
+                    # Build a descriptive tooltip showing which channels are ready
+                    _tg_src = "(personal)" if (_user_div_tg_chat_id and _tg_configured) else "(global)"
+                    _dc_src = "(personal)" if (_user_div_dc_webhook and _dc_configured) else "(global)"
                     _send_btn_label = "📤 Send divergence alert"
                     _send_btn_help  = (
                         "Send this flagged-tickers list (+ CSV attachment) via "
                         + (", ".join(filter(None, [
-                            "Telegram" if _tg_configured else "",
-                            "Discord"  if _dc_configured else "",
+                            f"Telegram {_tg_src}" if _tg_configured else "",
+                            f"Discord {_dc_src}"  if _dc_configured else "",
                         ])) or "—")
                         + "."
                     )
@@ -12718,10 +12792,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _div_alert_result = send_divergence_alert(
                                 flagged_rows=_flagged_csv_rows,
                                 threshold=_div_thresh,
+                                tg_token=_global_tg_token,
+                                tg_chat_id=_eff_tg_chat_id,
+                                discord_webhook_url=_eff_dc_webhook,
                             )
                             _sent_to = [ch for ch, ok in _div_alert_result.items() if ok]
-                            _failed  = [ch for ch, ok in _div_alert_result.items() if not ok and os.environ.get(
-                                "TELEGRAM_BOT_TOKEN" if ch == "telegram" else "DISCORD_WEBHOOK_URL"
+                            _failed  = [ch for ch, ok in _div_alert_result.items() if not ok and (
+                                (_global_tg_token and _eff_tg_chat_id) if ch == "telegram"
+                                else (_eff_dc_webhook and _eff_dc_webhook.startswith("http"))
                             )]
                             if _sent_to:
                                 st.success(f"Alert sent via {', '.join(c.title() for c in _sent_to)}.", icon="✅")
@@ -12729,8 +12807,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.warning(f"Could not send via {', '.join(c.title() for c in _failed)}.", icon="⚠️")
                     else:
                         st.caption(
-                            "Configure TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID or "
-                            "DISCORD_WEBHOOK_URL to enable external alerts."
+                            "Set your Telegram Chat ID or Discord Webhook URL in the sidebar "
+                            "(📱 Telegram Alerts → Divergence Alert Recipients), or configure "
+                            "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID / DISCORD_WEBHOOK_URL in Secrets."
                         )
             elif _div_thresh is not None:
                 # Threshold is set but nothing exceeds it
