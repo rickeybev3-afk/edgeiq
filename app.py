@@ -5063,6 +5063,7 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
         _grid_d = _prefs["grid_sync_dismissed_at"]
         st.session_state["grid_sync_dismissed_at"] = tuple(_grid_d) if isinstance(_grid_d, list) else _grid_d
     st.session_state["_pref_div_tg_chat_id"] = str(_prefs.get("div_alert_tg_chat_id", ""))
+    st.session_state["_pref_div_tg_token"] = str(_prefs.get("div_alert_tg_token", ""))
     st.session_state["_pref_div_discord_webhook"] = str(_prefs.get("div_alert_discord_webhook", ""))
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
@@ -5657,13 +5658,22 @@ with st.sidebar:
     )
     _div_uid = st.session_state.get("auth_user_id", "")
     _div_tg_val = st.session_state.get("_pref_div_tg_chat_id", "")
+    _div_tg_token_val = st.session_state.get("_pref_div_tg_token", "")
     _div_dc_val = st.session_state.get("_pref_div_discord_webhook", "")
     _div_tg_input = st.text_input(
         "Telegram Chat ID",
         value=_div_tg_val,
         placeholder="e.g. -1001234567890",
         key="_sb_div_tg_chat_id",
-        help="Your Telegram chat/channel ID. The shared bot token is used automatically.",
+        help="Your Telegram chat/channel ID. The shared bot token is used automatically unless you supply your own below.",
+    )
+    _div_tg_token_input = st.text_input(
+        "Telegram Bot Token (optional)",
+        value=_div_tg_token_val,
+        placeholder="e.g. 123456:ABC-DEF…",
+        key="_sb_div_tg_token",
+        type="password",
+        help="Your own Telegram bot token. When set, alerts are sent from your private bot instead of the shared one. Leave blank to use the shared bot.",
     )
     _div_dc_input = st.text_input(
         "Discord Webhook URL",
@@ -5676,6 +5686,7 @@ with st.sidebar:
     if st.button("💾 Save divergence recipients", key="_div_recip_save_btn", use_container_width=True):
         if _div_uid:
             _div_tg_clean = _div_tg_input.strip()
+            _div_tg_token_clean = _div_tg_token_input.strip()
             _div_dc_clean = _div_dc_input.strip()
             _div_errs = []
             if _div_tg_clean:
@@ -5693,11 +5704,13 @@ with st.sidebar:
                 _div_new_prefs = {
                     **_div_cur_prefs,
                     "div_alert_tg_chat_id": _div_tg_clean,
+                    "div_alert_tg_token": _div_tg_token_clean,
                     "div_alert_discord_webhook": _div_dc_clean,
                 }
                 save_user_prefs(_div_uid, _div_new_prefs)
                 st.session_state["_cached_prefs"] = _div_new_prefs
                 st.session_state["_pref_div_tg_chat_id"] = _div_tg_clean
+                st.session_state["_pref_div_tg_token"] = _div_tg_token_clean
                 st.session_state["_pref_div_discord_webhook"] = _div_dc_clean
                 st.success("Divergence alert recipients saved.", icon="✅")
         else:
@@ -13121,17 +13134,26 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             or (_now_ts - _last_fired_ts).total_seconds() >= _cooldown_mins * 60
                         )
                         if _n_flagged != _prev_auto_n and _n_flagged > 0:
+                            _auto_user_tg_token   = st.session_state.get("_pref_div_tg_token", "").strip()
+                            _auto_user_tg_chat_id = st.session_state.get("_pref_div_tg_chat_id", "").strip()
+                            _auto_user_dc_webhook = st.session_state.get("_pref_div_discord_webhook", "").strip()
+                            _auto_eff_tg_token    = _auto_user_tg_token or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+                            _auto_eff_tg_chat_id  = _auto_user_tg_chat_id or os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+                            _auto_eff_dc_webhook  = _auto_user_dc_webhook or os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
                             if _cooldown_elapsed:
                                 _auto_result = send_divergence_alert(
                                     flagged_rows=_flagged_csv_rows,
                                     threshold=_div_thresh,
+                                    tg_token=_auto_eff_tg_token,
+                                    tg_chat_id=_auto_eff_tg_chat_id,
+                                    discord_webhook_url=_auto_eff_dc_webhook,
                                 )
                                 _auto_sent_to = [ch for ch, ok in _auto_result.items() if ok]
                                 _auto_failed  = [
                                     ch for ch, ok in _auto_result.items()
-                                    if not ok and os.environ.get(
-                                        "TELEGRAM_BOT_TOKEN" if ch == "telegram"
-                                        else "DISCORD_WEBHOOK_URL"
+                                    if not ok and (
+                                        (_auto_eff_tg_token and _auto_eff_tg_chat_id) if ch == "telegram"
+                                        else (_auto_eff_dc_webhook and _auto_eff_dc_webhook.startswith("http"))
                                     )
                                 ]
                                 if _auto_sent_to:
@@ -13200,21 +13222,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 with _div_alert_send_col:
                     # Per-user recipients take priority; fall back to global env vars
                     _user_div_tg_chat_id = st.session_state.get("_pref_div_tg_chat_id", "").strip()
+                    _user_div_tg_token   = st.session_state.get("_pref_div_tg_token", "").strip()
                     _user_div_dc_webhook = st.session_state.get("_pref_div_discord_webhook", "").strip()
                     _global_tg_token     = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
                     _global_tg_chat_id   = os.environ.get("TELEGRAM_CHAT_ID",    "").strip()
                     _global_dc_webhook   = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 
                     # Effective credentials: prefer per-user, fall back to global
+                    _eff_tg_token   = _user_div_tg_token or _global_tg_token
                     _eff_tg_chat_id = _user_div_tg_chat_id or _global_tg_chat_id
                     _eff_dc_webhook = _user_div_dc_webhook or _global_dc_webhook
 
-                    _tg_configured = bool(_global_tg_token and _eff_tg_chat_id)
+                    _tg_configured = bool(_eff_tg_token and _eff_tg_chat_id)
                     _dc_configured = bool(_eff_dc_webhook and _eff_dc_webhook.startswith("http"))
                     _any_channel   = _tg_configured or _dc_configured
 
                     # Build a descriptive tooltip showing which channels are ready
-                    _tg_src = "(personal)" if (_user_div_tg_chat_id and _tg_configured) else "(global)"
+                    _tg_token_src = "own bot" if _user_div_tg_token else "shared bot"
+                    _tg_src = f"(personal chat, {_tg_token_src})" if (_user_div_tg_chat_id and _tg_configured) else "(global)"
                     _dc_src = "(personal)" if (_user_div_dc_webhook and _dc_configured) else "(global)"
                     _send_btn_label = "📤 Send divergence alert"
                     _send_btn_help  = (
@@ -13235,13 +13260,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _div_alert_result = send_divergence_alert(
                                 flagged_rows=_flagged_csv_rows,
                                 threshold=_div_thresh,
-                                tg_token=_global_tg_token,
+                                tg_token=_eff_tg_token,
                                 tg_chat_id=_eff_tg_chat_id,
                                 discord_webhook_url=_eff_dc_webhook,
                             )
                             _sent_to = [ch for ch, ok in _div_alert_result.items() if ok]
                             _failed  = [ch for ch, ok in _div_alert_result.items() if not ok and (
-                                (_global_tg_token and _eff_tg_chat_id) if ch == "telegram"
+                                (_eff_tg_token and _eff_tg_chat_id) if ch == "telegram"
                                 else (_eff_dc_webhook and _eff_dc_webhook.startswith("http"))
                             )]
                             if _sent_to:
