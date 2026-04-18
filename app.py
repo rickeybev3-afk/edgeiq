@@ -13700,9 +13700,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     )
                                 with _sw_ctrl_cols[3]:
                                     st.markdown('<div style="margin-top:22px;"></div>', unsafe_allow_html=True)
+                                    _sw_mc_eq_def   = float(st.session_state.get("bt_mc_equity", 10_000))
+                                    _sw_mc_risk_def = float(st.session_state.get("bt_mc_risk", 2.0))
+                                    _sw_ticker_has_override = (
+                                        _sw_start_eq != _sw_mc_eq_def
+                                        or _sw_risk_pct != _sw_mc_risk_def
+                                    )
                                     if st.button(
                                         "↺ Reset",
                                         key=f"opt_both_reset_{_tk_name}",
+                                        disabled=not _sw_ticker_has_override,
                                         help=(
                                             "Reset to MC defaults: clears per-ticker overrides and reloads "
                                             "Starting equity and Risk per trade from Backtest → Advanced settings."
