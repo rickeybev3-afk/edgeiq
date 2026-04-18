@@ -13099,6 +13099,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f"{', '.join(c.title() for c in _auto_failed)}",
                                     icon="⚠️",
                                 )
+                            # Append a record to the session-level dispatch log
+                            if "auto_dispatch_log" not in st.session_state:
+                                st.session_state["auto_dispatch_log"] = []
+                            st.session_state["auto_dispatch_log"].append({
+                                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "trigger": "On count change",
+                                "flagged_count": _n_flagged,
+                                "sent_to": _auto_sent_to,
+                                "failed": _auto_failed,
+                            })
                         st.session_state["_div_auto_last_n"] = _n_flagged
                     else:
                         # "Once per day" mode — the bot (paper_trader_bot.py) dispatches
@@ -13184,6 +13194,39 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "(📱 Telegram Alerts → Divergence Alert Recipients), or configure "
                             "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID / DISCORD_WEBHOOK_URL in Secrets."
                         )
+                # ── Auto-alert dispatch log ───────────────────────────────────────────
+                _dispatch_log = st.session_state.get("auto_dispatch_log", [])
+                if _dispatch_log:
+                    with st.expander(
+                        f"📋 Auto-alert dispatch log ({len(_dispatch_log)} dispatch{'es' if len(_dispatch_log) != 1 else ''})",
+                        expanded=False,
+                    ):
+                        for _dl_entry in reversed(_dispatch_log):
+                            _dl_ts      = _dl_entry.get("ts", "—")
+                            _dl_trigger = _dl_entry.get("trigger", "—")
+                            _dl_count   = _dl_entry.get("flagged_count", 0)
+                            _dl_sent    = _dl_entry.get("sent_to", [])
+                            _dl_failed  = _dl_entry.get("failed", [])
+                            if _dl_sent and not _dl_failed:
+                                _dl_icon   = "✅"
+                                _dl_status = f"Sent via {', '.join(c.title() for c in _dl_sent)}"
+                            elif _dl_sent and _dl_failed:
+                                _dl_icon   = "⚠️"
+                                _dl_status = (
+                                    f"Sent via {', '.join(c.title() for c in _dl_sent)}; "
+                                    f"failed: {', '.join(c.title() for c in _dl_failed)}"
+                                )
+                            else:
+                                _dl_icon   = "❌"
+                                _dl_status = f"Failed: {', '.join(c.title() for c in _dl_failed)}" if _dl_failed else "No channels delivered"
+                            st.markdown(
+                                f"{_dl_icon} &nbsp; **{_dl_ts}** &nbsp;·&nbsp; "
+                                f"Trigger: *{_dl_trigger}* &nbsp;·&nbsp; "
+                                f"{_dl_count} ticker{'s' if _dl_count != 1 else ''} flagged &nbsp;·&nbsp; "
+                                f"{_dl_status}",
+                                unsafe_allow_html=True,
+                            )
+                # ─────────────────────────────────────────────────────────────────────
             elif _div_thresh is not None:
                 # Threshold is set but nothing exceeds it — clear the state file so
                 # the bot does not dispatch a stale alert from an earlier render.
