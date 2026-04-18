@@ -11943,6 +11943,43 @@ def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+def get_intraday_closed_paper_trades(user_id: str = "") -> "pd.DataFrame":
+    """Return today's paper_trades rows that have been closed intraday (win_loss IS NOT NULL).
+
+    These are typically trailing-stop fills that _monitor_trailing_stops() patches
+    in real-time throughout the day, giving traders a live running tally of realized R
+    before the nightly EOD sweep runs.
+
+    Columns returned (subset):
+        ticker, win_loss, pnl_r_actual, alpaca_exit_fill_price,
+        alpaca_fill_price, stop_price_sim, entry_time, exit_trigger,
+        trade_date, predicted, tcs
+    """
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        from datetime import date
+        today = str(date.today())
+        q = (
+            supabase.table("paper_trades")
+            .select(
+                "id,ticker,win_loss,pnl_r_actual,alpaca_exit_fill_price,"
+                "alpaca_fill_price,stop_price_sim,entry_time,exit_trigger,"
+                "trade_date,predicted,tcs"
+            )
+            .eq("trade_date", today)
+            .not_.is_("win_loss", "null")
+            .order("id", desc=False)
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        data = q.execute().data
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        print(f"get_intraday_closed_paper_trades error: {e}")
+        return pd.DataFrame()
+
+
 def count_paper_tiered_pending(user_id: str = "") -> int:
     """Return the count of paper_trades rows that qualify for tiered P&L backfill.
 

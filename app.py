@@ -22282,6 +22282,160 @@ def render_performance_tab():
     _bw = _cached_load_brain_weights(user_id=_AUTH_USER_ID)
 
     # ════════════════════════════════════════════════════════════════════════════
+    # INTRADAY TRAILING-STOP P&L CARD
+    # Shows paper_trades rows closed today (win_loss IS NOT NULL) so traders
+    # see a live running tally of realized R as trailing-stop fills come in,
+    # instead of waiting for the nightly 3:30 PM sweep.
+    # ════════════════════════════════════════════════════════════════════════════
+    @st.cache_data(ttl=60, show_spinner=False)
+    def _load_intraday_closed(uid: str):
+        return get_intraday_closed_paper_trades(user_id=uid)
+
+    _intraday_closed = _load_intraday_closed(uid=_AUTH_USER_ID)
+
+    _today_label = __import__("datetime").date.today().strftime("%a %b %-d")
+
+    st.markdown(
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; '
+        f'letter-spacing:1.5px; font-weight:700; font-family:monospace; '
+        f'margin-bottom:6px;">⚡ Today\'s Closed Trades — {_today_label}</div>',
+        unsafe_allow_html=True,
+    )
+
+    if _intraday_closed.empty:
+        st.markdown(
+            '<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+            'padding:14px 20px; margin-bottom:18px; color:#546e7a; font-size:12px;">'
+            'No trailing-stop fills yet today. Closed positions will appear here as the bot '
+            'patches each fill in real time.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        _id_r_vals = pd.to_numeric(
+            _intraday_closed.get("pnl_r_actual", pd.Series(dtype=float)),
+            errors="coerce",
+        )
+        _id_running_r = float(_id_r_vals.fillna(0).sum())
+        _id_wins   = int((_intraday_closed["win_loss"].isin(["Win", "W"])).sum())
+        _id_losses = int((_intraday_closed["win_loss"].isin(["Loss", "L"])).sum())
+        _id_n      = len(_intraday_closed)
+
+        _id_r_color = "#4caf50" if _id_running_r >= 0 else "#ef5350"
+        _id_r_sign  = "+" if _id_running_r >= 0 else ""
+
+        # Summary strip
+        st.markdown(
+            f'<div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:10px;">'
+            f'<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+            f'padding:10px 18px; text-align:center; min-width:110px;">'
+            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:3px;">Running R</div>'
+            f'<div style="font-size:24px; font-weight:900; color:{_id_r_color}; font-family:monospace;">'
+            f'{_id_r_sign}{_id_running_r:.2f}R</div>'
+            f'<div style="font-size:10px; color:#37474f;">{_id_n} fill{"s" if _id_n != 1 else ""} today</div>'
+            f'</div>'
+            f'<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+            f'padding:10px 18px; text-align:center; min-width:100px;">'
+            f'<div style="font-size:9px; color:#546e7a; text-transform:uppercase; '
+            f'letter-spacing:1px; margin-bottom:3px;">W / L</div>'
+            f'<div style="font-size:24px; font-weight:900; font-family:monospace;">'
+            f'<span style="color:#4caf50;">{_id_wins}W</span>'
+            f'<span style="color:#37474f;"> / </span>'
+            f'<span style="color:#ef5350;">{_id_losses}L</span></div>'
+            f'<div style="font-size:10px; color:#37474f;">trailing-stop fills</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Per-trade rows
+        _id_rows_html = []
+        _id_cum_r = 0.0
+        for _, _id_row in _intraday_closed.iterrows():
+            _id_wl    = str(_id_row.get("win_loss", "")).strip()
+            _id_tkr   = str(_id_row.get("ticker", "—"))
+            _id_r_raw = _id_row.get("pnl_r_actual")
+            _id_exit  = _id_row.get("alpaca_exit_fill_price")
+            _id_entry = _id_row.get("alpaca_fill_price")
+            _id_trig  = str(_id_row.get("exit_trigger") or "trail").lower()
+            _id_tcs   = _id_row.get("tcs")
+
+            try:
+                _id_r_val = float(_id_r_raw)
+                _id_cum_r += _id_r_val
+                _id_r_str = f'{("+" if _id_r_val >= 0 else "")}{_id_r_val:.2f}R'
+                _id_r_clr = "#4caf50" if _id_r_val >= 0 else "#ef5350"
+            except (TypeError, ValueError):
+                _id_r_str = "—"
+                _id_r_clr = "#546e7a"
+
+            try:
+                _id_exit_str = f"${float(_id_exit):.2f}"
+            except (TypeError, ValueError):
+                _id_exit_str = "—"
+
+            try:
+                _id_entry_str = f"${float(_id_entry):.2f}"
+            except (TypeError, ValueError):
+                _id_entry_str = "—"
+
+            _id_cum_str = f'{("+" if _id_cum_r >= 0 else "")}{_id_cum_r:.2f}R'
+            _id_cum_clr = "#4caf50" if _id_cum_r >= 0 else "#ef5350"
+
+            _id_wl_badge_clr = "#1b5e20" if _id_wl in ("Win", "W") else "#b71c1c" if _id_wl in ("Loss", "L") else "#1a2744"
+            _id_wl_txt_clr   = "#69f0ae" if _id_wl in ("Win", "W") else "#ff5252" if _id_wl in ("Loss", "L") else "#90a4ae"
+            _id_wl_disp      = "WIN" if _id_wl in ("Win", "W") else "LOSS" if _id_wl in ("Loss", "L") else _id_wl.upper()
+
+            try:
+                _id_tcs_int  = int(float(_id_tcs)) if pd.notna(_id_tcs) else None
+            except (TypeError, ValueError):
+                _id_tcs_int = None
+            _id_tcs_badge = (
+                f'<span style="font-size:9px; color:#ce93d8; font-family:monospace; margin-left:6px;">TCS {_id_tcs_int}</span>'
+                if _id_tcs_int is not None else ""
+            )
+
+            _id_rows_html.append(
+                f'<div style="display:flex; align-items:center; gap:12px; '
+                f'padding:8px 14px; border-bottom:1px solid #0d1b2a; flex-wrap:wrap;">'
+                f'<span style="font-family:monospace; font-weight:700; color:#e0e0e0; '
+                f'font-size:13px; min-width:60px;">{_id_tkr}</span>'
+                f'<span style="background:{_id_wl_badge_clr}; color:{_id_wl_txt_clr}; '
+                f'font-size:9px; font-weight:700; font-family:monospace; letter-spacing:1px; '
+                f'padding:2px 7px; border-radius:4px;">{_id_wl_disp}</span>'
+                f'{_id_tcs_badge}'
+                f'<span style="font-family:monospace; font-weight:700; color:{_id_r_clr}; '
+                f'font-size:13px; min-width:70px;">{_id_r_str}</span>'
+                f'<span style="font-size:10px; color:#546e7a; flex:1;">'
+                f'entry {_id_entry_str} → exit {_id_exit_str}'
+                f'</span>'
+                f'<span style="font-family:monospace; font-size:10px; color:{_id_cum_clr}; '
+                f'white-space:nowrap;">∑ {_id_cum_str}</span>'
+                f'</div>'
+            )
+
+        st.markdown(
+            f'<div style="background:#020813; border:1px solid #1a2744; border-radius:8px; '
+            f'margin-bottom:18px; overflow:hidden;">'
+            f'<div style="display:flex; gap:12px; padding:8px 14px; '
+            f'border-bottom:1px solid #1a2744; background:#040f1e;">'
+            f'<span style="font-size:9px; color:#37474f; text-transform:uppercase; '
+            f'letter-spacing:1px; min-width:60px; font-family:monospace;">Ticker</span>'
+            f'<span style="font-size:9px; color:#37474f; text-transform:uppercase; '
+            f'letter-spacing:1px; min-width:46px; font-family:monospace;">Result</span>'
+            f'<span style="font-size:9px; color:#37474f; text-transform:uppercase; '
+            f'letter-spacing:1px; min-width:70px; font-family:monospace;">Realized R</span>'
+            f'<span style="font-size:9px; color:#37474f; text-transform:uppercase; '
+            f'letter-spacing:1px; flex:1; font-family:monospace;">Fill Prices</span>'
+            f'<span style="font-size:9px; color:#37474f; text-transform:uppercase; '
+            f'letter-spacing:1px; font-family:monospace;">Running ∑</span>'
+            f'</div>'
+            + "".join(_id_rows_html)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ════════════════════════════════════════════════════════════════════════════
     # SECTION 1 — KPI STRIP
     # ════════════════════════════════════════════════════════════════════════════
     st.markdown("### Key Numbers")
