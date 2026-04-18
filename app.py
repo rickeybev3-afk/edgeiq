@@ -19156,6 +19156,78 @@ ALTER TABLE backtest_sim_runs
                 )
                 _scen_data_cache[_scol] = (_sc_df, _sclr, _slabel.split(" ", 1)[-1].strip())
 
+        # ── Ladder Screener Breakdown ────────────────────────────────────────
+        if (
+            not _paper_ladder_cache.empty
+            and "screener" in _paper_ladder_cache.columns
+            and "scan_type" in _paper_ladder_cache.columns
+            and "sum_tiered_r" in _paper_ladder_cache.columns
+            and "total_trades" in _paper_ladder_cache.columns
+            and "wins" in _paper_ladder_cache.columns
+        ):
+            _ldr_df = _paper_ladder_cache.copy()
+            for _nc in ("total_trades", "wins", "losses", "sum_tiered_r", "win_rate_pct"):
+                if _nc in _ldr_df.columns:
+                    _ldr_df[_nc] = pd.to_numeric(_ldr_df[_nc], errors="coerce").fillna(0)
+
+            _ldr_grp = (
+                _ldr_df
+                .groupby(["screener", "scan_type"], dropna=False)
+                .agg(
+                    total_trades=("total_trades", "sum"),
+                    wins=("wins", "sum"),
+                    sum_tiered_r=("sum_tiered_r", "sum"),
+                )
+                .reset_index()
+            )
+            _ldr_grp["win_rate_pct"] = (
+                _ldr_grp["wins"] / _ldr_grp["total_trades"].replace(0, float("nan")) * 100
+            ).fillna(0)
+            _ldr_grp = _ldr_grp.sort_values("sum_tiered_r", ascending=False).reset_index(drop=True)
+
+            if not _ldr_grp.empty:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:#ffb74d;letter-spacing:1px;'
+                    'text-transform:uppercase;font-weight:700;margin-bottom:6px;">'
+                    '🪜 Ladder Performance by Screener</div>',
+                    unsafe_allow_html=True,
+                )
+                _ldr_rows_html = ""
+                for _, _lr in _ldr_grp.iterrows():
+                    _lr_scr  = str(_lr["screener"] or "—")
+                    _lr_scan = str(_lr.get("scan_type") or "—").capitalize()
+                    _lr_tot  = int(_lr["total_trades"])
+                    _lr_wr   = float(_lr["win_rate_pct"])
+                    _lr_sumr = float(_lr["sum_tiered_r"])
+                    _lr_wr_c  = "#2e7d32" if _lr_wr >= 60 else ("#ef6c00" if _lr_wr >= 50 else "#c62828")
+                    _lr_r_c   = "#4caf50" if _lr_sumr > 0 else "#ef5350"
+                    _lr_sign  = "+" if _lr_sumr >= 0 else ""
+                    _ldr_rows_html += (
+                        f'<tr style="border-top:1px solid #1c2040;">'
+                        f'<td style="padding:5px 10px;font-size:12px;color:#cfd8dc;white-space:nowrap;">{_lr_scr}</td>'
+                        f'<td style="padding:5px 10px;font-size:11px;color:#78909c;">{_lr_scan}</td>'
+                        f'<td style="padding:5px 10px;font-size:12px;color:#90a4ae;text-align:right;">{_lr_tot}</td>'
+                        f'<td style="padding:5px 10px;font-size:12px;font-weight:700;color:{_lr_wr_c};text-align:right;">{_lr_wr:.1f}%</td>'
+                        f'<td style="padding:5px 10px;font-size:12px;font-weight:700;color:{_lr_r_c};text-align:right;">{_lr_sign}{_lr_sumr:.1f}R</td>'
+                        f'</tr>'
+                    )
+                st.markdown(
+                    f'<div style="background:#0c1030;border:1px solid #2a2a4a;border-radius:8px;'
+                    f'padding:4px 0;overflow-x:auto;">'
+                    f'<table style="width:100%;border-collapse:collapse;min-width:360px;">'
+                    f'<thead><tr style="background:#141e2e;">'
+                    f'<th style="padding:5px 10px;font-size:10px;color:#78909c;font-weight:600;text-align:left;text-transform:uppercase;">Screener</th>'
+                    f'<th style="padding:5px 10px;font-size:10px;color:#78909c;font-weight:600;text-align:left;text-transform:uppercase;">Scan</th>'
+                    f'<th style="padding:5px 10px;font-size:10px;color:#78909c;font-weight:600;text-align:right;text-transform:uppercase;">Trades</th>'
+                    f'<th style="padding:5px 10px;font-size:10px;color:#78909c;font-weight:600;text-align:right;text-transform:uppercase;">Win %</th>'
+                    f'<th style="padding:5px 10px;font-size:10px;color:#78909c;font-weight:600;text-align:right;text-transform:uppercase;">Total R</th>'
+                    f'</tr></thead>'
+                    f'<tbody>{_ldr_rows_html}</tbody>'
+                    f'</table></div>',
+                    unsafe_allow_html=True,
+                )
+
         # ── Row 2 — Combined overlay equity curve ────────────────────────────
         if _scen_data_cache:
             st.markdown("<br>", unsafe_allow_html=True)
