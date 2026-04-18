@@ -4992,6 +4992,13 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
             st.session_state["link_date_filters"] = bool(_prefs["link_date_filters"])
         except (ValueError, TypeError):
             pass
+    if "date_link_precedence" in _prefs:
+        try:
+            _dp_val = str(_prefs["date_link_precedence"])
+            if _dp_val in ("backtest", "edge_map"):
+                st.session_state["date_link_precedence"] = _dp_val
+        except (ValueError, TypeError):
+            pass
     if "bq_dr_start" in _prefs:
         try:
             import datetime as _dt_bq
@@ -20763,6 +20770,10 @@ ALTER TABLE backtest_sim_runs
         var bqldf = localStorage.getItem('bq_link_date_filters');
         if (bqldf === '1') { url.searchParams.set('bq_link_filters', '1'); needRedirect = true; }
     }
+    if (!url.searchParams.has('link_prec')) {
+        var prec = localStorage.getItem('date_link_precedence');
+        if (prec && prec !== 'backtest') { url.searchParams.set('link_prec', prec); needRedirect = true; }
+    }
     if (needRedirect) window.parent.location.replace(url.toString());
 })();
 </script>
@@ -20795,6 +20806,9 @@ ALTER TABLE backtest_sim_runs
         if "bq_link_date_filters" not in st.session_state:
             if st.query_params.get("bq_link_filters") == "1":
                 st.session_state["bq_link_date_filters"] = True
+        if "date_link_precedence" not in st.session_state:
+            _qp_prec = st.query_params.get("link_prec", "backtest")
+            st.session_state["date_link_precedence"] = _qp_prec if _qp_prec in ("backtest", "edge_map") else "backtest"
 
         # Snapshot prev values BEFORE widgets render (used by link-filter sync below)
         _link_prev_bts  = st.session_state.get("_link_prev_bts",  {})
@@ -20898,10 +20912,22 @@ ALTER TABLE backtest_sim_runs
         _bts_date_filter_active = bool(_bts_start or _bts_end)
 
         if st.session_state.get("link_date_filters", False):
-            st.caption(
-                "🔗 Filters linked — both date ranges stay in sync automatically. "
-                "When both sections are edited simultaneously, the Backtest P&L dates take precedence."
-            )
+            _prec_note_cols = st.columns([5, 2])
+            with _prec_note_cols[0]:
+                _prec_active = st.session_state.get("date_link_precedence", "backtest")
+                _prec_label_bts = "Backtest P&L" if _prec_active == "backtest" else "Edge Map"
+                st.caption(
+                    f"🔗 Filters linked — both date ranges stay in sync automatically. "
+                    f"When both sections are edited simultaneously, {_prec_label_bts} dates take precedence."
+                )
+            with _prec_note_cols[1]:
+                st.selectbox(
+                    "Precedence when both change",
+                    options=["backtest", "edge_map"],
+                    format_func=lambda x: "Backtest P&L" if x == "backtest" else "Edge Map",
+                    key="date_link_precedence",
+                    help="Choose which section's date range wins when both are edited at the same time",
+                )
 
         # ── Link-filter bidirectional sync ────────────────────────────────────────
         if st.session_state.get("link_date_filters", False):
@@ -20917,8 +20943,10 @@ ALTER TABLE backtest_sim_runs
                 _curr_grid_s != _link_prev_grid.get("s", "None") or
                 _curr_grid_e != _link_prev_grid.get("e", "None")
             )
-            if _grid_changed and not _bts_changed:
-                # User edited the Edge Map section → clamp to valid bts range, then mirror
+            _link_prec = st.session_state.get("date_link_precedence", "backtest")
+            _edge_map_wins = (_grid_changed and not _bts_changed) or (_grid_changed and _bts_changed and _link_prec == "edge_map")
+            if _edge_map_wins:
+                # User edited the Edge Map section (or Edge Map takes precedence) → clamp to valid bts range, then mirror
                 import datetime as _dt_link
                 _g2b_start = st.session_state.get("grid_dr_start")
                 _g2b_end   = st.session_state.get("grid_dr_end")
@@ -20969,42 +20997,49 @@ ALTER TABLE backtest_sim_runs
                 st.query_params["bts_dr_end"] = _bts_end_str
         elif "bts_dr_end" in st.query_params:
             del st.query_params["bts_dr_end"]
-        _ldf_val = st.session_state.get("link_date_filters", False)
-        _ldf_js  = "1" if _ldf_val else ""
+        _ldf_val  = st.session_state.get("link_date_filters", False)
+        _ldf_js   = "1" if _ldf_val else ""
+        _prec_val = st.session_state.get("date_link_precedence", "backtest")
         _cmp_bts_dr.html(
             f"<script>"
             f"(function(){{"
             f"  var s = {repr(_bts_start_str or '')};"
             f"  var e = {repr(_bts_end_str or '')};"
             f"  var ldf = {repr(_ldf_js)};"
+            f"  var prec = {repr(_prec_val)};"
             f"  if (s) {{ localStorage.setItem('bts_dr_start', s); }}"
             f"  else {{ localStorage.removeItem('bts_dr_start'); }}"
             f"  if (e) {{ localStorage.setItem('bts_dr_end', e); }}"
             f"  else {{ localStorage.removeItem('bts_dr_end'); }}"
             f"  if (ldf) {{ localStorage.setItem('link_date_filters', '1'); }}"
             f"  else {{ localStorage.removeItem('link_date_filters'); }}"
+            f"  localStorage.setItem('date_link_precedence', prec);"
             f"  var url = new URL(window.parent.location.href);"
             f"  if (ldf) {{ url.searchParams.set('link_filters', '1'); }}"
             f"  else {{ url.searchParams.delete('link_filters'); }}"
+            f"  if (prec && prec !== 'backtest') {{ url.searchParams.set('link_prec', prec); }}"
+            f"  else {{ url.searchParams.delete('link_prec'); }}"
             f"  window.parent.history.replaceState(null, '', url.toString());"
             f"}})();"
             f"</script>",
             height=0,
         )
 
-        # Persist bts date-range filter and link_date_filters toggle to user prefs
+        # Persist bts date-range filter, link_date_filters toggle, and precedence to user prefs
         if _AUTH_USER_ID:
             _bts_dr_cached = st.session_state.get("_cached_prefs", {})
             if (
                 _bts_dr_cached.get("bts_dr_start") != _bts_start_str
                 or _bts_dr_cached.get("bts_dr_end") != _bts_end_str
                 or bool(_bts_dr_cached.get("link_date_filters")) != bool(_ldf_val)
+                or _bts_dr_cached.get("date_link_precedence", "backtest") != _prec_val
             ):
                 _bts_dr_new_prefs = {
                     **_bts_dr_cached,
-                    "bts_dr_start":    _bts_start_str,
-                    "bts_dr_end":      _bts_end_str,
-                    "link_date_filters": bool(_ldf_val),
+                    "bts_dr_start":       _bts_start_str,
+                    "bts_dr_end":         _bts_end_str,
+                    "link_date_filters":  bool(_ldf_val),
+                    "date_link_precedence": _prec_val,
                 }
                 save_user_prefs(_AUTH_USER_ID, _bts_dr_new_prefs)
                 st.session_state["_cached_prefs"] = _bts_dr_new_prefs
@@ -23429,10 +23464,12 @@ ALTER TABLE backtest_sim_runs
                         st.session_state["_cached_prefs"] = _grid_r_prefs
                     st.rerun()
     else:
+        _prec_active_grid = st.session_state.get("date_link_precedence", "backtest")
+        _prec_label_grid = "Backtest P&L" if _prec_active_grid == "backtest" else "Edge Map"
         st.caption(
-                "🔗 Filters linked — both date ranges stay in sync automatically. "
-                "When both sections are edited simultaneously, the Backtest P&L dates take precedence."
-            )
+            f"🔗 Filters linked — both date ranges stay in sync automatically. "
+            f"When both sections are edited simultaneously, {_prec_label_grid} dates take precedence."
+        )
 
     _grid_dr_cols = st.columns([1, 1, 4])
     with _grid_dr_cols[0]:
