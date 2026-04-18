@@ -385,17 +385,23 @@ def _compute_risk_dollars() -> float:
 
 
 # ── P1–P4 tier priority ordering ───────────────────────────────────────────────
-# Expected R per tier (from 5-year backtest, April 2026):
-#   P3: Morning TCS 70+   → avg +7.58R  (fires ~2×/month — NEVER miss these)
-#   P1: Intraday TCS 70+  → avg +4.44R
-#   P2: Intraday TCS 50-69 → avg +2.15R
-#   P4: Morning TCS 50-69  → avg +1.90R
+# Expected R per tier (v5 trailing-stop sim, 33,773 rows, April 2026):
+#   P3: Morning  TCS≥70   → +4.607R / 81.9% WR  (fires ~2×/month — NEVER miss)
+#   P1: Intraday TCS≥70   → +2.998R / 88.8% WR
+#   P2: Intraday TCS50-69 → +0.947R / 75.1% WR  (acceptable — take with 1.0× size)
+#   P4: Morning  TCS50-69 → +0.324R / 41.3% WR  ← BLOCKED (morning TCS floor = 70)
 _TIER_EXPECTED_R = {
-    "P3": 7.58,
-    "P1": 4.44,
-    "P2": 2.15,
-    "P4": 1.90,
+    "P3": 4.607,
+    "P1": 2.998,
+    "P2": 0.947,
+    "P4": 0.324,
 }
+
+# ── Morning-scan TCS floor ──────────────────────────────────────────────────────
+# v5 data: morning TCS<70 (P4) → 41.3% WR / +0.324R on 886 trades.
+# This is the primary reason raw morning backtest was -0.287R overall.
+# Hard block P4 morning setups — they destroy expectancy without enough WR.
+MORNING_TCS_FLOOR = int(os.environ.get("MORNING_TCS_FLOOR", "70"))
 
 # IB-range position-sizing multiplier table
 # Source: 5-yr backtest, TCS≥50 + IB<10% universe (Apr 2026).
@@ -421,6 +427,39 @@ def _ib_size_mult(ib_pct: float) -> float:
         if ib_pct < ceiling:
             return mult
     return 0.80  # ≥10% shouldn't pass IB filter, safe fallback
+
+
+# ── P-tier position-sizing multiplier ─────────────────────────────────────────
+# Calibrated from v5 trailing-stop sim (33,773 rows, April 2026).
+# Applied AFTER the IB-range mult so the two stack multiplicatively.
+# Net max exposure: 2.00× (IB) × 1.50× (P3) = 3.00× base risk (never exceeds
+# the $2,000 risk cap enforced in _compute_risk_dollars).
+#   P3: Morning  TCS≥70   → +4.607R / 81.9% WR → 1.50× (premium runners)
+#   P1: Intraday TCS≥70   → +2.998R / 88.8% WR → 1.25× (high-frequency edge)
+#   P2: Intraday TCS50-69 → +0.947R / 75.1% WR → 1.00× (baseline, acceptable)
+#   P4: Morning  TCS50-69 → blocked by MORNING_TCS_FLOOR before sizing; 0.50×
+#                            fallback in case floor is overridden via env var.
+_PTIER_MULT = [
+    # (scan_type, tcs_min, multiplier)
+    ("morning",  70, 1.50),
+    ("morning",  50, 0.50),   # P4 — should be blocked; 0.5× if floor is overridden
+    ("intraday", 70, 1.25),
+    ("intraday", 50, 1.00),
+]
+
+def _ptier_size_mult(tcs: float, scan_type: str) -> float:
+    """Return P-tier position-size multiplier for a given TCS and scan type."""
+    st = (scan_type or "").lower()
+    for s, tcs_min, mult in _PTIER_MULT:
+        if s == st and tcs >= tcs_min:
+            return mult
+    return 1.00  # fallback — unknown tier, baseline sizing
+
+# ── RVOL minimum entry floor ───────────────────────────────────────────────────
+# v5 data: RVOL 0-1.0 → 28.2% WR / -0.513R (85 trades). Clear negative edge.
+# All other RVOL bands ≥ 1.0 are profitable within P1/P3 universe.
+# Hard block setups with RVOL < RVOL_MIN_FLOOR when RVOL data is available.
+RVOL_MIN_FLOOR = float(os.environ.get("RVOL_MIN_FLOOR", "1.0"))
 
 _ADAPTIVE_EXIT_CONFIG: dict = {}
 try:
@@ -799,6 +838,25 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         _patch_skip_reason(r, _ticker_raw, "bearish_break_filtered")
         return
 
+    # ── Morning TCS floor (P4 blocker) ────────────────────────────────────────
+    # v5 data: Morning TCS<70 (P4) → 41.3% WR / +0.324R on 886 trades.
+    # This low-WR bucket dragged raw morning backtest to -0.287R.
+    # Only morning setups — intraday TCS floor is the per-structure calibration.
+    _tcs_val     = float(r.get("tcs", 0))
+    _scan_type_v = (r.get("scan_type") or scan_label or "").lower()
+    if _scan_type_v == "morning" and _tcs_val < MORNING_TCS_FLOOR:
+        log.info(
+            f"  [{_ticker_raw}] skip order — morning TCS {_tcs_val:.0f} < floor {MORNING_TCS_FLOOR} "
+            f"(P4 tier: 41.3% WR / +0.324R, not worth trading)"
+        )
+        tg_send(
+            f"⛔ <b>{_ticker_raw} Blocked — Morning TCS too low</b>\n"
+            f"TCS <b>{_tcs_val:.0f}</b> < floor <b>{MORNING_TCS_FLOOR}</b> (P4 tier)\n"
+            f"P4 hist: 41.3% WR / +0.324R — skipping to preserve expectancy"
+        )
+        _patch_skip_reason(r, _ticker_raw, "morning_tcs_below_floor")
+        return
+
     ticker = r.get("ticker", "").upper()
 
     # ── PDT guard (live accounts only, <$25k equity) ───────────────────────────
@@ -876,6 +934,36 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"→ size mult {_ib_mult:.2f}× → risk ${risk_dollars:,.0f}"
         )
 
+    # ── Entry quality filter 3: RVOL minimum floor ────────────────────────────
+    # v5 data: RVOL 0-1.0 → 28.2% WR / -0.513R (85 trades). Clear negative edge.
+    # Only apply when rvol is available (may be None for new tickers or data gaps).
+    _rvol_val = r.get("rvol")
+    if _rvol_val is not None:
+        _rvol_float = float(_rvol_val)
+        if _rvol_float > 0 and _rvol_float < RVOL_MIN_FLOOR:
+            log.info(
+                f"  [{ticker}] skip order — RVOL {_rvol_float:.2f} < floor {RVOL_MIN_FLOOR:.1f} "
+                f"(hist WR 28.2% / -0.513R at RVOL 0-1.0)"
+            )
+            tg_send(
+                f"⛔ <b>{ticker} Blocked — Low RVOL</b>\n"
+                f"RVOL <b>{_rvol_float:.2f}×</b> < floor <b>{RVOL_MIN_FLOOR:.1f}×</b>\n"
+                f"Low-participation setup — hist 28.2% WR / -0.513R at RVOL &lt;1.0"
+            )
+            _patch_skip_reason(r, ticker, "rvol_below_floor")
+            return
+
+    # ── P-tier position-size multiplier ───────────────────────────────────────
+    # Stack on top of IB-range mult: P3 (morning 70+) → 1.50×; P1 (intraday 70+)
+    # → 1.25×; P2 (intraday 50-69) → 1.00×.  P4 morning is already blocked above.
+    _ptier_mult  = _ptier_size_mult(_tcs_val, _scan_type_v)
+    risk_dollars = round(risk_dollars * _ptier_mult, 2)
+    if _ptier_mult != 1.0:
+        log.info(
+            f"  [{ticker}] P-tier mult {_ptier_mult:.2f}× "
+            f"(TCS {_tcs_val:.0f}, {_scan_type_v}) → risk ${risk_dollars:,.0f}"
+        )
+
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
     # DISABLED 2026-04-18: backtest showed removing this filter nearly doubled
     # annual return (+20%+ weekly) — counter-VWAP setups that pass TCS≥50 +
@@ -941,7 +1029,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
             f"Target: ${result['target']}\n"
             f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} "
-            f"({_ib_mult:.2f}× IB-size · 1R base)\n"
+            f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier · 1R base)\n"
             f"<code>{order_id[:8]}…</code>"
         )
         # Patch Supabase paper_trades row with order metadata + skip_reason
@@ -1171,6 +1259,84 @@ def _monitor_trailing_stops() -> None:
                 f"T1 hit at {unrealized_r:.2f}R but couldn't place trailing order.\n"
                 f"Error: {ts_result['error']}"
             )
+
+
+def _force_close_all_positions() -> None:
+    """Market-order close all open Alpaca positions at 3:30 PM ET.
+
+    Runs once per trading day from the main scheduling loop.  Prevents holding
+    positions through the final 30-minute close auction where spreads widen and
+    fills become unpredictable on paper accounts.
+
+    Logic:
+      1. Fetch open Alpaca positions.
+      2. For each position submit a market order to close (sell if long, buy if short).
+      3. Log + Telegram notify the result.
+    """
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        return
+
+    positions = _alpaca_get_positions()
+    if not positions:
+        log.info("[ForceClose] 3:30 PM sweep — no open positions, nothing to close.")
+        return
+
+    import requests as _req
+
+    base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+        "Content-Type":        "application/json",
+    }
+
+    closed   = []
+    failed   = []
+
+    for pos in positions:
+        ticker = pos.get("symbol", "").upper()
+        qty    = int(float(pos.get("qty", 0) or 0))
+        side   = pos.get("side", "long")
+
+        if qty <= 0:
+            continue
+
+        # Long → sell; Short → buy-to-close
+        order_side = "sell" if side == "long" else "buy"
+
+        payload = {
+            "symbol":        ticker,
+            "qty":           str(qty),
+            "side":          order_side,
+            "type":          "market",
+            "time_in_force": "day",
+        }
+        try:
+            resp = _req.post(
+                f"{base}/v2/orders",
+                json=payload,
+                headers=headers,
+                timeout=10,
+            )
+            if resp.status_code in (200, 201):
+                order_id = resp.json().get("id", "?")[:8]
+                log.info(f"[ForceClose] {ticker} — market close submitted ({order_side} {qty}) order={order_id}…")
+                closed.append(ticker)
+            else:
+                log.warning(f"[ForceClose] {ticker} — close FAILED: {resp.status_code} {resp.text[:200]}")
+                failed.append(ticker)
+        except Exception as _e:
+            log.warning(f"[ForceClose] {ticker} — close exception: {_e}")
+            failed.append(ticker)
+
+    if closed or failed:
+        lines = ["🔔 <b>3:30 PM — Positions Force-Closed</b>"]
+        if closed:
+            lines.append(f"✅ Closed: {', '.join(closed)}")
+        if failed:
+            lines.append(f"⚠️ Failed: {', '.join(failed)} — check manually")
+        lines.append("<i>Avoids holding through close-auction spread widening</i>")
+        tg_send("\n".join(lines))
 
 
 def tg_send(message: str) -> bool:
@@ -4449,6 +4615,7 @@ def main():
     _midday_watchlist_done = False
     _morning_done          = False
     _intraday_done         = False
+    _force_close_done      = False
     _eod_done              = False
     _verify_done           = False
     _recalibration_done    = False
@@ -4535,6 +4702,7 @@ def main():
             _midday_watchlist_done = False
             _morning_done          = False
             _intraday_done         = False
+            _force_close_done      = False
             _eod_done              = False
             _verify_done           = False
             _recalibration_done    = False
@@ -4663,6 +4831,22 @@ def main():
         ):
             intraday_scan()
             _intraday_done = True
+
+        # 3:30 PM — force-close all open positions before close-auction chaos
+        # Avoids holding through the final 30 min where spreads widen and paper
+        # fills become unpredictable.  Fires on weekdays only.
+        if (
+            not _force_close_done
+            and now_et.weekday() < 5
+            and now_et.hour == 15
+            and now_et.minute >= 30
+        ):
+            log.info("[ForceClose] 3:30 PM — closing all open positions before EOD...")
+            try:
+                _force_close_all_positions()
+            except Exception as _fce:
+                log.warning(f"[ForceClose] Force-close sweep failed (non-fatal): {_fce}")
+            _force_close_done = True
 
         # 4:20 PM — EOD update (only reachable if market extended session; normally
         # handled in the after-close block above)

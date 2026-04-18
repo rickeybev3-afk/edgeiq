@@ -19763,7 +19763,217 @@ Nothing here requires any input from you. All numbers update automatically as yo
             "Duplicates removed · Hover bars for full breakdown"
         )
 
-    # ── RAW TRACKER TABLE ─────────────────────────────────────────────────
+    # ── PROJECTED ACCOUNT EQUITY — MONTE CARLO (v5 sim data) ───────────────
+    st.markdown("---")
+    with st.expander("📈 Projected Account Growth — Monte Carlo Equity Simulation", expanded=False):
+        st.caption(
+            "Loads all v5 trailing-stop sim data from the historical backtest database. "
+            "Shuffles the trade sequence 1,000 times to show the range of possible outcomes "
+            "based on real edge — not averages."
+        )
+
+        _mc_uid = st.session_state.get("auth_user_id", "")
+        _mc_cache_key = f"_mc_v5_rows_{_mc_uid}"
+
+        _mc_col1, _mc_col2, _mc_col3 = st.columns([2, 2, 2])
+        with _mc_col1:
+            _mc_start_equity = st.number_input(
+                "Starting equity ($)",
+                value=25_000,
+                min_value=1_000,
+                max_value=500_000,
+                step=1_000,
+                key="mc_start_equity",
+                help="Your starting account size. Default: $25,000 (target paper start)"
+            )
+        with _mc_col2:
+            _mc_tier_filter = st.selectbox(
+                "Setup tier",
+                options=["P1 + P3 only (TCS ≥ 70)", "All qualifying (TCS ≥ 50)"],
+                index=0,
+                key="mc_tier_filter",
+                help="P1+P3 = intraday/morning TCS≥70 (highest expectancy). All = full TCS≥50 universe."
+            )
+        with _mc_col3:
+            _mc_risk_pct = st.slider(
+                "Risk per trade (%)",
+                min_value=0.5, max_value=3.0, value=1.0, step=0.25,
+                key="mc_risk_pct",
+                help="Fraction of current equity risked per trade (1R). Default: 1%"
+            )
+
+        _mc_load_btn = st.button("▶ Run simulation", key="mc_run_btn", type="primary")
+
+        if _mc_load_btn or _mc_cache_key in st.session_state:
+            if _mc_load_btn or st.session_state.get(_mc_cache_key) is None:
+                with st.spinner("Loading v5 sim data from database…"):
+                    try:
+                        _mc_cols = "pnl_r_sim,tcs,scan_type,ib_range_pct"
+                        _mc_rows_raw = []
+                        _mc_offset = 0
+                        _mc_page = 1000
+                        while True:
+                            _mc_resp = (
+                                supabase.table("backtest_sim_runs")
+                                .select(_mc_cols)
+                                .eq("user_id", _mc_uid)
+                                .eq("sim_version", "v5")
+                                .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+                                .not_.is_("pnl_r_sim", "null")
+                                .range(_mc_offset, _mc_offset + _mc_page - 1)
+                                .execute()
+                            )
+                            _mc_batch = _mc_resp.data or []
+                            _mc_rows_raw.extend(_mc_batch)
+                            if len(_mc_batch) < _mc_page:
+                                break
+                            _mc_offset += _mc_page
+                        st.session_state[_mc_cache_key] = _mc_rows_raw
+                    except Exception as _mc_err:
+                        st.error(f"Failed to load sim data: {_mc_err}")
+                        _mc_rows_raw = []
+            else:
+                _mc_rows_raw = st.session_state.get(_mc_cache_key, [])
+
+            if _mc_rows_raw:
+                # Apply tier filter
+                _mc_tcs_min = 70 if "P1 + P3" in _mc_tier_filter else 50
+                _mc_filtered = [
+                    r for r in _mc_rows_raw
+                    if (r.get("tcs") or 0) >= _mc_tcs_min
+                    and (r.get("ib_range_pct") is not None and float(r.get("ib_range_pct", 99)) < 10.0)
+                ]
+                _mc_pnl_r = [float(r["pnl_r_sim"]) for r in _mc_filtered]
+
+                if len(_mc_pnl_r) >= 5:
+                    import numpy as _np_mc
+                    import random as _rand_mc
+
+                    _mc_n_sim   = 1000
+                    _mc_rp      = _mc_risk_pct / 100.0
+                    _mc_eq0     = float(_mc_start_equity)
+                    _rand_mc.seed(42)
+
+                    _mc_all_curves   = []
+                    _mc_final_equities = []
+
+                    for _ in range(_mc_n_sim):
+                        _shuf = _mc_pnl_r.copy()
+                        _rand_mc.shuffle(_shuf)
+                        _eq = _mc_eq0
+                        _curve = [_eq]
+                        for _r in _shuf:
+                            _eq = max(0.01, _eq * (1.0 + _mc_rp * _r))
+                            _curve.append(_eq)
+                        _mc_all_curves.append(_curve)
+                        _mc_final_equities.append(_eq)
+
+                    _mc_arr     = _np_mc.array(_mc_all_curves)
+                    _mc_p10_arr = _np_mc.percentile(_mc_arr, 10, axis=0).tolist()
+                    _mc_p50_arr = _np_mc.percentile(_mc_arr, 50, axis=0).tolist()
+                    _mc_p90_arr = _np_mc.percentile(_mc_arr, 90, axis=0).tolist()
+                    _mc_x_arr   = list(range(len(_mc_p50_arr)))
+
+                    _mc_final_equities.sort()
+                    _mc_median_fin = float(_np_mc.median(_mc_final_equities))
+                    _mc_p10_fin    = float(_np_mc.percentile(_mc_final_equities, 10))
+                    _mc_p90_fin    = float(_np_mc.percentile(_mc_final_equities, 90))
+                    _mc_pct_prof   = sum(1 for v in _mc_final_equities if v > _mc_eq0) / len(_mc_final_equities) * 100
+
+                    # ── KPI cards ──────────────────────────────────────────────
+                    _mc_kpi = st.columns(4)
+                    _mc_kpi[0].metric(
+                        "Median Final",
+                        f"${_mc_median_fin:,.0f}",
+                        f"{(_mc_median_fin / _mc_eq0 - 1)*100:+.1f}%"
+                    )
+                    _mc_kpi[1].metric(
+                        "P90 Final (best 10%)",
+                        f"${_mc_p90_fin:,.0f}",
+                        f"{(_mc_p90_fin / _mc_eq0 - 1)*100:+.1f}%"
+                    )
+                    _mc_kpi[2].metric(
+                        "P10 Final (worst 10%)",
+                        f"${_mc_p10_fin:,.0f}",
+                        f"{(_mc_p10_fin / _mc_eq0 - 1)*100:+.1f}%"
+                    )
+                    _mc_kpi[3].metric("% Simulations Profitable", f"{_mc_pct_prof:.1f}%")
+
+                    # ── Chart ──────────────────────────────────────────────────
+                    import plotly.graph_objects as _go_mc
+                    _fig_mc_proj = _go_mc.Figure()
+                    _fig_mc_proj.add_trace(_go_mc.Scatter(
+                        x=_mc_x_arr + _mc_x_arr[::-1],
+                        y=_mc_p90_arr + _mc_p10_arr[::-1],
+                        fill="toself",
+                        fillcolor="rgba(0,188,212,0.07)",
+                        line=dict(color="rgba(0,0,0,0)"),
+                        name="P10–P90 range",
+                        showlegend=True,
+                    ))
+                    _fig_mc_proj.add_trace(_go_mc.Scatter(
+                        x=_mc_x_arr, y=_mc_p90_arr,
+                        line=dict(color="#4caf50", dash="dot", width=1.5),
+                        name="P90 (best 10%)",
+                    ))
+                    _fig_mc_proj.add_trace(_go_mc.Scatter(
+                        x=_mc_x_arr, y=_mc_p50_arr,
+                        line=dict(color="#00bcd4", width=3),
+                        name="Median outcome",
+                    ))
+                    _fig_mc_proj.add_trace(_go_mc.Scatter(
+                        x=_mc_x_arr, y=_mc_p10_arr,
+                        line=dict(color="#ef5350", dash="dot", width=1.5),
+                        name="P10 (worst 10%)",
+                    ))
+                    _fig_mc_proj.add_hline(
+                        y=_mc_eq0,
+                        line_dash="dash",
+                        line_color="#546e7a",
+                        opacity=0.6,
+                        annotation_text=f"Starting: ${_mc_eq0:,.0f}",
+                        annotation_font_color="#546e7a",
+                    )
+                    _tier_label = "P1+P3 (TCS≥70)" if "P1 + P3" in _mc_tier_filter else "TCS≥50"
+                    _fig_mc_proj.update_layout(
+                        paper_bgcolor="#0a0a1a",
+                        plot_bgcolor="#0d1117",
+                        font=dict(color="#e0e0e0"),
+                        height=350,
+                        margin=dict(t=30, b=50, l=70, r=20),
+                        title=dict(
+                            text=f"Monte Carlo: {len(_mc_pnl_r):,} {_tier_label} trades · "
+                                 f"{_mc_n_sim:,} simulations · 1% risk/trade",
+                            font=dict(size=11, color="#90a4ae"),
+                            x=0,
+                        ),
+                        legend=dict(
+                            orientation="h", yanchor="bottom", y=1.02, x=0,
+                            font=dict(size=10),
+                        ),
+                        xaxis=dict(
+                            title="Trade #",
+                            gridcolor="#1a1a2e",
+                            zeroline=False,
+                        ),
+                        yaxis=dict(
+                            title="Account Equity ($)",
+                            gridcolor="#1a1a2e",
+                            zeroline=False,
+                            tickformat="$,.0f",
+                        ),
+                    )
+                    st.plotly_chart(_fig_mc_proj, use_container_width=True)
+                    st.caption(
+                        f"Data: {len(_mc_rows_raw):,} total v5 sim rows loaded · "
+                        f"{len(_mc_filtered):,} passed {_tier_label} filter · "
+                        f"IB<10% applied · Sequence order shuffled 1,000× per simulation"
+                    )
+                else:
+                    st.info("Not enough sim rows pass the current filter (need ≥ 5). "
+                            "Run the calibration backtest to build the sim history.")
+
+        # ── RAW TRACKER TABLE ─────────────────────────────────────────────────
     with st.expander("🗂 Raw Synced Trades", expanded=False):
         eq_disp = ana["equity_curve"].copy()
         if not eq_disp.empty:
