@@ -21679,6 +21679,21 @@ def render_performance_tab():
     else:
         _pt_funnel_html = '<span style="color:#546e7a;font-size:11px;">historical estimate</span>'
 
+    # Append a date-scope badge when the funnel counts are filtered to a replay period
+    if _pace_start_str or _pace_end_str:
+        _scope_parts = []
+        if _pace_start_str:
+            _scope_parts.append(_pace_start_str)
+        if _pace_end_str:
+            _scope_parts.append(_pace_end_str)
+        _scope_label = " – ".join(_scope_parts) if len(_scope_parts) == 2 else _scope_parts[0]
+        _pt_funnel_html += (
+            f' <span title="Funnel counts are filtered to the active replay date range" '
+            f'style="background:#1a1a2e;border:1px solid #546e7a;border-radius:11px;'
+            f'padding:1px 8px;font-size:10px;color:#78909c;white-space:nowrap;cursor:help;">'
+            f'scoped: {_scope_label}</span>'
+        )
+
     # ── Trades/Day pace row ─────────────────────────────────────────────────────
 
     # Count actual trading days elapsed since first settled trade
