@@ -1203,9 +1203,12 @@ if not st.session_state.skip_reason_backfill_done:
         _sr_uid = st.session_state.get("auth_user_id", "")
         if _sr_uid:
             backfill_paper_trades_skip_reason(user_id=_sr_uid)
-        # Only mark done on success — if skip_reason column doesn't exist yet
-        # (migrations not run), the function raises and we retry next render.
-        st.session_state.skip_reason_backfill_done = True
+            # Mark done only after a real authenticated backfill succeeds.
+            # If _sr_uid is empty (pre-auth render) we keep the flag False
+            # and retry on the next render once auth is populated.
+            # If backfill raises (skip_reason column not yet created by
+            # migrations), the exception propagates here and we also retry.
+            st.session_state.skip_reason_backfill_done = True
     except Exception:
         pass  # retry on next render (e.g., after migrations add the column)
 
