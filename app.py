@@ -15314,22 +15314,28 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "Trade #": list(range(len(_mini_eq))),
                                     "Equity ($)": [round(v, 2) for v in _mini_eq],
                                 })
+                                _meq_prev_eq_max_key = f"_prev_eq_max_{_tk_name}"
+                                _meq_prev_eq_min_key = f"_prev_eq_min_{_tk_name}"
+                                if _meq_prev_eq_max_key not in st.session_state:
+                                    st.session_state[_meq_prev_eq_max_key] = None
+                                if _meq_prev_eq_min_key not in st.session_state:
+                                    st.session_state[_meq_prev_eq_min_key] = None
                                 _meq_prev_flt_col1, _meq_prev_flt_col2 = st.columns([2, 2])
                                 with _meq_prev_flt_col1:
                                     _meq_prev_eq_max = st.number_input(
                                         "Show trades where equity ≤ ($)",
-                                        value=None,
+                                        value=st.session_state[_meq_prev_eq_max_key],
                                         placeholder="No filter",
-                                        key=f"_prev_eq_max_{_tk_name}",
+                                        key=_meq_prev_eq_max_key,
                                         help="Only show rows where Equity ($) is at or below this value",
                                         label_visibility="visible",
                                     )
                                 with _meq_prev_flt_col2:
                                     _meq_prev_eq_min = st.number_input(
                                         "Show trades where equity ≥ ($)",
-                                        value=None,
+                                        value=st.session_state[_meq_prev_eq_min_key],
                                         placeholder="No filter",
-                                        key=f"_prev_eq_min_{_tk_name}",
+                                        key=_meq_prev_eq_min_key,
                                         help="Only show rows where Equity ($) is at or above this value",
                                         label_visibility="visible",
                                     )
@@ -15716,31 +15722,40 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "Equity ($)": [round(_mini_eq[i], 2) for i in range(_mini_csv_len)],
                                     "Cumulative R": [round(_mini_r[i], 4) for i in range(_mini_csv_len)],
                                 })
+                                _mdiv_prev_eq_max_key = f"_prev_div_eq_max_{_tk_name}"
+                                _mdiv_prev_eq_min_key = f"_prev_div_eq_min_{_tk_name}"
+                                _mdiv_prev_r_max_key = f"_prev_div_r_max_{_tk_name}"
+                                if _mdiv_prev_eq_max_key not in st.session_state:
+                                    st.session_state[_mdiv_prev_eq_max_key] = None
+                                if _mdiv_prev_eq_min_key not in st.session_state:
+                                    st.session_state[_mdiv_prev_eq_min_key] = None
+                                if _mdiv_prev_r_max_key not in st.session_state:
+                                    st.session_state[_mdiv_prev_r_max_key] = None
                                 _mdiv_prev_flt_col1, _mdiv_prev_flt_col2, _mdiv_prev_flt_col3 = st.columns([2, 2, 2])
                                 with _mdiv_prev_flt_col1:
                                     _mdiv_prev_eq_max = st.number_input(
                                         "Show trades where equity ≤ ($)",
-                                        value=None,
+                                        value=st.session_state[_mdiv_prev_eq_max_key],
                                         placeholder="No filter",
-                                        key=f"_prev_div_eq_max_{_tk_name}",
+                                        key=_mdiv_prev_eq_max_key,
                                         help="Only show rows where Equity ($) is at or below this value",
                                         label_visibility="visible",
                                     )
                                 with _mdiv_prev_flt_col2:
                                     _mdiv_prev_eq_min = st.number_input(
                                         "Show trades where equity ≥ ($)",
-                                        value=None,
+                                        value=st.session_state[_mdiv_prev_eq_min_key],
                                         placeholder="No filter",
-                                        key=f"_prev_div_eq_min_{_tk_name}",
+                                        key=_mdiv_prev_eq_min_key,
                                         help="Only show rows where Equity ($) is at or above this value",
                                         label_visibility="visible",
                                     )
                                 with _mdiv_prev_flt_col3:
                                     _mdiv_prev_r_max = st.number_input(
                                         "Show trades where Cumulative R ≤",
-                                        value=None,
+                                        value=st.session_state[_mdiv_prev_r_max_key],
                                         placeholder="No filter",
-                                        key=f"_prev_div_r_max_{_tk_name}",
+                                        key=_mdiv_prev_r_max_key,
                                         help="Only show rows where Cumulative R is at or below this value",
                                         label_visibility="visible",
                                     )
