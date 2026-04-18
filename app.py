@@ -17977,11 +17977,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _exp_df["IB Pass %"] = _exp_ib_pass if _exp_ib_pass is not None else ""
                     _exp_sc = _all_tkr_signal_counts.get(str(_exp_tk), {})
                     if not _exp_sc.get("is_fallback", True):
-                        _exp_df["TCS+IB Signals"] = _exp_sc.get("tcs_ib_count", "")
-                        _exp_df["VWAP Signals"]   = _exp_sc.get("vwap_count", "")
+                        _exp_tcs_ib = _exp_sc.get("tcs_ib_count", 0) or 0
+                        _exp_vwap_n = _exp_sc.get("vwap_count", 0) or 0
+                        _exp_tcs_ib_icon = "🟢" if _exp_tcs_ib >= 20 else "🟡" if _exp_tcs_ib >= 10 else "🔴"
+                        _exp_vwap_icon   = "🟢" if _exp_vwap_n >= 10  else "🟡" if _exp_vwap_n >= 5   else "🔴"
+                        _exp_df["TCS+IB Signals"] = f"{_exp_tcs_ib_icon} {_exp_tcs_ib}"
+                        _exp_df["VWAP Signals"]   = f"{_exp_vwap_icon} {_exp_vwap_n}"
                     else:
-                        _exp_df["TCS+IB Signals"] = ""
-                        _exp_df["VWAP Signals"]   = ""
+                        _exp_df["TCS+IB Signals"] = "—"
+                        _exp_df["VWAP Signals"]   = "—"
                     _all_sweep_frames.append(_exp_df)
                 if "_sweep_export_sufficient_only" not in st.session_state:
                     st.session_state["_sweep_export_sufficient_only"] = (
@@ -18093,20 +18097,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             ),
                         )
                     if "TCS+IB Signals" in _detail_df.columns:
-                        _sweep_col_cfg["TCS+IB Signals"] = st.column_config.NumberColumn(
+                        _sweep_col_cfg["TCS+IB Signals"] = st.column_config.TextColumn(
                             "TCS+IB Signals",
                             help=(
                                 "Number of historical setups for this ticker (in the selected date range) "
-                                "that passed TCS ≥ 50 and the IB range filter — before the VWAP gate."
+                                "that passed TCS ≥ 50 and the IB range filter — before the VWAP gate. "
+                                "🟢 ≥ 20 signals · 🟡 10–19 · 🔴 < 10"
                             ),
                         )
                     if "VWAP Signals" in _detail_df.columns:
-                        _sweep_col_cfg["VWAP Signals"] = st.column_config.NumberColumn(
+                        _sweep_col_cfg["VWAP Signals"] = st.column_config.TextColumn(
                             "VWAP Signals",
                             help=(
                                 "Qualifying signals for this ticker that also passed VWAP alignment "
                                 "(IB midpoint on the correct side of VWAP). "
-                                "This is the count the live paper-trader would have acted on."
+                                "This is the count the live paper-trader would have acted on. "
+                                "🟢 ≥ 10 signals · 🟡 5–9 · 🔴 < 5"
                             ),
                         )
                     st.dataframe(
