@@ -11,6 +11,13 @@ import threading
 import subprocess
 import sys
 
+from url_sync import (
+    _url_init_str, _url_init_str_pref,
+    _url_init_int, _url_init_float, _url_init_float_none,
+    _url_init_bool, _url_init_date, _url_init_multiselect,
+    _url_push, _url_push_opt,
+)
+
 from backend import *
 from backend import (
     _compute_value_area, _strip_emoji, _runtime_credential_errors,
@@ -6135,18 +6142,9 @@ with st.sidebar:
 
     st.markdown("---")
     _MODE_OPTS = ["📅 Historical", "🎬 Replay", "🔴 Live Stream"]
-    _qp_dash_mode = st.query_params.get("dash_mode", "📅 Historical")
-    _qp_dash_mode = _qp_dash_mode if _qp_dash_mode in _MODE_OPTS else "📅 Historical"
-    if (
-        "dash_mode" not in st.session_state
-        or st.session_state.get("_dash_mode_last_url") != _qp_dash_mode
-    ):
-        st.session_state["dash_mode"] = _qp_dash_mode
-        st.session_state["_dash_mode_last_url"] = _qp_dash_mode
+    _url_init_str("dash_mode", "dash_mode", "📅 Historical", allowed=_MODE_OPTS)
     mode = st.radio("Mode", _MODE_OPTS, key="dash_mode")
-    if st.query_params.get("dash_mode") != mode:
-        st.query_params["dash_mode"] = mode
-    st.session_state["_dash_mode_last_url"] = mode
+    _url_push("dash_mode", mode)
 
     st.markdown("---")
     st.header("📈 Settings")
@@ -7134,19 +7132,10 @@ with st.sidebar:
 """, height=0)
         _HIST_FEED_OPTS = ["sip", "iex"]
         _gdf_hist = st.session_state.get("_global_default_feed", "sip")
-        _qp_hist_feed = st.query_params.get("hist_scan_feed", _gdf_hist)
-        _qp_hist_feed_val = _qp_hist_feed if _qp_hist_feed in _HIST_FEED_OPTS else _gdf_hist
-        if (
-            "hist_scan_feed" not in st.session_state
-            or st.session_state.get("_hist_scan_feed_last_url") != _qp_hist_feed_val
-        ):
-            st.session_state["hist_scan_feed"] = _qp_hist_feed_val
-            st.session_state["_hist_scan_feed_last_url"] = _qp_hist_feed_val
+        _url_init_str("hist_scan_feed", "hist_scan_feed", _gdf_hist, allowed=_HIST_FEED_OPTS)
         data_feed = st.selectbox("Data Feed", _HIST_FEED_OPTS, key="hist_scan_feed",
                                   help="SIP = full national tape (recommended). IEX = free tier, regular hours only.")
-        if st.query_params.get("hist_scan_feed") != data_feed:
-            st.query_params["hist_scan_feed"] = data_feed
-        st.session_state["_hist_scan_feed_last_url"] = data_feed
+        _url_push("hist_scan_feed", data_feed)
         _cmp_hist_feed.html(
             f"<script>(function(){{var _f={repr(data_feed)};localStorage.setItem('hist_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
@@ -7185,19 +7174,12 @@ with st.sidebar:
 """, height=0)
         _REPLAY_SCAN_FEED_OPTS = ["sip", "iex"]
         _gdf_replay = st.session_state.get("_global_default_feed", "sip")
-        _qp_replay_scan_feed = st.query_params.get("replay_scan_feed", _gdf_replay)
-        _qp_replay_feed_val = _qp_replay_scan_feed if _qp_replay_scan_feed in _REPLAY_SCAN_FEED_OPTS else _gdf_replay
-        if (
-            "replay_feed_sel" not in st.session_state
-            or st.session_state.get("_replay_feed_sel_last_url") != _qp_replay_feed_val
-        ):
-            st.session_state["replay_feed_sel"] = _qp_replay_feed_val
-            st.session_state["_replay_feed_sel_last_url"] = _qp_replay_feed_val
+        _url_init_str("replay_scan_feed", "replay_feed_sel", _gdf_replay,
+                      allowed=_REPLAY_SCAN_FEED_OPTS,
+                      last_url_key="_replay_feed_sel_last_url")
         data_feed = st.selectbox("Data Feed", _REPLAY_SCAN_FEED_OPTS, key="replay_feed_sel",
                                   help="SIP = full national tape (recommended). IEX = free tier fallback.")
-        if st.query_params.get("replay_scan_feed") != data_feed:
-            st.query_params["replay_scan_feed"] = data_feed
-        st.session_state["_replay_feed_sel_last_url"] = data_feed
+        _url_push("replay_scan_feed", data_feed, last_url_key="_replay_feed_sel_last_url")
         _cmp_replay_scan_feed.html(
             f"<script>(function(){{var _f={repr(data_feed)};localStorage.setItem('replay_feed_sel',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
@@ -7290,19 +7272,10 @@ with st.sidebar:
 """, height=0)
         _LIVE_FEED_OPTS = ["iex", "sip"]
         _gdf_live = st.session_state.get("_global_default_feed", "iex")
-        _qp_live_feed = st.query_params.get("live_scan_feed", _gdf_live)
-        _qp_live_feed_val = _qp_live_feed if _qp_live_feed in _LIVE_FEED_OPTS else _gdf_live
-        if (
-            "live_scan_feed" not in st.session_state
-            or st.session_state.get("_live_scan_feed_last_url") != _qp_live_feed_val
-        ):
-            st.session_state["live_scan_feed"] = _qp_live_feed_val
-            st.session_state["_live_scan_feed_last_url"] = _qp_live_feed_val
+        _url_init_str("live_scan_feed", "live_scan_feed", _gdf_live, allowed=_LIVE_FEED_OPTS)
         live_feed = st.selectbox("Data Feed", _LIVE_FEED_OPTS, key="live_scan_feed",
                                   help="IEX = free real-time feed. SIP = full national tape (requires paid Alpaca subscription).")
-        if st.query_params.get("live_scan_feed") != live_feed:
-            st.query_params["live_scan_feed"] = live_feed
-        st.session_state["_live_scan_feed_last_url"] = live_feed
+        _url_push("live_scan_feed", live_feed)
         _cmp_live_feed.html(
             f"<script>(function(){{var _f={repr(live_feed)};localStorage.setItem('live_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
             height=0,
@@ -7526,19 +7499,12 @@ with st.sidebar:
 """, height=0)
     _SCAN_FEED_OPTS = ["sip", "iex"]
     _gdf_scan = st.session_state.get("_global_default_feed", "sip")
-    _qp_scan_feed = st.query_params.get("scan_feed", _gdf_scan)
-    _qp_scan_feed_val = _qp_scan_feed if _qp_scan_feed in _SCAN_FEED_OPTS else _gdf_scan
-    if (
-        "scan_feed_select" not in st.session_state
-        or st.session_state.get("_scan_feed_select_last_url") != _qp_scan_feed_val
-    ):
-        st.session_state["scan_feed_select"] = _qp_scan_feed_val
-        st.session_state["_scan_feed_select_last_url"] = _qp_scan_feed_val
+    _url_init_str("scan_feed", "scan_feed_select", _gdf_scan,
+                  allowed=_SCAN_FEED_OPTS,
+                  last_url_key="_scan_feed_select_last_url")
     scan_feed = st.selectbox("Scanner Feed", _SCAN_FEED_OPTS, key="scan_feed_select",
                              help="SIP = full national tape with PM RVOL (recommended). IEX = free tier, regular hours only.")
-    if st.query_params.get("scan_feed") != scan_feed:
-        st.query_params["scan_feed"] = scan_feed
-    st.session_state["_scan_feed_select_last_url"] = scan_feed
+    _url_push("scan_feed", scan_feed, last_url_key="_scan_feed_select_last_url")
     _cmp_scan_feed.html(
         f"<script>(function(){{var _f={repr(scan_feed)};localStorage.setItem('scan_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
@@ -7964,14 +7930,8 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
 </script>
 """, height=0)
         _PB_FEED_OPTIONS = ["SIP (recommended)", "IEX (free)"]
-        _qp_pb_feed = st.query_params.get("pb_feed", "SIP (recommended)")
-        _qp_pb_feed_val = _qp_pb_feed if _qp_pb_feed in _PB_FEED_OPTIONS else "SIP (recommended)"
-        if (
-            "playbook_feed_radio" not in st.session_state
-            or st.session_state.get("_pb_feed_last_url") != _qp_pb_feed_val
-        ):
-            st.session_state["playbook_feed_radio"] = _qp_pb_feed_val
-            st.session_state["_pb_feed_last_url"] = _qp_pb_feed_val
+        _url_init_str("pb_feed", "playbook_feed_radio", "SIP (recommended)",
+                      allowed=_PB_FEED_OPTIONS)
         _pb_feed = st.radio(
             "Bar data feed",
             _PB_FEED_OPTIONS,
@@ -7983,10 +7943,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
             horizontal=True,
             key="playbook_feed_radio",
         )
-        _qp_pb_feed_cur = st.query_params.get("pb_feed")
-        if _qp_pb_feed_cur != _pb_feed:
-            st.query_params["pb_feed"] = _pb_feed
-        st.session_state["_pb_feed_last_url"] = _pb_feed
+        _url_push("pb_feed", _pb_feed)
         _cmp_pb_feed.html(
             f"<script>localStorage.setItem('playbook_feed_radio', {repr(_pb_feed)});</script>",
             height=0,
@@ -8673,14 +8630,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
 </script>
 """, height=0)
         _CAL_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free)"]
-        _qp_cal_feed = st.query_params.get("cal_feed", "SIP (paid — accurate)")
-        _qp_cal_feed_val = _qp_cal_feed if _qp_cal_feed in _CAL_FEED_OPTIONS else "SIP (paid — accurate)"
-        if (
-            "cal_feed_radio" not in st.session_state
-            or st.session_state.get("_cal_feed_last_url") != _qp_cal_feed_val
-        ):
-            st.session_state["cal_feed_radio"] = _qp_cal_feed_val
-            st.session_state["_cal_feed_last_url"] = _qp_cal_feed_val
+        _url_init_str("cal_feed", "cal_feed_radio", "SIP (paid — accurate)",
+                      allowed=_CAL_FEED_OPTIONS)
         _cal_feed = st.radio(
             "Feed",
             _CAL_FEED_OPTIONS,
@@ -8692,10 +8643,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             key="cal_feed_radio",
             horizontal=True,
         )
-        _qp_cal_feed_cur = st.query_params.get("cal_feed")
-        if _qp_cal_feed_cur != _cal_feed:
-            st.query_params["cal_feed"] = _cal_feed
-        st.session_state["_cal_feed_last_url"] = _cal_feed
+        _url_push("cal_feed", _cal_feed)
         _cmp_cal_feed.html(
             f"<script>localStorage.setItem('cal_feed_radio', {repr(_cal_feed)});</script>",
             height=0,
@@ -8813,14 +8761,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
 </script>
 """, height=0)
         _BT_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
-        _qp_bt_feed = st.query_params.get("bt_feed", "SIP (paid — accurate)")
-        _qp_bt_feed_val = _qp_bt_feed if _qp_bt_feed in _BT_FEED_OPTIONS else "SIP (paid — accurate)"
-        if (
-            "bt_feed_radio" not in st.session_state
-            or st.session_state.get("_bt_feed_last_url") != _qp_bt_feed_val
-        ):
-            st.session_state["bt_feed_radio"] = _qp_bt_feed_val
-            st.session_state["_bt_feed_last_url"] = _qp_bt_feed_val
+        _url_init_str("bt_feed", "bt_feed_radio", "SIP (paid — accurate)",
+                      allowed=_BT_FEED_OPTIONS)
         _bt_feed = st.radio(
             "Bar Data Feed",
             _BT_FEED_OPTIONS,
@@ -8832,10 +8774,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             key="bt_feed_radio",
             horizontal=True,
         )
-        _qp_bt_feed_cur = st.query_params.get("bt_feed")
-        if _qp_bt_feed_cur != _bt_feed:
-            st.query_params["bt_feed"] = _bt_feed
-        st.session_state["_bt_feed_last_url"] = _bt_feed
+        _url_push("bt_feed", _bt_feed)
         _cmp_bt_feed.html(
             f"<script>localStorage.setItem('bt_feed_radio', {repr(_bt_feed)});</script>",
             height=0,
@@ -9111,14 +9050,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
 </script>
 """, height=0)
 
-        _qp_sizing = st.query_params.get("rp_sizing", "🤖 Match Live Bot (100 shares flat)")
-        _qp_sizing_val = _qp_sizing if _qp_sizing in _RP_SIZING_OPTIONS else "🤖 Match Live Bot (100 shares flat)"
-        if (
-            "rp_sizing_mode" not in st.session_state
-            or st.session_state.get("_rp_sizing_mode_last_url") != _qp_sizing_val
-        ):
-            st.session_state["rp_sizing_mode"] = _qp_sizing_val
-            st.session_state["_rp_sizing_mode_last_url"] = _qp_sizing_val
+        _url_init_str("rp_sizing", "rp_sizing_mode",
+                      "🤖 Match Live Bot (100 shares flat)",
+                      allowed=_RP_SIZING_OPTIONS,
+                      last_url_key="_rp_sizing_mode_last_url")
 
         _rp_mode = st.radio(
             "Sizing Mode",
@@ -9137,10 +9072,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             ),
         )
 
-        _qp_sizing_cur = st.query_params.get("rp_sizing")
-        if _qp_sizing_cur != _rp_mode:
-            st.query_params["rp_sizing"] = _rp_mode
-        st.session_state["_rp_sizing_mode_last_url"] = _rp_mode
+        _url_push("rp_sizing", _rp_mode, last_url_key="_rp_sizing_mode_last_url")
         _cmp_rp_filters.html(
             f"<script>localStorage.setItem('rp_sizing_mode', {repr(_rp_mode)});</script>",
             height=0,
@@ -9152,34 +9084,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
         # available in session state for the stale-badge check below.
         # Honour query_params (set by the localStorage restore snippet above)
         # so the persisted date range is applied on first render.
-        _qp_rp_start = st.query_params.get("rp_start_date") or ""
-        if (
-            "rp_start_date" not in st.session_state
-            or st.session_state.get("_rp_start_date_last_url") != _qp_rp_start
-        ):
-            if _qp_rp_start:
-                try:
-                    from datetime import date as _date_cls
-                    st.session_state["rp_start_date"] = _date_cls.fromisoformat(_qp_rp_start)
-                except (ValueError, TypeError):
-                    st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
-            else:
-                st.session_state["rp_start_date"] = datetime.now(EASTERN).date() - timedelta(days=60)
-            st.session_state["_rp_start_date_last_url"] = _qp_rp_start
-        _qp_rp_end = st.query_params.get("rp_end_date") or ""
-        if (
-            "rp_end_date" not in st.session_state
-            or st.session_state.get("_rp_end_date_last_url") != _qp_rp_end
-        ):
-            if _qp_rp_end:
-                try:
-                    from datetime import date as _date_cls
-                    st.session_state["rp_end_date"] = _date_cls.fromisoformat(_qp_rp_end)
-                except (ValueError, TypeError):
-                    st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
-            else:
-                st.session_state["rp_end_date"] = datetime.now(EASTERN).date()
-            st.session_state["_rp_end_date_last_url"] = _qp_rp_end
+        _url_init_date("rp_start_date", "rp_start_date",
+                       lambda: datetime.now(EASTERN).date() - timedelta(days=60))
+        _url_init_date("rp_end_date", "rp_end_date",
+                       lambda: datetime.now(EASTERN).date())
 
         # Clear saved floor selections whenever any replay filter changes.
         # Streamlit writes widget values to session state before each rerun, so
@@ -9250,42 +9158,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
-            _qp_rp_pos_size = st.query_params.get("rp_pos_size", "500")
-            if (
-                "rp_pos_size" not in st.session_state
-                or st.session_state.get("_rp_pos_size_last_url") != _qp_rp_pos_size
-            ):
-                try:
-                    st.session_state["rp_pos_size"] = int(_qp_rp_pos_size)
-                except (ValueError, TypeError):
-                    st.session_state["rp_pos_size"] = 500
-                st.session_state["_rp_pos_size_last_url"] = _qp_rp_pos_size
-            _qp_compound = st.query_params.get("rp_compound", "false")
-            if (
-                "rp_compound" not in st.session_state
-                or st.session_state.get("_rp_compound_last_url") != _qp_compound
-            ):
-                st.session_state["rp_compound"] = str(_qp_compound).lower() == "true"
-                st.session_state["_rp_compound_last_url"] = _qp_compound
-            _qp_rp_equity = st.query_params.get("rp_equity", "10000")
-            if (
-                "rp_equity" not in st.session_state
-                or st.session_state.get("_rp_equity_last_url") != _qp_rp_equity
-            ):
-                try:
-                    st.session_state["rp_equity"] = int(_qp_rp_equity)
-                except (ValueError, TypeError):
-                    st.session_state["rp_equity"] = 10000
-                st.session_state["_rp_equity_last_url"] = _qp_rp_equity
+            _url_init_int("rp_pos_size", "rp_pos_size", 500)
+            _url_init_bool("rp_compound", "rp_compound", False)
+            _url_init_int("rp_equity", "rp_equity", 10000)
             if _rp_bot_mode:
                 _rp_pos_size = st.number_input(
                     "Position Size ($)", min_value=100, max_value=50000,
                     value=500, step=100, key="rp_pos_size",
                     help="Fixed dollar amount invested per trade (or starting position if compounding is on).",
                 )
-                if st.query_params.get("rp_pos_size") != str(_rp_pos_size):
-                    st.query_params["rp_pos_size"] = str(_rp_pos_size)
-                st.session_state["_rp_pos_size_last_url"] = str(_rp_pos_size)
+                _url_push("rp_pos_size", str(_rp_pos_size))
                 _cmp_rp_filters.html(
                     f"<script>localStorage.setItem('rp_pos_size', {repr(str(_rp_pos_size))});</script>",
                     height=0,
@@ -9301,9 +9183,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ),
                 )
                 _rp_compound_str = "true" if _rp_compound else "false"
-                if st.query_params.get("rp_compound") != _rp_compound_str:
-                    st.query_params["rp_compound"] = _rp_compound_str
-                st.session_state["_rp_compound_last_url"] = _rp_compound_str
+                _url_push("rp_compound", _rp_compound_str)
                 _cmp_rp_filters.html(
                     f"<script>localStorage.setItem('rp_compound', {repr(_rp_compound_str)});</script>",
                     height=0,
@@ -9316,25 +9196,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 value=10000, step=500, key="rp_equity",
                 help="Starting account size for the equity curve.",
             )
-            if st.query_params.get("rp_equity") != str(_rp_equity):
-                st.query_params["rp_equity"] = str(_rp_equity)
-            st.session_state["_rp_equity_last_url"] = str(_rp_equity)
+            _url_push("rp_equity", str(_rp_equity))
             _cmp_rp_filters.html(
                 f"<script>localStorage.setItem('rp_equity', {repr(str(_rp_equity))});</script>",
                 height=0,
             )
         with _rp_col2:
             if _rp_bot_mode:
-                _qp_rp_tcs_offset = st.query_params.get("rp_tcs_offset", "0")
-                if (
-                    "rp_tcs_offset" not in st.session_state
-                    or st.session_state.get("_rp_tcs_offset_last_url") != _qp_rp_tcs_offset
-                ):
-                    try:
-                        st.session_state["rp_tcs_offset"] = int(_qp_rp_tcs_offset)
-                    except (ValueError, TypeError):
-                        st.session_state["rp_tcs_offset"] = 0
-                    st.session_state["_rp_tcs_offset_last_url"] = _qp_rp_tcs_offset
+                _url_init_int("rp_tcs_offset", "rp_tcs_offset", 0)
                 _rp_tcs_offset = st.slider(
                     "TCS Adjustment", min_value=-20, max_value=20,
                     value=0, step=5, key="rp_tcs_offset",
@@ -9348,9 +9217,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rp_effective_floor = 50 + _rp_tcs_offset
                 _rp_offset_sign = f"+{_rp_tcs_offset}" if _rp_tcs_offset >= 0 else str(_rp_tcs_offset)
                 st.caption(f"≈ TCS {_rp_effective_floor} effective floor (base 50 + offset {_rp_offset_sign})")
-                if st.query_params.get("rp_tcs_offset") != str(_rp_tcs_offset):
-                    st.query_params["rp_tcs_offset"] = str(_rp_tcs_offset)
-                st.session_state["_rp_tcs_offset_last_url"] = str(_rp_tcs_offset)
+                _url_push("rp_tcs_offset", str(_rp_tcs_offset))
                 _cmp_rp_filters.html(
                     f"<script>localStorage.setItem('rp_tcs_offset', {repr(str(_rp_tcs_offset))});</script>",
                     height=0,
@@ -9364,39 +9231,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rp_min_tcs = 0
             else:
                 _rp_tcs_offset = 0
-                _qp_rp_risk_pct = st.query_params.get("rp_risk_pct", "2.0")
-                if (
-                    "rp_risk_pct" not in st.session_state
-                    or st.session_state.get("_rp_risk_pct_last_url") != _qp_rp_risk_pct
-                ):
-                    try:
-                        st.session_state["rp_risk_pct"] = float(_qp_rp_risk_pct)
-                    except (ValueError, TypeError):
-                        st.session_state["rp_risk_pct"] = 2.0
-                    st.session_state["_rp_risk_pct_last_url"] = _qp_rp_risk_pct
+                _url_init_float("rp_risk_pct", "rp_risk_pct", 2.0)
                 _rp_risk_pct = st.number_input(
                     "Risk per Trade (%)", min_value=0.5, max_value=10.0,
                     value=2.0, step=0.5, key="rp_risk_pct",
                 )
-                if st.query_params.get("rp_risk_pct") != str(_rp_risk_pct):
-                    st.query_params["rp_risk_pct"] = str(_rp_risk_pct)
-                st.session_state["_rp_risk_pct_last_url"] = str(_rp_risk_pct)
+                _url_push("rp_risk_pct", str(_rp_risk_pct))
                 _cmp_rp_filters.html(
                     f"<script>localStorage.setItem('rp_risk_pct', {repr(str(_rp_risk_pct))});</script>",
                     height=0,
                 )
-                _qp_rp_min_tcs = st.query_params.get("rp_min_tcs", "0")
-                if (
-                    "rp_min_tcs_slider" not in st.session_state
-                    or st.session_state.get("_rp_min_tcs_last_url") != _qp_rp_min_tcs
-                ):
-                    try:
-                        st.session_state["rp_min_tcs_slider"] = int(_qp_rp_min_tcs)
-                    except (ValueError, TypeError):
-                        st.session_state["rp_min_tcs_slider"] = 0
-                    st.session_state["_rp_min_tcs_last_url"] = _qp_rp_min_tcs
-                else:
-                    st.session_state["rp_min_tcs_slider"] = int(st.session_state["rp_min_tcs_slider"])
+                _url_init_int("rp_min_tcs", "rp_min_tcs_slider", 0)
+                st.session_state["rp_min_tcs_slider"] = int(
+                    st.session_state.get("rp_min_tcs_slider", 0)
+                )
                 _rp_min_tcs = st.number_input(
                     "Min TCS",
                     min_value=0,
@@ -9412,9 +9260,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         f" ({_rp_best_tcs_src['floor']})"
                     )
                 # Sync rp_min_tcs to query params + localStorage
-                if st.query_params.get("rp_min_tcs") != str(_rp_min_tcs):
-                    st.query_params["rp_min_tcs"] = str(_rp_min_tcs)
-                st.session_state["_rp_min_tcs_last_url"] = str(_rp_min_tcs)
+                _url_push("rp_min_tcs", str(_rp_min_tcs))
                 _cmp_rp_filters.html(
                     f"<script>localStorage.setItem('rp_min_tcs_slider', {repr(str(_rp_min_tcs))});</script>",
                     height=0,
@@ -9427,24 +9273,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
                         st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_col3:
-            _qp_rp_min_ft = st.query_params.get("rp_min_ft", "0.0")
-            if (
-                "rp_min_ft" not in st.session_state
-                or st.session_state.get("_rp_min_ft_last_url") != _qp_rp_min_ft
-            ):
-                try:
-                    st.session_state["rp_min_ft"] = float(_qp_rp_min_ft)
-                except (ValueError, TypeError):
-                    st.session_state["rp_min_ft"] = 0.0
-                st.session_state["_rp_min_ft_last_url"] = _qp_rp_min_ft
+            _url_init_float("rp_min_ft", "rp_min_ft", 0.0)
             _rp_min_ft = st.slider(
                 "Min Follow-Through %", min_value=0.0, max_value=10.0,
                 value=0.0, step=0.5, key="rp_min_ft",
                 help="Only include trades where the stock moved at least this % past the IB.",
             )
-            if st.query_params.get("rp_min_ft") != str(_rp_min_ft):
-                st.query_params["rp_min_ft"] = str(_rp_min_ft)
-            st.session_state["_rp_min_ft_last_url"] = str(_rp_min_ft)
+            _url_push("rp_min_ft", str(_rp_min_ft))
             _cmp_rp_filters.html(
                 f"<script>localStorage.setItem('rp_min_ft', {repr(str(_rp_min_ft))});</script>",
                 height=0,
@@ -9484,14 +9319,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
 </script>
 """, height=0)
 
-        _qp_snap = st.query_params.get("rp_snap", "Morning (10:47 AM)")
-        _qp_snap_val = _qp_snap if _qp_snap in _RP_SNAP_OPTIONS else "Morning (10:47 AM)"
-        if (
-            "rp_scan_type" not in st.session_state
-            or st.session_state.get("_rp_scan_type_last_url") != _qp_snap_val
-        ):
-            st.session_state["rp_scan_type"] = _qp_snap_val
-            st.session_state["_rp_scan_type_last_url"] = _qp_snap_val
+        _url_init_str("rp_snap", "rp_scan_type", "Morning (10:47 AM)",
+                      allowed=_RP_SNAP_OPTIONS,
+                      last_url_key="_rp_scan_type_last_url")
 
         _rp_snap_col, _rp_date_col1, _rp_date_col2 = st.columns([1, 1, 1])
         with _rp_snap_col:
@@ -9514,10 +9344,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "ceiling if you always timed your entry perfectly."
                 ),
             )
-            _qp_snap_cur = st.query_params.get("rp_snap")
-            if _qp_snap_cur != _rp_snap:
-                st.query_params["rp_snap"] = _rp_snap
-            st.session_state["_rp_scan_type_last_url"] = _rp_snap
+            _url_push("rp_snap", _rp_snap, last_url_key="_rp_scan_type_last_url")
             _cmp_snap.html(
                 f"<script>localStorage.setItem('rp_scan_type', {repr(_rp_snap)});</script>",
                 height=0,
@@ -9541,12 +9368,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
         # ── Persist date range to localStorage / query_params / user prefs ───
         _rp_start_iso = _rp_start.isoformat()
         _rp_end_iso   = _rp_end.isoformat()
-        if st.query_params.get("rp_start_date") != _rp_start_iso:
-            st.query_params["rp_start_date"] = _rp_start_iso
-        st.session_state["_rp_start_date_last_url"] = _rp_start_iso
-        if st.query_params.get("rp_end_date") != _rp_end_iso:
-            st.query_params["rp_end_date"] = _rp_end_iso
-        st.session_state["_rp_end_date_last_url"] = _rp_end_iso
+        _url_push("rp_start_date", _rp_start_iso)
+        _url_push("rp_end_date", _rp_end_iso)
         _cmp_rp_filters.html(
             f"<script>"
             f"localStorage.setItem('rp_start_date', {repr(_rp_start_iso)});"
@@ -9567,16 +9390,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _rp_gap_col1, _rp_gap_col2, _rp_gap_col3 = st.columns([1, 1, 2])
         with _rp_gap_col1:
-            _qp_rp_min_gap = st.query_params.get("rp_min_gap", "0.0")
-            if (
-                "rp_min_gap" not in st.session_state
-                or st.session_state.get("_rp_min_gap_last_url") != _qp_rp_min_gap
-            ):
-                try:
-                    st.session_state["rp_min_gap"] = float(_qp_rp_min_gap)
-                except (ValueError, TypeError):
-                    st.session_state["rp_min_gap"] = 0.0
-                st.session_state["_rp_min_gap_last_url"] = _qp_rp_min_gap
+            _url_init_float("rp_min_gap", "rp_min_gap", 0.0)
             _rp_min_gap = st.number_input(
                 "Min Gap % (open vs prev close)",
                 min_value=0.0, max_value=50.0, value=0.0, step=0.5,
@@ -9587,9 +9401,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Records from before the migration will show gap_pct = 0 and will still appear."
                 ),
             )
-            if st.query_params.get("rp_min_gap") != str(_rp_min_gap):
-                st.query_params["rp_min_gap"] = str(_rp_min_gap)
-            st.session_state["_rp_min_gap_last_url"] = str(_rp_min_gap)
+            _url_push("rp_min_gap", str(_rp_min_gap))
             _cmp_rp_filters.html(
                 f"<script>localStorage.setItem('rp_min_gap', {repr(str(_rp_min_gap))});</script>",
                 height=0,
@@ -9601,16 +9413,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     save_user_prefs(_AUTH_USER_ID, _rp_new_prefs)
                     st.session_state["_cached_prefs"] = _rp_new_prefs
         with _rp_gap_col2:
-            _qp_rp_min_gap_vs_ib = st.query_params.get("rp_min_gap_vs_ib", "0.0")
-            if (
-                "rp_min_gap_vs_ib" not in st.session_state
-                or st.session_state.get("_rp_min_gap_vs_ib_last_url") != _qp_rp_min_gap_vs_ib
-            ):
-                try:
-                    st.session_state["rp_min_gap_vs_ib"] = float(_qp_rp_min_gap_vs_ib)
-                except (ValueError, TypeError):
-                    st.session_state["rp_min_gap_vs_ib"] = 0.0
-                st.session_state["_rp_min_gap_vs_ib_last_url"] = _qp_rp_min_gap_vs_ib
+            _url_init_float("rp_min_gap_vs_ib", "rp_min_gap_vs_ib", 0.0)
             _rp_min_gap_vs_ib = st.number_input(
                 "Min Gap vs IB (×)",
                 min_value=0.0, max_value=10.0, value=0.0, step=0.25,
@@ -9622,9 +9425,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "0 = no filter."
                 ),
             )
-            if st.query_params.get("rp_min_gap_vs_ib") != str(_rp_min_gap_vs_ib):
-                st.query_params["rp_min_gap_vs_ib"] = str(_rp_min_gap_vs_ib)
-            st.session_state["_rp_min_gap_vs_ib_last_url"] = str(_rp_min_gap_vs_ib)
+            _url_push("rp_min_gap_vs_ib", str(_rp_min_gap_vs_ib))
             _cmp_rp_filters.html(
                 f"<script>localStorage.setItem('rp_min_gap_vs_ib', {repr(str(_rp_min_gap_vs_ib))});</script>",
                 height=0,
@@ -9724,14 +9525,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
 </script>
 """, height=0)
 
-        _qp_opt_sort = st.query_params.get("opt_sort_col", "Expectancy")
-        _qp_opt_sort_val = _qp_opt_sort if _qp_opt_sort in _OPT_SORT_OPTIONS else "Expectancy"
-        if (
-            "opt_sort_col" not in st.session_state
-            or st.session_state.get("_opt_sort_col_last_url") != _qp_opt_sort_val
-        ):
-            st.session_state["opt_sort_col"] = _qp_opt_sort_val
-            st.session_state["_opt_sort_col_last_url"] = _qp_opt_sort_val
+        _qp_opt_sort_prev = st.session_state.get("_opt_sort_col_last_url")
+        _url_init_str("opt_sort_col", "opt_sort_col", "Expectancy", allowed=_OPT_SORT_OPTIONS)
+        if st.session_state.get("_opt_sort_col_last_url") != _qp_opt_sort_prev:
             st.session_state.pop("opt_hdr_sort_col", None)
 
         with st.expander("🎯 Find Optimal Filter Combo — maximize +R", expanded=False):
@@ -9881,29 +9677,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.session_state["opt_hdr_sort_col"] = (
                             _seed if _seed in _opt_all_cols else "Expectancy"
                         )
-                    _qp_asc_raw = st.query_params.get("opt_sort_asc") or ""
-                    if (
-                        "opt_hdr_sort_asc" not in st.session_state
-                        or st.session_state.get("_opt_sort_asc_last_url") != _qp_asc_raw
-                    ):
-                        if _qp_asc_raw:
-                            st.session_state["opt_hdr_sort_asc"] = _qp_asc_raw.lower() == "true"
-                        else:
-                            st.session_state["opt_hdr_sort_asc"] = (
-                                st.session_state.get("opt_hdr_sort_col", "Expectancy") in _opt_asc_defaults
-                            )
-                        st.session_state["_opt_sort_asc_last_url"] = _qp_asc_raw
+                    _url_init_bool("opt_sort_asc", "opt_hdr_sort_asc", False,
+                                   true_val="true",
+                                   default_factory=lambda: (
+                                       st.session_state.get("opt_hdr_sort_col", "Expectancy")
+                                       in _opt_asc_defaults
+                                   ))
 
                     _opt_sort_col = st.session_state["opt_hdr_sort_col"]
                     _opt_sort_asc = st.session_state["opt_hdr_sort_asc"]
                     # Persist sort column + direction in URL + localStorage for cross-session restore
-                    if st.query_params.get("opt_sort_col") != _opt_sort_col:
-                        st.query_params["opt_sort_col"] = _opt_sort_col
-                    st.session_state["_opt_sort_col_last_url"] = _opt_sort_col
+                    _url_push("opt_sort_col", _opt_sort_col)
                     _opt_sort_asc_str = "true" if _opt_sort_asc else "false"
-                    if st.query_params.get("opt_sort_asc") != _opt_sort_asc_str:
-                        st.query_params["opt_sort_asc"] = _opt_sort_asc_str
-                    st.session_state["_opt_sort_asc_last_url"] = _opt_sort_asc_str
+                    _url_push("opt_sort_asc", _opt_sort_asc_str)
                     _cmp_opt_sort.html(
                         f"<script>"
                         f"localStorage.setItem('opt_sort_col', {repr(_opt_sort_col)});"
@@ -10614,16 +10400,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 key=lambda x: int(x),
                             )
                             _floor_options = ["All"] + [str(int(v)) for v in _floor_vals_raw]
-                            _qp_tcs_floor = st.query_params.get("rp_tcs_floor", "All")
-                            if (
-                                "rp_tcs_floor_filter" not in st.session_state
-                                or st.session_state.get("_rp_tcs_floor_last_url") != _qp_tcs_floor
-                            ):
-                                st.session_state["rp_tcs_floor_filter"] = (
-                                    _qp_tcs_floor if _qp_tcs_floor in _floor_options else "All"
-                                )
-                                st.session_state["_rp_tcs_floor_last_url"] = _qp_tcs_floor
-                            elif st.session_state["rp_tcs_floor_filter"] not in _floor_options:
+                            _url_init_str("rp_tcs_floor", "rp_tcs_floor_filter", "All",
+                                          allowed=_floor_options)
+                            if st.session_state.get("rp_tcs_floor_filter") not in _floor_options:
                                 st.session_state["rp_tcs_floor_filter"] = "All"
                             _rp_tcs_floor_filter = st.selectbox(
                                 "Filter by TCS Floor (≥)",
@@ -10634,9 +10413,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "'All' = include every trade regardless of floor."
                                 ),
                             )
-                            if st.query_params.get("rp_tcs_floor") != _rp_tcs_floor_filter:
-                                st.query_params["rp_tcs_floor"] = _rp_tcs_floor_filter
-                            st.session_state["_rp_tcs_floor_last_url"] = _rp_tcs_floor_filter
+                            _url_push("rp_tcs_floor", _rp_tcs_floor_filter)
                             _cmp_rp_filters.html(
                                 f"<script>localStorage.setItem('rp_tcs_floor_filter', {repr(_rp_tcs_floor_filter)});</script>",
                                 height=0,
@@ -11235,14 +11012,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
 </script>
 """, height=0)
 
-                        _qp_chart = st.query_params.get("rp_chart_view", "Equity ($)")
-                        _qp_chart_val = _qp_chart if _qp_chart in _RP_CHART_OPTIONS else "Equity ($)"
-                        if (
-                            "rp_chart_view" not in st.session_state
-                            or st.session_state.get("_rp_chart_view_last_url") != _qp_chart_val
-                        ):
-                            st.session_state["rp_chart_view"] = _qp_chart_val
-                            st.session_state["_rp_chart_view_last_url"] = _qp_chart_val
+                        _url_init_str("rp_chart_view", "rp_chart_view", "Equity ($)",
+                                      allowed=_RP_CHART_OPTIONS)
 
                         _chart_view = st.radio(
                             "Chart view",
@@ -11257,10 +11028,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             label_visibility="collapsed",
                         )
 
-                        _qp_chart_cur = st.query_params.get("rp_chart_view")
-                        if _qp_chart_cur != _chart_view:
-                            st.query_params["rp_chart_view"] = _chart_view
-                        st.session_state["_rp_chart_view_last_url"] = _chart_view
+                        _url_push("rp_chart_view", _chart_view)
                         _cmp_chart_view.html(
                             f"<script>localStorage.setItem('rp_chart_view', {repr(_chart_view)});</script>",
                             height=0,
@@ -11629,26 +11397,12 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         # Distinguish "param absent" (no prior save → default to all) from
                         # "param present but empty" (user explicitly deselected everything).
                         _df_r_cols = set(_rp_csv_df.columns)
-                        _qp_r_cols_raw = st.query_params.get("rp_r_cols", None)
-                        _qp_r_cols_sentinel = _qp_r_cols_raw if _qp_r_cols_raw is not None else "__absent__"
-                        if (
-                            "rp_r_col_select" not in st.session_state
-                            or st.session_state.get("_rp_r_cols_last_url") != _qp_r_cols_sentinel
-                        ):
-                            if _qp_r_cols_raw is not None:
-                                _qp_r_cols_full = [
-                                    c.strip() for c in _qp_r_cols_raw.split(",")
-                                    if c.strip() in _r_col_options
-                                ] if _qp_r_cols_raw else []
-                                st.session_state["_rp_r_col_full_pref"] = _qp_r_cols_full
-                                st.session_state["rp_r_col_select"] = [
-                                    c for c in _qp_r_cols_full if c in _df_r_cols
-                                ]
-                            else:
-                                _default_r = [c for c in _r_col_options if c in _df_r_cols]
-                                st.session_state["_rp_r_col_full_pref"] = _default_r
-                                st.session_state["rp_r_col_select"] = _default_r
-                            st.session_state["_rp_r_cols_last_url"] = _qp_r_cols_sentinel
+                        _url_init_multiselect(
+                            "rp_r_cols", "rp_r_col_select",
+                            [c for c in _r_col_options if c in _df_r_cols],
+                            allowed=_r_col_options,
+                            full_pref_key="_rp_r_col_full_pref",
+                        )
                         def _on_rp_r_change():
                             st.session_state["sw_r_col_select"] = list(
                                 st.session_state.get("_rp_r_col_full_pref",
@@ -11675,9 +11429,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         ]
                         st.session_state["_rp_r_col_full_pref"] = _rp_r_merged
                         _r_cols_serialised = ",".join(_rp_r_merged)
-                        if st.query_params.get("rp_r_cols") != _r_cols_serialised:
-                            st.query_params["rp_r_cols"] = _r_cols_serialised
-                        st.session_state["_rp_r_cols_last_url"] = _r_cols_serialised
+                        _url_push("rp_r_cols", _r_cols_serialised,
+                                  last_url_key="_rp_r_cols_last_url")
                         _cmp_r_col.html(
                             f"<script>(function(){{var _v={repr(_r_cols_serialised)};var _prev=localStorage.getItem('rp_r_col_select');localStorage.setItem('rp_r_col_select',_v);if(_prev!==_v){{try{{var _bc=new BroadcastChannel('edgeiq_r_col_sync');_bc.postMessage({{rCols:_v}});_bc.close();}}catch(e){{}}}}}})()</script>",
                             height=0,
@@ -12651,73 +12404,43 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.divider()
                         _rp_log_fcol1, _rp_log_fcol2, _rp_log_fcol3, _rp_log_fcol4 = st.columns([2, 1, 1, 1])
                         with _rp_log_fcol1:
-                            _ticker_url_val = st.query_params.get("rp_log_ticker", "")
-                            if (
-                                "rp_log_ticker_filter" not in st.session_state
-                                or st.session_state.get("_rp_log_ticker_last_url") != _ticker_url_val
-                            ):
-                                st.session_state["rp_log_ticker_filter"] = _ticker_url_val
-                                st.session_state["_rp_log_ticker_last_url"] = _ticker_url_val
+                            _url_init_str("rp_log_ticker", "rp_log_ticker_filter", "")
                             _rp_log_ticker_filter = st.text_input(
                                 "Filter by ticker",
                                 key="rp_log_ticker_filter",
                                 placeholder="e.g. AAPL, NVDA",
                                 label_visibility="collapsed",
                             )
-                            if st.query_params.get("rp_log_ticker") != _rp_log_ticker_filter:
-                                st.query_params["rp_log_ticker"] = _rp_log_ticker_filter
-                            st.session_state["_rp_log_ticker_last_url"] = _rp_log_ticker_filter
+                            _url_push("rp_log_ticker", _rp_log_ticker_filter)
                         with _rp_log_fcol2:
                             _rp_wl_options = ["All", "Win", "Loss"]
-                            _wl_url_val = st.query_params.get("rp_log_wl", "All")
-                            _wl_url_val = _wl_url_val if _wl_url_val in _rp_wl_options else "All"
-                            if (
-                                "rp_log_wl_filter" not in st.session_state
-                                or st.session_state.get("_rp_log_wl_last_url") != _wl_url_val
-                            ):
-                                st.session_state["rp_log_wl_filter"] = _wl_url_val
-                                st.session_state["_rp_log_wl_last_url"] = _wl_url_val
+                            _url_init_str("rp_log_wl", "rp_log_wl_filter", "All",
+                                          allowed=_rp_wl_options)
                             _rp_log_wl_filter = st.selectbox(
                                 "W/L filter",
                                 options=_rp_wl_options,
                                 key="rp_log_wl_filter",
                                 label_visibility="collapsed",
                             )
-                            if st.query_params.get("rp_log_wl") != _rp_log_wl_filter:
-                                st.query_params["rp_log_wl"] = _rp_log_wl_filter
-                            st.session_state["_rp_log_wl_last_url"] = _rp_log_wl_filter
+                            _url_push("rp_log_wl", _rp_log_wl_filter)
                         with _rp_log_fcol3:
-                            _rp_log_neutral_url = st.query_params.get("rp_log_neutral", "1")
-                            if (
-                                "rp_log_show_neutral" not in st.session_state
-                                or st.session_state.get("_rp_log_neutral_last_url") != _rp_log_neutral_url
-                            ):
-                                st.session_state["rp_log_show_neutral"] = _rp_log_neutral_url != "0"
-                                st.session_state["_rp_log_neutral_last_url"] = _rp_log_neutral_url
+                            _url_init_bool("rp_log_neutral", "rp_log_show_neutral",
+                                           True, true_val="1")
                             _rp_log_show_neutral = st.checkbox(
                                 "Show neutral rows",
                                 key="rp_log_show_neutral",
                             )
                             _neutral_write_val = "1" if _rp_log_show_neutral else "0"
-                            if st.query_params.get("rp_log_neutral") != _neutral_write_val:
-                                st.query_params["rp_log_neutral"] = _neutral_write_val
-                            st.session_state["_rp_log_neutral_last_url"] = _neutral_write_val
+                            _url_push("rp_log_neutral", _neutral_write_val)
                         with _rp_log_fcol4:
-                            _boosted_url_val = st.query_params.get("rp_log_boosted", "0")
-                            if (
-                                "rp_log_boosted_only" not in st.session_state
-                                or st.session_state.get("_rp_log_boosted_last_url") != _boosted_url_val
-                            ):
-                                st.session_state["rp_log_boosted_only"] = _boosted_url_val == "1"
-                                st.session_state["_rp_log_boosted_last_url"] = _boosted_url_val
+                            _url_init_bool("rp_log_boosted", "rp_log_boosted_only",
+                                           False, true_val="1")
                             _rp_log_boosted_only = st.checkbox(
                                 "RVOL boosted only",
                                 key="rp_log_boosted_only",
                             )
                             _boosted_write_val = "1" if _rp_log_boosted_only else "0"
-                            if st.query_params.get("rp_log_boosted") != _boosted_write_val:
-                                st.query_params["rp_log_boosted"] = _boosted_write_val
-                            st.session_state["_rp_log_boosted_last_url"] = _boosted_write_val
+                            _url_push("rp_log_boosted", _boosted_write_val)
 
                         # Win/loss caption for boosted filter
                         if _rp_log_boosted_only and _rp_boost_count_all > 0:
@@ -12734,21 +12457,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"Show only marginal entries (TCS ≤ Floor + 5)"
                                 f" — {_rp_marginal_count_all} marginal"
                             )
-                            _rp_log_marginal_url = st.query_params.get("rp_log_marginal", "0")
-                            if (
-                                "rp_log_only_marginal" not in st.session_state
-                                or st.session_state.get("_rp_log_marginal_last_url") != _rp_log_marginal_url
-                            ):
-                                st.session_state["rp_log_only_marginal"] = _rp_log_marginal_url == "1"
-                                st.session_state["_rp_log_marginal_last_url"] = _rp_log_marginal_url
+                            _url_init_bool("rp_log_marginal", "rp_log_only_marginal",
+                                           False, true_val="1")
                             _rp_log_only_marginal = st.checkbox(
                                 _rp_marg_label,
                                 key="rp_log_only_marginal",
                             )
                             _marginal_write_val = "1" if _rp_log_only_marginal else "0"
-                            if st.query_params.get("rp_log_marginal") != _marginal_write_val:
-                                st.query_params["rp_log_marginal"] = _marginal_write_val
-                            st.session_state["_rp_log_marginal_last_url"] = _marginal_write_val
+                            _url_push("rp_log_marginal", _marginal_write_val)
                             # Sub-caption: win/loss breakdown for marginal trades
                             if _rp_log_only_marginal and _rp_marginal_count_all > 0:
                                 _marg_w_pct = round(_rp_marginal_wins_all   / _rp_marginal_count_all * 100, 1)
@@ -12775,39 +12491,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         # ── Date range filter (row 2) ─────────────────────────
                         _rp_log_date_col1, _rp_log_date_col2, _rp_log_date_col3 = st.columns([1, 1, 2])
                         with _rp_log_date_col1:
-                            _rp_log_from_url = st.query_params.get("rp_log_from", "")
-                            if (
-                                "rp_log_from_str" not in st.session_state
-                                or st.session_state.get("_rp_log_from_last_url") != _rp_log_from_url
-                            ):
-                                st.session_state["rp_log_from_str"] = _rp_log_from_url
-                                st.session_state["_rp_log_from_last_url"] = _rp_log_from_url
+                            _url_init_str("rp_log_from", "rp_log_from_str", "")
                             _rp_log_from_str = st.text_input(
                                 "From (YYYY-MM-DD)",
                                 key="rp_log_from_str",
                                 placeholder="From date",
                                 label_visibility="collapsed",
                             )
-                            if st.query_params.get("rp_log_from", "") != _rp_log_from_str:
-                                st.query_params["rp_log_from"] = _rp_log_from_str
-                            st.session_state["_rp_log_from_last_url"] = _rp_log_from_str
+                            _url_push("rp_log_from", _rp_log_from_str)
                         with _rp_log_date_col2:
-                            _rp_log_to_url = st.query_params.get("rp_log_to", "")
-                            if (
-                                "rp_log_to_str" not in st.session_state
-                                or st.session_state.get("_rp_log_to_last_url") != _rp_log_to_url
-                            ):
-                                st.session_state["rp_log_to_str"] = _rp_log_to_url
-                                st.session_state["_rp_log_to_last_url"] = _rp_log_to_url
+                            _url_init_str("rp_log_to", "rp_log_to_str", "")
                             _rp_log_to_str = st.text_input(
                                 "To (YYYY-MM-DD)",
                                 key="rp_log_to_str",
                                 placeholder="To date",
                                 label_visibility="collapsed",
                             )
-                            if st.query_params.get("rp_log_to", "") != _rp_log_to_str:
-                                st.query_params["rp_log_to"] = _rp_log_to_str
-                            st.session_state["_rp_log_to_last_url"] = _rp_log_to_str
+                            _url_push("rp_log_to", _rp_log_to_str)
                         with _rp_log_date_col3:
                             st.write("")
                             _rp_log_active_filters = sum([
@@ -14211,26 +13911,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # Priority: URL query param → saved pref → first option (default).
                 # The _last_url guard ensures a shared link pasted into an active
                 # session always wins, matching the tkr_sort_rev pattern.
-                _qp_sort = st.query_params.get("tkr_sort", "")
                 _sort_opts = list(_sort_col_map.keys())
-                if "tkr_summary_sort_radio" not in st.session_state:
-                    # First load: URL param takes priority, then saved pref, then default.
-                    if _qp_sort in _sort_opts:
-                        st.session_state["tkr_summary_sort_radio"] = _qp_sort
-                    else:
-                        _pref_sort_col = st.session_state.get("_pref_tkr_summary_sort_radio", "")
-                        if _pref_sort_col in _sort_opts:
-                            st.session_state["tkr_summary_sort_radio"] = _pref_sort_col
-                        else:
-                            st.session_state["tkr_summary_sort_radio"] = _sort_opts[0]
-                    st.session_state["_tkr_sort_last_url"] = _qp_sort
-                elif "_tkr_sort_last_url" not in st.session_state:
-                    st.session_state["_tkr_sort_last_url"] = _qp_sort
-                elif st.session_state["_tkr_sort_last_url"] != _qp_sort:
-                    # URL changed in an active session (shared link pasted in).
-                    if _qp_sort in _sort_opts:
-                        st.session_state["tkr_summary_sort_radio"] = _qp_sort
-                    st.session_state["_tkr_sort_last_url"] = _qp_sort
+                _url_init_str_pref("tkr_sort", "tkr_summary_sort_radio", _sort_opts[0],
+                                   pref_val=st.session_state.get("_pref_tkr_summary_sort_radio", ""),
+                                   allowed=_sort_opts)
                 _sort_choice = st.radio(
                     "Sort table by",
                     list(_sort_col_map.keys()),
@@ -14238,20 +13922,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     key="tkr_summary_sort_radio",
                 )
                 # Sync sort choice to URL query params
-                if st.query_params.get("tkr_sort") != _sort_choice:
-                    st.query_params["tkr_sort"] = _sort_choice
-                st.session_state["_tkr_sort_last_url"] = _sort_choice
+                _url_push("tkr_sort", _sort_choice)
                 # Sort direction toggle — restore from URL query params on first load
                 # or whenever the URL value changes (shared link pasted into an active session).
-                _qp_sort_rev = st.query_params.get("tkr_sort_rev", "")
-                if "tkr_summary_sort_reverse" not in st.session_state:
-                    st.session_state["tkr_summary_sort_reverse"] = (_qp_sort_rev == "1")
-                    st.session_state["_tkr_sort_rev_last_url"] = _qp_sort_rev
-                elif "_tkr_sort_rev_last_url" not in st.session_state:
-                    st.session_state["_tkr_sort_rev_last_url"] = _qp_sort_rev
-                elif st.session_state["_tkr_sort_rev_last_url"] != _qp_sort_rev:
-                    st.session_state["tkr_summary_sort_reverse"] = (_qp_sort_rev == "1")
-                    st.session_state["_tkr_sort_rev_last_url"] = _qp_sort_rev
+                _url_init_bool("tkr_sort_rev", "tkr_summary_sort_reverse", False,
+                               true_val="1", default_factory=lambda: False)
                 _sort_reverse = st.checkbox(
                     "Reverse order ↕",
                     key="tkr_summary_sort_reverse",
@@ -14261,16 +13936,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ),
                 )
                 # Sync direction flag to URL query params
-                _qp_sort_rev_cur = st.query_params.get("tkr_sort_rev", "")
-                _sort_rev_str = "1" if _sort_reverse else ""
-                if _qp_sort_rev_cur != _sort_rev_str:
-                    if _sort_rev_str:
-                        st.query_params["tkr_sort_rev"] = _sort_rev_str
-                    elif "tkr_sort_rev" in st.query_params:
-                        del st.query_params["tkr_sort_rev"]
-                # Write back the current widget value so the _last_url guard doesn't
-                # mistake a normal re-render for a new shared-URL navigation.
-                st.session_state["_tkr_sort_rev_last_url"] = _sort_rev_str
+                _url_push_opt("tkr_sort_rev", "1" if _sort_reverse else "")
                 # Persist sort direction to user prefs whenever it changes
                 if _AUTH_USER_ID:
                     _sort_rev_cached = st.session_state.get("_cached_prefs", {})
@@ -14288,38 +13954,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
             with _ctrl_col_filter:
                 # Restore filter column on first load.
                 # Priority: saved pref → URL query param → first option (default).
-                _qp_r_col = st.query_params.get("tkr_r_col", "")
                 _r_col_opts = list(_r_filter_col_map.keys())
-                if (
-                    "tkr_summary_r_filter_col" not in st.session_state
-                    or st.session_state.get("_tkr_r_col_last_url") != _qp_r_col
-                ):
-                    _pref_r_col = st.session_state.get("_pref_tkr_summary_r_filter_col", "")
-                    if "tkr_summary_r_filter_col" not in st.session_state and _pref_r_col in _r_col_opts:
-                        st.session_state["tkr_summary_r_filter_col"] = _pref_r_col
-                    elif _qp_r_col in _r_col_opts:
-                        st.session_state["tkr_summary_r_filter_col"] = _qp_r_col
-                    elif "tkr_summary_r_filter_col" not in st.session_state:
-                        st.session_state["tkr_summary_r_filter_col"] = _r_col_opts[0]
-                    st.session_state["_tkr_r_col_last_url"] = _qp_r_col
+                _url_init_str_pref("tkr_r_col", "tkr_summary_r_filter_col", _r_col_opts[0],
+                                   pref_val=st.session_state.get("_pref_tkr_summary_r_filter_col", ""),
+                                   pref_first=True, allowed=_r_col_opts)
                 # Restore min-R value on first load.
                 # Priority: saved pref → URL query param → no filter (None).
-                _qp_r_min_str = st.query_params.get("tkr_r_min", "")
-                if (
-                    "tkr_summary_r_filter_min" not in st.session_state
-                    or st.session_state.get("_tkr_r_min_last_url") != _qp_r_min_str
-                ):
-                    _pref_r_min = st.session_state.get("_pref_tkr_summary_r_filter_min", "NOT_SET")
-                    if "tkr_summary_r_filter_min" not in st.session_state and _pref_r_min != "NOT_SET":
-                        st.session_state["tkr_summary_r_filter_min"] = _pref_r_min
-                    else:
-                        try:
-                            st.session_state["tkr_summary_r_filter_min"] = (
-                                float(_qp_r_min_str) if _qp_r_min_str else None
-                            )
-                        except (ValueError, TypeError):
-                            st.session_state["tkr_summary_r_filter_min"] = None
-                    st.session_state["_tkr_r_min_last_url"] = _qp_r_min_str
+                _url_init_float_none("tkr_r_min", "tkr_summary_r_filter_min",
+                                     pref_val=st.session_state.get("_pref_tkr_summary_r_filter_min", "NOT_SET"))
                 _r_filter_col = st.radio(
                     "Min-R filter column",
                     list(_r_filter_col_map.keys()),
@@ -14328,9 +13970,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     key="tkr_summary_r_filter_col",
                 )
                 # Sync filter column selection to query params
-                if st.query_params.get("tkr_r_col") != _r_filter_col:
-                    st.query_params["tkr_r_col"] = _r_filter_col
-                st.session_state["_tkr_r_col_last_url"] = _r_filter_col
+                _url_push("tkr_r_col", _r_filter_col)
                 _r_filter_min = st.number_input(
                     f"Min {_r_filter_col}",
                     value=None,
@@ -14345,14 +13985,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ),
                 )
                 # Sync min-R threshold to query params (remove param when cleared)
-                _qp_r_min_cur = st.query_params.get("tkr_r_min", "")
-                _r_min_str = str(_r_filter_min) if _r_filter_min is not None else ""
-                if _qp_r_min_cur != _r_min_str:
-                    if _r_min_str:
-                        st.query_params["tkr_r_min"] = _r_min_str
-                    elif "tkr_r_min" in st.query_params:
-                        del st.query_params["tkr_r_min"]
-                st.session_state["_tkr_r_min_last_url"] = _r_min_str
+                _url_push_opt("tkr_r_min", str(_r_filter_min) if _r_filter_min is not None else "")
                 # Persist R-filter settings to user prefs whenever they change
                 if _AUTH_USER_ID:
                     _r_filter_cached = st.session_state.get("_cached_prefs", {})
@@ -14372,19 +14005,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _r_filter_min = float("-inf")
             with _ctrl_col_div:
                 # Restore divergence threshold from URL query params on first load
-                _qp_div_thresh_str = st.query_params.get("tkr_div_thresh", "")
-                if (
-                    "tkr_div_thresh" not in st.session_state
-                    or st.session_state.get("_tkr_div_thresh_last_url") != _qp_div_thresh_str
-                ):
-                    try:
-                        _qp_div_thresh_raw = float(_qp_div_thresh_str) if _qp_div_thresh_str else None
-                        if _qp_div_thresh_raw is not None and not (0.0 <= _qp_div_thresh_raw <= 1.0):
-                            _qp_div_thresh_raw = None
-                        st.session_state["tkr_div_thresh"] = _qp_div_thresh_raw
-                    except (ValueError, TypeError):
-                        st.session_state["tkr_div_thresh"] = None
-                    st.session_state["_tkr_div_thresh_last_url"] = _qp_div_thresh_str
+                _url_init_float_none("tkr_div_thresh", "tkr_div_thresh",
+                                     clamp=(0.0, 1.0))
                 _div_thresh = st.number_input(
                     "Divergence flag threshold",
                     value=None,
@@ -14402,33 +14024,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ),
                 )
                 # Sync divergence threshold to query params
-                _qp_div_thresh_cur = st.query_params.get("tkr_div_thresh", "")
-                _div_thresh_str = str(_div_thresh) if _div_thresh is not None else ""
-                if _qp_div_thresh_cur != _div_thresh_str:
-                    if _div_thresh_str:
-                        st.query_params["tkr_div_thresh"] = _div_thresh_str
-                    elif "tkr_div_thresh" in st.query_params:
-                        del st.query_params["tkr_div_thresh"]
-                st.session_state["_tkr_div_thresh_last_url"] = _div_thresh_str
+                _url_push_opt("tkr_div_thresh", str(_div_thresh) if _div_thresh is not None else "")
                 # Restore auto-send settings from URL query params on first load
                 _auto_alert_modes = ["On count change", "Once per day"]
-                _qp_auto_alert = st.query_params.get("tkr_div_auto_alert", "")
-                if (
-                    "tkr_div_auto_alert" not in st.session_state
-                    or st.session_state.get("_tkr_div_auto_alert_last_url") != _qp_auto_alert
-                ):
-                    st.session_state["tkr_div_auto_alert"] = (_qp_auto_alert == "1")
-                    st.session_state["_tkr_div_auto_alert_last_url"] = _qp_auto_alert
-                _qp_auto_mode = st.query_params.get("tkr_div_auto_mode", "")
-                if (
-                    "tkr_div_auto_mode" not in st.session_state
-                    or st.session_state.get("_tkr_div_auto_mode_last_url") != _qp_auto_mode
-                ):
-                    st.session_state["tkr_div_auto_mode"] = (
-                        _qp_auto_mode if _qp_auto_mode in _auto_alert_modes
-                        else _auto_alert_modes[0]
-                    )
-                    st.session_state["_tkr_div_auto_mode_last_url"] = _qp_auto_mode
+                _url_init_bool("tkr_div_auto_alert", "tkr_div_auto_alert", False,
+                               true_val="1", default_factory=lambda: False)
+                _url_init_str("tkr_div_auto_mode", "tkr_div_auto_mode", _auto_alert_modes[0],
+                              allowed=_auto_alert_modes)
                 st.checkbox(
                     "Auto-send alerts",
                     value=False,
@@ -14440,14 +14042,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ),
                 )
                 # Sync auto-send enabled flag to query params
-                _qp_auto_alert_cur = st.query_params.get("tkr_div_auto_alert", "")
-                _auto_alert_val = "1" if st.session_state.get("tkr_div_auto_alert") else ""
-                if _qp_auto_alert_cur != _auto_alert_val:
-                    if _auto_alert_val:
-                        st.query_params["tkr_div_auto_alert"] = _auto_alert_val
-                    elif "tkr_div_auto_alert" in st.query_params:
-                        del st.query_params["tkr_div_auto_alert"]
-                st.session_state["_tkr_div_auto_alert_last_url"] = _auto_alert_val
+                _url_push_opt("tkr_div_auto_alert",
+                              "1" if st.session_state.get("tkr_div_auto_alert") else "")
                 if st.session_state.get("tkr_div_auto_alert"):
                     st.radio(
                         "Auto-send trigger",
@@ -14463,11 +14059,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         ),
                     )
                     # Sync auto-send mode to query params
-                    _qp_auto_mode_cur = st.query_params.get("tkr_div_auto_mode", "")
-                    _auto_mode_val = st.session_state.get("tkr_div_auto_mode", _auto_alert_modes[0])
-                    if _qp_auto_mode_cur != _auto_mode_val:
-                        st.query_params["tkr_div_auto_mode"] = _auto_mode_val
-                    st.session_state["_tkr_div_auto_mode_last_url"] = _auto_mode_val
+                    _url_push("tkr_div_auto_mode",
+                              st.session_state.get("tkr_div_auto_mode", _auto_alert_modes[0]))
                     if st.session_state.get("tkr_div_auto_mode", "On count change") == "On count change":
                         st.number_input(
                             "Min minutes between alerts",
@@ -15492,15 +15085,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
 """, height=0)
 
                 # Seed session state from URL query param (survives browser refresh)
-                _qp_sweep = st.query_params.get("sweep_sort", "")
-                if (
-                    "sweep_chart_sort" not in st.session_state
-                    or st.session_state.get("_sweep_sort_last_url") != _qp_sweep
-                ):
-                    st.session_state["sweep_chart_sort"] = (
-                        _qp_sweep if _qp_sweep in _SWEEP_SORT_OPTIONS else "P&L (default)"
-                    )
-                    st.session_state["_sweep_sort_last_url"] = _qp_sweep
+                _url_init_str("sweep_sort", "sweep_chart_sort", "P&L (default)",
+                              allowed=_SWEEP_SORT_OPTIONS)
 
                 _sweep_sort_sel = st.selectbox(
                     "Sort sweep charts by:",
@@ -15521,10 +15107,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                 # Persist the selected value — URL query param (survives refresh) +
                 # localStorage (survives new sessions via the JS restore above)
-                _qp_current = st.query_params.get("sweep_sort")
-                if _qp_current != _sweep_sort_sel:
-                    st.query_params["sweep_sort"] = _sweep_sort_sel
-                st.session_state["_sweep_sort_last_url"] = _sweep_sort_sel
+                _url_push("sweep_sort", _sweep_sort_sel)
                 _cmp_sort.html(
                     f"<script>localStorage.setItem('sweep_chart_sort',"
                     f" {repr(_sweep_sort_sel)});</script>",
@@ -19023,13 +18606,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _exp_df["RVOL Non-Boosted Avg R"]    = _exp_rvol_cols.apply(lambda x: x[4])
 
                     _all_sweep_frames.append(_exp_df)
-                _qp_sweep_suf = st.query_params.get("sweep_suf_only", "")
-                if (
-                    "_sweep_export_sufficient_only" not in st.session_state
-                    or st.session_state.get("_sweep_suf_last_url") != _qp_sweep_suf
-                ):
-                    st.session_state["_sweep_export_sufficient_only"] = (_qp_sweep_suf == "1")
-                    st.session_state["_sweep_suf_last_url"] = _qp_sweep_suf
+                _url_init_bool("sweep_suf_only", "_sweep_export_sufficient_only",
+                               False, true_val="1")
                 if _all_sweep_frames:
                     _all_sweep_df = _pd_bt.concat(_all_sweep_frames, ignore_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
@@ -19042,9 +18620,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Rows marked ✗ (insufficient trades) are excluded."
                         ),
                     )
-                    if st.query_params.get("sweep_suf_only") != ("1" if _sweep_suf_only else "0"):
-                        st.query_params["sweep_suf_only"] = "1" if _sweep_suf_only else "0"
-                    st.session_state["_sweep_suf_last_url"] = "1" if _sweep_suf_only else "0"
+                    _url_push("sweep_suf_only", "1" if _sweep_suf_only else "0")
                     if _sweep_suf_only:
                         _all_sweep_export_df = _all_sweep_df[
                             _all_sweep_df["Sufficient"] == "✓"
@@ -21419,23 +20995,13 @@ Nothing here requires any input from you. All numbers update automatically as yo
 """, height=0)
     _PAT_FEED_OPTS = ["iex", "sip"]
     _gdf_pat = st.session_state.get("_global_default_feed", "iex")
-    _qp_pat_feed = st.query_params.get("pat_scan_feed", "")
-    if (
-        "pat_scan_feed" not in st.session_state
-        or st.session_state.get("_pat_feed_last_url") != _qp_pat_feed
-    ):
-        st.session_state["pat_scan_feed"] = (
-            _qp_pat_feed if _qp_pat_feed in _PAT_FEED_OPTS else _gdf_pat
-        )
-        st.session_state["_pat_feed_last_url"] = _qp_pat_feed
+    _url_init_str("pat_scan_feed", "pat_scan_feed", _gdf_pat, allowed=_PAT_FEED_OPTS)
     _pat_col1, _pat_col2 = st.columns([3, 1])
     _pat_scan_feed = _pat_col2.selectbox(
         "Feed", _PAT_FEED_OPTS, key="pat_scan_feed",
         help="iex = free tier. sip = paid Alpaca subscription."
     )
-    if st.query_params.get("pat_scan_feed") != _pat_scan_feed:
-        st.query_params["pat_scan_feed"] = _pat_scan_feed
-    st.session_state["_pat_feed_last_url"] = _pat_scan_feed
+    _url_push("pat_scan_feed", _pat_scan_feed)
     _cmp_pat_feed.html(
         f"<script>(function(){{var _f={repr(_pat_scan_feed)};localStorage.setItem('pat_scan_feed',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
@@ -32427,15 +31993,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _PT_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
         _gdf_pt_raw = st.session_state.get("_global_default_feed", "sip")
         _gdf_pt = "SIP (paid — accurate)" if _gdf_pt_raw == "sip" else "IEX (free — limited)"
-        _qp_pt_feed = st.query_params.get("pt_feed", "")
-        if (
-            "pt_feed" not in st.session_state
-            or st.session_state.get("_pt_feed_last_url") != _qp_pt_feed
-        ):
-            st.session_state["pt_feed"] = (
-                _qp_pt_feed if _qp_pt_feed in _PT_FEED_OPTIONS else _gdf_pt
-            )
-            st.session_state["_pt_feed_last_url"] = _qp_pt_feed
+        _url_init_str("pt_feed", "pt_feed", _gdf_pt, allowed=_PT_FEED_OPTIONS)
         _pt_feed = st.radio(
             "Bar Data Feed",
             _PT_FEED_OPTIONS,
@@ -32447,9 +32005,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             key="pt_feed",
             horizontal=True,
         )
-        if st.query_params.get("pt_feed") != _pt_feed:
-            st.query_params["pt_feed"] = _pt_feed
-        st.session_state["_pt_feed_last_url"] = _pt_feed
+        _url_push("pt_feed", _pt_feed)
         _pt_feed_str = "sip" if "SIP" in _pt_feed else "iex"
         _cmp_pt_feed.html(
             f"<script>(function(){{var _f={repr(_pt_feed_str)};localStorage.setItem('pt_feed',{repr(_pt_feed)});if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
@@ -34723,20 +34279,10 @@ with tab_scan:
 """, height=0)
     _WPE_FEED_OPTS = ["sip", "iex"]
     _gdf_wpe = st.session_state.get("_global_default_feed", "sip")
-    _qp_wpe_feed = st.query_params.get("wpe_feed", "")
-    if (
-        "wpe_feed_select" not in st.session_state
-        or st.session_state.get("_wpe_feed_last_url") != _qp_wpe_feed
-    ):
-        st.session_state["wpe_feed_select"] = (
-            _qp_wpe_feed if _qp_wpe_feed in _WPE_FEED_OPTS else _gdf_wpe
-        )
-        st.session_state["_wpe_feed_last_url"] = _qp_wpe_feed
+    _url_init_str("wpe_feed", "wpe_feed_select", _gdf_wpe, allowed=_WPE_FEED_OPTS)
     _wpe_feed = st.selectbox("Feed", _WPE_FEED_OPTS, key="wpe_feed_select",
                              help="SIP = full national tape (recommended). IEX = free tier fallback.")
-    if st.query_params.get("wpe_feed") != _wpe_feed:
-        st.query_params["wpe_feed"] = _wpe_feed
-    st.session_state["_wpe_feed_last_url"] = _wpe_feed
+    _url_push("wpe_feed", _wpe_feed)
     _cmp_wpe_feed.html(
         f"<script>(function(){{var _f={repr(_wpe_feed)};localStorage.setItem('wpe_feed_select',_f);if(localStorage.getItem('edgeiq_feed')!==_f){{localStorage.setItem('edgeiq_feed',_f);try{{var _bc=new BroadcastChannel('edgeiq_feed_sync');_bc.postMessage({{feed:_f}});_bc.close();}}catch(e){{}}}}}})()</script>",
         height=0,
