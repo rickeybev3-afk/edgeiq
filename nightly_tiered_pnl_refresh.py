@@ -183,6 +183,7 @@ def _clear_alert_cooldown(alert_key: str) -> None:
     If at least one failure alert was sent during the streak (i.e. last_sent_utc
     is present), a one-time recovery notification is dispatched before clearing
     the state so operators know the issue has resolved.
+    Removing the key resets consecutive_failures to zero for this view.
     """
     state = _read_alert_state()
     if alert_key in state:
@@ -426,14 +427,24 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
     failure always generates a fresh alert.  Independent views are unaffected:
     if view A succeeds its cooldown is cleared while view B's cooldown remains
     in place.  Set CACHE_ALERT_COOLDOWN_HOURS=0 to disable suppression entirely.
+
+    consecutive_failures is incremented on every call (whether suppressed or
+    not) so the nightly Telegram summary can report how many nights in a row
+    the alert has been firing.  _clear_alert_cooldown() resets the counter.
     """
     cooldown_hours = _get_cooldown_hours()
     now_utc = datetime.datetime.utcnow()
 
+    # Always increment the consecutive-failure counter, even when suppressed.
+    state = _read_alert_state()
+    key_state = state.get(alert_key, {})
+    if not isinstance(key_state, dict):
+        key_state = {}
+    key_state["consecutive_failures"] = int(key_state.get("consecutive_failures") or 0) + 1
+    state[alert_key] = key_state
+
     if cooldown_hours > 0:
-        state = _read_alert_state()
-        key_state = state.get(alert_key, {})
-        last_sent_iso = key_state.get("last_sent_utc") if isinstance(key_state, dict) else None
+        last_sent_iso = key_state.get("last_sent_utc")
         if last_sent_iso:
             try:
                 last_sent_dt = datetime.datetime.fromisoformat(last_sent_iso)
@@ -447,6 +458,7 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
                         cooldown_hours,
                         error_msg,
                     )
+                    _write_alert_state(state)
                     return
             except Exception as _parse_err:
                 log.warning(
@@ -478,8 +490,8 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
     )
     _send_email_alert(email_subject, plain_msg, email_html)
 
-    state = _read_alert_state()
-    state[alert_key] = {"last_sent_utc": now_utc.isoformat()}
+    key_state["last_sent_utc"] = now_utc.isoformat()
+    state[alert_key] = key_state
     _write_alert_state(state)
 
 
@@ -685,6 +697,21 @@ def run_backfill(date_from: str = "", date_to: str = ""):
         total_errors = bt_errors + pt_errors
         status_icon = "✅" if total_errors == 0 else "⚠️"
 
+        # Report the longest consecutive-failure streak across all alert keys.
+        # Using max() avoids inflating "nights in a row" when several views fail
+        # simultaneously (sum would count each view separately).
+        alert_state = _read_alert_state()
+        max_suppressed = max(
+            (int(v.get("consecutive_failures", 0)) for v in alert_state.values() if isinstance(v, dict)),
+            default=0,
+        )
+        suppressed_line = (
+            f"\n\u26a0\ufe0f Cache alert suppressed {max_suppressed} night"
+            f"{'s' if max_suppressed != 1 else ''} in a row"
+            if max_suppressed > 0
+            else ""
+        )
+
         msg = (
             f"{status_icon} <b>Nightly Tiered P&amp;L Refresh</b>\n"
             f"Date: {run_date}\n"
@@ -702,6 +729,7 @@ def run_backfill(date_from: str = "", date_to: str = ""):
             f"  Errors  : {pt_errors}\n"
             f"\n"
             f"Elapsed : {elapsed_str}"
+            f"{suppressed_line}"
         )
 
     _send_telegram(msg)
