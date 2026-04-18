@@ -47,10 +47,6 @@ args = "Backtest: Trend 90-Day (Preview)"
 task = "workflow.run"
 args = "Nightly Tiered P&L Refresh"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "MFE/MAE Backfill (one-time)"
-
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -114,14 +110,6 @@ args = "python nightly_tiered_pnl_refresh.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
-
-[[workflows.workflow]]
-name = "MFE/MAE Backfill (one-time)"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python backfill_mfe_mae.py"
 
 [agent]
 stack = "PNPM_WORKSPACE"
