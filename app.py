@@ -19540,6 +19540,10 @@ ALTER TABLE backtest_sim_runs
                         f"{_bf_no_cross} skipped (no entry cross). "
                         f"{_bf_remain:,} rows still pending."
                     )
+                    try:
+                        refresh_mv_tiered_pnl_summary()
+                    except Exception:
+                        pass
                     st.rerun()
         with _tp_col_full:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -19611,6 +19615,10 @@ ALTER TABLE backtest_sim_runs
                 _prog_bar.progress(1.0)
                 _final_remain = count_backtest_tiered_pending(user_id=_AUTH_USER_ID)
                 _status_text.empty()
+                try:
+                    refresh_mv_tiered_pnl_summary()
+                except Exception:
+                    pass
                 if _full_aborted:
                     st.error(
                         "Full backfill aborted — Alpaca credentials may be missing. "

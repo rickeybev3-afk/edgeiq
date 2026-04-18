@@ -1085,6 +1085,17 @@ def main():
         except Exception as _e:
             print(f"  (stats file write failed: {_e})")
 
+    if not dry_run and not reset_sentinel:
+        print("  Refreshing Ladder cache (mv_tiered_pnl_summary)…", end="", flush=True)
+        try:
+            _ref = backend.refresh_mv_tiered_pnl_summary()
+            if _ref.get("success"):
+                print(" done.")
+            else:
+                print(f" skipped — {_ref.get('message', 'unknown error')}")
+        except Exception as _ref_e:
+            print(f" error: {_ref_e}")
+
 
 if __name__ == "__main__":
     main()
