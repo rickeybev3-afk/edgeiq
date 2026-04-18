@@ -12656,6 +12656,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             st.session_state["_rp_log_to_last_url"] = _rp_log_to_str
                         with _rp_log_date_col3:
                             st.write("")
+                            _rp_log_active_filters = sum([
+                                bool(_rp_log_ticker_filter.strip()),
+                                _rp_log_wl_filter != "All",
+                                not _rp_log_show_neutral,
+                                _rp_log_boosted_only,
+                                _rp_log_only_marginal,
+                                bool(_rp_log_from_str.strip()),
+                                bool(_rp_log_to_str.strip()),
+                            ])
+                            if _rp_log_active_filters > 0:
+                                _rp_filter_word = "filter" if _rp_log_active_filters == 1 else "filters"
+                                st.markdown(
+                                    f'<span style="background:#d97706;color:#fff;padding:2px 8px;'
+                                    f'border-radius:12px;font-size:0.78rem;font-weight:600;">'
+                                    f'&#9679; {_rp_log_active_filters} {_rp_filter_word} active</span>',
+                                    unsafe_allow_html=True,
+                                )
                             if st.button("↺ Reset filters", key="_rp_log_reset_btn"):
                                 for _qp_key in ["rp_log_ticker", "rp_log_wl", "rp_log_neutral", "rp_log_boosted", "rp_log_marginal", "rp_log_from", "rp_log_to"]:
                                     if _qp_key in st.query_params:
