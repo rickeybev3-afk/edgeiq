@@ -843,22 +843,37 @@ def run_backfill(date_from: str = "", date_to: str = ""):
         if failing_views:
             # Sort descending by failure count so the worst offender appears first.
             sorted_views = sorted(failing_views.items(), key=lambda x: x[1], reverse=True)
-            header = "\n\u26a0\ufe0f Cache alerts suppressed:"
-            remaining = _TG_LIMIT - len(base_msg) - len(header)
-            lines_added: list[str] = []
+
+            # Build a compact monospace table inside <pre> so it renders like a grid
+            # in Telegram's HTML mode (which does not support real <table> tags).
+            col_w = max(len(k) for k, _ in sorted_views)
+            col_w = max(col_w, len("View"))  # at least as wide as the header
+            divider = f"{'-' * col_w}-+-{'-------'}"
+            col_header = f"{'View':<{col_w}} | Nights"
+
+            # Build rows, respecting the Telegram 4096-char hard limit.
+            header_block = f"\n\u26a0\ufe0f <b>Cache alerts suppressed:</b>\n<pre>{col_header}\n{divider}"
+            footer_block = "</pre>"
+            # Budget = total limit minus the fixed parts already committed.
+            budget = _TG_LIMIT - len(base_msg) - len(header_block) - len(footer_block)
+
+            rows: list[str] = []
             omitted = 0
             for key, count in sorted_views:
-                entry = f"\n  {key}: {count} night{'s' if count != 1 else ''}"
-                if len(entry) <= remaining:
-                    lines_added.append(entry)
-                    remaining -= len(entry)
+                nights_label = f"{count} night{'s' if count != 1 else ''}"
+                row = f"\n{key:<{col_w}} | {nights_label}"
+                if len(row) <= budget:
+                    rows.append(row)
+                    budget -= len(row)
                 else:
                     omitted += 1
+
             if omitted:
-                tail = f"\n  \u2026 (+{omitted} more)"
-                if len(tail) <= remaining:
-                    lines_added.append(tail)
-            suppressed_line = header + "".join(lines_added)
+                tail = f"\n\u2026 (+{omitted} more)"
+                if len(tail) <= budget:
+                    rows.append(tail)
+
+            suppressed_line = header_block + "".join(rows) + footer_block
         else:
             suppressed_line = ""
 
