@@ -20008,7 +20008,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
         )
 
         _mc_uid = st.session_state.get("auth_user_id", "")
-        _mc_cache_key = f"_mc_v5_rows_{_mc_uid}"
+        _mc_cache_key = f"_mc_v6_rows_{_mc_uid}"
 
         _mc_col1, _mc_col2, _mc_col3 = st.columns([2, 2, 2])
         with _mc_col1:
@@ -20041,7 +20041,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
         if _mc_load_btn or _mc_cache_key in st.session_state:
             if _mc_load_btn or st.session_state.get(_mc_cache_key) is None:
-                with st.spinner("Loading v5 sim data from database…"):
+                with st.spinner("Loading v6 sim data from database…"):
                     try:
                         _mc_cols = "pnl_r_sim,tcs,scan_type,ib_range_pct"
                         _mc_rows_raw = []
