@@ -12526,6 +12526,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if st.query_params.get("rp_log_to", "") != _rp_log_to_str:
                                 st.query_params["rp_log_to"] = _rp_log_to_str
                             st.session_state["_rp_log_to_last_url"] = _rp_log_to_str
+                        with _rp_log_date_col3:
+                            st.write("")
+                            if st.button("↺ Reset filters", key="_rp_log_reset_btn"):
+                                for _qp_key in ["rp_log_ticker", "rp_log_wl", "rp_log_neutral", "rp_log_boosted", "rp_log_marginal", "rp_log_from", "rp_log_to"]:
+                                    if _qp_key in st.query_params:
+                                        del st.query_params[_qp_key]
+                                for _ss_key in [
+                                    "rp_log_ticker_filter", "_rp_log_ticker_last_url",
+                                    "rp_log_wl_filter", "_rp_log_wl_last_url",
+                                    "rp_log_show_neutral", "_rp_log_neutral_last_url",
+                                    "rp_log_boosted_only", "_rp_log_boosted_last_url",
+                                    "rp_log_only_marginal", "_rp_log_marginal_last_url",
+                                    "rp_log_from_str", "rp_log_to_str",
+                                ]:
+                                    if _ss_key in st.session_state:
+                                        del st.session_state[_ss_key]
+                                st.rerun()
 
                         _rp_display_df = _rp_df.copy()
                         if _rp_log_ticker_filter.strip():
