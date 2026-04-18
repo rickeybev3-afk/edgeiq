@@ -5950,6 +5950,45 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+    with st.sidebar.expander("⚠️ Sync Warning Resets", expanded=False):
+        st.caption(
+            "Dismissing a date-sync warning hides it until you reset it here. "
+            "Use **Reset all** to restore Backtest P&L, Edge Map, and Screener / Outcome warnings at once."
+        )
+        _any_bts_dismissed  = bool(st.session_state.get("bts_sync_dismissed_at"))
+        _any_bq_dismissed   = bool(st.session_state.get("bq_sync_dismissed_at"))
+        _any_grid_dismissed = bool(st.session_state.get("grid_sync_dismissed_at"))
+        _either_dismissed = _any_bts_dismissed or _any_bq_dismissed or _any_grid_dismissed
+        if _either_dismissed:
+            _dismissed_labels = []
+            if _any_bts_dismissed:
+                _dismissed_labels.append("Backtest P&L")
+            if _any_bq_dismissed:
+                _dismissed_labels.append("Screener / Outcome")
+            if _any_grid_dismissed:
+                _dismissed_labels.append("Edge Map")
+            st.caption(f"Currently dismissed: **{', '.join(_dismissed_labels)}**")
+        else:
+            st.caption("No sync warnings are currently dismissed.")
+        if st.button(
+            "↩ Reset all dismissed warnings",
+            key="reset_all_sync_warnings",
+            disabled=not _either_dismissed,
+            use_container_width=True,
+            help="Clear all dismissed sync-warning states so warnings re-appear immediately",
+        ):
+            st.session_state["bts_sync_dismissed_at"]  = None
+            st.session_state["bq_sync_dismissed_at"]   = None
+            st.session_state["grid_sync_dismissed_at"] = None
+            if _AUTH_USER_ID:
+                _all_r_prefs = {**st.session_state.get("_cached_prefs", {})}
+                _all_r_prefs.pop("bts_sync_dismissed_at", None)
+                _all_r_prefs.pop("bq_sync_dismissed_at", None)
+                _all_r_prefs.pop("grid_sync_dismissed_at", None)
+                save_user_prefs(_AUTH_USER_ID, _all_r_prefs)
+                st.session_state["_cached_prefs"] = _all_r_prefs
+            st.rerun()
+
     with st.sidebar.expander("🔧 Database Migrations", expanded=False):
         st.caption("Run pending ALTER TABLE migrations on Supabase.")
         if st.button("🔄 Run Migrations", key="run_migrations_btn"):
