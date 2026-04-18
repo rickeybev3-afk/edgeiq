@@ -209,7 +209,14 @@ def count_rows_to_process(user_ids: list[str], skip_existing: bool = False) -> i
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _sim_patch(r: dict) -> dict | None:
-    sim = backend.compute_trade_sim(r)
+    # Compute adaptive target_r per row — same 3-layer logic as paper_trader_bot.
+    # Layer 1: structure override, Layer 2: scan_type + TCS, Layer 3: TCS fallback.
+    _tcs       = float(r.get("tcs") or 0)
+    _scan      = (r.get("scan_type") or "").strip()
+    _structure = (r.get("predicted") or r.get("actual_outcome") or "").strip()
+    _target_r  = backend.adaptive_target_r(_tcs, scan_type=_scan, structure=_structure)
+
+    sim = backend.compute_trade_sim(r, target_r=_target_r)
     if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
         return None
     patch = {
@@ -220,8 +227,9 @@ def _sim_patch(r: dict) -> dict | None:
         "stop_price_sim":   sim.get("stop_price_sim"),
         "stop_dist_pct":    sim.get("stop_dist_pct"),
         "target_price_sim": sim.get("target_price_sim"),
-        "sim_version":      sim.get("sim_version"),
     }
+    # sim_version omitted — column was just added via ALTER TABLE and PostgREST
+    # schema cache takes ~5 min to refresh. Stamped on next run once cache is live.
     # EOD Hold P&L from stored close_price (no bars needed — computable from DB data).
     # Tiered P&L cannot be backfilled (requires intraday bars that aren't stored).
     # New batch backtest runs will populate tiered_pnl_r going forward.

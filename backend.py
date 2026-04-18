@@ -10794,12 +10794,55 @@ def ensure_paper_trades_table() -> bool:
 # Formula version stamped on every sim row by _sim_patch().
 # Bump this string whenever compute_trade_sim() logic changes so that
 # --skip-existing automatically re-processes stale (old-version) rows.
-SIM_VERSION = "v1"
+SIM_VERSION = "v2"  # bumped 2026-04-18: adaptive target_r per row (3-layer calibration)
 
 # Formula version stamped on every row that writes eod_pnl_r.
 # Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
 # that --skip-existing can detect stale eod_pnl_r values and re-process them.
 TIERED_SIM_VERSION = "v1"
+
+# ── Adaptive exit target (mirrors paper_trader_bot._adaptive_target_r) ────────
+# Reads adaptive_exits.json — 3-layer calibration from 24,837 qualified backtest
+# rows + 314 live paper_trades. Updated 2026-04-18.
+_ADAPTIVE_EXITS_CFG: dict = {}
+try:
+    _aef_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
+    with open(_aef_path) as _f:
+        _ADAPTIVE_EXITS_CFG = json.load(_f)
+except Exception:
+    pass
+
+
+def adaptive_target_r(tcs: float, scan_type: str = "", structure: str = "") -> float:
+    """Return MFE-calibrated exit target in R-units.
+
+    3-layer lookup (most specific wins):
+      1. Structure override — Bearish Break → 0.5R, Dbl Dist → 1.5R
+      2. Scan type + TCS band — morning/intraday × TCS tier
+      3. TCS-only fallback
+
+    Falls back to 1.0R if config is missing.
+    """
+    cfg = _ADAPTIVE_EXITS_CFG
+    if not cfg:
+        return 1.0
+
+    # Layer 1: structure override
+    for struct_key, target in cfg.get("structure_overrides", {}).items():
+        if struct_key.lower() in structure.lower():
+            return float(target)
+
+    # Layer 2: scan_type + TCS band
+    for band in cfg.get("scan_and_tcs", []):
+        if band["scan_type"] == scan_type and band["tcs_min"] <= tcs < band["tcs_max"]:
+            return float(band["target_r"])
+
+    # Layer 3: TCS-only fallback
+    for band in cfg.get("tcs_fallback", []):
+        if band["tcs_min"] <= tcs < band["tcs_max"]:
+            return float(band["target_r"])
+
+    return float(cfg.get("global_fallback_target_r", 1.0))
 
 
 def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
