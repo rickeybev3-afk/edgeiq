@@ -18341,6 +18341,27 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _summary_df.to_excel(
                             _xlsx_writer, sheet_name="Summary", index=False
                         )
+                        # ── VWAP Pass Rate Band colour coding ─────────────────
+                        from openpyxl.styles import PatternFill as _PatternFill
+                        _vwap_band_fills = {
+                            "Strong":   _PatternFill("solid", fgColor="C8E6C9"),
+                            "Moderate": _PatternFill("solid", fgColor="FFE0B2"),
+                            "Weak":     _PatternFill("solid", fgColor="FFCDD2"),
+                        }
+                        for _sh_name, _sh_df in [("Detail", _detail_df), ("Summary", _summary_df)]:
+                            if "VWAP Pass Rate Band" not in _sh_df.columns:
+                                continue
+                            _ws = _xlsx_writer.sheets[_sh_name]
+                            _band_col_idx = list(_sh_df.columns).index("VWAP Pass Rate Band") + 1
+                            for _row_i, _cell_val in enumerate(_sh_df["VWAP Pass Rate Band"], start=2):
+                                _cell = _ws.cell(row=_row_i, column=_band_col_idx)
+                                _val_str = str(_cell_val)
+                                if _val_str.startswith("Strong"):
+                                    _cell.fill = _vwap_band_fills["Strong"]
+                                elif _val_str.startswith("Moderate"):
+                                    _cell.fill = _vwap_band_fills["Moderate"]
+                                elif _val_str.startswith("Weak"):
+                                    _cell.fill = _vwap_band_fills["Weak"]
                         try:
                             _vf_tcs_ib, _vf_vwap = _compute_bt_vwap_funnel(_bt_df)
                             if _vf_tcs_ib > 0:
