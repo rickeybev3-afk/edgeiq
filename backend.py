@@ -8539,6 +8539,7 @@ def save_backtest_sim_runs(rows: list, user_id: str = ""):
                 rec["stop_price_sim"]   = _sim.get("stop_price_sim")
                 rec["stop_dist_pct"]    = _sim.get("stop_dist_pct")
                 rec["target_price_sim"] = _sim.get("target_price_sim")
+                rec["sim_version"]      = SIM_VERSION
                 # Compute eod_pnl_r when close_price is available.
                 # NOTE: tiered_pnl_r is intentionally NOT stored here because
                 # computing it requires bar-by-bar intraday data (aft_df) from
@@ -10620,6 +10621,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["stop_price_sim"]   = _sim.get("stop_price_sim")
                 row_record["stop_dist_pct"]    = _sim.get("stop_dist_pct")
                 row_record["target_price_sim"] = _sim.get("target_price_sim")
+                row_record["sim_version"]      = SIM_VERSION
             elif _new_sim_outcome in ("missing_data", "invalid_ib"):
                 # Sim could not be computed for this newly-inserted trade — warn the trader.
                 _new_reason = _SIM_REASON_LABELS.get(_new_sim_outcome, "unknown reason")
@@ -10653,6 +10655,7 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                                   "sim_outcome", "pnl_r_sim", "pnl_pct_sim",
                                   "entry_price_sim", "stop_price_sim",
                                   "stop_dist_pct", "target_price_sim",
+                                  "sim_version",
                                   "ib_range_pct", "vwap_at_ib", "tcs_floor"]
                 if any(col in _err_s for col in _optional_cols):
                     for rec in records:
@@ -11106,6 +11109,7 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     patch["stop_price_sim"]   = sim.get("stop_price_sim")
                     patch["stop_dist_pct"]    = sim.get("stop_dist_pct")
                     patch["target_price_sim"] = sim.get("target_price_sim")
+                    patch["sim_version"]      = SIM_VERSION
                 if r.get("mae") is not None:
                     patch["mae"] = round(float(r["mae"]), 2)
                 if r.get("mfe") is not None:
@@ -11130,7 +11134,7 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     _upd_s = str(_upd_err).lower()
                     _opt_update_cols = [
                         "mae", "mfe", "exit_trigger", "entry_ib_distance", "entry_time",
-                        "tiered_pnl_r", "eod_pnl_r",
+                        "tiered_pnl_r", "eod_pnl_r", "sim_version",
                     ]
                     if any(col in _upd_s for col in _opt_update_cols):
                         for col in _opt_update_cols:
@@ -11176,6 +11180,7 @@ def update_paper_trade_outcomes(trade_date: str, results: list, user_id: str = "
                     insert_row["stop_price_sim"]   = sim.get("stop_price_sim")
                     insert_row["stop_dist_pct"]    = sim.get("stop_dist_pct")
                     insert_row["target_price_sim"] = sim.get("target_price_sim")
+                    insert_row["sim_version"]      = SIM_VERSION
                 if r.get("mae") is not None:
                     insert_row["mae"] = round(float(r["mae"]), 2)
                 if r.get("mfe") is not None:
