@@ -21102,8 +21102,24 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 </style>
 <script>
 (function(){
-  if (window.__tcsInit) { window.__tcsInit(); return; }
-  var _tcsSortCol = 4, _tcsSortAsc = false;
+  var _LS_COL = 'tcs_sort_col', _LS_ASC = 'tcs_sort_asc';
+  function _tcsLoadState(maxCol) {
+    try {
+      var col = localStorage.getItem(_LS_COL);
+      var asc = localStorage.getItem(_LS_ASC);
+      var parsedCol = col !== null ? parseInt(col, 10) : 4;
+      if (isNaN(parsedCol) || parsedCol < 0 || parsedCol > maxCol) { parsedCol = 4; }
+      return { col: parsedCol, asc: asc === 'true' };
+    } catch(e) { return {col: 4, asc: false}; }
+  }
+  function _tcsSaveState(col, asc) {
+    try {
+      localStorage.setItem(_LS_COL, col);
+      localStorage.setItem(_LS_ASC, asc);
+    } catch(e) {}
+  }
+  var _state = _tcsLoadState(20);
+  var _tcsSortCol = _state.col, _tcsSortAsc = _state.asc;
   function _tcsApplySort(tbl) {
     var tbody = tbl.querySelector('tbody');
     var rows = Array.from(tbody.querySelectorAll('tr'));
@@ -21139,13 +21155,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
           var col = parseInt(th.getAttribute('data-tcs-col'));
           if (col === _tcsSortCol) { _tcsSortAsc = !_tcsSortAsc; }
           else { _tcsSortCol = col; _tcsSortAsc = false; }
+          _tcsSaveState(_tcsSortCol, _tcsSortAsc);
           _tcsApplySort(tbl);
         });
       });
       _tcsApplySort(tbl);
     });
   }
-  window.__tcsInit = _tcsAttach;
   if (window.__tcsObs) { window.__tcsObs.disconnect(); }
   window.__tcsObs = new MutationObserver(_tcsAttach);
   window.__tcsObs.observe(document.body, {childList:true, subtree:true});
