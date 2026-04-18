@@ -1296,16 +1296,19 @@ def _monitor_trailing_stops() -> None:
 
 
 def _force_close_all_positions() -> None:
-    """Market-order close all open Alpaca positions at 3:30 PM ET.
+    """Market-close all open Alpaca positions at 3:30 PM ET.
 
     Runs once per trading day from the main scheduling loop.  Prevents holding
     positions through the final 30-minute close auction where spreads widen and
     fills become unpredictable on paper accounts.
 
-    Logic:
-      1. Fetch open Alpaca positions.
-      2. For each position submit a market order to close (sell if long, buy if short).
-      3. Log + Telegram notify the result.
+    Strategy: use Alpaca's DELETE /v2/positions/{symbol} endpoint, which
+    atomically cancels any open bracket/exit orders for the symbol AND submits
+    a market order to flatten the position — avoiding the order-rejection race
+    condition that occurs when a trailing stop or bracket order is still active.
+
+    After the first pass a 90-second validation loop re-checks for any surviving
+    positions and retries once per symbol.
     """
     if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
         return
@@ -1316,6 +1319,7 @@ def _force_close_all_positions() -> None:
         return
 
     import requests as _req
+    import time as _time
 
     base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
     headers = {
@@ -1327,50 +1331,60 @@ def _force_close_all_positions() -> None:
     closed   = []
     failed   = []
 
-    for pos in positions:
-        ticker  = pos.get("symbol", "").upper()
-        # Alpaca returns negative qty for short positions — use abs() to get the
-        # correct share count regardless of direction.
-        qty     = abs(int(float(pos.get("qty", 0) or 0)))
-        side    = pos.get("side", "long")
-
-        if qty <= 0:
-            continue
-
-        # Long → sell; Short → buy-to-close
-        order_side = "sell" if side == "long" else "buy"
-
-        payload = {
-            "symbol":        ticker,
-            "qty":           str(qty),
-            "side":          order_side,
-            "type":          "market",
-            "time_in_force": "day",
-        }
+    def _close_one(ticker: str) -> bool:
+        """Use Alpaca's DELETE /v2/positions/{symbol} — cancels open orders + closes position atomically."""
         try:
-            resp = _req.post(
-                f"{base}/v2/orders",
-                json=payload,
+            resp = _req.delete(
+                f"{base}/v2/positions/{ticker}",
+                params={"percentage": "1"},
                 headers=headers,
                 timeout=10,
             )
-            if resp.status_code in (200, 201):
-                order_id = resp.json().get("id", "?")[:8]
-                log.info(f"[ForceClose] {ticker} — market close submitted ({order_side} {qty}) order={order_id}…")
-                closed.append(ticker)
+            if resp.status_code in (200, 201, 204):
+                log.info(f"[ForceClose] {ticker} — position close submitted via DELETE /v2/positions")
+                return True
+            elif resp.status_code == 404:
+                log.info(f"[ForceClose] {ticker} — already flat (404)")
+                return True
             else:
-                log.warning(f"[ForceClose] {ticker} — close FAILED: {resp.status_code} {resp.text[:200]}")
-                failed.append(ticker)
+                log.warning(f"[ForceClose] {ticker} — DELETE failed: {resp.status_code} {resp.text[:200]}")
+                return False
         except Exception as _e:
-            log.warning(f"[ForceClose] {ticker} — close exception: {_e}")
+            log.warning(f"[ForceClose] {ticker} — exception: {_e}")
+            return False
+
+    # ── First pass ────────────────────────────────────────────────────────────
+    symbols_attempted = []
+    for pos in positions:
+        ticker = pos.get("symbol", "").upper()
+        if not ticker:
+            continue
+        symbols_attempted.append(ticker)
+        if _close_one(ticker):
+            closed.append(ticker)
+        else:
             failed.append(ticker)
+
+    # ── Validation pass (90 s later) ─────────────────────────────────────────
+    if symbols_attempted:
+        _time.sleep(90)
+        still_open = [p.get("symbol", "").upper() for p in (_alpaca_get_positions() or [])]
+        still_open = [s for s in still_open if s in symbols_attempted]
+        for ticker in still_open:
+            log.warning(f"[ForceClose] {ticker} still open after first pass — retrying")
+            if _close_one(ticker):
+                if ticker in failed:
+                    failed.remove(ticker)
+                    closed.append(ticker)
+            else:
+                log.error(f"[ForceClose] {ticker} — retry FAILED, manual close required")
 
     if closed or failed:
         lines = ["🔔 <b>3:30 PM — Positions Force-Closed</b>"]
         if closed:
-            lines.append(f"✅ Closed: {', '.join(closed)}")
+            lines.append(f"✅ Closed: {', '.join(sorted(set(closed)))}")
         if failed:
-            lines.append(f"⚠️ Failed: {', '.join(failed)} — check manually")
+            lines.append(f"⚠️ Failed after retry: {', '.join(sorted(set(failed)))} — check manually")
         lines.append("<i>Avoids holding through close-auction spread widening</i>")
         tg_send("\n".join(lines))
 
