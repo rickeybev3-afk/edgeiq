@@ -18397,6 +18397,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 if "VWAP Pass Rate (%)" not in _xls_headers:
                                     continue
                                 _xls_vwap_col = _xls_headers.index("VWAP Pass Rate (%)") + 1
+                                _xls_vwap_hdr = _xls_ws.cell(row=1, column=_xls_vwap_col)
+                                _xls_vwap_hdr.fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
+                                _xls_vwap_hdr.font = _OpxlFont(bold=True, color="FFFFFF")
                                 for _xls_row in _xls_ws.iter_rows(
                                     min_row=2, min_col=_xls_vwap_col, max_col=_xls_vwap_col
                                 ):
