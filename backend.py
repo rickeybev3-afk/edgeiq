@@ -7901,6 +7901,9 @@ def run_pending_migrations() -> dict:
         # Version stamps — used by run_sim_backfill.py to detect stale rows
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS sim_version TEXT",
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS tiered_sim_version TEXT",
+        # vwap_at_ib for backtest_sim_runs — written by batch_backtest.py (optional field)
+        # used by get_backtest_pace_target() to apply full live filter stack (TCS+IB+VWAP)
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS vwap_at_ib FLOAT",
         # paper_trades pnl_r_sim — needed by mv_paper_tiered_pnl_summary materialized view
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_sim FLOAT",
     ]
@@ -8693,19 +8696,26 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
 def get_backtest_pace_target(user_id: str = "") -> dict:
     """Compute the live-filter pace target from backtest_sim_runs.
 
-    Applies the bot's entry quality filters:
-      • TCS >= 50
-      • IB range < 10% of open price
-    (VWAP alignment is not stored in backtest_sim_runs, so this gives the
-    pre-VWAP upper-bound count; VWAP alignment historically trims ~46%.)
+    Applies the same entry-quality filter stack used by the live paper-trader
+    bot:
+      1. TCS >= 50
+      2. IB range < 10% of open price  (computed from ib_high, ib_low, open_price)
+      3. VWAP alignment: Bullish → IB midpoint > vwap_at_ib
+                         Bearish → IB midpoint < vwap_at_ib
+         (only applied to rows where vwap_at_ib IS NOT NULL — older rows that
+          pre-date vwap_at_ib logging fall through and are excluded from the
+          count to avoid inflating the target)
+
+    Rows are fetched via offset pagination so there is no hard row-cap; the
+    function always reflects the full table regardless of dataset size.
 
     Returns a dict:
         per_day     – avg qualifying setups per trading day  (float)
         per_year    – per_day × 250  (int)
-        count       – total qualifying rows
-        bdays       – trading-day span (min→max sim_date)
-        min_date    – earliest sim_date in the qualifying set
-        max_date    – latest sim_date in the qualifying set
+        count       – total qualifying rows (TCS + IB + VWAP-aligned)
+        bdays       – trading-day span (min→max sim_date of qualifying rows)
+        min_date    – earliest qualifying sim_date
+        max_date    – latest qualifying sim_date
         is_fallback – True when no data exists and defaults are returned
 
     Falls back to {"per_day": 0.81, "per_year": 202, "is_fallback": True}
@@ -8720,20 +8730,30 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
     if not supabase:
         return _default
     try:
-        q = (
-            supabase.table("backtest_sim_runs")
-            .select("sim_date,tcs,ib_high,ib_low,open_price")
-            .gte("tcs", 50)
-        )
-        if user_id:
-            q = q.eq("user_id", user_id)
-        rows = q.limit(20000).execute().data or []
-        if not rows:
+        import pandas as _pd_bpt
+
+        _PAGE = 1000
+        _offset = 0
+        _all_rows: list = []
+        while True:
+            q = (
+                supabase.table("backtest_sim_runs")
+                .select("sim_date,tcs,ib_high,ib_low,open_price,vwap_at_ib,predicted")
+                .gte("tcs", 50)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            _chunk = q.range(_offset, _offset + _PAGE - 1).execute().data or []
+            _all_rows.extend(_chunk)
+            if len(_chunk) < _PAGE:
+                break
+            _offset += _PAGE
+
+        if not _all_rows:
             return _default
 
-        import pandas as _pd_bpt
-        _df = _pd_bpt.DataFrame(rows)
-        for _col in ("tcs", "ib_high", "ib_low", "open_price"):
+        _df = _pd_bpt.DataFrame(_all_rows)
+        for _col in ("tcs", "ib_high", "ib_low", "open_price", "vwap_at_ib"):
             _df[_col] = _pd_bpt.to_numeric(_df[_col], errors="coerce")
 
         _valid = (
@@ -8741,8 +8761,24 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
             _df["ib_high"].notna() & _df["ib_low"].notna()
         )
         _df = _df[_valid].copy()
+
         _df["_ib_pct"] = (_df["ib_high"] - _df["ib_low"]) / _df["open_price"] * 100
         _df = _df[_df["_ib_pct"] < 10]
+
+        if _df.empty:
+            return _default
+
+        _df["_ib_mid"] = (_df["ib_high"] + _df["ib_low"]) / 2
+
+        _bullish_mask = _df["predicted"].str.lower().isin(["bullish", "long"])
+        _bearish_mask = _df["predicted"].str.lower().isin(["bearish", "short"])
+        _has_vwap    = _df["vwap_at_ib"].notna()
+
+        _vwap_ok = (
+            (_has_vwap & _bullish_mask & (_df["_ib_mid"] > _df["vwap_at_ib"])) |
+            (_has_vwap & _bearish_mask & (_df["_ib_mid"] < _df["vwap_at_ib"]))
+        )
+        _df = _df[_vwap_ok]
 
         if _df.empty:
             return _default

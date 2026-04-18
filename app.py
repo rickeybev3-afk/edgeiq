@@ -21210,7 +21210,7 @@ def render_performance_tab():
     _TARGET_PER_DAY  = _pace_tgt["per_day"]
     _TARGET_PER_YEAR = _pace_tgt["per_year"]
     _pace_tgt_source = (
-        f"TCS≥50 + IB<10%  ·  {_pace_tgt['count']:,} setups / {_pace_tgt['bdays']:,} days"
+        f"TCS≥50 + IB<10% + VWAP aligned  ·  {_pace_tgt['count']:,} setups / {_pace_tgt['bdays']:,} days"
         if not _pace_tgt["is_fallback"] else "historical estimate"
     )
 
