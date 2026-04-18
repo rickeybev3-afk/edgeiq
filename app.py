@@ -18215,6 +18215,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _xlsx_bytes = _xlsx_buf.getvalue()
                     _xlsx_btn_label = _sweep_btn_label.replace("CSV", "Excel (.xlsx)")
                     _xlsx_fname     = _sweep_fname.replace(".csv", ".xlsx")
+                    _sweep_csv_bytes = _detail_df.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        label=_sweep_btn_label,
+                        data=_sweep_csv_bytes,
+                        file_name=_sweep_fname,
+                        mime="text/csv",
+                        key="_dl_sweep_all_tickers_csv",
+                        help=(
+                            "Download a CSV with all TCS floor rows including Ticker, Best TCS Floor, "
+                            "Recommended, TCS+IB Signals, VWAP Signals, and all sweep metrics."
+                        ),
+                    )
                     st.download_button(
                         label=_xlsx_btn_label,
                         data=_xlsx_bytes,
