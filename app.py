@@ -11361,8 +11361,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
                         _bt_tier_defs = [
                             ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                            ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
-                            ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                            ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
+                            ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
                             ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
                         ]
 
@@ -11665,8 +11665,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             unsafe_allow_html=True,
                         )
                         st.caption(
-                            "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
-                            "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+                            "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
+                            "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
                         )
                         _bt_tier_cols = st.columns(4)
                         # Pre-compute expectancy R per tier for best-edge highlight
@@ -22364,14 +22364,14 @@ ALTER TABLE backtest_sim_runs
         unsafe_allow_html=True,
     )
     st.caption(
-        "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
-        "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+        "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
+        "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
     )
 
     _tier_defs = [
         ("P1", "🔴", "intraday", 70, 999, "#c62828",  "Intraday 70+"),
-        ("P2", "🟠", "intraday", 50,  69, "#ef6c00",  "Intraday 50–69"),
-        ("P3", "🟡", "morning",  70, 999, "#f9a825",  "Morning 70+"),
+        ("P2", "🟠", "morning",  70, 999, "#ef6c00",  "Morning 70+"),
+        ("P3", "🟡", "intraday", 50,  69, "#f9a825",  "Intraday 50–69"),
         ("P4", "🟢", "morning",  50,  69, "#2e7d32",  "Morning 50–69"),
     ]
 
@@ -25159,13 +25159,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 unsafe_allow_html=True,
             )
             st.caption(
-                "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
-                "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+                "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
+                "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
             )
             _bts_tier_defs2 = [
                 ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
-                ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
+                ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
                 ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
             ]
             _bts_has_tcs2 = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
@@ -25342,13 +25342,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     unsafe_allow_html=True,
                 )
                 st.caption(
-                    "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
-                    "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+                    "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
+                    "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
                 )
                 _bts_eod_tier_defs = [
                     ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                    ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
-                    ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                    ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
+                    ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
                     ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
                 ]
                 _bts_eod_has_tcs = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
@@ -25595,13 +25595,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     unsafe_allow_html=True,
                 )
                 st.caption(
-                    "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Intraday TCS 50–69  ·  "
-                    "P3 🟡 = Morning TCS 70+  ·  P4 🟢 = Morning TCS 50–69"
+                    "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
+                    "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
                 )
                 _bts_ldr_tier_defs = [
                     ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                    ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
-                    ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                    ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
+                    ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
                     ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
                 ]
                 _bts_ldr_has_tcs = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
@@ -25807,8 +25807,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             if _bts_has_tcs2 and (_bts_cs_has_eod or _bts_cs_has_tiered):
                 _bts_cs_tier_defs = [
                     ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                    ("P2", "🟠", "intraday", 50,  69, "#ef6c00", "Intraday 50–69"),
-                    ("P3", "🟡", "morning",  70, 999, "#f9a825", "Morning 70+"),
+                    ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
+                    ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
                     ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
                 ]
                 _bts_cs_rows = []
@@ -27866,8 +27866,8 @@ function _bqCopyShareLink() {
                         )
                         st.caption(
                             "Same paired trades sliced by confidence tier. "
-                            "P1 🔴 = Intraday 70+  ·  P2 🟠 = Intraday 50–69  ·  "
-                            "P3 🟡 = Morning 70+  ·  P4 🟢 = Morning 50–69. "
+                            "P1 🔴 = Intraday 70+  ·  P2 🟠 = Morning 70+  ·  "
+                            "P3 🟡 = Intraday 50–69  ·  P4 🟢 = Morning 50–69. "
                             "Reveals whether the EOD vs Tiered gap is driven by high- or low-confidence setups."
                         )
                         _bq_dir_filter = st.radio(
@@ -27912,8 +27912,8 @@ function _bqCopyShareLink() {
                             _bq_tcs_src = _bq_tcs_src[_bq_tcs_src["actual_outcome"] == "Bearish Break"]
                         _bq_tier_defs = [
                             ("P1", "🔴", "intraday", 70, 999, "#ef5350",  "Intraday 70+"),
-                            ("P2", "🟠", "intraday", 50,  69, "#ef6c00",  "Intraday 50–69"),
-                            ("P3", "🟡", "morning",  70, 999, "#f9a825",  "Morning 70+"),
+                            ("P2", "🟠", "morning",  70, 999, "#ef6c00",  "Morning 70+"),
+                            ("P3", "🟡", "intraday", 50,  69, "#f9a825",  "Intraday 50–69"),
                             ("P4", "🟢", "morning",  50,  69, "#66bb6a",  "Morning 50–69"),
                         ]
                         _bq_tcs_src["_tcs_num"] = pd.to_numeric(
@@ -28318,13 +28318,13 @@ function _bqCopyShareLink() {
             st_name = row["scan_type"]
             lo      = row["tcs_lo"]
             if st_name == "intraday" and lo >= 70:
-                return "🔴 P1", "#c62828", "Intraday 70+ — act on every one"
-            if st_name == "intraday" and lo >= 50:
-                return "🟠 P2", "#ef6c00", "Intraday 50+ — core bread & butter"
+                return "🔴 P1", "#c62828", "Intraday 70+ — highest annual R, act on every one"
             if st_name == "morning" and lo >= 70:
-                return "🟡 P3", "#f9a825", "Morning 70+ — high R, small sample"
+                return "🟠 P2", "#ef6c00", "Morning 70+ — highest per-trade R (+3.76R), always reserve a slot"
+            if st_name == "intraday" and lo >= 50:
+                return "🟡 P3", "#f9a825", "Intraday 50–69 — core volume driver, fill remaining slots"
             if st_name == "morning" and lo >= 50:
-                return "🟢 P4", "#2e7d32", "Morning 50+ — solid, current system"
+                return "🟢 P4", "#2e7d32", "Morning 50–69 — lowest priority, skip if P1–P3 slots still open"
             return "⚪ Low", "#546e7a", "Below threshold — skip"
 
         # ── Best combos summary ──────────────────────────────────────────────
@@ -28346,15 +28346,24 @@ function _bqCopyShareLink() {
         else:
             _tier_filter_label = ""
 
-        st.markdown("**Priority Tiers — ranked by true expectancy per setup (5-yr backtest)**")
+        st.markdown(
+            "**Priority Tiers — P1 by annual R · P2 by per-trade R · P3–P4 by volume (5-yr backtest)**",
+            help=(
+                "P1 = Intraday 70+ fires ~286×/yr (+830R annual) — take every one. "
+                "P2 = Morning 70+ fires ~36×/yr but carries the highest per-trade expectancy (+3.76R) "
+                "— always reserve a slot when it appears. "
+                "P3 = Intraday 50–69 drives volume (+545R annual). "
+                "P4 = Morning 50–69 is lowest priority (+90R annual)."
+            ),
+        )
         _tier_cols = st.columns(4)
         _tier_defs = [
             ("🔴 P1", "Intraday TCS 70+", "#c62828",
-             next((r for r in _ranked if r["scan_type"] == "intraday" and r["tcs_lo"] == 70), None)),
-            ("🟠 P2", "Intraday TCS 50–69", "#ef6c00",
-             next((r for r in _bt_grid if r["scan_type"] == "intraday" and r["tcs_lo"] == 50), None)),
-            ("🟡 P3", "Morning TCS 70+", "#f9a825",
+             next((r for r in _bt_grid if r["scan_type"] == "intraday" and r["tcs_lo"] == 70), None)),
+            ("🟠 P2", "Morning TCS 70+", "#ef6c00",
              next((r for r in _bt_grid if r["scan_type"] == "morning" and r["tcs_lo"] == 70), None)),
+            ("🟡 P3", "Intraday TCS 50–69", "#f9a825",
+             next((r for r in _bt_grid if r["scan_type"] == "intraday" and r["tcs_lo"] == 50), None)),
             ("🟢 P4", "Morning TCS 50–69", "#2e7d32",
              next((r for r in _bt_grid if r["scan_type"] == "morning" and r["tcs_lo"] == 50), None)),
         ]
