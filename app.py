@@ -25629,6 +25629,129 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     unsafe_allow_html=True,
                 )
 
+            # ── IB Range Breakdown Table (Backtest Sim) ───────────────────────
+            # Mirrors the Section 1b paper-trades IB breakdown but uses the
+            # (typically much larger) backtest dataset for higher confidence.
+            if "ib_range_pct" in _bts_df.columns:
+                _bts_ib_thr_disp = _cached_load_ib_range_pct_threshold()
+                _bts_ib_bd_df = _bts_df.copy()
+                _bts_ib_bd_df["_ib_pct"] = pd.to_numeric(
+                    _bts_ib_bd_df["ib_range_pct"], errors="coerce"
+                )
+                _bts_ib_bd_df = _bts_ib_bd_df[_bts_ib_bd_df["_ib_pct"].notna()]
+
+                _bts_ib_buckets = [
+                    ("0–5%",   (0,  5)),
+                    ("5–10%",  (5,  10)),
+                    ("10–15%", (10, 15)),
+                    ("15%+",   (15, None)),
+                ]
+
+                _bts_ib_has_eod    = "eod_pnl_r"    in _bts_ib_bd_df.columns and _bts_ib_bd_df["eod_pnl_r"].notna().any()
+                _bts_ib_has_tiered = "tiered_pnl_r"  in _bts_ib_bd_df.columns and _bts_ib_bd_df["tiered_pnl_r"].notna().any()
+
+                if not _bts_ib_bd_df.empty and (_bts_ib_has_eod or _bts_ib_has_tiered):
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(
+                        '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                        'text-transform:uppercase;margin-bottom:6px;">IB Range Breakdown</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(
+                        f"Performance split by IB range % bucket — "
+                        f"active threshold: **{_bts_ib_thr_disp:.1f}%** (buckets at/above threshold are filtered out by the bot). "
+                        f"⚠ = fewer than 50 trades (treat with caution)."
+                    )
+
+                    _bts_ib_hdr = (
+                        f'<tr style="background:#0d2137;">'
+                        f'<th style="padding:7px 10px;text-align:left;font-weight:700;color:#90a4ae;font-size:11px;">IB Range Bucket</th>'
+                        f'<th style="padding:7px 10px;text-align:left;font-size:11px;color:#90a4ae;">Bot Gate</th>'
+                        f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#90a4ae;">n</th>'
+                    )
+                    if _bts_ib_has_eod:
+                        _bts_ib_hdr += (
+                            f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#81c784;">EOD WR%</th>'
+                            f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#81c784;">EOD Exp</th>'
+                        )
+                    if _bts_ib_has_tiered:
+                        _bts_ib_hdr += (
+                            f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#ffb74d;">Tiered WR%</th>'
+                            f'<th style="padding:7px 10px;text-align:right;font-size:11px;color:#ffb74d;">Tiered Exp</th>'
+                        )
+                    _bts_ib_hdr += f'<th style="padding:7px 10px;text-align:center;font-size:11px;color:#90a4ae;">Confidence</th></tr>'
+
+                    _bts_ib_body = ""
+                    for _bts_bkt_label, (_bts_bkt_lo, _bts_bkt_hi) in _bts_ib_buckets:
+                        if _bts_bkt_hi is None:
+                            _bts_bkt_mask = _bts_ib_bd_df["_ib_pct"] >= _bts_bkt_lo
+                        else:
+                            _bts_bkt_mask = (_bts_ib_bd_df["_ib_pct"] >= _bts_bkt_lo) & (_bts_ib_bd_df["_ib_pct"] < _bts_bkt_hi)
+                        _bts_bkt_sub = _bts_ib_bd_df[_bts_bkt_mask]
+                        _bts_bkt_n = len(_bts_bkt_sub)
+                        if _bts_bkt_n == 0:
+                            continue
+
+                        if _bts_bkt_hi is not None and _bts_bkt_hi <= _bts_ib_thr_disp:
+                            _bts_bkt_gate = f'<span style="color:#66bb6a;font-size:11px;font-weight:600;">✓ Pass</span>'
+                            _bts_bkt_row_bg = "background:rgba(76,175,80,0.04);"
+                        elif _bts_bkt_lo >= _bts_ib_thr_disp:
+                            _bts_bkt_gate = f'<span style="color:#ef5350;font-size:11px;font-weight:600;">✗ Filtered</span>'
+                            _bts_bkt_row_bg = "background:rgba(239,83,80,0.04);"
+                        else:
+                            _bts_bkt_gate = f'<span style="color:#ff9800;font-size:11px;font-weight:600;">~ Partial</span>'
+                            _bts_bkt_row_bg = "background:rgba(255,152,0,0.04);"
+
+                        _bts_bkt_conf = '<span style="color:#ef5350;font-weight:700;">⚠ Low n</span>' if _bts_bkt_n < 50 else '<span style="color:#546e7a;">OK</span>'
+
+                        _bts_ib_body += f'<tr style="border-top:1px solid #1e2a3a;{_bts_bkt_row_bg}">'
+                        _bts_ib_body += f'<td style="padding:6px 10px;font-weight:700;color:#cfd8dc;">{_bts_bkt_label}</td>'
+                        _bts_ib_body += f'<td style="padding:6px 10px;">{_bts_bkt_gate}</td>'
+                        _bts_ib_body += f'<td style="padding:6px 10px;text-align:right;color:#cfd8dc;">{_bts_bkt_n}</td>'
+
+                        if _bts_ib_has_eod:
+                            _bts_bkt_eod = pd.to_numeric(_bts_bkt_sub["eod_pnl_r"], errors="coerce").dropna()
+                            if len(_bts_bkt_eod) > 0:
+                                _bts_bkt_eod_wr  = (_bts_bkt_eod > 0).sum() / len(_bts_bkt_eod) * 100
+                                _bts_bkt_eod_exp = float(_bts_bkt_eod.mean())
+                                _bts_bkt_eod_wr_c  = "#2e7d32" if _bts_bkt_eod_wr >= 60 else ("#ef6c00" if _bts_bkt_eod_wr >= 50 else "#c62828")
+                                _bts_bkt_eod_ex_c  = "#4caf50" if _bts_bkt_eod_exp > 0 else "#ef5350"
+                                _bts_ib_body += (
+                                    f'<td style="padding:6px 10px;text-align:right;">'
+                                    f'<span style="color:{_bts_bkt_eod_wr_c};font-weight:600;">{_bts_bkt_eod_wr:.1f}%</span></td>'
+                                    f'<td style="padding:6px 10px;text-align:right;">'
+                                    f'<span style="color:{_bts_bkt_eod_ex_c};font-weight:600;">{"+" if _bts_bkt_eod_exp >= 0 else ""}{_bts_bkt_eod_exp:.3f}R</span></td>'
+                                )
+                            else:
+                                _bts_ib_body += '<td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td><td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td>'
+                        if _bts_ib_has_tiered:
+                            _bts_bkt_tier = pd.to_numeric(_bts_bkt_sub["tiered_pnl_r"], errors="coerce").dropna()
+                            if len(_bts_bkt_tier) > 0:
+                                _bts_bkt_tier_wr  = (_bts_bkt_tier > 0).sum() / len(_bts_bkt_tier) * 100
+                                _bts_bkt_tier_exp = float(_bts_bkt_tier.mean())
+                                _bts_bkt_tier_wr_c = "#2e7d32" if _bts_bkt_tier_wr >= 60 else ("#ef6c00" if _bts_bkt_tier_wr >= 50 else "#c62828")
+                                _bts_bkt_tier_ex_c = "#4caf50" if _bts_bkt_tier_exp > 0 else "#ef5350"
+                                _bts_ib_body += (
+                                    f'<td style="padding:6px 10px;text-align:right;">'
+                                    f'<span style="color:{_bts_bkt_tier_wr_c};font-weight:600;">{_bts_bkt_tier_wr:.1f}%</span></td>'
+                                    f'<td style="padding:6px 10px;text-align:right;">'
+                                    f'<span style="color:{_bts_bkt_tier_ex_c};font-weight:600;">{"+" if _bts_bkt_tier_exp >= 0 else ""}{_bts_bkt_tier_exp:.3f}R</span></td>'
+                                )
+                            else:
+                                _bts_ib_body += '<td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td><td style="padding:6px 10px;text-align:right;color:#546e7a;">—</td>'
+                        _bts_ib_body += f'<td style="padding:6px 10px;text-align:center;">{_bts_bkt_conf}</td>'
+                        _bts_ib_body += "</tr>"
+
+                    if _bts_ib_body:
+                        st.markdown(
+                            f'<div style="overflow-x:auto;">'
+                            f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
+                            f'<thead>{_bts_ib_hdr}</thead>'
+                            f'<tbody>{_bts_ib_body}</tbody>'
+                            f'</table></div>',
+                            unsafe_allow_html=True,
+                        )
+
             # ── Row 4 — Tiered vs EOD Head-to-Head Comparison ────────────────
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(
