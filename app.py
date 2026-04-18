@@ -31286,6 +31286,21 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
+    # Apply the same live filter stack used by the Phase 2 Gate: TCS ≥ 50 + IB < 10%
+    if "tcs" in _pt_df.columns:
+        _pt_df = _pt_df[pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0) >= 50]
+    if "ib_range_pct" in _pt_df.columns:
+        _pt_df = _pt_df[
+            _pt_df["ib_range_pct"].isna() | (pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce") < 10.0)
+        ]
+
+    if _pt_df.empty:
+        st.info(
+            "No paper trades pass the TCS ≥ 50 + IB < 10% filter yet — widen the date range or lower the filter.",
+            icon="📋",
+        )
+        return
+
     _pt_wins   = (_pt_df["win_loss"] == "Win").sum()
     _pt_losses = (_pt_df["win_loss"] == "Loss").sum()
     _pt_total  = len(_pt_df)
@@ -31304,14 +31319,14 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         f'<div style="font-size:10px; color:#37474f;">{_pt_wins}W / {_pt_losses}L</div></div>'
         f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
         f'padding:14px 22px; text-align:center; min-width:120px;">'
-        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Total Setups</div>'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Filtered Setups</div>'
         f'<div style="font-size:30px; font-weight:900; color:#e0e0e0; font-family:monospace;">{_pt_total}</div>'
-        f'<div style="font-size:10px; color:#37474f;">across {_pt_dates} day(s)</div></div>'
+        f'<div style="font-size:10px; color:#37474f;">{_pt_dates} day(s) · TCS ≥ 50 + IB &lt; 10%</div></div>'
         f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
         f'padding:14px 22px; text-align:center; min-width:120px;">'
         f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Avg TCS</div>'
         f'<div style="font-size:30px; font-weight:900; color:#ce93d8; font-family:monospace;">{int(_pt_avg_tcs)}</div>'
-        f'<div style="font-size:10px; color:#37474f;">min filter applied</div></div>'
+        f'<div style="font-size:10px; color:#37474f;">of filtered setups</div></div>'
         f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
         f'padding:14px 22px; text-align:center; min-width:120px;">'
         f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Avg Follow-Thru</div>'
