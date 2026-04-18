@@ -18354,6 +18354,43 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _vf_df.to_excel(_xlsx_writer, sheet_name="VWAP Funnel", index=False)
                         except Exception:
                             pass
+                        try:
+                            from openpyxl.styles import PatternFill, Font as _OpxlFont
+                            _vwap_green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                            _vwap_amber_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+                            _vwap_red_fill   = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                            _vwap_green_font = _OpxlFont(color="276221", bold=True)
+                            _vwap_amber_font = _OpxlFont(color="9C6500", bold=True)
+                            _vwap_red_font   = _OpxlFont(color="9C0006", bold=True)
+                            for _xls_sheet_name in ("Detail", "Summary"):
+                                _xls_ws = _xlsx_writer.sheets.get(_xls_sheet_name)
+                                if _xls_ws is None:
+                                    continue
+                                _xls_headers = [cell.value for cell in _xls_ws[1]]
+                                if "VWAP Pass Rate (%)" not in _xls_headers:
+                                    continue
+                                _xls_vwap_col = _xls_headers.index("VWAP Pass Rate (%)") + 1
+                                for _xls_row in _xls_ws.iter_rows(
+                                    min_row=2, min_col=_xls_vwap_col, max_col=_xls_vwap_col
+                                ):
+                                    for _xls_cell in _xls_row:
+                                        try:
+                                            _xls_val = float(
+                                                str(_xls_cell.value).replace("%", "").strip()
+                                            )
+                                            if _xls_val >= 70:
+                                                _xls_cell.fill = _vwap_green_fill
+                                                _xls_cell.font = _vwap_green_font
+                                            elif _xls_val >= 40:
+                                                _xls_cell.fill = _vwap_amber_fill
+                                                _xls_cell.font = _vwap_amber_font
+                                            else:
+                                                _xls_cell.fill = _vwap_red_fill
+                                                _xls_cell.font = _vwap_red_font
+                                        except (ValueError, TypeError):
+                                            pass
+                        except Exception:
+                            pass
                     _xlsx_bytes = _xlsx_buf.getvalue()
                     _xlsx_btn_label = _sweep_btn_label.replace("CSV", "Excel (.xlsx)")
                     _xlsx_fname     = _sweep_fname.replace(".csv", ".xlsx")
