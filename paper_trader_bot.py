@@ -3416,6 +3416,51 @@ def nightly_recalibration():
     except Exception as exc:
         log.warning(f"EOD eod_pnl_r recalculation (backtest) failed: {exc}")
 
+    # ── Count paper_trades breakout rows still missing eod_pnl_r after heal ──
+    # Split into two buckets so the Telegram message is accurate:
+    #   - no_price_count:  eod_pnl_r NULL AND close_price NULL  → awaiting price data
+    #   - no_pnl_count:    eod_pnl_r NULL AND close_price NOT NULL → have price, still unfilled (anomaly)
+    # None means the count query failed; used to avoid falsely reporting "fully filled".
+    no_price_count: int | None = None
+    no_pnl_count: int | None = None
+    try:
+        if _supabase_client:
+            _np_total = 0
+            _anomaly_total = 0
+            for _direction in ("Bullish Break", "Bearish Break"):
+                _resp_np = (
+                    _supabase_client.table("paper_trades")
+                    .select("id", count="exact")
+                    .eq("user_id", USER_ID)
+                    .eq("actual_outcome", _direction)
+                    .is_("eod_pnl_r", "null")
+                    .is_("close_price", "null")
+                    .limit(1)
+                    .execute()
+                )
+                _np_total += (_resp_np.count or 0)
+
+                _resp_an = (
+                    _supabase_client.table("paper_trades")
+                    .select("id", count="exact")
+                    .eq("user_id", USER_ID)
+                    .eq("actual_outcome", _direction)
+                    .is_("eod_pnl_r", "null")
+                    .not_.is_("close_price", "null")
+                    .limit(1)
+                    .execute()
+                )
+                _anomaly_total += (_resp_an.count or 0)
+            no_price_count = _np_total
+            no_pnl_count = _anomaly_total
+            log.info(
+                f"Nightly EOD P&L heal: still-missing breakdown — "
+                f"{no_price_count} awaiting close price, "
+                f"{no_pnl_count} have price but no P&L (anomaly)."
+            )
+    except Exception as exc:
+        log.warning(f"Still-missing eod_pnl_r count failed: {exc}")
+
     # ── Telegram summary: how many old paper trades had P&L healed overnight ──
     try:
         paper_written = pr_result.get("written", 0)
@@ -3440,6 +3485,19 @@ def nightly_recalibration():
                 "🌙 <b>Nightly EOD P&amp;L Sweep</b>",
                 "  • No rows needed healing tonight — all P&amp;L already filled.",
             ]
+        if no_price_count is None or no_pnl_count is None:
+            lines.append("  ⚠️ Still-missing P&amp;L count unavailable (query failed).")
+        elif no_price_count or no_pnl_count:
+            if no_price_count:
+                lines.append(
+                    f"  ⚠️ Still missing P&amp;L: <b>{no_price_count}</b> row(s) awaiting close price."
+                )
+            if no_pnl_count:
+                lines.append(
+                    f"  ⚠️ Still missing P&amp;L: <b>{no_pnl_count}</b> row(s) have price but no P&amp;L computed."
+                )
+        else:
+            lines.append("  ✅ All paper-trade P&amp;L rows are fully filled.")
         tg_send("\n".join(lines))
     except Exception as exc:
         log.warning(f"Nightly eod_pnl_r Telegram summary failed: {exc}")
