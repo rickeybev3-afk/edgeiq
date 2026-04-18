@@ -18159,6 +18159,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         except (ValueError, TypeError):
                             return ""
 
+                    def _sweep_style_vwap_band(val):
+                        if not val or val == "—" or val is None:
+                            return ""
+                        _v = str(val)
+                        if _v.startswith("Strong"):
+                            return "background-color:#1b3a2b;color:#66bb6a;font-weight:700"
+                        elif _v.startswith("Moderate"):
+                            return "background-color:#3a2e10;color:#ffa726;font-weight:700"
+                        elif _v.startswith("Weak"):
+                            return "background-color:#3a1414;color:#ef5350;font-weight:700"
+                        return ""
+
                     _sweep_delta_cols_present = [
                         c for c in ["Δ Morn", "Δ Intra"] if c in _detail_df.columns
                     ]
@@ -18180,6 +18192,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         except AttributeError:
                             _sweep_styled = _sweep_styled.applymap(
                                 _sweep_style_vwap_pass_rate, subset=["VWAP Pass Rate (%)"]
+                            )
+                    if "VWAP Pass Rate Band" in _detail_df.columns:
+                        try:
+                            _sweep_styled = _sweep_styled.map(
+                                _sweep_style_vwap_band, subset=["VWAP Pass Rate Band"]
+                            )
+                        except AttributeError:
+                            _sweep_styled = _sweep_styled.applymap(
+                                _sweep_style_vwap_band, subset=["VWAP Pass Rate Band"]
                             )
                     _sweep_col_cfg = {}
                     if "Δ Morn" in _detail_df.columns:
@@ -18228,6 +18249,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "Percentage of TCS+IB signals that also passed VWAP alignment "
                                 "(VWAP Signals ÷ TCS+IB Signals × 100). "
                                 "Green ≥ 70% · Amber 40–69% · Red < 40%"
+                            ),
+                        )
+                    if "VWAP Pass Rate Band" in _detail_df.columns:
+                        _sweep_col_cfg["VWAP Pass Rate Band"] = st.column_config.TextColumn(
+                            "VWAP Pass Rate Band",
+                            help=(
+                                "Qualitative band derived from the VWAP Pass Rate: "
+                                "Strong (≥ 70%) · Moderate (40–69%) · Weak (< 40%). "
+                                "Matches the label shown in the CSV export."
                             ),
                         )
                     st.dataframe(
