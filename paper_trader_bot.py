@@ -158,6 +158,7 @@ try:
         label_to_weight_key,
         WK_DISPLAY,
         load_ib_range_pct_threshold,
+        send_divergence_alert,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -3451,6 +3452,86 @@ def _ensure_alpaca_columns() -> bool:
         return True
 
 
+def _dispatch_scheduled_divergence_alert() -> None:
+    """Read divergence_alert_state.json and dispatch the end-of-session divergence alert.
+
+    Called once per trading day at ~4:35 PM ET from the main scheduling loop.
+    This is the *autonomous* path — it fires even when no dashboard session is open,
+    which satisfies the goal of risk managers receiving alerts without anyone being
+    present at the dashboard.
+    """
+    import json as _json
+    from datetime import date as _date
+
+    _state_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "divergence_alert_state.json"
+    )
+    try:
+        with open(_state_path) as _sf:
+            _state = _json.load(_sf)
+    except FileNotFoundError:
+        log.info("[DivAlert] divergence_alert_state.json not found — no scheduled dispatch today")
+        return
+    except Exception as _e:
+        log.warning(f"[DivAlert] Failed to read state file: {_e}")
+        return
+
+    if not _state.get("auto_send_enabled"):
+        log.info("[DivAlert] Auto-send disabled in state file — skipping scheduled dispatch")
+        return
+
+    if _state.get("trigger_mode") != "Once per day":
+        log.info(
+            f"[DivAlert] Trigger mode is '{_state.get('trigger_mode')}' — "
+            "bot only handles 'Once per day' dispatches"
+        )
+        return
+
+    _today = _date.today().isoformat()
+
+    # Guard: if we already sent today (e.g. after a mid-day bot restart) skip
+    if _state.get("last_bot_sent_date") == _today:
+        log.info(f"[DivAlert] Already dispatched today ({_today}) — skipping")
+        return
+
+    # Guard: require the state file to have been written today so we don't
+    # dispatch stale data from a previous session
+    _last_updated = str(_state.get("last_updated", ""))[:10]
+    if _last_updated != _today:
+        log.info(
+            f"[DivAlert] State file is from {_last_updated or 'unknown date'} "
+            f"(expected {_today}) — skipping to avoid stale dispatch"
+        )
+        return
+
+    _flagged_rows = _state.get("flagged_rows", [])
+    _n = len(_flagged_rows)
+    if _n == 0:
+        log.info("[DivAlert] No flagged tickers in today's state file — skipping scheduled dispatch")
+        return
+
+    _threshold = float(_state.get("threshold", 0.0))
+    log.info(
+        f"[DivAlert] Dispatching scheduled end-of-session divergence alert — "
+        f"{_n} flagged ticker{'s' if _n != 1 else ''}, threshold={_threshold}"
+    )
+    try:
+        _result = send_divergence_alert(flagged_rows=_flagged_rows, threshold=_threshold)
+        _sent   = [ch for ch, ok in _result.items() if ok]
+        _failed = [ch for ch, ok in _result.items() if not ok]
+        log.info(f"[DivAlert] Dispatch result — sent: {_sent}  failed: {_failed}")
+        if _sent:
+            _state["last_bot_sent_date"] = _today
+            try:
+                with open(_state_path, "w") as _sf:
+                    _json.dump(_state, _sf, indent=2)
+                log.info("[DivAlert] State file updated with today's sent date")
+            except Exception as _we:
+                log.warning(f"[DivAlert] Could not update state file after dispatch: {_we}")
+    except Exception as _e:
+        log.error(f"[DivAlert] Scheduled dispatch raised an exception: {_e}")
+
+
 def main():
     log.info("EdgeIQ Paper Trader Bot starting up...")
 
@@ -3590,6 +3671,7 @@ def main():
     _verify_done           = False
     _recalibration_done    = False
     _pdf_export_done       = False
+    _div_alert_done        = False
 
     # ── Startup catch-up: recover scans missed due to mid-day restart ─────────
     # Task merges / workflow restarts can happen during market hours.
@@ -3630,6 +3712,16 @@ def main():
             _verify_done = True
         if _su_hm >= 16 * 60 + 30:
             _recalibration_done = True
+        if _su_hm >= 16 * 60 + 35:
+            # Past 4:35 PM — attempt dispatch now; _dispatch_scheduled_divergence_alert
+            # has its own idempotency guard (last_bot_sent_date) so it will skip safely
+            # if the alert was already sent earlier today.
+            log.info("[Catch-up] Past 4:35 PM — attempting divergence alert dispatch in case it was missed...")
+            try:
+                _dispatch_scheduled_divergence_alert()
+            except Exception as _cue:
+                log.warning(f"[Catch-up] Divergence alert dispatch failed (non-fatal): {_cue}")
+            _div_alert_done = True
         log.info(f"[Catch-up] Done — premarket={_premarket_done} watchlist={_watchlist_done} "
                  f"morning={_morning_done} intraday={_intraday_done} eod={_eod_done}")
     # ─────────────────────────────────────────────────────────────────────────
@@ -3649,6 +3741,7 @@ def main():
             _verify_done           = False
             _recalibration_done    = False
             _pdf_export_done       = False
+            _div_alert_done        = False
 
         if not _market_is_open(now_et):
             # EOD outcome update — 4:20 PM ET (SIP free tier needs data >16 min old;
@@ -3685,6 +3778,18 @@ def main():
                     update_daily_build_notes()
                 except Exception as _bne:
                     log.warning(f"Build notes update failed (non-fatal): {_bne}")
+
+            # 4:35 PM — scheduled divergence alert dispatch
+            # Fires even when no dashboard session is open so risk managers
+            # receive the flagged-tickers CSV without anyone being present.
+            if (
+                not _div_alert_done
+                and now_et.weekday() < 5
+                and now_et.hour == 16
+                and now_et.minute >= 35
+            ):
+                _dispatch_scheduled_divergence_alert()
+                _div_alert_done = True
 
             # 9:10 AM — pre-market gap scanner (SIP, before Finviz refresh)
             if (

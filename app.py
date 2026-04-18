@@ -12597,6 +12597,30 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.query_params["tkr_div_thresh"] = _div_thresh_str
                     elif "tkr_div_thresh" in st.query_params:
                         del st.query_params["tkr_div_thresh"]
+                st.checkbox(
+                    "Auto-send alerts",
+                    value=False,
+                    key="tkr_div_auto_alert",
+                    help=(
+                        "Automatically dispatch the divergence alert without clicking the "
+                        "button. Requires Telegram or Discord to be configured. The trigger "
+                        "below controls when the alert fires."
+                    ),
+                )
+                if st.session_state.get("tkr_div_auto_alert"):
+                    st.radio(
+                        "Auto-send trigger",
+                        ["On count change", "Once per day"],
+                        horizontal=True,
+                        key="tkr_div_auto_mode",
+                        help=(
+                            "On count change: fires when the number of flagged tickers "
+                            "changes and is above zero (no alert is sent when the count "
+                            "falls to zero). "
+                            "Once per day: bot dispatches once at 4:35 PM ET whenever at "
+                            "least one ticker is flagged."
+                        ),
+                    )
             _sort_key, _sort_asc = _sort_col_map[_sort_choice]
             _r_filter_key = _r_filter_col_map[_r_filter_col]
             _tkr_summary_df = _pd_bt.DataFrame(_tkr_rows).sort_values(_sort_key, ascending=_sort_asc)
@@ -12851,6 +12875,98 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     st.session_state["_scroll_to_worst_div"] = _jt
                                     st.rerun()
                 _flagged_csv_df = pd.DataFrame(_flagged_csv_rows, columns=["Ticker", "Divergence Magnitude", "Max Divergence label"])
+                # ── Auto-send divergence alert (no manual click required) ───────────
+                _auto_send_on   = st.session_state.get("tkr_div_auto_alert", False)
+                _auto_send_mode = st.session_state.get("tkr_div_auto_mode", "On count change")
+                _tg_configured_auto = bool(
+                    os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")
+                )
+                _dc_configured_auto = bool(os.environ.get("DISCORD_WEBHOOK_URL"))
+                _any_channel_auto   = _tg_configured_auto or _dc_configured_auto
+
+                # Always persist the current flagged-ticker state to a JSON file so
+                # paper_trader_bot.py can dispatch alerts autonomously at 4:35 PM ET
+                # without requiring an active dashboard session.
+                import json as _json_div
+                _div_state_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "divergence_alert_state.json"
+                )
+                _existing_bot_date = ""
+                _new_div_state: dict = {}
+                try:
+                    try:
+                        with open(_div_state_path) as _dsf:
+                            _existing_state = _json_div.load(_dsf)
+                            _existing_bot_date = _existing_state.get("last_bot_sent_date", "")
+                    except Exception:
+                        pass
+                    _new_div_state = {
+                        "auto_send_enabled": bool(_auto_send_on),
+                        "trigger_mode": _auto_send_mode,
+                        "threshold": float(_div_thresh),
+                        "flagged_rows": _flagged_csv_rows,
+                        "flagged_count": _n_flagged,
+                        "last_updated": datetime.now().isoformat(timespec="seconds"),
+                        "last_bot_sent_date": _existing_bot_date,
+                    }
+                    with open(_div_state_path, "w") as _dsf:
+                        _json_div.dump(_new_div_state, _dsf, indent=2)
+                except Exception as _dse:
+                    import logging as _lg_div
+                    _lg_div.getLogger("edgeiq.div_alert").warning(
+                        "Could not write divergence_alert_state.json: %s", _dse
+                    )
+
+                if _auto_send_on and _any_channel_auto:
+                    if _auto_send_mode == "On count change":
+                        # Fire immediately from the session whenever the count changes.
+                        # This covers in-session monitoring; the bot handles end-of-day.
+                        _prev_auto_n = st.session_state.get("_div_auto_last_n", -1)
+                        if _n_flagged != _prev_auto_n and _n_flagged > 0:
+                            _auto_result = send_divergence_alert(
+                                flagged_rows=_flagged_csv_rows,
+                                threshold=_div_thresh,
+                            )
+                            _auto_sent_to = [ch for ch, ok in _auto_result.items() if ok]
+                            _auto_failed  = [
+                                ch for ch, ok in _auto_result.items()
+                                if not ok and os.environ.get(
+                                    "TELEGRAM_BOT_TOKEN" if ch == "telegram"
+                                    else "DISCORD_WEBHOOK_URL"
+                                )
+                            ]
+                            if _auto_sent_to:
+                                st.toast(
+                                    f"Auto-alert dispatched via "
+                                    f"{', '.join(c.title() for c in _auto_sent_to)} "
+                                    f"({_n_flagged} ticker{'s' if _n_flagged != 1 else ''} flagged)",
+                                    icon="📤",
+                                )
+                            if _auto_failed:
+                                st.toast(
+                                    f"Auto-alert failed for: "
+                                    f"{', '.join(c.title() for c in _auto_failed)}",
+                                    icon="⚠️",
+                                )
+                        st.session_state["_div_auto_last_n"] = _n_flagged
+                    else:
+                        # "Once per day" mode — the bot (paper_trader_bot.py) dispatches
+                        # the alert at 4:35 PM ET using the state file written above.
+                        # Show the last bot dispatch date so traders can confirm it fired.
+                        _bot_status_msg = (
+                            "📅 Scheduled for **4:35 PM ET** by the Paper Trader Bot · "
+                            + (f"Last sent: **{_existing_bot_date}**" if _existing_bot_date else "Not yet sent today")
+                            + " · Note: the bot reads today's flagged-ticker data from this "
+                            "session — open the dashboard at least once on trading days so "
+                            "it has current data to dispatch."
+                        )
+                        st.caption(_bot_status_msg)
+                elif _auto_send_on and not _any_channel_auto:
+                    st.caption(
+                        "⚠️ Auto-send is on but no channels are configured — "
+                        "set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID or DISCORD_WEBHOOK_URL."
+                    )
+                # ────────────────────────────────────────────────────────────────────
                 _div_alert_dl_col, _div_alert_send_col = st.columns([1, 1])
                 with _div_alert_dl_col:
                     st.download_button(
@@ -12918,7 +13034,42 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID / DISCORD_WEBHOOK_URL in Secrets."
                         )
             elif _div_thresh is not None:
-                # Threshold is set but nothing exceeds it
+                # Threshold is set but nothing exceeds it — clear the state file so
+                # the bot does not dispatch a stale alert from an earlier render.
+                import json as _json_div_clr
+                _div_state_path_clr = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "divergence_alert_state.json"
+                )
+                try:
+                    _clr_bot_date = ""
+                    try:
+                        with open(_div_state_path_clr) as _cf:
+                            _clr_bot_date = _json_div_clr.load(_cf).get("last_bot_sent_date", "")
+                    except Exception:
+                        pass
+                    with open(_div_state_path_clr, "w") as _cf:
+                        _json_div_clr.dump(
+                            {
+                                "auto_send_enabled": bool(
+                                    st.session_state.get("tkr_div_auto_alert", False)
+                                ),
+                                "trigger_mode": st.session_state.get(
+                                    "tkr_div_auto_mode", "On count change"
+                                ),
+                                "threshold": float(_div_thresh),
+                                "flagged_rows": [],
+                                "flagged_count": 0,
+                                "last_updated": datetime.now().isoformat(timespec="seconds"),
+                                "last_bot_sent_date": _clr_bot_date,
+                            },
+                            _cf,
+                            indent=2,
+                        )
+                except Exception as _clr_e:
+                    import logging as _lg_div_clr
+                    _lg_div_clr.getLogger("edgeiq.div_alert").warning(
+                        "Could not clear divergence_alert_state.json: %s", _clr_e
+                    )
                 st.markdown(
                     f'<div style="background:#0d1f0d;border-left:3px solid #4caf50;padding:7px 14px;'
                     f'border-radius:4px;margin-bottom:6px;font-size:13px;">'
@@ -12955,6 +13106,45 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             st.session_state[f"_tk_exp_{_worst_div_clean}"] = True
                             st.session_state["_scroll_to_worst_div"] = _worst_div_clean
                             st.rerun()
+            # ── No divergence threshold active: clear the state file so the bot
+            # does not dispatch stale alerts from a previous session.
+            if _div_thresh is None:
+                import json as _json_div_none
+                _div_state_path_none = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "divergence_alert_state.json"
+                )
+                try:
+                    _none_bot_date = ""
+                    try:
+                        with open(_div_state_path_none) as _nf:
+                            _none_bot_date = _json_div_none.load(_nf).get(
+                                "last_bot_sent_date", ""
+                            )
+                    except Exception:
+                        pass
+                    with open(_div_state_path_none, "w") as _nf:
+                        _json_div_none.dump(
+                            {
+                                "auto_send_enabled": bool(
+                                    st.session_state.get("tkr_div_auto_alert", False)
+                                ),
+                                "trigger_mode": st.session_state.get(
+                                    "tkr_div_auto_mode", "On count change"
+                                ),
+                                "threshold": None,
+                                "flagged_rows": [],
+                                "flagged_count": 0,
+                                "last_updated": datetime.now().isoformat(timespec="seconds"),
+                                "last_bot_sent_date": _none_bot_date,
+                            },
+                            _nf,
+                            indent=2,
+                        )
+                except Exception as _none_e:
+                    import logging as _lg_div_none
+                    _lg_div_none.getLogger("edgeiq.div_alert").warning(
+                        "Could not clear divergence_alert_state.json (no threshold): %s", _none_e
+                    )
             st.caption(
                 "🟢 Win % ≥ 60% — model reads this ticker well  · "
                 "🟡 45–60% — mixed signal, paper trade first  · "
