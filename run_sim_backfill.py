@@ -205,6 +205,31 @@ def count_rows_to_process(user_ids: list[str], skip_existing: bool = False) -> i
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Context levels cache — keyed (ticker, trade_date, scan_type)
+# Loaded once per backfill_table() call so _sim_patch() can enrich rows with
+# nearest_resistance / nearest_support needed for the v6 trail-tightening sim.
+# ──────────────────────────────────────────────────────────────────────────────
+
+_CTX_LEVELS: dict = {}   # module-level cache; reset per call
+
+
+def _load_context_levels() -> None:
+    """Load all backtest_context_levels rows into _CTX_LEVELS."""
+    global _CTX_LEVELS
+    _CTX_LEVELS = {}
+    try:
+        resp = backend.supabase.table("backtest_context_levels") \
+            .select("ticker,trade_date,scan_type,nearest_resistance,nearest_support") \
+            .execute()
+        for row in (resp.data or []):
+            key = (row["ticker"], row["trade_date"], row["scan_type"])
+            _CTX_LEVELS[key] = row
+        print(f"  [v6] Context levels loaded: {len(_CTX_LEVELS)} rows")
+    except Exception as e:
+        print(f"  [v6] Could not load context levels (non-fatal — v6 falls back to 1R trail): {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Core backfill helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -215,6 +240,17 @@ def _sim_patch(r: dict) -> dict | None:
     _scan      = (r.get("scan_type") or "").strip()
     _structure = (r.get("predicted") or r.get("actual_outcome") or "").strip()
     _target_r  = backend.adaptive_target_r(_tcs, scan_type=_scan, structure=_structure)
+
+    # Enrich row with S/R context levels for v6 trail-tightening logic.
+    # sim_date (backtest_sim_runs) or trade_date (paper_trades) is the date key.
+    _trade_date = (r.get("sim_date") or r.get("trade_date") or "")
+    _ticker     = (r.get("ticker") or "").upper()
+    if _CTX_LEVELS and _trade_date and _ticker and _scan:
+        _ctx = _CTX_LEVELS.get((_ticker, _trade_date, _scan))
+        if _ctx:
+            r = dict(r)  # shallow copy — do not mutate original row
+            r["nearest_resistance"] = _ctx.get("nearest_resistance")
+            r["nearest_support"]    = _ctx.get("nearest_support")
 
     sim = backend.compute_trade_sim(r, target_r=_target_r)
     if sim.get("sim_outcome") in ("no_trade", "missing_data", "invalid_ib", None):
@@ -287,6 +323,9 @@ def backfill_table(table: str, id_col: str, user_id: str,
     print(f"  {'DRY RUN — ' if dry_run else ''}Backfilling: {table}  (user {user_id})  [{mode_label}]{dry_label}")
     print(f"{'='*60}")
 
+    # Pre-load S/R context levels for v6 trail-tightening sim.
+    _load_context_levels()
+
     total_updated = 0
     total_errors  = 0
     dry_run_counts: dict[str, dict] = {}  # populated only when dry_run=True
@@ -325,9 +364,9 @@ def backfill_table(table: str, id_col: str, user_id: str,
             try:
                 q = (
                     backend.supabase.table(table)
-                    .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,"
+                    .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
-                            f"tcs,scan_type,mfe,mae,"
+                            f"tcs,scan_type,mfe,mae,sim_date,"
                             f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
@@ -351,8 +390,9 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     try:
                         q2 = (
                             backend.supabase.table(table)
-                            .select(f"{id_col},predicted,actual_outcome,ib_low,ib_high,"
-                                    f"follow_thru_pct,false_break_up,false_break_down")
+                            .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
+                                    f"follow_thru_pct,false_break_up,false_break_down,"
+                                    f"tcs,scan_type,sim_date")
                             .eq("user_id", user_id)
                             .eq("actual_outcome", direction)
                         )

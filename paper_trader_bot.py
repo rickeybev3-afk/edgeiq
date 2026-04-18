@@ -1207,7 +1207,7 @@ def _monitor_trailing_stops() -> None:
         open_trades = (
             _supabase_client
             .table("paper_trades")
-            .select("ticker,predicted,entry_price_sim,stop_price_sim,target_price_sim,alpaca_order_id,alpaca_qty,win_loss,trade_date")
+            .select("ticker,predicted,scan_type,entry_price_sim,stop_price_sim,target_price_sim,alpaca_order_id,alpaca_qty,win_loss,trade_date")
             .eq("user_id", USER_ID)
             .eq("trade_date", today_str)
             .not_.is_("alpaca_order_id", "null")
@@ -1241,6 +1241,7 @@ def _monitor_trailing_stops() -> None:
         target_sim = float(row.get("target_price_sim") or 0)
         qty        = int(row.get("alpaca_qty") or 0)
         direction  = row.get("predicted", "")
+        scan_type  = (row.get("scan_type") or "").strip()
 
         if not entry_sim or not stop_sim or qty <= 0:
             continue
@@ -1270,22 +1271,65 @@ def _monitor_trailing_stops() -> None:
         cancelled = _alpaca_cancel_orders_for_ticker(ticker)
         log.info(f"[TrailingStop] {ticker} — cancelled {cancelled} open bracket order(s)")
 
-        # Trail by the original stop distance (1R) so we risk 1R of gains
-        # for unlimited upside. Side is always "sell" (closing a long position).
+        # ── v6 S/R-aware trail tightening ────────────────────────────────────
+        # If nearest S/R is within 0.3R of entry, the trade is bumping against
+        # a known wall → tighten trail to 0.5R to lock in more gain sooner.
+        # Falls back to 1.0R (standard) when no context data is available.
+        trail_size     = stop_dist       # default: 1R trail
+        trail_r_label  = "1R"
+        trail_tightened = False
+        try:
+            ctx_resp = (
+                _supabase_client
+                .table("backtest_context_levels")
+                .select("nearest_resistance,nearest_support")
+                .eq("ticker", ticker)
+                .eq("trade_date", today_str)
+                .eq("scan_type", scan_type)
+                .limit(1)
+                .execute()
+            )
+            ctx_rows = ctx_resp.data or []
+            if ctx_rows:
+                ctx = ctx_rows[0]
+                if direction == "Bullish Break":
+                    _nearest = ctx.get("nearest_resistance")
+                    if _nearest is not None and (float(_nearest) - entry_sim) <= 0.3 * stop_dist:
+                        trail_size    = stop_dist * 0.5
+                        trail_r_label = "0.5R"
+                        trail_tightened = True
+                        log.info(
+                            f"[TrailingStop] {ticker} v6 tighten: resistance=${float(_nearest):.2f} "
+                            f"within 0.3R of entry=${entry_sim:.2f} → trail={trail_r_label}"
+                        )
+                else:  # Bearish Break
+                    _nearest = ctx.get("nearest_support")
+                    if _nearest is not None and (entry_sim - float(_nearest)) <= 0.3 * stop_dist:
+                        trail_size    = stop_dist * 0.5
+                        trail_r_label = "0.5R"
+                        trail_tightened = True
+                        log.info(
+                            f"[TrailingStop] {ticker} v6 tighten: support=${float(_nearest):.2f} "
+                            f"within 0.3R of entry=${entry_sim:.2f} → trail={trail_r_label}"
+                        )
+        except Exception as _ctx_e:
+            log.warning(f"[TrailingStop] {ticker} S/R context fetch failed (using 1R trail): {_ctx_e}")
+
         ts_side   = "sell" if direction == "Bullish Break" else "buy"
-        ts_result = _alpaca_place_trailing_stop(ticker, qty, stop_dist, side=ts_side)
+        ts_result = _alpaca_place_trailing_stop(ticker, qty, trail_size, side=ts_side)
 
         if ts_result["ok"]:
             _TRAILING_STOP_ACTIVATED.add(guard_key)
             cur_px = float(pos.get("current_price", 0) or pos.get("lastday_price", 0) or 0)
+            tighten_note = " 🎯 Tight trail (S/R wall)" if trail_tightened else " — runners run 🚀"
             tg_send(
                 f"🔄 <b>Trailing Stop Activated — {ticker}</b>\n"
                 f"T1 hit: <b>{unrealized_r:.2f}R</b> unrealized\n"
                 f"Current: <b>${cur_px:.2f}</b> | Qty: {qty} shares\n"
-                f"Now trailing by <b>${stop_dist:.2f}/share</b> (1R) — runners run 🚀\n"
+                f"Trailing by <b>${trail_size:.2f}/share</b> ({trail_r_label}){tighten_note}\n"
                 f"<code>{ts_result['order_id'][:8]}…</code>"
             )
-            log.info(f"[TrailingStop] {ticker} — trailing stop placed ✅ (order {ts_result['order_id'][:8]})")
+            log.info(f"[TrailingStop] {ticker} — trailing stop placed ✅ trail={trail_r_label} (order {ts_result['order_id'][:8]})")
         else:
             log.warning(f"[TrailingStop] {ticker} — trailing stop FAILED: {ts_result['error']}")
             tg_send(

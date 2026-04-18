@@ -10860,10 +10860,15 @@ def ensure_paper_trades_table() -> bool:
 # SIM_VERSION = "v3"  # v3 = adaptive target_r per row (EOD close, awaiting clean MFE re-backfill)
 # SIM_VERSION = "v4"  # v4 = intraday bracket sim: MAE>=1R→stop, MFE>=target_r→exit at fixed target
 #                     # Enable once backfill_mfe_mae.py --force-recompute completes (2026-04-18 fix)
-SIM_VERSION = "v5"  # v5 = trailing stop sim: T1 hit → trail 1R below MFE peak (mirrors paper bot).
-#                   # MFE>=target_r → captured = MFE-1.0R (trail fires 1R from peak).
-#                   # MFE<target_r AND MAE>=1R → stopped at -1.0R.
-#                   # Neither → EOD close (position held). Clean MFE data loaded 2026-04-18.
+# SIM_VERSION = "v5"  # v5 = trailing stop sim: T1 hit → trail 1R below MFE peak (mirrors paper bot).
+#                     # MFE>=target_r → captured = MFE-1.0R (trail fires 1R from peak).
+#                     # MFE<target_r AND MAE>=1R → stopped at -1.0R.
+#                     # Neither → EOD close (position held). Clean MFE data loaded 2026-04-18.
+SIM_VERSION = "v6"  # v6 = S/R-aware trail tightening: same as v5 but when nearest_resistance
+#                   # (bullish) or nearest_support (bearish) is within 0.3R of entry, the trail
+#                   # tightens to 0.5R instead of 1.0R — locks in more gain near S/R walls.
+#                   # Falls back to 1.0R trail when context level data is absent.
+#                   # sim_outcome = "tight_trail_exit" for tightened cases.
 
 # Formula version stamped on every row that writes eod_pnl_r.
 # Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
@@ -10914,7 +10919,9 @@ def adaptive_target_r(tcs: float, scan_type: str = "", structure: str = "") -> f
     return float(cfg.get("global_fallback_target_r", 1.0))
 
 
-def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
+def compute_trade_sim(r: dict, target_r: float = 2.0,
+                      nearest_resistance: float | None = None,
+                      nearest_support:    float | None = None) -> dict:
     """Simulate an IB-breakout paper trade from an EdgeIQ structure setup.
 
     Trade direction signal priority:
@@ -10956,9 +10963,21 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
         _mfe_r is not None and _mae_r is not None
         and float(_mfe_r) >= 0 and float(_mae_r) >= 0   # exclude sentinel -9999 rows
     )
-    _use_bracket_sim = SIM_VERSION == "v4" and _has_clean_mfe
-    _use_trail_sim   = SIM_VERSION == "v5" and _has_clean_mfe
-    if _has_clean_mfe and (_use_bracket_sim or _use_trail_sim):
+    _use_bracket_sim  = SIM_VERSION == "v4" and _has_clean_mfe
+    _use_trail_sim    = SIM_VERSION == "v5" and _has_clean_mfe
+    _use_trail_sim_v6 = SIM_VERSION == "v6" and _has_clean_mfe
+
+    # Allow nearest_resistance / nearest_support to be passed via row dict (for backfill)
+    # or as explicit kwargs (for direct calls).
+    if nearest_resistance is None:
+        nearest_resistance = r.get("nearest_resistance")
+    if nearest_support is None:
+        nearest_support = r.get("nearest_support")
+    if nearest_resistance is not None:
+        nearest_resistance = float(nearest_resistance)
+    if nearest_support is not None:
+        nearest_support = float(nearest_support)
+    if _has_clean_mfe and (_use_bracket_sim or _use_trail_sim or _use_trail_sim_v6):
         _mfe_r = float(_mfe_r)
         _mae_r = float(_mae_r)
 
@@ -11029,6 +11048,33 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                 }
             # T1 not hit, stop not hit — held to EOD, fall through
 
+        # ── v6: S/R-aware trail tightening (Bullish) ─────────────────────────
+        if _use_trail_sim_v6:
+            if _mfe_r >= target_r:
+                # Check if nearest_resistance is within 0.3R above entry → tighten trail.
+                _trail_r = 1.0
+                _outcome = "trailing_exit"
+                if (nearest_resistance is not None
+                        and (nearest_resistance - entry) <= 0.3 * ib_range):
+                    _trail_r = 0.5
+                    _outcome = "tight_trail_exit"
+                captured_r   = max(0.0, round(_mfe_r - _trail_r, 3))
+                captured_pct = captured_r * stop_dist_pct
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
+                    "sim_outcome": _outcome, "sim_version": SIM_VERSION,
+                }
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            # T1 not hit, stop not hit — held to EOD, fall through
+
         # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
             close_price = float(close_price)
@@ -11089,6 +11135,33 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
                     "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
                     "sim_outcome": "trailing_exit", "sim_version": SIM_VERSION,
+                }
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            # T1 not hit, stop not hit — held to EOD, fall through
+
+        # ── v6: S/R-aware trail tightening (Bearish) ─────────────────────────
+        if _use_trail_sim_v6:
+            if _mfe_r >= target_r:
+                # Check if nearest_support is within 0.3R below entry → tighten trail.
+                _trail_r = 1.0
+                _outcome = "trailing_exit"
+                if (nearest_support is not None
+                        and (entry - nearest_support) <= 0.3 * ib_range):
+                    _trail_r = 0.5
+                    _outcome = "tight_trail_exit"
+                captured_r   = max(0.0, round(_mfe_r - _trail_r, 3))
+                captured_pct = captured_r * stop_dist_pct
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
+                    "sim_outcome": _outcome, "sim_version": SIM_VERSION,
                 }
             if _mae_r >= 1.0:
                 return {
