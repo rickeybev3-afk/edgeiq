@@ -54,3 +54,4 @@ backfill_*.log
 # Runtime state — managed by live bots, not tracked in git
 brain_weights.json
 tcs_threshold_history.jsonl
+.backfill_heartbeat_alerted.json
