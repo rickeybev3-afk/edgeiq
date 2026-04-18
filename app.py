@@ -14958,7 +14958,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _meq_dates = _mini_div_data.get("trade_dates", [])
                             _meq_tcs   = _mini_div_data.get("trade_tcs", [])
                             _meq_has_meta = bool(_meq_dates or _meq_tcs)
-                            _meq_flt_cols = st.columns([1, 1, 1])
+                            _meq_flt_cols = st.columns([1, 1, 1, 0.7])
                             with _meq_flt_cols[0]:
                                 _meq_flt_from = st.date_input(
                                     "From date",
@@ -14986,6 +14986,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     key=f"_flt_meq_tcs_{_tk_name}",
                                     help="Filter exported rows: only include trades at this TCS floor or higher (0 = no filter)",
                                 )
+                            with _meq_flt_cols[3]:
+                                _meq_any_filter = bool(_meq_flt_from or _meq_flt_to or _meq_flt_tcs > 0)
+                                st.write("")
+                                if st.button(
+                                    "↺ Reset",
+                                    key=f"_flt_meq_reset_{_tk_name}",
+                                    disabled=not _meq_any_filter,
+                                    help="Clear all filters to restore the full unfiltered dataset",
+                                    use_container_width=True,
+                                ):
+                                    for _rk in [
+                                        f"_flt_meq_from_{_tk_name}",
+                                        f"_flt_meq_to_{_tk_name}",
+                                        f"_flt_meq_tcs_{_tk_name}",
+                                    ]:
+                                        st.session_state.pop(_rk, None)
+                                    st.rerun()
                             _meq_csv_lines = []
                             _meq_header = "trade_index,date,tcs_floor,equity_usd" if _meq_has_meta else "trade_index,equity_usd"
                             for _mi, _mv in enumerate(_mini_eq):
@@ -15259,7 +15276,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _mdiv_dates = _mini_div_data.get("trade_dates", [])
                             _mdiv_tcs   = _mini_div_data.get("trade_tcs", [])
                             _mdiv_has_meta = bool(_mdiv_dates or _mdiv_tcs)
-                            _mdiv_flt_cols = st.columns([1, 1, 1])
+                            _mdiv_flt_cols = st.columns([1, 1, 1, 0.7])
                             with _mdiv_flt_cols[0]:
                                 _mdiv_flt_from = st.date_input(
                                     "From date",
@@ -15286,6 +15303,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     key=f"_flt_mdiv_tcs_{_tk_name}",
                                     help="Filter exported rows: only include trades at this TCS floor or higher (0 = no filter)",
                                 )
+                            with _mdiv_flt_cols[3]:
+                                _mdiv_any_filter = bool(_mdiv_flt_from or _mdiv_flt_to or _mdiv_flt_tcs > 0)
+                                st.write("")
+                                if st.button(
+                                    "↺ Reset",
+                                    key=f"_flt_mdiv_reset_{_tk_name}",
+                                    disabled=not _mdiv_any_filter,
+                                    help="Clear all filters to restore the full unfiltered dataset",
+                                    use_container_width=True,
+                                ):
+                                    for _rk in [
+                                        f"_flt_mdiv_from_{_tk_name}",
+                                        f"_flt_mdiv_to_{_tk_name}",
+                                        f"_flt_mdiv_tcs_{_tk_name}",
+                                    ]:
+                                        st.session_state.pop(_rk, None)
+                                    st.rerun()
                             _mini_csv_len = min(len(_mini_eq), len(_mini_r))
                             _mdiv_csv_lines = []
                             _mdiv_header = (
