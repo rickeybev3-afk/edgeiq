@@ -13407,6 +13407,63 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID or DISCORD_WEBHOOK_URL."
                     )
                 # ────────────────────────────────────────────────────────────────────
+                def _render_inline_recip_editor(expanded=False):
+                    """Inline personal-recipient editor — mirrors the sidebar save logic."""
+                    with st.expander("✏️ Edit recipients", expanded=expanded):
+                        _inl_tg = st.text_input(
+                            "Telegram Chat ID",
+                            value=st.session_state.get("_pref_div_tg_chat_id", ""),
+                            placeholder="e.g. -1001234567890",
+                            key="_inl_div_tg_chat_id",
+                        )
+                        _inl_tg_tok = st.text_input(
+                            "Telegram Bot Token (optional)",
+                            value=st.session_state.get("_pref_div_tg_token", ""),
+                            placeholder="e.g. 123456:ABC-DEF…",
+                            type="password",
+                            key="_inl_div_tg_token",
+                        )
+                        _inl_dc = st.text_input(
+                            "Discord Webhook URL",
+                            value=st.session_state.get("_pref_div_discord_webhook", ""),
+                            placeholder="https://discord.com/api/webhooks/…",
+                            type="password",
+                            key="_inl_div_dc_webhook",
+                        )
+                        if st.button("💾 Save", key="_inl_div_recip_save", use_container_width=True):
+                            _inl_uid = _AUTH_USER_ID
+                            if _inl_uid:
+                                _inl_tg_clean = _inl_tg.strip()
+                                _inl_dc_clean = _inl_dc.strip()
+                                _inl_errs = []
+                                if _inl_tg_clean:
+                                    try:
+                                        int(_inl_tg_clean)
+                                    except ValueError:
+                                        _inl_errs.append("Telegram Chat ID must be numeric (e.g. -1001234567890).")
+                                if _inl_dc_clean and not _inl_dc_clean.startswith("https://discord.com/api/webhooks/"):
+                                    _inl_errs.append("Discord Webhook must start with https://discord.com/api/webhooks/")
+                                if _inl_errs:
+                                    for _e in _inl_errs:
+                                        st.error(_e, icon="⚠️")
+                                else:
+                                    _inl_tok_clean = _inl_tg_tok.strip()
+                                    _inl_cur = st.session_state.get("_cached_prefs", {})
+                                    _inl_new = {
+                                        **_inl_cur,
+                                        "div_alert_tg_chat_id": _inl_tg_clean,
+                                        "div_alert_tg_token": _inl_tok_clean,
+                                        "div_alert_discord_webhook": _inl_dc_clean,
+                                    }
+                                    save_user_prefs(_inl_uid, _inl_new)
+                                    st.session_state["_cached_prefs"] = _inl_new
+                                    st.session_state["_pref_div_tg_chat_id"] = _inl_tg_clean
+                                    st.session_state["_pref_div_tg_token"] = _inl_tok_clean
+                                    st.session_state["_pref_div_discord_webhook"] = _inl_dc_clean
+                                    st.success("Saved.", icon="✅")
+                                    st.rerun()
+                            else:
+                                st.warning("Sign in to save recipients.", icon="⚠️")
                 _div_alert_dl_col, _div_alert_send_col = st.columns([1, 1])
                 with _div_alert_dl_col:
                     st.download_button(
@@ -13481,12 +13538,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "your Discord" if _user_div_dc_webhook else "global Discord"
                             )
                         st.caption("→ " + " · ".join(_badge_parts))
+                        _render_inline_recip_editor(expanded=False)
                     else:
                         st.caption(
-                            "Set your Telegram Chat ID or Discord Webhook URL in the sidebar "
-                            "(📱 Telegram Alerts → Divergence Alert Recipients), or configure "
-                            "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID / DISCORD_WEBHOOK_URL in Secrets."
+                            "No personal alert channels configured. "
+                            "Add your Telegram Chat ID or Discord Webhook below, "
+                            "or set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID / "
+                            "DISCORD_WEBHOOK_URL in Secrets to use shared channels."
                         )
+                        _render_inline_recip_editor(expanded=True)
                 # ── Auto-alert dispatch log ───────────────────────────────────────────
                 _dispatch_log = st.session_state.get("auto_dispatch_log", [])
                 if _dispatch_log:
