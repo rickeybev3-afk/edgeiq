@@ -523,10 +523,16 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
                 )
 
     timestamp = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
+    consecutive = int(key_state.get("consecutive_failures") or 1)
+    streak_plain = f"\nThis view has failed {consecutive} nights in a row." if consecutive > 1 else ""
+    streak_html  = f"\n<b>This view has failed {consecutive} nights in a row.</b>" if consecutive > 1 else ""
+    streak_email = f"<p><strong>This view has failed {consecutive} nights in a row.</strong></p>" if consecutive > 1 else ""
+
     plain_msg = (
         f"[EdgeIQ] Ladder cache refresh FAILED\n"
         f"Time: {timestamp}\n"
         f"Error: {error_msg}"
+        f"{streak_plain}"
     )
     _send_slack(plain_msg)
 
@@ -534,6 +540,7 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
         f"⚠️ <b>EdgeIQ — Ladder cache refresh FAILED</b>\n"
         f"Time: {timestamp}\n"
         f"<b>Error:</b> <code>{html.escape(error_msg[:400])}</code>"
+        f"{streak_html}"
     )
     _send_telegram(html_msg)
 
@@ -542,6 +549,7 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
         f"<p>⚠️ <strong>EdgeIQ — Ladder cache refresh FAILED</strong></p>"
         f"<p><strong>Time:</strong> {timestamp}</p>"
         f"<p><strong>Error:</strong> <code>{html.escape(error_msg[:400])}</code></p>"
+        f"{streak_email}"
     )
     _send_email_alert(email_subject, plain_msg, email_html)
 
