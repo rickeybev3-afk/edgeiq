@@ -122,6 +122,24 @@ interface DryRunState {
   showRaw: boolean;
 }
 
+interface ConfigParam {
+  value: number;
+  source: "env" | "override";
+}
+
+interface ConfigSummary {
+  paper_close_lookback_days: ConfigParam;
+  backtest_close_lookback_days: ConfigParam;
+  paper_trade_min_tcs: ConfigParam;
+  backfill_heartbeat_hours: ConfigParam;
+}
+
+interface ConfigSummaryState {
+  data: ConfigSummary | null;
+  loading: boolean;
+  error: string | null;
+}
+
 interface EodRecalcRun {
   completed_at: string;
   path: string;
@@ -433,6 +451,31 @@ export default function Settings() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  const [configSummary, setConfigSummary] = useState<ConfigSummaryState>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  const fetchConfig = () => {
+    fetch("/api/config")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data: ConfigSummary) => {
+        setConfigSummary({ data, loading: false, error: null });
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Could not load config.";
+        setConfigSummary({ data: null, loading: false, error: msg });
+      });
+  };
+
+  useEffect(() => {
+    fetchConfig();
+  }, []);
+
   const [dryRun, setDryRun] = useState<DryRunState>({ running: false, result: null, error: null, showRaw: false });
 
   const handleDryRun = async () => {
@@ -497,6 +540,7 @@ export default function Settings() {
         saving: false,
         saved: true,
       }));
+      fetchConfig();
       setTimeout(() => setState((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -608,6 +652,7 @@ export default function Settings() {
         saving: false,
         saved: true,
       }));
+      fetchConfig();
       setTimeout(() => setHeartbeatWindow((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -636,6 +681,7 @@ export default function Settings() {
         saving: false,
         saved: true,
       }));
+      fetchConfig();
       setTimeout(() => setHeartbeatWindow((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -669,6 +715,7 @@ export default function Settings() {
         saving: false,
         saved: true,
       }));
+      fetchConfig();
       setTimeout(() => setPaperLookback((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -697,6 +744,7 @@ export default function Settings() {
         saving: false,
         saved: true,
       }));
+      fetchConfig();
       setTimeout(() => setPaperLookback((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -715,9 +763,100 @@ export default function Settings() {
       }}
     >
       <div style={{ maxWidth: "640px", margin: "0 auto" }}>
-        <h1 style={{ fontSize: "22px", fontWeight: 700, marginBottom: "32px", color: "#f1f5f9" }}>
+        <h1 style={{ fontSize: "22px", fontWeight: 700, marginBottom: "24px", color: "#f1f5f9" }}>
           Settings
         </h1>
+
+        <section
+          style={{
+            background: "#131825",
+            border: "1px solid #1e2d40",
+            borderRadius: "10px",
+            padding: "18px 20px",
+            marginBottom: "28px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
+            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", color: "#475569", textTransform: "uppercase" }}>
+              Active Config
+            </span>
+            {configSummary.data && !configSummary.loading && (
+              <span style={{ fontSize: "10px", color: "#334155", marginLeft: "auto" }}>read-only</span>
+            )}
+          </div>
+
+          {configSummary.loading && (
+            <p style={{ fontSize: "12px", color: "#475569", margin: 0 }}>Loading…</p>
+          )}
+          {configSummary.error && !configSummary.loading && (
+            <p style={{ fontSize: "12px", color: "#f87171", margin: 0 }}>⚠ {configSummary.error}</p>
+          )}
+          {configSummary.data && !configSummary.loading && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
+              {(
+                [
+                  {
+                    key: "paper_close_lookback_days" as const,
+                    label: "Paper Lookback",
+                    unit: "days",
+                    fmt: (v: number) => String(v),
+                  },
+                  {
+                    key: "backtest_close_lookback_days" as const,
+                    label: "Backtest Lookback",
+                    unit: "days",
+                    fmt: (v: number) => String(v),
+                  },
+                  {
+                    key: "paper_trade_min_tcs" as const,
+                    label: "Min TCS",
+                    unit: "",
+                    fmt: (v: number) => String(v),
+                  },
+                  {
+                    key: "backfill_heartbeat_hours" as const,
+                    label: "Heartbeat Window",
+                    unit: "hrs",
+                    fmt: (v: number) => v % 1 === 0 ? String(v) : v.toFixed(1),
+                  },
+                ] as const
+              ).map(({ key, label, unit, fmt }) => {
+                const param = configSummary.data![key];
+                const isOverride = param.source === "override";
+                return (
+                  <div
+                    key={key}
+                    style={{
+                      background: isOverride ? "rgba(234,179,8,0.05)" : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${isOverride ? "#713f12" : "#1e2d40"}`,
+                      borderRadius: "7px",
+                      padding: "10px 12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "3px",
+                    }}
+                    title={isOverride ? "User override — set via Settings" : "Environment default"}
+                  >
+                    <span style={{ fontSize: "11px", color: "#475569", letterSpacing: "0.03em" }}>
+                      {label}
+                    </span>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: "4px" }}>
+                      <span style={{ fontSize: "18px", fontWeight: 700, color: isOverride ? "#fbbf24" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>
+                        {fmt(param.value)}
+                      </span>
+                      {unit && (
+                        <span style={{ fontSize: "11px", color: "#475569" }}>{unit}</span>
+                      )}
+                    </div>
+                    {isOverride && (
+                      <span style={{ fontSize: "10px", color: "#a16207", letterSpacing: "0.03em" }}>override</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
         <section
           id="trading-mode"
