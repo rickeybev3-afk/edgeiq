@@ -24964,6 +24964,326 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     "Only paired trades where both metrics are recorded are included."
                 )
 
+                # ── Filter Funnel ─────────────────────────────────────────────
+                # Shows how progressive live-settings filters narrow the backtest
+                # pool. Uses _bts_df_unfiltered so the funnel always reflects the
+                # full history regardless of the BQ date-range filter below.
+                _ff_df = _bts_df_unfiltered.copy()
+                _ff_exp_col = None
+                for _fec in ("tiered_pnl_r", "eod_pnl_r", "pnl_r_sim"):
+                    if _fec in _ff_df.columns and _ff_df[_fec].notna().any():
+                        _ff_exp_col = _fec
+                        break
+                _ff_date_col = "sim_date" if "sim_date" in _ff_df.columns else (
+                    "trade_date" if "trade_date" in _ff_df.columns else None
+                )
+                _ff_has_wl = "win_loss" in _ff_df.columns and _ff_df["win_loss"].notna().any()
+                _ff_has_tcs = "tcs" in _ff_df.columns and _ff_df["tcs"].notna().any()
+                _ff_ib_thr = _cached_load_ib_range_pct_threshold()
+                _ff_has_ib_col = (
+                    "ib_range_pct" in _ff_df.columns
+                    and _ff_df["ib_range_pct"].notna().any()
+                    and _ff_ib_thr > 0
+                )
+
+                if _ff_has_wl and _ff_exp_col and not _ff_df.empty:
+                    _ff_base = _ff_df[
+                        _ff_df["win_loss"].notna() & _ff_df[_ff_exp_col].notna()
+                    ].copy()
+                    _ff_base["_ff_win"] = (
+                        _ff_base["win_loss"].astype(str).str.upper().isin(
+                            ["W", "WIN", "1", "TRUE", "YES"]
+                        )
+                    )
+
+                    # Trading-day span for annualisation
+                    _ff_bdays = None
+                    _ff_dr_label = ""
+                    if _ff_date_col:
+                        try:
+                            _ff_dates = pd.to_datetime(
+                                _ff_base[_ff_date_col], errors="coerce"
+                            ).dropna()
+                            if len(_ff_dates) >= 2:
+                                _ff_bdays = max(
+                                    1,
+                                    len(
+                                        pd.bdate_range(
+                                            _ff_dates.min(), _ff_dates.max()
+                                        )
+                                    ),
+                                )
+                                _ff_dr_label = (
+                                    f"{_ff_dates.min().strftime('%b %d %Y')}"
+                                    f" – {_ff_dates.max().strftime('%b %d %Y')}"
+                                    f" · {_ff_bdays} trading days"
+                                )
+                        except Exception:
+                            pass
+
+                    def _ff_stats(df):
+                        _n = len(df)
+                        if _n == 0:
+                            return 0, 0.0, 0.0, None
+                        _wr = df["_ff_win"].sum() / _n * 100
+                        _exp = df[_ff_exp_col].astype(float).mean()
+                        _tpy = (
+                            round(_n / _ff_bdays * 252, 0)
+                            if _ff_bdays
+                            else None
+                        )
+                        return _n, _wr, _exp, _tpy
+
+                    _ff0_n, _ff0_wr, _ff0_exp, _ff0_tpy = _ff_stats(_ff_base)
+                    _ff_tcs_floor = 50
+                    _ff1_df = (
+                        _ff_base[
+                            _ff_base["tcs"].notna()
+                            & (_ff_base["tcs"].astype(float) >= _ff_tcs_floor)
+                        ]
+                        if _ff_has_tcs
+                        else _ff_base.iloc[0:0]
+                    )
+                    _ff1_n, _ff1_wr, _ff1_exp, _ff1_tpy = _ff_stats(_ff1_df)
+
+                    if _ff_has_ib_col:
+                        _ff2_df = _ff1_df[
+                            _ff1_df["ib_range_pct"].astype(float) >= _ff_ib_thr
+                        ]
+                    else:
+                        _ff2_df = _ff1_df.copy()
+                    _ff2_n, _ff2_wr, _ff2_exp, _ff2_tpy = _ff_stats(_ff2_df)
+
+                    # Removal stats for each gate
+                    _ff01_rm = _ff0_n - _ff1_n
+                    _ff_rm0_mask = ~_ff_base.index.isin(_ff1_df.index)
+                    _ff01_rm_wr = (
+                        _ff_base.loc[_ff_rm0_mask, "_ff_win"].sum()
+                        / _ff01_rm
+                        * 100
+                        if _ff01_rm > 0
+                        else None
+                    )
+                    _ff12_rm = _ff1_n - _ff2_n
+                    _ff_rm1_mask = ~_ff1_df.index.isin(_ff2_df.index)
+                    _ff12_rm_wr = (
+                        _ff1_df.loc[_ff_rm1_mask, "_ff_win"].sum()
+                        / _ff12_rm
+                        * 100
+                        if _ff12_rm > 0
+                        else None
+                    )
+
+                    def _ff_card(title, n, wr, exp, tpy, rm_n=None, rm_wr=None):
+                        _bc = "#37474f"
+                        _wr_clr = (
+                            "#4caf50" if wr >= 80
+                            else "#66bb6a" if wr >= 65
+                            else "#ffca28" if wr >= 50
+                            else "#ef5350"
+                        )
+                        _exp_clr = "#4caf50" if exp > 0 else "#ef5350"
+                        _exp_sign = "+" if exp > 0 else ""
+                        _tpy_html = (
+                            f'<div style="font-size:10px;color:#4db6ac;margin-top:1px;">'
+                            f'~{int(tpy):,} / yr</div>'
+                            if tpy is not None else ""
+                        )
+                        _rm_html = ""
+                        if rm_n and rm_n > 0 and rm_wr is not None:
+                            _rm_html = (
+                                f'<div style="font-size:9px;color:#546e7a;margin-top:5px;'
+                                f'padding-top:5px;border-top:1px solid #263238;">'
+                                f'↑ gate removed {rm_n:,} — those had {rm_wr:.1f}% WR</div>'
+                            )
+                        return (
+                            f'<div style="background:#1a2332;border:1px solid {_bc};'
+                            f'border-radius:8px;padding:12px 10px;flex:1;min-width:0;">'
+                            f'<div style="font-size:9px;color:#78909c;letter-spacing:0.8px;'
+                            f'text-transform:uppercase;margin-bottom:6px;font-weight:600;">'
+                            f'{title}</div>'
+                            f'<div style="font-size:28px;font-weight:700;color:{_wr_clr};'
+                            f'line-height:1;">{wr:.1f}%</div>'
+                            f'<div style="font-size:9px;color:#546e7a;margin-top:1px;">WR</div>'
+                            f'<div style="font-size:13px;font-weight:600;color:{_exp_clr};'
+                            f'margin-top:6px;">{_exp_sign}{exp:.4f} R</div>'
+                            f'<div style="font-size:9px;color:#546e7a;">avg R / trade</div>'
+                            f'<div style="font-size:11px;color:#546e7a;margin-top:5px;">'
+                            f'n = {n:,}</div>'
+                            f'{_tpy_html}'
+                            f'{_rm_html}'
+                            f'</div>'
+                        )
+
+                    _ff_c0 = _ff_card(
+                        "All Backtest Trades",
+                        _ff0_n, _ff0_wr, _ff0_exp, _ff0_tpy,
+                    )
+                    _ff_c1 = _ff_card(
+                        f"TCS ≥ {_ff_tcs_floor}",
+                        _ff1_n, _ff1_wr, _ff1_exp, _ff1_tpy,
+                        _ff01_rm, _ff01_rm_wr,
+                    )
+                    _ff_cards_html = _ff_c0 + _ff_c1
+                    _ff_chart_labels = ["All Trades", f"TCS ≥ {_ff_tcs_floor}"]
+                    _ff_chart_wr = [_ff0_wr, _ff1_wr]
+                    _ff_chart_exp = [_ff0_exp, _ff1_exp]
+                    if _ff_has_ib_col:
+                        _ff_ib_label = f"+ IB ≥ {_ff_ib_thr:.1f}%"
+                        _ff_cards_html += _ff_card(
+                            _ff_ib_label,
+                            _ff2_n, _ff2_wr, _ff2_exp, _ff2_tpy,
+                            _ff12_rm, _ff12_rm_wr,
+                        )
+                        _ff_chart_labels.append(_ff_ib_label)
+                        _ff_chart_wr.append(_ff2_wr)
+                        _ff_chart_exp.append(_ff2_exp)
+
+                    _ff_note_html = (
+                        f'<span style="font-size:10px;color:#546e7a;"> — {_ff_dr_label}</span>'
+                        if _ff_dr_label else ""
+                    )
+                    st.markdown(
+                        f'<div style="margin:16px 0 8px;">'
+                        f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1px;'
+                        f'text-transform:uppercase;font-weight:600;margin-bottom:8px;">'
+                        f'🔽 Filter Funnel{_ff_note_html}</div>'
+                        f'<div style="display:flex;gap:8px;">{_ff_cards_html}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(
+                        "WR and expectancy at each live-settings filter gate, computed "
+                        f"from the full backtest pool (unfiltered by the BQ date range). "
+                        f"Trades/yr = n ÷ {_ff_bdays or '?'} trading days × 252. "
+                        "Note: the first-stage baseline (All Trades) already reflects "
+                        "screener pre-selection — raw market WR would be lower."
+                    )
+
+                    # Bar charts: WR and Expectancy by filter layer
+                    import altair as _alt_ff
+                    _ff_bar_df = pd.DataFrame({
+                        "Filter": _ff_chart_labels,
+                        "Win Rate %": [round(x, 1) for x in _ff_chart_wr],
+                        "Avg R": [round(x, 4) for x in _ff_chart_exp],
+                    })
+                    _ff_sort = _ff_chart_labels
+                    _ff_ax_cfg = _alt_ff.Axis(
+                        labelColor="#90a4ae", titleColor="#78909c", labelAngle=0
+                    )
+                    _ff_wr_chart = (
+                        _alt_ff.layer(
+                            _alt_ff.Chart(_ff_bar_df)
+                            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                            .encode(
+                                x=_alt_ff.X(
+                                    "Filter:N", sort=_ff_sort,
+                                    axis=_alt_ff.Axis(labelColor="#90a4ae", labelAngle=0),
+                                    title=None,
+                                ),
+                                y=_alt_ff.Y(
+                                    "Win Rate %:Q",
+                                    scale=_alt_ff.Scale(domain=[0, 100]),
+                                    title="Win Rate %",
+                                    axis=_alt_ff.Axis(labelColor="#90a4ae", titleColor="#78909c"),
+                                ),
+                                color=_alt_ff.Color(
+                                    "Win Rate %:Q",
+                                    scale=_alt_ff.Scale(
+                                        domain=[50, 65, 80, 100],
+                                        range=["#ef5350", "#ffca28", "#66bb6a", "#4caf50"],
+                                    ),
+                                    legend=None,
+                                ),
+                                tooltip=[
+                                    _alt_ff.Tooltip("Filter:N", title="Filter"),
+                                    _alt_ff.Tooltip("Win Rate %:Q", format=".1f", title="WR %"),
+                                ],
+                            ),
+                            _alt_ff.Chart(_ff_bar_df)
+                            .mark_text(dy=-8, fontSize=11, fontWeight="bold", color="#e0f2f1")
+                            .encode(
+                                x=_alt_ff.X("Filter:N", sort=_ff_sort),
+                                y=_alt_ff.Y("Win Rate %:Q"),
+                                text=_alt_ff.Text("Win Rate %:Q", format=".1f"),
+                            ),
+                        )
+                        .properties(
+                            height=160,
+                            title=_alt_ff.TitleParams(
+                                "Win Rate by Filter Layer",
+                                fontSize=11,
+                                color="#90a4ae",
+                                anchor="start",
+                            ),
+                        )
+                    )
+                    _ff_exp_chart = (
+                        _alt_ff.layer(
+                            _alt_ff.Chart(_ff_bar_df)
+                            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                            .encode(
+                                x=_alt_ff.X(
+                                    "Filter:N", sort=_ff_sort,
+                                    axis=_alt_ff.Axis(labelColor="#90a4ae", labelAngle=0),
+                                    title=None,
+                                ),
+                                y=_alt_ff.Y(
+                                    "Avg R:Q",
+                                    title="Avg R / Trade",
+                                    axis=_alt_ff.Axis(labelColor="#90a4ae", titleColor="#78909c"),
+                                ),
+                                color=_alt_ff.Color(
+                                    "Avg R:Q",
+                                    scale=_alt_ff.Scale(
+                                        domain=[-1, 0, 1, 2],
+                                        range=["#ef5350", "#ef5350", "#66bb6a", "#4caf50"],
+                                    ),
+                                    legend=None,
+                                ),
+                                tooltip=[
+                                    _alt_ff.Tooltip("Filter:N", title="Filter"),
+                                    _alt_ff.Tooltip("Avg R:Q", format="+.4f", title="Avg R"),
+                                ],
+                            ),
+                            _alt_ff.Chart(_ff_bar_df)
+                            .mark_text(dy=-8, fontSize=11, fontWeight="bold", color="#e0f2f1")
+                            .encode(
+                                x=_alt_ff.X("Filter:N", sort=_ff_sort),
+                                y=_alt_ff.Y("Avg R:Q"),
+                                text=_alt_ff.Text("Avg R:Q", format="+.4f"),
+                            ),
+                        )
+                        .properties(
+                            height=160,
+                            title=_alt_ff.TitleParams(
+                                "Expectancy (avg R/trade) by Filter Layer",
+                                fontSize=11,
+                                color="#90a4ae",
+                                anchor="start",
+                            ),
+                        )
+                    )
+                    _ff_col1, _ff_col2 = st.columns(2)
+                    _ff_chart_cfg = dict(
+                        configure_view=dict(strokeOpacity=0),
+                        configure_axis=dict(grid=False),
+                    )
+                    with _ff_col1:
+                        st.altair_chart(
+                            _ff_wr_chart
+                            .configure_view(strokeOpacity=0)
+                            .configure_axis(grid=False),
+                            use_container_width=True,
+                        )
+                    with _ff_col2:
+                        st.altair_chart(
+                            _ff_exp_chart
+                            .configure_view(strokeOpacity=0)
+                            .configure_axis(grid=False),
+                            use_container_width=True,
+                        )
+
                 # ── Copy-link button ──────────────────────────────────────────
                 import streamlit.components.v1 as _cmp_bq_copy_link
                 _cmp_bq_copy_link.html("""
