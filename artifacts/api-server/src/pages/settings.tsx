@@ -1361,6 +1361,7 @@ export default function Settings() {
                         <tr style={{ borderBottom: "1px solid #2d3748" }}>
                           <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Completed</th>
                           <th style={{ textAlign: "left", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Script</th>
+                          <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Gap</th>
                           <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Rows saved</th>
                           <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>No-bars</th>
                           <th style={{ textAlign: "right", padding: "6px 10px", color: "#64748b", fontWeight: 500 }}>Errors</th>
@@ -1407,6 +1408,15 @@ export default function Settings() {
                             </td>
                             <td style={{ padding: "6px 10px", color: run.script && run.script !== "other" ? "#94a3b8" : "#475569", fontStyle: !run.script || run.script === "other" ? "italic" : "normal" }}>
                               {run.script ?? "other"}
+                            </td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: gapHours === null ? "#475569" : isOverdue ? "#fbbf24" : "#64748b", fontWeight: isOverdue ? 600 : 400 }}>
+                              {gapHours === null
+                                ? "—"
+                                : gapHours >= 48
+                                ? `${Math.floor(gapHours / 24)}d ${Math.floor(gapHours % 24)}h`
+                                : gapHours < 1
+                                ? `${Math.floor(gapHours * 60)} min`
+                                : `${Math.floor(gapHours)} h`}
                             </td>
                             <td style={{ padding: "6px 10px", textAlign: "right", color: "#4ade80" }}>
                               {run.rows_saved.toLocaleString()}
