@@ -729,7 +729,7 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
         )
     else:
         html_msg = (
-            f"⚠️ <b>EdgeIQ — Ladder cache refresh FAILED</b>\n"
+            f"⚠️ <b>EdgeIQ — Ladder cache refresh FAILED{streak_heading_suffix}</b>\n"
             f"Time: {timestamp}\n"
             f"<b>Error:</b> <code>{html.escape(error_msg[:400])}</code>"
             f"{streak_html}"
