@@ -422,6 +422,32 @@ def _ib_size_mult(ib_pct: float) -> float:
             return mult
     return 0.80  # ≥10% shouldn't pass IB filter, safe fallback
 
+_ADAPTIVE_EXITS: list = []
+try:
+    import json as _json
+    with open(os.path.join(os.path.dirname(__file__), "adaptive_exits.json")) as _aef:
+        _ADAPTIVE_EXITS = _json.load(_aef).get("tcs_bands", [])
+except Exception:
+    pass
+
+_ADAPTIVE_FALLBACK_TARGET_R = 1.0
+
+def _adaptive_target_r(tcs: float) -> float:
+    """Return MFE-calibrated exit target in R-units for a given TCS score.
+
+    Reads from adaptive_exits.json (derived from 24,837 backtest rows with
+    intraday bar data).  Falls back to 1.0R if config is missing.
+
+    TCS 50-60 → 0.8R  (p50 MFE 1.24R, optimal E[R] +0.495R)
+    TCS 60-70 → 1.0R  (p50 MFE 1.23R, optimal E[R] +0.209R)
+    TCS 70+   → 1.5R  (p50 MFE 2.39R, optimal E[R] +1.056R)
+    """
+    for band in _ADAPTIVE_EXITS:
+        if band["tcs_min"] <= tcs < band["tcs_max"]:
+            return float(band["target_r"])
+    return _ADAPTIVE_FALLBACK_TARGET_R
+
+
 def _tier_priority_key(r: dict) -> tuple:
     """Return sort key (priority_int, -tcs) so highest-R tier comes first.
     P3 (Morning 70+) → P1 (Intraday 70+) → P2 (Intraday 50-69) → P4 (Morning 50-69).
@@ -860,13 +886,17 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     #         _patch_skip_reason(r, ticker, "vwap_misaligned")
     #         return
 
+    _tcs_for_exit = float(r.get("tcs", 0))
+    _target_r     = _adaptive_target_r(_tcs_for_exit)
+    log.info(f"  [{ticker}] Adaptive exit target: {_target_r:.1f}R (TCS {_tcs_for_exit:.0f})")
+
     result = place_alpaca_bracket_order(
         ticker       = ticker,
         ib_high      = ib_high,
         ib_low       = ib_low,
         direction    = direction,
         risk_dollars = risk_dollars,
-        target_r     = 2.0,
+        target_r     = _target_r,
         is_paper     = IS_PAPER_ALPACA,
         api_key      = ALPACA_API_KEY,
         secret_key   = ALPACA_SECRET_KEY,
