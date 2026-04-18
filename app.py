@@ -12015,6 +12015,31 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         else:
                             _rp_log_only_marginal = False
 
+                        # ── Date range filter (row 2) ─────────────────────────
+                        _rp_log_date_col1, _rp_log_date_col2, _rp_log_date_col3 = st.columns([1, 1, 2])
+                        with _rp_log_date_col1:
+                            if "rp_log_from_str" not in st.session_state:
+                                st.session_state["rp_log_from_str"] = st.query_params.get("rp_log_from", "")
+                            _rp_log_from_str = st.text_input(
+                                "From (YYYY-MM-DD)",
+                                key="rp_log_from_str",
+                                placeholder="From date",
+                                label_visibility="collapsed",
+                            )
+                            if st.query_params.get("rp_log_from", "") != _rp_log_from_str:
+                                st.query_params["rp_log_from"] = _rp_log_from_str
+                        with _rp_log_date_col2:
+                            if "rp_log_to_str" not in st.session_state:
+                                st.session_state["rp_log_to_str"] = st.query_params.get("rp_log_to", "")
+                            _rp_log_to_str = st.text_input(
+                                "To (YYYY-MM-DD)",
+                                key="rp_log_to_str",
+                                placeholder="To date",
+                                label_visibility="collapsed",
+                            )
+                            if st.query_params.get("rp_log_to", "") != _rp_log_to_str:
+                                st.query_params["rp_log_to"] = _rp_log_to_str
+
                         _rp_display_df = _rp_df.copy()
                         if _rp_log_ticker_filter.strip():
                             _rp_tickers_input = [
@@ -12042,11 +12067,34 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             )
                             _rp_display_df = _rp_display_df[_rp_marginal_mask]
 
+                        # ── Date range filtering ──────────────────────────────
+                        _rp_date_col = "sim_date" if "sim_date" in _rp_display_df.columns else (
+                            "trade_date" if "trade_date" in _rp_display_df.columns else None
+                        )
+                        if _rp_date_col and _rp_log_from_str.strip():
+                            try:
+                                _rp_from_ts = pd.Timestamp(_rp_log_from_str.strip())
+                                _rp_display_df = _rp_display_df[
+                                    pd.to_datetime(_rp_display_df[_rp_date_col], errors="coerce") >= _rp_from_ts
+                                ]
+                            except Exception:
+                                pass
+                        if _rp_date_col and _rp_log_to_str.strip():
+                            try:
+                                _rp_to_ts = pd.Timestamp(_rp_log_to_str.strip())
+                                _rp_display_df = _rp_display_df[
+                                    pd.to_datetime(_rp_display_df[_rp_date_col], errors="coerce") <= _rp_to_ts
+                                ]
+                            except Exception:
+                                pass
+
                         _rp_any_filter_active = (
                             bool(_rp_log_ticker_filter.strip())
                             or _rp_log_wl_filter != "All"
                             or not _rp_log_show_neutral
                             or _rp_log_only_marginal
+                            or bool(_rp_log_from_str.strip())
+                            or bool(_rp_log_to_str.strip())
                         )
                         if _rp_any_filter_active:
                             st.caption(f"Showing {len(_rp_display_df)} of {len(_rp_df)} trades")
@@ -17953,6 +18001,56 @@ Measures how accurately the 7-structure framework classified those days in hinds
         'Follow-Thru = (Best post-IB point − IB boundary broken) / IB boundary · IB = 9:30–10:30 AM ET'
         '</div>',
         unsafe_allow_html=True,
+    )
+
+    # ── Highlight jumped-to trade row (from drill-down ↓ Jump link) ──────────
+    import streamlit.components.v1 as _cmp_trade_jump
+    _cmp_trade_jump.html(
+        """<script>
+(function() {
+    var _hash = window.parent.location.hash;
+    if (!_hash || !_hash.startsWith('#trade-')) return;
+    var _id = _hash.slice(1);
+    var _doc = window.parent.document;
+    function _doHighlight() {
+        var _el = _doc.getElementById(_id);
+        if (!_el) {
+            setTimeout(function() {
+                var _el2 = _doc.getElementById(_id);
+                if (_el2) { _scroll(_el2); }
+            }, 600);
+            return;
+        }
+        _scroll(_el);
+    }
+    function _scroll(el) {
+        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        var _styleId = '_rp_trade_pulse_kf';
+        if (!_doc.getElementById(_styleId)) {
+            var _st = _doc.createElement('style');
+            _st.id = _styleId;
+            _st.textContent = '@keyframes _rpTradePulse {' +
+                '0%,100%{outline:none;box-shadow:none}' +
+                '15%,55%{outline:2px solid rgba(255,179,0,0.75);' +
+                'box-shadow:0 0 0 4px rgba(255,179,0,0.25);' +
+                'background:rgba(255,179,0,0.12);}' +
+                '}';
+            _doc.head.appendChild(_st);
+        }
+        el.style.borderRadius = '3px';
+        el.style.animation = '_rpTradePulse 2.2s ease-out';
+        setTimeout(function() { el.style.animation = ''; }, 2300);
+    }
+    if (_doc.readyState === 'complete') {
+        setTimeout(_doHighlight, 350);
+    } else {
+        _doc.addEventListener('DOMContentLoaded', function() {
+            setTimeout(_doHighlight, 350);
+        });
+    }
+})();
+</script>""",
+        height=0,
     )
 
 
