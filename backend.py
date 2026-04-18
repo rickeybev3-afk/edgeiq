@@ -8770,8 +8770,9 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
 
         _df["_ib_mid"] = (_df["ib_high"] + _df["ib_low"]) / 2
 
-        _bullish_mask = _df["predicted"].str.lower().isin(["bullish", "long"])
-        _bearish_mask = _df["predicted"].str.lower().isin(["bearish", "short"])
+        _pred_s      = _df["predicted"].fillna("").str.lower()
+        _bullish_mask = _pred_s.str.contains("bullish|long|up", na=False)
+        _bearish_mask = _pred_s.str.contains("bearish|short|down", na=False)
         _has_vwap    = _df["vwap_at_ib"].notna()
 
         _vwap_ok = (
