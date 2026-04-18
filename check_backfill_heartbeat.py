@@ -181,8 +181,16 @@ def check_heartbeat() -> int:
                     age_hours,
                     window_hours,
                 )
-                # Fresh run detected — clear any previous alert state so the next
-                # outage triggers a new alert immediately.
+                # Fresh run detected — if a previous outage alert was on record,
+                # send a one-time recovery notification then clear the state file.
+                _previous_outage = os.path.exists(_HEARTBEAT_ALERT_STATE_FILE)
+                if _previous_outage:
+                    log.info("Previous outage alert found — sending recovery notification.")
+                    _send_telegram(
+                        "\u2705 <b>Backfill is healthy again</b>\n\n"
+                        f"The backfill completed successfully (last run {age_hours:.1f} h ago). "
+                        "No further alerts will be sent until the next outage."
+                    )
                 _clear_heartbeat_alert_state()
                 return 0
             age_desc = (
