@@ -20373,9 +20373,11 @@ Nothing here requires any input from you. All numbers update automatically as yo
                     return 1.00
 
                 _mc_pnl_r = [
-                    float(r["pnl_r_sim"])
-                    * _mc_ib_mult(r.get("ib_range_pct"))
-                    * _mc_ptier_mult(r.get("tcs"), r.get("scan_type"))
+                    max(-3.0, min(15.0,
+                        float(r["pnl_r_sim"])
+                        * _mc_ib_mult(r.get("ib_range_pct"))
+                        * _mc_ptier_mult(r.get("tcs"), r.get("scan_type"))
+                    ))
                     for r in _mc_filtered
                 ]
 
