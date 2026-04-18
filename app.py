@@ -10103,7 +10103,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         while True:
                             _rp_q = (
                                 supabase.table("backtest_sim_runs")
-                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down,eod_pnl_r,tiered_pnl_r,ib_range_pct,vwap_at_ib")
+                                .select("sim_date,ticker,open_price,ib_low,ib_high,tcs,predicted,actual_outcome,win_loss,follow_thru_pct,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,false_break_up,false_break_down,eod_pnl_r,tiered_pnl_r,ib_range_pct,vwap_at_ib,rvol")
                                 .eq("user_id", _rp_uid)
                                 .gte("sim_date", str(_rp_start))
                                 .lte("sim_date", str(_rp_end))
@@ -10233,6 +10233,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     # Fixed dollar risk = % of STARTING equity only (no compounding)
                     _fixed_risk_amt = float(_rp_equity) * (_rp_risk_pct / 100.0)
 
+                    # Load RVOL tier config once (mirrors backend.rvol_size_mult)
+                    try:
+                        import json as _rp_json
+                        _rp_ae_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
+                        with open(_rp_ae_path) as _rp_ae_f:
+                            _rp_rvol_tiers = _rp_json.load(_rp_ae_f).get(
+                                "rvol_size_tiers",
+                                [{"rvol_min": 3.5, "multiplier": 1.5}, {"rvol_min": 2.5, "multiplier": 1.25}],
+                            )
+                    except Exception:
+                        _rp_rvol_tiers = [{"rvol_min": 3.5, "multiplier": 1.5}, {"rvol_min": 2.5, "multiplier": 1.25}]
+                    _rp_rvol_tiers_sorted = sorted(_rp_rvol_tiers, key=lambda t: t["rvol_min"], reverse=True)
+
                     _rp_by_date = {}
                     for _rp_r in _rp_rows:
                         _d = str(_rp_r.get("sim_date", ""))
@@ -10327,16 +10340,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _risk_1r   *= _rp_ib_mult
 
                             # ── RVOL size bonus ────────────────────────────────────────────────
-                            # Mirrors live bot: RVOL ≥ 3.0 → 1.50×; RVOL 2.0-2.99 → 1.25×;
-                            # RVOL < 2.0 or missing → 1.00× (no bonus).
+                            # Both multiplier and tier label use the same config-driven tiers
+                            # (loaded once above from adaptive_exits.json) so they stay in sync.
                             _rp_rvol_raw  = _rp_r.get("rvol")
                             _rp_rvol_val  = float(_rp_rvol_raw) if _rp_rvol_raw is not None else None
-                            if _rp_rvol_val is not None and _rp_rvol_val >= 3.0:
-                                _rp_rvol_mult = 1.5
-                            elif _rp_rvol_val is not None and _rp_rvol_val >= 2.0:
-                                _rp_rvol_mult = 1.25
-                            else:
-                                _rp_rvol_mult = 1.0
+                            _rp_rvol_mult = 1.0
+                            _rp_rvol_tier = "—"
+                            if _rp_rvol_val is not None:
+                                _rp_rvol_tier = "Base"
+                                for _rt in _rp_rvol_tiers_sorted:
+                                    if _rp_rvol_val >= float(_rt["rvol_min"]):
+                                        _rp_rvol_mult = float(_rt["multiplier"])
+                                        _rp_rvol_tier = f"{_rp_rvol_mult:.2g}× Tier"
+                                        break
                             _risk_1r *= _rp_rvol_mult
 
                             # ── P&L: false_break detection + MFE R-multiple ───────────────────
@@ -10404,6 +10420,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "IB Width %":  round(float(_rp_ib_raw), 2) if _rp_ib_raw is not None else None,
                                 "RVOL":        round(_rp_rvol_val, 2) if _rp_rvol_val is not None else None,
                                 "RVOL Mult":   _rp_rvol_mult,
+                                "RVOL Tier":   _rp_rvol_tier,
                                 "P&L ($)":     round(_trade_pnl, 2),
                                 "Equity":      round(_rp_equity_cur, 2),
                             })
@@ -12648,6 +12665,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         styles[_rm_col_idx] = "color:#ffb300;font-weight:700"
                                 except (TypeError, ValueError):
                                     pass
+                            # Override RVOL Tier cell: match gold tones to RVOL Mult
+                            if "RVOL Tier" in row.index:
+                                _rt_col_idx = list(row.index).index("RVOL Tier")
+                                _rt_v = str(row.get("RVOL Tier", ""))
+                                if "1.5" in _rt_v:
+                                    styles[_rt_col_idx] = "color:#ffd54f;font-weight:700"
+                                elif "1.25" in _rt_v or "1.2" in _rt_v:
+                                    styles[_rt_col_idx] = "color:#ffb300;font-weight:700"
                             return styles
 
                         _rp_styled_df = _rp_display_df.style.apply(_rp_row_style, axis=1)
@@ -12676,6 +12701,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "RVOL Mult":  st.column_config.NumberColumn(
                                               format="%.2f×",
                                               help="RVOL size bonus applied: 1.25× when RVOL 2–3×, 1.50× when RVOL ≥ 3×, 1.00× otherwise. Gold = boosted."),
+                                "RVOL Tier":  st.column_config.TextColumn(
+                                              help="RVOL size tier matched at scan time, computed from the current tier config. '—' = no RVOL data."),
                             }
                         )
                         if _rp_bot_mode:
