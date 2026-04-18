@@ -83,7 +83,22 @@ def append_backfill_history(script: str, health: dict, logger=None) -> None:
             history = []
 
         history.append(record)
-        history = history[-50:]
+
+        # Keep the last 10 records per script so a frequently-running script
+        # cannot crowd out the most-recent entry from a rarely-run one.
+        # Walk newest-first so we can count per-script and then reverse back
+        # to restore global chronological order for consumers that rely on
+        # history[-1] being the latest entry.
+        script_counts: dict[str, int] = {}
+        kept: list = []
+        for entry in reversed(history):
+            if not isinstance(entry, dict):
+                continue
+            key = entry.get('script', '')
+            script_counts[key] = script_counts.get(key, 0) + 1
+            if script_counts[key] <= 10:
+                kept.append(entry)
+        history = list(reversed(kept))
 
         with open(history_path, 'w') as fh:
             json.dump(history, fh)
