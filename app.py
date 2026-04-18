@@ -12918,6 +12918,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "active replays or repeated filter adjustments."
                             ),
                         )
+                        _cd_last_fired = st.session_state.get("_div_auto_last_fired_ts")
+                        if _cd_last_fired is not None:
+                            _cd_mins = st.session_state.get("tkr_div_auto_cooldown_mins", 15)
+                            _cd_secs_left = int(_cd_mins * 60 - (datetime.now() - _cd_last_fired).total_seconds())
+                            if _cd_secs_left > 0:
+                                _cd_mins_left = max(1, round(_cd_secs_left / 60))
+                                st.caption(
+                                    f"⏳ Next alert in **{_cd_mins_left} min{'s' if _cd_mins_left != 1 else ''}** "
+                                    f"— cool-down active"
+                                )
             _sort_key, _sort_asc_default = _sort_col_map[_sort_choice]
             _sort_asc = (not _sort_asc_default) if _sort_reverse else _sort_asc_default
             _r_filter_key = _r_filter_col_map[_r_filter_col]
