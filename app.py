@@ -10797,6 +10797,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         help="Expected R per trade in the 1.50× tier: win rate × avg win R + loss rate × avg loss R",
                                     )
 
+                                    # Combined boosted W/L caption (matches format of Trade-by-Trade log caption)
+                                    _boosted_mask_combined   = _mask_125 | _mask_150
+                                    _boosted_wins_combined   = int((_boosted_mask_combined & (_wl_ser == "Win")).sum())
+                                    _boosted_losses_combined = int((_boosted_mask_combined & (_wl_ser == "Loss")).sum())
+                                    _boosted_total_combined  = _t125_total + _t150_total
+                                    if _boosted_total_combined > 0:
+                                        _b_w_pct = round(_boosted_wins_combined  / _boosted_total_combined * 100, 1)
+                                        _b_l_pct = round(_boosted_losses_combined / _boosted_total_combined * 100, 1)
+                                        st.caption(
+                                            f"🟡 Of {_boosted_total_combined} boosted trades (1.25× + 1.50× tiers) — "
+                                            f"✔ {_boosted_wins_combined} win{'s' if _boosted_wins_combined != 1 else ''} ({_b_w_pct}%) · "
+                                            f"✖ {_boosted_losses_combined} loss{'es' if _boosted_losses_combined != 1 else ''} ({_b_l_pct}%)"
+                                        )
+
                         # ── Win / Loss avg breakdown row ──────────────────────────────────────
                         _avg_loss_display = f"${_avg_loss:,.0f}" if _pnl_losses else "—"
                         _avg_win_display  = f"${_avg_win:,.0f}"  if _pnl_wins  else "—"
