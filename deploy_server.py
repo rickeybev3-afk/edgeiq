@@ -591,6 +591,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/backfill-heartbeat-window":
             self._backfill_heartbeat_window_get()
             return
+        if path == "/api/backtest-lookback":
+            self._backtest_lookback_get()
+            return
+        if path == "/api/paper-trade-min-tcs":
+            self._paper_trade_min_tcs_get()
+            return
         if path == "/api/config":
             self._config_get()
             return
@@ -641,6 +647,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/backfill-heartbeat-window":
             self._backfill_heartbeat_window_post()
+            return
+        if path == "/api/backtest-lookback":
+            self._backtest_lookback_post()
+            return
+        if path == "/api/paper-trade-min-tcs":
+            self._paper_trade_min_tcs_post()
             return
         if path == "/api/backfill-dryrun":
             self._backfill_dryrun_post()
@@ -1563,6 +1575,224 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+    def _backtest_lookback_get(self):
+        """Return the effective backtest close look-back window.
+
+        Reads backtest_close_lookback_days from owner prefs when set, otherwise
+        returns the value of the BACKTEST_CLOSE_LOOKBACK_DAYS env var (default 60).
+        Response: {"days": int, "source": "override"|"env"}
+        """
+        try:
+            prefs = _load_owner_prefs()
+            if "backtest_close_lookback_days" in prefs:
+                days = int(prefs["backtest_close_lookback_days"])
+                source = "override"
+            else:
+                days = _DEFAULT_BACKTEST_LOOKBACK_DAYS
+                source = "env"
+            body = json.dumps({"days": days, "source": source}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _backtest_lookback_post(self):
+        """Accept {"days": int|null} and persist backtest_close_lookback_days in owner's user prefs.
+
+        Accepts a positive integer between 1 and 3650 (10 years).  Passing null
+        for days clears the override and reverts to the env-var default.
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "days" not in payload:
+                body = json.dumps({"error": "'days' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            raw_days = payload["days"]
+            if raw_days is None:
+                prefs = _load_owner_prefs()
+                prefs.pop("backtest_close_lookback_days", None)
+                _save_owner_prefs(prefs)
+                body = json.dumps({"days": _DEFAULT_BACKTEST_LOOKBACK_DAYS, "source": "env"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            try:
+                days = int(raw_days)
+            except (TypeError, ValueError):
+                body = json.dumps({"error": "'days' must be an integer"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if days < 1 or days > 3650:
+                body = json.dumps({"error": "'days' must be between 1 and 3650"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            prefs = _load_owner_prefs()
+            prefs["backtest_close_lookback_days"] = days
+            _save_owner_prefs(prefs)
+            body = json.dumps({"days": days, "source": "override"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+    def _paper_trade_min_tcs_get(self):
+        """Return the effective paper trade minimum TCS threshold.
+
+        Reads paper_trade_min_tcs from owner prefs when set, otherwise
+        returns the value of the PAPER_TRADE_MIN_TCS env var (default 50).
+        Response: {"value": int, "source": "override"|"env"}
+        """
+        try:
+            prefs = _load_owner_prefs()
+            if "paper_trade_min_tcs" in prefs:
+                val = int(prefs["paper_trade_min_tcs"])
+                source = "override"
+            else:
+                val = _DEFAULT_MIN_TCS
+                source = "env"
+            body = json.dumps({"value": val, "source": source}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _paper_trade_min_tcs_post(self):
+        """Accept {"value": int|null} and persist paper_trade_min_tcs in owner's user prefs.
+
+        Accepts a positive integer between 0 and 100.  Passing null for value
+        clears the override and reverts to the env-var default.
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "value" not in payload:
+                body = json.dumps({"error": "'value' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            raw_val = payload["value"]
+            if raw_val is None:
+                prefs = _load_owner_prefs()
+                prefs.pop("paper_trade_min_tcs", None)
+                _save_owner_prefs(prefs)
+                body = json.dumps({"value": _DEFAULT_MIN_TCS, "source": "env"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            try:
+                val = int(raw_val)
+            except (TypeError, ValueError):
+                body = json.dumps({"error": "'value' must be an integer"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if val < 0 or val > 100:
+                body = json.dumps({"error": "'value' must be between 0 and 100"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            prefs = _load_owner_prefs()
+            prefs["paper_trade_min_tcs"] = val
+            _save_owner_prefs(prefs)
+            body = json.dumps({"value": val, "source": "override"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
     def _config_get(self):
         """Return a snapshot of all key configuration values active at runtime.
 
@@ -1572,8 +1802,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         Response schema:
         {
           "paper_close_lookback_days":  {"value": int,   "source": "override"|"env"},
-          "backtest_close_lookback_days": {"value": int, "source": "env"},
-          "paper_trade_min_tcs":        {"value": int,   "source": "env"},
+          "backtest_close_lookback_days": {"value": int, "source": "override"|"env"},
+          "paper_trade_min_tcs":        {"value": int,   "source": "override"|"env"},
           "backfill_heartbeat_hours":   {"value": float, "source": "override"|"env"}
         }
         """
@@ -1594,10 +1824,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 heartbeat_hours = _DEFAULT_HEARTBEAT_HOURS
                 heartbeat_source = "env"
 
+            if "backtest_close_lookback_days" in prefs:
+                backtest_days = int(prefs["backtest_close_lookback_days"])
+                backtest_source = "override"
+            else:
+                backtest_days = _DEFAULT_BACKTEST_LOOKBACK_DAYS
+                backtest_source = "env"
+
+            if "paper_trade_min_tcs" in prefs:
+                min_tcs = int(prefs["paper_trade_min_tcs"])
+                min_tcs_source = "override"
+            else:
+                min_tcs = _DEFAULT_MIN_TCS
+                min_tcs_source = "env"
+
             payload = {
                 "paper_close_lookback_days": {"value": paper_days, "source": paper_source},
-                "backtest_close_lookback_days": {"value": _DEFAULT_BACKTEST_LOOKBACK_DAYS, "source": "env"},
-                "paper_trade_min_tcs": {"value": _DEFAULT_MIN_TCS, "source": "env"},
+                "backtest_close_lookback_days": {"value": backtest_days, "source": backtest_source},
+                "paper_trade_min_tcs": {"value": min_tcs, "source": min_tcs_source},
                 "backfill_heartbeat_hours": {"value": heartbeat_hours, "source": heartbeat_source},
             }
             body = json.dumps(payload).encode()

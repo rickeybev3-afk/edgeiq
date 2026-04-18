@@ -479,40 +479,192 @@ interface BotConfig {
   backfill_heartbeat_hours: ConfigEntry;
 }
 
+interface ConfigRowEdit {
+  draft: string;
+  saving: boolean;
+  saved: boolean;
+  error: string | null;
+}
+
+type ConfigKey = keyof BotConfig;
+
+function makeEditState(value: number): ConfigRowEdit {
+  return { draft: String(value), saving: false, saved: false, error: null };
+}
+
+async function saveConfigValue(
+  key: ConfigKey,
+  draft: string
+): Promise<{ value: number; source: "env" | "override" }> {
+  if (key === "backfill_heartbeat_hours") {
+    const parsed = parseFloat(draft);
+    if (isNaN(parsed) || parsed < 1 || parsed > 8760) throw new Error("Enter a number between 1 and 8760.");
+    const res = await fetch("/api/backfill-heartbeat-window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hours: parsed }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.hours, source: data.source === "override" ? "override" : "env" };
+  }
+  if (key === "paper_close_lookback_days") {
+    const parsed = parseInt(draft, 10);
+    if (isNaN(parsed) || parsed < 1 || parsed > 3650) throw new Error("Enter a whole number between 1 and 3650.");
+    const res = await fetch("/api/paper-lookback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ days: parsed }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.days, source: data.source === "override" ? "override" : "env" };
+  }
+  if (key === "backtest_close_lookback_days") {
+    const parsed = parseInt(draft, 10);
+    if (isNaN(parsed) || parsed < 1 || parsed > 3650) throw new Error("Enter a whole number between 1 and 3650.");
+    const res = await fetch("/api/backtest-lookback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ days: parsed }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.days, source: data.source === "override" ? "override" : "env" };
+  }
+  if (key === "paper_trade_min_tcs") {
+    const parsed = parseInt(draft, 10);
+    if (isNaN(parsed) || parsed < 0 || parsed > 100) throw new Error("Enter a whole number between 0 and 100.");
+    const res = await fetch("/api/paper-trade-min-tcs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: parsed }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.value, source: data.source === "override" ? "override" : "env" };
+  }
+  throw new Error("Unknown config key");
+}
+
+async function resetConfigValue(
+  key: ConfigKey
+): Promise<{ value: number; source: "env" | "override" }> {
+  if (key === "backfill_heartbeat_hours") {
+    const res = await fetch("/api/backfill-heartbeat-window", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hours: null }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.hours, source: "env" };
+  }
+  if (key === "paper_close_lookback_days") {
+    const res = await fetch("/api/paper-lookback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: null }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.days, source: "env" };
+  }
+  if (key === "backtest_close_lookback_days") {
+    const res = await fetch("/api/backtest-lookback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: null }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.days, source: "env" };
+  }
+  if (key === "paper_trade_min_tcs") {
+    const res = await fetch("/api/paper-trade-min-tcs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: null }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `Server returned ${res.status}`); }
+    const data = await res.json();
+    return { value: data.value, source: "env" };
+  }
+  throw new Error("Unknown config key");
+}
+
 function ConfigPanel() {
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editState, setEditState] = useState<Record<ConfigKey, ConfigRowEdit>>({
+    paper_close_lookback_days: makeEditState(60),
+    backtest_close_lookback_days: makeEditState(60),
+    paper_trade_min_tcs: makeEditState(50),
+    backfill_heartbeat_hours: makeEditState(25),
+  });
+
+  const loadConfig = async (cancelled: { val: boolean }, isInitial = false) => {
+    try {
+      const res = await fetch("/api/config");
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data: BotConfig = await res.json();
+      if (!cancelled.val) {
+        setConfig(data);
+        setError(null);
+        setLoading(false);
+        const keys: ConfigKey[] = [
+          "paper_close_lookback_days",
+          "backtest_close_lookback_days",
+          "paper_trade_min_tcs",
+          "backfill_heartbeat_hours",
+        ];
+        setEditState((prev) => {
+          const next = { ...prev };
+          for (const key of keys) {
+            const row = prev[key];
+            if (row.saving) continue;
+            if (isInitial || row.draft === String(data[key].value)) {
+              next[key] = makeEditState(data[key].value);
+            }
+          }
+          return next;
+        });
+      }
+    } catch {
+      if (!cancelled.val) {
+        setError("Could not load config values.");
+        setLoading(false);
+      }
+    }
+  };
 
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/api/config");
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) {
-          setConfig(data);
-          setError(null);
-          setLoading(false);
-        }
-      } catch {
-        if (!cancelled) {
-          setError("Could not load config values.");
-          setLoading(false);
-        }
-      }
-    };
-    load();
-    const interval = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(interval); };
+    const cancelled = { val: false };
+    loadConfig(cancelled, true);
+    const interval = setInterval(() => loadConfig(cancelled, false), 60_000);
+    return () => { cancelled.val = true; clearInterval(interval); };
   }, []);
 
-  const rows: Array<{ label: string; key: keyof BotConfig; unit: string }> = [
-    { label: "Paper close look-back", key: "paper_close_lookback_days", unit: "days" },
-    { label: "Backtest close look-back", key: "backtest_close_lookback_days", unit: "days" },
-    { label: "Min TCS threshold", key: "paper_trade_min_tcs", unit: "" },
-    { label: "Backfill heartbeat window", key: "backfill_heartbeat_hours", unit: "h" },
+  const setRowEdit = (key: ConfigKey, patch: Partial<ConfigRowEdit>) => {
+    setEditState((s) => ({ ...s, [key]: { ...s[key], ...patch } }));
+  };
+
+  const handleSave = async (key: ConfigKey) => {
+    setRowEdit(key, { saving: true, error: null, saved: false });
+    try {
+      const result = await saveConfigValue(key, editState[key].draft);
+      setConfig((c) => c ? { ...c, [key]: { value: result.value, source: result.source } } : c);
+      setRowEdit(key, { saving: false, saved: true, draft: String(result.value), error: null });
+      setTimeout(() => setRowEdit(key, { saved: false }), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setRowEdit(key, { saving: false, error: msg });
+    }
+  };
+
+  const handleReset = async (key: ConfigKey) => {
+    setRowEdit(key, { saving: true, error: null, saved: false });
+    try {
+      const result = await resetConfigValue(key);
+      setConfig((c) => c ? { ...c, [key]: { value: result.value, source: "env" } } : c);
+      setRowEdit(key, { saving: false, saved: true, draft: String(result.value), error: null });
+      setTimeout(() => setRowEdit(key, { saved: false }), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setRowEdit(key, { saving: false, error: msg });
+    }
+  };
+
+  const rows: Array<{ label: string; key: ConfigKey; unit: string; step?: string; min: string; max: string }> = [
+    { label: "Paper close look-back", key: "paper_close_lookback_days", unit: "days", min: "1", max: "3650" },
+    { label: "Backtest close look-back", key: "backtest_close_lookback_days", unit: "days", min: "1", max: "3650" },
+    { label: "Min TCS threshold", key: "paper_trade_min_tcs", unit: "", min: "0", max: "100" },
+    { label: "Backfill heartbeat window", key: "backfill_heartbeat_hours", unit: "h", step: "0.5", min: "1", max: "8760" },
   ];
 
   return (
@@ -548,49 +700,109 @@ function ConfigPanel() {
       )}
       {!loading && !error && config && (
         <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
-          {rows.map(({ label, key, unit }, idx) => {
+          {rows.map(({ label, key, unit, step, min, max }, idx) => {
             const entry = config[key];
             const isOverride = entry.source === "override";
+            const row = editState[key];
+            const isDirty = row.draft !== String(entry.value);
             return (
               <div
                 key={key}
                 style={{
                   display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  padding: "10px 0",
+                  flexDirection: "column",
+                  gap: "6px",
+                  padding: "12px 0",
                   borderTop: idx > 0 ? "1px solid #2d3748" : undefined,
                 }}
               >
-                <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>{label}</span>
-                <span
-                  style={{
-                    fontSize: "13px",
-                    fontWeight: 700,
-                    color: "#e2e8f0",
-                    fontFamily: "monospace",
-                  }}
-                >
-                  {entry.value}{unit ? ` ${unit}` : ""}
-                </span>
-                <span
-                  title={isOverride ? "Set via user-pref override (not the env var)" : "From environment variable"}
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    color: isOverride ? "#fdba74" : "#475569",
-                    background: isOverride ? "rgba(251,191,36,0.08)" : "rgba(255,255,255,0.04)",
-                    border: isOverride ? "1px solid #92400e" : "1px solid #334155",
-                    borderRadius: "4px",
-                    padding: "2px 7px",
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    cursor: "default",
-                    flexShrink: 0,
-                  }}
-                >
-                  {isOverride ? "override" : "env"}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>{label}</span>
+                  <span
+                    title={isOverride ? "Set via user-pref override (not the env var)" : "From environment variable"}
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      color: isOverride ? "#fdba74" : "#475569",
+                      background: isOverride ? "rgba(251,191,36,0.08)" : "rgba(255,255,255,0.04)",
+                      border: isOverride ? "1px solid #92400e" : "1px solid #334155",
+                      borderRadius: "4px",
+                      padding: "2px 7px",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                      cursor: "default",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {isOverride ? "override" : "env"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <input
+                    type="number"
+                    step={step ?? "1"}
+                    min={min}
+                    max={max}
+                    value={row.draft}
+                    disabled={row.saving}
+                    onChange={(e) => setRowEdit(key, { draft: e.target.value, error: null })}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSave(key); }}
+                    style={{
+                      width: "90px",
+                      padding: "5px 8px",
+                      fontSize: "13px",
+                      fontFamily: "monospace",
+                      background: "#0e1117",
+                      border: row.error ? "1px solid #ef4444" : "1px solid #334155",
+                      borderRadius: "6px",
+                      color: "#e2e8f0",
+                      outline: "none",
+                    }}
+                  />
+                  {unit && <span style={{ fontSize: "13px", color: "#64748b" }}>{unit}</span>}
+                  <button
+                    onClick={() => handleSave(key)}
+                    disabled={row.saving || !isDirty}
+                    style={{
+                      padding: "5px 12px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      background: isDirty && !row.saving ? "#3b82f6" : "#1e293b",
+                      color: isDirty && !row.saving ? "#fff" : "#475569",
+                      border: "1px solid #334155",
+                      borderRadius: "6px",
+                      cursor: isDirty && !row.saving ? "pointer" : "default",
+                      transition: "background 0.15s",
+                    }}
+                  >
+                    {row.saving ? "Saving…" : "Save"}
+                  </button>
+                  {isOverride && (
+                    <button
+                      onClick={() => handleReset(key)}
+                      disabled={row.saving}
+                      title="Clear override and revert to env-var default"
+                      style={{
+                        padding: "5px 10px",
+                        fontSize: "12px",
+                        fontWeight: 500,
+                        background: "transparent",
+                        color: "#94a3b8",
+                        border: "1px solid #334155",
+                        borderRadius: "6px",
+                        cursor: row.saving ? "default" : "pointer",
+                      }}
+                    >
+                      Reset
+                    </button>
+                  )}
+                  {row.saved && (
+                    <span style={{ fontSize: "12px", color: "#4ade80" }}>✓ Saved</span>
+                  )}
+                </div>
+                {row.error && (
+                  <span style={{ fontSize: "12px", color: "#f87171" }}>{row.error}</span>
+                )}
               </div>
             );
           })}
