@@ -296,6 +296,8 @@ def _sim_patch(r: dict) -> dict | None:
         "target_price_sim": sim.get("target_price_sim"),
         "sim_version":      sim.get("sim_version"),
     }
+    if sim.get("rvol_mult") is not None:
+        patch["rvol_mult"] = sim["rvol_mult"]
     # EOD Hold P&L from stored close_price (no bars needed — computable from DB data).
     # Tiered P&L cannot be backfilled (requires intraday bars that aren't stored).
     # New batch backtest runs will populate tiered_pnl_r going forward.

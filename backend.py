@@ -8091,6 +8091,10 @@ def run_pending_migrations() -> dict:
         # RVOL size bonus multiplier — written by _place_order_for_setup() in paper_trader_bot.py
         # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol_mult REAL DEFAULT 1.0",
+        # RVOL size bonus multiplier for batch backtest rows — mirrors the live bot bonus.
+        # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
+        # pnl_r_sim already reflects this multiplier when rvol_mult > 1.0.
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS rvol_mult REAL DEFAULT 1.0",
     ]
 
     ran = 0
@@ -10995,6 +10999,8 @@ def apply_rvol_sizing_to_sim(sim: dict, rvol_raw) -> dict:
 
     A 1.25× RVOL size bonus on a +1.5R win → +1.875R effective account R;
     a 1.25× boost on a -1.0R loss → -1.25R effective loss.
+    Both pnl_r_sim and pnl_pct_sim are scaled so the DB values reflect the
+    actual RVOL-boosted position size in all dimensions.
 
     Returns the original sim dict unchanged when:
     - rvol_raw is None / falsy (no RVOL data available for this row)
@@ -11007,13 +11013,17 @@ def apply_rvol_sizing_to_sim(sim: dict, rvol_raw) -> dict:
         _mult = rvol_size_mult(float(rvol_raw))
     except (TypeError, ValueError):
         return sim
+    result = dict(sim)
+    result["rvol_mult"] = _mult
     if _mult == 1.0:
-        return sim
+        return result
     _pnl_r = sim.get("pnl_r_sim")
     if _pnl_r is None:
-        return sim
-    result = dict(sim)
+        return result
     result["pnl_r_sim"] = round(float(_pnl_r) * _mult, 4)
+    _pnl_pct = sim.get("pnl_pct_sim")
+    if _pnl_pct is not None:
+        result["pnl_pct_sim"] = round(float(_pnl_pct) * _mult, 4)
     return result
 
 

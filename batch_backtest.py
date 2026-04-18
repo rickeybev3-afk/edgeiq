@@ -797,6 +797,8 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             rec["gap_vs_ib_pct"] = r.get("gap_vs_ib_pct")
         if include_sim:
             sim = backend.apply_rvol_sizing_to_sim(backend.compute_trade_sim(r), r.get("rvol"))
+            if sim.get("rvol_mult") is not None:
+                rec["rvol_mult"] = sim["rvol_mult"]
             if sim.get("sim_outcome") not in ("no_trade", "missing_data", "invalid_ib", None):
                 rec["sim_outcome"]      = sim["sim_outcome"]
                 rec["pnl_r_sim"]        = sim.get("pnl_r_sim")
@@ -825,7 +827,7 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
             err_str = str(e).lower()
             sim_cols  = ["sim_outcome", "pnl_r_sim", "pnl_pct_sim", "entry_price_sim",
                          "stop_price_sim", "stop_dist_pct", "target_price_sim",
-                         "eod_pnl_r", "tiered_pnl_r"]
+                         "eod_pnl_r", "tiered_pnl_r", "rvol_mult"]
             gap_cols  = ["gap_pct", "gap_vs_ib_pct"]
 
             if include_sim and any(c in err_str for c in sim_cols):
@@ -840,7 +842,8 @@ def save_rows_with_scan_type(rows: list, user_id: str = ""):
                     "     ADD COLUMN IF NOT EXISTS stop_dist_pct FLOAT,\n"
                     "     ADD COLUMN IF NOT EXISTS target_price_sim FLOAT,\n"
                     "     ADD COLUMN IF NOT EXISTS eod_pnl_r FLOAT,\n"
-                    "     ADD COLUMN IF NOT EXISTS tiered_pnl_r FLOAT;\n"
+                    "     ADD COLUMN IF NOT EXISTS tiered_pnl_r FLOAT,\n"
+                    "     ADD COLUMN IF NOT EXISTS rvol_mult FLOAT;\n"
                 )
                 include_sim = False
                 records = [_build_record(r, include_gap, False) for r in batch]
