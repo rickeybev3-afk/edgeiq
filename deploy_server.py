@@ -709,6 +709,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             heartbeat_hours = 25.0
         try:
+            _prefs = _load_owner_prefs()
+            if "backfill_heartbeat_hours" in _prefs:
+                heartbeat_hours = float(_prefs["backfill_heartbeat_hours"])
+        except Exception:
+            pass
+        try:
             with open(history_path) as f:
                 history = json.load(f)
             if not isinstance(history, list) or len(history) == 0:

@@ -84,6 +84,8 @@ interface BackfillHealth {
   error?: string;
   history?: BackfillRun[];
   history_path?: string;
+  heartbeat_hours?: number;
+  is_overdue?: boolean;
 }
 
 interface DryRunTableResult {
@@ -1059,12 +1061,26 @@ export default function Settings() {
                   higherIsBetter={false}
                 />
               </div>
-              {backfillHealth.completed_at && (
-                <p style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", margin: 0 }}>
-                  Completed {formatRelativeTime(backfillHealth.completed_at)} &nbsp;·&nbsp;{" "}
-                  {new Date(backfillHealth.completed_at).toLocaleString()}
-                </p>
-              )}
+              {backfillHealth.completed_at && (() => {
+                const threshold = backfillHealth.heartbeat_hours ?? 25;
+                const ageHours = (Date.now() - new Date(backfillHealth.completed_at).getTime()) / 3_600_000;
+                const ageColor = backfillHealth.is_overdue
+                  ? "#f87171"
+                  : ageHours >= threshold * 0.8
+                  ? "#fbbf24"
+                  : "#94a3b8";
+                return (
+                  <p style={{ fontSize: "11px", fontFamily: "monospace", margin: 0, display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                    <span style={{ color: ageColor, fontWeight: backfillHealth.is_overdue || ageHours >= threshold * 0.8 ? 700 : 400 }}>
+                      Last run {formatRelativeTime(backfillHealth.completed_at)}
+                    </span>
+                    <span style={{ color: "#475569" }}>·</span>
+                    <span style={{ color: "#475569" }}>alert threshold: {threshold} h</span>
+                    <span style={{ color: "#334155" }}>·</span>
+                    <span style={{ color: "#475569" }}>{new Date(backfillHealth.completed_at).toLocaleString()}</span>
+                  </p>
+                );
+              })()}
               {backfillHealth.history_path && (
                 <p style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", marginTop: "6px", marginBottom: 0 }}>
                   History file: {backfillHealth.history_path}
