@@ -1325,18 +1325,42 @@ export default function Settings() {
                         </tr>
                       </thead>
                       <tbody>
-                        {backfillHealth.history.map((run, i) => (
+                        {backfillHealth.history.map((run, i) => {
+                          const heartbeatHours = backfillHealth.heartbeat_hours ?? 25;
+                          const prevRun = backfillHealth.history![i + 1];
+                          const gapHours = prevRun
+                            ? (new Date(run.completed_at).getTime() - new Date(prevRun.completed_at).getTime()) / 3_600_000
+                            : null;
+                          const isOverdue = gapHours !== null && gapHours > heartbeatHours;
+                          const rowBg = isOverdue
+                            ? "rgba(251,191,36,0.07)"
+                            : i === 0
+                            ? "rgba(255,255,255,0.03)"
+                            : "transparent";
+                          return (
                           <tr
                             key={`${run.completed_at}-${i}`}
                             style={{
                               borderBottom: "1px solid rgba(45,55,72,0.5)",
-                              background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent",
+                              background: rowBg,
                             }}
                           >
-                            <td style={{ padding: "6px 10px", color: i === 0 ? "#cbd5e1" : "#64748b" }}>
+                            <td style={{ padding: "6px 10px", color: isOverdue ? "#fbbf24" : i === 0 ? "#cbd5e1" : "#64748b" }}>
                               {formatRelativeTime(run.completed_at)}
                               {i === 0 && (
                                 <span style={{ marginLeft: "6px", fontSize: "10px", color: "#4ade80", fontFamily: "sans-serif" }}>latest</span>
+                              )}
+                              {isOverdue && (
+                                <span style={{
+                                  marginLeft: "6px",
+                                  fontSize: "10px",
+                                  color: "#fbbf24",
+                                  fontFamily: "sans-serif",
+                                  background: "rgba(251,191,36,0.15)",
+                                  border: "1px solid rgba(251,191,36,0.3)",
+                                  borderRadius: "3px",
+                                  padding: "1px 4px",
+                                }}>overdue</span>
                               )}
                             </td>
                             <td style={{ padding: "6px 10px", color: run.script && run.script !== "other" ? "#94a3b8" : "#475569", fontStyle: !run.script || run.script === "other" ? "italic" : "normal" }}>
@@ -1352,7 +1376,8 @@ export default function Settings() {
                               {run.errors.toLocaleString()}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
