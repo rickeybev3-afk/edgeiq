@@ -13270,14 +13270,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     os.path.dirname(os.path.abspath(__file__)), "divergence_alert_state.json"
                 )
                 _existing_bot_date = ""
+                _existing_fired_ts_str = ""
                 _new_div_state: dict = {}
                 try:
                     try:
                         with open(_div_state_path) as _dsf:
                             _existing_state = _json_div.load(_dsf)
                             _existing_bot_date = _existing_state.get("last_bot_sent_date", "")
+                            _existing_fired_ts_str = _existing_state.get("last_fired_ts", "")
+                            # Seed session cool-down from disk before writing so the
+                            # write never clobbers a valid persisted timestamp.
+                            if "_div_auto_last_fired_ts" not in st.session_state and _existing_fired_ts_str:
+                                try:
+                                    st.session_state["_div_auto_last_fired_ts"] = datetime.fromisoformat(_existing_fired_ts_str)
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
+                    _session_fired_ts = st.session_state.get("_div_auto_last_fired_ts")
                     _new_div_state = {
                         "auto_send_enabled": bool(_auto_send_on),
                         "trigger_mode": _auto_send_mode,
@@ -13286,6 +13296,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "flagged_count": _n_flagged,
                         "last_updated": datetime.now().isoformat(timespec="seconds"),
                         "last_bot_sent_date": _existing_bot_date,
+                        "last_fired_ts": (
+                            _session_fired_ts.isoformat(timespec="seconds")
+                            if _session_fired_ts is not None
+                            else _existing_fired_ts_str
+                        ),
                     }
                     with open(_div_state_path, "w") as _dsf:
                         _json_div.dump(_new_div_state, _dsf, indent=2)
@@ -13339,6 +13354,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         icon="📤",
                                     )
                                     st.session_state["_div_auto_last_fired_ts"] = _now_ts
+                                    # Immediately persist the new timestamp so cooldown survives refresh.
+                                    try:
+                                        _new_div_state["last_fired_ts"] = _now_ts.isoformat(timespec="seconds")
+                                        with open(_div_state_path, "w") as _post_f:
+                                            _json_div.dump(_new_div_state, _post_f, indent=2)
+                                    except Exception:
+                                        pass
                                 if _auto_failed:
                                     st.toast(
                                         f"Auto-alert failed for: "
@@ -13507,11 +13529,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
                 try:
                     _clr_bot_date = ""
+                    _clr_fired_ts_str = ""
                     try:
                         with open(_div_state_path_clr) as _cf:
-                            _clr_bot_date = _json_div_clr.load(_cf).get("last_bot_sent_date", "")
+                            _clr_existing = _json_div_clr.load(_cf)
+                            _clr_bot_date = _clr_existing.get("last_bot_sent_date", "")
+                            _clr_fired_ts_str = _clr_existing.get("last_fired_ts", "")
                     except Exception:
                         pass
+                    _clr_session_ts = st.session_state.get("_div_auto_last_fired_ts")
                     with open(_div_state_path_clr, "w") as _cf:
                         _json_div_clr.dump(
                             {
@@ -13526,6 +13552,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "flagged_count": 0,
                                 "last_updated": datetime.now().isoformat(timespec="seconds"),
                                 "last_bot_sent_date": _clr_bot_date,
+                                "last_fired_ts": (
+                                    _clr_session_ts.isoformat(timespec="seconds")
+                                    if _clr_session_ts is not None
+                                    else _clr_fired_ts_str
+                                ),
                             },
                             _cf,
                             indent=2,
@@ -13580,13 +13611,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
                 try:
                     _none_bot_date = ""
+                    _none_fired_ts_str = ""
                     try:
                         with open(_div_state_path_none) as _nf:
-                            _none_bot_date = _json_div_none.load(_nf).get(
-                                "last_bot_sent_date", ""
-                            )
+                            _none_existing = _json_div_none.load(_nf)
+                            _none_bot_date = _none_existing.get("last_bot_sent_date", "")
+                            _none_fired_ts_str = _none_existing.get("last_fired_ts", "")
                     except Exception:
                         pass
+                    _none_session_ts = st.session_state.get("_div_auto_last_fired_ts")
                     with open(_div_state_path_none, "w") as _nf:
                         _json_div_none.dump(
                             {
@@ -13601,6 +13634,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "flagged_count": 0,
                                 "last_updated": datetime.now().isoformat(timespec="seconds"),
                                 "last_bot_sent_date": _none_bot_date,
+                                "last_fired_ts": (
+                                    _none_session_ts.isoformat(timespec="seconds")
+                                    if _none_session_ts is not None
+                                    else _none_fired_ts_str
+                                ),
                             },
                             _nf,
                             indent=2,
