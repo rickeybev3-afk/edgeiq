@@ -10936,6 +10936,130 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         f'</div>', unsafe_allow_html=True
                                     )
 
+                        # ── Replay Tier Comparison Summary Table ───────────────────
+                        _rp_tbl_rows = []
+                        for _rp_tsi, (_rp_tsl, _rp_tse, _rp_tsst, _rp_tslo, _rp_tshi, _rp_tsc, _rp_tsd) in enumerate(_bt_tier_defs):
+                            _rp_tsdf = _rp_df[
+                                (_rp_df["Snapshot"].str.lower() == _rp_tsst) &
+                                (_rp_df["TCS"] >= _rp_tslo) &
+                                (_rp_df["TCS"] <= _rp_tshi)
+                            ]
+                            if _rp_tsdf.empty:
+                                _rp_tbl_rows.append({
+                                    "idx": _rp_tsi, "label": _rp_tsl, "emoji": _rp_tse,
+                                    "desc": _rp_tsd, "color": _rp_tsc, "n": 0,
+                                    "eod_wr": None, "eod_exp": None,
+                                    "tier_wr": None, "tier_exp": None,
+                                })
+                            else:
+                                _rp_ts_n = len(_rp_tsdf)
+                                _rp_ts_eod_ser  = pd.to_numeric(
+                                    _rp_tsdf["R (EOD)"]    if "R (EOD)"    in _rp_tsdf.columns else pd.Series(dtype=float),
+                                    errors="coerce"
+                                ).dropna()
+                                _rp_ts_tier_ser = pd.to_numeric(
+                                    _rp_tsdf["R (Tiered)"] if "R (Tiered)" in _rp_tsdf.columns else pd.Series(dtype=float),
+                                    errors="coerce"
+                                ).dropna()
+                                _rp_tbl_rows.append({
+                                    "idx": _rp_tsi, "label": _rp_tsl, "emoji": _rp_tse,
+                                    "desc": _rp_tsd, "color": _rp_tsc, "n": _rp_ts_n,
+                                    "eod_wr":   round((_rp_ts_eod_ser  > 0).sum() / len(_rp_ts_eod_ser)  * 100, 1) if len(_rp_ts_eod_ser)  else None,
+                                    "eod_exp":  round(_rp_ts_eod_ser.mean(),  3) if len(_rp_ts_eod_ser)  else None,
+                                    "tier_wr":  round((_rp_ts_tier_ser > 0).sum() / len(_rp_ts_tier_ser) * 100, 1) if len(_rp_ts_tier_ser) else None,
+                                    "tier_exp": round(_rp_ts_tier_ser.mean(), 3) if len(_rp_ts_tier_ser) else None,
+                                })
+
+                        _rp_ts_valid_eod  = [r["eod_exp"]  for r in _rp_tbl_rows if r["eod_exp"]  is not None]
+                        _rp_ts_valid_tier = [r["tier_exp"] for r in _rp_tbl_rows if r["tier_exp"] is not None]
+                        _rp_ts_best_eod_exp  = max(_rp_ts_valid_eod)  if len(_rp_ts_valid_eod)  > 1 else None
+                        _rp_ts_best_tier_exp = max(_rp_ts_valid_tier) if len(_rp_ts_valid_tier) > 1 else None
+
+                        def _rp_ts_wr_col(v):
+                            if v is None: return "#546e7a"
+                            return "#2e7d32" if v >= 60 else ("#ef6c00" if v >= 50 else "#c62828")
+
+                        def _rp_ts_exp_col(v):
+                            if v is None: return "#546e7a"
+                            return "#2e7d32" if v > 0 else ("#ef6c00" if v == 0 else "#c62828")
+
+                        _rp_ts_header = (
+                            '<tr style="background:#1a2738;font-size:11px;color:#90a4ae;letter-spacing:0.5px;">'
+                            '<th style="padding:6px 10px;text-align:left;">Tier</th>'
+                            '<th style="padding:6px 10px;text-align:left;">Description</th>'
+                            '<th style="padding:6px 10px;text-align:right;">Trades</th>'
+                            '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Win%</th>'
+                            '<th style="padding:6px 10px;text-align:right;color:#80cbc4;">EOD Exp</th>'
+                            '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Win%</th>'
+                            '<th style="padding:6px 10px;text-align:right;color:#ce93d8;">Tiered Exp</th>'
+                            '<th style="padding:6px 10px;text-align:center;">Edge Winner</th>'
+                            '</tr>'
+                        )
+                        _rp_ts_body = ""
+                        for _rp_tsr in _rp_tbl_rows:
+                            _rp_ts_eod_wr_str  = (
+                                f'<span style="color:{_rp_ts_wr_col(_rp_tsr["eod_wr"])};font-weight:600;">{_rp_tsr["eod_wr"]}%</span>'
+                                if _rp_tsr["eod_wr"] is not None else '<span style="color:#546e7a;">—</span>'
+                            )
+                            _rp_ts_eod_exp_str = (
+                                f'<span style="color:{_rp_ts_exp_col(_rp_tsr["eod_exp"])};font-weight:600;">{_rp_tsr["eod_exp"]:+.3f}R</span>'
+                                if _rp_tsr["eod_exp"] is not None else '<span style="color:#546e7a;">—</span>'
+                            )
+                            _rp_ts_tier_wr_str  = (
+                                f'<span style="color:{_rp_ts_wr_col(_rp_tsr["tier_wr"])};font-weight:600;">{_rp_tsr["tier_wr"]}%</span>'
+                                if _rp_tsr["tier_wr"] is not None else '<span style="color:#546e7a;">—</span>'
+                            )
+                            _rp_ts_tier_exp_str = (
+                                f'<span style="color:{_rp_ts_exp_col(_rp_tsr["tier_exp"])};font-weight:600;">{_rp_tsr["tier_exp"]:+.3f}R</span>'
+                                if _rp_tsr["tier_exp"] is not None else '<span style="color:#546e7a;">—</span>'
+                            )
+                            _rp_ts_is_best_eod  = (
+                                _rp_ts_best_eod_exp  is not None and _rp_tsr["eod_exp"]  is not None
+                                and abs(_rp_tsr["eod_exp"]  - _rp_ts_best_eod_exp)  < 1e-9
+                            )
+                            _rp_ts_is_best_tier = (
+                                _rp_ts_best_tier_exp is not None and _rp_tsr["tier_exp"] is not None
+                                and abs(_rp_tsr["tier_exp"] - _rp_ts_best_tier_exp) < 1e-9
+                            )
+                            if _rp_ts_is_best_eod and _rp_ts_is_best_tier:
+                                _rp_ts_badge = '<span style="color:#ffd54f;font-weight:700;">⭐ Both</span>'
+                            elif _rp_ts_is_best_eod:
+                                _rp_ts_badge = '<span style="color:#80cbc4;font-weight:700;">⭐ EOD</span>'
+                            elif _rp_ts_is_best_tier:
+                                _rp_ts_badge = '<span style="color:#ce93d8;font-weight:700;">⭐ Tiered</span>'
+                            else:
+                                _rp_ts_badge = '<span style="color:#546e7a;">—</span>'
+                            _rp_ts_n_str = (
+                                f'<span style="color:#cfd8dc;">{_rp_tsr["n"]}</span>'
+                                if _rp_tsr["n"] > 0 else '<span style="color:#546e7a;">0</span>'
+                            )
+                            _rp_ts_body += (
+                                f'<tr style="border-top:1px solid #1e2a3a;">'
+                                f'<td style="padding:6px 10px;"><span style="color:{_rp_tsr["color"]};font-weight:700;">{_rp_tsr["emoji"]} {_rp_tsr["label"]}</span></td>'
+                                f'<td style="padding:6px 10px;font-size:11px;color:#90a4ae;">{_rp_tsr["desc"]}</td>'
+                                f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_n_str}</td>'
+                                f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_eod_wr_str}</td>'
+                                f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_eod_exp_str}</td>'
+                                f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_tier_wr_str}</td>'
+                                f'<td style="padding:6px 10px;text-align:right;">{_rp_ts_tier_exp_str}</td>'
+                                f'<td style="padding:6px 10px;text-align:center;">{_rp_ts_badge}</td>'
+                                f'</tr>'
+                            )
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.markdown(
+                            '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+                            'text-transform:uppercase;margin-bottom:6px;">Tier Comparison Summary</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            f'<div style="overflow-x:auto;">'
+                            f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
+                            f'{_rp_ts_header}'
+                            f'<tbody>{_rp_ts_body}</tbody>'
+                            f'</table></div>',
+                            unsafe_allow_html=True,
+                        )
+
                         # ── TCS Optimizer ──────────────────────────────────────────
                         st.markdown("<br>", unsafe_allow_html=True)
                         with st.expander("🔍 TCS Optimizer — Find the optimal TCS cutoff for max profit", expanded=False):
