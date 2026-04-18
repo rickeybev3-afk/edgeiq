@@ -20313,25 +20313,21 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 with st.spinner("Loading v6 sim data from database…"):
                     try:
                         _mc_cols = "pnl_r_sim,tcs,scan_type,ib_range_pct"
-                        _mc_rows_raw = []
-                        _mc_offset = 0
-                        _mc_page = 1000
-                        while True:
-                            _mc_resp = (
-                                supabase.table("backtest_sim_runs")
-                                .select(_mc_cols)
-                                .eq("user_id", _mc_uid)
-                                .eq("sim_version", "v6")
-                                .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
-                                .not_.is_("pnl_r_sim", "null")
-                                .range(_mc_offset, _mc_offset + _mc_page - 1)
-                                .execute()
-                            )
-                            _mc_batch = _mc_resp.data or []
-                            _mc_rows_raw.extend(_mc_batch)
-                            if len(_mc_batch) < _mc_page:
-                                break
-                            _mc_offset += _mc_page
+                        # Single capped fetch — 5 000 rows is more than enough for
+                        # Monte Carlo (1 000 shuffles × any pool ≥ 500 converge).
+                        # Avoids 30+ sequential HTTP/2 calls that trigger connection
+                        # termination errors from Supabase on large tables.
+                        _mc_resp = (
+                            supabase.table("backtest_sim_runs")
+                            .select(_mc_cols)
+                            .eq("user_id", _mc_uid)
+                            .eq("sim_version", "v6")
+                            .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+                            .not_.is_("pnl_r_sim", "null")
+                            .limit(5000)
+                            .execute()
+                        )
+                        _mc_rows_raw = _mc_resp.data or []
                         st.session_state[_mc_cache_key] = _mc_rows_raw
                     except Exception as _mc_err:
                         st.error(f"Failed to load sim data: {_mc_err}")
