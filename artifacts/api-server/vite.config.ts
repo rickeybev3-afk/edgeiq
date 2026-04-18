@@ -67,39 +67,7 @@ export default defineConfig({
       deny: ["**/.*"],
     },
     proxy: {
-      "/api/health": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/trading-mode": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/credential-alerts": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/db-events": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/backfill-health": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/backfill-error-alerts": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/eod-sweep": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/eod-recalc-health": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/api/subscribers/credential-alerts": {
+      "/api": {
         target: "http://localhost:8080",
         changeOrigin: true,
       },
