@@ -409,6 +409,7 @@ _BACKFILL_STATUS          = "/tmp/backfill_pipeline.status"
 _BACKFILL_START_TIME      = "/tmp/backfill_pipeline.start_time"
 _BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
 _BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
+_BACKFILL_RUN_HISTORY     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backfill_run_history.log")
 
 # Module-level lock ensures only one pipeline thread runs at a time.
 # The lock is held for the entire duration of the run and released in the
@@ -529,9 +530,22 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
                 return
             lf.write("=== Backfill pipeline finished successfully ===\n")
         import time as _finish_time_mod
+        import datetime as _datetime_mod
+        _now_ts = _finish_time_mod.time()
         try:
             with open(_BACKFILL_FINISH_TIME, "w") as _ftf:
-                _ftf.write(str(_finish_time_mod.time()))
+                _ftf.write(str(_now_ts))
+        except Exception:
+            pass
+        try:
+            _hist_elapsed = None
+            if os.path.exists(_BACKFILL_START_TIME):
+                with open(_BACKFILL_START_TIME) as _hst_f:
+                    _hist_elapsed = max(0.0, _now_ts - float(_hst_f.read().strip()))
+            if _hist_elapsed is not None:
+                _hist_iso = _datetime_mod.datetime.utcfromtimestamp(_now_ts).strftime("%Y-%m-%dT%H:%M:%SZ")
+                with open(_BACKFILL_RUN_HISTORY, "a") as _hf:
+                    _hf.write(f"{_hist_iso}\t{int(_hist_elapsed)}\n")
         except Exception:
             pass
         with open(_BACKFILL_STATUS, "w") as sf:
@@ -6425,6 +6439,55 @@ with st.sidebar:
                 else "✅ Backfill complete!"
             )
             st.success(_bf_success_msg)
+
+            # ── Show last N run durations from history log ──────────────────
+            _BF_HISTORY_DISPLAY = 8
+            if os.path.exists(_BACKFILL_RUN_HISTORY):
+                try:
+                    with open(_BACKFILL_RUN_HISTORY) as _bhf:
+                        _bf_history_lines = [l.strip() for l in _bhf.readlines() if l.strip()]
+                    if _bf_history_lines:
+                        _bf_recent = _bf_history_lines[-_BF_HISTORY_DISPLAY:]
+                        _bf_hist_rows = []
+                        for _bhl in reversed(_bf_recent):
+                            _bhl_parts = _bhl.split("\t")
+                            if len(_bhl_parts) == 2:
+                                _bhl_ts, _bhl_secs_raw = _bhl_parts
+                                try:
+                                    _bhl_secs = int(_bhl_secs_raw)
+                                    if _bhl_secs < 60:
+                                        _bhl_dur = f"{_bhl_secs}s"
+                                    elif _bhl_secs < 3600:
+                                        _bhl_dur = f"{_bhl_secs // 60}m {_bhl_secs % 60}s"
+                                    else:
+                                        _bhl_h = _bhl_secs // 3600
+                                        _bhl_m = (_bhl_secs % 3600) // 60
+                                        _bhl_dur = f"{_bhl_h}h {_bhl_m}m"
+                                except ValueError:
+                                    _bhl_dur = _bhl_secs_raw
+                                _bf_hist_rows.append(
+                                    f'<tr><td style="color:#aaa;padding:2px 8px 2px 0;">{_bhl_ts}</td>'
+                                    f'<td style="color:#e0e0e0;text-align:right;">{_bhl_dur}</td></tr>'
+                                )
+                        if _bf_hist_rows:
+                            _bf_hist_total = len(_bf_history_lines)
+                            _bf_hist_label = (
+                                f"Last {len(_bf_recent)} of {_bf_hist_total} runs"
+                                if _bf_hist_total > _BF_HISTORY_DISPLAY
+                                else f"All {_bf_hist_total} run{'s' if _bf_hist_total != 1 else ''}"
+                            )
+                            st.markdown(
+                                f'<div style="background:#1a1a2e;border:1px solid #2d2d5a;border-radius:6px;'
+                                f'padding:8px 10px;margin:6px 0;font-size:11px;">'
+                                f'<div style="color:#8888cc;margin-bottom:4px;font-size:10px;">'
+                                f'🕑 Run history ({_bf_hist_label})</div>'
+                                f'<table style="width:100%;border-collapse:collapse;">'
+                                + "".join(_bf_hist_rows)
+                                + "</table></div>",
+                                unsafe_allow_html=True,
+                            )
+                except Exception:
+                    pass
 
             # ── Parse summary numbers from the log ─────────────────────────
             import re as _re
