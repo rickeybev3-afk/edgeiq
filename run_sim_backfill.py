@@ -846,6 +846,13 @@ if __name__ == "__main__":
 
     if dry_run:
         skip_note = " (--skip-existing: already-filled rows excluded)" if skip_existing else ""
+        print(f"\n  Flags in effect:")
+        print(f"    --dry-run        : yes")
+        print(f"    --skip-existing  : {'yes' if skip_existing else 'no'}")
+        print(f"    --skip-context   : {'yes' if skip_context  else 'no'}")
+        if out_file:
+            _out_label = out_file if _out_flag else f"{out_file}  (auto-generated)"
+            print(f"    --out            : {_out_label}")
         print(f"\n{'='*60}")
         print(f"  DRY RUN COMPLETE — {elapsed:.0f}s elapsed")
         print(f"  {grand_total_would_update:,} row(s) across all users/tables would be updated{skip_note}")
@@ -874,6 +881,11 @@ if __name__ == "__main__":
     else:
         for uid in user_ids:
             print_summary(uid)
+
+        print(f"\n  Flags in effect:")
+        print(f"    --dry-run        : no")
+        print(f"    --skip-existing  : {'yes' if skip_existing else 'no'}")
+        print(f"    --skip-context   : {'yes' if skip_context  else 'no'}")
 
         print(f"\n✅ Backfill complete for {len(user_ids)} user(s) in {elapsed:.0f}s")
 
