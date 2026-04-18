@@ -854,8 +854,12 @@ if __name__ == "__main__":
                 _zero_report = {
                     "generated_at":  datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "mode":          "dry-run",
-                    "skip_existing": skip_existing,
                     "sim_version":   getattr(backend, "SIM_VERSION", None),
+                    "flags": {
+                        "dry_run":       True,
+                        "skip_existing": skip_existing,
+                        "skip_context":  skip_context,
+                    },
                     "rows":          [],
                     "totals":        {"would_update": 0, "unfillable": 0},
                 }
@@ -926,8 +930,12 @@ if __name__ == "__main__":
             report = {
                 "generated_at":  datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "mode":          "dry-run",
-                "skip_existing": skip_existing,
                 "sim_version":   getattr(backend, "SIM_VERSION", None),
+                "flags": {
+                    "dry_run":        True,
+                    "skip_existing":  skip_existing,
+                    "skip_context":   skip_context,
+                },
                 "rows": _report_rows,
                 "totals": {
                     "would_update": grand_total_would_update,
