@@ -9294,6 +9294,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     ("EOD only",       "eod"),
                 ]
 
+                _opt_bdays = max(1, len(pd.bdate_range(str(_rp_start), str(_rp_end))))
+
                 _opt_table_rows = []
                 _combo_pnls_map: dict = {}
                 for _os_lbl, _os_val in _OPT_SCAN_BUCKETS:
@@ -9351,11 +9353,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             "Scan Type":    _os_lbl,
                             "Min TCS":      _ofloor if _ofloor > 0 else "Any",
                             "Trades":       _on,
+                            "Trades/Yr":    round(_on / _opt_bdays * 252),
                             "Win Rate %":   round(_owr, 1),
                             "Avg Win (R)":  round(_oavgw, 3),
                             "Avg Loss (R)": round(_oavgl, 3),
                             "Expectancy":   round(_oexp, 3),
                             "Total R":      round(_ototr, 1),
+                            "R/Yr":         round(_ototr / _opt_bdays * 252, 1),
                             "Max DD (R)":   round(_omaxdd, 2),
                             "Marg Trades":  _omarg_n,
                             "Marg WR %":    _omarg_wr,
@@ -9370,8 +9374,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     )
                 else:
                     _opt_all_cols = [
-                        "Scan Type", "Min TCS", "Win Rate %", "Trades",
-                        "Avg Win (R)", "Avg Loss (R)", "Expectancy", "Total R", "Max DD (R)",
+                        "Scan Type", "Min TCS", "Win Rate %", "Trades", "Trades/Yr",
+                        "Avg Win (R)", "Avg Loss (R)", "Expectancy", "Total R", "R/Yr", "Max DD (R)",
                         "Marg Trades", "Marg WR %", "Marg Avg R",
                     ]
                     _opt_asc_defaults = {"Max DD (R)", "Min TCS"}
@@ -9431,6 +9435,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         if _opt_sort_col == "Win Rate %"
                         else f"{int(_opt_best['Trades'])} trades"
                         if _opt_sort_col == "Trades"
+                        else f"{int(_opt_best['Trades/Yr'])} trades/yr"
+                        if _opt_sort_col == "Trades/Yr"
+                        else f"{_opt_best['R/Yr']:+.1f}R/yr"
+                        if _opt_sort_col == "R/Yr"
                         else f"{_opt_best['Avg Win (R)']:+.3f}R avg win"
                         if _opt_sort_col == "Avg Win (R)"
                         else f"{_opt_best['Avg Loss (R)']:+.3f}R avg loss"
