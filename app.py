@@ -14098,11 +14098,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.caption("✱ = custom TCS floor override is active for that ticker")
                 with _sw_hdr_col_btn:
                     _sw_overridden_tickers = set()
-                    for _k in st.session_state:
-                        if _k.startswith("opt_both_equity_") and not _k.startswith("opt_both_equity_mem_"):
-                            _sw_overridden_tickers.add(_k[len("opt_both_equity_"):])
-                        elif _k.startswith("opt_both_risk_") and not _k.startswith("opt_both_risk_mem_"):
-                            _sw_overridden_tickers.add(_k[len("opt_both_risk_"):])
+                    _sw_mc_eq_def_bulk   = float(st.session_state.get("bt_mc_equity", 10_000))
+                    _sw_mc_risk_def_bulk = float(st.session_state.get("bt_mc_risk", 2.0))
+                    for _bulk_tk in _tkr_sweep_data:
+                        _bulk_eq_val   = float(st.session_state.get(
+                            f"opt_both_equity_{_bulk_tk}",
+                            st.session_state.get(f"opt_both_equity_mem_{_bulk_tk}", _sw_mc_eq_def_bulk),
+                        ))
+                        _bulk_risk_val = float(st.session_state.get(
+                            f"opt_both_risk_{_bulk_tk}",
+                            st.session_state.get(f"opt_both_risk_mem_{_bulk_tk}", _sw_mc_risk_def_bulk),
+                        ))
+                        if _bulk_eq_val != _sw_mc_eq_def_bulk or _bulk_risk_val != _sw_mc_risk_def_bulk:
+                            _sw_overridden_tickers.add(_bulk_tk)
                     _sw_has_overrides = bool(_sw_overridden_tickers)
                     _sw_override_count = len(_sw_overridden_tickers)
                     _sw_reset_label = (
