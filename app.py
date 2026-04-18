@@ -134,6 +134,20 @@ def _cached_load_brain_weights(user_id: str = ""):
     return load_brain_weights(user_id=user_id)
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _cached_get_backtest_pace_target(
+    user_id: str = "",
+    ticker: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> dict:
+    return get_backtest_pace_target(
+        user_id=user_id,
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+@st.cache_data(ttl=300, show_spinner=False)
 def _cached_compute_adaptive_weights(user_id: str = ""):
     return compute_adaptive_weights(user_id)
 
@@ -15936,6 +15950,57 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _tk_ib_pass_decimal if _tk_ib_pass_decimal is not None else ""
                         )
 
+                        # ── VWAP entry-filter funnel (scoped to ticker + date range) ─
+                        _sw_vwap_ft = _cached_get_backtest_pace_target(
+                            user_id=_AUTH_USER_ID,
+                            ticker=str(_tk_name),
+                            start_date=str(_bt_date),
+                            end_date=str(_bt_end_date),
+                        )
+                        if not _sw_vwap_ft["is_fallback"]:
+                            _sw_ft_tcs_ib = _sw_vwap_ft.get("tcs_ib_count", 0)
+                            _sw_ft_vwap   = _sw_vwap_ft.get("vwap_count", 0)
+                            _sw_ft_pct    = (
+                                round((_sw_ft_tcs_ib - _sw_ft_vwap) / _sw_ft_tcs_ib * 100)
+                                if _sw_ft_tcs_ib else 0
+                            )
+                            _sw_ft_scope  = _sw_vwap_ft.get(
+                                "scope",
+                                f"{_tk_name} only, {_bt_date}\u2013{_bt_end_date}",
+                            )
+                            _sw_ft_cols   = list(_tk_sw_csv_export.columns)
+                            _sw_ft_lbl    = _sw_ft_cols[0]
+                            _sw_ft_val    = _sw_ft_cols[1] if len(_sw_ft_cols) > 1 else _sw_ft_cols[0]
+                            def _sw_ft_row(lbl, val, _cols=_sw_ft_cols, _lc=_sw_ft_lbl, _vc=_sw_ft_val):
+                                _r = {c: "" for c in _cols}
+                                _r[_lc] = lbl
+                                _r[_vc] = val
+                                return _r
+                            _sw_funnel_rows = [
+                                {c: "" for c in _sw_ft_cols},
+                                _sw_ft_row("--- VWAP ENTRY FILTER FUNNEL ---", _sw_ft_scope),
+                                _sw_ft_row(
+                                    "Pass TCS\u226550 + IB filter",
+                                    f"{_sw_ft_tcs_ib:,}",
+                                ),
+                                _sw_ft_row(
+                                    "Pass VWAP alignment (qualifying signals)",
+                                    f"{_sw_ft_vwap:,}",
+                                ),
+                                _sw_ft_row(
+                                    "VWAP filter rate",
+                                    f"{_sw_ft_pct}% filtered out by VWAP misalignment",
+                                ),
+                                _sw_ft_row(
+                                    "IB threshold used",
+                                    f"{_sw_vwap_ft.get('ib_threshold', '?')}%",
+                                ),
+                            ]
+                            _tk_sw_csv_export = _pd_bt.concat(
+                                [_tk_sw_csv_export, _pd_bt.DataFrame(_sw_funnel_rows)],
+                                ignore_index=True,
+                            )
+
                         st.download_button(
                             label="⬇️ Download Sweep Summary CSV",
                             data=_tk_sw_csv_export.to_csv(index=False),
@@ -18011,6 +18076,55 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         hide_index=True,
                         column_config=_sweep_col_cfg if _sweep_col_cfg else None,
                     )
+                    # ── VWAP entry-filter funnel (scoped to active date range, all tickers) ─
+                    _all_vwap_ft = _cached_get_backtest_pace_target(
+                        user_id=_AUTH_USER_ID,
+                        start_date=str(_bt_date),
+                        end_date=str(_bt_end_date),
+                    )
+                    if not _all_vwap_ft["is_fallback"]:
+                        _all_ft_tcs_ib = _all_vwap_ft.get("tcs_ib_count", 0)
+                        _all_ft_vwap   = _all_vwap_ft.get("vwap_count", 0)
+                        _all_ft_pct    = (
+                            round((_all_ft_tcs_ib - _all_ft_vwap) / _all_ft_tcs_ib * 100)
+                            if _all_ft_tcs_ib else 0
+                        )
+                        _all_ft_scope  = _all_vwap_ft.get(
+                            "scope", f"All tickers, {_bt_date}\u2013{_bt_end_date}"
+                        )
+                        _det_cols = list(_detail_df.columns)
+                        _det_lbl  = _det_cols[0]
+                        _det_val  = _det_cols[1] if len(_det_cols) > 1 else _det_cols[0]
+                        def _det_ft_row(lbl, val, _dc=_det_cols, _dl=_det_lbl, _dv=_det_val):
+                            _r = {c: "" for c in _dc}
+                            _r[_dl] = lbl
+                            _r[_dv] = val
+                            return _r
+                        _det_funnel_rows = [
+                            {c: "" for c in _det_cols},
+                            _det_ft_row("--- VWAP ENTRY FILTER FUNNEL ---", _all_ft_scope),
+                            _det_ft_row(
+                                "Pass TCS\u226550 + IB filter",
+                                f"{_all_ft_tcs_ib:,}",
+                            ),
+                            _det_ft_row(
+                                "Pass VWAP alignment (qualifying signals)",
+                                f"{_all_ft_vwap:,}",
+                            ),
+                            _det_ft_row(
+                                "VWAP filter rate",
+                                f"{_all_ft_pct}% filtered out by VWAP misalignment",
+                            ),
+                            _det_ft_row(
+                                "IB threshold used",
+                                f"{_all_vwap_ft.get('ib_threshold', '?')}%",
+                            ),
+                        ]
+                        _detail_df = _pd_bt.concat(
+                            [_detail_df, _pd_bt.DataFrame(_det_funnel_rows)],
+                            ignore_index=True,
+                        )
+
                     # ── Build two-sheet XLSX (Detail + Summary) ───────────────
                     import io as _io_bt
                     _xlsx_buf = _io_bt.BytesIO()

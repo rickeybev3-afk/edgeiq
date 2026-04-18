@@ -8852,7 +8852,12 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
         return pd.DataFrame()
 
 
-def get_backtest_pace_target(user_id: str = "") -> dict:
+def get_backtest_pace_target(
+    user_id: str = "",
+    ticker: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> dict:
     """Compute the live-filter pace target from backtest_sim_runs.
 
     Applies the same entry-quality filter stack used by the live paper-trader
@@ -8870,6 +8875,11 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
           pre-date vwap_at_ib logging fall through and are still counted,
           preserving backward compatibility with pre-vwap batch runs)
 
+    Optional filters:
+        ticker     – restrict to a single ticker (case-insensitive)
+        start_date – restrict to sim_date >= start_date (ISO string, e.g. "2024-01-01")
+        end_date   – restrict to sim_date <= end_date  (ISO string)
+
     Rows are fetched via offset pagination so there is no hard row-cap; the
     function always reflects the full table regardless of dataset size.
 
@@ -8883,18 +8893,37 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         tcs_ib_count – rows passing TCS≥50 + IB < threshold (before VWAP gate)
         vwap_count   – rows passing all three filters (same as count)
         ib_threshold – the IB range % threshold used for this computation
+        scope        – human-readable description of the active filters
         is_fallback  – True when no data exists and defaults are returned
 
     Falls back to {"per_day": 0.81, "per_year": 202, "is_fallback": True}
     on any error or when the table has no qualifying rows.
     """
     _ib_threshold = load_ib_range_pct_threshold()
+
+    # Build a human-readable scope label for CSV/Excel annotations
+    _scope_parts: list = []
+    if ticker:
+        _scope_parts.append(f"{ticker.upper()} only")
+    else:
+        _scope_parts.append("All tickers")
+    if start_date and end_date and start_date == end_date:
+        _scope_parts.append(start_date)
+    elif start_date and end_date:
+        _scope_parts.append(f"{start_date}\u2013{end_date}")
+    elif start_date:
+        _scope_parts.append(f"from {start_date}")
+    elif end_date:
+        _scope_parts.append(f"to {end_date}")
+    _scope = ", ".join(_scope_parts)
+
     _default: dict = {
         "count": 0, "bdays": 0,
         "per_day": 0.81, "per_year": 202,
         "min_date": "", "max_date": "",
         "tcs_ib_count": 0, "vwap_count": 0,
         "ib_threshold": _ib_threshold,
+        "scope": _scope,
         "is_fallback": True,
     }
     if not supabase:
@@ -8913,6 +8942,12 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
             )
             if user_id:
                 q = q.eq("user_id", user_id)
+            if ticker:
+                q = q.eq("ticker", ticker.upper())
+            if start_date:
+                q = q.gte("sim_date", start_date)
+            if end_date:
+                q = q.lte("sim_date", end_date)
             _chunk = q.range(_offset, _offset + _PAGE - 1).execute().data or []
             _all_rows.extend(_chunk)
             if len(_chunk) < _PAGE:
@@ -8996,6 +9031,7 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
             "tcs_ib_count":  _tcs_ib_count,
             "vwap_count":    _cnt,
             "ib_threshold":  _ib_threshold,
+            "scope":         _scope,
             "is_fallback":   False,
         }
     except Exception as _bpt_err:
