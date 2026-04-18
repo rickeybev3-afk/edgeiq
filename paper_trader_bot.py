@@ -1210,9 +1210,11 @@ _TRAILING_STOP_STOPOUT_ALERTED: set = set()
 def _restore_trailing_stop_guard() -> None:
     """Re-populate _TRAILING_STOP_ACTIVATED from DB on startup.
 
-    Queries paper_trades for today's rows that already have trail_activated=TRUE.
-    This means a bot restart won't re-fire trail placement on trades where a
-    trailing stop was already placed earlier in the same session.
+    Queries paper_trades for today's rows that already have trail_activated=TRUE
+    AND win_loss IS NULL (i.e. the position is still open).  Excluding rows that
+    have already been closed (win_loss patched) ensures that a same-day re-entry
+    on the same ticker is not incorrectly blocked on restart — only genuinely
+    active trailing stops are restored.
 
     Silently skips if the trail_activated column doesn't exist yet (migration not
     yet applied) so the bot continues to function without it.
@@ -1228,6 +1230,7 @@ def _restore_trailing_stop_guard() -> None:
             .eq("user_id", USER_ID)
             .eq("trade_date", today_str)
             .eq("trail_activated", True)
+            .is_("win_loss", "null")
             .execute()
         ).data or []
         for row in rows:
@@ -1517,6 +1520,10 @@ def _monitor_trailing_stops() -> None:
                             + (f" | {pnl_r:+.2f}R" if pnl_r is not None else "")
                         )
 
+                        # Capture S/R context before the DB-patch block so it is
+                        # still available for the alert even if the guard is cleared.
+                        sr_ctx = _TRAILING_STOP_SR_CONTEXT.get(guard_key)
+
                         order_id = row.get("alpaca_order_id")
                         try:
                             if order_id:
@@ -1536,6 +1543,20 @@ def _monitor_trailing_stops() -> None:
                                 f"{wl} | exit={exit_fill:.4f} | ${pnl_dollars:+.2f}"
                                 + (f" | {pnl_r:+.2f}R" if pnl_r is not None else "")
                             )
+                            # ── Clear guard only after DB patch confirms stop-out ──
+                            # Fills matched and win_loss is now written.  Remove the
+                            # guard key from all module-level sets so that a same-day
+                            # re-entry on this ticker can activate its own trailing
+                            # stop.  Clearing is intentionally skipped if fills are
+                            # unavailable or the DB update fails — the guard stays
+                            # in place and the 3:30 PM sweep will close the row.
+                            _TRAILING_STOP_ACTIVATED.discard(guard_key)
+                            _TRAILING_STOP_SR_CONTEXT.pop(guard_key, None)
+                            _TRAILING_STOP_STOPOUT_ALERTED.discard(guard_key)
+                            log.info(
+                                f"[TrailingStop] {ticker} — guard cleared after confirmed "
+                                f"stop-out patch; same-day re-entry eligible for trailing stop."
+                            )
                         except Exception as _patch_err:
                             log.warning(
                                 f"[TrailingStop] {ticker} — paper_trades patch failed: {_patch_err}"
@@ -1546,7 +1567,6 @@ def _monitor_trailing_stops() -> None:
                         r_line   = (
                             f"\nRealized R: <b>{pnl_r:+.2f}R</b>" if pnl_r is not None else ""
                         )
-                        sr_ctx  = _TRAILING_STOP_SR_CONTEXT.get(guard_key)
                         if sr_ctx:
                             sr_line = (
                                 f"\n🎯 S/R wall: {sr_ctx['level_type']} @ "
