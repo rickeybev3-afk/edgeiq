@@ -10794,7 +10794,9 @@ def ensure_paper_trades_table() -> bool:
 # Formula version stamped on every sim row by _sim_patch().
 # Bump this string whenever compute_trade_sim() logic changes so that
 # --skip-existing automatically re-processes stale (old-version) rows.
-SIM_VERSION = "v3"  # bumped 2026-04-18: intraday MFE/MAE bracket sim (apples-to-apples with adaptive targets)
+SIM_VERSION = "v3"  # v3 = adaptive target_r per row (EOD close, awaiting clean MFE re-backfill)
+# SIM_VERSION = "v4"  # v4 = intraday bracket sim: MAE>=1R→stop, MFE>=target_r→exit at target
+#                     # Enable once backfill_mfe_mae.py --force-recompute completes (2026-04-18 fix)
 
 # Formula version stamped on every row that writes eod_pnl_r.
 # Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
@@ -10874,6 +10876,20 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     false_up    = bool(r.get("false_break_up", False))
     false_dn    = bool(r.get("false_break_down", False))
 
+    # v4: intraday bracket sim using post-IB MFE/MAE (re-backfilled with hm > entry_hm fix).
+    # MAE >= 1.0R → stop was hit before target; MFE >= target_r → bracket take-profit fired.
+    # Only active when SIM_VERSION == "v4" AND clean MFE/MAE data is present.
+    _mfe_r = r.get("mfe")
+    _mae_r = r.get("mae")
+    _use_bracket_sim = (
+        SIM_VERSION == "v4"
+        and _mfe_r is not None and _mae_r is not None
+        and float(_mfe_r) >= 0 and float(_mae_r) >= 0   # exclude sentinel -9999 rows
+    )
+    if _use_bracket_sim:
+        _mfe_r = float(_mfe_r)
+        _mae_r = float(_mae_r)
+
     NO_TRADE = {"sim_outcome": "no_trade",  "pnl_r_sim": None, "pnl_pct_sim": None,
                 "entry_price_sim": None, "stop_price_sim": None,
                 "stop_dist_pct": None, "target_price_sim": None}
@@ -10901,9 +10917,26 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
         target        = entry + target_r * ib_range
         stop_dist_pct = ib_range / entry * 100
 
-        # ── EOD close for realistic P&L ──────────────────────────────────────
-        # NOTE: Intraday bracket sim (MFE/MAE) is deferred — backtest MAE data
-        # requires re-backfill with post-IB-only bars before it can be trusted.
+        # ── v4: Intraday bracket sim (clean post-IB MFE/MAE) ─────────────────
+        if _use_bracket_sim:
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            if _mfe_r >= target_r:
+                pnl_pct_hit = target_r * stop_dist_pct
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(pnl_pct_hit, 2), "pnl_r_sim": round(target_r, 3),
+                    "sim_outcome": "hit_target", "sim_version": SIM_VERSION,
+                }
+            # Neither fired — position open at EOD, fall through
+
+        # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
             close_price = float(close_price)
             if close_price <= ib_low:
@@ -10934,7 +10967,26 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
         target        = entry - target_r * ib_range
         stop_dist_pct = ib_range / entry * 100
 
-        # ── EOD close ─────────────────────────────────────────────────────────
+        # ── v4: Intraday bracket sim ──────────────────────────────────────────
+        if _use_bracket_sim:
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            if _mfe_r >= target_r:
+                pnl_pct_hit = target_r * stop_dist_pct
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(pnl_pct_hit, 2), "pnl_r_sim": round(target_r, 3),
+                    "sim_outcome": "hit_target", "sim_version": SIM_VERSION,
+                }
+            # Neither fired — position open at EOD, fall through
+
+        # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
             close_price = float(close_price)
             if close_price >= ib_high:

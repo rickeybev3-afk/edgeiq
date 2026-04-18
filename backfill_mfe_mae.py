@@ -5,7 +5,8 @@ Backfills mfe (max favorable excursion) and mae (max adverse excursion)
 in R-units for all backtest_sim_runs rows that have entry_price_sim and
 stop_price_sim populated.
 
-Pulls 1-min Alpaca historical bars per (ticker, date) combo, then computes:
+Pulls 1-min Alpaca historical bars per (ticker, date) combo, then computes
+using ONLY bars AFTER the IB close bar (strictly > entry_time, not >=):
   Long:  MFE = (max_high - entry) / stop_dist
          MAE = (entry - min_low)  / stop_dist
   Short: MFE = (entry - min_low)  / stop_dist
@@ -15,8 +16,18 @@ Values are stored as positive R multiples.
 MFE of 2.0 means price moved 2R in your favor before reversing/EOD.
 MAE of 0.5 means price moved 0.5R against you at worst.
 
-Fully resumable — skips rows where mfe IS NOT NULL.
+Fully resumable — skips rows where mfe IS NOT NULL (unless --force-recompute).
 Safe to run multiple times or kill/restart.
+
+Usage:
+  python backfill_mfe_mae.py                   # incremental (null rows only)
+  python backfill_mfe_mae.py --force-recompute  # recompute ALL rows (overwrites existing)
+
+IMPORTANT — 2026-04-18 bug fix:
+  Original code used hm >= entry_hm which included the IB close bar itself.
+  That bar's low == IB_LOW by definition → every trade appeared to have MAE = 1.0
+  (stop-hit), inflating stop-out rate to ~64%.  Fixed to hm > entry_hm.
+  Run with --force-recompute to overwrite the contaminated values.
 """
 
 import os
@@ -173,19 +184,24 @@ def _compute_mfe_mae(bars: list, entry_price: float, stop_price: float, directio
     return round(mfe_r, 4), round(mae_r, 4)
 
 
-def _fetch_pending_rows(offset: int) -> list:
-    """Fetch a page of rows that need MFE/MAE computed."""
+def _fetch_pending_rows(offset: int, force: bool = False) -> list:
+    """Fetch a page of rows that need MFE/MAE computed.
+
+    force=True: fetch ALL rows with entry/stop populated (overwrites existing values).
+    force=False (default): only fetch rows where mfe IS NULL.
+    """
     from backend import supabase
-    r = (
+    q = (
         supabase.table("backtest_sim_runs")
         .select("id,ticker,sim_date,entry_price_sim,stop_price_sim,target_price_sim,predicted,breakout_time_est,ib_close_time_est")
-        .is_("mfe", "null")
         .not_.is_("entry_price_sim", "null")
         .not_.is_("stop_price_sim", "null")
         .order("sim_date")
         .range(offset, offset + BATCH_SIZE - 1)
-        .execute()
     )
+    if not force:
+        q = q.is_("mfe", "null")
+    r = q.execute()
     return r.data or []
 
 
@@ -200,17 +216,26 @@ def _upsert_results(updates: list):
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    log.info("=== MFE/MAE Backfill starting ===")
+    force = "--force-recompute" in sys.argv
+    log.info(f"=== MFE/MAE Backfill starting === (mode: {'FORCE all rows' if force else 'incremental null-only'})")
 
     from backend import supabase
 
     # Total pending count
-    count_r = supabase.table("backtest_sim_runs").select("id", count="exact").is_("mfe", "null").not_.is_("entry_price_sim", "null").not_.is_("stop_price_sim", "null").execute()
+    count_q = (
+        supabase.table("backtest_sim_runs")
+        .select("id", count="exact")
+        .not_.is_("entry_price_sim", "null")
+        .not_.is_("stop_price_sim", "null")
+    )
+    if not force:
+        count_q = count_q.is_("mfe", "null")
+    count_r = count_q.execute()
     total_pending = count_r.count or 0
     log.info(f"Rows to process: {total_pending:,}")
 
     if total_pending == 0:
-        log.info("Nothing to do — all rows already have MFE/MAE. Exiting.")
+        log.info("Nothing to do. Exiting.")
         return
 
     processed   = 0
@@ -221,7 +246,7 @@ def main():
     offset = 0
     while True:
         try:
-            rows = _fetch_pending_rows(offset)
+            rows = _fetch_pending_rows(offset, force=force)
         except Exception as e:
             log.error(f"Supabase fetch error at offset {offset}: {e}")
             time.sleep(5)
