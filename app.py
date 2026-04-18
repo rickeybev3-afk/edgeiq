@@ -21600,14 +21600,14 @@ ALTER TABLE backtest_sim_runs
         _sim_df["scan_type"] = _sim_df["scan_type"].fillna("morning")
 
         # ── Bot filter: same gate as the live paper-trader bot ───────────────
-        # TCS >= 50, IB range < 10%, VWAP aligned (backward compat — rows
+        # TCS >= 50, IB range < configured threshold, VWAP aligned (backward compat — rows
         # missing vwap_at_ib pass the gate, identical to get_backtest_pace_target)
         _bot_df = _sim_df.copy()
         if "tcs" in _bot_df.columns:
             _bot_df = _bot_df[_bot_df["tcs"].fillna(0) >= 50]
         if "ib_range_pct" in _bot_df.columns:
             _bot_df = _bot_df[
-                pd.to_numeric(_bot_df["ib_range_pct"], errors="coerce").fillna(999) < 10
+                pd.to_numeric(_bot_df["ib_range_pct"], errors="coerce").fillna(999) < _cached_load_ib_range_pct_threshold()
             ]
         _bot_has_vwap_cols = all(
             c in _bot_df.columns for c in ("vwap_at_ib", "ib_high", "ib_low", "predicted")
@@ -24284,7 +24284,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             _bts_bot_df = _bts_bot_df[_bts_bot_df["tcs"].fillna(0) >= 50]
         if "ib_range_pct" in _bts_bot_df.columns:
             _bts_bot_df = _bts_bot_df[
-                pd.to_numeric(_bts_bot_df["ib_range_pct"], errors="coerce").fillna(999) < 10
+                pd.to_numeric(_bts_bot_df["ib_range_pct"], errors="coerce").fillna(999) < _cached_load_ib_range_pct_threshold()
             ]
         _bts_bot_has_vwap_cols = all(
             c in _bts_bot_df.columns for c in ("vwap_at_ib", "ib_high", "ib_low", "predicted")
