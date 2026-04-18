@@ -146,6 +146,29 @@ _HEARTBEAT_ALERT_STATE_FILE = os.getenv(
 )
 
 _DEFAULT_COOLDOWN_HOURS = 23
+_DEFAULT_SUPPRESSION_ALERT_NIGHTS = 5
+
+
+def _get_suppression_threshold() -> int:
+    """Return the consecutive-failure night count that triggers an escalation alert.
+
+    Read from CACHE_SUPPRESSION_ALERT_NIGHTS (default 5).  Set to 0 to disable
+    escalation alerts entirely.
+    """
+    raw = os.getenv("CACHE_SUPPRESSION_ALERT_NIGHTS", "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v >= 0:
+                return v
+        except ValueError:
+            log.warning(
+                "CACHE_SUPPRESSION_ALERT_NIGHTS='%s' is not a valid integer; "
+                "using default %d.",
+                raw,
+                _DEFAULT_SUPPRESSION_ALERT_NIGHTS,
+            )
+    return _DEFAULT_SUPPRESSION_ALERT_NIGHTS
 
 
 def _get_cooldown_hours() -> float:
@@ -509,6 +532,89 @@ def _send_email_via_smtp(
         log.warning("SMTP send error: %s", exc)
 
 
+# ── Suppression-escalation alert ─────────────────────────────────────────────
+
+
+def _send_suppression_escalation_alert(alert_key: str, consecutive: int) -> None:
+    """Send a high-priority escalation alert when a view exceeds the suppression threshold.
+
+    Called whenever consecutive_failures reaches a multiple of the configured
+    threshold (CACHE_SUPPRESSION_ALERT_NIGHTS, default 5), e.g. at nights 5, 10, 15 …
+    The alert is separate from the nightly summary so operators receive an
+    out-of-band notification even if they are not actively reading the summary.
+    """
+    threshold = _get_suppression_threshold()
+    timestamp = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
+
+    plain_msg = (
+        f"[EdgeIQ] ESCALATION: cache '{alert_key}' suppressed "
+        f"{consecutive} consecutive nights\n"
+        f"Time: {timestamp}\n"
+        f"This view has been silently failing for {consecutive} nights in a row "
+        f"(escalation threshold: {threshold} nights).\n"
+        f"Immediate investigation required.\n"
+        f"Set CACHE_SUPPRESSION_ALERT_NIGHTS to change the threshold."
+    )
+    html_msg = (
+        f"\U0001f6a8 <b>EdgeIQ — Cache suppression ESCALATION</b>\n"
+        f"Time: {timestamp}\n"
+        f"View: <b>{html.escape(alert_key)}</b>\n"
+        f"This cache has been silently failing for <b>{consecutive} consecutive "
+        f"nights</b> (threshold: {threshold}).\n"
+        f"<b>Immediate investigation required.</b>\n"
+        f"<i>Set CACHE_SUPPRESSION_ALERT_NIGHTS to change the threshold.</i>"
+    )
+    email_subject = (
+        f"[EdgeIQ] ESCALATION: cache '{alert_key}' suppressed "
+        f"{consecutive} consecutive nights"
+    )
+    email_html = (
+        f"<p>\U0001f6a8 <strong>EdgeIQ &mdash; Cache suppression ESCALATION</strong></p>"
+        f"<p><strong>Time:</strong> {timestamp}</p>"
+        f"<p><strong>View:</strong> <code>{html.escape(alert_key)}</code></p>"
+        f"<p>This cache has been silently failing for "
+        f"<strong>{consecutive} consecutive nights</strong> "
+        f"(escalation threshold: {threshold} nights).</p>"
+        f"<p><strong>Immediate investigation required.</strong></p>"
+        f"<p><em>Set CACHE_SUPPRESSION_ALERT_NIGHTS to change the threshold.</em></p>"
+    )
+
+    log.warning(
+        "Suppression escalation: '%s' has failed %d consecutive nights "
+        "(threshold: %d) — sending high-priority alert.",
+        alert_key,
+        consecutive,
+        threshold,
+    )
+    _send_slack(plain_msg)
+    _send_telegram(html_msg)
+    _send_email_alert(email_subject, plain_msg, email_html)
+
+
+def _maybe_send_suppression_escalation(alert_key: str, key_state: dict) -> None:
+    """Fire a high-priority escalation if consecutive_failures has crossed a threshold multiple.
+
+    Reads CACHE_SUPPRESSION_ALERT_NIGHTS (default 5).  The escalation is
+    triggered whenever consecutive_failures equals a positive multiple of that
+    threshold — i.e. at nights 5, 10, 15 … — so operators receive repeated
+    reminders rather than a single one-time alert.
+
+    Semantic note: consecutive_failures is incremented on *every* failure call,
+    whether or not the regular per-view alert was suppressed by the 23-hour
+    cooldown.  This is intentional — night 1 is a real failure too, and the
+    escalation should reflect how many nights in a row the view has been broken,
+    not just how many times the regular notification was suppressed.
+
+    Pass threshold=0 (via the env var) to disable escalation entirely.
+    """
+    threshold = _get_suppression_threshold()
+    if threshold <= 0:
+        return
+    consecutive = int(key_state.get("consecutive_failures") or 0)
+    if consecutive >= threshold and consecutive % threshold == 0:
+        _send_suppression_escalation_alert(alert_key, consecutive)
+
+
 # ── Cache-failure alert dispatcher ───────────────────────────────────────────
 
 
@@ -560,6 +666,9 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
                         error_msg,
                     )
                     _write_alert_state(state)
+                    # Even when the regular alert is suppressed, check if the
+                    # consecutive-failure count has crossed the escalation threshold.
+                    _maybe_send_suppression_escalation(alert_key, key_state)
                     return
             except Exception as _parse_err:
                 log.warning(
@@ -602,6 +711,8 @@ def _send_cache_failure_alert(error_msg: str, alert_key: str = "default") -> Non
     key_state["last_sent_utc"] = now_utc.isoformat()
     state[alert_key] = key_state
     _write_alert_state(state)
+    # Also check escalation on the first/fresh alert path.
+    _maybe_send_suppression_escalation(alert_key, key_state)
 
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -963,6 +1074,20 @@ def main():
             "No alert channels configured — cache-refresh failures will only appear in logs. "
             "Set SLACK_WEBHOOK_URL, TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID, or "
             "SENDGRID_API_KEY (or SMTP_HOST)+ALERT_EMAIL_FROM+ALERT_EMAIL_TO to enable alerts."
+        )
+
+    suppression_threshold = _get_suppression_threshold()
+    if suppression_threshold > 0:
+        log.info(
+            "Suppression-escalation alerts enabled: high-priority alert fires "
+            "when a view fails %d+ consecutive nights (set CACHE_SUPPRESSION_ALERT_NIGHTS "
+            "to change, or 0 to disable).",
+            suppression_threshold,
+        )
+    else:
+        log.info(
+            "Suppression-escalation alerts disabled "
+            "(CACHE_SUPPRESSION_ALERT_NIGHTS=0)."
         )
 
     # Run backfill immediately on startup to catch any rows written since last run.
