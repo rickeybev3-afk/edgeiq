@@ -15328,6 +15328,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     borderpad=4,
                                     bordercolor="rgba(255,152,0,0.4)",
                                     borderwidth=1,
+                                    hovertext="⬇ Click to jump to filter controls",
+                                    hoverlabel=dict(bgcolor="#ff9800", font=dict(color="#000", size=11)),
                                 )
                             _mini_fig.update_layout(
                                 height=240,
@@ -15360,6 +15362,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 c if c.isalnum() else "_" for c in _tk_name
                             )
                             _mini_eq_sentinel_id = "div-eq-sentinel-" + "".join(
+                                c if c.isalnum() else "-" for c in _tk_name
+                            )
+                            _meq_flt_anchor_id = "flt-anchor-meq-" + "".join(
                                 c if c.isalnum() else "-" for c in _tk_name
                             )
                             _mini_eq_hdr_c1, _mini_eq_hdr_c2 = st.columns([0.87, 0.13])
@@ -15414,6 +15419,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _meq_dates = _mini_div_data.get("trade_dates", [])
                             _meq_tcs   = _mini_div_data.get("trade_tcs", [])
                             _meq_has_meta = bool(_meq_dates or _meq_tcs)
+                            st.markdown(
+                                f'<div id="{_meq_flt_anchor_id}" style="height:0;overflow:hidden;"></div>',
+                                unsafe_allow_html=True,
+                            )
                             _meq_flt_cols = st.columns([1, 1, 1, 0.7])
                             with _meq_flt_cols[0]:
                                 _meq_flt_from = st.date_input(
@@ -15565,13 +15574,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 mime="text/csv",
                                 key=f"_dl_mini_eq_{_tk_name}",
                             )
-                            # ── JS: capture equity-only chart zoom range ───────────────
+                            # ── JS: capture equity-only chart zoom range + annotation click ──
                             import streamlit.components.v1 as _cmp_eq_zoom
                             _cmp_eq_zoom.html(f"""
 <script>
 (function() {{
     var _LS_KEY = {repr(_mini_eq_ls_key)};
     var _SENTINEL_ID = {repr(_mini_eq_sentinel_id)};
+    var _ANCHOR_ID = {repr(_meq_flt_anchor_id)};
     function _findEqChart() {{
         var sentinel = window.parent.document.getElementById(_SENTINEL_ID);
         if (!sentinel) return null;
@@ -15581,6 +15591,34 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if (allPlotly[i].getBoundingClientRect().top >= sTop) return allPlotly[i];
         }}
         return null;
+    }}
+    function _scrollToFilters() {{
+        var doc = window.parent.document;
+        var anchor = doc.getElementById(_ANCHOR_ID);
+        if (!anchor) return;
+        anchor.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+        var styleId = '_flt_ann_pulse_kf';
+        if (!doc.getElementById(styleId)) {{
+            var styleEl = doc.createElement('style');
+            styleEl.id = styleId;
+            styleEl.textContent = '@keyframes _fltAnnPulse {{0%,100%{{background:transparent}}' +
+                '35%{{background:rgba(255,152,0,0.22)}}}}';
+            doc.head.appendChild(styleEl);
+        }}
+        var next = anchor.nextElementSibling;
+        if (next) {{
+            next.style.borderRadius = '6px';
+            next.style.animation = '_fltAnnPulse 1.6s ease-out';
+            setTimeout(function() {{ next.style.animation = ''; }}, 1700);
+        }}
+    }}
+    function _makeCursorPointer(plotDiv) {{
+        var anns = plotDiv.querySelectorAll('.annotation-text-g');
+        anns.forEach(function(el) {{
+            if ((el.textContent || '').indexOf('\u2702\ufe0f') !== -1) {{
+                el.style.cursor = 'pointer';
+            }}
+        }});
     }}
     function _attachListener() {{
         var _pDiv = _findEqChart();
@@ -15601,6 +15639,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 }} catch(e) {{}}
             }}
         }});
+        _pDiv.on('plotly_clickannotation', function(ev) {{
+            if (ev && ev.annotation && typeof ev.annotation.text === 'string' &&
+                    ev.annotation.text.indexOf('\u2702\ufe0f') !== -1) {{
+                _scrollToFilters();
+            }}
+        }});
+        setTimeout(function() {{ _makeCursorPointer(_pDiv); }}, 200);
     }}
     setTimeout(_attachListener, 600);
 }})();
@@ -15712,6 +15757,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     borderpad=4,
                                     bordercolor="rgba(255,152,0,0.4)",
                                     borderwidth=1,
+                                    hovertext="⬇ Click to jump to filter controls",
+                                    hoverlabel=dict(bgcolor="#ff9800", font=dict(color="#000", size=11)),
                                 )
                             _mini_fig.update_layout(
                                 height=240,
@@ -15758,6 +15805,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 c if c.isalnum() else "_" for c in _tk_name
                             )
                             _mini_div_sentinel_id = "div-mini-sentinel-" + "".join(
+                                c if c.isalnum() else "-" for c in _tk_name
+                            )
+                            _mdiv_flt_anchor_id = "flt-anchor-mdiv-" + "".join(
                                 c if c.isalnum() else "-" for c in _tk_name
                             )
                             _mini_div_hdr_c1, _mini_div_hdr_c2 = st.columns([0.87, 0.13])
@@ -15818,6 +15868,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _mdiv_dates = _mini_div_data.get("trade_dates", [])
                             _mdiv_tcs   = _mini_div_data.get("trade_tcs", [])
                             _mdiv_has_meta = bool(_mdiv_dates or _mdiv_tcs)
+                            st.markdown(
+                                f'<div id="{_mdiv_flt_anchor_id}" style="height:0;overflow:hidden;"></div>',
+                                unsafe_allow_html=True,
+                            )
                             _mdiv_flt_cols = st.columns([1, 1, 1, 0.7])
                             with _mdiv_flt_cols[0]:
                                 _mdiv_flt_from = st.date_input(
@@ -16000,7 +16054,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 mime="text/csv",
                                 key=f"_dl_mini_div_{_tk_name}",
                             )
-                            # ── JS: attach relayout listener to this ticker's specific chart div ──
+                            # ── JS: attach relayout listener + annotation click to this chart div ──
                             # Uses the sentinel element to find the correct Plotly div deterministically,
                             # even when multiple ticker expanders are open simultaneously.
                             import streamlit.components.v1 as _cmp_div_zoom
@@ -16009,6 +16063,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 (function() {{
     var _LS_KEY = {repr(_mini_div_ls_key)};
     var _SENTINEL_ID = {repr(_mini_div_sentinel_id)};
+    var _ANCHOR_ID = {repr(_mdiv_flt_anchor_id)};
     function _findMiniChart() {{
         var sentinel = window.parent.document.getElementById(_SENTINEL_ID);
         if (!sentinel) return null;
@@ -16018,6 +16073,34 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if (allPlotly[i].getBoundingClientRect().top >= sTop) return allPlotly[i];
         }}
         return null;
+    }}
+    function _scrollToFilters() {{
+        var doc = window.parent.document;
+        var anchor = doc.getElementById(_ANCHOR_ID);
+        if (!anchor) return;
+        anchor.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+        var styleId = '_flt_ann_pulse_kf';
+        if (!doc.getElementById(styleId)) {{
+            var styleEl = doc.createElement('style');
+            styleEl.id = styleId;
+            styleEl.textContent = '@keyframes _fltAnnPulse {{0%,100%{{background:transparent}}' +
+                '35%{{background:rgba(255,152,0,0.22)}}}}';
+            doc.head.appendChild(styleEl);
+        }}
+        var next = anchor.nextElementSibling;
+        if (next) {{
+            next.style.borderRadius = '6px';
+            next.style.animation = '_fltAnnPulse 1.6s ease-out';
+            setTimeout(function() {{ next.style.animation = ''; }}, 1700);
+        }}
+    }}
+    function _makeCursorPointer(plotDiv) {{
+        var anns = plotDiv.querySelectorAll('.annotation-text-g');
+        anns.forEach(function(el) {{
+            if ((el.textContent || '').indexOf('\u2702\ufe0f') !== -1) {{
+                el.style.cursor = 'pointer';
+            }}
+        }});
     }}
     function _attachListener() {{
         var _pDiv = _findMiniChart();
@@ -16038,6 +16121,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 }} catch(e) {{}}
             }}
         }});
+        _pDiv.on('plotly_clickannotation', function(ev) {{
+            if (ev && ev.annotation && typeof ev.annotation.text === 'string' &&
+                    ev.annotation.text.indexOf('\u2702\ufe0f') !== -1) {{
+                _scrollToFilters();
+            }}
+        }});
+        setTimeout(function() {{ _makeCursorPointer(_pDiv); }}, 200);
     }}
     setTimeout(_attachListener, 600);
 }})();
