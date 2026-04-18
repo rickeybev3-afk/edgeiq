@@ -12158,6 +12158,27 @@ def _maybe_telegram_playbook_alert(
         pass
 
 
+def validate_tg_bot_token(token: str) -> dict | None:
+    """Call the Telegram getMe API to verify *token* is a live, working bot.
+
+    Returns the bot info dict (keys: id, username, first_name, …) on success,
+    or None on any failure (bad token, network error, etc.).
+    """
+    if not token:
+        return None
+    try:
+        _resp = requests.get(
+            f"https://api.telegram.org/bot{token}/getMe",
+            timeout=8,
+        )
+        _data = _resp.json()
+        if _data.get("ok") and _data.get("result"):
+            return _data["result"]
+    except Exception:
+        pass
+    return None
+
+
 def send_divergence_alert(
     flagged_rows: list,
     threshold: float,

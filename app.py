@@ -5724,6 +5724,17 @@ with st.sidebar:
                     _div_errs.append("Telegram Chat ID must be a numeric value (e.g. -1001234567890).")
             if _div_dc_clean and not _div_dc_clean.startswith("https://discord.com/api/webhooks/"):
                 _div_errs.append("Discord Webhook URL must start with https://discord.com/api/webhooks/")
+            _div_tg_bot_name = None
+            if _div_tg_token_clean:
+                with st.spinner("Validating Telegram bot token…"):
+                    _div_bot_info = validate_tg_bot_token(_div_tg_token_clean)
+                if _div_bot_info is None:
+                    _div_errs.append(
+                        "Could not connect to Telegram with that bot token. "
+                        "Please check the token and try again."
+                    )
+                else:
+                    _div_tg_bot_name = _div_bot_info.get("username") or _div_bot_info.get("first_name", "")
             if _div_errs:
                 for _div_err in _div_errs:
                     st.error(_div_err, icon="⚠️")
@@ -5740,7 +5751,10 @@ with st.sidebar:
                 st.session_state["_pref_div_tg_chat_id"] = _div_tg_clean
                 st.session_state["_pref_div_tg_token"] = _div_tg_token_clean
                 st.session_state["_pref_div_discord_webhook"] = _div_dc_clean
-                st.success("Divergence alert recipients saved.", icon="✅")
+                if _div_tg_bot_name:
+                    st.success(f"Connected to @{_div_tg_bot_name} — recipients saved.", icon="✅")
+                else:
+                    st.success("Divergence alert recipients saved.", icon="✅")
         else:
             st.warning("Sign in to save per-user alert recipients.", icon="⚠️")
 
