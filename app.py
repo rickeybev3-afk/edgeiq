@@ -23269,6 +23269,62 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             if _bts_df.empty:
                 st.warning("No backtest runs found in the selected date range — try widening the filter.")
 
+        # ── Trades / Day pace row (mirrors paper trades section) ────────────────
+        _BTS_TARGET_PER_DAY  = 0.81   # best-only backtest target
+        _BTS_TARGET_PER_YEAR = 202    # 0.81 × 250 trading days
+
+        _bts_total_n = len(_bts_df)
+        _bts_td_first = None
+        _bts_td_last  = None
+        if not _bts_df.empty and "trade_date" in _bts_df.columns:
+            _bts_td_vals = pd.to_datetime(_bts_df["trade_date"], errors="coerce").dropna()
+            if not _bts_td_vals.empty:
+                try:
+                    _bts_td_first = _bts_td_vals.min().date()
+                    _bts_td_last  = _bts_td_vals.max().date()
+                except Exception:
+                    _bts_td_first = _bts_td_last = None
+
+        if _bts_td_first:
+            import pandas as _pd_bts_biz
+            _bts_bdays        = max(1, len(_pd_bts_biz.bdate_range(str(_bts_td_first), str(_bts_td_last))))
+            _bts_trades_pd    = round(_bts_total_n / _bts_bdays, 2)
+            _bts_annual_pace  = round(_bts_trades_pd * 250)
+            _bts_pace_color   = (
+                "#66bb6a" if _bts_trades_pd >= _BTS_TARGET_PER_DAY * 0.7 else
+                "#ef6c00" if _bts_trades_pd >= _BTS_TARGET_PER_DAY * 0.4 else
+                "#90a4ae"
+            )
+            _bts_pace_label = f"{_bts_total_n} trades / {_bts_bdays} trading days"
+            _bts_pace_sub   = f"~{_bts_annual_pace}/yr pace  ·  target {_BTS_TARGET_PER_DAY}/day ({_BTS_TARGET_PER_YEAR}/yr)"
+        else:
+            _bts_trades_pd   = 0.0
+            _bts_annual_pace = 0
+            _bts_pace_color  = "#90a4ae"
+            _bts_pace_label  = "no sim runs yet"
+            _bts_pace_sub    = f"target {_BTS_TARGET_PER_DAY}/day ({_BTS_TARGET_PER_YEAR}/yr)"
+
+        st.markdown(
+            f'<div style="background:#151f2e;border:1px solid #1e2a3a;border-radius:8px;'
+            f'padding:10px 18px;margin-top:10px;display:flex;align-items:center;gap:24px;">'
+            f'<div style="min-width:140px;">'
+            f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Avg Trades / Day</div>'
+            f'<div style="font-size:28px;font-weight:700;color:{_bts_pace_color};line-height:1.1;">'
+            f'{_bts_trades_pd:.2f}<span style="font-size:14px;color:#546e7a;font-weight:400;"> /day</span></div>'
+            f'</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:13px;color:#cfd8dc;">{_bts_pace_label}</div>'
+            f'<div style="font-size:11px;color:#546e7a;margin-top:2px;">{_bts_pace_sub}</div>'
+            f'</div>'
+            f'<div style="text-align:right;min-width:100px;">'
+            f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Annual Pace</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{_bts_pace_color};">{_bts_annual_pace}'
+            f'<span style="font-size:12px;color:#546e7a;font-weight:400;">/yr</span></div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
         import altair as _alt_bt
 
         # ── Load pre-aggregated Ladder P&L summary (mv_tiered_pnl_summary) ──────
