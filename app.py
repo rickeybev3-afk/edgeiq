@@ -15539,6 +15539,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         "🟢 ≥ 70% · 🟡 40–69% · 🔴 < 40%"
                                     ),
                                 ),
+                                "Best TCS": st.column_config.TextColumn(
+                                    "**Best TCS**",
+                                ),
                             },
                         )
                         # ── R-stats summary block for sweep summary CSV ──────────
