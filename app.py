@@ -6182,10 +6182,37 @@ with st.sidebar:
                     _nr_m = (_nr_elapsed_int % 3600) // 60
                     _nr_s = _nr_elapsed_int % 60
                     _nr_dur_str = f"{_nr_h}h {_nr_m}m {_nr_s}s"
+                _nr_finished_at = _nr_info.get("finished_at")
+                if _nr_finished_at:
+                    import datetime as _nr_dt
+                    _nr_fin_utc = _nr_dt.datetime.fromtimestamp(_nr_finished_at, tz=_nr_dt.timezone.utc)
+                    try:
+                        import zoneinfo as _nr_zi
+                        _nr_et_tz = _nr_zi.ZoneInfo("America/New_York")
+                    except Exception:
+                        _nr_et_tz = _nr_dt.timezone(
+                            _nr_dt.timedelta(hours=-5), "ET"
+                        )
+                    _nr_fin_et = _nr_fin_utc.astimezone(_nr_et_tz)
+                    _nr_time_str = _nr_fin_et.strftime("%I:%M %p ET").lstrip("0") or _nr_fin_et.strftime("%I:%M %p ET")
+                    _nr_ago_secs = max(0, int(_nr_dt.datetime.now(_nr_dt.timezone.utc).timestamp() - _nr_finished_at))
+                    if _nr_ago_secs < 60:
+                        _nr_ago_str = "just now"
+                    elif _nr_ago_secs < 3600:
+                        _nr_ago_str = f"{_nr_ago_secs // 60}m ago"
+                    elif _nr_ago_secs < 86400:
+                        _nr_ago_str = f"{_nr_ago_secs // 3600}h ago"
+                    else:
+                        _nr_ago_str = f"{_nr_ago_secs // 86400}d ago"
+                    _nr_when_str = f"Completed at {_nr_time_str} ({_nr_ago_str})"
+                else:
+                    _nr_when_str = None
                 if _nr_info.get("success", True):
                     st.success(f"✅ Refresh complete in {_nr_dur_str}")
                 else:
                     st.warning(f"⚠️ Last refresh failed (ran for {_nr_dur_str})")
+                if _nr_when_str:
+                    st.caption(_nr_when_str)
         except Exception:
             pass
         with st.expander("📋 View SQL", expanded=False):
