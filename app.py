@@ -6322,6 +6322,7 @@ with st.sidebar:
                     else:
                         # Step 1 running but no PROGRESS line yet
                         st.caption("**Step 1 of 2**")
+                        st.progress(0.0)
                         _s1_elapsed = _compute_elapsed(_BACKFILL_START_TIME)
                         _s1_caption = "📈 Fetching tickers…  ·  ⏱ "
                         _s1_caption += f"{_s1_elapsed}  ·  estimating…" if _s1_elapsed else "estimating…"
