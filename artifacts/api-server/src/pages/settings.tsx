@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useHashScroll } from "@/hooks/useHashScroll";
 
 type TradingMode = "paper" | "live";
@@ -1007,7 +1007,9 @@ function SubscriberRow({
 }) {
   const [enabled, setEnabled] = useState(subscriber.credential_alerts_enabled);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayName = subscriber.tg_name || subscriber.user_id;
   const hasName = Boolean(subscriber.tg_name);
 
@@ -1027,6 +1029,11 @@ function SubscriberRow({
     const next = !enabled;
     setEnabled(next);
     setError(null);
+    setSaved(false);
+    if (savedTimerRef.current !== null) {
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = null;
+    }
     setSaving(true);
     try {
       const res = await fetch("/api/subscribers/credential-alerts", {
@@ -1039,6 +1046,11 @@ function SubscriberRow({
         throw new Error(data.error || `Server error ${res.status}`);
       }
       onToggle(subscriber.user_id, next);
+      setSaved(true);
+      savedTimerRef.current = setTimeout(() => {
+        setSaved(false);
+        savedTimerRef.current = null;
+      }, 2000);
     } catch (err: unknown) {
       setEnabled(!next);
       setError(err instanceof Error ? err.message : "Failed to save.");
@@ -1102,6 +1114,17 @@ function SubscriberRow({
           flexShrink: 0,
         }}
       >
+        {saved && (
+          <span
+            style={{
+              fontSize: "11px",
+              color: "#4ade80",
+              fontWeight: 600,
+            }}
+          >
+            ✓ Saved
+          </span>
+        )}
         <span
           style={{
             fontSize: "11px",
