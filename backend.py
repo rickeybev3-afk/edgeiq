@@ -8042,6 +8042,72 @@ CREATE UNIQUE INDEX IF NOT EXISTS mv_paper_tiered_pnl_summary_uidx
 """
 
 
+# ── skip_reason one-time data backfill ────────────────────────────────────────
+def backfill_paper_trades_skip_reason(user_id: str) -> int:
+    """One-time backfill of skip_reason for historical paper_trades rows.
+
+    Called at app startup (via st.session_state guard) so the funnel is
+    meaningful for data pre-dating bot-side skip_reason logging.
+
+    Priority order applied to rows where skip_reason IS NULL:
+      1. alpaca_order_id IS NOT NULL          → order_placed
+      2. predicted contains 'bearish'         → bearish_break_filtered
+      3. everything else                      → unknown
+
+    Returns count of rows updated.
+    """
+    if not supabase:
+        return 0
+    try:
+        _updated = 0
+        _hist: list = []
+        _offset = 0
+        while True:
+            _page = (
+                supabase.table("paper_trades")
+                .select("id,predicted,alpaca_order_id")
+                .eq("user_id", user_id)
+                .is_("skip_reason", "null")
+                .range(_offset, _offset + 499)
+                .execute()
+            )
+            _rows = _page.data or []
+            _hist.extend(_rows)
+            if len(_rows) < 500:
+                break
+            _offset += 500
+        if not _hist:
+            return 0
+        _placed  = [r["id"] for r in _hist if r.get("alpaca_order_id")]
+        _bearish = [
+            r["id"] for r in _hist
+            if not r.get("alpaca_order_id")
+            and "bearish" in str(r.get("predicted") or "").lower()
+        ]
+        _rest = [
+            r["id"] for r in _hist
+            if not r.get("alpaca_order_id")
+            and "bearish" not in str(r.get("predicted") or "").lower()
+        ]
+        for _ids, _reason in (
+            (_placed, "order_placed"),
+            (_bearish, "bearish_break_filtered"),
+            (_rest, "unknown"),
+        ):
+            for _i in range(0, len(_ids), 50):
+                _chunk = _ids[_i : _i + 50]
+                try:
+                    supabase.table("paper_trades").update(
+                        {"skip_reason": _reason}
+                    ).in_("id", _chunk).execute()
+                    _updated += len(_chunk)
+                except Exception:
+                    pass
+        return _updated
+    except Exception:
+        return 0
+
+
 # ── Live Playbook Screener ──────────────────────────────────────────────────────
 def scan_playbook(api_key: str, secret_key: str, top: int = 50) -> tuple:
     """Scan Alpaca for today's most-active and top-gaining small-cap stocks ($2–$20).

@@ -1159,6 +1159,7 @@ _DEFAULTS = {
     "breadth_q_down":       0,
     "breadth_regime":       None,   # cached classify_macro_regime() result
     "sa_vap":               None,   # VP volumes for SA tab
+    "skip_reason_backfill_done": False,  # one-time paper_trades skip_reason backfill
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -1192,6 +1193,19 @@ if st.session_state.breadth_regime is None:
         st.session_state.breadth_regime = get_breadth_regime(user_id=_uid_startup)
     except Exception:
         pass
+
+# ── One-time skip_reason backfill for historical paper_trades rows ─────────────
+# Runs once per Streamlit session (session_state guard prevents re-runs on rerender).
+# Infers skip_reason from existing columns so the Alpaca Orders funnel is
+# meaningful even for rows logged before bot-side skip_reason writing was added.
+if not st.session_state.skip_reason_backfill_done:
+    try:
+        _sr_uid = st.session_state.get("auth_user_id", "")
+        if _sr_uid:
+            backfill_paper_trades_skip_reason(user_id=_sr_uid)
+    except Exception:
+        pass
+    st.session_state.skip_reason_backfill_done = True
 
 # ── Audio JS (Web Audio API, synthesised tones — no external files) ────────────
 _CHIME_JS = """(function(){
@@ -22184,58 +22198,12 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     st.markdown("### 📋 Alpaca Orders — Signal → Order Funnel")
     st.caption(
         "Every logged signal (paper_trades) vs. actual Alpaca bracket orders placed. "
-        "Rows without skip_reason are historical — backfill runs automatically on first view."
+        "Historical skip_reason backfill runs automatically at app startup."
     )
 
     if not _pt_df.empty:
         _ao_df = _pt_df.copy()
 
-        # ── One-time historical backfill of skip_reason ─────────────────────
-        # For rows that pre-date skip_reason logging, infer the reason from
-        # available columns so the funnel is meaningful even for old data.
-        @st.cache_data(ttl=600, show_spinner=False)
-        def _backfill_skip_reason_once(uid: str) -> int:
-            """Infer skip_reason for historical rows that have none.
-
-            Rules (applied in priority order):
-              1. alpaca_order_id IS NOT NULL          → order_placed
-              2. predicted = 'Bearish Break'           → bearish_break_filtered
-              3. everything else with no order         → unknown
-            Returns count of rows updated.
-            """
-            if not supabase:
-                return 0
-            try:
-                _updated = 0
-                _q_null = (
-                    supabase.table("paper_trades")
-                    .select("id,predicted,alpaca_order_id")
-                    .eq("user_id", uid)
-                    .is_("skip_reason", "null")
-                    .limit(5000)
-                )
-                _hist = _q_null.execute().data or []
-                if not _hist:
-                    return 0
-                _placed  = [r["id"] for r in _hist if r.get("alpaca_order_id")]
-                _bearish = [r["id"] for r in _hist
-                            if not r.get("alpaca_order_id") and r.get("predicted") == "Bearish Break"]
-                _rest    = [r["id"] for r in _hist
-                            if not r.get("alpaca_order_id") and r.get("predicted") != "Bearish Break"]
-                for _ids, _reason in ((_placed, "order_placed"), (_bearish, "bearish_break_filtered"), (_rest, "unknown")):
-                    for _i in range(0, len(_ids), 50):
-                        _chunk = _ids[_i:_i + 50]
-                        supabase.table("paper_trades").update(
-                            {"skip_reason": _reason}
-                        ).in_("id", _chunk).execute()
-                        _updated += len(_chunk)
-                return _updated
-            except Exception as _bf_err:
-                return 0
-
-        _backfill_skip_reason_once(uid=_AUTH_USER_ID)
-
-        # Re-freshen skip_reason from live data now that backfill ran
         if "skip_reason" not in _ao_df.columns:
             _ao_df["skip_reason"] = None
 
@@ -22249,8 +22217,25 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         _ao_cancelled      = _ao_total_placed - _ao_total_filled
         _ao_filtered_out   = _ao_total_signals - _ao_total_placed
 
+        # ── Realized $ P&L across filled orders (EOD-proxy: eod_close - fill_price × qty) ──
+        _ao_realized_pnl = 0.0
+        if "alpaca_fill_price" in _ao_df.columns and "alpaca_qty" in _ao_df.columns:
+            for _, _pnl_row in _ao_df[_ao_has_fill].iterrows():
+                try:
+                    _pnl_fill = float(_pnl_row.get("alpaca_fill_price") or 0)
+                    _pnl_qty  = float(_pnl_row.get("alpaca_qty") or 0)
+                    _pnl_eod  = float(_pnl_row.get("close_price") or 0)
+                    _pnl_dir  = str(_pnl_row.get("predicted") or "")
+                    if _pnl_fill > 0 and _pnl_qty > 0 and _pnl_eod > 0:
+                        if "bullish" in _pnl_dir.lower() or "long" in _pnl_dir.lower():
+                            _ao_realized_pnl += _pnl_qty * (_pnl_eod - _pnl_fill)
+                        else:
+                            _ao_realized_pnl += _pnl_qty * (_pnl_fill - _pnl_eod)
+                except Exception:
+                    pass
+
         # ── Summary cards ───────────────────────────────────────────────────
-        _ao_c1, _ao_c2, _ao_c3, _ao_c4 = st.columns(4)
+        _ao_c1, _ao_c2, _ao_c3, _ao_c4, _ao_c5 = st.columns(5)
         with _ao_c1:
             st.markdown(
                 f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
@@ -22285,6 +22270,16 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Order Rate</div>'
                 f'<div style="font-size:28px;font-weight:700;color:{_ao_fp_color};">{_ao_funnel_pct}%</div>'
                 f'<div style="font-size:12px;color:#78909c;">signals → orders</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+        with _ao_c5:
+            _ao_pnl_color = "#66bb6a" if _ao_realized_pnl >= 0 else "#ef5350"
+            _ao_pnl_s = f'{"+" if _ao_realized_pnl >= 0 else ""}${_ao_realized_pnl:,.2f}'
+            st.markdown(
+                f'<div style="background:#1e2a3a;border-radius:8px;padding:14px 10px;text-align:center;">'
+                f'<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;">Realized P&L</div>'
+                f'<div style="font-size:24px;font-weight:700;color:{_ao_pnl_color};">{_ao_pnl_s}</div>'
+                f'<div style="font-size:11px;color:#546e7a;">EOD proxy (filled orders)</div>'
                 f'</div>', unsafe_allow_html=True
             )
 
@@ -22381,36 +22376,90 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     _ord_ib_h    = float(_ord.get("ib_high") or 0)
                     _ord_ib_l    = float(_ord.get("ib_low")  or 0)
                     _ord_fill    = _ord.get("alpaca_fill_price")
-                    _ord_fill_s  = f"${float(_ord_fill):.2f}" if _ord_fill else "—"
-                    _ord_qty     = _ord.get("alpaca_qty", "—")
-                    _ord_wl      = str(_ord.get("win_loss", "—"))
-                    _ord_wl_col  = "#66bb6a" if _ord_wl in ("Win","W") else ("#ef5350" if _ord_wl in ("Loss","L") else "#78909c")
+                    _ord_fill_f  = float(_ord_fill) if _ord_fill else 0.0
+                    _ord_fill_s  = f"${_ord_fill_f:.2f}" if _ord_fill else "—"
+                    _ord_qty     = _ord.get("alpaca_qty")
+                    _ord_qty_f   = float(_ord_qty) if _ord_qty else 0.0
+                    _ord_qty_s   = str(int(_ord_qty_f)) if _ord_qty_f > 0 else "—"
                     _ord_oid     = str(_ord.get("alpaca_order_id", ""))
                     _ord_oid_s   = _ord_oid[:8] + "…" if len(_ord_oid) > 8 else _ord_oid
 
-                    # R multiple from fill price
-                    _ord_r_s = "—"
-                    if _ord_fill and _ord_ib_h > 0 and _ord_ib_l > 0:
-                        _ib_range = _ord_ib_h - _ord_ib_l
-                        _fill_f   = float(_ord_fill)
-                        _eod_px   = float(_ord.get("close_price") or 0)
-                        if _eod_px > 0 and _ib_range > 0:
-                            if "Bullish" in _ord_dir:
-                                _r_val = (_eod_px - _fill_f) / _ib_range
-                            else:
-                                _r_val = (_fill_f - _eod_px) / _ib_range
-                            _r_col = "#66bb6a" if _r_val >= 0 else "#ef5350"
-                            _ord_r_s = f'<span style="color:{_r_col};font-weight:600;">{_r_val:+.2f}R</span>'
+                    # ── Derived IB fields ───────────────────────────────────
+                    _ib_range = (_ord_ib_h - _ord_ib_l) if _ord_ib_h > 0 and _ord_ib_l > 0 else 0.0
+                    _is_bull  = "Bullish" in _ord_dir
+                    # Sim entry = IB edge in the direction of the trade
+                    _sim_entry   = _ord_ib_h if _is_bull else _ord_ib_l
+                    _sim_stop    = _ord_ib_l if _is_bull else _ord_ib_h
+                    _sim_tgt     = (_ord_ib_h + 2 * _ib_range) if _is_bull else (_ord_ib_l - 2 * _ib_range)
+                    _sim_entry_s = f"${_sim_entry:.2f}" if _sim_entry > 0 else "—"
+                    _sim_stop_s  = f"${_sim_stop:.2f}"  if _sim_stop > 0  else "—"
+                    _sim_tgt_s   = f"${_sim_tgt:.2f}"   if _sim_tgt > 0   else "—"
+
+                    # ── Order status ────────────────────────────────────────
+                    if _ord_fill_f > 0:
+                        _ord_status   = "Filled"
+                        _ord_stat_col = "#66bb6a"
+                    else:
+                        _ord_status   = "Pending"
+                        _ord_stat_col = "#ffa726"
+
+                    # ── EOD close ───────────────────────────────────────────
+                    _eod_px = float(_ord.get("close_price") or 0)
+
+                    # ── Fill-based EOD R (actual fill entry, EOD exit proxy) ─
+                    _ord_r_s  = "—"
+                    _r_val    = None
+                    if _ord_fill_f > 0 and _ib_range > 0 and _eod_px > 0:
+                        _r_val = (
+                            (_eod_px - _ord_fill_f) / _ib_range if _is_bull
+                            else (_ord_fill_f - _eod_px) / _ib_range
+                        )
+                        _r_col   = "#66bb6a" if _r_val >= 0 else "#ef5350"
+                        _ord_r_s = f'<span style="color:{_r_col};font-weight:600;">{_r_val:+.2f}R</span>'
+
+                    # ── Sim R (using IB edge as entry, same EOD exit) ────────
+                    _sim_r_s = "—"
+                    _sim_r   = None
+                    if _sim_entry > 0 and _ib_range > 0 and _eod_px > 0:
+                        _sim_r = (
+                            (_eod_px - _sim_entry) / _ib_range if _is_bull
+                            else (_sim_entry - _eod_px) / _ib_range
+                        )
+                        _sr_col  = "#66bb6a" if _sim_r >= 0 else "#ef5350"
+                        _sim_r_s = f'<span style="color:{_sr_col};">{_sim_r:+.2f}R</span>'
+
+                    # ── ΔR = fill R - sim R (slippage impact in R units) ────
+                    _delta_r_s = "—"
+                    if _r_val is not None and _sim_r is not None:
+                        _dr = _r_val - _sim_r
+                        _dc = "#66bb6a" if _dr >= 0 else "#ef5350"
+                        _delta_r_s = f'<span style="color:{_dc};font-size:11px;">{_dr:+.2f}R</span>'
+
+                    # ── Dollar P&L (fill-based, EOD proxy) ──────────────────
+                    _pnl_s = "—"
+                    if _ord_fill_f > 0 and _ord_qty_f > 0 and _eod_px > 0:
+                        _dollar_pnl = (
+                            _ord_qty_f * (_eod_px - _ord_fill_f) if _is_bull
+                            else _ord_qty_f * (_ord_fill_f - _eod_px)
+                        )
+                        _pc = "#66bb6a" if _dollar_pnl >= 0 else "#ef5350"
+                        _pnl_s = f'<span style="color:{_pc};font-weight:600;">{"+" if _dollar_pnl>=0 else ""}${_dollar_pnl:,.2f}</span>'
 
                     _ord_rows_html += (
                         f'<tr style="border-bottom:1px solid #1e2a3a;">'
                         f'<td style="padding:5px 8px;font-size:12px;color:#cfd8dc;">{_ord_date}</td>'
                         f'<td style="padding:5px 8px;font-size:12px;font-weight:600;color:#4fc3f7;">{_ord_ticker}</td>'
                         f'<td style="padding:5px 8px;font-size:11px;color:{_ord_dir_col};">{_ord_dir_lbl}</td>'
+                        f'<td style="padding:5px 8px;font-size:11px;color:{_ord_stat_col};">{_ord_status}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;color:#90a4ae;">{_sim_entry_s}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;color:#ef9a9a;">{_sim_stop_s}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;color:#a5d6a7;">{_sim_tgt_s}</td>'
                         f'<td style="padding:5px 8px;font-size:12px;color:#cfd8dc;">{_ord_fill_s}</td>'
-                        f'<td style="padding:5px 8px;font-size:12px;color:#cfd8dc;">{_ord_qty}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;color:#cfd8dc;">{_ord_qty_s}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;">{_pnl_s}</td>'
                         f'<td style="padding:5px 8px;font-size:12px;">{_ord_r_s}</td>'
-                        f'<td style="padding:5px 8px;font-size:11px;color:{_ord_wl_col};">{_ord_wl}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;">{_sim_r_s}</td>'
+                        f'<td style="padding:5px 8px;font-size:12px;">{_delta_r_s}</td>'
                         f'<td style="padding:5px 8px;font-size:10px;color:#546e7a;font-family:monospace;">{_ord_oid_s}</td>'
                         f'</tr>'
                     )
@@ -22422,16 +22471,23 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Date</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Ticker</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Dir</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Status</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Sim Entry</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Stop</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Target</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Fill $</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Qty</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">$ P&L</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">EOD R</th>'
-                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">W/L</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Sim R</th>'
+                    f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">ΔR</th>'
                     f'<th style="padding:6px 8px;text-align:left;color:#546e7a;font-size:10px;font-weight:600;text-transform:uppercase;">Order ID</th>'
                     f'</tr></thead>'
                     f'<tbody>{_ord_rows_html}</tbody>'
                     f'</table></div>',
                     unsafe_allow_html=True,
                 )
+                st.caption("EOD R = fill entry → EOD close / IB range. Sim R = IB edge → EOD close / IB range. ΔR = slippage impact. $ P&L is EOD-proxy until actual exit fill is available.")
 
     else:
         st.info("No paper trades logged yet — the funnel will populate as the bot runs.", icon="📋")
