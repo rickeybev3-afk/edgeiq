@@ -21705,41 +21705,43 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 </style>
 <script>
 (function(){
-  var _LS_COL = 'tcs_sort_col', _LS_ASC = 'tcs_sort_asc';
-  function _tcsLoadState(maxCol) {
+  function _tcsLsKey(ns, kind) {
+    return 'tcs_sort_' + kind + '_' + ns;
+  }
+  function _tcsLoadState(ns, maxCol) {
     try {
-      var col = localStorage.getItem(_LS_COL);
-      var asc = localStorage.getItem(_LS_ASC);
+      var col = localStorage.getItem(_tcsLsKey(ns, 'col'));
+      var asc = localStorage.getItem(_tcsLsKey(ns, 'asc'));
+      if (col === null) { col = localStorage.getItem('tcs_sort_col'); }
+      if (asc === null) { asc = localStorage.getItem('tcs_sort_asc'); }
       var parsedCol = col !== null ? parseInt(col, 10) : 4;
       if (isNaN(parsedCol) || parsedCol < 0 || parsedCol > maxCol) { parsedCol = 4; }
       return { col: parsedCol, asc: asc === 'true' };
     } catch(e) { return {col: 4, asc: false}; }
   }
-  function _tcsSaveState(col, asc) {
+  function _tcsSaveState(ns, col, asc) {
     try {
-      localStorage.setItem(_LS_COL, col);
-      localStorage.setItem(_LS_ASC, asc);
+      localStorage.setItem(_tcsLsKey(ns, 'col'), col);
+      localStorage.setItem(_tcsLsKey(ns, 'asc'), asc);
     } catch(e) {}
   }
-  var _state = _tcsLoadState(20);
-  var _tcsSortCol = _state.col, _tcsSortAsc = _state.asc;
-  function _tcsApplySort(tbl) {
+  function _tcsApplySort(tbl, state) {
     var tbody = tbl.querySelector('tbody');
     var rows = Array.from(tbody.querySelectorAll('tr'));
     var dataRows = rows.filter(function(r){ return !r.hasAttribute('data-nodata'); });
     var noDataRows = rows.filter(function(r){ return r.hasAttribute('data-nodata'); });
     dataRows.sort(function(a, b){
-      var av = parseFloat(a.cells[_tcsSortCol].getAttribute('data-val'));
-      var bv = parseFloat(b.cells[_tcsSortCol].getAttribute('data-val'));
-      return _tcsSortAsc ? av - bv : bv - av;
+      var av = parseFloat(a.cells[state.col].getAttribute('data-val'));
+      var bv = parseFloat(b.cells[state.col].getAttribute('data-val'));
+      return state.asc ? av - bv : bv - av;
     });
     dataRows.concat(noDataRows).forEach(function(r){ tbody.appendChild(r); });
     var ths = tbl.querySelectorAll('th[data-tcs-col]');
     ths.forEach(function(th){
       var ind = th.querySelector('.tcs-sort-ind');
       if (!ind) return;
-      if (parseInt(th.getAttribute('data-tcs-col')) === _tcsSortCol) {
-        ind.textContent = _tcsSortAsc ? '▲' : '▼';
+      if (parseInt(th.getAttribute('data-tcs-col')) === state.col) {
+        ind.textContent = state.asc ? '▲' : '▼';
         ind.style.opacity = '1';
       } else {
         ind.textContent = '';
@@ -21752,17 +21754,19 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     tbls.forEach(function(tbl){
       if (tbl.__tcsAttached) return;
       tbl.__tcsAttached = true;
+      var ns = tbl.getAttribute('data-tcs-sort');
+      var state = _tcsLoadState(ns, 20);
       var ths = tbl.querySelectorAll('th[data-tcs-col]');
       ths.forEach(function(th){
         th.addEventListener('click', function(){
           var col = parseInt(th.getAttribute('data-tcs-col'));
-          if (col === _tcsSortCol) { _tcsSortAsc = !_tcsSortAsc; }
-          else { _tcsSortCol = col; _tcsSortAsc = false; }
-          _tcsSaveState(_tcsSortCol, _tcsSortAsc);
-          _tcsApplySort(tbl);
+          if (col === state.col) { state.asc = !state.asc; }
+          else { state.col = col; state.asc = false; }
+          _tcsSaveState(ns, state.col, state.asc);
+          _tcsApplySort(tbl, state);
         });
       });
-      _tcsApplySort(tbl);
+      _tcsApplySort(tbl, state);
     });
   }
   if (window.__tcsObs) { window.__tcsObs.disconnect(); }
