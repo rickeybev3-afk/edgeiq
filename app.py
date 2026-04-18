@@ -23743,6 +23743,11 @@ ALTER TABLE backtest_sim_runs
                                 return d
                             st.session_state["bq_dr_start"] = _clamp_bq(_bq_bts_sync_start)
                             st.session_state["bq_dr_end"]   = _clamp_bq(_bq_bts_sync_end)
+                            st.session_state.pop("bq_sync_dismissed_at", None)
+                            if _AUTH_USER_ID:
+                                _bq_sync_prefs = {k: v for k, v in st.session_state.get("_cached_prefs", {}).items() if k != "bq_sync_dismissed_at"}
+                                save_user_prefs(_AUTH_USER_ID, _bq_sync_prefs)
+                                st.session_state["_cached_prefs"] = _bq_sync_prefs
                             st.rerun()
                         _bq_out_of_sync = (
                             _bq_start != _bq_bts_sync_start or _bq_end != _bq_bts_sync_end
