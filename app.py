@@ -24410,6 +24410,19 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         save_user_prefs(_AUTH_USER_ID, _bq_d_prefs)
                                         st.session_state["_cached_prefs"] = _bq_d_prefs
                                     st.rerun()
+                            else:
+                                if st.button(
+                                    "↩ Re-show sync warning",
+                                    key="bq_reset_sync_warning",
+                                    help="Clear the dismissed state and show the out-of-sync warning again",
+                                ):
+                                    st.session_state["bq_sync_dismissed_at"] = None
+                                    if _AUTH_USER_ID:
+                                        _bq_r_prefs = {**st.session_state.get("_cached_prefs", {})}
+                                        _bq_r_prefs.pop("bq_sync_dismissed_at", None)
+                                        save_user_prefs(_AUTH_USER_ID, _bq_r_prefs)
+                                        st.session_state["_cached_prefs"] = _bq_r_prefs
+                                    st.rerun()
 
                 if _bq_start or _bq_end:
                     _bq_from_str = str(_bq_start) if _bq_start else "any"
