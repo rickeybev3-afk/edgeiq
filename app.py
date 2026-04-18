@@ -19956,7 +19956,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                             margin=dict(t=30, b=50, l=70, r=20),
                             title=dict(
                                 text=f"Monte Carlo: {len(_mc_pnl_r):,} {_tier_label} trades · "
-                                     f"{_mc_n_sim:,} simulations · 1% risk/trade",
+                                     f"{_mc_n_sim:,} simulations · {_mc_risk_pct:.2g}% risk/trade",
                                 font=dict(size=11, color="#90a4ae"),
                                 x=0,
                             ),
