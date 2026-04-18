@@ -1082,42 +1082,18 @@ export default function Settings() {
             </div>
           )}
 
-          <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid #1a2332", display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "10px", fontWeight: 600, color: "#334155", letterSpacing: "0.06em", textTransform: "uppercase", marginRight: "2px" }}>
-              Jump to
-            </span>
-            {(
-              [
-                { id: "trading-mode", label: "Trading Mode" },
-                { id: "credential-alerts", label: "Credential Alerts" },
-                { id: "subscriber-opt-out", label: "Subscriber Opt-Out" },
-                { id: "backfill-health", label: "Backfill Health" },
-                { id: "context-dryrun", label: "Context Dry-Run" },
-                { id: "paper-lookback", label: "Paper Lookback" },
-                { id: "backfill-heartbeat-window", label: "Backfill Heartbeat" },
-                { id: "eod-recalc-health", label: "EOD Recalc" },
-                { id: "rvol-size-tiers", label: "RVOL Size Tiers" },
-              ] as const
-            ).map(({ id, label }) => (
-              <a
-                key={id}
-                href={`#${id}`}
-                style={{
-                  padding: "3px 9px",
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid #253247",
-                  borderRadius: "9999px",
-                  color: "#64748b",
-                  fontSize: "11px",
-                  textDecoration: "none",
-                  fontWeight: 500,
-                  letterSpacing: "0.02em",
-                  transition: "color 0.15s, border-color 0.15s",
-                }}
-              >
-                {label}
-              </a>
-            ))}
+          <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "11px", color: "#334155", fontWeight: 600, marginRight: "2px" }}>Jump to:</span>
+            <NavPill href="#trading-mode" label="Trading Mode" />
+            <NavPill href="#credential-alerts" label="Subscriber Prefs" />
+            <NavPill href="#subscriber-opt-out" label="Credential Status" />
+            <NavPill href="#backfill-health" label="Backfill Health" />
+            <NavPill href="#context-dryrun" label="Context Dry-Run" />
+            <NavPill href="#paper-lookback" label="Paper Lookback" />
+            <NavPill href="#backfill-heartbeat-window" label="Alert Window" />
+            <NavPill href="#eod-recalc-health" label="EOD Recalc" />
+            <NavPill href="#rvol-size-tiers" label="RVOL Tiers" />
+          </div>
           </div>
         </section>
 
@@ -2606,6 +2582,33 @@ function ToggleSwitch({
         }}
       />
     </button>
+  );
+}
+
+function NavPill({ href, label }: { href: string; label: string }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <a
+      href={href}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "inline-block",
+        fontSize: "11px",
+        fontWeight: 500,
+        color: hovered ? "#93c5fd" : "#64748b",
+        background: hovered ? "rgba(147,197,253,0.08)" : "transparent",
+        border: `1px solid ${hovered ? "#3b82f6" : "#1e2d40"}`,
+        borderRadius: "999px",
+        padding: "2px 9px",
+        textDecoration: "none",
+        transition: "color 0.12s, background 0.12s, border-color 0.12s",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </a>
   );
 }
 
