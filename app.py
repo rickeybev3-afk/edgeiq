@@ -24720,6 +24720,42 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     if _bq_df.empty:
                         st.warning("No backtest runs found in the selected date range — try widening the filter.")
 
+                # ── Screener × Outcome — persistence contract ─────────────────────
+                # Every dropdown, radio, or toggle added to this section MUST follow
+                # the three-layer persistence pattern described here.  The existing
+                # Screener and Outcome-direction controls are the canonical examples.
+                #
+                # LAYER 1 — URL query param  (enables shareable links)
+                #   • If the value differs from the default ("All" / first option):
+                #       st.query_params["<key>"] = value
+                #   • If the value equals the default, remove it to keep URLs clean:
+                #       del st.query_params["<key>"]
+                #
+                # LAYER 2 — localStorage  (survives page reload without a bookmark)
+                #   Inject a zero-height <script> via _cmp_bq_dr.html():
+                #       if (value) { localStorage.setItem('<ls_key>', value); }
+                #       else       { localStorage.removeItem('<ls_key>'); }
+                #   Also update the in-page URL via history.replaceState so the
+                #   address bar stays in sync without a full navigation.
+                #
+                # LAYER 3 — user-prefs (server-side, survives clearing the browser)
+                #   if _AUTH_USER_ID:
+                #       if cached_prefs.get("<pref_key>") != value:
+                #           save_user_prefs(_AUTH_USER_ID, {**cached_prefs, "<pref_key>": value})
+                #           st.session_state["_cached_prefs"] = new_prefs
+                #
+                # RESTORE ORDER (at session start, applied in app.py ~line 5047):
+                #   1. user-prefs override nothing (they are written into session_state)
+                #   2. URL query param overrides session_state on first load
+                #   3. localStorage is read by the JS bootstrap (lines ~22073-22079) and
+                #      injects missing URL params before Streamlit renders, so the server
+                #      always sees the correct value even after a hard reload.
+                #
+                # DEFAULT ("All") removes both the URL param and the localStorage key so
+                # that a fresh session always starts clean.  Clearing to "All" therefore
+                # intentionally looks identical to a brand-new visit — this is by design.
+                # ──────────────────────────────────────────────────────────────────────
+
                 # ── Structure (Screener) filter ───────────────────────────────
                 _bq_screener_sel = st.radio(
                     "Screener",
