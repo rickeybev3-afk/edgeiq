@@ -5899,6 +5899,9 @@ with st.sidebar:
     if not st.session_state.get("bf_expander", False):
         st.session_state.pop("_bf_confirm_rerun", None)
         st.session_state.pop("_bf_confirm_after_cancel", None)
+        st.session_state.pop("bf_start_date", None)
+        st.session_state.pop("bf_end_date", None)
+        st.session_state.pop("bf_table_select", None)
 
     with st.sidebar.expander("📥 Close Price Backfill", expanded=False, key="bf_expander"):
         st.caption(
