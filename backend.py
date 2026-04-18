@@ -1133,6 +1133,7 @@ JOURNAL_PATH = "trade_journal.csv"
 _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
+    "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
 ]
 
 _BRAIN_WEIGHT_KEYS = [
@@ -5344,6 +5345,7 @@ JOURNAL_PATH = "trade_journal.csv"
 _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
+    "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
 ]
 
 
@@ -5869,8 +5871,12 @@ def parse_webull_csv(df: "pd.DataFrame") -> list:
                 "timestamp":   entry_time.isoformat() if hasattr(entry_time, "isoformat") else str(entry_time),
                 "ticker":      sym,
                 "price":       round(avg_entry, 4),
-                "exit_price":  round(price, 4),       # sell price — used by analytics
-                "mfe":         round(pnl, 2),         # P&L dollars — used by analytics
+                "entry_price": round(avg_entry, 4),
+                "exit_price":  round(price, 4),
+                "pnl_pct":     round(pnl_pct, 2),
+                "win_loss":    "Win" if pnl_pct > 0 else "Loss",
+                "source":      "manual",
+                "mfe":         round(pnl, 2),
                 "shares":      shares_int,
                 "structure":   "Unknown",
                 "tcs":         None,

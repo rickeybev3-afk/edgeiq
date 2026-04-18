@@ -2275,8 +2275,11 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                 f"and structure — this may take a moment..."
                             )
 
-                            _ak  = st.session_state.get("_sb_api_key", "")
-                            _ask = st.session_state.get("_sb_secret_key", "")
+                            import os as _os
+                            _ak  = (st.session_state.get("_sb_api_key", "")
+                                    or _os.environ.get("ALPACA_API_KEY", ""))
+                            _ask = (st.session_state.get("_sb_secret_key", "")
+                                    or _os.environ.get("ALPACA_SECRET_KEY", ""))
 
                             def _enrich_one(trade):
                                 ctx = enrich_trade_context(
