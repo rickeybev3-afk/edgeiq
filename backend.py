@@ -10906,6 +10906,34 @@ except Exception:
     pass
 
 
+_RVOL_SIZE_TIERS_DEFAULT_B = [
+    {"rvol_min": 3.5, "multiplier": 1.5},
+    {"rvol_min": 2.5, "multiplier": 1.25},
+]
+
+def rvol_size_mult(rvol: float | None) -> float:
+    """Return position-size multiplier based on RVOL bonus tiers.
+
+    Tiers are loaded fresh from adaptive_exits.json on each call so that
+    changes saved via the dashboard take effect without a process restart.
+    Tiers are evaluated highest rvol_min first; first match wins.
+    Returns 1.0 (baseline) when rvol is None or below all thresholds.
+    """
+    if rvol is None or rvol != rvol:  # None or NaN
+        return 1.0
+    try:
+        _path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
+        with open(_path) as _f:
+            cfg = json.load(_f)
+        tiers = cfg.get("rvol_size_tiers", _RVOL_SIZE_TIERS_DEFAULT_B)
+    except Exception:
+        tiers = _RVOL_SIZE_TIERS_DEFAULT_B
+    for tier in sorted(tiers, key=lambda t: t["rvol_min"], reverse=True):
+        if rvol >= tier["rvol_min"]:
+            return float(tier["multiplier"])
+    return 1.0
+
+
 def adaptive_target_r(tcs: float, scan_type: str = "", structure: str = "") -> float:
     """Return MFE-calibrated exit target in R-units.
 

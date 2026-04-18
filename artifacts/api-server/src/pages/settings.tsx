@@ -131,6 +131,21 @@ interface DryRunState {
   showRaw: boolean;
 }
 
+interface RvolSizeTier {
+  rvol_min: number;
+  multiplier: number;
+}
+
+interface RvolSizeTiersState {
+  tiers: RvolSizeTier[];
+  defaults: RvolSizeTier[];
+  draft: RvolSizeTier[];
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface ConfigParam {
   value: number;
   source: "env" | "override";
@@ -519,6 +534,39 @@ export default function Settings() {
     }
   };
 
+  const [rvolTiers, setRvolTiers] = useState<RvolSizeTiersState>({
+    tiers: [],
+    defaults: [],
+    draft: [],
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/rvol-size-tiers")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          const tiers: RvolSizeTier[] = Array.isArray(data.tiers) ? data.tiers : [];
+          const defaults: RvolSizeTier[] = Array.isArray(data.defaults) ? data.defaults : [];
+          setRvolTiers((s) => ({ ...s, tiers, defaults, draft: tiers.map((t) => ({ ...t })), loading: false }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load RVOL size tiers.";
+          setRvolTiers((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
 
   useEffect(() => {
@@ -542,9 +590,74 @@ export default function Settings() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  function handleRvolTierAdd() {
+    setRvolTiers((s) => ({
+      ...s,
+      draft: [...s.draft, { rvol_min: 0, multiplier: 1.01 }],
+      error: null,
+    }));
+  }
+
+  function handleRvolTierRemove(index: number) {
+    setRvolTiers((s) => ({
+      ...s,
+      draft: s.draft.filter((_, i) => i !== index),
+      error: null,
+    }));
+  }
+
+  function handleRvolTierEdit(index: number, field: "rvol_min" | "multiplier", value: string) {
+    const num = parseFloat(value);
+    setRvolTiers((s) => {
+      const next = s.draft.map((t, i) => i === index ? { ...t, [field]: isNaN(num) ? 0 : num } : t);
+      return { ...s, draft: next, error: null };
+    });
+  }
+
+  async function handleRvolTiersSave() {
+    for (let i = 0; i < rvolTiers.draft.length; i++) {
+      const t = rvolTiers.draft[i];
+      if (t.rvol_min <= 0) {
+        setRvolTiers((s) => ({ ...s, error: `Tier ${i + 1}: RVOL Min must be > 0` }));
+        return;
+      }
+      if (t.multiplier <= 1.0) {
+        setRvolTiers((s) => ({ ...s, error: `Tier ${i + 1}: Multiplier must be > 1.0` }));
+        return;
+      }
+    }
+    setRvolTiers((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/rvol-size-tiers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tiers: rvolTiers.draft }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      const tiers: RvolSizeTier[] = Array.isArray(data.tiers) ? data.tiers : [];
+      setRvolTiers((s) => ({ ...s, tiers, draft: tiers.map((t) => ({ ...t })), saving: false, saved: true }));
+      setTimeout(() => setRvolTiers((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setRvolTiers((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  function handleRvolTiersReset() {
+    setRvolTiers((s) => ({
+      ...s,
+      draft: s.defaults.map((t) => ({ ...t })),
+      error: null,
+    }));
+  }
+
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading]
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading]
   );
 
   async function handleChange(newMode: TradingMode) {
@@ -1531,13 +1644,13 @@ export default function Settings() {
                                 : `${Math.floor(gapHours)} h`}
                             </td>
                             <td style={{ padding: "6px 10px", textAlign: "right", color: "#4ade80" }}>
-                              {run.rows_saved.toLocaleString()}
+                              {(run.rows_saved ?? 0).toLocaleString()}
                             </td>
-                            <td style={{ padding: "6px 10px", textAlign: "right", color: run.no_bars > 0 ? "#fbbf24" : "#64748b" }}>
-                              {run.no_bars.toLocaleString()}
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: (run.no_bars ?? 0) > 0 ? "#fbbf24" : "#64748b" }}>
+                              {(run.no_bars ?? 0).toLocaleString()}
                             </td>
-                            <td style={{ padding: "6px 10px", textAlign: "right", color: run.errors > 0 ? "#f87171" : "#4ade80" }}>
-                              {run.errors.toLocaleString()}
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: (run.errors ?? 0) > 0 ? "#f87171" : "#4ade80" }}>
+                              {(run.errors ?? 0).toLocaleString()}
                             </td>
                           </tr>
                           );
@@ -2026,6 +2139,183 @@ export default function Settings() {
                 </div>
               )}
             </div>
+          )}
+        </section>
+
+        <section
+          id="rvol-size-tiers"
+          style={{
+            background: "#131825",
+            border: "1px solid #1e2d40",
+            borderRadius: "10px",
+            padding: "18px 20px",
+            marginBottom: "28px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", color: "#475569", textTransform: "uppercase" }}>
+              RVOL Size Tiers
+            </span>
+            {rvolTiers.saved && (
+              <span style={{ fontSize: "11px", color: "#4ade80", fontWeight: 600 }}>✓ Saved</span>
+            )}
+          </div>
+          <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "16px", lineHeight: "1.6" }}>
+            Position-size multipliers applied when RVOL exceeds a threshold. Tiers are evaluated from highest to lowest; first match wins. All changes take effect immediately without a server restart.
+          </p>
+
+          {rvolTiers.loading ? (
+            <p style={{ fontSize: "13px", color: "#475569" }}>Loading…</p>
+          ) : (
+            <>
+              {rvolTiers.draft.length === 0 && (
+                <p style={{ fontSize: "12px", color: "#64748b", fontStyle: "italic", marginBottom: "12px" }}>
+                  No tiers configured — all trades use 1× sizing.
+                </p>
+              )}
+
+              {rvolTiers.draft.length > 0 && (
+                <div style={{ marginBottom: "12px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "8px", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "11px", color: "#475569", fontWeight: 600, letterSpacing: "0.05em" }}>RVOL MIN (≥)</span>
+                    <span style={{ fontSize: "11px", color: "#475569", fontWeight: 600, letterSpacing: "0.05em" }}>MULTIPLIER (×)</span>
+                    <span />
+                  </div>
+                  {rvolTiers.draft.map((tier, i) => (
+                    <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "8px", marginBottom: "8px", alignItems: "center" }}>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        value={tier.rvol_min}
+                        onChange={(e) => handleRvolTierEdit(i, "rvol_min", e.target.value)}
+                        disabled={rvolTiers.saving}
+                        style={{
+                          background: "#0e1117",
+                          border: "1px solid #2d3748",
+                          borderRadius: "6px",
+                          color: "#f1f5f9",
+                          fontSize: "13px",
+                          padding: "7px 10px",
+                          width: "100%",
+                          boxSizing: "border-box",
+                          fontFamily: "monospace",
+                        }}
+                      />
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="1.01"
+                        value={tier.multiplier}
+                        onChange={(e) => handleRvolTierEdit(i, "multiplier", e.target.value)}
+                        disabled={rvolTiers.saving}
+                        style={{
+                          background: "#0e1117",
+                          border: "1px solid #2d3748",
+                          borderRadius: "6px",
+                          color: "#f1f5f9",
+                          fontSize: "13px",
+                          padding: "7px 10px",
+                          width: "100%",
+                          boxSizing: "border-box",
+                          fontFamily: "monospace",
+                        }}
+                      />
+                      <button
+                        onClick={() => handleRvolTierRemove(i)}
+                        disabled={rvolTiers.saving}
+                        title="Remove tier"
+                        style={{
+                          background: "rgba(239,68,68,0.1)",
+                          border: "1px solid rgba(239,68,68,0.3)",
+                          borderRadius: "6px",
+                          color: "#f87171",
+                          fontSize: "14px",
+                          padding: "6px 10px",
+                          cursor: rvolTiers.saving ? "not-allowed" : "pointer",
+                          lineHeight: 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {rvolTiers.error && (
+                <div style={{ marginBottom: "12px", padding: "10px 12px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: "7px", color: "#f87171", fontSize: "12px" }}>
+                  ⚠ {rvolTiers.error}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  onClick={handleRvolTierAdd}
+                  disabled={rvolTiers.saving}
+                  style={{
+                    padding: "7px 14px",
+                    background: "rgba(99,102,241,0.1)",
+                    border: "1px solid rgba(99,102,241,0.4)",
+                    borderRadius: "7px",
+                    color: "#818cf8",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    cursor: rvolTiers.saving ? "not-allowed" : "pointer",
+                  }}
+                >
+                  + Add Tier
+                </button>
+
+                <button
+                  onClick={handleRvolTiersSave}
+                  disabled={rvolTiers.saving}
+                  style={{
+                    padding: "7px 16px",
+                    background: rvolTiers.saving ? "#1e3a5f" : "#1d4ed8",
+                    border: "1px solid #3b82f6",
+                    borderRadius: "7px",
+                    color: "#eff6ff",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    cursor: rvolTiers.saving ? "not-allowed" : "pointer",
+                    opacity: rvolTiers.saving ? 0.7 : 1,
+                  }}
+                >
+                  {rvolTiers.saving ? "Saving…" : "Save"}
+                </button>
+
+                <button
+                  onClick={handleRvolTiersReset}
+                  disabled={rvolTiers.saving}
+                  title="Reset to defaults"
+                  style={{
+                    padding: "7px 14px",
+                    background: "transparent",
+                    border: "1px solid #2d3748",
+                    borderRadius: "7px",
+                    color: "#64748b",
+                    fontSize: "12px",
+                    cursor: rvolTiers.saving ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Reset to defaults
+                </button>
+              </div>
+
+              {rvolTiers.tiers.length > 0 && (
+                <div style={{ marginTop: "16px", padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid #1e2d40", borderRadius: "7px" }}>
+                  <p style={{ fontSize: "11px", color: "#475569", margin: "0 0 6px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Active tiers</p>
+                  {rvolTiers.tiers.map((t, i) => (
+                    <p key={i} style={{ fontSize: "12px", color: "#94a3b8", fontFamily: "monospace", margin: "0 0 2px" }}>
+                      RVOL ≥ <span style={{ color: "#f1f5f9" }}>{t.rvol_min}×</span>
+                      {" → "}
+                      <span style={{ color: "#4ade80" }}>{t.multiplier}× size</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>

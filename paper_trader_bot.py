@@ -501,6 +501,34 @@ def _rvol_size_mult(rvol: float) -> float:
 # Hard block setups with RVOL < RVOL_MIN_FLOOR when RVOL data is available.
 RVOL_MIN_FLOOR = float(os.environ.get("RVOL_MIN_FLOOR", "1.0"))
 
+_ADAPTIVE_EXIT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "adaptive_exits.json")
+_RVOL_SIZE_TIERS_DEFAULT = [
+    {"rvol_min": 3.5, "multiplier": 1.5},
+    {"rvol_min": 2.5, "multiplier": 1.25},
+]
+
+def _rvol_size_mult(rvol: float | None) -> float:
+    """Return position-size multiplier based on RVOL bonus tiers.
+
+    Tiers are loaded fresh from adaptive_exits.json on each call so that
+    changes saved via the dashboard take effect without a bot restart.
+    Tiers are evaluated highest rvol_min first; first match wins.
+    Returns 1.0 (baseline) when rvol is None or below all thresholds.
+    """
+    if rvol is None or rvol != rvol:  # None or NaN
+        return 1.0
+    try:
+        import json as _json
+        with open(_ADAPTIVE_EXIT_CONFIG_PATH) as _f:
+            cfg = _json.load(_f)
+        tiers = cfg.get("rvol_size_tiers", _RVOL_SIZE_TIERS_DEFAULT)
+    except Exception:
+        tiers = _RVOL_SIZE_TIERS_DEFAULT
+    for tier in sorted(tiers, key=lambda t: t["rvol_min"], reverse=True):
+        if rvol >= tier["rvol_min"]:
+            return float(tier["multiplier"])
+    return 1.0
+
 _ADAPTIVE_EXIT_CONFIG: dict = {}
 try:
     import json as _json

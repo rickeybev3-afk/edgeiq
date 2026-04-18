@@ -30,6 +30,11 @@ _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
 _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_BACKTEST_LOOKBACK_DAYS = int(os.environ.get("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_MIN_TCS = int(os.environ.get("PAPER_TRADE_MIN_TCS", "50"))
+_ADAPTIVE_EXITS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
+_RVOL_SIZE_TIERS_DEFAULT = [
+    {"rvol_min": 3.5, "multiplier": 1.5},
+    {"rvol_min": 2.5, "multiplier": 1.25},
+]
 try:
     _DEFAULT_HEARTBEAT_HOURS = float(os.environ.get("BACKFILL_HEARTBEAT_HOURS", "25"))
 except (ValueError, TypeError):
@@ -597,6 +602,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/paper-trade-min-tcs":
             self._paper_trade_min_tcs_get()
             return
+        if path == "/api/rvol-size-tiers":
+            self._rvol_size_tiers_get()
+            return
         if path == "/api/config":
             self._config_get()
             return
@@ -653,6 +661,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/paper-trade-min-tcs":
             self._paper_trade_min_tcs_post()
+            return
+        if path == "/api/rvol-size-tiers":
+            self._rvol_size_tiers_post()
             return
         if path == "/api/backfill-dryrun":
             self._backfill_dryrun_post()
@@ -1832,6 +1843,117 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+
+    def _rvol_size_tiers_get(self):
+        """Return the current RVOL position-size tiers from adaptive_exits.json.
+
+        Response: {"tiers": [{"rvol_min": float, "multiplier": float}, ...],
+                   "defaults": [...]}
+        Tiers are sorted by rvol_min descending (highest first).
+        """
+        try:
+            with open(_ADAPTIVE_EXITS_JSON) as _f:
+                cfg = json.load(_f)
+            tiers = cfg.get("rvol_size_tiers", _RVOL_SIZE_TIERS_DEFAULT)
+            tiers_sorted = sorted(tiers, key=lambda t: t["rvol_min"], reverse=True)
+            payload = {"tiers": tiers_sorted, "defaults": _RVOL_SIZE_TIERS_DEFAULT}
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _rvol_size_tiers_post(self):
+        """Accept {"tiers": [...]} and persist rvol_size_tiers in adaptive_exits.json.
+
+        Each tier must have:
+          rvol_min   — float > 0
+          multiplier — float > 1.0
+
+        Validation errors are returned as 400. File write errors as 500.
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        def _json_error(msg: str, code: int = 400):
+            b = json.dumps({"error": msg}).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b)
+
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+        except Exception:
+            _json_error("Invalid JSON body")
+            return
+
+        if "tiers" not in payload:
+            _json_error("'tiers' field is required")
+            return
+
+        raw_tiers = payload["tiers"]
+        if not isinstance(raw_tiers, list):
+            _json_error("'tiers' must be an array")
+            return
+
+        validated = []
+        for i, t in enumerate(raw_tiers):
+            if not isinstance(t, dict):
+                _json_error(f"Tier {i+1} must be an object")
+                return
+            try:
+                rvol_min = float(t["rvol_min"])
+                multiplier = float(t["multiplier"])
+            except (KeyError, TypeError, ValueError):
+                _json_error(f"Tier {i+1} must have numeric 'rvol_min' and 'multiplier'")
+                return
+            if rvol_min <= 0:
+                _json_error(f"Tier {i+1}: rvol_min must be > 0 (got {rvol_min})")
+                return
+            if multiplier <= 1.0:
+                _json_error(f"Tier {i+1}: multiplier must be > 1.0 (got {multiplier})")
+                return
+            validated.append({"rvol_min": rvol_min, "multiplier": multiplier})
+
+        try:
+            with open(_ADAPTIVE_EXITS_JSON) as _f:
+                cfg = json.load(_f)
+            cfg["rvol_size_tiers"] = sorted(validated, key=lambda t: t["rvol_min"], reverse=True)
+            cfg["last_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            with open(_ADAPTIVE_EXITS_JSON, "w") as _f:
+                json.dump(cfg, _f, indent=2)
+                _f.write("\n")
+            result = sorted(validated, key=lambda t: t["rvol_min"], reverse=True)
+            body = json.dumps({"tiers": result, "defaults": _RVOL_SIZE_TIERS_DEFAULT}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _config_get(self):
         """Return a snapshot of all key configuration values active at runtime.
