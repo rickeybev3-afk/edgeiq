@@ -10794,13 +10794,13 @@ def ensure_paper_trades_table() -> bool:
 # Formula version stamped on every sim row by _sim_patch().
 # Bump this string whenever compute_trade_sim() logic changes so that
 # --skip-existing automatically re-processes stale (old-version) rows.
-SIM_VERSION = "v3"  # v3 = adaptive target_r per row (EOD close, awaiting clean MFE re-backfill)
+# SIM_VERSION = "v3"  # v3 = adaptive target_r per row (EOD close, awaiting clean MFE re-backfill)
 # SIM_VERSION = "v4"  # v4 = intraday bracket sim: MAE>=1R→stop, MFE>=target_r→exit at fixed target
 #                     # Enable once backfill_mfe_mae.py --force-recompute completes (2026-04-18 fix)
-# SIM_VERSION = "v5"  # v5 = trailing stop sim: T1 hit → trail 1R below MFE peak (mirrors paper bot).
-#                     # MFE>=target_r → captured = MFE-1.0R (trail fires 1R from peak).
-#                     # MFE<target_r AND MAE>=1R → stopped at -1.0R.
-#                     # Neither → EOD close (position held). Requires clean MFE data.
+SIM_VERSION = "v5"  # v5 = trailing stop sim: T1 hit → trail 1R below MFE peak (mirrors paper bot).
+#                   # MFE>=target_r → captured = MFE-1.0R (trail fires 1R from peak).
+#                   # MFE<target_r AND MAE>=1R → stopped at -1.0R.
+#                   # Neither → EOD close (position held). Clean MFE data loaded 2026-04-18.
 
 # Formula version stamped on every row that writes eod_pnl_r.
 # Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
