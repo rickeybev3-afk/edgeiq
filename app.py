@@ -29313,13 +29313,29 @@ function _bqCopyShareLink() {
 
         # Table
         _ib_threshold = _cached_load_ib_range_pct_threshold()
+        # ── Build RVOL Tier label from the stored multiplier ─────────────────
+        def _fmt_rvol_tier(val):
+            try:
+                v = float(val)
+                if v > 1.0:
+                    return f"{v:.2f}\u00d7 RVOL boost"
+                if v < 1.0:
+                    return f"{v:.2f}\u00d7 (reduced)"
+                return "1\u00d7 (no boost)"
+            except (TypeError, ValueError):
+                return "1\u00d7 (no boost)"
+        if "rvol_size_mult" in _verified.columns:
+            _verified["_rvol_tier_label"] = _verified["rvol_size_mult"].apply(_fmt_rvol_tier)
+        else:
+            _verified["_rvol_tier_label"] = "1\u00d7 (no boost)"
         _display_cols = [c for c in ["trade_date", "ticker", "tcs", "predicted_structure",
                                       "actual_outcome", "win_loss", "follow_thru_pct",
                                       "mae", "mfe",
                                       "ib_range_pct",
                                       "rvol_size_mult",
                                       "sim_pnl_100sh",
-                                      "eod_pnl_r", "tiered_pnl_r"] if c in _verified.columns]
+                                      "eod_pnl_r", "tiered_pnl_r",
+                                      "_rvol_tier_label"] if c in _verified.columns]
         _show = _verified[_display_cols].rename(columns={
             "trade_date": "Date", "ticker": "Ticker", "tcs": "TCS",
             "predicted_structure": "Predicted", "actual_outcome": "Actual",
@@ -29329,6 +29345,7 @@ function _bqCopyShareLink() {
             "rvol_size_mult": "RVOL Mult",
             "sim_pnl_100sh": "P&L (100sh)",
             "eod_pnl_r": "EOD Hold R", "tiered_pnl_r": "Tiered Exit R",
+            "_rvol_tier_label": "RVOL Tier",
         }).reset_index(drop=True)
         if "EOD Hold R" in _show.columns and "Tiered Exit R" in _show.columns:
             _eod_vals    = pd.to_numeric(_show["EOD Hold R"],    errors="coerce")
@@ -29456,6 +29473,14 @@ function _bqCopyShareLink() {
             except (ValueError, TypeError):
                 return ""
 
+        def _color_rvol_tier(val):
+            s = str(val)
+            if "RVOL boost" in s:
+                return "color: #29b6f6; font-weight:700"
+            if "no boost" in s:
+                return "color: #546e7a"
+            return "color: #37474f"
+
         _style_map = {}
         if "W/L" in _show.columns:
             _style_map["W/L"] = _color_wl
@@ -29473,6 +29498,8 @@ function _bqCopyShareLink() {
             _style_map["Tiered Exit R"] = _color_r
         if "Delta R" in _show.columns:
             _style_map["Delta R"] = _color_delta_r
+        if "RVOL Tier" in _show.columns:
+            _style_map["RVOL Tier"] = _color_rvol_tier
 
         _styled = _show_vis.style
         for _col_name, _fn in _style_map.items():
