@@ -78,6 +78,41 @@ function formatRelativeTime(isoTimestamp: string): string {
   return `${diffDays}d ago`;
 }
 
+function formatEodAge(isoTimestamp: string): string {
+  const t = new Date(isoTimestamp);
+  if (isNaN(t.getTime())) return "ran at unknown time";
+  const diffMs = Date.now() - t.getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return "ran just now";
+  if (diffMin < 60) return `ran ${diffMin} minute${diffMin === 1 ? "" : "s"} ago`;
+  const hh = t.getUTCHours().toString().padStart(2, "0");
+  const mm = t.getUTCMinutes().toString().padStart(2, "0");
+  const nowUtc = new Date();
+  const sameDay =
+    t.getUTCFullYear() === nowUtc.getUTCFullYear() &&
+    t.getUTCMonth() === nowUtc.getUTCMonth() &&
+    t.getUTCDate() === nowUtc.getUTCDate();
+  if (sameDay) return `ran today at ${hh}:${mm} UTC`;
+  const prevDay = new Date(nowUtc);
+  prevDay.setUTCDate(prevDay.getUTCDate() - 1);
+  const yesterday =
+    t.getUTCFullYear() === prevDay.getUTCFullYear() &&
+    t.getUTCMonth() === prevDay.getUTCMonth() &&
+    t.getUTCDate() === prevDay.getUTCDate();
+  if (yesterday) return `ran yesterday at ${hh}:${mm} UTC`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 48) return `ran ${diffHr} hour${diffHr === 1 ? "" : "s"} ago`;
+  const mon = t.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  const day = t.getUTCDate();
+  return `ran ${mon} ${day} at ${hh}:${mm} UTC`;
+}
+
+function isEodStale(isoTimestamp: string): boolean {
+  const t = new Date(isoTimestamp);
+  if (isNaN(t.getTime())) return false;
+  return Date.now() - t.getTime() > 30 * 60 * 60 * 1000;
+}
+
 function formatCheckedAgo(isoTimestamp: string): string {
   const checkedAt = new Date(isoTimestamp);
   if (isNaN(checkedAt.getTime())) return "DB check time unavailable";
@@ -673,6 +708,7 @@ function Home({ health }: { health: HealthState }) {
   }, []);
 
   const settingsBase = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const eodStale = eodSweep.ran_at ? isEodStale(eodSweep.ran_at) : false;
 
   return (
     <div
@@ -869,6 +905,8 @@ function Home({ health }: { health: HealthState }) {
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
                 ) : !eodSweep.available ? (
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+                ) : eodStale ? (
+                  <span title="Stale — last run was over 30 hours ago" style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #f59e0b" }} />
                 ) : (
                   <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #4ade80" }} />
                 )}
@@ -879,7 +917,7 @@ function Home({ health }: { health: HealthState }) {
                   <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>No data</span>
                 ) : (
                   <span
-                    style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}
+                    style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}
                     title={eodSweep.ran_at ? `Last run: ${formatUtc(eodSweep.ran_at)}` : undefined}
                   >
                     {(eodSweep.total_healed ?? 0) === 0 ? (
@@ -897,7 +935,16 @@ function Home({ health }: { health: HealthState }) {
                       <span style={{ color: "#94a3b8" }}>)</span>
                     )}
                     {eodSweep.ran_at && (
-                      <span style={{ color: "#64748b", fontSize: "12px" }}>· {formatRelativeTime(eodSweep.ran_at)}</span>
+                      <span
+                        style={{
+                          color: eodStale ? "#f59e0b" : "#64748b",
+                          fontSize: "12px",
+                          fontStyle: eodStale ? "italic" : undefined,
+                        }}
+                        title={eodStale ? "Stale — over 30 hours since last sweep" : undefined}
+                      >
+                        · {formatEodAge(eodSweep.ran_at)}
+                      </span>
                     )}
                   </span>
                 )}
