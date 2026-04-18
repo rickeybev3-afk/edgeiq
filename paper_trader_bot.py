@@ -2087,15 +2087,17 @@ def _force_close_all_positions() -> None:
                 r   = t["pnl_r"]
                 emoji = "🟢" if wl == "Win" else ("🔴" if wl == "Loss" else "⬜")
                 r_str = f" | {r:+.2f}R" if r is not None else ""
-                # Trail context note (populated from the persisted columns)
+                # Trail context note: prefer persisted columns; fall back to in-memory dict.
                 _t_trail = t.get("trail_size_r")
                 _t_level = t.get("trail_sr_level")
-                trail_str = ""
+                sr_tag = ""
                 if _t_trail:
-                    trail_str = f" | trail {_t_trail}"
+                    sr_tag = f" 🎯 trail {_t_trail}"
                     if _t_level is not None:
-                        trail_str += f" (S/R ${float(_t_level):.2f})"
-                lines.append(f"  {emoji} {sym}: ${usd:+.2f}{r_str}{trail_str}")
+                        sr_tag += f" (S/R ${float(_t_level):.2f})"
+                elif _TRAILING_STOP_SR_CONTEXT.get((sym, today_str)):
+                    sr_tag = " 🎯 S/R-tightened"
+                lines.append(f"  {emoji} {sym}: ${usd:+.2f}{r_str}{sr_tag}")
 
             lines.append("")
             if r_known:
