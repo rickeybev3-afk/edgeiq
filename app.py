@@ -22834,6 +22834,81 @@ ALTER TABLE backtest_sim_runs
                                     'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
                                     'Best Edge ⭐</div>'
                                 ) if _bts_et_is_best else ""
+                                # ── Per-tier Marginal vs Comfortable breakdown ────
+                                _bts_et_marg_html = ""
+                                if _has_marg_data_bts and len(_bts_etdf) > 0:
+                                    _bts_et_fv = _bts_etdf[_bts_etdf["tcs_floor"].notna()]
+                                    if not _bts_et_fv.empty:
+                                        _bts_et_marg_mask = (
+                                            (_bts_et_fv["tcs"] - _bts_et_fv["tcs_floor"]).between(0, 5, inclusive="both")
+                                        )
+                                        _bts_et_marg_df = _bts_et_fv[_bts_et_marg_mask]
+                                        _bts_et_comf_df = _bts_et_fv[~_bts_et_marg_mask]
+                                        _bts_et_marg_n = len(_bts_et_marg_df)
+                                        _bts_et_comf_n = len(_bts_et_comf_df)
+                                        if _bts_et_marg_n > 0 or _bts_et_comf_n > 0:
+                                            _bts_et_marg_wr = (
+                                                round((_bts_et_marg_df["eod_pnl_r"] > 0).sum() / _bts_et_marg_n * 100, 1)
+                                                if _bts_et_marg_n else None
+                                            )
+                                            _bts_et_comf_wr = (
+                                                round((_bts_et_comf_df["eod_pnl_r"] > 0).sum() / _bts_et_comf_n * 100, 1)
+                                                if _bts_et_comf_n else None
+                                            )
+                                            _bts_et_marg_avgr = (
+                                                round(_bts_et_marg_df["eod_pnl_r"].mean(), 2)
+                                                if _bts_et_marg_n else None
+                                            )
+                                            _bts_et_comf_avgr = (
+                                                round(_bts_et_comf_df["eod_pnl_r"].mean(), 2)
+                                                if _bts_et_comf_n else None
+                                            )
+                                            _bts_et_marg_wr_str   = f"{_bts_et_marg_wr}%"        if _bts_et_marg_wr   is not None else "—"
+                                            _bts_et_comf_wr_str   = f"{_bts_et_comf_wr}%"        if _bts_et_comf_wr   is not None else "—"
+                                            _bts_et_marg_avgr_str = f"{_bts_et_marg_avgr:+.2f}R" if _bts_et_marg_avgr is not None else "—"
+                                            _bts_et_comf_avgr_str = f"{_bts_et_comf_avgr:+.2f}R" if _bts_et_comf_avgr is not None else "—"
+                                            _bts_et_marg_wr_col = (
+                                                "#2e7d32" if (_bts_et_marg_wr is not None and _bts_et_marg_wr >= 60)
+                                                else ("#ef6c00" if (_bts_et_marg_wr is not None and _bts_et_marg_wr >= 50) else "#c62828")
+                                                if _bts_et_marg_wr is not None else "#90a4ae"
+                                            )
+                                            _bts_et_comf_wr_col = (
+                                                "#2e7d32" if (_bts_et_comf_wr is not None and _bts_et_comf_wr >= 60)
+                                                else ("#ef6c00" if (_bts_et_comf_wr is not None and _bts_et_comf_wr >= 50) else "#c62828")
+                                                if _bts_et_comf_wr is not None else "#90a4ae"
+                                            )
+                                            _bts_et_fv_n = len(_bts_et_fv)
+                                            _bts_et_marg_pct = round(_bts_et_marg_n / _bts_et_fv_n * 100, 1) if _bts_et_fv_n else 0
+                                            _bts_et_dwr = (
+                                                f"{round(_bts_et_marg_wr - _bts_et_comf_wr, 1):+.1f}pp"
+                                                if (_bts_et_marg_wr is not None and _bts_et_comf_wr is not None) else None
+                                            )
+                                            _bts_et_dwr_col = (
+                                                "#2e7d32" if (_bts_et_dwr is not None and float(_bts_et_dwr.replace("pp", "")) >= 0)
+                                                else "#c62828"
+                                            ) if _bts_et_dwr is not None else "#90a4ae"
+                                            _bts_et_marg_html = (
+                                                f'<div style="font-size:10px;color:#90a4ae;margin-top:6px;'
+                                                f'border-top:1px solid #263444;padding-top:5px;text-align:left;">'
+                                                f'<span style="color:#ffb74d;font-weight:600;">Marginal vs Comfortable</span>'
+                                                f'</div>'
+                                                f'<div style="font-size:10px;color:#cfd8dc;text-align:left;line-height:1.7;">'
+                                                f'<span style="color:#90a4ae;">Marginal</span> ({_bts_et_marg_n}, {_bts_et_marg_pct}%):&nbsp;'
+                                                f'WR <span style="color:{_bts_et_marg_wr_col};font-weight:600;">{_bts_et_marg_wr_str}</span>'
+                                                f'&nbsp;·&nbsp;'
+                                                f'Avg R <span style="color:#80cbc4;">{_bts_et_marg_avgr_str}</span>'
+                                                f'<br>'
+                                                f'<span style="color:#90a4ae;">Comfortable</span> ({_bts_et_comf_n}):&nbsp;'
+                                                f'WR <span style="color:{_bts_et_comf_wr_col};font-weight:600;">{_bts_et_comf_wr_str}</span>'
+                                                f'&nbsp;·&nbsp;'
+                                                f'Avg R <span style="color:#80cbc4;">{_bts_et_comf_avgr_str}</span>'
+                                                + (
+                                                    f'<br><span style="color:#90a4ae;">ΔWR (marg−comf):</span>&nbsp;'
+                                                    f'<span style="color:{_bts_et_dwr_col};font-weight:600;">{_bts_et_dwr}</span>'
+                                                    if _bts_et_dwr is not None else ""
+                                                ) +
+                                                f'</div>'
+                                            )
                                 st.markdown(
                                     f'<div style="background:#1e2a3a;border-left:{_bts_et_border};'
                                     f'border-radius:8px;padding:12px;text-align:center;">'
@@ -22848,6 +22923,7 @@ ALTER TABLE backtest_sim_runs
                                     f'Avg Win: +{_bts_etavgw:.2f}R  ·  Avg Loss: {_bts_etavgl:.2f}R</div>'
                                     f'<div style="font-size:11px;color:#90a4ae;">'
                                     f'Total: {"+" if _bts_ettot >= 0 else ""}{_bts_ettot:.1f}R</div>'
+                                    f'{_bts_et_marg_html}'
                                     f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
@@ -23011,6 +23087,81 @@ ALTER TABLE backtest_sim_runs
                                     'padding:1px 6px;display:inline-block;margin-bottom:4px;">'
                                     'Best Edge ⭐</div>'
                                 ) if _bts_lt_is_best else ""
+                                # ── Per-tier Marginal vs Comfortable breakdown ────
+                                _bts_lt_marg_html = ""
+                                if _has_marg_data_bts and len(_bts_ltdf) > 0:
+                                    _bts_lt_fv = _bts_ltdf[_bts_ltdf["tcs_floor"].notna()]
+                                    if not _bts_lt_fv.empty:
+                                        _bts_lt_marg_mask = (
+                                            (_bts_lt_fv["tcs"] - _bts_lt_fv["tcs_floor"]).between(0, 5, inclusive="both")
+                                        )
+                                        _bts_lt_marg_df = _bts_lt_fv[_bts_lt_marg_mask]
+                                        _bts_lt_comf_df = _bts_lt_fv[~_bts_lt_marg_mask]
+                                        _bts_lt_marg_n = len(_bts_lt_marg_df)
+                                        _bts_lt_comf_n = len(_bts_lt_comf_df)
+                                        if _bts_lt_marg_n > 0 or _bts_lt_comf_n > 0:
+                                            _bts_lt_marg_wr = (
+                                                round((_bts_lt_marg_df["tiered_pnl_r"] > 0).sum() / _bts_lt_marg_n * 100, 1)
+                                                if _bts_lt_marg_n else None
+                                            )
+                                            _bts_lt_comf_wr = (
+                                                round((_bts_lt_comf_df["tiered_pnl_r"] > 0).sum() / _bts_lt_comf_n * 100, 1)
+                                                if _bts_lt_comf_n else None
+                                            )
+                                            _bts_lt_marg_avgr = (
+                                                round(_bts_lt_marg_df["tiered_pnl_r"].mean(), 2)
+                                                if _bts_lt_marg_n else None
+                                            )
+                                            _bts_lt_comf_avgr = (
+                                                round(_bts_lt_comf_df["tiered_pnl_r"].mean(), 2)
+                                                if _bts_lt_comf_n else None
+                                            )
+                                            _bts_lt_marg_wr_str   = f"{_bts_lt_marg_wr}%"        if _bts_lt_marg_wr   is not None else "—"
+                                            _bts_lt_comf_wr_str   = f"{_bts_lt_comf_wr}%"        if _bts_lt_comf_wr   is not None else "—"
+                                            _bts_lt_marg_avgr_str = f"{_bts_lt_marg_avgr:+.2f}R" if _bts_lt_marg_avgr is not None else "—"
+                                            _bts_lt_comf_avgr_str = f"{_bts_lt_comf_avgr:+.2f}R" if _bts_lt_comf_avgr is not None else "—"
+                                            _bts_lt_marg_wr_col = (
+                                                "#2e7d32" if (_bts_lt_marg_wr is not None and _bts_lt_marg_wr >= 60)
+                                                else ("#ef6c00" if (_bts_lt_marg_wr is not None and _bts_lt_marg_wr >= 50) else "#c62828")
+                                                if _bts_lt_marg_wr is not None else "#90a4ae"
+                                            )
+                                            _bts_lt_comf_wr_col = (
+                                                "#2e7d32" if (_bts_lt_comf_wr is not None and _bts_lt_comf_wr >= 60)
+                                                else ("#ef6c00" if (_bts_lt_comf_wr is not None and _bts_lt_comf_wr >= 50) else "#c62828")
+                                                if _bts_lt_comf_wr is not None else "#90a4ae"
+                                            )
+                                            _bts_lt_fv_n = len(_bts_lt_fv)
+                                            _bts_lt_marg_pct = round(_bts_lt_marg_n / _bts_lt_fv_n * 100, 1) if _bts_lt_fv_n else 0
+                                            _bts_lt_dwr = (
+                                                f"{round(_bts_lt_marg_wr - _bts_lt_comf_wr, 1):+.1f}pp"
+                                                if (_bts_lt_marg_wr is not None and _bts_lt_comf_wr is not None) else None
+                                            )
+                                            _bts_lt_dwr_col = (
+                                                "#2e7d32" if (_bts_lt_dwr is not None and float(_bts_lt_dwr.replace("pp", "")) >= 0)
+                                                else "#c62828"
+                                            ) if _bts_lt_dwr is not None else "#90a4ae"
+                                            _bts_lt_marg_html = (
+                                                f'<div style="font-size:10px;color:#90a4ae;margin-top:6px;'
+                                                f'border-top:1px solid #263444;padding-top:5px;text-align:left;">'
+                                                f'<span style="color:#ffb74d;font-weight:600;">Marginal vs Comfortable</span>'
+                                                f'</div>'
+                                                f'<div style="font-size:10px;color:#cfd8dc;text-align:left;line-height:1.7;">'
+                                                f'<span style="color:#90a4ae;">Marginal</span> ({_bts_lt_marg_n}, {_bts_lt_marg_pct}%):&nbsp;'
+                                                f'WR <span style="color:{_bts_lt_marg_wr_col};font-weight:600;">{_bts_lt_marg_wr_str}</span>'
+                                                f'&nbsp;·&nbsp;'
+                                                f'Avg R <span style="color:#80cbc4;">{_bts_lt_marg_avgr_str}</span>'
+                                                f'<br>'
+                                                f'<span style="color:#90a4ae;">Comfortable</span> ({_bts_lt_comf_n}):&nbsp;'
+                                                f'WR <span style="color:{_bts_lt_comf_wr_col};font-weight:600;">{_bts_lt_comf_wr_str}</span>'
+                                                f'&nbsp;·&nbsp;'
+                                                f'Avg R <span style="color:#80cbc4;">{_bts_lt_comf_avgr_str}</span>'
+                                                + (
+                                                    f'<br><span style="color:#90a4ae;">ΔWR (marg−comf):</span>&nbsp;'
+                                                    f'<span style="color:{_bts_lt_dwr_col};font-weight:600;">{_bts_lt_dwr}</span>'
+                                                    if _bts_lt_dwr is not None else ""
+                                                ) +
+                                                f'</div>'
+                                            )
                                 st.markdown(
                                     f'<div style="background:#1e2a3a;border-left:{_bts_lt_border};'
                                     f'border-radius:8px;padding:12px;text-align:center;">'
@@ -23025,6 +23176,7 @@ ALTER TABLE backtest_sim_runs
                                     f'Avg Win: +{_bts_ltavgw:.2f}R  ·  Avg Loss: {_bts_ltavgl:.2f}R</div>'
                                     f'<div style="font-size:11px;color:#90a4ae;">'
                                     f'Total: {"+" if _bts_lttot >= 0 else ""}{_bts_lttot:.1f}R</div>'
+                                    f'{_bts_lt_marg_html}'
                                     f'{_bts_filter_badge_html}'
                                     f'</div>', unsafe_allow_html=True
                                 )
