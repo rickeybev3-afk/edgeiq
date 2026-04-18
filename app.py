@@ -20996,6 +20996,19 @@ ALTER TABLE backtest_sim_runs
             )
         with _cp_btn_col:
             st.markdown("<br>", unsafe_allow_html=True)
+            _cp_all_tickers = _missing_cp.get("all_tickers", _top_tickers)
+            _cp_csv_rows = [{"Ticker": t["ticker"], "Missing Rows": t["count"]} for t in _cp_all_tickers]
+            _cp_csv_df = pd.DataFrame(_cp_csv_rows)
+            st.download_button(
+                label="⬇ Download CSV",
+                data=_cp_csv_df.to_csv(index=False),
+                file_name="missing_close_price_tickers.csv",
+                mime="text/csv",
+                key="cp_missing_download_csv",
+                use_container_width=True,
+            )
+            if not _ticker_list_complete:
+                st.caption("Export is a partial sample — not all affected tickers could be scanned.")
             if st.button("🔄 Retry Close Price Fetch", key="cp_retry_backfill_btn",
                          use_container_width=True):
                 _cp_progress_bar  = st.progress(0.0)
@@ -24226,6 +24239,19 @@ ALTER TABLE backtest_sim_runs
             )
         with _pt_cp_btn_col:
             st.markdown("<br>", unsafe_allow_html=True)
+            _pt_cp_all_tickers = _pt_missing_cp.get("all_tickers", _pt_top_tickers)
+            _pt_cp_csv_rows = [{"Ticker": t["ticker"], "Missing Rows": t["count"]} for t in _pt_cp_all_tickers]
+            _pt_cp_csv_df = pd.DataFrame(_pt_cp_csv_rows)
+            st.download_button(
+                label="⬇ Download CSV",
+                data=_pt_cp_csv_df.to_csv(index=False),
+                file_name="missing_close_price_tickers.csv",
+                mime="text/csv",
+                key="pt_cp_missing_download_csv",
+                use_container_width=True,
+            )
+            if not _pt_ticker_list_complete:
+                st.caption("Export is a partial sample — not all affected tickers could be scanned.")
             if st.button("🔄 Retry Close Price Fetch", key="pt_cp_retry_backfill_btn",
                          use_container_width=True):
                 with st.spinner("Fetching close prices from Alpaca — this may take a moment…"):

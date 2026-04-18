@@ -9444,10 +9444,13 @@ def get_missing_close_price_stats(user_id: str = "") -> dict:
       total_missing        – int, exact count of qualifying rows with NULL close_price
       total_tickers        – int, number of distinct tickers affected
       top_tickers          – list of {"ticker": str, "count": int} sorted descending (top 10)
+      all_tickers          – list of {"ticker": str, "count": int} full sorted list (up to
+                             MAX_PAGES * PAGE rows sampled); use for CSV export
       ticker_list_complete – bool, True when all affected rows were seen during aggregation
+                             (False means the export may be a partial sample)
     """
     if not supabase:
-        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [], "all_tickers": [],
                 "ticker_list_complete": True}
     try:
         def _base_q():
@@ -9489,11 +9492,13 @@ def get_missing_close_price_stats(user_id: str = "") -> dict:
                 break  # last page reached
 
         ticker_list_complete = (rows_seen >= total_missing)
-        top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        all_sorted = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+        top = all_sorted[:10]
         return {
             "total_missing": total_missing,
             "total_tickers": len(counts),
             "top_tickers": [{"ticker": t, "count": c} for t, c in top],
+            "all_tickers": [{"ticker": t, "count": c} for t, c in all_sorted],
             "ticker_list_complete": ticker_list_complete,
         }
     except Exception as e:
@@ -9513,10 +9518,13 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
       total_missing        – int, exact count of qualifying rows with NULL close_price
       total_tickers        – int, number of distinct tickers affected
       top_tickers          – list of {"ticker": str, "count": int} sorted descending (top 10)
+      all_tickers          – list of {"ticker": str, "count": int} full sorted list (up to
+                             MAX_PAGES * PAGE rows sampled); use for CSV export
       ticker_list_complete – bool, True when all affected rows were seen during aggregation
+                             (False means the export may be a partial sample)
     """
     if not supabase:
-        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
+        return {"total_missing": 0, "total_tickers": 0, "top_tickers": [], "all_tickers": [],
                 "ticker_list_complete": True}
     try:
         def _base_q():
@@ -9557,11 +9565,13 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
                 break
 
         ticker_list_complete = (rows_seen >= total_missing)
-        top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        all_sorted = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+        top = all_sorted[:10]
         return {
             "total_missing": total_missing,
             "total_tickers": len(counts),
             "top_tickers": [{"ticker": t, "count": c} for t, c in top],
+            "all_tickers": [{"ticker": t, "count": c} for t, c in all_sorted],
             "ticker_list_complete": ticker_list_complete,
         }
     except Exception as e:
