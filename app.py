@@ -21644,15 +21644,25 @@ def render_performance_tab():
         )
 
     # ── Live-filter pace target (cached, computed from backtest_sim_runs) ────────
+    # All-time target: one entry per user, no growth risk.
     @st.cache_data(ttl=300, show_spinner=False)
-    def _load_pace_target(uid, start_date: str = "", end_date: str = ""):
+    def _load_pace_target_alltime(uid):
+        return get_backtest_pace_target(user_id=uid)
+
+    # Date-scoped target: capped at 50 LRU entries so the cache cannot grow
+    # unbounded as traders explore many unique date ranges.
+    @st.cache_data(ttl=300, max_entries=50, show_spinner=False)
+    def _load_pace_target_scoped(uid, start_date: str, end_date: str):
         return get_backtest_pace_target(user_id=uid, start_date=start_date, end_date=end_date)
 
     _pace_rp_start = st.session_state.get("rp_start_date")
     _pace_rp_end   = st.session_state.get("rp_end_date")
     _pace_start_str = str(_pace_rp_start) if _pace_rp_start else ""
     _pace_end_str   = str(_pace_rp_end)   if _pace_rp_end   else ""
-    _pace_tgt = _load_pace_target(uid=_AUTH_USER_ID, start_date=_pace_start_str, end_date=_pace_end_str)
+    if _pace_start_str or _pace_end_str:
+        _pace_tgt = _load_pace_target_scoped(uid=_AUTH_USER_ID, start_date=_pace_start_str, end_date=_pace_end_str)
+    else:
+        _pace_tgt = _load_pace_target_alltime(uid=_AUTH_USER_ID)
     _TARGET_PER_DAY  = _pace_tgt["per_day"]
     _TARGET_PER_YEAR = _pace_tgt["per_year"]
     if not _pace_tgt["is_fallback"]:
