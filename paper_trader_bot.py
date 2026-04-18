@@ -1016,9 +1016,10 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     # v5 data: RVOL 0-1.0 → 28.2% WR / -0.513R (85 trades). Clear negative edge.
     # Only apply when rvol is available (may be None for new tickers or data gaps).
     _rvol_val  = r.get("rvol")
-    _rvol_mult = 1.0  # default — no bonus; updated below when RVOL data is present
+    _rvol_mult = None  # None = RVOL data unavailable; updated below when data is present
     if _rvol_val is not None:
         _rvol_float = float(_rvol_val)
+        _rvol_mult  = _rvol_float
         # Block rvol=0 too — 0 means data is present but volume is near-zero;
         # only None (no data at all) is the bypass case, guarded by outer if-not-None.
         if _rvol_float < RVOL_MIN_FLOOR:
@@ -1136,6 +1137,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     "alpaca_qty":       qty,
                     "order_placed_at":  datetime.utcnow().isoformat(),
                     "skip_reason":      "order_placed",
+                    "rvol_size_mult":   _rvol_mult,
                 }).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date", ""))).eq("ticker", ticker).execute()
             except Exception as _patch_err:
                 log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")

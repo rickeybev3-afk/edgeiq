@@ -593,6 +593,69 @@ def print_summary(user_id: str):
             print(f"  Summary error for {table}: {e}")
 
 
+def backfill_rvol_size_mult(user_ids: list[str], dry_run: bool = False) -> int:
+    """Copy `rvol` → `rvol_size_mult` for paper_trades rows that have RVOL data
+    but no rvol_size_mult stored yet.  Safe to run multiple times (IS NULL guard).
+
+    Returns the number of rows updated (or that would be updated in dry-run mode).
+    """
+    if not backend.supabase:
+        print("  [rvol_backfill] No Supabase connection — skipping.")
+        return 0
+
+    dry_label = " [DRY RUN]" if dry_run else ""
+    print(f"\n{'='*60}")
+    print(f"  RVOL size-mult backfill — paper_trades{dry_label}")
+    print(f"{'='*60}")
+
+    total = 0
+    PAGE  = 1000
+    for uid in user_ids:
+        last_id = None
+        while True:
+            try:
+                q = (
+                    backend.supabase.table("paper_trades")
+                    .select("id,rvol")
+                    .eq("user_id", uid)
+                    .not_.is_("rvol", "null")
+                    .is_("rvol_size_mult", "null")
+                    .order("id")
+                )
+                if last_id is not None:
+                    q = q.gt("id", last_id)
+                resp = q.limit(PAGE).execute()
+            except Exception as e:
+                print(f"  [rvol_backfill] Fetch error for user {uid}: {e}")
+                break
+
+            rows = resp.data or []
+            if not rows:
+                break
+
+            if not dry_run:
+                for row in rows:
+                    try:
+                        backend.supabase.table("paper_trades").update(
+                            {"rvol_size_mult": row["rvol"]}
+                        ).eq("id", row["id"]).execute()
+                    except Exception as e:
+                        print(f"  [rvol_backfill] Update error id={row['id']}: {e}")
+                        continue
+
+            total   += len(rows)
+            last_id  = rows[-1]["id"]
+            action   = "would update" if dry_run else "updated"
+            print(f"  user={uid} | {action} {total} row(s) so far …")
+
+            if len(rows) < PAGE:
+                break
+
+    action = "Would update" if dry_run else "Updated"
+    print(f"  {action} {total} row(s) total.")
+    return total
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
@@ -765,6 +828,11 @@ if __name__ == "__main__":
             print_summary(uid)
 
         print(f"\n✅ Backfill complete for {len(user_ids)} user(s) in {elapsed:.0f}s")
+
+        # ── RVOL size-mult backfill — paper_trades only ────────────────────────
+        # Copies rvol → rvol_size_mult for historical rows where RVOL data exists
+        # but rvol_size_mult was not yet recorded (rows predating this feature).
+        backfill_rvol_size_mult(user_ids, dry_run=False)
 
         # ── Context level backfill (S/R, VWAP, MACD for adaptive exit analysis) ──
         print("\n" + "=" * 60)
