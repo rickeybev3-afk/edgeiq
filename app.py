@@ -27713,7 +27713,7 @@ def render_decision_log_tab():
 
     st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
-    _dl_fc1, _dl_fc2 = st.columns(2)
+    _dl_fc1, _dl_fc2, _dl_fc3 = st.columns(3)
     with _dl_fc1:
         _dl_filter_cats = st.multiselect(
             "Filter by Category",
@@ -27727,6 +27727,12 @@ def render_decision_log_tab():
             options=["Pending", "Confirmed", "Refuted", "Partial"],
             key="dl_filter_outcomes",
             placeholder="All outcomes",
+        )
+    with _dl_fc3:
+        _dl_sort_by = st.selectbox(
+            "Sort by",
+            options=["Newest first", "Oldest first", "Most reopened"],
+            key="dl_sort_by",
         )
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -27784,6 +27790,11 @@ def render_decision_log_tab():
         _dl_display = [r for r in _dl_display if r.get("category", "Other") in _dl_filter_cats]
     if _dl_filter_outcomes:
         _dl_display = [r for r in _dl_display if r.get("outcome", "Pending") in _dl_filter_outcomes]
+
+    if _dl_sort_by == "Oldest first":
+        _dl_display.sort(key=lambda r: (r.get("decision_date", ""), r.get("created_at", "")))
+    elif _dl_sort_by == "Most reopened":
+        _dl_display.sort(key=lambda r: r.get("reopen_count", 0) or 0, reverse=True)
 
     if not _dl_display:
         st.info("No decisions match the current filters.")
