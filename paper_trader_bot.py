@@ -3550,6 +3550,11 @@ def main():
         log.warning("Telegram alerts: DISABLED (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set)")
 
     log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
+    log.info(
+        f"Look-back windows — paper close: {PAPER_CLOSE_LOOKBACK_DAYS} days "
+        f"(PAPER_CLOSE_LOOKBACK_DAYS) | backtest close: {BACKTEST_CLOSE_LOOKBACK_DAYS} days "
+        f"(BACKTEST_CLOSE_LOOKBACK_DAYS)"
+    )
     log.info(f"User: {USER_ID}")
     log.info(
         "Schedule: 9:10 AM ET → pre-market gap scan (SIP) | 9:35 AM ET → watchlist refresh | "
