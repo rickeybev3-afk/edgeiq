@@ -15950,6 +15950,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _tk_ib_pass_decimal if _tk_ib_pass_decimal is not None else ""
                         )
 
+                        # ── Inject VWAP Pass Rate Band ────────────────────────────
+                        _tk_vwap_funnel = _tkr_vwap_funnel_data.get(str(_tk_name), (0, 0))
+                        _tk_vwap_tcs_ib = _tk_vwap_funnel[0] if isinstance(_tk_vwap_funnel, tuple) else 0
+                        _tk_vwap_n      = _tk_vwap_funnel[1] if isinstance(_tk_vwap_funnel, tuple) else 0
+                        if _tk_vwap_tcs_ib > 0:
+                            _tk_vwap_pass_rate = round(_tk_vwap_n / _tk_vwap_tcs_ib * 100, 1)
+                            if _tk_vwap_pass_rate >= 70:
+                                _tk_sw_csv_export["VWAP Pass Rate Band"] = "Strong (≥70%)"
+                            elif _tk_vwap_pass_rate >= 40:
+                                _tk_sw_csv_export["VWAP Pass Rate Band"] = "Moderate (40–69%)"
+                            else:
+                                _tk_sw_csv_export["VWAP Pass Rate Band"] = "Weak (<40%)"
+                        else:
+                            _tk_sw_csv_export["VWAP Pass Rate Band"] = "—"
+
                         # ── VWAP entry-filter funnel (scoped to ticker + date range) ─
                         _sw_vwap_ft = _cached_get_backtest_pace_target(
                             user_id=_AUTH_USER_ID,
