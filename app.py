@@ -21318,10 +21318,16 @@ def render_performance_tab():
     _pace_tgt = _load_pace_target(uid=_AUTH_USER_ID)
     _TARGET_PER_DAY  = _pace_tgt["per_day"]
     _TARGET_PER_YEAR = _pace_tgt["per_year"]
-    _pace_tgt_source = (
-        f"TCS≥50 + IB<10% + VWAP aligned  ·  {_pace_tgt['count']:,} setups / {_pace_tgt['bdays']:,} days"
-        if not _pace_tgt["is_fallback"] else "historical estimate"
-    )
+    if not _pace_tgt["is_fallback"]:
+        _pt_tcs_ib  = _pace_tgt.get("tcs_ib_count", _pace_tgt["count"])
+        _pt_vwap    = _pace_tgt.get("vwap_count",   _pace_tgt["count"])
+        _pt_filtered_pct = round((_pt_tcs_ib - _pt_vwap) / _pt_tcs_ib * 100) if _pt_tcs_ib else 0
+        _pace_tgt_source = (
+            f"{_pt_tcs_ib:,} pass TCS+IB filter  →  {_pt_vwap:,} pass VWAP alignment"
+            f" ({_pt_filtered_pct}% filtered)  ·  {_pace_tgt['bdays']:,} trading days"
+        )
+    else:
+        _pace_tgt_source = "historical estimate"
 
     # ── Trades/Day pace row ─────────────────────────────────────────────────────
 

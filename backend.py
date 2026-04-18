@@ -8854,13 +8854,15 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
     function always reflects the full table regardless of dataset size.
 
     Returns a dict:
-        per_day     – avg qualifying setups per trading day  (float)
-        per_year    – per_day × 250  (int)
-        count       – total qualifying rows (TCS + IB + VWAP-aligned)
-        bdays       – trading-day span (min→max sim_date of qualifying rows)
-        min_date    – earliest qualifying sim_date
-        max_date    – latest qualifying sim_date
-        is_fallback – True when no data exists and defaults are returned
+        per_day      – avg qualifying setups per trading day  (float)
+        per_year     – per_day × 250  (int)
+        count        – total qualifying rows (TCS + IB + VWAP-aligned)
+        bdays        – trading-day span (min→max sim_date of qualifying rows)
+        min_date     – earliest qualifying sim_date
+        max_date     – latest qualifying sim_date
+        tcs_ib_count – rows passing TCS≥50 + IB<10% (before VWAP gate)
+        vwap_count   – rows passing all three filters (same as count)
+        is_fallback  – True when no data exists and defaults are returned
 
     Falls back to {"per_day": 0.81, "per_year": 202, "is_fallback": True}
     on any error or when the table has no qualifying rows.
@@ -8869,6 +8871,7 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         "count": 0, "bdays": 0,
         "per_day": 0.81, "per_year": 202,
         "min_date": "", "max_date": "",
+        "tcs_ib_count": 0, "vwap_count": 0,
         "is_fallback": True,
     }
     if not supabase:
@@ -8912,6 +8915,8 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         if _df.empty:
             return _default
 
+        _tcs_ib_count = len(_df)
+
         _df["_ib_mid"] = (_df["ib_high"] + _df["ib_low"]) / 2
 
         _pred_s      = _df["predicted"].fillna("").str.lower()
@@ -8932,7 +8937,14 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         _df = _df[_vwap_ok]
 
         if _df.empty:
-            return _default
+            return {
+                **_default,
+                "tcs_ib_count": _tcs_ib_count,
+                "vwap_count":   0,
+                "per_day":      0.0,
+                "per_year":     0,
+                "is_fallback":  False,
+            }
 
         _cnt = len(_df)
         _dates = _pd_bpt.to_datetime(_df["sim_date"], errors="coerce").dropna()
@@ -8946,13 +8958,15 @@ def get_backtest_pace_target(user_id: str = "") -> dict:
         _per_year = round(_per_day * 250)
 
         return {
-            "count":       _cnt,
-            "bdays":       _bdays,
-            "per_day":     _per_day,
-            "per_year":    _per_year,
-            "min_date":    str(_min_d),
-            "max_date":    str(_max_d),
-            "is_fallback": False,
+            "count":         _cnt,
+            "bdays":         _bdays,
+            "per_day":       _per_day,
+            "per_year":      _per_year,
+            "min_date":      str(_min_d),
+            "max_date":      str(_max_d),
+            "tcs_ib_count":  _tcs_ib_count,
+            "vwap_count":    _cnt,
+            "is_fallback":   False,
         }
     except Exception as _bpt_err:
         logging.warning("get_backtest_pace_target: %s", _bpt_err)
