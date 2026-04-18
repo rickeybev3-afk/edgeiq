@@ -8044,12 +8044,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS mv_paper_tiered_pnl_summary_uidx
 
 # ── skip_reason one-time data backfill ────────────────────────────────────────
 def backfill_paper_trades_skip_reason(user_id: str) -> int:
-    """One-time backfill of skip_reason for historical paper_trades rows.
+    """Backfill skip_reason for historical paper_trades rows.
 
     Called at app startup (via st.session_state guard) so the funnel is
-    meaningful for data pre-dating bot-side skip_reason logging.
+    meaningful for data pre-dating bot-side skip_reason logging.  Also called
+    after the close-price / IB backfill pipeline finishes, so that rows which
+    were previously left as 'unknown' (because ib_range_pct / vwap_at_ib were
+    NULL at the time) can be reclassified now that those columns are populated.
 
-    Priority order applied to rows where skip_reason IS NULL:
+    Priority order applied to rows where skip_reason IS NULL **or 'unknown'**:
       1. alpaca_order_id IS NOT NULL                         → order_placed
       2. predicted contains 'bearish'                        → bearish_break_filtered
       3. ib_range_pct IS NOT NULL AND ib_range_pct >= 10     → ib_too_wide
@@ -8072,7 +8075,7 @@ def backfill_paper_trades_skip_reason(user_id: str) -> int:
             supabase.table("paper_trades")
             .select("id,predicted,alpaca_order_id,ib_range_pct,vwap_at_ib,close_price")
             .eq("user_id", user_id)
-            .is_("skip_reason", "null")
+            .or_("skip_reason.is.null,skip_reason.eq.unknown")
             .range(_offset, _offset + 499)
             .execute()
         )

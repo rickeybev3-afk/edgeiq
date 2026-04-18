@@ -411,6 +411,9 @@ _BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
 _BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
 _BACKFILL_RUN_HISTORY     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backfill_run_history.log")
 _NR_FINISH_FILE           = "/tmp/nightly_refresh.finish_time"
+# Sentinel written by _backfill_pipeline_thread on success so that the next
+# Streamlit render re-runs the skip_reason backfill with newly populated IB/VWAP data.
+_SKIP_REASON_RERUN_TRIGGER = "/tmp/skip_reason_rerun.trigger"
 
 # Module-level lock ensures only one pipeline thread runs at a time.
 # The lock is held for the entire duration of the run and released in the
@@ -551,6 +554,13 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
             pass
         with open(_BACKFILL_STATUS, "w") as sf:
             sf.write("done")
+        # Signal the Streamlit render loop to re-run the skip_reason backfill
+        # now that ib_range_pct / vwap_at_ib values may have been populated.
+        try:
+            with open(_SKIP_REASON_RERUN_TRIGGER, "w") as _trig:
+                _trig.write("1")
+        except Exception:
+            pass
     except Exception as _exc:
         try:
             with open(_BACKFILL_LOG, "a") as lf:
@@ -1198,6 +1208,15 @@ if st.session_state.breadth_regime is None:
 # Runs once per Streamlit session (session_state guard prevents re-runs on rerender).
 # Infers skip_reason from existing columns so the Alpaca Orders funnel is
 # meaningful even for rows logged before bot-side skip_reason writing was added.
+# If the close-price / IB backfill pipeline just finished it writes a sentinel
+# file; detecting it here resets the guard so this render picks up newly
+# populated ib_range_pct / vwap_at_ib values that can now reclassify 'unknown'.
+if os.path.exists(_SKIP_REASON_RERUN_TRIGGER):
+    try:
+        os.remove(_SKIP_REASON_RERUN_TRIGGER)
+    except Exception:
+        pass
+    st.session_state.skip_reason_backfill_done = False
 if not st.session_state.skip_reason_backfill_done:
     try:
         _sr_uid = st.session_state.get("auth_user_id", "")
