@@ -3809,12 +3809,25 @@ def _dispatch_scheduled_divergence_alert() -> None:
         return
 
     _threshold = float(_state.get("threshold", 0.0))
+
+    # Honour per-user Telegram credentials stored in the state file when present,
+    # falling back to the global env-var token so existing deployments are unaffected.
+    _user_tg_token   = str(_state.get("user_tg_token",   "") or "").strip()
+    _user_tg_chat_id = str(_state.get("user_tg_chat_id", "") or "").strip()
+    if _user_tg_token:
+        log.info("[DivAlert] Using per-user Telegram token for scheduled dispatch")
+
     log.info(
         f"[DivAlert] Dispatching scheduled end-of-session divergence alert — "
         f"{_n} flagged ticker{'s' if _n != 1 else ''}, threshold={_threshold}"
     )
     try:
-        _result = send_divergence_alert(flagged_rows=_flagged_rows, threshold=_threshold)
+        _result = send_divergence_alert(
+            flagged_rows=_flagged_rows,
+            threshold=_threshold,
+            tg_token=_user_tg_token,
+            tg_chat_id=_user_tg_chat_id,
+        )
         _sent   = [ch for ch, ok in _result.items() if ok]
         _failed = [ch for ch, ok in _result.items() if not ok]
         log.info(f"[DivAlert] Dispatch result — sent: {_sent}  failed: {_failed}")

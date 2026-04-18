@@ -13304,6 +13304,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     except Exception:
                         pass
                     _session_fired_ts = st.session_state.get("_div_auto_last_fired_ts")
+                    _state_user_tg_token   = st.session_state.get("_pref_div_tg_token", "").strip()
+                    _state_user_tg_chat_id = st.session_state.get("_pref_div_tg_chat_id", "").strip()
                     _new_div_state = {
                         "auto_send_enabled": bool(_auto_send_on),
                         "trigger_mode": _auto_send_mode,
@@ -13317,6 +13319,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _session_fired_ts is not None
                             else _existing_fired_ts_str
                         ),
+                        "user_tg_token": _state_user_tg_token,
+                        "user_tg_chat_id": _state_user_tg_chat_id,
                     }
                     with open(_div_state_path, "w") as _dsf:
                         _json_div.dump(_new_div_state, _dsf, indent=2)
