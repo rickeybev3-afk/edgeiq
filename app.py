@@ -20813,6 +20813,19 @@ ALTER TABLE backtest_sim_runs
                                 save_user_prefs(_AUTH_USER_ID, _bts_d_prefs)
                                 st.session_state["_cached_prefs"] = _bts_d_prefs
                             st.rerun()
+                    else:
+                        if st.button(
+                            "↩ Re-show sync warning",
+                            key="bts_reset_sync_warning",
+                            help="Clear the dismissed state and show the out-of-sync warning again",
+                        ):
+                            st.session_state["bts_sync_dismissed_at"] = None
+                            if _AUTH_USER_ID:
+                                _bts_r_prefs = {**st.session_state.get("_cached_prefs", {})}
+                                _bts_r_prefs.pop("bts_sync_dismissed_at", None)
+                                save_user_prefs(_AUTH_USER_ID, _bts_r_prefs)
+                                st.session_state["_cached_prefs"] = _bts_r_prefs
+                            st.rerun()
 
         _bts_date_filter_active = bool(_bts_start or _bts_end)
 
@@ -23309,6 +23322,19 @@ ALTER TABLE backtest_sim_runs
                         _grid_d_prefs = {**st.session_state.get("_cached_prefs", {}), "grid_sync_dismissed_at": list(_grid_dismiss_key)}
                         save_user_prefs(_AUTH_USER_ID, _grid_d_prefs)
                         st.session_state["_cached_prefs"] = _grid_d_prefs
+                    st.rerun()
+            else:
+                if st.button(
+                    "↩ Re-show sync warning",
+                    key="grid_reset_sync_warning",
+                    help="Clear the dismissed state and show the out-of-sync warning again",
+                ):
+                    st.session_state["grid_sync_dismissed_at"] = None
+                    if _AUTH_USER_ID:
+                        _grid_r_prefs = {**st.session_state.get("_cached_prefs", {})}
+                        _grid_r_prefs.pop("grid_sync_dismissed_at", None)
+                        save_user_prefs(_AUTH_USER_ID, _grid_r_prefs)
+                        st.session_state["_cached_prefs"] = _grid_r_prefs
                     st.rerun()
     else:
         st.caption(
