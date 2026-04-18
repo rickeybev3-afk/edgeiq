@@ -35,6 +35,13 @@ interface BackfillHealthData {
   is_overdue?: boolean;
 }
 
+interface EodSweepEntry {
+  ran_at: string;
+  paper_healed: number;
+  backtest_healed: number;
+  total_healed: number;
+}
+
 interface EodSweepData {
   available: boolean;
   loading: boolean;
@@ -43,6 +50,7 @@ interface EodSweepData {
   backtest_healed?: number;
   total_healed?: number;
   error?: string;
+  history?: EodSweepEntry[];
 }
 
 function formatRelativeTime(isoTimestamp: string): string {
@@ -433,6 +441,7 @@ function Home({ health }: { health: HealthState }) {
   const [backfillErrorAlertsEnabled, setBackfillErrorAlertsEnabled] = useState<boolean | null>(null);
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealthData>({ available: false, loading: true });
   const [eodSweep, setEodSweep] = useState<EodSweepData>({ available: false, loading: true });
+  const [eodHistoryOpen, setEodHistoryOpen] = useState(false);
   useSecondTick(health.db_checked_at);
 
   useEffect(() => {
@@ -692,42 +701,119 @@ function Home({ health }: { health: HealthState }) {
               </div>
             </div>
 
-            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
-              {eodSweep.loading ? (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
-              ) : !eodSweep.available ? (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
-              ) : (
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #4ade80" }} />
-              )}
-              <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>EOD P&amp;L Sweep</span>
-              {eodSweep.loading ? (
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>—</span>
-              ) : !eodSweep.available ? (
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>No data</span>
-              ) : (
-                <span
-                  style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}
-                  title={eodSweep.ran_at ? `Last run: ${formatUtc(eodSweep.ran_at)}` : undefined}
+            <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                {eodSweep.loading ? (
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+                ) : !eodSweep.available ? (
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#475569", display: "inline-block", flexShrink: 0 }} />
+                ) : (
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#4ade80", display: "inline-block", flexShrink: 0, boxShadow: "0 0 6px #4ade80" }} />
+                )}
+                <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>EOD P&amp;L Sweep</span>
+                {eodSweep.loading ? (
+                  <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>—</span>
+                ) : !eodSweep.available ? (
+                  <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>No data</span>
+                ) : (
+                  <span
+                    style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}
+                    title={eodSweep.ran_at ? `Last run: ${formatUtc(eodSweep.ran_at)}` : undefined}
+                  >
+                    {(eodSweep.total_healed ?? 0) === 0 ? (
+                      <span style={{ color: "#86efac", fontWeight: 600 }}>All healed</span>
+                    ) : (
+                      <span style={{ color: "#86efac", fontWeight: 600 }}>{eodSweep.total_healed} healed</span>
+                    )}
+                    {(eodSweep.paper_healed ?? 0) > 0 && (
+                      <span style={{ color: "#94a3b8" }}>({eodSweep.paper_healed}p</span>
+                    )}
+                    {(eodSweep.paper_healed ?? 0) > 0 && (eodSweep.backtest_healed ?? 0) > 0 && (
+                      <span style={{ color: "#94a3b8" }}>+{eodSweep.backtest_healed}b)</span>
+                    )}
+                    {(eodSweep.paper_healed ?? 0) > 0 && (eodSweep.backtest_healed ?? 0) === 0 && (
+                      <span style={{ color: "#94a3b8" }}>)</span>
+                    )}
+                    {eodSweep.ran_at && (
+                      <span style={{ color: "#64748b", fontSize: "12px" }}>· {formatRelativeTime(eodSweep.ran_at)}</span>
+                    )}
+                  </span>
+                )}
+                {(eodSweep.history ?? []).length > 0 && (
+                  <button
+                    onClick={() => setEodHistoryOpen((o) => !o)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "#64748b",
+                      fontSize: "11px",
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      lineHeight: 1,
+                    }}
+                    title={eodHistoryOpen ? "Hide history" : "Show history"}
+                  >
+                    {eodHistoryOpen ? "▲" : "▼"} {(eodSweep.history ?? []).length}
+                  </button>
+                )}
+              </div>
+              {eodHistoryOpen && (eodSweep.history ?? []).length > 0 && (
+                <div
+                  style={{
+                    marginTop: "10px",
+                    background: "#131720",
+                    border: "1px solid #2d3748",
+                    borderRadius: "6px",
+                    overflow: "hidden",
+                  }}
                 >
-                  {(eodSweep.total_healed ?? 0) === 0 ? (
-                    <span style={{ color: "#86efac", fontWeight: 600 }}>All healed</span>
-                  ) : (
-                    <span style={{ color: "#86efac", fontWeight: 600 }}>{eodSweep.total_healed} healed</span>
-                  )}
-                  {(eodSweep.paper_healed ?? 0) > 0 && (
-                    <span style={{ color: "#94a3b8" }}>({eodSweep.paper_healed}p</span>
-                  )}
-                  {(eodSweep.paper_healed ?? 0) > 0 && (eodSweep.backtest_healed ?? 0) > 0 && (
-                    <span style={{ color: "#94a3b8" }}>+{eodSweep.backtest_healed}b)</span>
-                  )}
-                  {(eodSweep.paper_healed ?? 0) > 0 && (eodSweep.backtest_healed ?? 0) === 0 && (
-                    <span style={{ color: "#94a3b8" }}>)</span>
-                  )}
-                  {eodSweep.ran_at && (
-                    <span style={{ color: "#64748b", fontSize: "12px" }}>· {formatRelativeTime(eodSweep.ran_at)}</span>
-                  )}
-                </span>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto auto auto",
+                      gap: "0",
+                      fontSize: "11px",
+                      color: "#475569",
+                      fontWeight: 600,
+                      padding: "6px 12px",
+                      borderBottom: "1px solid #2d3748",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    <span>Date</span>
+                    <span style={{ textAlign: "right", paddingLeft: "12px" }}>Paper</span>
+                    <span style={{ textAlign: "right", paddingLeft: "12px" }}>Backtest</span>
+                    <span style={{ textAlign: "right", paddingLeft: "12px" }}>Total</span>
+                  </div>
+                  {(eodSweep.history ?? []).map((entry, idx) => (
+                    <div
+                      key={entry.ran_at}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr auto auto auto",
+                        gap: "0",
+                        fontSize: "12px",
+                        padding: "6px 12px",
+                        borderBottom: idx < (eodSweep.history ?? []).length - 1 ? "1px solid #1e2435" : "none",
+                        background: idx % 2 === 0 ? "transparent" : "#0e1117",
+                      }}
+                    >
+                      <span style={{ color: "#94a3b8" }} title={formatUtc(entry.ran_at)}>
+                        {new Date(entry.ran_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                        <span style={{ color: "#475569", marginLeft: "6px", fontSize: "11px" }}>
+                          {new Date(entry.ran_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </span>
+                      <span style={{ color: "#cbd5e1", textAlign: "right", paddingLeft: "12px" }}>{entry.paper_healed}</span>
+                      <span style={{ color: "#cbd5e1", textAlign: "right", paddingLeft: "12px" }}>{entry.backtest_healed}</span>
+                      <span style={{ color: entry.total_healed === 0 ? "#86efac" : "#f8fafc", fontWeight: 600, textAlign: "right", paddingLeft: "12px" }}>
+                        {entry.total_healed === 0 ? "✓" : entry.total_healed}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>

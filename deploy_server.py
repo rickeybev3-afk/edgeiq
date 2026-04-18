@@ -798,6 +798,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
           backtest_healed — number of backtest rows updated
           total_healed   — combined total
 
+        It also appends each run to eod_sweep_history.json (next to this file).
+        The response includes a `history` array (newest first, up to 30 entries).
+
         If the file is absent the endpoint returns {"available": false}.
         """
         sweep_path = "/tmp/eod_sweep_status.json"
@@ -811,6 +814,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = {"available": False, "error": "status file corrupt"}
         except Exception as e:
             data = {"available": False, "error": str(e)}
+
+        # Attach history (newest first, cap at 30 entries)
+        history_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eod_sweep_history.json")
+        try:
+            with open(history_path) as hf:
+                raw_history = json.load(hf)
+            if isinstance(raw_history, list):
+                data["history"] = list(reversed(raw_history))[:30]
+            else:
+                data["history"] = []
+        except FileNotFoundError:
+            data["history"] = []
+        except Exception:
+            data["history"] = []
+
         body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

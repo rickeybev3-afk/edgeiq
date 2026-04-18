@@ -3671,6 +3671,7 @@ def nightly_recalibration():
     # ── Persist sweep result to disk so the dashboard can surface it ──────────
     try:
         import datetime as _dt
+        import json as _json
         _sweep_payload = {
             "ran_at": _dt.datetime.utcnow().isoformat() + "Z",
             "paper_healed": paper_written,
@@ -3679,9 +3680,28 @@ def nightly_recalibration():
         }
         _sweep_path = "/tmp/eod_sweep_status.json"
         with open(_sweep_path, "w") as _sf:
-            import json as _json
             _json.dump(_sweep_payload, _sf)
         log.info(f"EOD sweep status written to {_sweep_path}")
+
+        # Append to persistent history file next to deploy_server.py
+        import os as _os
+        _history_path = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)),
+            "eod_sweep_history.json",
+        )
+        _history: list = []
+        if _os.path.exists(_history_path):
+            try:
+                with open(_history_path) as _hf:
+                    _history = _json.load(_hf)
+                if not isinstance(_history, list):
+                    _history = []
+            except Exception:
+                _history = []
+        _history.append(_sweep_payload)
+        with open(_history_path, "w") as _hf:
+            _json.dump(_history, _hf)
+        log.info(f"EOD sweep history appended to {_history_path} ({len(_history)} entries)")
     except Exception as exc:
         log.warning(f"Could not write EOD sweep status file: {exc}")
 
