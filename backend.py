@@ -10795,8 +10795,12 @@ def ensure_paper_trades_table() -> bool:
 # Bump this string whenever compute_trade_sim() logic changes so that
 # --skip-existing automatically re-processes stale (old-version) rows.
 SIM_VERSION = "v3"  # v3 = adaptive target_r per row (EOD close, awaiting clean MFE re-backfill)
-# SIM_VERSION = "v4"  # v4 = intraday bracket sim: MAE>=1R→stop, MFE>=target_r→exit at target
+# SIM_VERSION = "v4"  # v4 = intraday bracket sim: MAE>=1R→stop, MFE>=target_r→exit at fixed target
 #                     # Enable once backfill_mfe_mae.py --force-recompute completes (2026-04-18 fix)
+# SIM_VERSION = "v5"  # v5 = trailing stop sim: T1 hit → trail 1R below MFE peak (mirrors paper bot).
+#                     # MFE>=target_r → captured = MFE-1.0R (trail fires 1R from peak).
+#                     # MFE<target_r AND MAE>=1R → stopped at -1.0R.
+#                     # Neither → EOD close (position held). Requires clean MFE data.
 
 # Formula version stamped on every row that writes eod_pnl_r.
 # Bump this string whenever compute_trade_sim_tiered() EOD logic changes so
@@ -10876,17 +10880,22 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
     false_up    = bool(r.get("false_break_up", False))
     false_dn    = bool(r.get("false_break_down", False))
 
-    # v4: intraday bracket sim using post-IB MFE/MAE (re-backfilled with hm > entry_hm fix).
-    # MAE >= 1.0R → stop was hit before target; MFE >= target_r → bracket take-profit fired.
-    # Only active when SIM_VERSION == "v4" AND clean MFE/MAE data is present.
+    # v4/v5: intraday sim using post-IB MFE/MAE (re-backfilled with hm > entry_hm fix).
+    # v4 = bracket sim: MAE>=1R→stop, MFE>=target_r→exit at fixed target_r.
+    # v5 = trailing stop sim (mirrors paper bot):
+    #   MFE >= target_r (T1 hit) → trail 1R below MFE peak → captured = MFE - 1.0R
+    #   MFE <  target_r AND MAE >= 1.0R → stopped at -1.0R
+    #   Neither → EOD close (position held)
+    # Priority: T1/MFE check first (price ran before it stopped), MAE second.
     _mfe_r = r.get("mfe")
     _mae_r = r.get("mae")
-    _use_bracket_sim = (
-        SIM_VERSION == "v4"
-        and _mfe_r is not None and _mae_r is not None
+    _has_clean_mfe = (
+        _mfe_r is not None and _mae_r is not None
         and float(_mfe_r) >= 0 and float(_mae_r) >= 0   # exclude sentinel -9999 rows
     )
-    if _use_bracket_sim:
+    _use_bracket_sim = SIM_VERSION == "v4" and _has_clean_mfe
+    _use_trail_sim   = SIM_VERSION == "v5" and _has_clean_mfe
+    if _has_clean_mfe and (_use_bracket_sim or _use_trail_sim):
         _mfe_r = float(_mfe_r)
         _mae_r = float(_mae_r)
 
@@ -10935,6 +10944,27 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                     "sim_outcome": "hit_target", "sim_version": SIM_VERSION,
                 }
             # Neither fired — position open at EOD, fall through
+
+        # ── v5: Trailing stop sim — mirrors paper bot T1 → trail 1R below peak ─
+        if _use_trail_sim:
+            if _mfe_r >= target_r:
+                # T1 hit: trailing stop converts bracket. Trail = 1R below MFE peak.
+                captured_r = max(0.0, round(_mfe_r - 1.0, 3))
+                captured_pct = captured_r * stop_dist_pct
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
+                    "sim_outcome": "trailing_exit", "sim_version": SIM_VERSION,
+                }
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            # T1 not hit, stop not hit — held to EOD, fall through
 
         # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
@@ -10985,6 +11015,26 @@ def compute_trade_sim(r: dict, target_r: float = 2.0) -> dict:
                     "sim_outcome": "hit_target", "sim_version": SIM_VERSION,
                 }
             # Neither fired — position open at EOD, fall through
+
+        # ── v5: Trailing stop sim — mirrors paper bot T1 → trail 1R below peak ─
+        if _use_trail_sim:
+            if _mfe_r >= target_r:
+                captured_r = max(0.0, round(_mfe_r - 1.0, 3))
+                captured_pct = captured_r * stop_dist_pct
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
+                    "sim_outcome": "trailing_exit", "sim_version": SIM_VERSION,
+                }
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            # T1 not hit, stop not hit — held to EOD, fall through
 
         # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
