@@ -238,8 +238,6 @@ export default function Settings() {
     saved: false,
   });
 
-  const [activeSection, setActiveSection] = useState<string>("trading-mode");
-
   const [credAlerts, setCredAlerts] = useState<CredentialAlertsState>({
     enabled: true,
     loading: true,
@@ -269,6 +267,42 @@ export default function Settings() {
     error: null,
     saved: false,
   });
+
+  const [activeSection, setActiveSection] = useState<string>("");
+
+  useEffect(() => {
+    const sectionIds = [
+      "trading-mode",
+      "credential-alerts",
+      "subscriber-opt-out",
+      "backfill-health",
+      "context-dryrun",
+      "paper-lookback",
+      "backfill-heartbeat-window",
+      "eod-recalc-health",
+      "rvol-size-tiers",
+    ];
+    const visibleSections = new Set<string>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            visibleSections.add(entry.target.id);
+          } else {
+            visibleSections.delete(entry.target.id);
+          }
+        });
+        const first = sectionIds.find((id) => visibleSections.has(id));
+        if (first !== undefined) setActiveSection(first);
+      },
+      { threshold: 0.15 }
+    );
+    sectionIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
