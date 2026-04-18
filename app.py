@@ -12370,6 +12370,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     "max_div_idx": _max_div_idx_tk,
                                     "max_div_val": _max_div_val_tk,
                                     "eq_source":   _eq_crv_src,
+                                    "trade_dates": (
+                                        _tgrp["sim_date"].fillna("").astype(str).str[:10].tolist()
+                                        if "sim_date" in _tgrp.columns else []
+                                    ),
+                                    "trade_tcs": (
+                                        _pd_bt.to_numeric(_tgrp["tcs"], errors="coerce").fillna(0).astype(int).tolist()
+                                        if "tcs" in _tgrp.columns else []
+                                    ),
                                 }
                                 if abs(_max_div_val_tk) >= 0.02:
                                     _tk_max_div_val = _max_div_val_tk
@@ -12383,6 +12391,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 "eq_curve": _tk_eq_cum,
                                 "eq_only":  True,
                                 "eq_source": _eq_crv_src,
+                                "trade_dates": (
+                                    _tgrp["sim_date"].fillna("").astype(str).str[:10].tolist()
+                                    if "sim_date" in _tgrp.columns else []
+                                ),
+                                "trade_tcs": (
+                                    _pd_bt.to_numeric(_tgrp["tcs"], errors="coerce").fillna(0).astype(int).tolist()
+                                    if "tcs" in _tgrp.columns else []
+                                ),
                             }
                 except Exception:
                     pass
@@ -14359,9 +14375,58 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"ℹ️ Equity curve built from {_eq_src_lbl}. "
                                 "Divergence analysis requires an EOD or tiered-exit R column."
                             )
-                            _mini_eq_csv_rows = "\n".join(
-                                f"{i},{v:.2f}" for i, v in enumerate(_mini_eq)
-                            )
+                            _meq_dates = _mini_div_data.get("trade_dates", [])
+                            _meq_tcs   = _mini_div_data.get("trade_tcs", [])
+                            _meq_has_meta = bool(_meq_dates or _meq_tcs)
+                            _meq_flt_cols = st.columns([1, 1, 1])
+                            with _meq_flt_cols[0]:
+                                _meq_flt_from = st.date_input(
+                                    "From date",
+                                    value=None,
+                                    key=f"_flt_meq_from_{_tk_name}",
+                                    help="Filter exported rows: only include trades on or after this date",
+                                    label_visibility="visible",
+                                )
+                            with _meq_flt_cols[1]:
+                                _meq_flt_to = st.date_input(
+                                    "To date",
+                                    value=None,
+                                    key=f"_flt_meq_to_{_tk_name}",
+                                    help="Filter exported rows: only include trades on or before this date",
+                                    label_visibility="visible",
+                                )
+                            _meq_tcs_vals = sorted(set(_meq_tcs)) if _meq_tcs else []
+                            with _meq_flt_cols[2]:
+                                _meq_flt_tcs = st.number_input(
+                                    "Min TCS floor",
+                                    min_value=0,
+                                    max_value=100,
+                                    value=0,
+                                    step=5,
+                                    key=f"_flt_meq_tcs_{_tk_name}",
+                                    help="Filter exported rows: only include trades at this TCS floor or higher (0 = no filter)",
+                                )
+                            _meq_csv_lines = []
+                            _meq_header = "trade_index,date,tcs_floor,equity_usd" if _meq_has_meta else "trade_index,equity_usd"
+                            for _mi, _mv in enumerate(_mini_eq):
+                                if _mi == 0:
+                                    _meq_csv_lines.append(f"{_mi},,,{_mv:.2f}" if _meq_has_meta else f"{_mi},{_mv:.2f}")
+                                    continue
+                                _td_idx  = _mi - 1
+                                _td_date = _meq_dates[_td_idx] if _td_idx < len(_meq_dates) else ""
+                                _td_tcs  = int(_meq_tcs[_td_idx]) if _td_idx < len(_meq_tcs) else 0
+                                if _meq_flt_from and _td_date and _td_date < str(_meq_flt_from):
+                                    continue
+                                if _meq_flt_to and _td_date and _td_date > str(_meq_flt_to):
+                                    continue
+                                if _meq_flt_tcs > 0 and _td_tcs < _meq_flt_tcs:
+                                    continue
+                                if _meq_has_meta:
+                                    _meq_csv_lines.append(f"{_mi},{_td_date},{_td_tcs},{_mv:.2f}")
+                                else:
+                                    _meq_csv_lines.append(f"{_mi},{_mv:.2f}")
+                            _meq_flt_active = bool(_meq_flt_from or _meq_flt_to or _meq_flt_tcs > 0)
+                            _meq_row_count  = len(_meq_csv_lines) - 1
                             with st.expander("🔍 Preview trade-by-trade data", expanded=False):
                                 _mini_eq_prev_df = _pd_bt.DataFrame({
                                     "Trade #": list(range(len(_mini_eq))),
@@ -14376,9 +14441,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     },
                                     height=220,
                                 )
+                            if _meq_flt_active:
+                                st.caption(
+                                    f"✂️ Filter active — {_meq_row_count} trade row(s) will be exported"
+                                )
                             st.download_button(
                                 label="⬇️ Download Equity Curve CSV",
-                                data=f"trade_index,equity_usd\n{_mini_eq_csv_rows}",
+                                data=f"{_meq_header}\n" + "\n".join(_meq_csv_lines),
                                 file_name=f"{_tk_name}_equity_curve.csv",
                                 mime="text/csv",
                                 key=f"_dl_mini_eq_{_tk_name}",
@@ -14567,11 +14636,64 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             st.caption(
                                 f"🟡 **Trade\u00a0#{_mini_idx}**: {_mini_div_msg}{_div_src_note}"
                             )
+                            _mdiv_dates = _mini_div_data.get("trade_dates", [])
+                            _mdiv_tcs   = _mini_div_data.get("trade_tcs", [])
+                            _mdiv_has_meta = bool(_mdiv_dates or _mdiv_tcs)
+                            _mdiv_flt_cols = st.columns([1, 1, 1])
+                            with _mdiv_flt_cols[0]:
+                                _mdiv_flt_from = st.date_input(
+                                    "From date",
+                                    value=None,
+                                    key=f"_flt_mdiv_from_{_tk_name}",
+                                    help="Filter exported rows: only include trades on or after this date",
+                                    label_visibility="visible",
+                                )
+                            with _mdiv_flt_cols[1]:
+                                _mdiv_flt_to = st.date_input(
+                                    "To date",
+                                    value=None,
+                                    key=f"_flt_mdiv_to_{_tk_name}",
+                                    help="Filter exported rows: only include trades on or before this date",
+                                    label_visibility="visible",
+                                )
+                            with _mdiv_flt_cols[2]:
+                                _mdiv_flt_tcs = st.number_input(
+                                    "Min TCS floor",
+                                    min_value=0,
+                                    max_value=100,
+                                    value=0,
+                                    step=5,
+                                    key=f"_flt_mdiv_tcs_{_tk_name}",
+                                    help="Filter exported rows: only include trades at this TCS floor or higher (0 = no filter)",
+                                )
                             _mini_csv_len = min(len(_mini_eq), len(_mini_r))
-                            _mini_div_csv_rows = "\n".join(
-                                f"{i},{_mini_eq[i]:.2f},{_mini_r[i]:.4f}"
-                                for i in range(_mini_csv_len)
+                            _mdiv_csv_lines = []
+                            _mdiv_header = (
+                                "trade_index,date,tcs_floor,equity_usd,cum_r"
+                                if _mdiv_has_meta else
+                                "trade_index,equity_usd,cum_r"
                             )
+                            for _di in range(_mini_csv_len):
+                                _deq = _mini_eq[_di]
+                                _dr  = _mini_r[_di]
+                                if _di == 0:
+                                    _mdiv_csv_lines.append(f"{_di},,,{_deq:.2f},{_dr:.4f}" if _mdiv_has_meta else f"{_di},{_deq:.2f},{_dr:.4f}")
+                                    continue
+                                _dt_idx  = _di - 1
+                                _dt_date = _mdiv_dates[_dt_idx] if _dt_idx < len(_mdiv_dates) else ""
+                                _dt_tcs  = int(_mdiv_tcs[_dt_idx]) if _dt_idx < len(_mdiv_tcs) else 0
+                                if _mdiv_flt_from and _dt_date and _dt_date < str(_mdiv_flt_from):
+                                    continue
+                                if _mdiv_flt_to and _dt_date and _dt_date > str(_mdiv_flt_to):
+                                    continue
+                                if _mdiv_flt_tcs > 0 and _dt_tcs < _mdiv_flt_tcs:
+                                    continue
+                                if _mdiv_has_meta:
+                                    _mdiv_csv_lines.append(f"{_di},{_dt_date},{_dt_tcs},{_deq:.2f},{_dr:.4f}")
+                                else:
+                                    _mdiv_csv_lines.append(f"{_di},{_deq:.2f},{_dr:.4f}")
+                            _mdiv_flt_active = bool(_mdiv_flt_from or _mdiv_flt_to or _mdiv_flt_tcs > 0)
+                            _mdiv_row_count  = len(_mdiv_csv_lines) - 1
                             with st.expander("🔍 Preview trade-by-trade data", expanded=False):
                                 _mini_div_prev_df = _pd_bt.DataFrame({
                                     "Trade #": list(range(_mini_csv_len)),
@@ -14588,9 +14710,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     },
                                     height=220,
                                 )
+                            if _mdiv_flt_active:
+                                st.caption(
+                                    f"✂️ Filter active — {_mdiv_row_count} trade row(s) will be exported"
+                                )
                             st.download_button(
                                 label="⬇️ Download Curve Data CSV",
-                                data=f"trade_index,equity_usd,cum_r\n{_mini_div_csv_rows}",
+                                data=f"{_mdiv_header}\n" + "\n".join(_mdiv_csv_lines),
                                 file_name=f"{_tk_name}_equity_r_curve.csv",
                                 mime="text/csv",
                                 key=f"_dl_mini_div_{_tk_name}",
