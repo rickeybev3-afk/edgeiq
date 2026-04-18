@@ -1197,6 +1197,15 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
 # Prevents re-triggering on every 30-second loop iteration.
 _TRAILING_STOP_ACTIVATED: set = set()
 
+# S/R context stored when a trailing stop is tightened due to a nearby wall.
+# Maps guard_key → {"level_type": str, "level": float, "gap": float}
+# Read by the stop-out detector to include wall detail in the close alert.
+_TRAILING_STOP_SR_CONTEXT: dict = {}
+
+# Guard set: (ticker, trade_date) pairs for which the stop-out Telegram alert
+# has already been sent.  Prevents duplicate alerts on successive 30-s loops.
+_TRAILING_STOP_STOPOUT_ALERTED: set = set()
+
 # Session-open equity: date_str → equity float captured at ~9:35 AM ET each day.
 # Used by _force_close_all_positions() to compute equity change vs session open.
 _SESSION_OPEN_EQUITY: dict = {}
@@ -1380,10 +1389,36 @@ def _monitor_trailing_stops() -> None:
         ticker    = (row.get("ticker") or "").upper()
         guard_key = (ticker, today_str)
 
+        pos = pos_by_ticker.get(ticker)
+
         if guard_key in _TRAILING_STOP_ACTIVATED:
+            # Trailing stop was already placed.  If the position has since
+            # disappeared (Alpaca filled / stopped out), fire the stop-out alert.
+            if not pos and guard_key not in _TRAILING_STOP_STOPOUT_ALERTED:
+                _TRAILING_STOP_STOPOUT_ALERTED.add(guard_key)
+                sr_ctx = _TRAILING_STOP_SR_CONTEXT.get(guard_key)
+                if sr_ctx:
+                    lvl_type = sr_ctx["level_type"]
+                    lvl_px   = sr_ctx["level"]
+                    lvl_gap  = sr_ctx["gap"]
+                    sr_line  = (
+                        f"🎯 Tightened to 0.5R at T1: {lvl_type} wall @ "
+                        f"<b>${lvl_px:.2f}</b> ({lvl_gap:.2f} away)\n"
+                    )
+                else:
+                    sr_line = ""
+                tg_send(
+                    f"🛑 <b>Trailing Stop Hit — {ticker}</b>\n"
+                    f"Position stopped out — trailing stop filled\n"
+                    + sr_line
+                    + "<i>Final P&amp;L in the 3:30 PM close summary</i>"
+                )
+                log.info(
+                    f"[TrailingStop] {ticker} — stop-out detected (position gone)"
+                    + (f" — S/R wall was {sr_ctx['level_type']} @ ${sr_ctx['level']:.2f}" if sr_ctx else "")
+                )
             continue
 
-        pos = pos_by_ticker.get(ticker)
         if not pos:
             continue
 
@@ -1494,6 +1529,11 @@ def _monitor_trailing_stops() -> None:
                         _sr_level = float(_nearest)
                         _sr_dist  = _sr_level - cur_px
                         _sr_label = "Resistance"
+                        _TRAILING_STOP_SR_CONTEXT[guard_key] = {
+                            "level_type": "resistance",
+                            "level":      _sr_level,
+                            "gap":        round(_sr_dist, 2),
+                        }
                         log.info(
                             f"[TrailingStop] {ticker} v6 tighten [{_ctx_source}]: "
                             f"resistance=${_sr_level:.2f} "
@@ -1512,6 +1552,11 @@ def _monitor_trailing_stops() -> None:
                         _sr_level = float(_nearest)
                         _sr_dist  = cur_px - _sr_level
                         _sr_label = "Support"
+                        _TRAILING_STOP_SR_CONTEXT[guard_key] = {
+                            "level_type": "support",
+                            "level":      _sr_level,
+                            "gap":        round(_sr_dist, 2),
+                        }
                         log.info(
                             f"[TrailingStop] {ticker} v6 tighten [{_ctx_source}]: "
                             f"support=${_sr_level:.2f} "
