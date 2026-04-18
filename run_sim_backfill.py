@@ -740,6 +740,12 @@ if __name__ == "__main__":
     if context_only:
         if dry_run:
             print("Mode: CONTEXT-ONLY DRY RUN — rows will be inspected but NO database writes will occur.")
+            if out_file:
+                print(f"       Report will be saved to: {out_file}")
+            else:
+                _ts      = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+                out_file = f"dry_run_context_{_ts}.json"
+                print(f"       No --out specified — report will be saved to: {out_file}")
         else:
             print("Mode: CONTEXT-ONLY — running S/R, VWAP, and MACD context backfill.")
         if uid_args:
@@ -748,57 +754,70 @@ if __name__ == "__main__":
         else:
             _ctx_uids = None
             print("  No user IDs specified — running for all users.")
-        if dry_run:
-            if out_file:
-                print(f"       Report will be saved to: {out_file}")
-            else:
-                _ts      = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
-                out_file = f"dry_run_context_{_ts}.json"
-                print(f"       No --out specified — report will be saved to: {out_file}")
         print(f"\n  Flags in effect:")
         print(f"    --context-only   : yes")
         print(f"    --dry-run        : {'yes' if dry_run else 'no'}")
         print("=" * 60)
 
         if dry_run:
-            # Dry-run: query the DB for scope without making any writes or API calls.
-            import time as _time
-            _t0 = _time.time()
+            # ── context-only dry-run: count rows without writing ───────────────
             try:
                 import backfill_context_levels as _ctx
-                import backend as _backend
-                _supabase = _backend.supabase
-
-                _resolve_uids = _ctx_uids
-                if not _resolve_uids:
-                    _resolve_uids = _ctx.discover_user_ids()
-
-                _query = _supabase.table('backtest_sim_runs') \
-                    .select('ticker, sim_date, scan_type') \
-                    .in_('user_id', _resolve_uids) \
-                    .in_('actual_outcome', ['Bullish Break', 'Bearish Break'])
-                _resp = _query.execute()
-                _all_rows = _resp.data or []
-
-                _already = _ctx.get_already_processed()
-                _todo = [r for r in _all_rows
-                         if (r['ticker'], r['sim_date'], r['scan_type']) not in _already]
-
-                _tickers = sorted({r['ticker'] for r in _todo})
-                _dates   = sorted({r['sim_date'] for r in _todo})
-                _date_start = _dates[0] if _dates else "N/A"
-                _date_end   = _dates[-1] if _dates else "N/A"
-                _elapsed = _time.time() - _t0
-
-                print(f"CONTEXT DRY RUN: {len(_todo)} row(s) would be processed")
-                print(f"CONTEXT DRY RUN unique tickers ({len(_tickers)}): {', '.join(_tickers)}")
-                print(f"CONTEXT DRY RUN date range: {_date_start} to {_date_end}")
-                print(f"CONTEXT DRY RUN COMPLETE — {_elapsed:.2f}s elapsed")
+                _ctx_t0 = time.time()
+                _ctx_discovered = _ctx_uids or _ctx.discover_user_ids()
+                _ctx_total_candidates   = 0
+                _ctx_total_already      = 0
+                _ctx_total_would_update = 0
+                # Fetch settled breakout rows for discovered users
+                _ctx_resp = _ctx.SUPABASE.table("backtest_sim_runs") \
+                    .select("ticker, sim_date, scan_type, user_id") \
+                    .in_("user_id", _ctx_discovered) \
+                    .in_("actual_outcome", ["Bullish Break", "Bearish Break"]) \
+                    .execute()
+                _ctx_all_rows = _ctx_resp.data or []
+                _ctx_total_candidates = len(_ctx_all_rows)
+                # Fetch already-processed keys
+                _ctx_already = _ctx.get_already_processed()
+                _ctx_total_already = len(_ctx_already)
+                # Compute per-user would_update counts
+                _ctx_by_uid: dict = {}
+                for _r in _ctx_all_rows:
+                    _uid = _r.get("user_id", "unknown")
+                    if (_r["ticker"], _r["sim_date"], _r["scan_type"]) not in _ctx_already:
+                        _ctx_by_uid[_uid] = _ctx_by_uid.get(_uid, 0) + 1
+                        _ctx_total_would_update += 1
+                _ctx_report_rows = [
+                    {"user_id": _uid, "would_update": _cnt}
+                    for _uid, _cnt in sorted(_ctx_by_uid.items())
+                ]
+                _ctx_elapsed = time.time() - _ctx_t0
+                print(f"\n  DRY RUN COMPLETE — {_ctx_elapsed:.0f}s elapsed")
+                print(f"  {_ctx_total_candidates:,} candidate row(s) found; "
+                      f"{_ctx_total_already:,} already processed; "
+                      f"{_ctx_total_would_update:,} would be updated.")
+                print(f"  No database writes were performed.")
+                _ctx_report = {
+                    "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "mode":         "dry-run",
+                    "pipeline":     "context-only",
+                    "totals": {
+                        "candidates":   _ctx_total_candidates,
+                        "already_done": _ctx_total_already,
+                        "would_update": _ctx_total_would_update,
+                    },
+                    "rows": _ctx_report_rows,
+                }
+                try:
+                    with open(out_file, "w") as _f:
+                        json.dump(_ctx_report, _f, indent=2, sort_keys=True)
+                    print(f"\n  Report saved → {out_file}")
+                except Exception as _we:
+                    print(f"\n  ⚠  Could not write report to {out_file}: {_we}")
             except Exception as _ctx_err:
                 print(f"  Context dry-run error: {_ctx_err}")
                 sys.exit(1)
             sys.exit(0)
-
+        # ── live context backfill ──────────────────────────────────────────────
         try:
             import backfill_context_levels as _ctx
             _ctx.main(user_ids=_ctx_uids)

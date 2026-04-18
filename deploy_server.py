@@ -1547,18 +1547,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _context_dryrun_post(self):
-        """Run run_sim_backfill.py --context-only --dry-run and return structured JSON.
+        """Run run_sim_backfill.py --context-only --dry-run --out and return structured JSON.
 
-        Queries the database to report how many rows, unique tickers, and what
-        date range a context-only backfill would cover — without making any DB
-        writes or Alpaca API calls.
+        The script counts how many context-level rows (S/R, VWAP, MACD) would be
+        updated without performing any database writes.  The JSON report written by
+        the script is read back and returned to the caller with the same envelope
+        used by the full pipeline dry-run: generated_at, mode, pipeline, totals, rows.
 
-        The DASHBOARD_WRITE_SECRET guard is NOT applied here because the
-        dry-run makes no writes; it is purely a preview operation.
+        The DASHBOARD_WRITE_SECRET guard is NOT applied here — this is a read-only
+        preview operation.
         """
-        import re as _re
         import subprocess as _sp
         import sys as _sys
+        import tempfile as _tmp
 
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_sim_backfill.py")
         if not os.path.isfile(script):
@@ -1571,28 +1572,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        timed_out = False
+        timed_out   = False
+        exit_code   = 0
+        report      = None
+        raw         = ""
+
+        with _tmp.NamedTemporaryFile(suffix=".json", delete=False) as _tf:
+            out_path = _tf.name
+
         try:
             result = _sp.run(
-                [_sys.executable, script, "--context-only", "--dry-run"],
+                [_sys.executable, script, "--context-only", "--dry-run", f"--out={out_path}"],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=300,
                 cwd=os.path.dirname(os.path.abspath(__file__)),
             )
+            exit_code = result.returncode
             raw = result.stdout + ("\n" + result.stderr if result.stderr.strip() else "")
-            if result.returncode != 0:
-                body = json.dumps({
-                    "error": f"Context dry-run script exited with code {result.returncode}",
-                    "raw_output": raw,
-                }).encode()
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(body)
-                return
         except _sp.TimeoutExpired as _te:
             raw = (_te.stdout or "") + ("\n" + (_te.stderr or ""))
             timed_out = True
@@ -1606,44 +1603,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        row_count = None
-        unique_tickers = None
-        ticker_count = None
-        date_start = None
-        date_end = None
-        elapsed_s = None
+        try:
+            with open(out_path) as _f:
+                report = json.load(_f)
+        except Exception:
+            report = None
+        finally:
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
 
-        for line in raw.splitlines():
-            m = _re.search(r"CONTEXT DRY RUN:\s*([\d,]+)\s+row\(s\) would be processed", line)
-            if m:
-                row_count = int(m.group(1).replace(",", ""))
-                continue
-            m2 = _re.search(r"CONTEXT DRY RUN unique tickers \((\d+)\):\s*(.*)", line)
-            if m2:
-                ticker_count = int(m2.group(1))
-                unique_tickers = [t.strip() for t in m2.group(2).split(",") if t.strip()]
-                continue
-            m3 = _re.search(r"CONTEXT DRY RUN date range:\s*(\S+)\s+to\s+(\S+)", line)
-            if m3:
-                date_start = m3.group(1)
-                date_end = m3.group(2)
-                continue
-            m4 = _re.search(r"CONTEXT DRY RUN COMPLETE\s*[—-]\s*([\d.]+)s elapsed", line)
-            if m4:
-                elapsed_s = float(m4.group(1))
+        if report is not None:
+            report["timed_out"]  = timed_out
+            report["raw_output"] = raw
+            data = report
+            http_status = 200
+        else:
+            # Script exited without writing a report — treat as an error when the
+            # exit code is non-zero or the run was not simply a timeout.
+            failed = (exit_code != 0) and not timed_out
+            data = {
+                "generated_at": None,
+                "mode":         "dry-run",
+                "pipeline":     "context-only",
+                "totals":       None,
+                "rows":         [],
+                "timed_out":    timed_out,
+                "raw_output":   raw,
+                "error":        f"Script exited with code {exit_code}" if failed else None,
+            }
+            http_status = 500 if failed else 200
 
-        data = {
-            "row_count":      row_count,
-            "ticker_count":   ticker_count,
-            "unique_tickers": unique_tickers,
-            "date_start":     date_start,
-            "date_end":       date_end,
-            "elapsed_s":      elapsed_s,
-            "timed_out":      timed_out,
-            "raw_output":     raw,
-        }
         body = json.dumps(data).encode()
-        self.send_response(200)
+        self.send_response(http_status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
