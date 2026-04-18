@@ -10712,39 +10712,29 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                         "<small>**Per-tier outcomes  (1.00× baseline · 1.25× · 1.50×)**</small>",
                                         unsafe_allow_html=True,
                                     )
-                                    # Row 1 — Win rates
-                                    _rc1, _rc2, _rc3 = st.columns(3)
-                                    _rc1.metric(
-                                        "1.00× Win Rate  (baseline)",
-                                        f"{_nb_wr}%" if _nb_wr is not None else "—",
-                                        help=f"{_nb_wins} wins out of {_nb_total} non-boosted trades",
+                                    _tier_table = pd.DataFrame(
+                                        {
+                                            "1.00× (baseline)": [
+                                                str(_nb_total),
+                                                f"{_nb_wr}%" if _nb_wr is not None else "—",
+                                                f"{_nb_avgr:+.2f}R" if _nb_avgr is not None else "—",
+                                            ],
+                                            "1.25× (RVOL 2–3×)": [
+                                                str(_t125_total),
+                                                f"{_t125_wr}%" if _t125_wr is not None else "—",
+                                                f"{_t125_avgr:+.2f}R" if _t125_avgr is not None else "—",
+                                            ],
+                                            "1.50× (RVOL ≥ 3×)": [
+                                                str(_t150_total),
+                                                f"{_t150_wr}%" if _t150_wr is not None else "—",
+                                                f"{_t150_avgr:+.2f}R" if _t150_avgr is not None else "—",
+                                            ],
+                                        },
+                                        index=["Trades", "Win Rate", "Avg R"],
                                     )
-                                    _rc2.metric(
-                                        "1.25× Win Rate  (RVOL 2–3×)",
-                                        f"{_t125_wr}%" if _t125_wr is not None else "—",
-                                        help=f"{_t125_wins} wins out of {_t125_total} trades in the 1.25× tier",
-                                    )
-                                    _rc3.metric(
-                                        "1.50× Win Rate  (RVOL ≥ 3×)",
-                                        f"{_t150_wr}%" if _t150_wr is not None else "—",
-                                        help=f"{_t150_wins} wins out of {_t150_total} trades in the 1.50× tier",
-                                    )
-                                    # Row 2 — Average R
-                                    _rd1, _rd2, _rd3 = st.columns(3)
-                                    _rd1.metric(
-                                        "1.00× Avg R  (baseline)",
-                                        f"{_nb_avgr:+.2f}R" if _nb_avgr is not None else "—",
-                                        help="Average R (MFE) across non-boosted trades",
-                                    )
-                                    _rd2.metric(
-                                        "1.25× Avg R",
-                                        f"{_t125_avgr:+.2f}R" if _t125_avgr is not None else "—",
-                                        help="Average R (MFE) across 1.25× boosted trades",
-                                    )
-                                    _rd3.metric(
-                                        "1.50× Avg R",
-                                        f"{_t150_avgr:+.2f}R" if _t150_avgr is not None else "—",
-                                        help="Average R (MFE) across 1.50× boosted trades",
+                                    st.dataframe(
+                                        _tier_table,
+                                        use_container_width=True,
                                     )
 
                         # ── Win / Loss avg breakdown row ──────────────────────────────────────
