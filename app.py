@@ -33057,9 +33057,14 @@ function _bqCopyShareLink() {
                                 _pt_eod_wkly_all = _pt_eod_spk.resample("W-FRI").agg(
                                     _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
                                     _tot=EOD_PNL_COUNT_AGG,
+                                    _avg_r_win=("eod_pnl_r", lambda x: x[x > 0].mean() if (x > 0).any() else 0.0),
                                 )
                                 _pt_eod_wkly_all = _pt_eod_wkly_all[_pt_eod_wkly_all["_tot"] > 0]
                                 _pt_eod_wkly_all["_wr"] = _pt_eod_wkly_all["_wins"] / _pt_eod_wkly_all["_tot"] * 100
+                                _pt_eod_wkly_all["_avg_r"] = _pt_eod_wkly_all["_avg_r_win"]
+                                _pt_eod_wkly_all["_true_exp"] = (
+                                    (_pt_eod_wkly_all["_wins"] / _pt_eod_wkly_all["_tot"]) * _pt_eod_wkly_all["_avg_r_win"]
+                                )
                                 if len(_pt_eod_wkly_all) >= 3:
                                     _pt_eod_spk_data = _pt_eod_wkly_all
                             except (ValueError, KeyError, TypeError) as _pt_eod_spk_err:
@@ -33120,23 +33125,57 @@ function _bqCopyShareLink() {
                         )
                         if _pt_eod_spk_data is not None:
                             st.markdown(f'<div id="{_pt_eod_spk_anchor}"></div>', unsafe_allow_html=True)
+                            _pt_eod_spk_metric = st.radio(
+                                "Metric",
+                                options=["Win Rate %", "Avg R", "True Expectancy"],
+                                index=0,
+                                horizontal=True,
+                                key=f"pt_eod_spk_metric_{_pt_eod_scan}",
+                                label_visibility="collapsed",
+                            )
                             _pt_eod_sfig = go.Figure()
-                            _pt_eod_sfig.add_trace(go.Scatter(
-                                x=[idx.strftime("w/e %b %d") for idx in _pt_eod_spk_data.index],
-                                y=_pt_eod_spk_data["_wr"].tolist(),
-                                mode="lines+markers",
-                                line=dict(color=_pt_eod_accent, width=1.5),
-                                marker=dict(size=4, color=_pt_eod_accent),
-                                hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
-                            ))
-                            _pt_eod_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                            if _pt_eod_spk_metric == "Win Rate %":
+                                _pt_eod_sfig.add_trace(go.Scatter(
+                                    x=[idx.strftime("w/e %b %d") for idx in _pt_eod_spk_data.index],
+                                    y=_pt_eod_spk_data["_wr"].tolist(),
+                                    mode="lines+markers",
+                                    line=dict(color=_pt_eod_accent, width=1.5),
+                                    marker=dict(size=4, color=_pt_eod_accent),
+                                    hovertemplate="%{x}: %{y:.1f}%<extra></extra>",
+                                ))
+                                _pt_eod_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                                _pt_eod_sfig.update_layout(yaxis=dict(visible=False, fixedrange=True, range=[0, 100]))
+                                _pt_eod_spk_caption = "Weekly EOD win rate"
+                            elif _pt_eod_spk_metric == "Avg R":
+                                _pt_eod_sfig.add_trace(go.Scatter(
+                                    x=[idx.strftime("w/e %b %d") for idx in _pt_eod_spk_data.index],
+                                    y=_pt_eod_spk_data["_avg_r"].tolist(),
+                                    mode="lines+markers",
+                                    line=dict(color=_pt_eod_accent, width=1.5),
+                                    marker=dict(size=4, color=_pt_eod_accent),
+                                    hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                                ))
+                                _pt_eod_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                                _pt_eod_sfig.update_layout(yaxis=dict(visible=False, fixedrange=True))
+                                _pt_eod_spk_caption = "Weekly EOD avg winning R"
+                            else:
+                                _pt_eod_sfig.add_trace(go.Scatter(
+                                    x=[idx.strftime("w/e %b %d") for idx in _pt_eod_spk_data.index],
+                                    y=_pt_eod_spk_data["_true_exp"].tolist(),
+                                    mode="lines+markers",
+                                    line=dict(color=_pt_eod_accent, width=1.5),
+                                    marker=dict(size=4, color=_pt_eod_accent),
+                                    hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                                ))
+                                _pt_eod_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                                _pt_eod_sfig.update_layout(yaxis=dict(visible=False, fixedrange=True))
+                                _pt_eod_spk_caption = "Weekly EOD true expectancy"
                             _pt_eod_sfig.update_layout(
                                 height=70,
                                 margin=dict(l=2, r=2, t=6, b=2),
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 xaxis=dict(visible=False, fixedrange=True),
-                                yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
                                 showlegend=False,
                             )
                             st.plotly_chart(
@@ -33144,7 +33183,7 @@ function _bqCopyShareLink() {
                                 use_container_width=True,
                                 config=PLOTLY_NO_MODEBAR,
                             )
-                            st.caption("Weekly EOD win rate")
+                            st.caption(_pt_eod_spk_caption)
                             with st.expander("📈 Expand full chart"):
                                 _pt_eod_full = go.Figure()
                                 _pt_eod_full.add_trace(go.Scatter(
@@ -35659,9 +35698,14 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             _ptt_eod_wkly_all = _ptt_eod_spk.resample("W-FRI").agg(
                                 _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
                                 _tot=EOD_PNL_COUNT_AGG,
+                                _avg_r_win=("eod_pnl_r", lambda x: x[x > 0].mean() if (x > 0).any() else 0.0),
                             )
                             _ptt_eod_wkly_all = _ptt_eod_wkly_all[_ptt_eod_wkly_all["_tot"] > 0]
                             _ptt_eod_wkly_all["_wr"] = _ptt_eod_wkly_all["_wins"] / _ptt_eod_wkly_all["_tot"] * 100
+                            _ptt_eod_wkly_all["_avg_r"] = _ptt_eod_wkly_all["_avg_r_win"]
+                            _ptt_eod_wkly_all["_true_exp"] = (
+                                (_ptt_eod_wkly_all["_wins"] / _ptt_eod_wkly_all["_tot"]) * _ptt_eod_wkly_all["_avg_r_win"]
+                            )
                             if len(_ptt_eod_wkly_all) >= 3:
                                 _ptt_eod_spk_data = _ptt_eod_wkly_all
                         except (ValueError, KeyError, TypeError) as _ptt_eod_spk_err:
@@ -35721,23 +35765,57 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     )
                     if _ptt_eod_spk_data is not None:
                         st.markdown(f'<div id="{_ptt_eod_spk_anchor}"></div>', unsafe_allow_html=True)
+                        _ptt_eod_spk_metric = st.radio(
+                            "Metric",
+                            options=["Win Rate %", "Avg R", "True Expectancy"],
+                            index=0,
+                            horizontal=True,
+                            key=f"ptt_eod_spk_metric_{_ptt_eod_scan}",
+                            label_visibility="collapsed",
+                        )
                         _ptt_eod_sfig = go.Figure()
-                        _ptt_eod_sfig.add_trace(go.Scatter(
-                            x=[idx.strftime("w/e %b %d") for idx in _ptt_eod_spk_data.index],
-                            y=_ptt_eod_spk_data["_wr"].tolist(),
-                            mode="lines+markers",
-                            line=dict(color=_ptt_eod_accent, width=1.5),
-                            marker=dict(size=4, color=_ptt_eod_accent),
-                            hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
-                        ))
-                        _ptt_eod_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                        if _ptt_eod_spk_metric == "Win Rate %":
+                            _ptt_eod_sfig.add_trace(go.Scatter(
+                                x=[idx.strftime("w/e %b %d") for idx in _ptt_eod_spk_data.index],
+                                y=_ptt_eod_spk_data["_wr"].tolist(),
+                                mode="lines+markers",
+                                line=dict(color=_ptt_eod_accent, width=1.5),
+                                marker=dict(size=4, color=_ptt_eod_accent),
+                                hovertemplate="%{x}: %{y:.1f}%<extra></extra>",
+                            ))
+                            _ptt_eod_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                            _ptt_eod_sfig.update_layout(yaxis=dict(visible=False, fixedrange=True, range=[0, 100]))
+                            _ptt_eod_spk_caption = "Weekly EOD win rate"
+                        elif _ptt_eod_spk_metric == "Avg R":
+                            _ptt_eod_sfig.add_trace(go.Scatter(
+                                x=[idx.strftime("w/e %b %d") for idx in _ptt_eod_spk_data.index],
+                                y=_ptt_eod_spk_data["_avg_r"].tolist(),
+                                mode="lines+markers",
+                                line=dict(color=_ptt_eod_accent, width=1.5),
+                                marker=dict(size=4, color=_ptt_eod_accent),
+                                hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                            ))
+                            _ptt_eod_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                            _ptt_eod_sfig.update_layout(yaxis=dict(visible=False, fixedrange=True))
+                            _ptt_eod_spk_caption = "Weekly EOD avg winning R"
+                        else:
+                            _ptt_eod_sfig.add_trace(go.Scatter(
+                                x=[idx.strftime("w/e %b %d") for idx in _ptt_eod_spk_data.index],
+                                y=_ptt_eod_spk_data["_true_exp"].tolist(),
+                                mode="lines+markers",
+                                line=dict(color=_ptt_eod_accent, width=1.5),
+                                marker=dict(size=4, color=_ptt_eod_accent),
+                                hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                            ))
+                            _ptt_eod_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                            _ptt_eod_sfig.update_layout(yaxis=dict(visible=False, fixedrange=True))
+                            _ptt_eod_spk_caption = "Weekly EOD true expectancy"
                         _ptt_eod_sfig.update_layout(
                             height=70,
                             margin=dict(l=2, r=2, t=6, b=2),
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
                             xaxis=dict(visible=False, fixedrange=True),
-                            yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
                             showlegend=False,
                         )
                         st.plotly_chart(
@@ -35745,7 +35823,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             use_container_width=True,
                             config=PLOTLY_NO_MODEBAR,
                         )
-                        st.caption("Weekly EOD win rate")
+                        st.caption(_ptt_eod_spk_caption)
                         with st.expander("📈 Expand full chart"):
                             _ptt_eod_full = go.Figure()
                             _ptt_eod_full.add_trace(go.Scatter(
