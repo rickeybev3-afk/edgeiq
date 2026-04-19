@@ -956,7 +956,7 @@ def main():
     trend_universe = []
 
     if gap_scan_types:
-        print("         Gap pass: float ≤100M, $1–$20, avgvol ≥1M...", flush=True)
+        print(f"         Gap pass: float ≤100M, ${args.price_min}–${args.price_max}, avgvol ≥1M...", flush=True)
         gap_universe = fetch_smallcap_universe(
             float_max_m=args.float_max,
             price_min=args.price_min,

@@ -1028,3 +1028,19 @@ if __name__ == "__main__":
                 _ctx.main(user_ids=user_ids)
             except Exception as _ctx_err:
                 print(f"  Context backfill error (non-critical): {_ctx_err}")
+
+        # ── One-shot gap backtest trigger ─────────────────────────────────────
+        # If /tmp/.run_gap_bt exists, launch the gap backtest inline (blocking).
+        # This runs inside the workflow process so it won't be killed mid-run.
+        # Create the flag with: touch /tmp/.run_gap_bt
+        import os as _os, subprocess as _sp
+        _gap_flag = "/tmp/.run_gap_bt"
+        if _os.path.exists(_gap_flag):
+            _os.remove(_gap_flag)
+            print("\n" + "=" * 60)
+            print("  Gap Backtest 365-Day ($50 cap)  [triggered by flag file]")
+            print("=" * 60)
+            _sp.run(
+                ["python", "batch_backtest.py", "--screener", "gap", "--days", "365"],
+                cwd=_os.path.dirname(_os.path.abspath(__file__)) or ".",
+            )
