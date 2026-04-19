@@ -112,7 +112,7 @@ MAX_ROWS     = 0  # 0 = full history
 def load_breakout_rows(user_id: str, max_rows: int = 0):
     cols = (
         "actual_outcome,tcs,ib_range_pct,close_vs_vwap_pct,"
-        "pnl_r_sim,scan_type,sim_date"
+        "pnl_r_sim,scan_type,sim_date,rvol"
     )
     all_rows = []
     offset   = 0
@@ -127,7 +127,7 @@ def load_breakout_rows(user_id: str, max_rows: int = 0):
                     SUPABASE.table("backtest_sim_runs")
                     .select(cols)
                     .eq("user_id", user_id)
-                    .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
+                    .eq("actual_outcome", "Bullish Break")
                     .not_.is_("pnl_r_sim", "null")
                     .range(offset, offset + page - 1)
                     .execute()
@@ -249,7 +249,7 @@ ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1.5, 1.5])
 with ctrl_col1:
     tcs_min = st.slider(
         "Min TCS score", min_value=30, max_value=85, value=50, step=5,
-        help="Trade Conviction Score — composite signal strength. 50 = solid floor, 70+ = high-conviction. Higher = fewer but cleaner trades."
+        help="Trade Conviction Score. Bot floors are enforced automatically: morning ≥60, intraday ≥50. Slider raises the floor further above those minimums."
     )
 
 with ctrl_col2:
@@ -260,7 +260,7 @@ with ctrl_col2:
 
 with ctrl_col3:
     use_vwap = st.toggle("Require VWAP side", key="fs_use_vwap",
-                         help="Only take Bullish Breaks where close was above VWAP (and Bearish Breaks below). Removes setups fighting the intraday trend.")
+                         help="Only take Bullish Breaks where close was above VWAP. Removes setups fighting the intraday trend. No edge confirmed in backtest — off by default.")
 
 with ctrl_col4:
     scan_type_filter = st.selectbox("Scan type", ["All", "morning", "intraday"],
@@ -274,46 +274,59 @@ src = all_rows if scan_type_filter == "All" else [
     r for r in all_rows if r.get("scan_type") == scan_type_filter
 ]
 
-# Layer 0: no filters
+# Layer 0: Bullish Break only (Bearish Break excluded at query level — bot always skips)
 s0 = compute_stats(src)
 
-# Layer 1: TCS
-tcs_pass = [r for r in src if (r.get("tcs") or 0) >= tcs_min]
+# Layer 1: TCS — bot split floors: morning/null ≥60, intraday ≥50 (slider raises further)
+def _tcs_floor(r, slider_min):
+    scan = (r.get("scan_type") or "morning").lower()
+    bot_floor = 50 if scan.startswith("intraday") else 60
+    return max(slider_min, bot_floor)
+
+tcs_pass = [r for r in src if (r.get("tcs") or 0) >= _tcs_floor(r, tcs_min)]
 s1 = compute_stats(tcs_pass)
 
 # Layer 2: + IB range
 has_ib    = [r for r in tcs_pass if r.get("ib_range_pct") is not None]
 ib_pass   = [r for r in has_ib   if r["ib_range_pct"] < ib_max]
 ib_wide   = [r for r in has_ib   if r["ib_range_pct"] >= ib_max]
-# Trades that had no ib_range_pct — pass through
 no_ib     = [r for r in tcs_pass if r.get("ib_range_pct") is None]
 after_ib  = ib_pass + no_ib
 s2 = compute_stats(after_ib)
 
-# Layer 3: + VWAP
+# Layer 3: + RVOL ≥ 1.0 (bot filter — skip when data present and < 1.0; NULL passes)
+rvol_rej  = [r for r in after_ib if r.get("rvol") is not None and float(r.get("rvol") or 0) < 1.0]
+after_rvol = [r for r in after_ib if r.get("rvol") is None or float(r.get("rvol") or 0) >= 1.0]
+s_rvol = compute_stats(after_rvol)
+
+# Layer 4: + VWAP
 if use_vwap:
-    final       = [r for r in after_ib if vwap_aligned(r)]
-    vwap_rej    = [r for r in after_ib if not vwap_aligned(r)]
+    final       = [r for r in after_rvol if vwap_aligned(r)]
+    vwap_rej    = [r for r in after_rvol if not vwap_aligned(r)]
 else:
-    final       = after_ib
+    final       = after_rvol
     vwap_rej    = []
 s3 = compute_stats(final)
 
 # ── Filter funnel cards ───────────────────────────────────────────────────────
 st.markdown("### Filter Funnel")
-fc0, fca, fc1, fcb, fc2, fcc, fc3 = st.columns([3, 0.4, 3, 0.4, 3, 0.4, 3])
+fc0, fca, fc1, fcb, fc2, fcc, fc_rvol, fcd, fc3 = st.columns([3, 0.4, 3, 0.4, 3, 0.4, 3, 0.4, 3])
 
 with fc0:
-    stat_card("All Breakout Trades", s0)
+    stat_card("Bullish Break Signals", s0)
 with fca:
     st.markdown('<div class="funnel-arrow"><span>▶</span></div>', unsafe_allow_html=True)
 with fc1:
-    stat_card(f"TCS ≥ {tcs_min}", s1, active=True)
+    stat_card(f"TCS ≥ {tcs_min} (bot floors: 60m/50i)", s1, active=True)
 with fcb:
     st.markdown('<div class="funnel-arrow"><span>▶</span></div>', unsafe_allow_html=True)
 with fc2:
     stat_card(f"+ IB < {ib_max:.1f}%", s2, active=True)
 with fcc:
+    st.markdown('<div class="funnel-arrow"><span>▶</span></div>', unsafe_allow_html=True)
+with fc_rvol:
+    stat_card("+ RVOL ≥ 1.0", s_rvol, active=True)
+with fcd:
     st.markdown('<div class="funnel-arrow"><span>▶</span></div>', unsafe_allow_html=True)
 with fc3:
     stat_card(f"{'+ VWAP aligned' if use_vwap else '(VWAP off)'} — Live Settings", s3, active=True)
@@ -321,10 +334,11 @@ with fc3:
 # ── Rejection summary ─────────────────────────────────────────────────────────
 rj1 = s0["n"] - s1["n"]
 rj2 = s1["n"] - s2["n"]
-rj3 = s2["n"] - s3["n"]
+rj_rvol = s2["n"] - s_rvol["n"]
+rj3 = s_rvol["n"] - s3["n"]
 
 st.markdown("&nbsp;")
-rj_col1, rj_col2, rj_col3 = st.columns(3)
+rj_col1, rj_col2, rj_col_rvol, rj_col3 = st.columns(4)
 with rj_col1:
     if rj1 > 0:
         st.markdown(
@@ -339,12 +353,20 @@ with rj_col2:
             f'({rj2/s1["n"]*100:.0f}%) — those had <b>{ib_wide_stats["wr"]:.0f}%</b> WR</div>',
             unsafe_allow_html=True
         )
+with rj_col_rvol:
+    if rj_rvol > 0:
+        rvol_rej_stats = compute_stats(rvol_rej)
+        st.markdown(
+            f'<div class="reject-badge">✂ RVOL filter removes <b>{rj_rvol:,}</b> trades '
+            f'({rj_rvol/s2["n"]*100:.0f}%) — those had <b>{rvol_rej_stats["wr"]:.0f}%</b> WR</div>',
+            unsafe_allow_html=True
+        )
 with rj_col3:
     if rj3 > 0 and use_vwap:
         vwap_rej_stats = compute_stats(vwap_rej)
         st.markdown(
             f'<div class="reject-badge">✂ VWAP filter removes <b>{rj3:,}</b> trades '
-            f'({rj3/s2["n"]*100:.0f}%) — those had <b>{vwap_rej_stats["wr"]:.0f}%</b> WR</div>',
+            f'({rj3/s_rvol["n"]*100:.0f}%) — those had <b>{vwap_rej_stats["wr"]:.0f}%</b> WR</div>',
             unsafe_allow_html=True
         )
 
@@ -357,13 +379,14 @@ chart_left, chart_right = st.columns(2)
 with chart_left:
     st.markdown("#### Win-Rate by Filter Layer")
     layers_labels = [
-        "Unfiltered",
-        f"TCS >= {tcs_min}",
+        "Bullish Breaks",
+        f"TCS ≥ {tcs_min}",
         f"+ IB < {ib_max:.1f}%",
+        "+ RVOL ≥ 1.0",
         f"{'+ VWAP' if use_vwap else '(no VWAP)'} [Live]",
     ]
-    layers_wr  = [s0["wr"], s1["wr"], s2["wr"], s3["wr"]]
-    layers_exp = [s0["exp"], s1["exp"], s2["exp"], s3["exp"]]
+    layers_wr  = [s0["wr"], s1["wr"], s2["wr"], s_rvol["wr"], s3["wr"]]
+    layers_exp = [s0["exp"], s1["exp"], s2["exp"], s_rvol["exp"], s3["exp"]]
     bar_colors = [wr_color(w) for w in layers_wr]
 
     fig_wr = go.Figure()
