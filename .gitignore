@@ -51,6 +51,7 @@ backfill_*.log
 # Replit
 .cache/
 .local/
+!.local/build_notes_private.md
 # Runtime state — managed by live bots, not tracked in git
 brain_weights.json
 tcs_threshold_history.jsonl
