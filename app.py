@@ -26032,7 +26032,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     with _sp_auto_col:
         st.selectbox(
             "Auto-refresh",
-            options=["Off", "5 min", "15 min"],
+            options=["Off", "1 min", "5 min", "15 min"],
             key="sp_tier_auto_interval",
             label_visibility="collapsed",
             help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
@@ -26052,7 +26052,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_tier_ts}</p>', unsafe_allow_html=True)
         else:
             st.caption(f"Updated {_sp_tier_ts}")
-    _sp_tier_run_every = {"5 min": 300, "15 min": 900}.get(
+    _sp_tier_run_every = {"1 min": 60, "5 min": 300, "15 min": 900}.get(
         st.session_state.get("sp_tier_auto_interval", "Off")
     )
 
@@ -26061,7 +26061,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         _at_interval = st.session_state.get("sp_tier_auto_interval", "Off")
         if _at_interval == "Off" or _sp_tier_run_every is None:
             return
-        _at_secs = {"5 min": 300, "15 min": 900}[_at_interval]
+        _at_secs = {"1 min": 60, "5 min": 300, "15 min": 900}[_at_interval]
         _at_now = datetime.now()
         _at_last = st.session_state.get("_sp_tier_last_auto_rerun")
         if _at_last is None:
@@ -31796,7 +31796,7 @@ function _bqCopyShareLink() {
         with _sp2_auto_col:
             st.selectbox(
                 "Auto-refresh",
-                options=["Off", "5 min", "15 min"],
+                options=["Off", "1 min", "5 min", "15 min"],
                 key="sp_grid_auto_interval",
                 label_visibility="collapsed",
                 help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
@@ -31816,7 +31816,7 @@ function _bqCopyShareLink() {
                 st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_grid_ts}</p>', unsafe_allow_html=True)
             else:
                 st.caption(f"Updated {_sp_grid_ts}")
-        _sp_grid_run_every = {"5 min": 300, "15 min": 900}.get(
+        _sp_grid_run_every = {"1 min": 60, "5 min": 300, "15 min": 900}.get(
             st.session_state.get("sp_grid_auto_interval", "Off")
         )
 
@@ -31825,7 +31825,7 @@ function _bqCopyShareLink() {
             _ag_interval = st.session_state.get("sp_grid_auto_interval", "Off")
             if _ag_interval == "Off" or _sp_grid_run_every is None:
                 return
-            _ag_secs = {"5 min": 300, "15 min": 900}[_ag_interval]
+            _ag_secs = {"1 min": 60, "5 min": 300, "15 min": 900}[_ag_interval]
             _ag_now = datetime.now()
             _ag_last = st.session_state.get("_sp_grid_last_auto_rerun")
             if _ag_last is None:
