@@ -11438,13 +11438,29 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
         target        = entry + target_r * ib_range
         stop_dist_pct = ib_range / entry * 100
 
+        # ── Smart stop-widening (Bullish) — mirrors paper bot logic ──────────
+        # 5yr analysis: TCS>=70 + IB<=3% + RVOL>=3 → 95% false shakeout rate on stopped trades.
+        # TCS>=65 + intraday + RVOL>=2.5 → elevated false shakeout risk.
+        # Widen the effective stop; share sizing adjusts automatically in live bot.
+        _tcs_s     = float(r.get("tcs") or 0)
+        _rvol_s    = float(r.get("rvol") or 0)
+        _ib_pct_s  = float(r.get("ib_range_pct") or 999)
+        _scan_s    = (r.get("scan_type") or "").strip()
+        _smart_buf = 0.0
+        if _tcs_s >= 70 and _ib_pct_s <= 3.0 and _rvol_s >= 3.0:
+            _smart_buf = 0.5
+        elif _tcs_s >= 65 and _scan_s == "intraday" and _rvol_s >= 2.5:
+            _smart_buf = 0.25
+        _eff_stop_r   = 1.0 + _smart_buf   # effective stop in R units from entry
+        _eff_stop_pct = _eff_stop_r * stop_dist_pct
+
         # ── v4: Intraday bracket sim (clean post-IB MFE/MAE) ─────────────────
         if _use_bracket_sim:
-            if _mae_r >= 1.0:
+            if _mae_r >= _eff_stop_r:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "pnl_pct_sim": round(-_eff_stop_pct, 2), "pnl_r_sim": -_eff_stop_r,
                     "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             if _mfe_r >= target_r:
@@ -11459,14 +11475,13 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
 
         # ── v5: Trailing stop sim — mirrors paper bot T1 → trail 1R below peak ─
         if _use_trail_sim:
-            # MAE check FIRST: if stop was hit (MAE >= 1R), trade is closed regardless
-            # of subsequent MFE. Checking MFE first would incorrectly credit post-stopout
-            # recoveries as trailing exit winners.
-            if _mae_r >= 1.0:
+            # MAE check FIRST: if stop was hit (MAE >= eff_stop_r), trade is closed.
+            # Smart stop widens the threshold — wider stop = fewer false shakeout stops.
+            if _mae_r >= _eff_stop_r:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "pnl_pct_sim": round(-_eff_stop_pct, 2), "pnl_r_sim": -_eff_stop_r,
                     "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             if _mfe_r >= target_r:
@@ -11484,11 +11499,12 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
         # ── v6: S/R-aware trail tightening (Bullish) ─────────────────────────
         if _use_trail_sim_v6:
             # MAE check FIRST: stop hit means trade is closed — post-stopout MFE is irrelevant.
-            if _mae_r >= 1.0:
+            # Smart stop widens the effective stop for qualifying high-TCS/tight-IB/high-RVOL trades.
+            if _mae_r >= _eff_stop_r:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "pnl_pct_sim": round(-_eff_stop_pct, 2), "pnl_r_sim": -_eff_stop_r,
                     "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             if _mfe_r >= target_r:
@@ -11513,12 +11529,13 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
         # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
             close_price = float(close_price)
-            if close_price <= ib_low:
-                # EOD close below stop → full stop out
+            _eff_stop_price = ib_low - _smart_buf * ib_range
+            if close_price <= _eff_stop_price:
+                # EOD close below effective stop → stopped out
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "pnl_pct_sim": round(-_eff_stop_pct, 2), "pnl_r_sim": -_eff_stop_r,
                     "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             pnl_pct = (close_price - ib_high) / ib_high * 100
@@ -11528,7 +11545,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "pnl_pct_sim": round(-_eff_stop_pct, 2), "pnl_r_sim": -_eff_stop_r,
                     "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             pnl_pct = float(ft_pct)
