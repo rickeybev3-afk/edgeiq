@@ -34118,45 +34118,70 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
-    # ── Exact bot filters (paper_trader_bot.py _place_order_for_setup) ─────────
-    # 1. Bearish Break → bot always skips (gap-up universe, hist WR 40%)
-    if "predicted" in _pt_df.columns:
-        _pt_df = _pt_df[_pt_df["predicted"].str.lower().str.strip().ne("bearish break")]
+    # ── View mode toggle ────────────────────────────────────────────────────────
+    _pt_bot_only = st.toggle(
+        "Bot-eligible only",
+        value=True,
+        key="pt_bot_only_toggle",
+        help=(
+            "ON — shows only trades the bot would place under current rules: "
+            "predicted = Bullish Break · morning TCS ≥60 / intraday TCS ≥50 · IB <10% · RVOL ≥1.0. "
+            "OFF — shows every setup logged by the scanner (Neutral, Nrtl Extreme, Dbl Dist, etc.) "
+            "exactly as it was recorded, no filters applied."
+        ),
+    )
 
-    # 2. TCS floor — mirrors bot exactly:
-    #    morning (or NULL, bot defaults to morning) → TCS ≥ 60 (MORNING_TCS_FLOOR)
-    #    intraday → TCS ≥ 50 (MIN_TCS)
-    if "tcs" in _pt_df.columns:
-        _pt_tcs_num = pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0)
-        _pt_scan_norm = (
-            _pt_df["scan_type"].str.lower().str.strip().fillna("morning")
-            if "scan_type" in _pt_df.columns
-            else pd.Series("morning", index=_pt_df.index)
-        )
-        _pt_is_intraday = _pt_scan_norm.str.startswith("intraday")
-        _pt_df = _pt_df[
-            (_pt_is_intraday  & (_pt_tcs_num >= 50)) |
-            (~_pt_is_intraday & (_pt_tcs_num >= 60))
-        ]
+    _pt_df_all = _pt_df.copy()   # keep unfiltered copy for 'all trades' mode
 
-    # 3. IB range < threshold (10% default) — NULL passes (same as bot)
-    if "ib_range_pct" in _pt_df.columns:
-        _pt_ib_num = pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce")
-        _pt_df = _pt_df[_pt_ib_num.isna() | (_pt_ib_num < 10.0)]
+    if _pt_bot_only:
+        # ── Exact bot filters (paper_trader_bot.py _place_order_for_setup) ────
+        # 1. predicted == "Bullish Break" only.
+        #    Bot gate (line 916): skip if predicted not in ("Bullish Break","Bearish Break"),
+        #    then skip Bearish Break. Net result: only Bullish Break reaches order placement.
+        #    Neutral / Nrtl Extreme / Dbl Dist are all skipped as "non_directional".
+        if "predicted" in _pt_df.columns:
+            _pt_df = _pt_df[
+                _pt_df["predicted"].str.strip().str.lower() == "bullish break"
+            ]
 
-    # 4. RVOL ≥ 1.0 — only applied when data is present (NULL = no data = passes, same as bot)
-    if "rvol" in _pt_df.columns:
-        _pt_rvol_num = pd.to_numeric(_pt_df["rvol"], errors="coerce")
-        _pt_df = _pt_df[_pt_rvol_num.isna() | (_pt_rvol_num >= 1.0)]
+        # 2. TCS floor split: morning/NULL → ≥60, intraday → ≥50
+        if "tcs" in _pt_df.columns:
+            _pt_tcs_num = pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0)
+            _pt_scan_norm = (
+                _pt_df["scan_type"].str.lower().str.strip().fillna("morning")
+                if "scan_type" in _pt_df.columns
+                else pd.Series("morning", index=_pt_df.index)
+            )
+            _pt_is_intraday = _pt_scan_norm.str.startswith("intraday")
+            _pt_df = _pt_df[
+                (_pt_is_intraday  & (_pt_tcs_num >= 50)) |
+                (~_pt_is_intraday & (_pt_tcs_num >= 60))
+            ]
 
-    if _pt_df.empty:
-        st.info(
-            "No logged trades pass the current bot filters "
-            "(no Bearish Break / TCS ≥ 60 morning or ≥ 50 intraday / IB < 10% / RVOL ≥ 1.0). "
-            "Trades from old settings are excluded.",
-            icon="📋",
-        )
-        return
+        # 3. IB range < 10% — NULL passes (same as bot)
+        if "ib_range_pct" in _pt_df.columns:
+            _pt_ib_num = pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce")
+            _pt_df = _pt_df[_pt_ib_num.isna() | (_pt_ib_num < 10.0)]
+
+        # 4. RVOL ≥ 1.0 — NULL passes (same as bot)
+        if "rvol" in _pt_df.columns:
+            _pt_rvol_num = pd.to_numeric(_pt_df["rvol"], errors="coerce")
+            _pt_df = _pt_df[_pt_rvol_num.isna() | (_pt_rvol_num >= 1.0)]
+
+        if _pt_df.empty:
+            st.info(
+                "No logged trades pass current bot filters "
+                "(Bullish Break · TCS ≥60 morning / ≥50 intraday · IB <10% · RVOL ≥1.0). "
+                "Switch the toggle off to see all logged setups.",
+                icon="📋",
+            )
+            return
+
+    _pt_view_label = (
+        "Bullish Break · TCS ≥60 morn / ≥50 intra · IB <10% · RVOL ≥1.0"
+        if _pt_bot_only
+        else "All logged setups — no filters applied"
+    )
 
     _pt_wins   = (_pt_df["win_loss"] == "Win").sum()
     _pt_losses = (_pt_df["win_loss"] == "Loss").sum()
@@ -34176,9 +34201,9 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         f'<div style="font-size:10px; color:#37474f;">{_pt_wins}W / {_pt_losses}L</div></div>'
         f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
         f'padding:14px 22px; text-align:center; min-width:120px;">'
-        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Filtered Setups</div>'
+        f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">{"Bot-Eligible" if _pt_bot_only else "All Logged"} Setups</div>'
         f'<div style="font-size:30px; font-weight:900; color:#e0e0e0; font-family:monospace;">{_pt_total}</div>'
-        f'<div style="font-size:10px; color:#37474f;">{_pt_dates} day(s) · intraday ≥50 / morning ≥60 · IB &lt;10%</div></div>'
+        f'<div style="font-size:10px; color:#37474f;">{_pt_dates} day(s) · {_pt_view_label}</div></div>'
         f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
         f'padding:14px 22px; text-align:center; min-width:120px;">'
         f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Avg TCS</div>'
