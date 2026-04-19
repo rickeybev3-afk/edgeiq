@@ -255,7 +255,7 @@ with ctrl_col2:
     )
 
 with ctrl_col3:
-    use_vwap = st.toggle("Require VWAP side", value=True,
+    use_vwap = st.toggle("Require VWAP side", value=False,
                          help="Only take Bullish Breaks where close was above VWAP (and Bearish Breaks below). Removes setups fighting the intraday trend.")
 
 with ctrl_col4:
