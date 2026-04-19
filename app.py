@@ -3110,7 +3110,38 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         else:
             _df_display = df
 
-        if _transcript_filter != "All entries":
+        # ── Signal filter ──────────────────────────────────────────────────────
+        _signal_options = [_VJ_SIGNAL_LABELS.get(k, k) for k in _VJ_SIGNAL_KEYS]
+        _signal_key_for_label = {_VJ_SIGNAL_LABELS.get(k, k): k for k in _VJ_SIGNAL_KEYS}
+        _selected_signal_labels = st.multiselect(
+            "Filter by behavioural signal",
+            options=_signal_options,
+            default=[],
+            placeholder="All signals",
+            key="journal_signal_filter",
+        )
+        _selected_signal_keys = [_signal_key_for_label[lbl] for lbl in _selected_signal_labels]
+
+        if _selected_signal_keys:
+            def _row_has_any_selected_signal(row):
+                _vs = row.get("voice_signals")
+                if isinstance(_vs, dict):
+                    _sigs = _vs
+                elif isinstance(_vs, str) and _vs.strip():
+                    try:
+                        import json as _json_sf
+                        _parsed = _json_sf.loads(_vs)
+                        _sigs = _parsed if isinstance(_parsed, dict) else {}
+                    except Exception:
+                        _sigs = {}
+                else:
+                    _sigs = {}
+                return any(_sigs.get(k) for k in _selected_signal_keys)
+
+            _df_display = _df_display[_df_display.apply(_row_has_any_selected_signal, axis=1)]
+
+        _any_filter_active = _transcript_filter != "All entries" or bool(_selected_signal_keys)
+        if _any_filter_active:
             _shown = len(_df_display)
             _total = len(df)
             st.caption(f"Showing {_shown} of {_total} entries")
@@ -3118,7 +3149,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         if _df_display.empty:
             st.info(
                 "No entries match this filter."
-                if _transcript_filter != "All entries"
+                if _any_filter_active
                 else "No entries yet."
             )
 
