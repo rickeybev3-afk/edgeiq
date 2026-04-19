@@ -1,5 +1,27 @@
 # EdgeIQ — Private Build Notes (Reorganized)
-*Last updated: April 18, 2026 — Reorganized for navigation*
+*Last updated: April 19, 2026 — Session note added*
+
+---
+
+## 📝 SESSION NOTE — April 19, 2026 (1:43 AM)
+
+### What was built tonight
+1. **Filter Sim trade cap fixed** — simulation now correctly caps at N trades/day (default 2) by picking highest TCS per day. Fixed datetime grouping bug (`[:10]` truncation) that was causing 2854 trades/yr instead of ~345. Numbers are now realistic.
+2. **VWAP default changed to OFF** — `pages/filter_sim.py` toggle now defaults to `False`. All sim numbers going forward reflect the actual live bot behaviour (no VWAP filter unless manually enabled).
+3. **Cognitive Profiler page built** — `pages/cognitive_profiler.py` is live. Upload audio/video of any trader's live session, tag 12 behavioral signals, see a 6-dimension radar chart, save to Supabase. AI transcription (Whisper) + auto-signal extraction (GPT-4) activates automatically when `OPENAI_API_KEY` is added to secrets.
+
+### What to do tomorrow
+- **Add `OPENAI_API_KEY` to secrets** — unlocks Whisper transcription in Cognitive Profiler AND will power the voice trade journal (next build)
+- **Build voice trade journal** — `st.audio_input()` recorder in the trade journal page. Record during/after a live trade, Whisper transcribes, GPT-4 pre-fills behavioral signals. This is the Layer 3 cognitive data capture described in the build notes.
+- **Start uploading trader recordings** to the Cognitive Profiler — even manual transcript paste works now. Build the dataset early.
+
+### What was discussed tonight (strategic)
+- Realistic year 1 target: **$100k with compounding**, $125k flat-sized per sim (345 trades/yr, $1,500/trade, 80.8% WR). Scaling to $5-6k/trade at $25k account.
+- 5-year vision reread from build notes: trading account $1.9M (conservative) to $3.4M (expected). Company $4.5M ARR, $300M-$1.2B exit ceiling.
+- Cognitive profiling → employer product: the real moat is real-stakes behavioral data (not synthetic games like Pymetrics). Three revenue streams: SaaS subscriptions + employer licensing + user revenue share.
+- Voice journal is the critical data source — overnight conviction notes + live trade recordings = richest behavioral dataset a trader can generate.
+- Go live date: **May 6, 2026**. First real Alpaca orders expected week of April 21.
+- Confidence on Porsche by Jan 2028: **55%**. Apartment by April 2027: **75%**. Leave the bot alone — that's the only real variable.
 
 ---
 
