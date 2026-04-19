@@ -620,8 +620,8 @@ with _dr_c3:
         key="fs_pnl_max_per_day",
         help="Caps how many trades are taken per calendar day — picks the highest-TCS "
              "signals first. Set to 20 to match the live paper bot's concurrent cap. "
-             "The raw dataset has ~21 qualifying signals/day across all tickers. "
-             "Set to 100 to model taking all signals.",
+             "5yr data: avg 5 signals/day, median 3/day. Busy days hit 10+. "
+             "Set to 20+ to model taking all realistic signals.",
     )
 
 st.caption(
