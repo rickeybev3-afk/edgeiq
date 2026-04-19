@@ -22107,12 +22107,16 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 "Last 12 months": 365,
                 "All time":      None,
             }
+            _url_init_str(
+                "bs_range", "bs_date_range", "Last 90 days",
+                allowed=list(_bs_range_opts.keys()),
+            )
             _bs_range_sel = st.selectbox(
                 "Date range",
                 options=list(_bs_range_opts.keys()),
-                index=2,
                 key="bs_date_range",
             )
+            _url_push("bs_range", _bs_range_sel)
             _bs_days = _bs_range_opts[_bs_range_sel]
             if _bs_days is not None:
                 _bs_cutoff = _dt_bsrange.date.today() - _dt_bsrange.timedelta(days=_bs_days)
