@@ -1348,6 +1348,62 @@ RESOLVED_OUTCOMES = [
     "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
 ]
 
+# TCS priority-tier definitions: (tier_id, emoji, scan_type, tcs_lo, tcs_hi, colour, label)
+TCS_TIER_DEFS = [
+    ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
+    ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
+    ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
+    ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
+]
+
+# Plotly config that hides the mode-bar toolbar
+PLOTLY_NO_MODEBAR = {"displayModeBar": False}
+
+# Canonical scan-type ordering used in loops, filters, and grouping
+SCAN_TYPES = ["morning", "intraday"]
+
+# Grade letter → display colour mapping
+GRADE_COLOURS = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}
+
+# Selectable trade outcomes for win/loss tracking
+WIN_LOSS_OUTCOMES = ["Win", "Loss", "Breakeven"]
+
+# Outcomes that represent a directional break (tuple preserves ordering)
+BREAK_OUTCOMES = ("Bullish Break", "Bearish Break")
+
+# Bar-data feed display options
+FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
+
+# Column names for the morning/intraday drift-direction delta cells
+DELTA_DRIFT_COLS = ["Δ Morn", "Δ Intra"]
+
+# Win/loss canonical aliases used in membership checks and DataFrame filters
+WIN_ALIASES = ("W", "Win")
+LOSS_ALIASES = ("L", "Loss")
+
+# Win/Loss without Breakeven — used for selectboxes and DB query filters
+WIN_LOSS_BASIC = ["Win", "Loss"]
+
+# Boolean yes/no options for "did you follow your plan?" prompts
+YES_NO_OPTIONS = ["Yes", "No"]
+
+# Internal feed-key identifiers (lower-case backend values)
+FEED_KEYS = ["iex", "sip"]
+
+# Sentinel values that represent a missing/blank field (for None/empty checks)
+NULL_SENTINELS = (None, "", "nan")
+
+# Lower-cased sentinel strings for blank-grade checks after .lower()
+BLANK_STR_SENTINELS = ("nan", "none", "")
+
+# Pandas named-agg spec for EOD P&L count column
+EOD_PNL_COUNT_AGG = ("eod_pnl_r", "count")
+# Pandas style subset for the "Win Rate %" column
+WIN_RATE_COLS = ["Win Rate %"]
+
+
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CORE MATH
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1630,7 +1686,7 @@ def render_beta_portal(beta_user_id: str):
             _b_ticker = st.text_input("Ticker", placeholder="ARAI", key="beta_ticker",
                                       label_visibility="visible").upper().strip()
         with _b_col2:
-            _b_wl = st.selectbox("Result", ["Win", "Loss"], key="beta_wl")
+            _b_wl = st.selectbox("Result", WIN_LOSS_BASIC, key="beta_wl")
 
         _b_col3, _b_col4 = st.columns([1, 1])
         with _b_col3:
@@ -2222,7 +2278,7 @@ def render_log_entry_ui():
         )
         _followed_plan = st.radio(
             "Did you execute your plan?",
-            options=["Yes", "No"],
+            options=YES_NO_OPTIONS,
             index=0,
             horizontal=True,
             key="journal_followed_plan",
@@ -2347,7 +2403,7 @@ def render_log_entry_ui():
         # Format price column
         if "price" in _show.columns:
             _show["price"] = _show["price"].apply(
-                lambda x: f"${float(x):.2f}" if x not in (None, "", "nan") else "—"
+                lambda x: f"${float(x):.2f}" if x not in NULL_SENTINELS else "—"
             )
 
         import json as _json_rt
@@ -2374,7 +2430,7 @@ def render_log_entry_ui():
         _has_signals_col = "voice_signals" in _show.columns
 
         # Grade → colored badge via styled HTML
-        _grade_row_colors = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}
+        _grade_row_colors = GRADE_COLOURS
         _has_proc_col = "process_grade" in _show.columns
         rows_html = ""
         for _, row in _show.iterrows():
@@ -2383,7 +2439,7 @@ def render_log_entry_ui():
             ts = str(row.get("timestamp", ""))[:16]   # trim seconds
             _pg_raw = row.get("process_grade", None) if _has_proc_col else None
             _pg = str(_pg_raw).strip() if _pg_raw is not None else ""
-            if _pg.lower() in ("nan", "none", ""):
+            if _pg.lower() in BLANK_STR_SENTINELS:
                 _pg = ""
             _pgc = _grade_row_colors.get(_pg, "#555")
             _pg_cell = (
@@ -2850,7 +2906,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _vm_entry  = st.number_input("Entry Price ($)", min_value=0.0, step=0.01, format="%.4f", key="vm_entry")
             _vm_exit   = st.number_input("Exit Price ($)",  min_value=0.0, step=0.01, format="%.4f", key="vm_exit")
             _vm_pnl    = st.number_input("P&L (%)",         step=0.01,                format="%.2f", key="vm_pnl")
-            _vm_wl     = st.selectbox("Outcome", ["Win", "Loss", "Breakeven"], key="vm_wl")
+            _vm_wl     = st.selectbox("Outcome", WIN_LOSS_OUTCOMES, key="vm_wl")
 
         _vm_transcript = st.text_area(
             "Paste transcript here",
@@ -2885,7 +2941,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
 
         _vm_followed_plan = st.radio(
             "Did you follow your plan?",
-            options=["Yes", "No"],
+            options=YES_NO_OPTIONS,
             horizontal=True,
             key="vm_followed_plan",
         )
@@ -2984,7 +3040,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             if _avg_grade_score is not None:
                 _rounded = round(_avg_grade_score)
                 _avg_lbl = _grade_label_map.get(_rounded, "—")
-                _avg_col = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}.get(_avg_lbl, "#aaa")
+                _avg_col = GRADE_COLOURS.get(_avg_lbl, "#aaa")
                 st.markdown(
                     f'<div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;'
                     f'padding:14px 18px;text-align:center;">'
@@ -3303,7 +3359,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _pnl_str    = f"${_pnl_val:+.2f} ({_pnl_pct}%)" if _pnl_m else ""
             _pnl_color  = "#4caf50" if _pnl_val >= 0 else "#ef5350"
             _shares_str = _sh_m.group(1) if _sh_m else ""
-            _entry_fmt  = f"${float(price):.4f}" if price not in (None, "", "nan") else "—"
+            _entry_fmt  = f"${float(price):.4f}" if price not in NULL_SENTINELS else "—"
 
             # Compute hold time from entry → exit timestamps
             _hold_badge = ""
@@ -3389,7 +3445,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             # Process grade letter badge (A/B/C/F)
             _proc_grade_raw = row.get("process_grade", None)
             _proc_grade_val = str(_proc_grade_raw).strip() if _proc_grade_raw is not None else ""
-            if _proc_grade_val.lower() in ("nan", "none", ""):
+            if _proc_grade_val.lower() in BLANK_STR_SENTINELS:
                 _proc_grade_val = ""
             _pgc_card = _GRADE_COLORS.get(_proc_grade_val, "#aaa")
             if _proc_grade_val:
@@ -4019,7 +4075,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _rev_fp_default = 0 if _existing_fp != "no" else 1
             _review_followed_plan = st.radio(
                 "Did you execute your plan?",
-                options=["Yes", "No"],
+                options=YES_NO_OPTIONS,
                 index=_rev_fp_default,
                 horizontal=True,
                 key="review_followed_plan",
@@ -4684,7 +4740,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                             if _jd.get("structure"):
                                 _parts.append(str(_jd["structure"]))
                             if _jd.get("grade"):
-                                _gc = {"A":"#4caf50","B":"#26a69a","C":"#ffa726","F":"#ef5350"}.get(str(_jd["grade"]),"#888")
+                                _gc = GRADE_COLOURS.get(str(_jd["grade"]),"#888")
                                 _parts.append(f'<span style="color:{_gc};font-weight:800;">Grade {_jd["grade"]}</span>')
                             if _parts:
                                 _jbadges.append(
@@ -10115,7 +10171,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 })();
 </script>
 """, height=0)
-        _BT_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
+        _BT_FEED_OPTIONS = FEED_OPTIONS
         _url_init_str("bt_feed", "bt_feed_radio", "SIP (paid — accurate)",
                       allowed=_BT_FEED_OPTIONS)
         _bt_feed = st.radio(
@@ -10952,7 +11008,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             if _os_val and _or.get("scan_type") != _os_val:
                                 continue
                             _ao = _or.get("actual_outcome", "")
-                            if _ao not in ("Bullish Break", "Bearish Break"):
+                            if _ao not in BREAK_OUTCOMES:
                                 continue
                             if float(_or.get("tcs") or 0) < _ofloor:
                                 continue
@@ -11581,7 +11637,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             # Using predicted as fallback included Range-Bound days as fake trades
                             # (market didn't break, but MFE was positive → fake 100% win rate).
                             _actual_out = str(_rp_r.get("actual_outcome") or "").strip()
-                            _direction  = _actual_out if _actual_out in ("Bullish Break", "Bearish Break") else ""
+                            _direction  = _actual_out if _actual_out in BREAK_OUTCOMES else ""
                             if _direction == "Bullish Break":
                                 _entry = _ibh
                                 _stop  = _ibl
@@ -12826,12 +12882,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             r[_val_col]   = value
                             return r
 
-                        _bt_tier_defs = [
-                            ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                            ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
-                            ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
-                            ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
-                        ]
+                        _bt_tier_defs = TCS_TIER_DEFS
 
                         _summary_rows = [
                             {c: "" for c in _csv_cols},
@@ -14086,7 +14137,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             ]
                         if not _rp_log_show_neutral:
                             _rp_display_df = _rp_display_df[
-                                _rp_display_df["W/L"].isin(["Win", "Loss"])
+                                _rp_display_df["W/L"].isin(WIN_LOSS_BASIC)
                             ]
                         if _rp_log_only_marginal and "TCS" in _rp_display_df.columns and "TCS Floor" in _rp_display_df.columns:
                             _rp_marginal_mask = (
@@ -14149,7 +14200,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _rp_wl_col = _rp_display_df["W/L"].astype(str).str.strip() if "W/L" in _rp_display_df.columns else pd.Series(dtype=str)
                         _rp_wins    = int((_rp_wl_col == "Win").sum())
                         _rp_losses  = int((_rp_wl_col == "Loss").sum())
-                        _rp_neutral = int((~_rp_wl_col.isin(["Win", "Loss"])).sum())
+                        _rp_neutral = int((~_rp_wl_col.isin(WIN_LOSS_BASIC)).sum())
                         _rp_total   = _rp_wins + _rp_losses + _rp_neutral
                         _rp_wr_pct  = (_rp_wins / (_rp_wins + _rp_losses) * 100) if (_rp_wins + _rp_losses) > 0 else 0.0
                         _rp_bar_win_pct  = (_rp_wins  / _rp_total * 100) if _rp_total > 0 else 0.0
@@ -15072,10 +15123,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         try:
                             _sw_mask = (
                                 _tgrp["actual_outcome"].str.lower().str.contains("bullish|bearish", na=False)
-                                & _tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                                & _tgrp["win_loss"].str.strip().isin(WIN_LOSS_BASIC)
                                 & (_tgrp["tcs"].astype(float) >= _sw_tcs)
                             ) if "actual_outcome" in _tgrp.columns else (
-                                _tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                                _tgrp["win_loss"].str.strip().isin(WIN_LOSS_BASIC)
                                 & (_tgrp["tcs"].astype(float) >= _sw_tcs)
                             )
                             _sw_sub = _tgrp[_sw_mask]
@@ -15644,7 +15695,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 except (ValueError, TypeError):
                     return ""
 
-            _delta_cols_present = [c for c in ["Δ Morn", "Δ Intra"] if c in _tkr_display_df.columns]
+            _delta_cols_present = [c for c in DELTA_DRIFT_COLS if c in _tkr_display_df.columns]
             _styled_summary = _tkr_display_df.style.apply(_style_rows, axis=1)
             if _delta_cols_present:
                 try:
@@ -17444,10 +17495,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         if "actual_outcome" in _sw_tgrp.columns:
                             _sw_valid_mask = (
                                 _sw_tgrp["actual_outcome"].str.lower().str.contains("bullish|bearish", na=False)
-                                & _sw_tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                                & _sw_tgrp["win_loss"].str.strip().isin(WIN_LOSS_BASIC)
                             )
                         elif "win_loss" in _sw_tgrp.columns:
-                            _sw_valid_mask = _sw_tgrp["win_loss"].str.strip().isin(["Win", "Loss"])
+                            _sw_valid_mask = _sw_tgrp["win_loss"].str.strip().isin(WIN_LOSS_BASIC)
                         else:
                             _sw_valid_mask = _pd_bt.Series([True] * len(_sw_tgrp), index=_sw_tgrp.index)
                         _sw_tgrp       = _sw_tgrp[_sw_valid_mask]
@@ -19024,7 +19075,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 & _bt_df["actual_outcome"].str.lower().str.contains(
                                     "bullish|bearish", na=False
                                 )
-                                & _bt_df["win_loss"].str.strip().isin(["Win", "Loss"])
+                                & _bt_df["win_loss"].str.strip().isin(WIN_LOSS_BASIC)
                             )
                         _tk_drill_df = _bt_df[_tk_drill_mask].copy()
                         if _tk_drill_df.empty:
@@ -19988,7 +20039,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             try:
                                 _floor_int = int(floor)
                                 _fl_mask = (
-                                    _grp["win_loss"].str.strip().isin(["Win", "Loss"])
+                                    _grp["win_loss"].str.strip().isin(WIN_LOSS_BASIC)
                                     & (_grp["tcs"].astype(float) >= _floor_int)
                                 )
                                 if "actual_outcome" in _grp.columns:
@@ -20148,7 +20199,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         return ""
 
                     _sweep_delta_cols_present = [
-                        c for c in ["Δ Morn", "Δ Intra"] if c in _detail_df.columns
+                        c for c in DELTA_DRIFT_COLS if c in _detail_df.columns
                     ]
                     _sweep_styled = _detail_df.style
                     if _sweep_delta_cols_present:
@@ -22547,7 +22598,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
             # ── Signal → Outcome Correlation ──────────────────────────────
             _bs_outcome_df = (
-                _bs_df[_bs_df["win_loss"].isin(["Win", "Loss", "Breakeven"])].copy()
+                _bs_df[_bs_df["win_loss"].isin(WIN_LOSS_OUTCOMES)].copy()
                 if "win_loss" in _bs_df.columns
                 else _pd_bs.DataFrame()
             )
@@ -22727,7 +22778,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
 })();
 </script>
 """, height=0)
-    _PAT_FEED_OPTS = ["iex", "sip"]
+    _PAT_FEED_OPTS = FEED_KEYS
     _gdf_pat = st.session_state.get("_global_default_feed", "iex")
     _url_init_str("pat_scan_feed", "pat_scan_feed", _gdf_pat, allowed=_PAT_FEED_OPTS)
     _pat_col1, _pat_col2 = st.columns([3, 1])
@@ -22984,7 +23035,7 @@ def render_tracker_tab():
 })();
 </script>
 """, height=0)
-        _BT_BATCH_FEED_OPTS = ["iex", "sip"]
+        _BT_BATCH_FEED_OPTS = FEED_KEYS
         if "bt_feed_select" not in st.session_state:
             _gdf_bt = st.session_state.get("_global_default_feed", "iex")
             _qp_bt_batch_feed = st.query_params.get("bt_batch_feed", _gdf_bt)
@@ -24165,7 +24216,6 @@ def render_sa_tab():
 def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False):
     """Single-pass fetch of backtest_sim_runs; groups by screener_pass in memory."""
     from datetime import date as _date_cls
-    BREAK_OUTCOMES = {"Bullish Break", "Bearish Break"}
     all_rows, offset, fetch_error = [], 0, None
     try:
         while True:
@@ -24512,8 +24562,8 @@ def render_performance_tab():
             errors="coerce",
         )
         _id_running_r = float(_id_r_vals.fillna(0).sum())
-        _id_wins   = int((_intraday_closed["win_loss"].isin(["Win", "W"])).sum())
-        _id_losses = int((_intraday_closed["win_loss"].isin(["Loss", "L"])).sum())
+        _id_wins   = int((_intraday_closed["win_loss"].isin(WIN_ALIASES)).sum())
+        _id_losses = int((_intraday_closed["win_loss"].isin(LOSS_ALIASES)).sum())
         _id_n      = len(_intraday_closed)
 
         _id_r_color = "#4caf50" if _id_running_r >= 0 else "#ef5350"
@@ -25264,7 +25314,7 @@ ALTER TABLE backtest_sim_runs
                 for _st_key in ["morning", "intraday", "eod"]:
                     _st_mask = _pt_df["scan_type"].fillna("morning") == _st_key if "scan_type" in _pt_df.columns else pd.Series(False, index=_pt_df.index)
                     _st_wl   = _pt_df.loc[_st_mask, "win_loss"].dropna() if not _pt_df.empty else pd.Series()
-                    _st_sw   = int((_st_wl.isin(["Win", "W"])).sum())
+                    _st_sw   = int((_st_wl.isin(WIN_ALIASES)).sum())
                     _st_tot  = len(_st_wl[_st_wl.isin(["Win", "W", "Loss", "L"])])
                     _st_swr  = _st_sw / _st_tot * 100 if _st_tot else 0
                     _st_scn  = _mfe_df[_mfe_df["scan_type"] == _st_key] if "scan_type" in _mfe_df.columns else pd.DataFrame()
@@ -25390,12 +25440,7 @@ ALTER TABLE backtest_sim_runs
         "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
     )
 
-    _tier_defs = [
-        ("P1", "🔴", "intraday", 70, 999, "#c62828",  "Intraday 70+"),
-        ("P2", "🟠", "morning",  70, 999, "#ef6c00",  "Morning 70+"),
-        ("P3", "🟡", "intraday", 50,  69, "#f9a825",  "Intraday 50–69"),
-        ("P4", "🟢", "morning",  50,  69, "#2e7d32",  "Morning 50–69"),
-    ]
+    _tier_defs = TCS_TIER_DEFS
 
     _has_tcs = "tcs" in _sim_df.columns and _sim_df["tcs"].notna().any()
     _has_marg_data_sweep = (
@@ -26415,7 +26460,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 hovermode="x unified",
             )
 
-            st.plotly_chart(_cpnl_fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(_cpnl_fig, use_container_width=True, config=PLOTLY_NO_MODEBAR)
             st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Fill vs Sim R comparison (aggregate across filled orders) ────────
@@ -28115,7 +28160,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     unsafe_allow_html=True,
                 )
                 _bts_scan_cols = st.columns(4)
-                for _bts_idx, _bts_stk in enumerate(["morning", "intraday"]):
+                for _bts_idx, _bts_stk in enumerate(SCAN_TYPES):
                     _bts_stk_df = (
                         _bts_mfe_df[_bts_mfe_df["scan_type"] == _bts_stk]
                         if "scan_type" in _bts_mfe_df.columns
@@ -28148,7 +28193,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                 f'</div>',
                                 unsafe_allow_html=True,
                             )
-                for _bts_eod_idx, _bts_eod_stk in enumerate(["morning", "intraday"]):
+                for _bts_eod_idx, _bts_eod_stk in enumerate(SCAN_TYPES):
                     with _bts_scan_cols[2 + _bts_eod_idx]:
                         _bts_eod_df = pd.DataFrame()
                         if "eod_pnl_r" in _bts_df.columns:
@@ -28343,12 +28388,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
                 "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
             )
-            _bts_tier_defs2 = [
-                ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
-                ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
-                ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
-            ]
+            _bts_tier_defs2 = TCS_TIER_DEFS
             _bts_has_tcs2 = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
             _has_marg_data_bts = (
                 _bts_has_tcs2
@@ -28526,12 +28566,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
                     "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
                 )
-                _bts_eod_tier_defs = [
-                    ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                    ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
-                    ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
-                    ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
-                ]
+                _bts_eod_tier_defs = TCS_TIER_DEFS
                 _bts_eod_has_tcs = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
                 _bts_eod_tier_cols = st.columns(4)
                 _bts_eod_exp_map: dict = {}
@@ -28694,7 +28729,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         _bts_et_spk = _bts_et_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
                                         _bts_et_wkly = _bts_et_spk.resample("W-FRI").agg(
                                             _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
-                                            _tot=("eod_pnl_r", "count"),
+                                            _tot=EOD_PNL_COUNT_AGG,
                                         )
                                         _bts_et_wkly = _bts_et_wkly[_bts_et_wkly["_tot"] > 0]
                                         _bts_et_wkly["_wr"] = _bts_et_wkly["_wins"] / _bts_et_wkly["_tot"] * 100
@@ -28727,7 +28762,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                     st.plotly_chart(
                                         _bts_et_sfig,
                                         use_container_width=True,
-                                        config={"displayModeBar": False},
+                                        config=PLOTLY_NO_MODEBAR,
                                     )
                                     st.caption("Weekly EOD win rate")
                                     # ── Week drill-down ───────────────────────
@@ -28779,12 +28814,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     "P1 🔴 = Intraday TCS 70+  ·  P2 🟠 = Morning TCS 70+  ·  "
                     "P3 🟡 = Intraday TCS 50–69  ·  P4 🟢 = Morning TCS 50–69"
                 )
-                _bts_ldr_tier_defs = [
-                    ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                    ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
-                    ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
-                    ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
-                ]
+                _bts_ldr_tier_defs = TCS_TIER_DEFS
                 _bts_ldr_has_tcs = "tcs" in _bts_df.columns and _bts_df["tcs"].notna().any()
                 _bts_ldr_tier_cols = st.columns(4)
                 _bts_ldr_exp_map: dict = {}
@@ -28978,7 +29008,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                     st.plotly_chart(
                                         _bts_lt_sfig,
                                         use_container_width=True,
-                                        config={"displayModeBar": False},
+                                        config=PLOTLY_NO_MODEBAR,
                                     )
                                     st.caption("Weekly Ladder win rate")
 
@@ -28986,12 +29016,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             _bts_cs_has_eod    = "eod_pnl_r"   in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
             _bts_cs_has_tiered = "tiered_pnl_r" in _bts_df.columns and _bts_df["tiered_pnl_r"].notna().any()
             if _bts_has_tcs2 and (_bts_cs_has_eod or _bts_cs_has_tiered):
-                _bts_cs_tier_defs = [
-                    ("P1", "🔴", "intraday", 70, 999, "#c62828", "Intraday 70+"),
-                    ("P2", "🟠", "morning",  70, 999, "#ef6c00", "Morning 70+"),
-                    ("P3", "🟡", "intraday", 50,  69, "#f9a825", "Intraday 50–69"),
-                    ("P4", "🟢", "morning",  50,  69, "#2e7d32", "Morning 50–69"),
-                ]
+                _bts_cs_tier_defs = TCS_TIER_DEFS
                 _bts_cs_rows = []
                 for _bts_csi, (_bts_csl, _bts_cse, _bts_csst, _bts_cslo, _bts_cshi, _bts_csc, _bts_csd) in enumerate(_bts_cs_tier_defs):
                     _bts_csdf = _bts_df[
@@ -29541,7 +29566,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     unsafe_allow_html=True,
                 )
                 _bts_scan_cmp_cols = st.columns(2)
-                for _bts_sc_idx, _bts_sc_name in enumerate(["morning", "intraday"]):
+                for _bts_sc_idx, _bts_sc_name in enumerate(SCAN_TYPES):
                     _bts_sc_df = (
                         _bts_df[_bts_df["scan_type"] == _bts_sc_name].copy()
                         if "scan_type" in _bts_df.columns
@@ -29636,7 +29661,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     and "tiered_pnl_r" in _bts_df.columns
                 ):
                     _bts_sc_trend_src = _bts_df[
-                        _bts_df["scan_type"].isin(["morning", "intraday"])
+                        _bts_df["scan_type"].isin(SCAN_TYPES)
                         & _bts_df["eod_pnl_r"].notna()
                         & _bts_df["tiered_pnl_r"].notna()
                     ].copy()
@@ -31323,7 +31348,7 @@ function _bqCopyShareLink() {
     @st.cache_data(ttl=3600, show_spinner=False)
     def _load_backtest_grid(uid, start_date=None, end_date=None):
         grid = []
-        for st_name in ["morning", "intraday"]:
+        for st_name in SCAN_TYPES:
             for lo, hi in [(0, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 101)]:
                 try:
                     rows, offset = [], 0
@@ -31356,7 +31381,7 @@ function _bqCopyShareLink() {
                         continue
                     breaks = [
                         r for r in rows
-                        if r.get("actual_outcome") in ("Bullish Break", "Bearish Break")
+                        if r.get("actual_outcome") in BREAK_OUTCOMES
                         and r.get("pnl_r_sim") is not None
                     ]
                     p_break = len(breaks) / len(rows) if rows else 0
@@ -31650,7 +31675,7 @@ function _bqCopyShareLink() {
             _live_resolved["is_win"] = _live_resolved["win_loss"].isin(["W", "Win"])
 
             _live_rows = []
-            for _st in ["morning", "intraday"]:
+            for _st in SCAN_TYPES:
                 for _lo, _hi, _lbl in [(0, 50, "<50"), (50, 60, "50–59"), (60, 70, "60–69"), (70, 101, "70+")]:
                     _sub = _live_resolved[
                         (_live_resolved["scan_type"] == _st) &
@@ -32201,7 +32226,7 @@ function _bqCopyShareLink() {
                 yaxis=dict(gridcolor="#1e2a3a", tickprefix="$", tickfont=dict(size=10)),
                 showlegend=False,
             )
-            st.plotly_chart(_fig_pnl, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(_fig_pnl, use_container_width=True, config=PLOTLY_NO_MODEBAR)
 
         # ── RVOL Boost Win-Rate Breakdown ─────────────────────────────────────
         if "rvol_size_mult" in _verified.columns and "win_loss" in _verified.columns:
@@ -32394,8 +32419,8 @@ function _bqCopyShareLink() {
             )
 
         def _color_wl(val):
-            if val in ("W", "Win"):   return "color: #66bb6a; font-weight:700"
-            if val in ("L", "Loss"):  return "color: #ef5350; font-weight:700"
+            if val in WIN_ALIASES:   return "color: #66bb6a; font-weight:700"
+            if val in LOSS_ALIASES:  return "color: #ef5350; font-weight:700"
             return ""
 
         def _color_mae(val):
@@ -32575,7 +32600,7 @@ function _bqCopyShareLink() {
                         _pt_eod_all_spk = _pt_eod_all_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
                         _pt_eod_all_wkly = _pt_eod_all_spk.resample("W-FRI").agg(
                             _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
-                            _tot=("eod_pnl_r", "count"),
+                            _tot=EOD_PNL_COUNT_AGG,
                         )
                         _pt_eod_all_wkly = _pt_eod_all_wkly[_pt_eod_all_wkly["_tot"] > 0]
                         _pt_eod_all_wkly["_wr"] = _pt_eod_all_wkly["_wins"] / _pt_eod_all_wkly["_tot"] * 100
@@ -32667,7 +32692,7 @@ function _bqCopyShareLink() {
                                 _pt_eod_spk = _pt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
                                 _pt_eod_wkly_all = _pt_eod_spk.resample("W-FRI").agg(
                                     _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
-                                    _tot=("eod_pnl_r", "count"),
+                                    _tot=EOD_PNL_COUNT_AGG,
                                 )
                                 _pt_eod_wkly_all = _pt_eod_wkly_all[_pt_eod_wkly_all["_tot"] > 0]
                                 _pt_eod_wkly_all["_wr"] = _pt_eod_wkly_all["_wins"] / _pt_eod_wkly_all["_tot"] * 100
@@ -32753,7 +32778,7 @@ function _bqCopyShareLink() {
                             st.plotly_chart(
                                 _pt_eod_sfig,
                                 use_container_width=True,
-                                config={"displayModeBar": False},
+                                config=PLOTLY_NO_MODEBAR,
                             )
                             st.caption("Weekly EOD win rate")
                             with st.expander("📈 Expand full chart"):
@@ -32802,7 +32827,7 @@ function _bqCopyShareLink() {
                                 st.plotly_chart(
                                     _pt_eod_full,
                                     use_container_width=True,
-                                    config={"displayModeBar": False},
+                                    config=PLOTLY_NO_MODEBAR,
                                 )
             if "morning" in _pt_eod_exp_map and "intraday" in _pt_eod_exp_map:
                 _pt_eod_m_exp = _pt_eod_exp_map["morning"]
@@ -32893,7 +32918,7 @@ function _bqCopyShareLink() {
                 yaxis=dict(gridcolor="#1e2a3a", range=[0, 110], ticksuffix="%"),
                 showlegend=False,
             )
-            st.plotly_chart(_bar_fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(_bar_fig, use_container_width=True, config=PLOTLY_NO_MODEBAR)
 
         def _color_rate(val):
             if isinstance(val, (int, float)):
@@ -32903,7 +32928,7 @@ function _bqCopyShareLink() {
             return ""
 
         st.dataframe(
-            _by_struct_display.style.map(_color_rate, subset=["Win Rate %"]),
+            _by_struct_display.style.map(_color_rate, subset=WIN_RATE_COLS),
             use_container_width=True, hide_index=True, height="stretch"
         )
 
@@ -33636,7 +33661,7 @@ function _bqCopyShareLink() {
                             st.plotly_chart(
                                 _sp_fig,
                                 use_container_width=True,
-                                config={"displayModeBar": False},
+                                config=PLOTLY_NO_MODEBAR,
                             )
 
             # ── Download threshold history (CSV — full 90-day window) ────────────
@@ -33772,7 +33797,7 @@ function _bqCopyShareLink() {
             return ""
 
         st.dataframe(
-            _daily.style.map(_color_winrate, subset=["Win Rate %"]),
+            _daily.style.map(_color_winrate, subset=WIN_RATE_COLS),
             use_container_width=True, hide_index=True, height="stretch"
         )
     else:
@@ -34248,7 +34273,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 supabase.table("paper_trades")
                 .select("trade_date,win_loss,tcs,ib_range_pct")
                 .eq("user_id", _AUTH_USER_ID)
-                .in_("win_loss", ["Win", "Loss"])
+                .in_("win_loss", WIN_LOSS_BASIC)
                 .gte("tcs", 50)
                 .execute()
             )
@@ -34422,7 +34447,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 })();
 </script>
 """, height=0)
-        _PT_FEED_OPTIONS = ["SIP (paid — accurate)", "IEX (free — limited)"]
+        _PT_FEED_OPTIONS = FEED_OPTIONS
         _gdf_pt_raw = st.session_state.get("_global_default_feed", "sip")
         _gdf_pt = "SIP (paid — accurate)" if _gdf_pt_raw == "sip" else "IEX (free — limited)"
         _url_init_str("pt_feed", "pt_feed", _gdf_pt, allowed=_PT_FEED_OPTIONS)
@@ -34912,7 +34937,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_daily = (
             _pt_df.groupby("trade_date")
             .apply(lambda g: pd.Series({
-                "Win %":   round(g["win_loss"].isin(["Win", "W"]).sum() / len(g) * 100, 1),
+                "Win %":   round(g["win_loss"].isin(WIN_ALIASES).sum() / len(g) * 100, 1),
                 "Setups":  len(g),
                 "Avg TCS": round(g["tcs"].mean(), 0) if "tcs" in g.columns else 0,
             }))
@@ -35043,7 +35068,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         except (ValueError, TypeError):
             return ""
 
-    _pt_delta_cols = [c for c in ["Δ Morn", "Δ Intra"] if c in _pt_tkr_display_df.columns]
+    _pt_delta_cols = [c for c in DELTA_DRIFT_COLS if c in _pt_tkr_display_df.columns]
     _pt_styled = _pt_tkr_display_df.style
     if _pt_delta_cols:
         try:
@@ -35177,7 +35202,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     _ptt_eod_all_spk = _ptt_eod_all_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
                     _ptt_eod_all_wkly = _ptt_eod_all_spk.resample("W-FRI").agg(
                         _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
-                        _tot=("eod_pnl_r", "count"),
+                        _tot=EOD_PNL_COUNT_AGG,
                     )
                     _ptt_eod_all_wkly = _ptt_eod_all_wkly[_ptt_eod_all_wkly["_tot"] > 0]
                     _ptt_eod_all_wkly["_wr"] = _ptt_eod_all_wkly["_wins"] / _ptt_eod_all_wkly["_tot"] * 100
@@ -35269,7 +35294,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             _ptt_eod_spk = _ptt_eod_spk.dropna(subset=["_dt"]).set_index("_dt").sort_index()
                             _ptt_eod_wkly_all = _ptt_eod_spk.resample("W-FRI").agg(
                                 _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
-                                _tot=("eod_pnl_r", "count"),
+                                _tot=EOD_PNL_COUNT_AGG,
                             )
                             _ptt_eod_wkly_all = _ptt_eod_wkly_all[_ptt_eod_wkly_all["_tot"] > 0]
                             _ptt_eod_wkly_all["_wr"] = _ptt_eod_wkly_all["_wins"] / _ptt_eod_wkly_all["_tot"] * 100
@@ -35354,7 +35379,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                         st.plotly_chart(
                             _ptt_eod_sfig,
                             use_container_width=True,
-                            config={"displayModeBar": False},
+                            config=PLOTLY_NO_MODEBAR,
                         )
                         st.caption("Weekly EOD win rate")
                         with st.expander("📈 Expand full chart"):
@@ -35403,7 +35428,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             st.plotly_chart(
                                 _ptt_eod_full,
                                 use_container_width=True,
-                                config={"displayModeBar": False},
+                                config=PLOTLY_NO_MODEBAR,
                             )
         if "morning" in _ptt_eod_exp_map and "intraday" in _ptt_eod_exp_map:
             _ptt_eod_m_exp = _ptt_eod_exp_map["morning"]
@@ -35601,10 +35626,10 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     for col in row.index
                 ]
             wl = str(row.get("win_loss", "")).strip()
-            if wl in ("W", "Win"):
+            if wl in WIN_ALIASES:
                 base = "background-color: rgba(76,175,80,0.08)"
                 hi   = "background-color: rgba(76,175,80,0.18); color:#66bb6a; font-weight:700"
-            elif wl in ("L", "Loss"):
+            elif wl in LOSS_ALIASES:
                 base = "background-color: rgba(239,83,80,0.08)"
                 hi   = "background-color: rgba(239,83,80,0.18); color:#ef5350; font-weight:700"
             else:
@@ -36187,7 +36212,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     return ""
 
                 st.dataframe(
-                    _acc_display.style.map(_color_rank_wr, subset=["Win Rate %"]),
+                    _acc_display.style.map(_color_rank_wr, subset=WIN_RATE_COLS),
                     use_container_width=True, hide_index=True, height="stretch"
                 )
                 _best = _acc_df[_acc_df["win_rate"] == _acc_df["win_rate"].max()]
