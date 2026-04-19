@@ -210,6 +210,46 @@ The difference between what the bot did and what the user did on the same tradin
 
 ---
 
+### THREE-WAY BENCHMARK — Adding the MFE Ceiling
+*Insight captured April 19, 2026*
+
+The gap analysis above compares two tracks (user vs bot). But there is a third benchmark already in the system that should be explicit: **the MFE ceiling** — the best possible outcome on any given setup before the trade reversed.
+
+MFE (Maximum Favorable Excursion) is already the permanent P&L basis. The bot already learns from it nightly. Making it the third axis of comparison creates a much richer signal set:
+
+| Layer | What it represents | Gap it reveals |
+|---|---|---|
+| **User execution** | What the trader actually did | Behavioral discipline gap (human vs bot) |
+| **Bot execution** | What the bot actually did | Model efficiency gap (bot vs MFE ceiling) |
+| **MFE ceiling** | Best possible outcome on that exact setup | Total efficiency gap (human vs theoretical max) |
+
+**The learning chain:**
+- The bot learns from the MFE ceiling → improves its exit strategy over time
+- The human learns from the bot → improves behavioral discipline over time
+- The human is therefore indirectly learning from the MFE ceiling through the bot
+- Making this chain explicit lets both be measured against the same ultimate benchmark
+
+**Why this adds signal beyond the two-track comparison:**
+
+A trader whose gap-to-MFE is shrinking even when their gap-to-bot stays flat means their exits are improving independently of entry discipline. Two completely different coaching signals — invisible without the three-way comparison.
+
+| Observed pattern | What it means |
+|---|---|
+| User → Bot gap shrinking, Bot → MFE gap stable | Human behavioral discipline improving |
+| Bot → MFE gap shrinking, User → Bot gap stable | Bot exit model improving, human not yet following |
+| User → MFE gap shrinking faster than User → Bot gap | Human is self-discovering exit improvements the bot hasn't found yet |
+| All three gaps stable | Plateau — model and behavior have converged at current ceiling |
+
+**The employer product implication:**
+The user's MFE capture rate over time is a measure of learning efficiency — how quickly they internalize feedback from an objective performance standard. High MFE capture rate convergence = high coachability. Stalled MFE capture = ceiling hit, different intervention needed.
+
+**Data already available:**
+- MFE is tracked and stored per trade in the existing system
+- Bot uses MFE as permanent P&L basis already
+- No new data collection required — just new comparison logic
+
+---
+
 ### TRADE QUALITY SCORE — The Composite Metric
 
 Currently three grading systems exist as silos with no connection to each other:
