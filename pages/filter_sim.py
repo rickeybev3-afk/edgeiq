@@ -23,8 +23,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# VWAP adds no edge (backtest confirmed) — force OFF every load so it never auto-enables
-st.session_state["fs_use_vwap"] = False
+# Default VWAP to OFF (backtest: no edge) but allow user to toggle on manually
+if "fs_use_vwap" not in st.session_state:
+    st.session_state["fs_use_vwap"] = False
 
 st.markdown("""
 <style>
