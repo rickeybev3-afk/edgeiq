@@ -819,26 +819,27 @@ def _alpaca_get(endpoint: str) -> dict:
         return {}
 
 
-def _check_pdt_guard() -> tuple[bool, int]:
-    """Return (blocked, daytrade_count).
+def _check_pdt_guard() -> tuple[bool, int, bool]:
+    """Return (blocked, daytrade_count, pdt_in_effect).
 
-    Blocked = True when daytrade_count >= PDT_MAX_DAY_TRADES AND account
-    equity < $25,000 (PDT rule only applies below that threshold).
+    blocked        — True when daytrade_count >= PDT_MAX_DAY_TRADES (live + <$25k only).
+    daytrade_count — rolling 5-day count from Alpaca (0 for paper accounts).
+    pdt_in_effect  — True when account is live AND equity < $25k (PDT rules actively apply).
     Paper accounts are never blocked — PDT is a real-money brokerage rule.
     """
     if IS_PAPER_ALPACA:
-        return False, 0
+        return False, 0, False
     acct = _alpaca_get("/v2/account")
     if not acct:
         log.warning("[PDT guard] Could not fetch account info — allowing order through")
-        return False, 0
+        return False, 0, False
     equity      = float(acct.get("equity", 0) or 0)
     dt_count    = int(acct.get("daytrade_count", 0) or 0)
     pdt_flagged = acct.get("pattern_day_trader", False)
     if equity >= 25_000:
-        return False, dt_count   # above PDT threshold — no restriction
+        return False, dt_count, False  # above PDT threshold — no restriction
     blocked = dt_count >= PDT_MAX_DAY_TRADES or pdt_flagged
-    return blocked, dt_count
+    return blocked, dt_count, True
 
 
 def _check_concurrent_positions_guard() -> tuple[bool, int]:
@@ -997,7 +998,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     ticker = r.get("ticker", "").upper()
 
     # ── PDT guard (live accounts only, <$25k equity) ───────────────────────────
-    _pdt_blocked, _dt_count = _check_pdt_guard()
+    _pdt_blocked, _dt_count, _pdt_in_effect = _check_pdt_guard()
     if _pdt_blocked:
         log.warning(
             f"  [{ticker}] ORDER BLOCKED — PDT limit reached "
@@ -1022,6 +1023,32 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
 
     # ── PDT equity floor warning (fires if equity near $25k boundary) ──────────
     _warn_pdt_equity_floor()
+
+    # ── PDT budget gate (live + <$25k only) ────────────────────────────────────
+    # When the rolling 5-day trade count is non-zero we become more selective:
+    #   remaining == 2  (1 trade used)  → require TCS ≥ 60  (skip borderline P4)
+    #   remaining == 1  (2 trades used) → require TCS ≥ 70  (P3 only, highest edge)
+    # This preserves the best setups for the scarce last slots and auto-releases
+    # once equity crosses $25k (pdt_in_effect becomes False).
+    if _pdt_in_effect and _dt_count > 0:
+        _remaining  = max(0, PDT_MAX_DAY_TRADES - _dt_count)
+        _tcs_val    = float(r.get("tcs", 0))
+        _min_tcs    = 60 if _remaining == 2 else (70 if _remaining == 1 else 50)
+        if _tcs_val < _min_tcs:
+            log.warning(
+                f"  [{ticker}] ORDER SKIPPED — PDT budget gate "
+                f"(slots remaining={_remaining}, TCS={_tcs_val:.0f} < floor {_min_tcs})"
+            )
+            tg_send(
+                f"⏭️ <b>{ticker} Skipped — PDT Budget Gate</b>\n"
+                f"Trade slots remaining today: <b>{_remaining}/{PDT_MAX_DAY_TRADES}</b>\n"
+                f"TCS {_tcs_val:.0f} is below the floor for this slot "
+                f"(min <b>{_min_tcs}</b> — "
+                f"{'P3 only (last slot)' if _remaining == 1 else 'P3 preferred (1 slot used)'}).\n"
+                f"<i>Preserving slot for a higher-conviction setup.</i>"
+            )
+            _patch_skip_reason(r, ticker, "pdt_budget_gate")
+            return
 
     # ── Concurrent position cap ────────────────────────────────────────────────
     _pos_blocked, _pos_count = _check_concurrent_positions_guard()
@@ -5575,7 +5602,7 @@ def main():
             # For live accounts show live PDT + position status at startup
             _startup_extra = ""
             if not IS_PAPER_ALPACA:
-                _pdt_blk, _pdt_n = _check_pdt_guard()
+                _pdt_blk, _pdt_n, _ = _check_pdt_guard()
                 _pos_blk, _pos_n = _check_concurrent_positions_guard()
                 _pdt_warn  = " 🚫 LIMIT REACHED" if _pdt_blk else ""
                 _pos_warn  = " 🚫 AT CAP" if _pos_blk else ""
