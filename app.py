@@ -22106,6 +22106,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 "Last 6 months": 180,
                 "Last 12 months": 365,
                 "All time":      None,
+                "Custom range":  "custom",
             }
             _url_init_str(
                 "bs_range", "bs_date_range", "Last 90 days",
@@ -22118,7 +22119,54 @@ Nothing here requires any input from you. All numbers update automatically as yo
             )
             _url_push("bs_range", _bs_range_sel)
             _bs_days = _bs_range_opts[_bs_range_sel]
-            if _bs_days is not None:
+            if _bs_days == "custom":
+                _bs_today = _dt_bsrange.date.today()
+                _bs_dated_dates = _bs_df["date"].dropna()
+                _bs_min_date = (
+                    _bs_dated_dates.min()
+                    if not _bs_dated_dates.empty
+                    else _bs_today - _dt_bsrange.timedelta(days=365)
+                )
+                _bs_default_start = max(
+                    _bs_min_date,
+                    _bs_today - _dt_bsrange.timedelta(days=90),
+                )
+                _bs_custom_col1, _bs_custom_col2 = st.columns(2)
+                with _bs_custom_col1:
+                    _bs_custom_start = st.date_input(
+                        "From",
+                        value=_bs_default_start,
+                        min_value=_bs_min_date,
+                        max_value=_bs_today,
+                        key="bs_custom_start",
+                    )
+                with _bs_custom_col2:
+                    _bs_custom_end = st.date_input(
+                        "To",
+                        value=_bs_today,
+                        min_value=_bs_min_date,
+                        max_value=_bs_today,
+                        key="bs_custom_end",
+                    )
+                if _bs_custom_start > _bs_custom_end:
+                    st.warning("'From' date must be on or before the 'To' date.")
+                    _bs_custom_start, _bs_custom_end = _bs_custom_end, _bs_custom_start
+                _bs_undated_excluded = int(_bs_df["date"].isna().sum())
+                _bs_df = _bs_df[
+                    (_bs_df["date"] >= _bs_custom_start) & (_bs_df["date"] <= _bs_custom_end)
+                ]
+                _bs_range_note = (
+                    f"Showing signals from **{_bs_custom_start.strftime('%b %d, %Y')}** "
+                    f"to **{_bs_custom_end.strftime('%b %d, %Y')}**."
+                )
+                if _bs_undated_excluded > 0:
+                    _bs_range_note += (
+                        f" {_bs_undated_excluded} signal"
+                        f"{'s' if _bs_undated_excluded != 1 else ''} without a timestamp "
+                        "are excluded when a date filter is active."
+                    )
+                st.caption(_bs_range_note)
+            elif _bs_days is not None:
                 _bs_cutoff = _dt_bsrange.date.today() - _dt_bsrange.timedelta(days=_bs_days)
                 _bs_df_unfiltered_count = len(_bs_df)
                 _bs_df = _bs_df[_bs_df["date"] >= _bs_cutoff]
