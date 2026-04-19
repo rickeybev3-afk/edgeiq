@@ -185,6 +185,40 @@ The insight that adversity forges specific cognitive strengths means the profile
 
 ---
 
+### 🧠 THEORY NOTE — Evaluation Apprehension, Body Doubling & Why Solo Trading Is a Cleaner Lab
+*Captured April 19, 2026 — personal origin of a key product insight*
+
+**The personal origin:**
+The cognitive profiler idea came partly from a personal experience: taking a formal IQ test and underperforming significantly because of the proctor. Not the test itself. The person watching. This isn't a unique failure — it's a documented cognitive phenomenon that contaminates every formally administered assessment in existence.
+
+**Two distinct effects being confused as one:**
+
+*Body doubling (familiar presence, non-evaluating):*
+When off Prozac, needed a familiar person physically present — not interacting, just there — to do focused work. This is body doubling, well-documented in ADHD research. A known, non-threatening presence acts as an external attentional anchor and co-regulator. It reduces the cognitive overhead of self-monitoring without introducing an evaluation threat. The nervous system reads it as "safe" and can allocate more capacity to the task. This is a regulatory function, not a social one.
+
+*Evaluation apprehension (stranger watching, evaluative context):*
+Performance under proctored assessment is impaired regardless of medication state. Cottrell's evaluation apprehension model: it is specifically the fear of being judged that impairs complex cognitive performance — not just the presence of another person. A proctor's job is to evaluate compliance and watch for cheating. That is an unmistakably evaluative social signal. The result is predictable: cognitive resources are partially redirected to managing the social threat, and complex task performance drops.
+
+*On Prozac:*
+The medication reduces baseline social anxiety, which raises the threshold for triggering evaluation apprehension. Body doubling is no longer required because the external regulation need is lower. Proctored performance is somewhat better because the threat response is modulated. But the underlying sensitivity hasn't disappeared — it's shifted. The two effects (body double need vs. evaluation apprehension) respond differently to the pharmacological change because they're different mechanisms.
+
+**What this means for the product:**
+
+Standard cognitive assessments are contaminated by evaluation apprehension by design. The proctor, the formal setting, the stranger administering the test — these are maximum evaluation threat signals. The score you get reflects cognitive capacity *minus* however much that individual's evaluation apprehension costs them under those conditions. For people with high evaluation sensitivity (a trait that maps partly to social anxiety, ADHD-adjacent attentional patterns, and trauma-shaped nervous systems), the contamination is severe. For people low in evaluation sensitivity, it's minimal. The assessment is measuring different things in different people.
+
+Solo trading with real money removes this confound entirely. There is no observer. There is no evaluator. The pressure is financial, not social. You cannot perform for anyone because no one is watching. Your actual cognitive patterns emerge unmasked. This is a cleaner measurement context than any proctored assessment — not theoretically, but demonstrably, for anyone whose performance diverges between observed and unobserved conditions.
+
+**The citation layer:**
+- Zajonc (1965) — social facilitation: presence of others enhances simple/well-learned tasks but impairs complex/novel ones
+- Cottrell et al. (1968) — evaluation apprehension model: it is specifically anticipated evaluation, not mere presence, that drives performance impairment
+- Beilock & Carr (2001) — "choking under pressure": expert-level skill execution is disrupted under evaluative observation due to conscious monitoring of automated processes
+- Body doubling in ADHD: Prevatt & Levrini (2015) — environmental accommodation literature; attentional scaffolding via non-evaluative presence
+
+**The product design implication:**
+The formal employer test (future product) must also address this. If the test is administered in a proctored setting, it reintroduces the same confound. Options: asynchronous administration (no proctor), familiar-environment delivery, or explicitly measuring performance under evaluative vs. non-evaluative conditions as its own signal. The delta between the two IS data.
+
+---
+
 ### 🚨 BIGGER INSIGHT — Trading as Universal Behavioral Assessment Laboratory
 *Captured April 19, 2026 — this changes the total addressable market*
 
@@ -393,6 +427,37 @@ EdgeIQ is the real-stakes behavioral data collection instrument. The cognitive p
 The employer product never labels pathology, trauma, or personal history. It reports behavioral pattern direction and conditions, maps them to role-relevant predictions, and cites the literature behind each prediction.
 
 **EdgeIQ's role in this architecture:** it is the proof-of-concept and the origin of the data that made the test design possible. It is not the product. It is the laboratory.
+
+---
+
+### EMPLOYER TEST — WHAT IT ACTUALLY MEASURES
+*(Discussed April 19, 2026 — constructs the standalone assessment would be built around)*
+
+The 7 EdgeIQ radar dimensions are trading-framed. The employer test uses the same underlying constructs but reframes them for role-performance prediction. The test is designed around 8 core constructs:
+
+| Construct | What it captures | Role-performance prediction |
+|---|---|---|
+| **Decision quality under pressure** | How decisions are structured when time and information are constrained — not just the outcome | Whether someone makes sound calls when resources are limited or deadlines are real |
+| **Plan adherence vs. adaptive deviation** | Can they follow a system AND recognize when legitimate new information justifies breaking it — vs. emotional deviation | Are they disciplined executors who can also think independently when the situation changes |
+| **Sunk cost resistance** | Ability to close a losing position or abandon a failing project without ego interference | Won't defend failed decisions past the point of evidence; can redirect resources cleanly |
+| **Loss aversion calibration** | How much does the pain of a loss distort the next decision | Does a setback produce overcautious paralysis, recklessness, or recalibrated judgment |
+| **Metacognition** | Do they notice their own pattern shifting in real time — Flavell (1979) | Self-aware under pressure; can observe and correct their own cognitive drift without external feedback |
+| **Latent inhibition** | Can they filter noise from signal under pressure, or do they react to everything | High = expert pattern-matching, structures their attention well. Low = creative/divergent but distractible and reactive |
+| **Coachability index** | Learning velocity + convergence rate combined: does feedback actually change behavior or get acknowledged and ignored | Whether investing in this person compounds or plateaus |
+| **Overconfidence cycle** | Does prior performance history distort risk-taking in the next decision window | Post-success behavior: does the person overcommit, get reckless, or maintain calibration |
+
+**Output format to employer:**
+Not "score on 8 dimensions." Role-fit predictions:
+- *Thrives in ambiguity vs. needs clear structure* (latent inhibition)
+- *Executor vs. strategic thinker cognitive profile* (decision quality + plan adherence)
+- *Coachability tier* (coachability index)
+- *Pressure decision velocity* (loss aversion calibration + sunk cost resistance)
+- *Self-correction without external feedback* (metacognition)
+
+Every prediction traceable to a peer-reviewed source. Output language reviewed to eliminate disparate impact exposure before first sale.
+
+**Why evaluation apprehension matters for test design:**
+The formal test cannot be proctored in a traditional sense — the observation effect reintroduces the exact confound it's trying to eliminate. Options: asynchronous delivery (no live evaluator), familiar-environment administration, or measuring the observed vs. unobserved performance delta explicitly as a dimension (evaluation sensitivity as its own signal). See "Evaluation Apprehension" theory note above.
 
 ---
 

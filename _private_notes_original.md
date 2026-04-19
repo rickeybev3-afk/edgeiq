@@ -114,6 +114,38 @@ The insight that adversity forges specific cognitive strengths means the profile
 
 ---
 
+### 🧠 THEORY NOTE — Evaluation Apprehension, Body Doubling & Why Solo Trading Is a Cleaner Lab
+*Captured April 19, 2026 — personal origin of a key product insight*
+
+**The personal origin:**
+The cognitive profiler idea came partly from a personal experience: taking a formal IQ test and underperforming significantly because of the proctor. Not the test itself. The person watching. Off Prozac, needed a familiar person physically present to do focused work — not talking, just there. On Prozac, don't need that anymore. In both states, performance drops with a stranger watching in an evaluative context. On Prozac, somewhat more tolerant, but the sensitivity is still there.
+
+**Two distinct effects — not one:**
+
+*Body doubling (familiar presence, non-evaluating):*
+A known, non-threatening person present acts as an external attentional anchor and co-regulator. It reduces the cognitive overhead of self-monitoring without introducing an evaluation threat. The nervous system reads it as safe and allocates more capacity to the task. This is a regulatory function, not a social one. Well-documented in ADHD research (Prevatt & Levrini, 2015 — attentional scaffolding via non-evaluative presence).
+
+*Evaluation apprehension (stranger watching, evaluative context):*
+Cottrell's evaluation apprehension model: it is specifically the fear of being judged that impairs complex cognitive performance — not just the presence of another person. A proctor's job is to evaluate. That is an unmistakably evaluative social signal. Cognitive resources get partially redirected to managing the threat, and complex task performance drops.
+
+*On Prozac:*
+Reduces baseline social anxiety → raises the threshold for triggering evaluation apprehension. Body doubling is no longer required (external regulation need is lower). Proctored performance is somewhat better (threat response modulated). But the underlying sensitivity hasn't disappeared — both effects respond differently to the pharmacological change because they're different mechanisms.
+
+**What this means for the product:**
+Standard cognitive assessments are contaminated by evaluation apprehension by design. The score reflects cognitive capacity *minus* how much that individual's evaluation sensitivity costs them under formal assessment conditions. For people with high sensitivity (social anxiety, ADHD-adjacent patterns, trauma-shaped nervous systems), the contamination is severe. The assessment is measuring different things in different people.
+
+Solo trading with real money removes this confound entirely. No observer. No evaluator. Financial pressure only. Actual cognitive patterns emerge unmasked. Cleaner measurement context than any proctored assessment — not theoretically, demonstrably, for anyone whose performance diverges between observed and unobserved conditions.
+
+**Citations:**
+- Zajonc (1965) — social facilitation: presence of others enhances simple tasks but impairs complex ones
+- Cottrell et al. (1968) — evaluation apprehension: it's anticipated judgment, not mere presence, that drives impairment
+- Beilock & Carr (2001) — choking under pressure: expert performance disrupted under evaluative observation via conscious monitoring of automated processes
+
+**Test design implication:**
+The future employer test cannot be proctored in a traditional sense — reintroduces the exact confound it's trying to eliminate. Options: asynchronous delivery, familiar-environment administration, or measuring observed vs. unobserved performance delta as its own signal (evaluation sensitivity as Dimension 8).
+
+---
+
 ### 🚨 BIGGER INSIGHT — Trading as Universal Behavioral Assessment Laboratory
 *Captured April 19, 2026 — this changes the total addressable market*
 
@@ -322,6 +354,26 @@ EdgeIQ is the real-stakes behavioral data collection instrument. The cognitive p
 The employer product never labels pathology, trauma, or personal history. It reports behavioral pattern direction and conditions, maps them to role-relevant predictions, and cites the literature behind each prediction.
 
 **EdgeIQ's role in this architecture:** it is the proof-of-concept and the origin of the data that made the test design possible. It is not the product. It is the laboratory.
+
+---
+
+### EMPLOYER TEST — WHAT IT ACTUALLY MEASURES
+*(Discussed April 19, 2026)*
+
+The 7 EdgeIQ radar dimensions are trading-framed. The employer test uses the same underlying constructs reframed for role-performance prediction. 8 core constructs:
+
+| Construct | What it captures | Role-performance prediction |
+|---|---|---|
+| **Decision quality under pressure** | How decisions are structured when time/information are constrained | Sound calls when resources are limited or deadlines are real |
+| **Plan adherence vs. adaptive deviation** | Can they follow a system AND recognize when new information justifies breaking it — vs. emotional deviation | Disciplined executors who can also think independently when the situation changes |
+| **Sunk cost resistance** | Ability to close a failing position/project without ego interference | Won't defend failed decisions past the point of evidence |
+| **Loss aversion calibration** | How much does the pain of a loss distort the next decision | Does a setback produce paralysis, recklessness, or recalibrated judgment |
+| **Metacognition** | Do they notice their own pattern shifting in real time (Flavell, 1979) | Self-aware under pressure; correct cognitive drift without external feedback |
+| **Latent inhibition** | Can they filter noise from signal under pressure | High = expert pattern-matching. Low = creative/divergent but distractible |
+| **Coachability index** | Learning velocity + convergence rate: does feedback change behavior or just get acknowledged | Whether investing in this person compounds or plateaus |
+| **Overconfidence cycle** | Does prior performance distort risk-taking in the next decision window | Post-success: overcommit, reckless, or maintain calibration |
+
+**Output format:** Role-fit predictions, not dimension scores. Every prediction cited to literature. Language reviewed for disparate impact before first sale.
 
 ---
 
