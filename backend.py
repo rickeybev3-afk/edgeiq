@@ -8434,6 +8434,10 @@ def run_pending_migrations() -> dict:
         # Stored as JSONB so analytics can query individual signal keys.
         # Keys match _VJ_SIGNAL_KEYS: fomo_entry, panic_exit, followed_plan, etc.
         "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS voice_signals JSONB",
+        # Screener pass that produced this ticker — 'gap' | 'trend' | 'squeeze' | 'morning'
+        # Written by paper_trader_bot at order placement; backfilled from SMA20/SMA50 for history.
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS screener_pass TEXT",
+        "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS screener_pass TEXT",
     ]
 
     ran = 0
@@ -8566,6 +8570,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS mv_paper_tiered_pnl_summary_uidx
 
 -- 9. Realized R from 3:30 PM force-close fills (written by _force_close_all_positions):
 ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_r_actual NUMERIC;
+
+-- 10. Screener pass — which Finviz scan produced this ticker:
+--     'gap' = ≥3% gap-of-day | 'trend' = ≥1% + above SMA20/SMA50 | 'squeeze' = short-float ≥15%
+--     'morning' = legacy / unclassified rows
+ALTER TABLE paper_trades       ADD COLUMN IF NOT EXISTS screener_pass TEXT;
+ALTER TABLE backtest_sim_runs  ADD COLUMN IF NOT EXISTS screener_pass TEXT;
 """
 
 

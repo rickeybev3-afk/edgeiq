@@ -31343,6 +31343,48 @@ function _bqCopyShareLink() {
             else:
                 st.info("No resolved live paper trades to break down.")
 
+    # ── Screener Pass Breakdown ───────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("**Screener Pass Comparison — Gap vs Trend vs Squeeze** *(live paper trades)*")
+    if "screener_pass" not in (_pt_df.columns if not _pt_df.empty else []):
+        st.caption("screener_pass column not yet available — run the migration SQL then re-tag live trades.")
+    elif _pt_df.empty:
+        st.info("No paper trades loaded.")
+    else:
+        _sp_df = _pt_df[_pt_df["win_loss"].isin(["W", "L", "Win", "Loss"])].copy()
+        if _sp_df.empty:
+            st.info("No resolved live paper trades for screener breakdown yet.")
+        else:
+            if "screener_pass" not in _sp_df.columns:
+                _sp_df["screener_pass"] = "morning"
+            _sp_df["screener_pass"] = _sp_df["screener_pass"].fillna("morning")
+            _sp_df["pnl_r"] = pd.to_numeric(
+                _sp_df.get("pnl_r_sim", _sp_df.get("pnl_r_actual", None)), errors="coerce"
+            )
+            _sp_df["is_win"] = _sp_df["win_loss"].isin(["W", "Win"])
+            _sp_rows = []
+            for _pass in ["gap", "trend", "squeeze", "morning"]:
+                _sub = _sp_df[_sp_df["screener_pass"] == _pass]
+                if _sub.empty:
+                    continue
+                _n   = len(_sub)
+                _w   = int(_sub["is_win"].sum())
+                _wr  = _w / _n * 100
+                _avg_r = _sub["pnl_r"].mean() if not _sub["pnl_r"].isna().all() else None
+                _sp_rows.append({
+                    "Pass":     _pass.capitalize(),
+                    "Trades":   _n,
+                    "Wins":     _w,
+                    "Losses":   _n - _w,
+                    "Win Rate": f"{_wr:.0f}%",
+                    "Avg R":    f"{_avg_r:+.2f}R" if _avg_r is not None else "—",
+                })
+            if _sp_rows:
+                st.dataframe(pd.DataFrame(_sp_rows), use_container_width=True, hide_index=True)
+                st.caption("Gap = ≥3% daily gap · Trend = ≥1% + above SMA20 & SMA50 · Morning = other")
+            else:
+                st.info("No screener_pass data available yet — run backfill_screener_pass.py.")
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════

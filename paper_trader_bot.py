@@ -1204,13 +1204,17 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         # Patch Supabase paper_trades row with order metadata + skip_reason
         if _supabase_client:
             try:
-                _supabase_client.table("paper_trades").update({
+                _sp = _TICKER_SCREENER_PASS.get(ticker) or _TICKER_SCREENER_PASS.get(ticker.upper())
+                _order_patch = {
                     "alpaca_order_id":  order_id,
                     "alpaca_qty":       qty,
                     "order_placed_at":  datetime.utcnow().isoformat(),
                     "skip_reason":      "order_placed",
                     "rvol_mult":        _rvol_mult,
-                }).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date") or r.get("trade_date") or "")).eq("ticker", ticker).execute()
+                }
+                if _sp:
+                    _order_patch["screener_pass"] = _sp
+                _supabase_client.table("paper_trades").update(_order_patch).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date") or r.get("trade_date") or "")).eq("ticker", ticker).execute()
             except Exception as _patch_err:
                 log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")
     else:
@@ -1223,6 +1227,12 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
 # Guard set: (ticker, trade_date) pairs that already have trailing stop active.
 # Prevents re-triggering on every 30-second loop iteration.
 _TRAILING_STOP_ACTIVATED: set = set()
+
+# ── Screener pass registry ─────────────────────────────────────────────────────
+# Maps ticker → pass name ('gap' | 'trend' | 'squeeze').  Populated by
+# watchlist_refresh() after each Finviz scan; queried by _place_order_for_setup()
+# so the paper_trades row records which screener produced the signal.
+_TICKER_SCREENER_PASS: dict[str, str] = {}
 
 # S/R context stored when a trailing stop is tightened due to a nearby wall.
 # Maps guard_key → {"level_type": str, "level": float, "gap": float}
@@ -3192,6 +3202,18 @@ def watchlist_refresh(midday: bool = False):
             if t not in merged:
                 merged.append(t)
         merged = merged[:100]
+
+        # ── Tag each ticker with the pass that first claimed it ───────────────
+        global _TICKER_SCREENER_PASS
+        _TICKER_SCREENER_PASS.clear()
+        for t in gap_tickers:
+            _TICKER_SCREENER_PASS[t] = "gap"
+        for t in trend_tickers:
+            if t not in _TICKER_SCREENER_PASS:
+                _TICKER_SCREENER_PASS[t] = "trend"
+        for t in squeeze_tickers:
+            if t not in _TICKER_SCREENER_PASS:
+                _TICKER_SCREENER_PASS[t] = "squeeze"
 
         if merged:
             saved = save_watchlist(merged, user_id=USER_ID)
