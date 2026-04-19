@@ -298,18 +298,30 @@ It is one of the highest-signal dimensions for the employer product — more pre
 
 ### EMPLOYER PRODUCT FLOW
 
-The employer product output is not "this trader wins 80%." That tells an employer nothing useful about how the person will behave managing a team, handling a deadline, or making decisions under resource constraints.
+**What EdgeIQ is in this architecture: a laboratory, not the employer product.**
 
-The output is: *"This person consistently deviates from optimal execution in the following direction under the following conditions — and here is what that predicts about their cognitive behavior in high-pressure non-trading contexts."*
+EdgeIQ is the real-stakes behavioral data collection instrument. The cognitive profiler inside EdgeIQ is an internal research tool — it validates the model and generates the case study. It does not output anything that goes directly to employers. This distinction matters.
 
-| Observed trading deviation | Employer-relevant prediction |
+**The actual sequence:**
+
+1. **EdgeIQ phase (now)** — generates real behavioral data under real financial pressure. Personal case study is built first. This produces the patterns, the signal definitions, and the proof that the model works across actual trading decisions — not simulated ones.
+
+2. **Research + interview phase** — take the patterns from EdgeIQ data, combine with the academic citations layer, and start interviewing real people. Not traders necessarily. The question being explored: how do the cognitive markers observed in trading (loss aversion under pressure, exit timing, plan adherence) map to observable behaviors in role-performance contexts the employer actually cares about?
+
+3. **Test design phase** — from the interviews and the research, draft a purpose-built cognitive assessment. This is not an export of EdgeIQ data. It is a standalone instrument — a formal test that tracks the same underlying cognitive markers but doesn't require trading at all. Designed from scratch based on what the EdgeIQ research revealed.
+
+4. **The employer-facing product** — that standalone test. Separate brand, separate company, separate pitch. The trading context is not mentioned. The output maps assessed cognitive patterns to role-performance predictions. Each prediction is traceable to a peer-reviewed source.
+
+| Cognitive marker (test output) | Role-performance prediction |
 |---|---|
-| Holds losses too long in the morning session | Sunk cost fallacy — difficulty admitting error, potential stubbornness on failed projects |
-| Cuts winners early, holds losers long | Asymmetric loss aversion — may under-invest in winning initiatives |
-| Oversizes immediately after strong wins | Overconfidence cycle — may over-commit resources post-success |
-| Undersizes after losses, misses recovery trades | Loss aversion imprint — may be risk-paralyzed after team failures |
+| Sunk cost vulnerability (persists on losing position) | Difficulty closing failed initiatives; may defend decisions past the point of evidence |
+| Asymmetric loss aversion (exits wins early, holds losses long) | Under-invests in winning initiatives; over-defends losing ones |
+| Overconfidence cycle post-success | May over-commit resources or skip validation after strong prior outcomes |
+| Loss-triggered risk paralysis | May avoid necessary risk-taking after team failures; difficulty recovering decision velocity |
 
-The profiling app never labels trauma, pathology, or personal history. It reports behavioral patterns under quantified pressure and maps them to role-relevant predictions. The trading context is not mentioned in employer-facing output.
+The employer product never labels pathology, trauma, or personal history. It reports behavioral pattern direction and conditions, maps them to role-relevant predictions, and cites the literature behind each prediction.
+
+**EdgeIQ's role in this architecture:** it is the proof-of-concept and the origin of the data that made the test design possible. It is not the product. It is the laboratory.
 
 ---
 
