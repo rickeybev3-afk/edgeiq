@@ -14566,6 +14566,143 @@ def load_watchlist(user_id: str = "") -> list:
         return []
 
 
+# ── Daily Scan Log ────────────────────────────────────────────────────────────
+
+_DAILY_SCAN_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS daily_scan_log (
+    id           BIGSERIAL PRIMARY KEY,
+    scan_date    DATE        NOT NULL,
+    ticker       VARCHAR(10) NOT NULL,
+    screener_pass VARCHAR(20) NOT NULL,
+    slot         VARCHAR(10) NOT NULL DEFAULT 'morning',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS daily_scan_log_date_idx ON daily_scan_log (scan_date DESC);
+"""
+
+
+def ensure_daily_scan_log_table() -> bool:
+    """Create daily_scan_log table if it doesn't exist. Returns True when ready."""
+    if not supabase:
+        return False
+    try:
+        supabase.table("daily_scan_log").select("id").limit(1).execute()
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if "404" in err or "relation" in err or "does not exist" in err or "not found" in err:
+            try:
+                supabase.rpc("exec_sql", {"sql": _DAILY_SCAN_LOG_DDL}).execute()
+                return True
+            except Exception as e2:
+                logging.warning(f"ensure_daily_scan_log_table create error: {e2}")
+                return False
+        logging.warning(f"ensure_daily_scan_log_table check error: {e}")
+        return False
+
+
+def save_daily_scan_log(
+    gap_tickers: list,
+    trend_tickers: list,
+    squeeze_tickers: list,
+    scan_date=None,
+    slot: str = "morning",
+) -> bool:
+    """Persist the morning/midday Finviz scan results to daily_scan_log.
+
+    Inserts one row per ticker tagged with its screener pass (gap/trend/squeeze).
+    Existing rows for the same (scan_date, slot) are deleted first so a re-run
+    doesn't double-insert.
+
+    Returns True on success, False on any error.
+    """
+    if not supabase:
+        return False
+    try:
+        import datetime as _dt
+        if scan_date is None:
+            scan_date = _dt.date.today()
+        scan_date_str = scan_date.isoformat() if hasattr(scan_date, "isoformat") else str(scan_date)
+
+        supabase.table("daily_scan_log").delete().eq("scan_date", scan_date_str).eq("slot", slot).execute()
+
+        rows = []
+        seen: set = set()
+        for t in gap_tickers:
+            t = t.strip().upper()
+            if t and t not in seen:
+                rows.append({"scan_date": scan_date_str, "ticker": t, "screener_pass": "gap", "slot": slot})
+                seen.add(t)
+        for t in trend_tickers:
+            t = t.strip().upper()
+            if t and t not in seen:
+                rows.append({"scan_date": scan_date_str, "ticker": t, "screener_pass": "trend", "slot": slot})
+                seen.add(t)
+        for t in squeeze_tickers:
+            t = t.strip().upper()
+            if t and t not in seen:
+                rows.append({"scan_date": scan_date_str, "ticker": t, "screener_pass": "squeeze", "slot": slot})
+                seen.add(t)
+
+        if rows:
+            supabase.table("daily_scan_log").insert(rows).execute()
+        logging.info(f"[save_daily_scan_log] {scan_date_str}/{slot}: {len(rows)} tickers saved")
+        return True
+    except Exception as e:
+        logging.warning(f"save_daily_scan_log error: {e}")
+        return False
+
+
+def load_daily_scan_log(scan_date=None) -> dict:
+    """Load daily_scan_log rows for a given date.
+
+    Returns a dict:
+      {
+        "gap":     [list of tickers],
+        "trend":   [list of tickers],
+        "squeeze": [list of tickers],
+        "all":     [all tickers deduped],
+        "total":   int,
+      }
+    Returns empty structure on error or no data.
+    """
+    _empty = {"gap": [], "trend": [], "squeeze": [], "all": [], "total": 0}
+    if not supabase:
+        return _empty
+    try:
+        import datetime as _dt
+        if scan_date is None:
+            scan_date = _dt.date.today()
+        scan_date_str = scan_date.isoformat() if hasattr(scan_date, "isoformat") else str(scan_date)
+
+        res = (supabase.table("daily_scan_log")
+               .select("ticker,screener_pass")
+               .eq("scan_date", scan_date_str)
+               .execute())
+        if not res.data:
+            return _empty
+
+        gap, trend, squeeze, seen = [], [], [], set()
+        for row in res.data:
+            t = row.get("ticker", "").strip().upper()
+            p = row.get("screener_pass", "gap")
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            if p == "trend":
+                trend.append(t)
+            elif p == "squeeze":
+                squeeze.append(t)
+            else:
+                gap.append(t)
+
+        all_tickers = gap + trend + squeeze
+        return {"gap": gap, "trend": trend, "squeeze": squeeze, "all": all_tickers, "total": len(all_tickers)}
+    except Exception as e:
+        logging.warning(f"load_daily_scan_log error: {e}")
+        return _empty
+
+
 # ── End-of-Day Review Notes ───────────────────────────────────────────────────
 
 def _compress_image_b64(file_bytes: bytes, max_px: int = 900) -> str:

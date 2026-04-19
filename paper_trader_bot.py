@@ -349,6 +349,8 @@ try:
         WK_DISPLAY,
         load_ib_range_pct_threshold,
         send_divergence_alert,
+        save_daily_scan_log,
+        ensure_daily_scan_log_table,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -3326,6 +3328,17 @@ def watchlist_refresh(midday: bool = False):
                     f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
                     f"{_scan_note}"
                 )
+                # Persist scan results to daily_scan_log table for dashboard visibility
+                try:
+                    save_daily_scan_log(
+                        gap_tickers=gap_tickers,
+                        trend_tickers=trend_tickers,
+                        squeeze_tickers=squeeze_tickers,
+                        scan_date=_wl_et_date,
+                        slot=_wl_slot,
+                    )
+                except Exception as _sl_err:
+                    log.warning(f"[watchlist_refresh] save_daily_scan_log failed (non-fatal): {_sl_err}")
                 # Mark this slot done — prevents duplicate TG if bot restarts today
                 try:
                     open(_wl_lock, 'w').close()
@@ -5607,6 +5620,9 @@ def main():
 
     # Ensure cognitive delta log table exists
     ensure_cognitive_delta_table()
+
+    # Ensure daily scan log table exists (for Finviz scan funnel visibility)
+    ensure_daily_scan_log_table()
 
     # Restore trailing-stop guard set from DB so trades already converted to a
     # trailing stop before this restart are not re-triggered on the next loop.

@@ -10331,8 +10331,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
         '</div>',
         unsafe_allow_html=True,
     )
+    if "_bt_wl_default_initialized" not in st.session_state:
+        _wl_loaded = _cached_load_watchlist(user_id=_AUTH_USER_ID)
+        st.session_state["_bt_wl_default_initialized"] = (
+            ",".join(_wl_loaded) if _wl_loaded else _BT_DEFAULT_TICKERS
+        )
+    _bt_default_val = st.session_state["_bt_wl_default_initialized"]
     _bt_tickers_raw = st.text_area(
-        "Simulation Tickers", value=_BT_DEFAULT_TICKERS,
+        "Simulation Tickers", value=_bt_default_val,
         height=68, key="bt_tickers_input", label_visibility="collapsed",
     )
 
@@ -31857,6 +31863,38 @@ function _bqCopyShareLink() {
                     hide_index=True,
                     height=310,
                 )
+
+        # ── Today's Scan Funnel ───────────────────────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.expander("📡 Today's Scanner Funnel", expanded=False):
+            if not st.session_state.get("_daily_scan_log_ensured"):
+                ensure_daily_scan_log_table()
+                st.session_state["_daily_scan_log_ensured"] = True
+            _dsl = load_daily_scan_log(date.today())
+            if _dsl["total"] == 0:
+                st.info(
+                    "No scan log for today yet. The bot writes here after its 9:35 AM "
+                    "Finviz watchlist refresh — check back after market open.",
+                    icon="🔍",
+                )
+            else:
+                _dsl_today_trades = (
+                    _pt_df[_pt_df["trade_date"] == str(date.today())].shape[0]
+                    if not _pt_df.empty and "trade_date" in _pt_df.columns
+                    else 0
+                )
+                _dsl_col1, _dsl_col2, _dsl_col3, _dsl_col4 = st.columns(4)
+                with _dsl_col1:
+                    st.metric("Tickers scanned", _dsl["total"])
+                with _dsl_col2:
+                    st.metric("Gap-of-day", len(_dsl["gap"]))
+                with _dsl_col3:
+                    st.metric("Trend / Squeeze", f"{len(_dsl['trend'])} / {len(_dsl['squeeze'])}")
+                with _dsl_col4:
+                    st.metric("Trades fired today", _dsl_today_trades,
+                              help="Paper trades logged today (all TCS levels)")
+                if _dsl["all"]:
+                    st.caption(f"**Scanned tickers:** {', '.join(_dsl['all'])}")
 
         # ── Live paper trade breakdown (small sample warning) ─────────────────
         st.markdown("<br>", unsafe_allow_html=True)
