@@ -420,7 +420,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     backend.supabase.table(table)
                     .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
-                            f"tcs,scan_type,mfe,mae,rvol,{_date_col},"
+                            f"tcs,scan_type,mfe,mae,rvol,ib_range_pct,{_date_col},"
                             f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
@@ -446,7 +446,7 @@ def backfill_table(table: str, id_col: str, user_id: str,
                             backend.supabase.table(table)
                             .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                                     f"follow_thru_pct,false_break_up,false_break_down,"
-                                    f"tcs,scan_type,rvol,{_date_col}")
+                                    f"tcs,scan_type,rvol,ib_range_pct,{_date_col}")
                             .eq("user_id", user_id)
                             .eq("actual_outcome", direction)
                         )
