@@ -1771,11 +1771,37 @@ def render_private_build_notes():
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown("""
+    <style>
+    /* ── Section Color Coding ───────────────────────────────────────── */
+    .bn-section { border-left: 4px solid #555; padding: 4px 0 4px 16px; margin-bottom: 24px; border-radius: 0 6px 6px 0; }
+    .bn-status  { border-left-color: #00e676; background: linear-gradient(90deg,rgba(0,230,118,.06),transparent); }
+    .bn-phase   { border-left-color: #7986cb; background: linear-gradient(90deg,rgba(121,134,203,.06),transparent); }
+    .bn-vision  { border-left-color: #29b6f6; background: linear-gradient(90deg,rgba(41,182,246,.06),transparent); }
+    .bn-algo    { border-left-color: #ff7043; background: linear-gradient(90deg,rgba(255,112,67,.06),transparent); }
+    .bn-arch    { border-left-color: #ab47bc; background: linear-gradient(90deg,rgba(171,71,188,.06),transparent); }
+    .bn-data    { border-left-color: #26c6da; background: linear-gradient(90deg,rgba(38,198,218,.06),transparent); }
+    .bn-live    { border-left-color: #66bb6a; background: linear-gradient(90deg,rgba(102,187,106,.06),transparent); }
+    .bn-backlog { border-left-color: #ffa726; background: linear-gradient(90deg,rgba(255,167,38,.06),transparent); }
+    .bn-decisions { border-left-color: #ec407a; background: linear-gradient(90deg,rgba(236,64,122,.06),transparent); }
+    .bn-marketing { border-left-color: #d4e157; background: linear-gradient(90deg,rgba(212,225,87,.06),transparent); }
+    .bn-preserved { border-left-color: #78909c; background: linear-gradient(90deg,rgba(120,144,156,.06),transparent); }
+    /* ── Typography ─────────────────────────────────────────────────── */
+    .bn-section h1 { font-size: 22px !important; font-weight: 800 !important; margin-top: 8px !important; }
+    .bn-section h2 { font-size: 16px !important; font-weight: 700 !important; margin-top: 20px !important; color: #ccc; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    .bn-section h3 { font-size: 14px !important; font-weight: 600 !important; color: #aaa; }
+    .bn-section table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .bn-section td, .bn-section th { padding: 4px 10px; border: 1px solid #2a2a2a; }
+    .bn-section th { background: #1a1a1a; font-weight: 700; }
+    .bn-section code { background: #1e1e1e; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+    </style>
+    """, unsafe_allow_html=True)
+
     notes_path = os.path.join(os.path.dirname(__file__), ".local", "build_notes_private.md")
     if os.path.exists(notes_path):
         with open(notes_path, "r") as f:
             content = f.read()
-        st.markdown(content)
+        st.markdown(content, unsafe_allow_html=True)
     else:
         st.error("Private build notes file not found.")
 
