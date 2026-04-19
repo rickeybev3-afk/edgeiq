@@ -1332,6 +1332,9 @@ _DEFAULTS = {
     "sa_vap":               None,   # VP volumes for SA tab
     "skip_reason_backfill_done": False,  # one-time paper_trades skip_reason backfill
     "perf_require_vwap":        False,  # Performance tab VWAP filter — default OFF
+    # BTS sparkline metric preferences — persist across re-renders / filter changes
+    "bts_eod_spk_metric_pref":  "Win Rate %",
+    "bts_ldr_spk_metric_pref":  "Win Rate %",
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -28887,13 +28890,18 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         import sys
                                         print(f"[BTS EOD sparkline] {_bts_etl}: {_bts_et_spk_err}", file=sys.stderr)
                                 if _bts_et_spk_data is not None:
+                                    _bts_eod_spk_key = f"bts_eod_spk_metric_{_bts_ei}"
+                                    if _bts_eod_spk_key not in st.session_state:
+                                        st.session_state[_bts_eod_spk_key] = st.session_state.get("bts_eod_spk_metric_pref", "Win Rate %")
                                     _bts_et_spk_metric = st.radio(
                                         "Metric",
                                         options=["Win Rate %", "Avg R", "True Expectancy"],
-                                        index=0,
                                         horizontal=True,
-                                        key=f"bts_eod_spk_metric_{_bts_ei}",
+                                        key=_bts_eod_spk_key,
                                         label_visibility="collapsed",
+                                        on_change=lambda _k=_bts_eod_spk_key: st.session_state.update(
+                                            bts_eod_spk_metric_pref=st.session_state[_k]
+                                        ),
                                     )
                                     _bts_et_sfig = go.Figure()
                                     if _bts_et_spk_metric == "Win Rate %":
@@ -29178,13 +29186,18 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         import sys
                                         print(f"[BTS Ladder sparkline] {_bts_ltl}: {_bts_lt_spk_err}", file=sys.stderr)
                                 if _bts_lt_spk_data is not None:
+                                    _bts_ldr_spk_key = f"bts_ldr_spk_metric_{_bts_li}"
+                                    if _bts_ldr_spk_key not in st.session_state:
+                                        st.session_state[_bts_ldr_spk_key] = st.session_state.get("bts_ldr_spk_metric_pref", "Win Rate %")
                                     _bts_lt_spk_metric = st.radio(
                                         "Metric",
                                         options=["Win Rate %", "Avg R", "True Expectancy"],
-                                        index=0,
                                         horizontal=True,
-                                        key=f"bts_ldr_spk_metric_{_bts_li}",
+                                        key=_bts_ldr_spk_key,
                                         label_visibility="collapsed",
+                                        on_change=lambda _k=_bts_ldr_spk_key: st.session_state.update(
+                                            bts_ldr_spk_metric_pref=st.session_state[_k]
+                                        ),
                                     )
                                     _bts_lt_sfig = go.Figure()
                                     if _bts_lt_spk_metric == "Win Rate %":
