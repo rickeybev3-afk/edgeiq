@@ -6,8 +6,8 @@ Backfills the `screener_pass` column on backtest_sim_runs and paper_trades.
 Classification rules (applied at row level using Alpaca daily bars):
   - 'gap'     : daily change ≥ 3%  (gap-of-day)
   - 'trend'   : daily change ≥ 1% AND close > SMA20 AND close > SMA50
-  - 'squeeze' : falls back to 'morning' (no short-interest data available historically)
-  - 'morning' : everything else
+  - 'squeeze' : falls back to 'other' (no short-interest data available historically)
+  - 'other'   : everything else
 
 For each row the script:
   1. Fetches 70-day daily bars from Alpaca (one API call per date × batch of tickers)
@@ -171,12 +171,15 @@ def fetch_bar_stats(trade_date_str: str, tickers: list[str]) -> dict[str, dict]:
 # ── Step 3: classify one ticker ───────────────────────────────────────────────
 
 def classify_pass(ticker: str, row_gap_pct, bar_stats: dict) -> str:
-    """Return 'gap' | 'trend' | 'morning'.
+    """Return 'gap' | 'trend' | 'other'.
 
     squeeze can't be inferred historically (no short-interest data at that time),
-    so those tickers fall through to 'gap' or 'trend' or 'morning'.
+    so squeeze tickers fall through to 'gap' or 'trend' or 'other'.
 
-    Priority: gap (≥3%) → trend (≥1% + above both SMAs) → morning.
+    Priority: gap (≥3%) → trend (≥1% + above both SMAs) → other.
+
+    Note: live paper_trades rows for squeeze candidates are tagged 'squeeze' by
+    the bot at order placement — this backfill only applies 'gap'/'trend'/'other'.
     """
     stats = bar_stats.get(ticker) or bar_stats.get(ticker.upper()) or {}
 
@@ -195,7 +198,7 @@ def classify_pass(ticker: str, row_gap_pct, bar_stats: dict) -> str:
             and close > sma20 and close > sma50):
         return "trend"
 
-    return "morning"
+    return "other"
 
 
 # ── Step 4: write screener_pass ───────────────────────────────────────────────
@@ -216,7 +219,7 @@ def write_passes(table: str, rows_for_date: list[dict], bar_stats: dict,
         stats     = bar_stats.get(ticker) or bar_stats.get(ticker.upper()) or {}
         if not stats and row_gap is None:
             no_data += 1
-            updates.append((r["id"], "morning"))   # safe fallback
+            updates.append((r["id"], "other"))   # safe fallback — no bar data
             continue
         sp = classify_pass(ticker, row_gap, bar_stats)
         updates.append((r["id"], sp))
@@ -282,7 +285,7 @@ def process_table(table: str, date_field: str, dry_run: bool, force: bool,
         total_written     += written
         total_no_data     += no_data
         total_tickers     += len(tickers)
-        print(f"→ {written} classified  {no_data} bars-missing (→ 'morning')")
+        print(f"→ {written} classified  {no_data} bars-missing (→ 'other')")
 
     return total_written, total_no_data, total_tickers
 
@@ -322,7 +325,7 @@ def main():
     print("=" * 64)
     print(f"  DONE in {elapsed:.0f}s")
     print(f"  screener_pass written : {grand_written}")
-    print(f"  no bars (→ 'morning') : {grand_missing}")
+    print(f"  no bars (→ 'other')   : {grand_missing}")
     print("=" * 64)
 
     if not args.dry_run:

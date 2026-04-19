@@ -25784,6 +25784,83 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                         unsafe_allow_html=True,
                     )
 
+    # ── Screener Pass × P-Tier Backtest Analysis ─────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
+        'text-transform:uppercase;margin-bottom:8px;">'
+        'Screener Pass × Tier Breakdown — Gap vs Trend vs Other (5-yr Backtest)</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption("Gap = ≥3% gap · Trend = ≥1% + above SMA20 & SMA50 · Other = remaining · PF = Profit Factor")
+
+    _sp_bt_df = _bt_sim_df.copy() if not _bt_sim_df.empty else pd.DataFrame()
+    _sp_has_pass = not _sp_bt_df.empty and "screener_pass" in _sp_bt_df.columns and _sp_bt_df["screener_pass"].notna().any()
+
+    if not _sp_has_pass:
+        st.info("screener_pass not yet populated — run `python backfill_screener_pass.py` to classify historical rows.")
+    else:
+        _sp_bt_df = _sp_bt_df[_sp_bt_df["pnl_r_sim"].notna() & _sp_bt_df["screener_pass"].notna()].copy()
+        _sp_bt_df["tcs"]          = pd.to_numeric(_sp_bt_df.get("tcs", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        _sp_bt_df["scan_type"]    = _sp_bt_df.get("scan_type", pd.Series(dtype=str)).fillna("morning")
+        _sp_bt_df["pnl_r_sim"]    = pd.to_numeric(_sp_bt_df["pnl_r_sim"], errors="coerce")
+
+        _sp_tier_defs = [
+            ("P1", "🔴", "intraday", 70, 999),
+            ("P2", "🟠", "morning",  70, 999),
+            ("P3", "🟡", "intraday", 50,  69),
+            ("P4", "🟢", "morning",  50,  69),
+        ]
+        _sp_passes = ["gap", "trend", "other"]
+
+        _sp_rows = []
+        for _spass in _sp_passes:
+            _pass_df = _sp_bt_df[_sp_bt_df["screener_pass"] == _spass]
+            if _pass_df.empty:
+                continue
+            for _stlabel, _stemoji, _stst, _stlo, _sthi in _sp_tier_defs:
+                _sub = _pass_df[
+                    (_pass_df["scan_type"] == _stst) &
+                    (_pass_df["tcs"] >= _stlo) &
+                    (_pass_df["tcs"] <= _sthi) &
+                    _pass_df["pnl_r_sim"].notna()
+                ]
+                if _sub.empty or len(_sub) < 5:
+                    continue
+                _r = _sub["pnl_r_sim"]
+                _wins_r = _r[_r > 0]
+                _loss_r = _r[_r < 0]
+                _n   = len(_r)
+                _w   = len(_wins_r)
+                _wr  = _w / _n * 100
+                _avg = float(_r.mean())
+                _pf  = (float(_wins_r.sum()) / abs(float(_loss_r.sum()))) if len(_loss_r) > 0 and float(_loss_r.sum()) != 0 else float("inf")
+                _pf_str = f"{_pf:.2f}" if _pf != float("inf") else "∞"
+                _avg_col = "#4caf50" if _avg > 0 else ("#ef6c00" if _avg > -0.2 else "#ef5350")
+                _sp_rows.append({
+                    "Pass":      _spass.capitalize(),
+                    "Tier":      f"{_stemoji} {_stlabel}",
+                    "Trades":    _n,
+                    "Wins":      _w,
+                    "Win Rate":  f"{_wr:.1f}%",
+                    "Avg R":     f"{_avg:+.3f}R",
+                    "PF":        _pf_str,
+                    "_avg_r":    _avg,
+                })
+
+        if _sp_rows:
+            _sp_rows.sort(key=lambda r: r["_avg_r"], reverse=True)
+            _sp_display = [{k: v for k, v in r.items() if k != "_avg_r"} for r in _sp_rows]
+            st.dataframe(pd.DataFrame(_sp_display), use_container_width=True, hide_index=True)
+            _sp_n_classified = _sp_bt_df["screener_pass"].notna().sum()
+            _sp_n_total_bt   = len(_sp_bt_df)
+            st.caption(
+                f"Based on {_sp_n_classified:,} rows with screener_pass out of {_sp_n_total_bt:,} "
+                f"sim rows shown (latest 5,000). Run `python backfill_screener_pass.py` for full 52k history."
+            )
+        else:
+            st.info("Not enough tagged rows yet — run the full backfill to populate this table.")
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════════
@@ -31345,7 +31422,7 @@ function _bqCopyShareLink() {
 
     # ── Screener Pass Breakdown ───────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**Screener Pass Comparison — Gap vs Trend vs Squeeze** *(live paper trades)*")
+    st.markdown("**Screener Pass — Gap vs Trend vs Squeeze** *(live paper trades only)*")
     if "screener_pass" not in (_pt_df.columns if not _pt_df.empty else []):
         st.caption("screener_pass column not yet available — run the migration SQL then re-tag live trades.")
     elif _pt_df.empty:
@@ -31356,14 +31433,14 @@ function _bqCopyShareLink() {
             st.info("No resolved live paper trades for screener breakdown yet.")
         else:
             if "screener_pass" not in _sp_df.columns:
-                _sp_df["screener_pass"] = "morning"
-            _sp_df["screener_pass"] = _sp_df["screener_pass"].fillna("morning")
+                _sp_df["screener_pass"] = "other"
+            _sp_df["screener_pass"] = _sp_df["screener_pass"].fillna("other")
             _sp_df["pnl_r"] = pd.to_numeric(
                 _sp_df.get("pnl_r_sim", _sp_df.get("pnl_r_actual", None)), errors="coerce"
             )
             _sp_df["is_win"] = _sp_df["win_loss"].isin(["W", "Win"])
             _sp_rows = []
-            for _pass in ["gap", "trend", "squeeze", "morning"]:
+            for _pass in ["gap", "trend", "squeeze", "other"]:
                 _sub = _sp_df[_sp_df["screener_pass"] == _pass]
                 if _sub.empty:
                     continue
@@ -31381,7 +31458,7 @@ function _bqCopyShareLink() {
                 })
             if _sp_rows:
                 st.dataframe(pd.DataFrame(_sp_rows), use_container_width=True, hide_index=True)
-                st.caption("Gap = ≥3% daily gap · Trend = ≥1% + above SMA20 & SMA50 · Morning = other")
+                st.caption("Gap = ≥3% daily gap · Trend = ≥1% + above SMA20 & SMA50 · Other = all else")
             else:
                 st.info("No screener_pass data available yet — run backfill_screener_pass.py.")
 

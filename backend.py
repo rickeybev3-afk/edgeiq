@@ -9317,7 +9317,7 @@ _BACKTEST_SIM_COLS = (
     "id,user_id,sim_date,ticker,open_price,close_price,ib_low,ib_high,"
     "tcs,predicted,actual_outcome,win_loss,follow_thru_pct,false_break_up,"
     "false_break_down,scan_type,gap_pct,gap_vs_ib_pct,pnl_r_sim,pnl_pct_sim,"
-    "eod_pnl_r,tiered_pnl_r,vwap_at_ib"
+    "eod_pnl_r,tiered_pnl_r,vwap_at_ib,screener_pass"
 )
 
 
