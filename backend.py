@@ -1135,6 +1135,7 @@ _JOURNAL_COLS = [
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
     "followed_plan", "deviation_notes", "transcript", "audio_b64",
+    "voice_signals",
 ]
 
 _BRAIN_WEIGHT_KEYS = [
@@ -5459,6 +5460,7 @@ _JOURNAL_COLS = [
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
     "followed_plan", "deviation_notes", "transcript", "audio_b64",
+    "voice_signals",
 ]
 
 
@@ -8258,6 +8260,10 @@ def run_pending_migrations() -> dict:
         # Voice trade journal — transcript and audio stored alongside each entry
         "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS transcript TEXT",
         "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS audio_b64 TEXT",
+        # Behavioral signals extracted from voice recordings via GPT-4.
+        # Stored as JSONB so analytics can query individual signal keys.
+        # Keys match _VJ_SIGNAL_KEYS: fomo_entry, panic_exit, followed_plan, etc.
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS voice_signals JSONB",
     ]
 
     ran = 0

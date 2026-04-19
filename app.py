@@ -2216,8 +2216,9 @@ def render_log_entry_ui():
                 "social_bull_pct":  state.get("social_bull_pct"),
                 "social_bear_pct":  state.get("social_bear_pct"),
                 "social_msg_count": state.get("social_msg_count"),
-                "transcript": st.session_state.get("vj_transcript", "") or "",
-                "audio_b64":  st.session_state.get("vj_audio_b64", "") or "",
+                "transcript":   st.session_state.get("vj_transcript", "") or "",
+                "audio_b64":    st.session_state.get("vj_audio_b64", "") or "",
+                "voice_signals": st.session_state.get("vj_signals") or {},
             }
             save_journal_entry(entry, user_id=st.session_state.get("auth_user_id", ""))
             _cached_load_journal.clear()
