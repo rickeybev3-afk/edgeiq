@@ -119,7 +119,7 @@ def walk_back_trading_days(from_date: date, n: int) -> date:
 def fetch_smallcap_universe(
     float_max_m:   float = 100.0,
     price_min:     float = 1.0,
-    price_max:     float = 20.0,
+    price_max:     float = 50.0,
     avg_vol_min_k: int   = 1000,
     max_tickers:   int   = 3000,
 ) -> list:
@@ -275,7 +275,7 @@ def reconstruct_daily_watchlist(
     scan_date:     date,
     gap_min_pct:   float = 3.0,
     price_min:     float = 1.0,
-    price_max:     float = 20.0,
+    price_max:     float = 50.0,
     rvol_min:      float = 1.0,
     avg_vol_days:  int   = 30,
 ) -> list:
@@ -891,7 +891,7 @@ def main():
                         help="Alpaca data feed for intraday bars (default: iex)")
     parser.add_argument("--gap",        type=float, default=3.0,  help="Min gap%% (default: 3.0)")
     parser.add_argument("--price-min",  type=float, default=1.0,  help="Min open price (default: 1.0)")
-    parser.add_argument("--price-max",  type=float, default=20.0, help="Max open price (default: 20.0)")
+    parser.add_argument("--price-max",  type=float, default=50.0, help="Max open price (default: 50.0)")
     parser.add_argument("--rvol-min",   type=float, default=1.0,  help="Min relative volume (default: 1.0)")
     parser.add_argument("--float-max",  type=float, default=100.0, help="Max float in millions (default: 100)")
     parser.add_argument("--workers",    type=int,   default=8,    help="Parallel workers per day (default: 8)")
