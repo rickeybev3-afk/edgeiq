@@ -10670,9 +10670,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         _rp_col1, _rp_col2, _rp_col3, _rp_col4 = st.columns([1, 1, 1, 1])
         with _rp_col1:
-            _url_init_int("rp_pos_size", "rp_pos_size", 500)
+            _url_init_int("rp_pos_size", "rp_pos_size", 500, clamp=(100, 50000, 100))
             _url_init_bool("rp_compound", "rp_compound", False)
-            _url_init_int("rp_equity", "rp_equity", 10000)
+            _url_init_int("rp_equity", "rp_equity", 10000, clamp=(1000, 500000, 500))
             if _rp_bot_mode:
                 _rp_pos_size = st.number_input(
                     "Position Size ($)", min_value=100, max_value=50000,
@@ -10715,7 +10715,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             )
         with _rp_col2:
             if _rp_bot_mode:
-                _url_init_int("rp_tcs_offset", "rp_tcs_offset", 0)
+                _url_init_int("rp_tcs_offset", "rp_tcs_offset", 0, clamp=(-20, 20, 5))
                 _rp_tcs_offset = st.slider(
                     "TCS Adjustment", min_value=-20, max_value=20,
                     value=0, step=5, key="rp_tcs_offset",
@@ -10753,7 +10753,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f"<script>localStorage.setItem('rp_risk_pct', {repr(str(_rp_risk_pct))});</script>",
                     height=0,
                 )
-                _url_init_int("rp_min_tcs", "rp_min_tcs_slider", 0)
+                _url_init_int("rp_min_tcs", "rp_min_tcs_slider", 0, clamp=(0, 100, 1))
                 st.session_state["rp_min_tcs_slider"] = int(
                     st.session_state.get("rp_min_tcs_slider", 0)
                 )
