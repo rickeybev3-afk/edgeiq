@@ -1233,6 +1233,31 @@ _TRAILING_STOP_ACTIVATED: set = set()
 # watchlist_refresh() after each Finviz scan; queried by _place_order_for_setup()
 # so the paper_trades row records which screener produced the signal.
 _TICKER_SCREENER_PASS: dict[str, str] = {}
+_SCREENER_PASS_CACHE_FILE = ".ticker_screener_pass.json"
+
+
+def _save_screener_pass_cache():
+    """Persist _TICKER_SCREENER_PASS to disk so it survives bot restarts."""
+    try:
+        import json as _json
+        with open(_SCREENER_PASS_CACHE_FILE, "w") as _f:
+            _json.dump(_TICKER_SCREENER_PASS, _f)
+    except Exception as _e:
+        log.warning(f"[screener_pass] cache save failed: {_e}")
+
+
+def _load_screener_pass_cache():
+    """Load _TICKER_SCREENER_PASS from disk on startup (survives restarts)."""
+    global _TICKER_SCREENER_PASS
+    try:
+        import json as _json, os as _os
+        if _os.path.exists(_SCREENER_PASS_CACHE_FILE):
+            _loaded = _json.load(open(_SCREENER_PASS_CACHE_FILE))
+            _TICKER_SCREENER_PASS.update(_loaded)
+            log.info(f"[screener_pass] Loaded {len(_loaded)} cached ticker→pass entries from disk")
+    except Exception as _e:
+        log.warning(f"[screener_pass] cache load failed: {_e}")
+
 
 # S/R context stored when a trailing stop is tightened due to a nearby wall.
 # Maps guard_key → {"level_type": str, "level": float, "gap": float}
@@ -3214,6 +3239,7 @@ def watchlist_refresh(midday: bool = False):
         for t in squeeze_tickers:
             if t not in _TICKER_SCREENER_PASS:
                 _TICKER_SCREENER_PASS[t] = "squeeze"
+        _save_screener_pass_cache()  # persist to disk — survives bot restarts
 
         if merged:
             saved = save_watchlist(merged, user_id=USER_ID)
@@ -5389,6 +5415,7 @@ def _dispatch_scheduled_divergence_alert() -> None:
 
 def main():
     log.info("EdgeIQ Paper Trader Bot starting up...")
+    _load_screener_pass_cache()   # restore ticker→pass mapping that survived restart
 
     if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
         log.error(

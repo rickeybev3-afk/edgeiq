@@ -3,25 +3,28 @@ backfill_screener_pass.py
 ─────────────────────────
 Backfills the `screener_pass` column on backtest_sim_runs and paper_trades.
 
-Classification rules (applied at row level using Alpaca daily bars):
-  - 'gap'     : abs(daily change) ≥ 3%  (gap-of-day)
-  - 'trend'   : abs(daily change) ≥ 1% AND close > SMA20 AND close > SMA50
+Classification rules (directional — positive daily change only):
+  - 'gap'     : close-to-close daily change ≥ 3.0%
+  - 'trend'   : close-to-close daily change ≥ 1.0% AND close > SMA20 AND close > SMA50
   - 'squeeze' : falls back to 'other' (no short-interest data available historically)
-  - 'other'   : everything else
+  - 'other'   : everything else (including down days)
 
-Two-pass approach
-─────────────────
-Pass 1 (no API): 98%+ of rows have gap_pct already stored in the DB from the
-  batch backtest pipeline. Any row with abs(gap_pct) ≥ 3 → 'gap'; rows with
-  abs(gap_pct) < 1 → 'other'. Both cases are classified with zero API calls.
+Close-to-close change computation
+──────────────────────────────────
+Primary (zero API calls — 100% of current rows have all three columns):
+  prev_close   = open_price / (1 + gap_pct/100)
+  daily_change = (close_price - prev_close) / prev_close × 100
 
-Pass 2 (API): Only rows where 1 ≤ abs(gap_pct) < 3 need Alpaca daily bars
-  to compute SMA20/SMA50 and determine 'trend' vs 'other'. Historically this
-  is ~1-2% of rows. Alpaca calls are rate-limited to ≤ MAX_ALPACA_CALLS_PER_MIN
-  and batched at 50 tickers per call.
+  close_price and open_price are sourced from Alpaca bars by the batch backtest
+  pipeline and backfill_close_prices.py — so this IS Alpaca-derived data.
 
-DB writes: batch-upserted in chunks of UPSERT_BATCH_SZ (500 rows per call)
-for fast throughput. Falls back to individual row updates on upsert error.
+Pass 2 (Alpaca API — SMA confirmation for 1-3% change zone):
+  Rows where daily_change falls in [1%, 3%) also need SMA20/SMA50 to distinguish
+  'trend' from 'other'. For these rows a targeted Alpaca call is made to fetch the
+  required moving averages. Rate-limited to ≤MAX_ALPACA_CALLS_PER_MIN.
+
+DB writes: batch-upserted in chunks of UPSERT_BATCH_SZ.
+Fallback: individual row updates if a batch upsert fails.
 
 Usage:
   python backfill_screener_pass.py                     # fill NULLs only
@@ -101,7 +104,7 @@ def fetch_rows(table: str, date_field: str,
     while True:
         q = (
             backend.supabase.table(table)
-            .select(f"id,ticker,{date_field},gap_pct,screener_pass")
+            .select(f"id,ticker,{date_field},gap_pct,open_price,close_price,screener_pass")
         )
         if not force:
             q = q.is_("screener_pass", "null")
@@ -121,13 +124,48 @@ def fetch_rows(table: str, date_field: str,
     return rows
 
 
-# ── Step 2: Alpaca bar fetch (Pass 2 — ambiguous rows only) ──────────────────
+# ── Step 2a: Compute close-to-close daily change from stored DB columns ──────
+
+def compute_daily_change(row: dict) -> float | None:
+    """Compute close-to-close daily change (%) from stored DB columns.
+
+    Formula:
+        prev_close   = open_price / (1 + gap_pct / 100)
+        daily_change = (close_price - prev_close) / prev_close × 100
+
+    open_price and close_price come from Alpaca bar data stored by the batch
+    backtest pipeline and backfill_close_prices.py. gap_pct is the
+    open-vs-prev-close gap (stored from the same pipeline).
+
+    Returns None if any column is missing, zero, or produces a division error.
+    """
+    try:
+        open_p  = float(row.get("open_price") or 0)
+        close_p = float(row.get("close_price") or 0)
+        gp      = float(row.get("gap_pct") or 0)
+        if open_p <= 0 or close_p <= 0:
+            return None
+        denom = 1.0 + gp / 100.0
+        if denom <= 0:
+            return None
+        prev_close = open_p / denom
+        if prev_close <= 0:
+            return None
+        return (close_p - prev_close) / prev_close * 100.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+# ── Step 2b: Alpaca bar fetch (Pass 2 — SMA for 1-3% change zone) ─────────────
 
 def fetch_bar_stats_for_date(trade_date_str: str, tickers: list[str]) -> dict[str, dict]:
-    """Fetch daily bars for a specific date (Pass 2 fallback for 1-3% gap rows).
+    """Fetch Alpaca daily bars for a specific date to compute SMA20/SMA50.
 
-    Returns {ticker: {change_pct, close, sma20, sma50}}.
-    Rate-limited via _alpaca_rl.acquire() — one token per 50-ticker batch.
+    Used only for Pass 2 rows (1% ≤ daily_change < 3%) where SMA alignment
+    determines 'trend' vs 'other'.
+
+    Rate-limited via _alpaca_rl — one token per 50-ticker API call.
+    Returns {ticker: {close, sma20, sma50}}.
     """
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests  import StockBarsRequest
@@ -171,19 +209,12 @@ def fetch_bar_stats_for_date(trade_date_str: str, tickers: list[str]) -> dict[st
                         continue
                     sym_df = sym_df.sort_index()
                     closes = sym_df["close"].values
-                    if len(closes) < 2:
+                    if len(closes) < 1:
                         continue
                     last_close = float(closes[-1])
-                    prev_close = float(closes[-2])
-                    change_pct = ((last_close - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
                     sma20 = float(closes[-20:].mean()) if len(closes) >= 20 else float(closes.mean())
                     sma50 = float(closes[-50:].mean()) if len(closes) >= 50 else float(closes.mean())
-                    result[sym] = {
-                        "change_pct": change_pct,
-                        "close":      last_close,
-                        "sma20":      sma20,
-                        "sma50":      sma50,
-                    }
+                    result[sym] = {"close": last_close, "sma20": sma20, "sma50": sma50}
                 except Exception:
                     pass
         except Exception as e:
@@ -194,31 +225,34 @@ def fetch_bar_stats_for_date(trade_date_str: str, tickers: list[str]) -> dict[st
 
 # ── Step 3: classify ──────────────────────────────────────────────────────────
 
-def classify_pass(ticker: str, row_gap_pct, bar_stats: dict) -> str:
+def classify_pass(daily_change: float | None, bar_sma: dict | None) -> str:
     """Return 'gap' | 'trend' | 'other'.
 
-    squeeze can't be inferred historically (no short-interest data),
-    so squeeze tickers fall through to 'gap'/'trend'/'other'.
+    Uses directional (non-absolute) thresholds — only positive daily change
+    days qualify as gap or trend. Large down days are classified as 'other'.
 
-    Priority: gap (abs ≥ 3%) → trend (abs ≥ 1% + close > SMA20 & SMA50) → other.
+    Priority: gap (change ≥ 3%) → trend (change ≥ 1% + close > SMA20 & SMA50) → other.
+
+    Arguments:
+        daily_change: close-to-close % change from DB columns or None if missing.
+        bar_sma:      {close, sma20, sma50} from Alpaca bars, or None for Pass 1 rows.
 
     Note: live paper_trades rows for squeeze candidates are tagged 'squeeze' by
     the bot at order placement — this backfill only applies 'gap'/'trend'/'other'.
     """
-    stats = bar_stats.get(ticker) or bar_stats.get(ticker.upper()) or {}
-    chg   = float(row_gap_pct) if row_gap_pct is not None else stats.get("change_pct", 0.0)
+    chg = daily_change if daily_change is not None else 0.0
 
-    if abs(chg) >= 3.0:
+    if chg >= 3.0:
         return "gap"
 
-    close = stats.get("close")
-    sma20 = stats.get("sma20")
-    sma50 = stats.get("sma50")
-
-    if (abs(chg) >= 1.0
-            and close is not None and sma20 is not None and sma50 is not None
-            and close > sma20 and close > sma50):
-        return "trend"
+    if bar_sma is not None:
+        close = bar_sma.get("close")
+        sma20 = bar_sma.get("sma20")
+        sma50 = bar_sma.get("sma50")
+        if (chg >= 1.0
+                and close is not None and sma20 is not None and sma50 is not None
+                and close > sma20 and close > sma50):
+            return "trend"
 
     return "other"
 
@@ -226,7 +260,7 @@ def classify_pass(ticker: str, row_gap_pct, bar_stats: dict) -> str:
 # ── Step 4: batch upsert ──────────────────────────────────────────────────────
 
 def upsert_passes(table: str, updates: list[dict], dry_run: bool) -> int:
-    """Write {id, screener_pass} records to Supabase via batched upsert."""
+    """Write {id, screener_pass} records via batched upsert. Falls back to single-row."""
     if dry_run or not updates:
         return len(updates)
     success = 0
@@ -278,43 +312,46 @@ def process_table(table: str, date_field: str, dry_run: bool, force: bool,
         print(f"  Nothing to classify — all rows already have screener_pass.")
         return 0, 0, 0
 
-    # ── Pass 1: classify using gap_pct (no API needed for 98%+ of rows) ──────
-    pass1_updates: list[dict] = []
-    pass2_rows:    list[dict] = []   # rows needing SMA confirmation (1-3% gap)
+    # ── Pass 1: classify using DB-stored close_price / open_price / gap_pct ──
+    # Computes true close-to-close daily change (same data as Alpaca bars,
+    # already stored by the batch backtest + backfill_close_prices pipeline).
+    pass1_updates: list[dict] = []  # clearly classifiable without SMA
+    pass2_rows:    list[dict] = []  # 1-3% zone — need SMA20/SMA50 check
+
+    n_gap, n_other_p1, n_no_close = 0, 0, 0
 
     for r in rows:
-        gp = r.get("gap_pct")
-        if gp is not None:
-            gp_f = float(gp)
-            if abs(gp_f) >= 3.0:
-                pass1_updates.append({"id": r["id"], "screener_pass": "gap"})
-                continue
-            if abs(gp_f) < 1.0:
-                pass1_updates.append({"id": r["id"], "screener_pass": "other"})
-                continue
-            # 1 ≤ abs(gap_pct) < 3 — need SMA data
+        chg = compute_daily_change(r)
+        if chg is None:
+            # Missing close_price/open_price — fall through to Pass 2 for SMA + change
+            n_no_close += 1
             pass2_rows.append(r)
+            continue
+        if chg >= 3.0:
+            pass1_updates.append({"id": r["id"], "screener_pass": "gap"})
+            n_gap += 1
+        elif chg < 1.0:
+            pass1_updates.append({"id": r["id"], "screener_pass": "other"})
+            n_other_p1 += 1
         else:
-            # No gap_pct stored — need bars to compute change_pct
+            # 1% ≤ chg < 3% — need SMA20/SMA50 to determine 'trend' vs 'other'
+            r["_daily_change"] = chg   # carry computed value forward
             pass2_rows.append(r)
 
     n_pass1 = len(pass1_updates)
     n_pass2 = len(pass2_rows)
-    n_total  = len(rows)
 
-    print(f"  Pass 1 (gap_pct only, no API): {n_pass1:,} rows  →  "
-          f"{sum(1 for u in pass1_updates if u['screener_pass']=='gap'):,} gap / "
-          f"{sum(1 for u in pass1_updates if u['screener_pass']=='other'):,} other")
-    print(f"  Pass 2 (SMA fetch via Alpaca): {n_pass2:,} rows  (1–3% gap zone)")
+    print(f"  Pass 1 (DB close-to-close, no API): {n_pass1:,} rows")
+    print(f"    {n_gap:,} gap (change ≥ 3%) | {n_other_p1:,} other (change < 1%)")
+    print(f"  Pass 2 (Alpaca SMA fetch):          {n_pass2:,} rows "
+          f"(1–3% zone + {n_no_close} missing close)")
     print()
 
     t0 = time.monotonic()
-
-    # Write Pass 1 results
     written1 = upsert_passes(table, pass1_updates, dry_run)
     print(f"  Pass 1 upserted: {written1:,} rows  ({time.monotonic()-t0:.1f}s)", flush=True)
 
-    # ── Pass 2: fetch SMA data for ambiguous rows ─────────────────────────────
+    # ── Pass 2: fetch SMA for 1-3% change rows ────────────────────────────────
     written2 = 0
     no_data2 = 0
 
@@ -326,23 +363,21 @@ def process_table(table: str, date_field: str, dry_run: bool, force: bool,
                 by_date[d].append(r)
         dates = sorted(by_date.keys())
 
-        print(f"  Pass 2: {len(dates)} unique dates to fetch")
-        print(f"  Rate:   ≤{MAX_ALPACA_CALLS_PER_MIN} Alpaca calls/min (within API limit)")
+        print(f"  Pass 2: {len(dates)} unique dates  (rate ≤{MAX_ALPACA_CALLS_PER_MIN}/min)")
         print()
 
         pass2_updates: list[dict] = []
-        t_pass2 = time.monotonic()
+        t_p2 = time.monotonic()
 
         for di, trade_date_str in enumerate(dates, 1):
             date_rows = by_date[trade_date_str]
             tickers   = sorted({r["ticker"] for r in date_rows})
 
-            elapsed   = time.monotonic() - t_pass2
+            elapsed   = time.monotonic() - t_p2
             eta_str   = ""
             if di > 1 and elapsed > 0:
                 rate    = elapsed / (di - 1)
-                eta_s   = rate * (len(dates) - di + 1)
-                eta_str = f"  ETA {_fmt_eta(eta_s)}"
+                eta_str = f"  ETA {_fmt_eta(rate * (len(dates) - di + 1))}"
 
             print(f"  P2 [{di:4d}/{len(dates)}]  {trade_date_str}  "
                   f"{len(tickers):3d} tickers{eta_str}", end="  ", flush=True)
@@ -351,17 +386,23 @@ def process_table(table: str, date_field: str, dry_run: bool, force: bool,
             if not bar_stats:
                 no_data2 += len(date_rows)
                 for r in date_rows:
-                    pass2_updates.append({"id": r["id"], "screener_pass": "other"})
-                print("no bars → 'other'")
+                    # Use daily_change if computed, else 'other' (no SMA available)
+                    chg = r.get("_daily_change")
+                    sp  = "gap" if (chg is not None and chg >= 3.0) else "other"
+                    pass2_updates.append({"id": r["id"], "screener_pass": sp})
+                print("no bars → classified by change only")
                 continue
 
             for r in date_rows:
-                sp = classify_pass(r["ticker"], r.get("gap_pct"), bar_stats)
+                chg     = r.get("_daily_change")   # computed in Pass 1 split
+                sma_key = r["ticker"]
+                sma     = bar_stats.get(sma_key) or bar_stats.get(sma_key.upper())
+                sp      = classify_pass(chg, sma)
                 pass2_updates.append({"id": r["id"], "screener_pass": sp})
-            print(f"→ classified")
+            print("→ classified")
 
         written2 = upsert_passes(table, pass2_updates, dry_run)
-        print(f"\n  Pass 2 upserted: {written2:,} rows  ({no_data2} no-bars → 'other')")
+        print(f"\n  Pass 2 upserted: {written2:,} rows  ({no_data2} no-bars fallback)")
 
     return written1 + written2, no_data2, 0
 
@@ -372,7 +413,8 @@ def main():
     args = parse_args()
     print("=" * 64)
     print("  EdgeIQ — Screener Pass Backfill")
-    print(f"  Strategy: gap_pct fast-path + Alpaca SMA for 1–3% zone")
+    print("  Classification: directional close-to-close change from DB cols")
+    print("  gap ≥ 3%  |  trend ≥ 1% + close > SMA20 & SMA50  |  other")
     if args.dry_run:
         print("  *** DRY RUN — no writes ***")
     print("=" * 64)
@@ -409,9 +451,10 @@ def main():
         append_backfill_history(
             script="backfill_screener_pass",
             health={
-                "rows_written": grand_written,
-                "rows_no_bars": grand_missing,
-                "elapsed_s":    round(elapsed, 1),
+                "rows_written":   grand_written,
+                "rows_no_bars":   grand_missing,
+                "elapsed_s":      round(elapsed, 1),
+                "classification": "directional close-to-close from DB cols + Alpaca SMA for 1-3% zone",
             },
             logger=_log,
         )
