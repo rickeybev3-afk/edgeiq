@@ -1,0 +1,219 @@
+Gemini
+Trading Bot Build Notes Review
+Conversation with Gemini
+hey, these are my public build notes, not my private ones so they are heavily redacted by around 90 pages.
+
+lmk your thoughts realistically:
+
+📋 EdgeIQ Build Notes
+
+Live document — always current
+
+
+
+EdgeIQ — Professional Trading Terminal
+
+Overview
+
+EdgeIQ is a Python Streamlit trading terminal for Volume Profile and Initial Balance (IB) structure analysis of small-cap stocks, primarily IB breakouts. Integrates Alpaca API for real-time data and trading, Supabase for multi-user auth and cloud data, Telegram for alerts, and Finviz for screener data.
+
+Core purpose: identify and automate IB-breakout strategies in high-TCS small-cap setups. Long-term vision: cognitive profiling software and a "Brain Marketplace" where verified traders rent calibrated algorithms (50% rev share).
+
+Phase Gate Status (as of Apr 18, 2026)
+
+Phase 1 — COMPLETE. 111 paper trades logged. TCS≥50 win rate: 80.8% (confirmed Apr 17, 2026 after false-break tracking bug fixed).
+
+Phase 1.5 — IN PROGRESS. Live Alpaca bracket orders wired and tested in paper mode. LIVE_ORDERS_ENABLED=true, IS_PAPER_ALPACA=true (paper-api.alpaca.markets). PDT protection + concurrent position cap active. First real-money attempt target: Apr 24, 2026.
+
+Phase 2 — Target: May 6, 2026. Full live execution. 7k starting equity, 1,500 position size, 2.14% account risk. Brain rental marketplace.
+
+Phase 1.5 Gate Checklist
+
+ PDT day-trade counter wired (_check_pdt_guard — Alpaca /v2/account daytrade_count)
+
+ Concurrent position cap enforced (_check_concurrent_positions_guard — default 2 positions)
+
+ Startup Telegram shows live PDT/position headroom for live accounts
+
+ LIVE_ORDERS_ENABLED=true (paper bracket orders firing in Alpaca paper-api)
+
+ API key swap (ALPACA_API_KEY/SECRET_KEY → live values)
+
+ Set IS_PAPER_ALPACA=false
+
+ Kill switch UI built — sidebar expander "🚨 Kill Switch [PAPER]", two-step ARM → CONFIRM, calls DELETE /v2/orders + DELETE /v2/positions. Updates label to LIVE ⚠️ when live mode is active.
+
+User Preferences
+
+Timezone: ET always — all times, schedules, and market hours in Eastern Time. Never say UTC.
+
+Build mode only, concise replies, no "ready for review" sign-offs
+
+Mobile-friendly communication style
+
+PDFs + build notes regenerate every night at 11:59 PM ET (both via Paper Trader Bot)
+
+Preserve compute_buy_sell_pressure, classify_day_structure, compute_structure_probabilities, brain_weights.json — do not modify
+
+System Architecture
+
+Separation of Concerns: Math/logic in backend.py. UI/rendering in app.py. Never mix.
+
+Key Files:
+
+app.py — Streamlit UI (~25k lines). Filter Funnel ~24970. Trade-by-Trade Log ~11921. Row anchor ~17825. JS pulse inject ~18009.
+
+paper_trader_bot.py — autonomous daily bot (~4400 lines). Main loop, scheduling, all scan/order/EOD/recalibration functions.
+
+backend.py — all math, Supabase helpers, auto-migrations (~15k lines).
+
+deploy_server.py — proxy on 8080, Streamlit on 8501.
+
+backfill_context_levels.py — fills backtest_context_levels from history files. Has graceful fallback if data_quality column missing.
+
+run_sim_backfill.py — fills sim_version/tiered_sim_version/eod_pnl_r on backtest_sim_runs.
+
+batch_backtest.py — runs full backtest simulations, writes all sim columns.
+
+nightly_tiered_pnl_refresh.py — persistent workflow. Fires at 00:05 ET nightly. Calls run_tiered_pnl_backfill.py --backtest-only.
+
+brain_weights.json / brain_weights_historical.json — blended at runtime. tcs_thresholds.json — TCS floors.
+
+Port Architecture: deploy_server.py=8080+8501 | edgeiq-old=23411 (baseUrlPath=edgeiq) | api-server=3001 | mockup-sandbox=8081
+
+IP Preservation: Three functions in backend.py are proprietary and must NEVER be modified:
+
+compute_buy_sell_pressure
+
+classify_day_structure
+
+compute_structure_probabilities
+
+Paper Trader Bot Schedule (ET)
+
+TimeTaskCatch-up on restart?9:10 AMPre-market gap scan (Alpaca SIP)Skip — data stale9:35 AMFinviz watchlist refresh (morning)Run immediately (lock file prevents duplicate)10:47 AMMorning scan → IB entries → Telegram → Alpaca bracket ordersRun if restarted 10:47–2 PM11:45 AMMidday watchlist refreshSkip — mark done, intraday uses existing list2:00 PMIntraday scanRun if restarted 2–4 PM4:20 PMEOD outcome resolution (idempotent)Run immediately (idempotency guard prevents duplication)4:25 PMAuto-verify today's predictions (idempotent)Run immediately4:30 PMBrain recalibration + build notes updateRun immediately4:35 PMDivergence alert dispatchRun with idempotency guard11:59 PMPDF exports + build notes updateRuns daily
+
+Watchlist lock files: /tmp/wl_morning_{ET_date}.lock and /tmp/wl_midday_{ET_date}.lock prevent duplicate Telegram sends on same-day restarts.
+
+Database Schema (Supabase)
+
+Tables
+
+paper_trades — live paper/live trade log. Key cols: ticker, trade_date, scan_type, predicted, actual_outcome, tcs, ib_high, ib_low, close_price, eod_pnl_r, tiered_pnl_r, pnl_r_sim, vwap_at_ib, ib_range_pct, tcs_floor, alpaca_order_id, alpaca_qty, order_placed_at, alpaca_fill_price, mae, mfe, entry_time, exit_trigger, exit_obs, entry_ib_distance
+
+backtest_sim_runs — backtest results. Key cols: ticker, sim_date, scan_type, predicted, actual_outcome, close_price, eod_pnl_r, tiered_pnl_r, pnl_r_sim, pnl_pct_sim, sim_outcome, sim_version, tiered_sim_version, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, gap_pct, gap_vs_ib_pct
+
+backtest_context_levels — context at signal time: ticker, trade_date, scan_type, vwap_at_signal, macd_line/signal/histogram/direction, nearest_resistance, nearest_support, prev_day_high/low, data_quality
+
+user_watchlist — 100-ticker daily watchlist (gap + trend + squeeze screeners)
+
+ticker_rankings — TCS, RVOL, edge_score, predicted_structure, confidence_label
+
+trade_journal — manual trade log with cognitive tags
+
+cognitive_delta_log — recalibration delta history
+
+accuracy_tracker — per-structure accuracy for brain weighting
+
+Auto-Migrations (run at every app startup via backend.run_pending_migrations())
+
+All column migrations use ADD COLUMN IF NOT EXISTS — safe to run repeatedly. Covers:
+
+paper_trades: mae, mfe, entry_time, exit_trigger, exit_obs, entry_ib_distance, close_price, ib_range_pct, vwap_at_ib, tcs_floor, pnl_r_sim
+
+backtest_sim_runs: close_price, tiered_pnl_r, eod_pnl_r, scan_type, sim_outcome, pnl_r_sim, pnl_pct_sim, entry_price_sim, stop_price_sim, stop_dist_pct, target_price_sim, gap_pct, gap_vs_ib_pct, sim_version, tiered_sim_version
+
+backtest_context_levels: data_quality
+
+ticker_rankings: tcs, rvol, edge_score, predicted_structure, confidence_label
+
+Performance index: idx_bsr_outcome_tiered_date
+
+Manual SQL Required (one-time, run in Supabase SQL Editor)
+
+These are too complex for exec_sql auto-migration:
+
+-- Materialized views for Ladder tab (nightly refresh targets)CREATE MATERIALIZED VIEW IF NOT EXISTS mv_tiered_pnl_summary AS ...CREATE MATERIALIZED VIEW IF NOT EXISTS mv_paper_tiered_pnl_summary AS ...
+
+
+
+(Full SQL is in backend._ALL_PENDING_MIGRATIONS string — extract and paste.)
+
+User has run: ALTER TABLE backtest_context_levels ADD COLUMN IF NOT EXISTS data_quality text ✅ User has run: materialized view creation SQL ✅ (Apr 18, 2026)
+
+External Dependencies
+
+Alpaca API — SIP data feed + paper/live bracket order execution
+
+Supabase — PostgreSQL backend with RLS, exec_sql RPC function for auto-migrations
+
+Finviz — three screeners: gap, trend-continuation, short-squeeze → 100 watchlist tickers
+
+Streamlit — web UI framework
+
+Plotly — charting
+
+Telegram — bot alerts (token in env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+
+Pandas / NumPy / PyTZ — data processing and timezone handling
+
+Known Open Items (as of Apr 18, 2026)
+
+Materialized views mv_tiered_pnl_summary + mv_paper_tiered_pnl_summary — need one-time Supabase SQL paste. Without them the Ladder tab shows empty / nightly refresh logs a warning. (User may have created these Apr 18.)
+
+IS_PAPER_ALPACA=false flip — needs to be done in env vars when going live (Phase 2). Must also swap ALPACA_API_KEY/SECRET_KEY to live credentials.
+
+Kill switch UI — not yet tested end-to-end.
+
+app_config table — returns 404 on GET (bot logs a warning at startup). Non-blocking.
+
+Recent Fix Log
+
+Apr 18, 2026 — Catch-up logic: EOD/verify/recalibration now actually RUN on restart (not just silently marked done). Build notes now updated at 11:59 PM alongside PDFs.
+
+Apr 18, 2026 — 13 missing backtest_sim_runs columns added to auto-migration list (sim_version, tiered_sim_version, scan_type, sim_outcome, and 9 others). paper_trades.pnl_r_sim added.
+
+Apr 18, 2026 — backfill_context_levels.py: graceful fallback if data_quality column absent — retries upsert without it so rows still save.
+
+Apr 17, 2026 — Duplicate Telegram watchlist alerts fixed: per-slot daily lock files in /tmp keyed to ET date (wl_morning_YYYY-MM-DD.lock, wl_midday_YYYY-MM-DD.lock).
+
+Apr 17, 2026 — Trade-by-Trade Log date range filter (URL params rp_log_from/rp_log_to) + amber pulse highlight on hash-jumped rows (#trade-{ticker}-{date}).
+
+The EdgeIQ build is disciplined, particularly regarding the risk-management guards and the autonomy of the paper_trader_bot.py. Moving from paper to live on April 24 is an aggressive but logical step given the Phase 1 win rates.
+
+🏗️ Architecture Critique
+The app.py Bloat: 25,000 lines in a single Streamlit file is a massive technical debt. Streamlit reruns the entire script on every interaction; even with caching, a file that size will eventually cause UI latency or "script heartbeat" timeouts.
+
+Recommendation: Decouple the "Filter Funnel" and "Trade Log" into a components/ directory. It’ll make debugging the "Kill Switch" significantly safer.
+
+Idempotency Guards: Using /tmp/ lock files for Telegram alerts is a smart, low-latency way to handle container/server restarts without spamming your phone at 10:47 AM ET.
+
+Database Hygiene: Auto-migrations via backend.py are solid, but the manual SQL requirement for Materialized Views is a potential failure point. If the "Ladder" tab depends on these, ensure your nightly bot validates their existence, or you'll be flying blind on PnL stats during the live transition.
+
+📈 Strategy & Risk Analysis
+The 80.8% Win Rate: This is exceptional for small-cap IB breakouts. However, paper trading often ignores the "liquidity gap"—in live small-cap setups, getting filled on a 1,500-share bracket order without moving the price (or getting slippage on the stop-loss) is the real test.
+
+PDT & Concurrent Caps: Hard-coding the _check_pdt_guard at the API level is the right move. With a 7k starting equity in Phase 2, you are well below the 25k PDT floor, so that 3-trade-per-5-day limit is your tightest bottleneck.
+
+2.14% Account Risk: This is a professional-grade risk parameter. It keeps you in the game even during a "max pain" streak.
+
+🚀 Readiness for April 24 (Phase 1.5)
+The Kill Switch: This is your most critical "Open Item." Do not go live until the two-step ARM → CONFIRM logic is verified. In small-caps, a hanging order during a halt can blow past your 2.14% risk in seconds.
+
+API Key Swap: Ensure your environment variable logic handles the swap gracefully. Hard-coding keys is the quickest way to get drained if your "public" notes ever leak a config snippet.
+
+🧠 The "Brain Marketplace" Vision
+The long-term pivot to cognitive profiling is what separates this from a standard bot. Renting out calibrated algorithms with a 50% revenue share creates a scalable "Quant-as-a-Service" model.
+
+The fact that you’ve preserved brain_weights.json and compute_structure_probabilities as immutable IP suggests you’re already thinking about the "Brain" as a proprietary asset rather than just a script.
+
+Priority for tonight's 11:59 PM ET refresh: Verify the app_config 404 error. While "non-blocking," a failing config fetch can lead to silent defaults in your risk logic.
+
+How are you planning to handle the "slippage" delta between your paper logs and the first live executions on Friday?
+
+
+
+
+
+Gemini is AI and can make mistakes.
+
