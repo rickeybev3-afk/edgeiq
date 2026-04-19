@@ -28853,9 +28853,14 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         _bts_et_wkly = _bts_et_spk.resample("W-FRI").agg(
                                             _wins=("eod_pnl_r", lambda x: (x > 0).sum()),
                                             _tot=EOD_PNL_COUNT_AGG,
+                                            _avg_r_win=("eod_pnl_r", lambda x: x[x > 0].mean() if (x > 0).any() else 0.0),
                                         )
                                         _bts_et_wkly = _bts_et_wkly[_bts_et_wkly["_tot"] > 0]
                                         _bts_et_wkly["_wr"] = _bts_et_wkly["_wins"] / _bts_et_wkly["_tot"] * 100
+                                        _bts_et_wkly["_avg_r"] = _bts_et_wkly["_avg_r_win"]
+                                        _bts_et_wkly["_true_exp"] = (
+                                            (_bts_et_wkly["_wins"] / _bts_et_wkly["_tot"]) * _bts_et_wkly["_avg_r_win"]
+                                        )
                                         if len(_bts_et_wkly) >= 3:
                                             _bts_et_spk_data = _bts_et_wkly
                                             _bts_et_spk_df = _bts_et_spk
@@ -28863,23 +28868,63 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         import sys
                                         print(f"[BTS EOD sparkline] {_bts_etl}: {_bts_et_spk_err}", file=sys.stderr)
                                 if _bts_et_spk_data is not None:
+                                    _bts_et_spk_metric = st.radio(
+                                        "Metric",
+                                        options=["Win Rate %", "Avg R", "True Expectancy"],
+                                        index=0,
+                                        horizontal=True,
+                                        key=f"bts_eod_spk_metric_{_bts_ei}",
+                                        label_visibility="collapsed",
+                                    )
                                     _bts_et_sfig = go.Figure()
-                                    _bts_et_sfig.add_trace(go.Scatter(
-                                        x=[idx.strftime("w/e %b %d") for idx in _bts_et_spk_data.index],
-                                        y=_bts_et_spk_data["_wr"].tolist(),
-                                        mode="lines+markers",
-                                        line=dict(color=_bts_etc, width=1.5),
-                                        marker=dict(size=4, color=_bts_etc),
-                                        hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
-                                    ))
-                                    _bts_et_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                                    if _bts_et_spk_metric == "Win Rate %":
+                                        _bts_et_sfig.add_trace(go.Scatter(
+                                            x=[idx.strftime("w/e %b %d") for idx in _bts_et_spk_data.index],
+                                            y=_bts_et_spk_data["_wr"].tolist(),
+                                            mode="lines+markers",
+                                            line=dict(color=_bts_etc, width=1.5),
+                                            marker=dict(size=4, color=_bts_etc),
+                                            hovertemplate="%{x}: %{y:.1f}%<extra></extra>",
+                                        ))
+                                        _bts_et_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                                        _bts_et_sfig.update_layout(
+                                            yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
+                                        )
+                                        _bts_et_spk_caption = "Weekly EOD win rate"
+                                    elif _bts_et_spk_metric == "Avg R":
+                                        _bts_et_sfig.add_trace(go.Scatter(
+                                            x=[idx.strftime("w/e %b %d") for idx in _bts_et_spk_data.index],
+                                            y=_bts_et_spk_data["_avg_r"].tolist(),
+                                            mode="lines+markers",
+                                            line=dict(color=_bts_etc, width=1.5),
+                                            marker=dict(size=4, color=_bts_etc),
+                                            hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                                        ))
+                                        _bts_et_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                                        _bts_et_sfig.update_layout(
+                                            yaxis=dict(visible=False, fixedrange=True),
+                                        )
+                                        _bts_et_spk_caption = "Weekly EOD avg winning R"
+                                    else:
+                                        _bts_et_sfig.add_trace(go.Scatter(
+                                            x=[idx.strftime("w/e %b %d") for idx in _bts_et_spk_data.index],
+                                            y=_bts_et_spk_data["_true_exp"].tolist(),
+                                            mode="lines+markers",
+                                            line=dict(color=_bts_etc, width=1.5),
+                                            marker=dict(size=4, color=_bts_etc),
+                                            hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                                        ))
+                                        _bts_et_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                                        _bts_et_sfig.update_layout(
+                                            yaxis=dict(visible=False, fixedrange=True),
+                                        )
+                                        _bts_et_spk_caption = "Weekly EOD true expectancy"
                                     _bts_et_sfig.update_layout(
                                         height=70,
                                         margin=dict(l=2, r=2, t=6, b=2),
                                         paper_bgcolor="rgba(0,0,0,0)",
                                         plot_bgcolor="rgba(0,0,0,0)",
                                         xaxis=dict(visible=False, fixedrange=True),
-                                        yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
                                         showlegend=False,
                                     )
                                     st.plotly_chart(
@@ -28887,7 +28932,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         use_container_width=True,
                                         config=PLOTLY_NO_MODEBAR,
                                     )
-                                    st.caption("Weekly EOD win rate")
+                                    st.caption(_bts_et_spk_caption)
                                     # ── Week drill-down ───────────────────────
                                     _bts_et_wk_opts = ["— pick a week —"] + [
                                         idx.strftime("w/e %b %d, %Y")
@@ -29100,32 +29145,77 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         _bts_lt_wkly = _bts_lt_spk.resample("W-FRI").agg(
                                             _wins=("tiered_pnl_r", lambda x: (x > 0).sum()),
                                             _tot=("tiered_pnl_r", "count"),
+                                            _avg_r_win=("tiered_pnl_r", lambda x: x[x > 0].mean() if (x > 0).any() else 0.0),
                                         )
                                         _bts_lt_wkly = _bts_lt_wkly[_bts_lt_wkly["_tot"] > 0]
                                         _bts_lt_wkly["_wr"] = _bts_lt_wkly["_wins"] / _bts_lt_wkly["_tot"] * 100
+                                        _bts_lt_wkly["_avg_r"] = _bts_lt_wkly["_avg_r_win"]
+                                        _bts_lt_wkly["_true_exp"] = (
+                                            (_bts_lt_wkly["_wins"] / _bts_lt_wkly["_tot"]) * _bts_lt_wkly["_avg_r_win"]
+                                        )
                                         if len(_bts_lt_wkly) >= 3:
                                             _bts_lt_spk_data = _bts_lt_wkly
                                     except (ValueError, KeyError, TypeError) as _bts_lt_spk_err:
                                         import sys
                                         print(f"[BTS Ladder sparkline] {_bts_ltl}: {_bts_lt_spk_err}", file=sys.stderr)
                                 if _bts_lt_spk_data is not None:
+                                    _bts_lt_spk_metric = st.radio(
+                                        "Metric",
+                                        options=["Win Rate %", "Avg R", "True Expectancy"],
+                                        index=0,
+                                        horizontal=True,
+                                        key=f"bts_ldr_spk_metric_{_bts_li}",
+                                        label_visibility="collapsed",
+                                    )
                                     _bts_lt_sfig = go.Figure()
-                                    _bts_lt_sfig.add_trace(go.Scatter(
-                                        x=[idx.strftime("w/e %b %d") for idx in _bts_lt_spk_data.index],
-                                        y=_bts_lt_spk_data["_wr"].tolist(),
-                                        mode="lines+markers",
-                                        line=dict(color=_bts_ltc, width=1.5),
-                                        marker=dict(size=4, color=_bts_ltc),
-                                        hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
-                                    ))
-                                    _bts_lt_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                                    if _bts_lt_spk_metric == "Win Rate %":
+                                        _bts_lt_sfig.add_trace(go.Scatter(
+                                            x=[idx.strftime("w/e %b %d") for idx in _bts_lt_spk_data.index],
+                                            y=_bts_lt_spk_data["_wr"].tolist(),
+                                            mode="lines+markers",
+                                            line=dict(color=_bts_ltc, width=1.5),
+                                            marker=dict(size=4, color=_bts_ltc),
+                                            hovertemplate="%{x}: %{y:.1f}%<extra></extra>",
+                                        ))
+                                        _bts_lt_sfig.add_hline(y=50, line_dash="dot", line_color="#546e7a", line_width=1)
+                                        _bts_lt_sfig.update_layout(
+                                            yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
+                                        )
+                                        _bts_lt_spk_caption = "Weekly Ladder win rate"
+                                    elif _bts_lt_spk_metric == "Avg R":
+                                        _bts_lt_sfig.add_trace(go.Scatter(
+                                            x=[idx.strftime("w/e %b %d") for idx in _bts_lt_spk_data.index],
+                                            y=_bts_lt_spk_data["_avg_r"].tolist(),
+                                            mode="lines+markers",
+                                            line=dict(color=_bts_ltc, width=1.5),
+                                            marker=dict(size=4, color=_bts_ltc),
+                                            hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                                        ))
+                                        _bts_lt_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                                        _bts_lt_sfig.update_layout(
+                                            yaxis=dict(visible=False, fixedrange=True),
+                                        )
+                                        _bts_lt_spk_caption = "Weekly Ladder avg winning R"
+                                    else:
+                                        _bts_lt_sfig.add_trace(go.Scatter(
+                                            x=[idx.strftime("w/e %b %d") for idx in _bts_lt_spk_data.index],
+                                            y=_bts_lt_spk_data["_true_exp"].tolist(),
+                                            mode="lines+markers",
+                                            line=dict(color=_bts_ltc, width=1.5),
+                                            marker=dict(size=4, color=_bts_ltc),
+                                            hovertemplate="%{x}: %{y:+.3f}R<extra></extra>",
+                                        ))
+                                        _bts_lt_sfig.add_hline(y=0, line_dash="dot", line_color="#546e7a", line_width=1)
+                                        _bts_lt_sfig.update_layout(
+                                            yaxis=dict(visible=False, fixedrange=True),
+                                        )
+                                        _bts_lt_spk_caption = "Weekly Ladder true expectancy"
                                     _bts_lt_sfig.update_layout(
                                         height=70,
                                         margin=dict(l=2, r=2, t=6, b=2),
                                         paper_bgcolor="rgba(0,0,0,0)",
                                         plot_bgcolor="rgba(0,0,0,0)",
                                         xaxis=dict(visible=False, fixedrange=True),
-                                        yaxis=dict(visible=False, fixedrange=True, range=[0, 100]),
                                         showlegend=False,
                                     )
                                     st.plotly_chart(
@@ -29133,7 +29223,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                                         use_container_width=True,
                                         config=PLOTLY_NO_MODEBAR,
                                     )
-                                    st.caption("Weekly Ladder win rate")
+                                    st.caption(_bts_lt_spk_caption)
 
             # ── Tier Comparison Summary Table (Sweep) ────────────────────────
             _bts_cs_has_eod    = "eod_pnl_r"   in _bts_df.columns and _bts_df["eod_pnl_r"].notna().any()
