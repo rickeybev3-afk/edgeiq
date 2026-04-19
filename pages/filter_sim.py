@@ -12,8 +12,7 @@ import plotly.graph_objects as go
 import sys, os, time
 from datetime import datetime
 
-if "fs_use_vwap" not in st.session_state:
-    st.session_state["fs_use_vwap"] = False
+st.session_state["fs_use_vwap"] = False
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import backend
