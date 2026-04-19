@@ -207,6 +207,10 @@ def _cached_load_cognitive_delta_today(user_id: str = "", trade_date=None):
 def _cached_load_cognitive_delta_analysis(user_id: str = ""):
     return load_cognitive_delta_analysis(user_id=user_id)
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_compute_bot_vs_trader_stats(user_id: str = "", days: int = 90):
+    return compute_bot_vs_trader_stats(user_id=user_id, days=days)
+
 @st.cache_data(ttl=30, show_spinner=False)
 def _cached_check_db_connection() -> tuple[bool, str]:
     # Equivalent to the db_reachable field in /api/health: both perform a HEAD
@@ -34136,6 +34140,207 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     f"Override > Followed = your tape-reading exceeds the algo. "
                     f"Skipped > Followed = your skip instinct is costing you."
                 )
+
+    # ── Section 8: Bot vs You — Daily Convergence Tracker ──────────────────────
+    st.markdown("---")
+    st.markdown("### 🤖 Bot vs You — Daily Convergence Tracker")
+    st.caption(
+        "Cross-references what the bot scanned vs what you actually traded each day. "
+        "Consistent gaps in execution reveal your cognitive fingerprint. "
+        "Dimension 7 of the Cognitive Profile is powered by this data. "
+        "**Note:** metrics are symbol-level per day — if the bot fired multiple scans "
+        "for the same ticker on the same day, they are counted as one call."
+    )
+
+    _bvy_uid  = _AUTH_USER_ID
+    _bvy_days = st.slider(
+        "Lookback (days)", min_value=14, max_value=180, value=90, step=7,
+        key="bvy_days_slider",
+        help="How many calendar days of history to include in the comparison.",
+    )
+
+    if not _bvy_uid:
+        st.info("Log in to see your Bot vs You analysis.")
+    else:
+        _bvy_stats = _cached_compute_bot_vs_trader_stats(user_id=_bvy_uid, days=_bvy_days)
+        _bvy_summary = _bvy_stats.get("summary", {})
+        _bvy_daily   = _bvy_stats.get("daily", [])
+        _bvy_series  = _bvy_stats.get("convergence_series", [])
+        _bvy_patterns = _bvy_stats.get("patterns", [])
+
+        if not _bvy_daily:
+            st.info(
+                "No comparison data yet. "
+                "The tracker needs both paper_trades from the bot AND decision logs from you — "
+                "use the **Log Today's Decisions** panel above to start building your behavioral record."
+            )
+        else:
+            # ── Summary KPIs ────────────────────────────────────────────────
+            _bvy_conv_rate  = _bvy_summary.get("overall_convergence_rate", 0)
+            _bvy_trend      = _bvy_summary.get("convergence_trend", "insufficient_data")
+            _bvy_tot_bot    = _bvy_summary.get("total_bot_calls", 0)
+            _bvy_tot_fol    = _bvy_summary.get("total_followed", 0)
+            _bvy_tot_days   = _bvy_summary.get("total_days", 0)
+            _bvy_tot_ovr    = _bvy_summary.get("total_overrides", 0)
+
+            _trend_icons = {
+                "rising_fast":      ("⬆⬆", "#4caf50", "Gap closing fast — learning system is working"),
+                "rising_slow":      ("⬆",  "#66bb6a", "Gap slowly closing — steady improvement"),
+                "flat":             ("➡",  "#ff9800", "Plateau — possible cognitive blocker"),
+                "falling_slow":     ("⬇",  "#ef9a9a", "Gap widening slightly — watch for emotion creep"),
+                "falling_fast":     ("⬇⬇", "#ef5350", "Gap widening fast — emotional override increasing"),
+                "insufficient_data":("—",  "#888888", "Need more logged decisions to detect a trend"),
+            }
+            _trend_icon, _trend_clr, _trend_desc = _trend_icons.get(
+                _bvy_trend, ("—", "#888888", "Unknown")
+            )
+            _conv_clr = "#4caf50" if _bvy_conv_rate >= 65 else ("#ff9800" if _bvy_conv_rate >= 40 else "#ef5350")
+
+            _bk1, _bk2, _bk3, _bk4 = st.columns(4)
+            with _bk1:
+                st.markdown(
+                    f"<div style='text-align:center'>"
+                    f"<div style='font-size:11px;color:#aaa;margin-bottom:2px;text-transform:uppercase;letter-spacing:1px'>Convergence Rate</div>"
+                    f"<div style='font-size:32px;font-weight:800;color:{_conv_clr}'>{_bvy_conv_rate}%</div>"
+                    f"<div style='font-size:11px;color:#555'>overlap ÷ union</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with _bk2:
+                st.markdown(
+                    f"<div style='text-align:center'>"
+                    f"<div style='font-size:11px;color:#aaa;margin-bottom:2px;text-transform:uppercase;letter-spacing:1px'>Trend</div>"
+                    f"<div style='font-size:28px;font-weight:800;color:{_trend_clr}'>{_trend_icon}</div>"
+                    f"<div style='font-size:11px;color:#555;line-height:1.3'>{_trend_desc}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with _bk3:
+                st.markdown(
+                    f"<div style='text-align:center'>"
+                    f"<div style='font-size:11px;color:#aaa;margin-bottom:2px;text-transform:uppercase;letter-spacing:1px'>Bot Calls</div>"
+                    f"<div style='font-size:32px;font-weight:800;color:#e0e0e0'>{_bvy_tot_bot}</div>"
+                    f"<div style='font-size:11px;color:#555'>{_bvy_tot_days} active days</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with _bk4:
+                st.markdown(
+                    f"<div style='text-align:center'>"
+                    f"<div style='font-size:11px;color:#aaa;margin-bottom:2px;text-transform:uppercase;letter-spacing:1px'>You Followed</div>"
+                    f"<div style='font-size:32px;font-weight:800;color:#64b5f6'>{_bvy_tot_fol}</div>"
+                    f"<div style='font-size:11px;color:#555'>{_bvy_tot_ovr} overrides</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            # ── Convergence chart ───────────────────────────────────────────
+            if len(_bvy_series) >= 3:
+                import plotly.graph_objects as go
+                _bvy_dates  = [s[0] for s in _bvy_series]
+                _bvy_rates  = [s[1] for s in _bvy_series]
+                _bvy_avg    = round(sum(_bvy_rates) / len(_bvy_rates), 1)
+                _bvy_fig = go.Figure()
+                _bvy_fig.add_trace(go.Scatter(
+                    x=_bvy_dates, y=_bvy_rates,
+                    mode="lines+markers",
+                    name="Convergence Rate",
+                    line=dict(color="#00c896", width=2),
+                    marker=dict(color="#00c896", size=5),
+                    fill="tozeroy",
+                    fillcolor="rgba(0,200,150,0.08)",
+                ))
+                _bvy_fig.add_hline(
+                    y=_bvy_avg,
+                    line_dash="dot",
+                    line_color="#ff9800",
+                    annotation_text=f"Avg {_bvy_avg}%",
+                    annotation_font_color="#ff9800",
+                )
+                _bvy_fig.update_layout(
+                    title=dict(text="Convergence Rate Over Time", font=dict(color="#fff", size=13)),
+                    xaxis=dict(color="#888", showgrid=False),
+                    yaxis=dict(color="#888", range=[0, 100], ticksuffix="%",
+                               gridcolor="rgba(255,255,255,0.06)"),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=40, r=20, t=50, b=30),
+                    height=260,
+                    showlegend=False,
+                )
+                st.plotly_chart(_bvy_fig, use_container_width=True)
+                st.caption(
+                    "Each point = one trading day. "
+                    "Rate = (tickers you followed) ÷ (all bot calls + your overrides) × 100. "
+                    "Higher = more aligned with the bot's discipline."
+                )
+
+            # ── Behavioral pattern flags ────────────────────────────────────
+            if _bvy_patterns:
+                st.markdown("**🔍 Behavioral Pattern Flags**")
+                _flag_colors = {
+                    "Overall":  "#64b5f6",
+                    "RVOL":     "#ff9800",
+                    "TCS":      "#ce93d8",
+                }
+                for _pat in _bvy_patterns:
+                    _fc = next((_flag_colors[k] for k in _flag_colors if _pat.startswith(k)), "#aaa")
+                    st.markdown(
+                        f'<div style="background:#0d1117;border-left:3px solid {_fc};'
+                        f'padding:8px 12px;border-radius:4px;margin:4px 0;font-size:13px;color:{_fc};">'
+                        f'{_pat}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            # ── Per-day breakdown table ─────────────────────────────────────
+            with st.expander("📅 Per-Day Breakdown", expanded=False):
+                _bvy_active_days = [d for d in _bvy_daily if d["bot_count"] > 0 or d["user_followed"] > 0]
+                if _bvy_active_days:
+                    import pandas as pd
+                    _bvy_rows = []
+                    for _d in reversed(_bvy_active_days):
+                        _bvy_rows.append({
+                            "Date":          _d["date"],
+                            "Bot Calls":     _d["bot_count"],
+                            "You Followed":  _d["user_followed"],
+                            "Overlap":       _d["overlap"],
+                            "Bot Only":      _d["bot_only"],
+                            "You Only":      _d["user_only"],
+                            "Conv %":        f"{_d['convergence_rate']:.0f}%",
+                            "Skipped":       ", ".join(_d["skipped_tickers"]) or "—",
+                        })
+                    _bvy_df_disp = pd.DataFrame(_bvy_rows)
+
+                    def _bvy_color_conv(val):
+                        try:
+                            v = float(str(val).rstrip("%"))
+                            if v >= 65: return "color:#4caf50;font-weight:700"
+                            if v >= 40: return "color:#ff9800"
+                            return "color:#ef5350"
+                        except Exception:
+                            return ""
+
+                    st.dataframe(
+                        _bvy_df_disp.style.map(_bvy_color_conv, subset=["Conv %"]),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.info("No days with bot calls or logged decisions in the lookback window.")
+
+            # ── Dimension 7 tip ─────────────────────────────────────────────
+            st.markdown(
+                f'<div style="background:#0a0a1a;border:1px solid #3949ab;border-radius:8px;'
+                f'padding:12px 16px;margin-top:12px;">'
+                f'<span style="font-size:12px;font-weight:700;color:#7986cb;">🧠 Cognitive Profile — Dimension 7</span><br>'
+                f'<span style="font-size:12px;color:#9fa8da;line-height:1.6;">'
+                f'Your current convergence rate of <b style="color:{_conv_clr}">{_bvy_conv_rate}%</b> '
+                f'feeds directly into <b>Dimension 7: Convergence Rate</b> on the Cognitive Profile radar. '
+                f'Open the <b>🧠 Cognitive Profiler</b> page to see your full 7-dimension behavioral fingerprint.'
+                f'</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ── Macro Regime Banner ─────────────────────────────────────────────────────────

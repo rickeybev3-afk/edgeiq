@@ -12883,6 +12883,225 @@ def load_cognitive_delta_analysis(user_id: str) -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+# ── Bot vs Trader Convergence ───────────────────────────────────────────────────
+
+def compute_bot_vs_trader_stats(user_id: str, days: int = 90) -> dict:
+    """Cross-reference bot paper_trades with trader cognitive_delta_log decisions.
+
+    Returns a dict with keys:
+      - 'daily'             : list of per-day summary dicts
+      - 'patterns'          : list of human-readable pattern flag strings
+      - 'convergence_series': list of (date_str, rate_float) pairs
+      - 'summary'           : overall aggregate stats dict
+    """
+    empty = {"daily": [], "patterns": [], "convergence_series": [], "summary": {}}
+    if not supabase or not user_id:
+        return empty
+    try:
+        from datetime import date as _date, timedelta as _td
+        cutoff = str(_date.today() - _td(days=days))
+
+        pt_res = (supabase.table("paper_trades")
+                  .select("trade_date,ticker,tcs,rvol,alpaca_order_id,predicted,win_loss,scan_type")
+                  .eq("user_id", user_id)
+                  .gte("trade_date", cutoff)
+                  .execute())
+        pt_data = pt_res.data or []
+
+        cd_res = (supabase.table("cognitive_delta_log")
+                  .select("trade_date,ticker,user_action,system_tcs,system_structure,actual_chg,notes")
+                  .eq("user_id", user_id)
+                  .gte("trade_date", cutoff)
+                  .execute())
+        cd_data = cd_res.data or []
+
+        if not pt_data and not cd_data:
+            return empty
+
+        pt_df = pd.DataFrame(pt_data) if pt_data else pd.DataFrame(
+            columns=["trade_date", "ticker", "tcs", "rvol", "alpaca_order_id", "predicted", "win_loss", "scan_type"]
+        )
+        cd_df = pd.DataFrame(cd_data) if cd_data else pd.DataFrame(
+            columns=["trade_date", "ticker", "user_action", "system_tcs", "system_structure", "actual_chg", "notes"]
+        )
+
+        if not pt_df.empty:
+            pt_df["ticker"]     = pt_df["ticker"].astype(str).str.upper().str.strip()
+            pt_df["trade_date"] = pt_df["trade_date"].astype(str).str[:10]
+            pt_df["tcs"]        = pd.to_numeric(pt_df["tcs"], errors="coerce")
+            pt_df["rvol"]       = pd.to_numeric(pt_df["rvol"], errors="coerce")
+
+        if not cd_df.empty:
+            cd_df["ticker"]     = cd_df["ticker"].astype(str).str.upper().str.strip()
+            cd_df["trade_date"] = cd_df["trade_date"].astype(str).str[:10]
+
+        # Per-day loop
+        all_dates = sorted(
+            set(pt_df["trade_date"].unique().tolist() if not pt_df.empty else []) |
+            set(cd_df["trade_date"].unique().tolist() if not cd_df.empty else [])
+        )
+
+        daily = []
+        for d in all_dates:
+            pt_day = pt_df[pt_df["trade_date"] == d] if not pt_df.empty else pd.DataFrame()
+            cd_day = cd_df[cd_df["trade_date"] == d] if not cd_df.empty else pd.DataFrame()
+
+            bot_tickers = set(pt_day["ticker"].tolist()) if not pt_day.empty else set()
+
+            followed_tickers  = set()
+            skipped_tickers   = set()
+            override_tickers  = set()
+            if not cd_day.empty:
+                followed_tickers  = set(cd_day[cd_day["user_action"] == "followed"]["ticker"].tolist())
+                skipped_tickers   = set(cd_day[cd_day["user_action"] == "skipped"]["ticker"].tolist())
+                override_tickers  = set(cd_day[cd_day["user_action"] == "override"]["ticker"].tolist())
+
+            overlap      = bot_tickers & followed_tickers
+            bot_only     = bot_tickers - followed_tickers - override_tickers
+            user_only    = override_tickers - bot_tickers
+            union        = bot_tickers | followed_tickers | override_tickers
+            conv_rate    = round(len(overlap) / len(union) * 100, 1) if union else 0.0
+
+            daily.append({
+                "date":             d,
+                "bot_count":        len(bot_tickers),
+                "user_followed":    len(followed_tickers),
+                "user_overrides":   len(override_tickers),
+                "overlap":          len(overlap),
+                "bot_only":         len(bot_only),
+                "user_only":        len(user_only),
+                "convergence_rate": conv_rate,
+                "bot_tickers":      sorted(bot_tickers),
+                "followed_tickers": sorted(followed_tickers),
+                "skipped_tickers":  sorted(skipped_tickers),
+                "override_tickers": sorted(override_tickers),
+            })
+
+        # Pattern analysis (needs both data sources)
+        patterns = []
+        if not pt_df.empty and not cd_df.empty:
+            # Deduplicate cd_df to one action per (trade_date, ticker): most decisive wins
+            # Priority: followed > override > skipped > no_log
+            _action_priority = {"followed": 0, "override": 1, "skipped": 2, "no_log": 3}
+            _cd_dedup = (
+                cd_df[["trade_date", "ticker", "user_action"]]
+                .assign(_priority=lambda df: df["user_action"].map(
+                    lambda a: _action_priority.get(a, 3)
+                ))
+                .sort_values("_priority")
+                .drop_duplicates(subset=["trade_date", "ticker"], keep="first")
+                .drop(columns=["_priority"])
+            )
+            merged = pt_df.merge(
+                _cd_dedup,
+                on=["trade_date", "ticker"],
+                how="left",
+            )
+            merged["user_action"] = merged["user_action"].fillna("no_log")
+            total_calls    = len(merged)
+            total_skipped  = (merged["user_action"] == "skipped").sum()
+            total_followed = (merged["user_action"] == "followed").sum()
+
+            if total_calls >= 5:
+                skip_rate   = round(total_skipped  / total_calls * 100, 1)
+                follow_rate = round(total_followed / total_calls * 100, 1)
+                patterns.append(
+                    f"Overall: you follow {follow_rate}% of bot calls and skip {skip_rate}%"
+                    f" ({total_followed} followed / {total_skipped} skipped / {total_calls} total)"
+                )
+
+            # RVOL-based skip rate
+            if "rvol" in merged.columns and int(merged["rvol"].notna().sum()) >= 5:
+                for rvol_label, rvol_mask in [
+                    ("RVOL < 1.5",  merged["rvol"] <  1.5),
+                    ("RVOL ≥ 2.0",  merged["rvol"] >= 2.0),
+                ]:
+                    subset = merged[rvol_mask]
+                    if len(subset) >= 3:
+                        pct = round((subset["user_action"] == "skipped").sum() / len(subset) * 100, 1)
+                        n_skip = int((subset["user_action"] == "skipped").sum())
+                        patterns.append(
+                            f"{rvol_label}: you skip {pct}% of bot calls ({n_skip}/{len(subset)})"
+                        )
+
+            # TCS-based skip rate
+            if "tcs" in merged.columns and int(merged["tcs"].notna().sum()) >= 5:
+                for tcs_label, tcs_mask in [
+                    ("TCS < 60",  merged["tcs"] <  60),
+                    ("TCS ≥ 75",  merged["tcs"] >= 75),
+                ]:
+                    subset = merged[tcs_mask]
+                    if len(subset) >= 3:
+                        pct    = round((subset["user_action"] == "skipped").sum() / len(subset) * 100, 1)
+                        n_skip = int((subset["user_action"] == "skipped").sum())
+                        patterns.append(
+                            f"{tcs_label}: you skip {pct}% of bot calls ({n_skip}/{len(subset)})"
+                        )
+
+            # Per-structure skip rate (only flag outliers: ≥ 60% or ≤ 20% skip rate)
+            if "predicted" in merged.columns and int(merged["predicted"].notna().sum()) >= 5:
+                for struct in merged["predicted"].dropna().unique():
+                    s_rows = merged[merged["predicted"] == struct]
+                    if len(s_rows) >= 3:
+                        pct    = round((s_rows["user_action"] == "skipped").sum() / len(s_rows) * 100, 1)
+                        n_skip = int((s_rows["user_action"] == "skipped").sum())
+                        if pct >= 60 or pct <= 20:
+                            patterns.append(
+                                f"{struct}: you skip {pct}% of calls ({n_skip}/{len(s_rows)})"
+                            )
+
+        # Convergence series (only days where bot actually fired calls)
+        convergence_series = [
+            (d["date"], d["convergence_rate"])
+            for d in daily
+            if d["bot_count"] > 0
+        ]
+
+        # Summary totals
+        total_days_active  = len([d for d in daily if d["bot_count"] > 0 or d["user_followed"] > 0])
+        total_bot          = sum(d["bot_count"]      for d in daily)
+        total_followed_all = sum(d["user_followed"]  for d in daily)
+        total_overrides    = sum(d["user_overrides"] for d in daily)
+        total_overlap      = sum(d["overlap"]        for d in daily)
+        overall_conv       = round(total_overlap / max(total_bot + total_overrides, 1) * 100, 1)
+
+        # Convergence trend via linear slope (last 30 data points)
+        recent = convergence_series[-30:]
+        conv_trend = "insufficient_data"
+        if len(recent) >= 5:
+            xs    = list(range(len(recent)))
+            ys    = [r for _, r in recent]
+            avg_x = sum(xs) / len(xs)
+            avg_y = sum(ys) / len(ys)
+            denom = sum((x - avg_x) ** 2 for x in xs) or 1
+            slope = sum((xs[i] - avg_x) * (ys[i] - avg_y) for i in range(len(xs))) / denom
+            if   slope >  0.5:  conv_trend = "rising_fast"
+            elif slope >  0.1:  conv_trend = "rising_slow"
+            elif slope < -0.5:  conv_trend = "falling_fast"
+            elif slope < -0.1:  conv_trend = "falling_slow"
+            else:               conv_trend = "flat"
+
+        summary = {
+            "total_days":              total_days_active,
+            "total_bot_calls":         total_bot,
+            "total_followed":          total_followed_all,
+            "total_overrides":         total_overrides,
+            "total_overlap":           total_overlap,
+            "overall_convergence_rate": overall_conv,
+            "convergence_trend":       conv_trend,
+        }
+
+        return {
+            "daily":              daily,
+            "patterns":           patterns,
+            "convergence_series": convergence_series,
+            "summary":            summary,
+        }
+    except Exception as e:
+        print(f"compute_bot_vs_trader_stats error: {e}")
+        return empty
+
+
 # ── Decision Log ───────────────────────────────────────────────────────────────
 _DECISION_LOG_SQL = """
 CREATE TABLE IF NOT EXISTS decision_log (

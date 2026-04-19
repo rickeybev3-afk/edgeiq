@@ -4,7 +4,7 @@ import os
 import io
 from datetime import datetime, date
 import plotly.graph_objects as go
-from backend import get_supabase_client, transcribe_audio_bytes, ai_extract_signals
+from backend import get_supabase_client, transcribe_audio_bytes, ai_extract_signals, compute_bot_vs_trader_stats
 
 st.set_page_config(page_title="Cognitive Profiler", page_icon="🧠", layout="wide")
 
@@ -48,7 +48,10 @@ DIMENSIONS = [
     "Risk Calibration",
     "Process Discipline",
     "Adaptability",
+    "Convergence Rate",
 ]
+
+_DIM7_CONVERGENCE = "Convergence Rate"
 
 SIGNALS = {
     "fomo_entry":          ("Chased / entered before planned level",           "negative"),
@@ -82,7 +85,7 @@ _DIM_MAP = {
 }
 
 
-def score_dimensions(signals: dict) -> dict:
+def score_dimensions(signals: dict, convergence_score: int = 50) -> dict:
     scores = {d: 50 for d in DIMENSIONS}
     for sig, active in signals.items():
         if not active:
@@ -90,7 +93,51 @@ def score_dimensions(signals: dict) -> dict:
         for dim_idx, impact in _DIM_MAP.get(sig, []):
             dim = DIMENSIONS[dim_idx]
             scores[dim] = max(0, min(100, scores[dim] + impact))
+    scores[_DIM7_CONVERGENCE] = max(0, min(100, convergence_score))
     return scores
+
+
+def _load_convergence_score(user_id: str = "") -> tuple[int, str]:
+    """Return (0-100 score, trend_label) for Dimension 7.
+
+    Score mapping:
+      rising_fast  → 90   (gap closing fast)
+      rising_slow  → 70   (steady progress)
+      flat         → 50   (plateau)
+      falling_slow → 35   (slight regression)
+      falling_fast → 15   (emotional override increasing)
+      insufficient_data / no user_id → 50 (neutral baseline)
+    """
+    if not user_id:
+        return 50, "No data"
+    try:
+        stats = compute_bot_vs_trader_stats(user_id=user_id, days=90)
+        summary = stats.get("summary", {})
+        if not summary:
+            return 50, "No data"
+        trend = summary.get("convergence_trend", "insufficient_data")
+        rate  = float(summary.get("overall_convergence_rate", 50) or 50)
+        _trend_scores = {
+            "rising_fast":       90,
+            "rising_slow":       70,
+            "flat":              50,
+            "falling_slow":      35,
+            "falling_fast":      15,
+            "insufficient_data": int(rate),
+        }
+        score = _trend_scores.get(trend, int(rate))
+        _trend_labels = {
+            "rising_fast":       f"Rising fast — {rate:.0f}% convergence",
+            "rising_slow":       f"Rising — {rate:.0f}% convergence",
+            "flat":              f"Flat — {rate:.0f}% convergence",
+            "falling_slow":      f"Declining — {rate:.0f}% convergence",
+            "falling_fast":      f"Falling fast — {rate:.0f}% convergence",
+            "insufficient_data": f"{rate:.0f}% convergence (need 5+ days)",
+        }
+        label = _trend_labels.get(trend, f"{rate:.0f}%")
+        return score, label
+    except Exception:
+        return 50, "Error loading"
 
 
 def render_radar(scores: dict, trader_name: str):
@@ -161,7 +208,8 @@ def load_profiles() -> list:
 st.title("🧠 Trader Cognitive Profiler")
 st.caption(
     "Upload live trading session recordings to extract behavioral signals and build a "
-    "6-dimension cognitive profile. Early-stage data collection for the EdgeIQ profiling engine."
+    "7-dimension cognitive profile. Dimensions 1–6 come from session analysis; "
+    "Dimension 7 (Convergence Rate) is computed live from the Bot vs You tracker."
 )
 
 if not HAS_AI:
@@ -248,22 +296,39 @@ with tab_new:
             pos_vals[key] = st.checkbox(label, value=bool(pre.get(key, False)), key=f"cp_{key}")
 
     all_signals = {**neg_vals, **pos_vals}
-    dimension_scores = score_dimensions(all_signals)
+
+    # ── Dimension 7: load live convergence score from Bot vs Trader tracker ──
+    _cp_user_id = st.session_state.get("auth_user_id", "")
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _cached_load_convergence_score(uid: str) -> tuple:
+        return _load_convergence_score(user_id=uid)
+    _conv_score, _conv_label = _cached_load_convergence_score(_cp_user_id)
+    dimension_scores = score_dimensions(all_signals, convergence_score=_conv_score)
 
     st.markdown("### Step 4 — Cognitive Profile Preview")
+    st.caption(
+        "**Dimension 7 — Convergence Rate** is computed live from the Bot vs You tracker. "
+        + (f"Current score: **{_conv_score}** ({_conv_label})" if _cp_user_id else
+           "Log in via the main dashboard and use the Bot vs You panel to populate it.")
+    )
     if trader_name.strip():
         render_radar(dimension_scores, trader_name)
     else:
         st.caption("Enter a trader name above to preview the radar chart.")
 
-    # Score summary
-    score_cols = st.columns(6)
-    for i, (dim, score) in enumerate(dimension_scores.items()):
+    # Score summary — 7 dimensions across 2 rows (4 + 3)
+    score_items = list(dimension_scores.items())
+    score_row1  = st.columns(4)
+    score_row2  = st.columns(4)
+    for i, (dim, score) in enumerate(score_items):
         color = "#00c896" if score >= 65 else ("#f4c542" if score >= 40 else "#e05c5c")
-        score_cols[i].markdown(
+        col   = score_row1[i] if i < 4 else score_row2[i - 4]
+        _dim7_note = f"<div style='font-size:9px;color:#555;margin-top:1px'>{_conv_label}</div>" if dim == _DIM7_CONVERGENCE else ""
+        col.markdown(
             f"<div style='text-align:center'>"
             f"<div style='font-size:11px;color:#aaa;margin-bottom:2px'>{dim}</div>"
             f"<div style='font-size:26px;font-weight:700;color:{color}'>{score}</div>"
+            f"{_dim7_note}"
             f"</div>",
             unsafe_allow_html=True,
         )

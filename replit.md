@@ -79,7 +79,7 @@ Core purpose: identify and automate IB-breakout strategies in high-TCS small-cap
 - `user_watchlist` — 100-ticker daily watchlist (gap + trend + squeeze screeners)
 - `ticker_rankings` — TCS, RVOL, edge_score, predicted_structure, confidence_label
 - `trade_journal` — manual trade log with cognitive tags
-- `cognitive_delta_log` — recalibration delta history
+- `cognitive_delta_log` — per-day follow/skip/override decisions logged by the trader against bot calls. Powers Bot vs You convergence tracker and Cognitive Profile Dimension 7
 - `accuracy_tracker` — per-structure accuracy for brain weighting
 
 ### Auto-Migrations (run at every app startup via `backend.run_pending_migrations()`)
