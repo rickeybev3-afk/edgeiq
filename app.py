@@ -31186,7 +31186,7 @@ function _bqCopyShareLink() {
         return grid
 
     @st.cache_data(ttl=3600, show_spinner=False)
-    def _load_screener_pass_grid(uid, start_date=None, end_date=None):
+    def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False):
         """Single-pass fetch of backtest_sim_runs; groups by screener_pass in memory."""
         from datetime import date as _date_cls
         BREAK_OUTCOMES = {"Bullish Break", "Bearish Break"}
@@ -31266,7 +31266,72 @@ function _bqCopyShareLink() {
         all_stats = _stats(all_rows)
         if all_stats:
             results.append({"screener_pass": "all", **all_stats})
-        return results
+
+        if not by_year:
+            return results
+
+        # ── Year-by-year breakdown (only when by_year=True) ─────────────────
+        def _yr_stats(subset):
+            """Like _stats but without trades_per_yr (scoped to one calendar year)."""
+            if not subset:
+                return None
+            breaks = [
+                r for r in subset
+                if r.get("actual_outcome") in BREAK_OUTCOMES
+                and r.get("pnl_r_sim") is not None
+            ]
+            p_break = len(breaks) / len(subset)
+            avg_r = (
+                sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks)
+                if breaks else 0.0
+            )
+            return {
+                "trades":   len(subset),
+                "wr_pct":   round(p_break * 100, 1),
+                "avg_r":    round(avg_r, 3),
+                "true_exp": round(p_break * avg_r, 3),
+            }
+
+        # Bucket rows by (year, month) to determine full-year coverage
+        by_year_months: dict = {}
+        by_year_pass: dict = {}
+        for r in all_rows:
+            raw = r.get("sim_date")
+            if not raw:
+                continue
+            try:
+                parsed = _date_cls.fromisoformat(str(raw)[:10])
+                yr, mo = parsed.year, parsed.month
+            except Exception:
+                continue
+            by_year_months.setdefault(yr, set()).add(mo)
+            sp = (r.get("screener_pass") or "other").strip().lower()
+            by_year_pass.setdefault(yr, {}).setdefault("all", []).append(r)
+            by_year_pass[yr].setdefault(sp, []).append(r)
+
+        # A calendar year is "full" if data covers both H1 (Jan-Jun) and H2 (Jul-Dec)
+        FIRST_HALF  = {1, 2, 3, 4, 5, 6}
+        SECOND_HALF = {7, 8, 9, 10, 11, 12}
+        full_year_count = sum(
+            1 for yr, months in by_year_months.items()
+            if months & FIRST_HALF and months & SECOND_HALF
+        )
+
+        yearly_results = []
+        for yr in sorted(by_year_pass.keys()):
+            yr_data = by_year_pass[yr]
+            row = {"year": yr}
+            for spass in ["gap", "trend", "all"]:
+                s = _yr_stats(yr_data.get(spass, []))
+                if s:
+                    for k, v in s.items():
+                        row[f"{spass}_{k}"] = v
+                else:
+                    for k in ["trades", "wr_pct", "avg_r", "true_exp"]:
+                        row[f"{spass}_{k}"] = None
+            yearly_results.append(row)
+
+        return {"aggregate": results, "by_year": yearly_results, "full_year_count": full_year_count}
 
     @st.cache_data(ttl=3600, show_spinner=False)
     def _load_tier_screener_pass_data(uid, start_date=None, end_date=None):
@@ -31655,11 +31720,15 @@ function _bqCopyShareLink() {
             if st.button("🔄 Refresh", key="refresh_screener_pass_grid", help="Clear cache and reload screener pass data immediately"):
                 st.cache_data.clear()
                 st.rerun()
-        _sp_grid = _load_screener_pass_grid(
+        _sp_result = _load_screener_pass_grid(
             st.session_state.get("auth_user_id", ""),
             start_date=_grid_start,
             end_date=_grid_end,
+            by_year=True,
         )
+        _sp_grid          = _sp_result.get("aggregate", [])    if isinstance(_sp_result, dict) else (_sp_result or [])
+        _sp_by_year       = _sp_result.get("by_year", [])      if isinstance(_sp_result, dict) else []
+        _sp_full_yrs      = _sp_result.get("full_year_count", 0) if isinstance(_sp_result, dict) else 0
         _sp_fetch_err = _sp_grid[0].get("_error") if _sp_grid else None
         if _sp_fetch_err:
             st.warning(f"Could not load screener pass data: {_sp_fetch_err}")
@@ -31718,6 +31787,87 @@ function _bqCopyShareLink() {
                 "All = full backtest universe · Trades/yr estimated from earliest→latest sim_date span. "
                 "Run `python backfill_screener_pass.py` if Gap/Trend counts look too low."
             )
+
+            # ── Year-by-year trend expander ───────────────────────────────────
+            if _sp_full_yrs < 2:
+                st.caption("📅 Year-by-year trend not available — fewer than 2 full years of data.")
+            else:
+                with st.expander("📅 Year-by-year edge trend (Gap vs Trend vs All)", expanded=False):
+                    def _yr_color_wr(v):
+                        if v is None:
+                            return "#546e7a"
+                        return "#2e7d32" if v >= 60 else ("#ef6c00" if v >= 50 else "#c62828")
+                    def _yr_color_avg(v):
+                        if v is None:
+                            return "#546e7a"
+                        return "#4caf50" if v > 0 else ("#ef6c00" if v > -0.1 else "#ef5350")
+                    def _yr_color_exp(v):
+                        if v is None:
+                            return "#546e7a"
+                        return "#c62828" if v >= 2.0 else ("#ef6c00" if v >= 1.0 else ("#2e7d32" if v >= 0.5 else "#546e7a"))
+
+                    _yr_hdr = (
+                        '<tr style="background:#1e2d3d;color:#90a4ae;font-size:10px;">'
+                        '<th style="padding:5px 10px;text-align:left;" rowspan="2">Year</th>'
+                        '<th style="padding:5px 10px;text-align:center;color:#5c8ee6;border-left:1px solid #263545;" colspan="4">🔵 Gap</th>'
+                        '<th style="padding:5px 10px;text-align:center;color:#66bb6a;border-left:1px solid #263545;" colspan="4">🟢 Trend</th>'
+                        '<th style="padding:5px 10px;text-align:center;color:#90a4ae;border-left:1px solid #263545;" colspan="4">⬜ All</th>'
+                        '</tr>'
+                        '<tr style="background:#1a2737;color:#78909c;font-size:10px;">'
+                        '<th style="padding:4px 8px;text-align:right;border-left:1px solid #263545;">Trades</th>'
+                        '<th style="padding:4px 8px;text-align:right;">WR%</th>'
+                        '<th style="padding:4px 8px;text-align:right;">Avg R</th>'
+                        '<th style="padding:4px 8px;text-align:right;">True Exp</th>'
+                        '<th style="padding:4px 8px;text-align:right;border-left:1px solid #263545;">Trades</th>'
+                        '<th style="padding:4px 8px;text-align:right;">WR%</th>'
+                        '<th style="padding:4px 8px;text-align:right;">Avg R</th>'
+                        '<th style="padding:4px 8px;text-align:right;">True Exp</th>'
+                        '<th style="padding:4px 8px;text-align:right;border-left:1px solid #263545;">Trades</th>'
+                        '<th style="padding:4px 8px;text-align:right;">WR%</th>'
+                        '<th style="padding:4px 8px;text-align:right;">Avg R</th>'
+                        '<th style="padding:4px 8px;text-align:right;">True Exp</th>'
+                        '</tr>'
+                    )
+                    _yr_body = ""
+                    for _yi, _yrow in enumerate(_sp_by_year):
+                        _yr_bg = "#131f2e" if _yi % 2 == 0 else "#0f1923"
+                        _yr_val = _yrow.get("year", "?")
+                        _yr_body += f'<tr style="background:{_yr_bg};">'
+                        _yr_body += f'<td style="padding:5px 10px;color:#b0bec5;font-weight:700;">{_yr_val}</td>'
+                        for _sp3 in ["gap", "trend", "all"]:
+                            _t3  = _yrow.get(f"{_sp3}_trades")
+                            _wr3 = _yrow.get(f"{_sp3}_wr_pct")
+                            _av3 = _yrow.get(f"{_sp3}_avg_r")
+                            _ex3 = _yrow.get(f"{_sp3}_true_exp")
+                            _sep = "border-left:1px solid #263545;"
+                            _wc  = _yr_color_wr(_wr3)
+                            _ac  = _yr_color_avg(_av3)
+                            _ec  = _yr_color_exp(_ex3)
+                            _t_str  = "—" if _t3 is None else f"{_t3:,}"
+                            _wr_str = "—" if _wr3 is None else f"{_wr3:.1f}%"
+                            _av_str = "—" if _av3 is None else f'{"+" if _av3 >= 0 else ""}{_av3:.3f}R'
+                            _ex_str = "—" if _ex3 is None else f'{"+" if _ex3 >= 0 else ""}{_ex3:.3f}R'
+                            _yr_body += (
+                                f'<td style="padding:5px 8px;text-align:right;color:#b0bec5;{_sep}">{_t_str}</td>'
+                                f'<td style="padding:5px 8px;text-align:right;"><span style="color:{_wc};font-weight:600;">{_wr_str}</span></td>'
+                                f'<td style="padding:5px 8px;text-align:right;"><span style="color:{_ac};font-weight:600;">{_av_str}</span></td>'
+                                f'<td style="padding:5px 8px;text-align:right;"><span style="color:{_ec};font-weight:700;">{_ex_str}</span></td>'
+                            )
+                        _yr_body += '</tr>'
+                    st.markdown(
+                        f'<div style="overflow-x:auto;">'
+                        f'<table style="width:100%;border-collapse:collapse;background:#131f2e;'
+                        f'border-radius:8px;overflow:hidden;font-size:11px;color:#cfd8dc;">'
+                        f'<thead>{_yr_hdr}</thead><tbody>{_yr_body}</tbody>'
+                        f'</table></div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(
+                        "Each row = one calendar year of backtest data. "
+                        "WR%, Avg R, and True Exp use the same break-outcome definition as the summary above. "
+                        "A year counts as 'full' when data covers both H1 (Jan-Jun) and H2 (Jul-Dec). "
+                        "Years with only edge months will appear in the table but may have lower trade counts."
+                    )
 
     # ── Screener Pass Breakdown ───────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
