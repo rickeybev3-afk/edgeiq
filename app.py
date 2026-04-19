@@ -34118,19 +34118,10 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
-    # Apply bot-matching filter: intraday TCS ≥ 50 (bypass calibration), morning TCS ≥ 60 + IB < 10%
-    if "tcs" in _pt_df.columns:
-        _pt_tcs_num = pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0)
-        if "scan_type" in _pt_df.columns:
-            _pt_scan_norm = _pt_df["scan_type"].str.lower().str.strip().fillna("")
-            _pt_is_morning = _pt_scan_norm.eq("morning")     # only explicit "morning" rows get floor=60
-            _pt_tcs_mask = (
-                (_pt_is_morning  & (_pt_tcs_num >= 60)) |    # morning: TCS ≥ 60
-                (~_pt_is_morning & (_pt_tcs_num >= 50))       # intraday OR unknown: TCS ≥ 50
-            )
-        else:
-            _pt_tcs_mask = _pt_tcs_num >= 50  # fallback when scan_type column missing
-        _pt_df = _pt_df[_pt_tcs_mask]
+    # Show all logged trades — TCS filter is forward-looking (new rules apply from Monday).
+    # Historical paper trades were logged under different TCS thresholds so applying
+    # today's rules retroactively would eliminate nearly all records.
+    # Only enforce IB < 10% (structural quality gate that has always applied).
     if "ib_range_pct" in _pt_df.columns:
         _pt_df = _pt_df[
             _pt_df["ib_range_pct"].isna() | (pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce") < 10.0)
@@ -34138,7 +34129,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
     if _pt_df.empty:
         st.info(
-            "No paper trades pass the current filter yet (intraday TCS ≥ 50 / morning TCS ≥ 60 + IB < 10%) — widen the date range or lower the filter.",
+            "No paper trades logged yet — run the bot through a trading session to build history.",
             icon="📋",
         )
         return
@@ -34163,7 +34154,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         f'padding:14px 22px; text-align:center; min-width:120px;">'
         f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Filtered Setups</div>'
         f'<div style="font-size:30px; font-weight:900; color:#e0e0e0; font-family:monospace;">{_pt_total}</div>'
-        f'<div style="font-size:10px; color:#37474f;">{_pt_dates} day(s) · intraday ≥50 / morning ≥60 · IB &lt;10%</div></div>'
+        f'<div style="font-size:10px; color:#37474f;">{_pt_dates} day(s) · all logged trades · IB &lt;10%</div></div>'
         f'<div style="background:#0a1929; border:1px solid #1565c055; border-radius:10px; '
         f'padding:14px 22px; text-align:center; min-width:120px;">'
         f'<div style="font-size:10px; color:#546e7a; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Avg TCS</div>'
