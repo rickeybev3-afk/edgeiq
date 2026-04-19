@@ -22438,52 +22438,72 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 _neg_sigs = [s for s in _sig_present if s in _bs_negative]
                 _pos_sigs = [s for s in _sig_present if s in _bs_positive]
 
-                _neg_tab, _pos_tab = st.tabs(["🔴 Bad Habits", "🟢 Positive Habits"])
+                _url_init_str("bs_tab", "bs_tab_sel", "bad", allowed=["bad", "positive"])
+                _bs_tab_display = {
+                    "bad": "🔴 Bad Habits",
+                    "positive": "🟢 Positive Habits",
+                }
+                _bs_tab_sel_val = st.session_state.get("bs_tab_sel", "bad")
+                if st.session_state.get("bs_tab_radio") != _bs_tab_display.get(_bs_tab_sel_val):
+                    st.session_state["bs_tab_radio"] = _bs_tab_display[_bs_tab_sel_val]
+                _bs_tab_choice = st.radio(
+                    "Habit tab",
+                    ["🔴 Bad Habits", "🟢 Positive Habits"],
+                    horizontal=True,
+                    key="bs_tab_radio",
+                    label_visibility="collapsed",
+                )
+                _url_push("bs_tab", "positive" if _bs_tab_choice == "🟢 Positive Habits" else "bad")
 
-                for _tab_widget, _tab_sigs, _palette, _tab_label in [
-                    (_neg_tab, _neg_sigs, _neg_palette, "bad"),
-                    (_pos_tab, _pos_sigs, _pos_palette, "positive"),
+                for _tab_sigs, _palette, _tab_label in [
+                    (_neg_sigs, _neg_palette, "bad"),
+                    (_pos_sigs, _pos_palette, "positive"),
                 ]:
-                    with _tab_widget:
-                        if not _tab_sigs:
-                            st.caption(f"No {_tab_label} signals logged yet.")
-                            continue
-                        fig_per = _go.Figure()
-                        for _si, _sig_key in enumerate(_tab_sigs):
-                            _sig_data = (
-                                _sig_weekly[_sig_weekly["signal"] == _sig_key]
-                                .set_index("week")["count"]
-                                .reindex(_weeks_sorted)
-                                .fillna(0)
-                            )
-                            _sig_color = _palette[_si % len(_palette)]
-                            _sig_label = _bs_label_map.get(_sig_key, _sig_key)
-                            fig_per.add_trace(_go.Scatter(
-                                x=[str(w) for w in _weeks_sorted],
-                                y=_sig_data.values,
-                                mode="lines+markers",
-                                name=_sig_label,
-                                line=dict(color=_sig_color, width=2),
-                                marker=dict(size=6),
-                                hovertemplate=(
-                                    f"<b>{_sig_label}</b><br>"
-                                    f"{_bs_period_label} of " + "%{x}<br>Count: %{y}<extra></extra>"
-                                ),
-                            ))
-                        fig_per.update_layout(
-                            paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
-                            font=dict(color="#e0e0e0"), height=320,
-                            xaxis=dict(gridcolor="#2a2a4a", tickangle=-20),
-                            yaxis=dict(title="Times flagged", gridcolor="#2a2a4a",
-                                       rangemode="tozero"),
-                            legend=dict(
-                                orientation="h", y=-0.3, x=0,
-                                font=dict(color="#e0e0e0", size=11),
-                                bgcolor="rgba(0,0,0,0)",
-                            ),
-                            margin=dict(l=10, r=10, t=20, b=90),
+                    _is_active = (
+                        (_tab_label == "bad" and _bs_tab_choice == "🔴 Bad Habits") or
+                        (_tab_label == "positive" and _bs_tab_choice == "🟢 Positive Habits")
+                    )
+                    if not _is_active:
+                        continue
+                    if not _tab_sigs:
+                        st.caption(f"No {_tab_label} signals logged yet.")
+                        continue
+                    fig_per = _go.Figure()
+                    for _si, _sig_key in enumerate(_tab_sigs):
+                        _sig_data = (
+                            _sig_weekly[_sig_weekly["signal"] == _sig_key]
+                            .set_index("week")["count"]
+                            .reindex(_weeks_sorted)
+                            .fillna(0)
                         )
-                        st.plotly_chart(fig_per, use_container_width=True)
+                        _sig_color = _palette[_si % len(_palette)]
+                        _sig_label = _bs_label_map.get(_sig_key, _sig_key)
+                        fig_per.add_trace(_go.Scatter(
+                            x=[str(w) for w in _weeks_sorted],
+                            y=_sig_data.values,
+                            mode="lines+markers",
+                            name=_sig_label,
+                            line=dict(color=_sig_color, width=2),
+                            marker=dict(size=6),
+                            hovertemplate=(
+                                f"<b>{_sig_label}</b><br>"
+                                f"{_bs_period_label} of " + "%{x}<br>Count: %{y}<extra></extra>"
+                            ),
+                        ))
+                    fig_per.update_layout(
+                        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                        font=dict(color="#e0e0e0"), height=320,
+                        xaxis=dict(gridcolor="#2a2a4a", tickangle=-20),
+                        yaxis=dict(title="Times flagged", gridcolor="#2a2a4a",
+                                   rangemode="tozero"),
+                        legend=dict(
+                            orientation="h", y=-0.3, x=0,
+                            font=dict(color="#e0e0e0", size=11),
+                            bgcolor="rgba(0,0,0,0)",
+                        ),
+                        margin=dict(l=10, r=10, t=20, b=90),
+                    )
+                    st.plotly_chart(fig_per, use_container_width=True)
 
             # ── Signal → Outcome Correlation ──────────────────────────────
             _bs_outcome_df = (
