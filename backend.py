@@ -14653,6 +14653,28 @@ def save_daily_scan_log(
         return False
 
 
+def get_earliest_scan_date():
+    """Return the earliest date in daily_scan_log, or None if unavailable."""
+    if not supabase:
+        return None
+    try:
+        import datetime as _dt
+        res = (supabase.table("daily_scan_log")
+               .select("scan_date")
+               .order("scan_date", desc=False)
+               .limit(1)
+               .execute())
+        if res.data and res.data[0].get("scan_date"):
+            raw = res.data[0]["scan_date"]
+            if isinstance(raw, str):
+                return _dt.date.fromisoformat(raw[:10])
+            return raw
+        return None
+    except Exception as e:
+        logging.warning(f"get_earliest_scan_date error: {e}")
+        return None
+
+
 def load_daily_scan_log(scan_date=None) -> dict:
     """Load daily_scan_log rows for a given date.
 

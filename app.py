@@ -31870,13 +31870,22 @@ function _bqCopyShareLink() {
             if not st.session_state.get("_daily_scan_log_ensured"):
                 ensure_daily_scan_log_table()
                 st.session_state["_daily_scan_log_ensured"] = True
+            if "_earliest_scan_date" not in st.session_state:
+                st.session_state["_earliest_scan_date"] = get_earliest_scan_date()
+            _earliest_scan_date = st.session_state["_earliest_scan_date"]
             _dsl_picked_date = st.date_input(
                 "Scan date",
                 value=date.today(),
+                min_value=_earliest_scan_date if _earliest_scan_date else None,
                 max_value=date.today(),
                 key="scanner_funnel_date",
                 help="Browse scan logs for any past day. Defaults to today.",
             )
+            if _earliest_scan_date:
+                st.caption(
+                    f"Scan history available from "
+                    f"**{_earliest_scan_date.strftime('%B %d, %Y')}**"
+                )
             _dsl = load_daily_scan_log(_dsl_picked_date)
             if _dsl["total"] == 0:
                 if _dsl_picked_date == date.today():
