@@ -3035,6 +3035,67 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         else:
                             st.error("Failed to save — check Supabase connection.")
 
+            # ── Voice transcript expander ─────────────────────────────────────
+            _transcript_v = str(row.get("transcript", "") or "").strip()
+            if _transcript_v:
+                import html as _html_mod
+                _behav_sum_v    = str(row.get("behavioral_summary", "") or "").strip()
+                _cog_tags_raw_v = str(row.get("cognitive_tags", "") or "").strip()
+                with st.expander("🎙️ View Transcript"):
+                    st.markdown(
+                        f'<div style="background:#0d1b2a;border:1px solid #1e3a5f;'
+                        f'border-radius:8px;padding:14px 18px;font-size:13px;'
+                        f'color:#cfd8e3;line-height:1.7;white-space:pre-wrap;">'
+                        f'{_html_mod.escape(_transcript_v)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if _behav_sum_v:
+                        st.markdown(
+                            f'<div style="margin-top:10px;background:#1a1f2e;'
+                            f'border:1px solid #2a3a5a;border-radius:6px;'
+                            f'padding:10px 14px;font-size:12px;color:#90caf9;">'
+                            f'<strong style="color:#64b5f6;">Behavioral Summary</strong><br>'
+                            f'{_html_mod.escape(_behav_sum_v)}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    if _cog_tags_raw_v:
+                        try:
+                            import json as _json_j
+                            _cog_tags_v = _json_j.loads(_cog_tags_raw_v)
+                            _pos_v = [
+                                _VJ_SIGNAL_LABELS.get(k, k)
+                                for k, v in _cog_tags_v.items()
+                                if v and k in _VJ_POSITIVE_SIGNALS
+                            ]
+                            _neg_v = [
+                                _VJ_SIGNAL_LABELS.get(k, k)
+                                for k, v in _cog_tags_v.items()
+                                if v and k in _VJ_NEGATIVE_SIGNALS
+                            ]
+                            if _pos_v or _neg_v:
+                                _sig_html_v = (
+                                    '<div style="margin-top:10px;display:flex;'
+                                    'flex-wrap:wrap;gap:6px;">'
+                                )
+                                for _s in _pos_v:
+                                    _sig_html_v += (
+                                        f'<span style="background:#1b3a2555;'
+                                        f'border:1px solid #4caf5066;color:#81c784;'
+                                        f'font-size:10px;font-weight:600;padding:2px 8px;'
+                                        f'border-radius:10px;">{_html_mod.escape(_s)}</span>'
+                                    )
+                                for _s in _neg_v:
+                                    _sig_html_v += (
+                                        f'<span style="background:#3a1b1b55;'
+                                        f'border:1px solid #ef535066;color:#ef9a9a;'
+                                        f'font-size:10px;font-weight:600;padding:2px 8px;'
+                                        f'border-radius:10px;">{_html_mod.escape(_s)}</span>'
+                                    )
+                                _sig_html_v += '</div>'
+                                st.markdown(_sig_html_v, unsafe_allow_html=True)
+                        except Exception:
+                            pass
+
     if not df.empty:
         # Equity curve — grade average over entries
         st.markdown("---")
