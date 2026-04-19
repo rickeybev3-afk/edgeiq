@@ -637,11 +637,15 @@ else:
         and str(pnl_date_start) <= r["sim_date"] <= str(pnl_date_end)
     ]
     # ── Per-day cap: take top N by TCS per trading day ──────────────────────
+    # Group by the date portion only (first 10 chars) so datetime strings
+    # with time components don't create false unique keys per row.
     if pnl_max_per_day and pnl_max_per_day > 0:
         from collections import defaultdict as _dd
         _by_date: dict = _dd(list)
         for _r in _date_filtered:
-            _by_date[_r["sim_date"]].append(_r)
+            _day_key = (_r.get("sim_date") or "")[:10]
+            if _day_key:
+                _by_date[_day_key].append(_r)
         sorted_trades = []
         for _d in sorted(_by_date.keys()):
             _day_trades = sorted(_by_date[_d], key=lambda x: float(x.get("tcs") or 0), reverse=True)
