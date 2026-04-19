@@ -31956,6 +31956,38 @@ function _bqCopyShareLink() {
                         "A year counts as 'full' when data covers both H1 (Jan-Jun) and H2 (Jul-Dec). "
                         "Years with only edge months will appear in the table but may have lower trade counts."
                     )
+                    def _yr_fmt(v, fmt="{:.4f}"):
+                        return "" if v is None else fmt.format(v)
+                    _yr_csv_header = (
+                        "Year,Gap Trades,Gap WR%,Gap Avg R,Gap True Exp,"
+                        "Trend Trades,Trend WR%,Trend Avg R,Trend True Exp,"
+                        "All Trades,All WR%,All Avg R,All True Exp"
+                    )
+                    _yr_csv_rows = [_yr_csv_header]
+                    for _yrow in _sp_by_year:
+                        _yr_csv_rows.append(
+                            f'{_yrow.get("year", "")},'
+                            f'{_yr_fmt(_yrow.get("gap_trades"), "{:.0f}")},'
+                            f'{_yr_fmt(_yrow.get("gap_wr_pct"))},'
+                            f'{_yr_fmt(_yrow.get("gap_avg_r"))},'
+                            f'{_yr_fmt(_yrow.get("gap_true_exp"))},'
+                            f'{_yr_fmt(_yrow.get("trend_trades"), "{:.0f}")},'
+                            f'{_yr_fmt(_yrow.get("trend_wr_pct"))},'
+                            f'{_yr_fmt(_yrow.get("trend_avg_r"))},'
+                            f'{_yr_fmt(_yrow.get("trend_true_exp"))},'
+                            f'{_yr_fmt(_yrow.get("all_trades"), "{:.0f}")},'
+                            f'{_yr_fmt(_yrow.get("all_wr_pct"))},'
+                            f'{_yr_fmt(_yrow.get("all_avg_r"))},'
+                            f'{_yr_fmt(_yrow.get("all_true_exp"))}'
+                        )
+                    _yr_csv_str = "\n".join(_yr_csv_rows)
+                    st.download_button(
+                        label="⬇️ Download CSV",
+                        data=_yr_csv_str,
+                        file_name="year_by_year_edge_trend.csv",
+                        mime="text/csv",
+                        key="dl_year_by_year_edge_csv",
+                    )
 
     # ── Screener Pass Breakdown ───────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
