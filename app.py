@@ -9411,7 +9411,7 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
     # ── Scan controls ───────────────────────────────────────────────────────────
     _pb_c1, _pb_c2, _pb_c3 = st.columns([2, 1, 1])
     with _pb_c1:
-        _url_init_int("pb_top", "playbook_top_slider", 50)
+        _url_init_int("pb_top", "playbook_top_slider", 50, clamp=(20, 100, 10))
         _pb_top = st.slider("Candidates to scan per source", 20, 100, 50, step=10,
                             key="playbook_top_slider")
         _url_push("pb_top", str(_pb_top))

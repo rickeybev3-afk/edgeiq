@@ -86,8 +86,15 @@ def _url_init_str_pref(qp_key, ss_key, default="", *, pref_val="",
     return qp_valid
 
 
-def _url_init_int(qp_key, ss_key, default=0, *, last_url_key=None):
+def _url_init_int(qp_key, ss_key, default=0, *, clamp=None, last_url_key=None):
     """Guard-initialise an int session-state key from URL query params.
+
+    Parameters
+    ----------
+    clamp : Optional ``(min, max)`` or ``(min, max, step)`` tuple.  Values
+            outside ``[min, max]`` are clamped to the nearest bound; when a
+            ``step`` is provided the result is also rounded to the nearest
+            multiple of ``step`` relative to ``min``.
 
     Returns the raw QP string (already stored; caller rarely needs it).
     """
@@ -95,7 +102,16 @@ def _url_init_int(qp_key, ss_key, default=0, *, last_url_key=None):
     qp_raw = st.query_params.get(qp_key, str(default))
     if ss_key not in st.session_state or st.session_state.get(_luk) != qp_raw:
         try:
-            st.session_state[ss_key] = int(qp_raw)
+            val = int(qp_raw)
+            if clamp is not None:
+                lo, hi = clamp[0], clamp[1]
+                step = clamp[2] if len(clamp) > 2 else None
+                val = max(lo, min(hi, val))
+                if step:
+                    steps = (val - lo + step // 2) // step
+                    val = lo + steps * step
+                    val = max(lo, min(hi, val))
+            st.session_state[ss_key] = val
         except (ValueError, TypeError):
             st.session_state[ss_key] = default
         st.session_state[_luk] = qp_raw
