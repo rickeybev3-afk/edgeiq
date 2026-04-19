@@ -367,10 +367,9 @@ def _struct_tcs_floor(r: dict, tcs_thresholds: dict, regime_floor: int) -> int:
 
 # ── Dynamic position sizing ────────────────────────────────────────────────────
 def _compute_risk_dollars() -> float:
-    """Return 1% of current Alpaca account equity, capped at $2,000.
+    """Return 2.1% of current Alpaca account equity, capped at $2,000.
 
     Falls back to RISK_PER_TRADE env var if account fetch fails.
-    Floor is $250 so tiny accounts still place a meaningful order.
     """
     equity = get_alpaca_account_equity(
         is_paper   = IS_PAPER_ALPACA,
@@ -378,9 +377,9 @@ def _compute_risk_dollars() -> float:
         secret_key = ALPACA_SECRET_KEY,
     )
     if equity and equity > 0:
-        dynamic = equity * 0.01          # 1% of account
-        risk    = min(dynamic, 2000.0)   # cap $2,000 — no floor, true 1% always
-        log.info(f"  Account equity: ${equity:,.0f} → 1% = ${dynamic:,.0f} → risk/trade: ${risk:,.0f}")
+        dynamic = equity * 0.021         # 2.1% of account
+        risk    = min(dynamic, 2000.0)   # cap $2,000
+        log.info(f"  Account equity: ${equity:,.0f} → 2.1% = ${dynamic:,.0f} → risk/trade: ${risk:,.0f}")
         return risk
     log.warning(f"  Could not fetch account equity — using fallback ${RISK_PER_TRADE:.0f}/trade")
     return RISK_PER_TRADE
