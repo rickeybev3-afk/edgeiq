@@ -3195,6 +3195,18 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         except Exception:
                             pass
 
+                    _audio_b64_v = str(row.get("audio_b64", "") or "").strip()
+                    if _audio_b64_v:
+                        st.markdown(
+                            f'<div style="margin-top:14px;">'
+                            f'<audio controls style="width:100%;border-radius:6px;">'
+                            f'<source src="data:audio/webm;base64,{_audio_b64_v}" type="audio/webm">'
+                            f'<source src="data:audio/ogg;base64,{_audio_b64_v}" type="audio/ogg">'
+                            f'Your browser does not support the audio element.'
+                            f'</audio></div>',
+                            unsafe_allow_html=True,
+                        )
+
     if not df.empty:
         # Equity curve — grade average over entries
         st.markdown("---")
