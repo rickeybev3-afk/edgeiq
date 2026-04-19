@@ -12,8 +12,6 @@ import plotly.graph_objects as go
 import sys, os, time
 from datetime import datetime
 
-st.session_state["fs_use_vwap"] = False
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import backend
 
@@ -24,6 +22,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# VWAP adds no edge (backtest confirmed) — force OFF every load so it never auto-enables
+st.session_state["fs_use_vwap"] = False
 
 st.markdown("""
 <style>
