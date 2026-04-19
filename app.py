@@ -34551,7 +34551,6 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                             if len(_ptt_eod_wkly_all) >= 3:
                                 _ptt_eod_spk_data = _ptt_eod_wkly_all
                         except (ValueError, KeyError, TypeError) as _ptt_eod_spk_err:
-                            import sys
                             print(f"[EOD sparkline] {_ptt_eod_scan}: {_ptt_eod_spk_err}", file=sys.stderr)
                     _ptt_eod_spk_anchor = f"ptt-eod-spk-{_ptt_eod_scan}"
                     _ptt_eod_arrow_html = ""
@@ -35681,7 +35680,6 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
             # ── Convergence chart ───────────────────────────────────────────
             if len(_bvy_series) >= 3:
-                import plotly.graph_objects as go
                 _bvy_dates  = [s[0] for s in _bvy_series]
                 _bvy_rates  = [s[1] for s in _bvy_series]
                 _bvy_avg    = round(sum(_bvy_rates) / len(_bvy_rates), 1)
