@@ -26099,6 +26099,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     if "sp_tier_last_refresh" not in st.session_state:
         st.session_state["sp_tier_last_refresh"] = datetime.now()
     _sp_hdr_col, _sp_auto_col, _sp_refresh_col = st.columns([5.5, 2, 1.5])
+    _url_init_str("sp_tier_ar", "sp_tier_auto_interval", "Off",
+                  allowed=["Off", "1 min", "5 min", "15 min"])
     with _sp_auto_col:
         st.selectbox(
             "Auto-refresh",
@@ -26107,6 +26109,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             label_visibility="collapsed",
             help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
         )
+        _url_push("sp_tier_ar", st.session_state.get("sp_tier_auto_interval", "Off"))
         st.caption("🔁 Auto-refresh")
         st.selectbox(
             "Countdown tick",
@@ -31923,6 +31926,8 @@ function _bqCopyShareLink() {
                     "Run `python backfill_screener_pass.py` to classify historical rows if counts look low."
                 ),
             )
+        _url_init_str("sp_grid_ar", "sp_grid_auto_interval", "Off",
+                      allowed=["Off", "1 min", "5 min", "15 min"])
         with _sp2_auto_col:
             st.selectbox(
                 "Auto-refresh",
@@ -31931,6 +31936,7 @@ function _bqCopyShareLink() {
                 label_visibility="collapsed",
                 help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
             )
+            _url_push("sp_grid_ar", st.session_state.get("sp_grid_auto_interval", "Off"))
             st.caption("🔁 Auto-refresh")
             st.selectbox(
                 "Countdown tick",
