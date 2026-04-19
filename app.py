@@ -2409,6 +2409,27 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _journal_export = df.copy()
             if "structure" in _journal_export.columns:
                 _journal_export["structure"] = _journal_export["structure"].apply(_clean_structure_label)
+            if "voice_signals" in _journal_export.columns:
+                import json as _json
+
+                def _expand_signals(val):
+                    if isinstance(val, dict):
+                        signals = val
+                    elif isinstance(val, str):
+                        try:
+                            signals = _json.loads(val)
+                            if not isinstance(signals, dict):
+                                signals = {}
+                        except Exception:
+                            signals = {}
+                    else:
+                        signals = {}
+                    return {k: int(bool(signals.get(k, False))) for k in _VJ_SIGNAL_KEYS}
+                _sig_df = _journal_export["voice_signals"].apply(_expand_signals).apply(pd.Series)
+                _drop_col = _journal_export.columns.get_loc("voice_signals")
+                _left = _journal_export.iloc[:, :_drop_col]
+                _right = _journal_export.iloc[:, _drop_col + 1:]
+                _journal_export = pd.concat([_left, _sig_df, _right], axis=1)
             csv_bytes = _journal_export.to_csv(index=False).encode()
             st.download_button(
                 "⬇️ Download Journal (CSV)",
