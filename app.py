@@ -2081,6 +2081,27 @@ def render_log_entry_ui():
             placeholder="e.g. Calm, FOMO, Greed, Hesitated...",
             key="journal_notes_input",
         )
+
+        st.markdown(
+            '<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+            'letter-spacing:1px; margin:8px 0 4px 0;">✅ Process Quality</div>',
+            unsafe_allow_html=True,
+        )
+        _followed_plan = st.radio(
+            "Did you execute your plan?",
+            options=["Yes", "No"],
+            index=0,
+            horizontal=True,
+            key="journal_followed_plan",
+        )
+        _deviation_notes = ""
+        if _followed_plan == "No":
+            _deviation_notes = st.text_input(
+                "What deviated from your plan?",
+                placeholder="e.g. Moved stop early, sized up without signal...",
+                key="journal_deviation_notes",
+            )
+
         if st.button("💾 LOG ENTRY", use_container_width=True, key="journal_log_btn"):
             grade, reason = compute_trade_grade(
                 state.get("rvol"), state.get("tcs"), state.get("price"),
@@ -2100,6 +2121,8 @@ def render_log_entry_ui():
                 "notes":     notes,
                 "grade":     grade,
                 "grade_reason": reason,
+                "followed_plan":   _followed_plan.lower(),
+                "deviation_notes": _deviation_notes,
                 "social_bull_pct":  state.get("social_bull_pct"),
                 "social_bear_pct":  state.get("social_bear_pct"),
                 "social_msg_count": state.get("social_msg_count"),
@@ -2179,6 +2202,15 @@ def render_log_entry_ui():
 def render_journal_tab(api_key: str = "", secret_key: str = ""):
     """Render the 📖 My Journal tab."""
     _uid = st.session_state.get("auth_user_id", "")
+    if not st.session_state.get("_process_cols_ensured"):
+        _cols_ok = ensure_process_columns()
+        if _cols_ok:
+            st.session_state["_process_cols_ensured"] = True
+        else:
+            st.warning(
+                "⚠️ Could not verify process-grade columns in the database. "
+                "Saving process grades may fail until the connection is restored."
+            )
     df = _cached_load_journal(user_id=_uid)
 
     with st.expander("📋 How to use this tab — read this first", expanded=df.empty):
@@ -2623,6 +2655,25 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 "", notes_v
             ).strip(" |·").strip()
 
+            # Process-grade badge
+            _fp_val = str(row.get("followed_plan", "") or "").strip().lower()
+            _dev_v  = str(row.get("deviation_notes", "") or "").strip()
+            if _fp_val == "yes":
+                _process_badge = (
+                    '<span style="background:#1b3a2555;border:1px solid #4caf5066;'
+                    'color:#81c784;font-size:10px;font-weight:600;padding:2px 8px;'
+                    'border-radius:10px;white-space:nowrap;">✅ Followed plan</span>'
+                )
+            elif _fp_val == "no":
+                _dev_display = f" — {_dev_v}" if _dev_v else ""
+                _process_badge = (
+                    f'<span style="background:#3a1b1b55;border:1px solid #ef535066;'
+                    f'color:#ef9a9a;font-size:10px;font-weight:600;padding:2px 8px;'
+                    f'border-radius:10px;white-space:nowrap;">⚠️ Deviated{_dev_display}</span>'
+                )
+            else:
+                _process_badge = ""
+
             _j_cols = st.columns([8, 1])
             with _j_cols[0]:
                 st.markdown(
@@ -2636,6 +2687,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     f'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
                     f'<span style="font-size:20px;font-weight:800;color:#e0e0e0;">{sym}</span>'
                     f'{_hold_badge}'
+                    f'{(" " + _process_badge) if _process_badge else ""}'
                     f'<span style="font-size:11px;color:#666;">{ts}</span>'
                     f'</div>'
                     f'<div style="font-size:13px;margin:3px 0;">{_price_line}</div>'
@@ -2698,7 +2750,93 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             showlegend=False,
         )
         st.plotly_chart(fig, use_container_width=True)
-    
+
+        # ── Process vs Outcome Gap ────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("**Process vs Outcome**")
+        if "followed_plan" in df.columns:
+            _pog_df = df[df["followed_plan"].isin(["yes", "no"])].copy()
+        else:
+            _pog_df = df.iloc[0:0].copy()
+
+        if _pog_df.empty:
+            st.caption("No process data yet — use the '💾 Log This Trade Entry' form to record whether you followed your plan.")
+        else:
+            _pog_df["_grade_score"] = _pog_df["grade"].map(_GRADE_SCORE).fillna(1)
+            _pog_df["_win"] = _pog_df["win_loss"].str.lower().eq("win") if "win_loss" in _pog_df.columns else False
+
+            _followed   = _pog_df[_pog_df["followed_plan"] == "yes"]
+            _deviated   = _pog_df[_pog_df["followed_plan"] == "no"]
+
+            _f_count = len(_followed)
+            _d_count = len(_deviated)
+            _total   = _f_count + _d_count
+
+            _f_avg_grade = _followed["_grade_score"].mean() if _f_count else 0.0
+            _d_avg_grade = _deviated["_grade_score"].mean() if _d_count else 0.0
+            _f_win_rate  = (_followed["_win"].sum() / _f_count * 100) if _f_count else 0.0
+            _d_win_rate  = (_deviated["_win"].sum() / _d_count * 100) if _d_count else 0.0
+
+            _grade_labels = {1: "F", 2: "C", 3: "B", 4: "A"}
+
+            _sc1, _sc2, _sc3 = st.columns(3)
+            with _sc1:
+                st.markdown(
+                    f'<div style="background:#12122288;border:1px solid #2a2a4a;border-radius:8px;'
+                    f'padding:12px 16px;text-align:center;">'
+                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Followed Plan</div>'
+                    f'<div style="font-size:22px;font-weight:800;color:#81c784;">{_f_count}</div>'
+                    f'<div style="font-size:11px;color:#666;">'
+                    f'{round(_f_count/_total*100) if _total else 0}% of graded entries</div>'
+                    f'<div style="font-size:12px;color:#a5d6a7;margin-top:6px;">'
+                    f'Avg grade: <b>{_grade_labels.get(round(_f_avg_grade), "—")}</b>'
+                    f'{"  ·  Win rate: " + str(round(_f_win_rate)) + "%" if _f_count else ""}'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+            with _sc2:
+                st.markdown(
+                    f'<div style="background:#12122288;border:1px solid #2a2a4a;border-radius:8px;'
+                    f'padding:12px 16px;text-align:center;">'
+                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Deviated from Plan</div>'
+                    f'<div style="font-size:22px;font-weight:800;color:#ef9a9a;">{_d_count}</div>'
+                    f'<div style="font-size:11px;color:#666;">'
+                    f'{round(_d_count/_total*100) if _total else 0}% of graded entries</div>'
+                    f'<div style="font-size:12px;color:#ef9a9a;margin-top:6px;">'
+                    f'Avg grade: <b>{_grade_labels.get(round(_d_avg_grade), "—")}</b>'
+                    f'{"  ·  Win rate: " + str(round(_d_win_rate)) + "%" if _d_count else ""}'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+            with _sc3:
+                # Gap interpretation
+                _gap = _f_avg_grade - _d_avg_grade
+                if _f_count == 0 or _d_count == 0:
+                    _gap_label = "Not enough data"
+                    _gap_color = "#888"
+                    _gap_detail = "Log more trades with process data"
+                elif _gap > 0.5:
+                    _gap_label = "Disciplined edge"
+                    _gap_color = "#81c784"
+                    _gap_detail = "Following your plan leads to better outcomes"
+                elif _gap < -0.5:
+                    _gap_label = "Lucky deviation"
+                    _gap_color = "#ffcc80"
+                    _gap_detail = "Deviating has paid off — may not be systematic"
+                else:
+                    _gap_label = "Neutral gap"
+                    _gap_color = "#90caf9"
+                    _gap_detail = "Process and outcome are closely aligned"
+                st.markdown(
+                    f'<div style="background:#12122288;border:1px solid #2a2a4a;border-radius:8px;'
+                    f'padding:12px 16px;text-align:center;">'
+                    f'<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Process–Outcome Gap</div>'
+                    f'<div style="font-size:18px;font-weight:800;color:{_gap_color};margin:4px 0;">{_gap_label}</div>'
+                    f'<div style="font-size:11px;color:#666;margin-top:4px;">{_gap_detail}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
         # ── Review Trades ────────────────────────────────────────────────────────
         st.markdown("---")
         with st.expander("🔍 Review Trades — Log Actual Outcome", expanded=False):
@@ -2772,12 +2910,66 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     "Direction", options=["Long", "Short"],
                     key="review_direction", horizontal=False,
                 )
-    
-            _submit_review = st.button(
-                "💾 Save Review to Accuracy Tracker",
-                use_container_width=True, key="review_submit_btn",
+
+            st.markdown(
+                '<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+                'letter-spacing:1px; margin:10px 0 4px 0;">✅ Process Quality</div>',
+                unsafe_allow_html=True,
             )
+            _existing_fp = str(_sel_row.get("followed_plan", "") or "").strip().lower()
+            _rev_fp_default = 0 if _existing_fp != "no" else 1
+            _review_followed_plan = st.radio(
+                "Did you execute your plan?",
+                options=["Yes", "No"],
+                index=_rev_fp_default,
+                horizontal=True,
+                key="review_followed_plan",
+            )
+            _existing_dev = str(_sel_row.get("deviation_notes", "") or "").strip()
+            _review_deviation_notes = ""
+            if _review_followed_plan == "No":
+                _review_deviation_notes = st.text_input(
+                    "What deviated from your plan?",
+                    value=_existing_dev,
+                    placeholder="e.g. Moved stop early, sized up without signal...",
+                    key="review_deviation_notes",
+                )
+
+            _btn_c1, _btn_c2 = st.columns([3, 2])
+            with _btn_c1:
+                _submit_review = st.button(
+                    "💾 Save Review to Accuracy Tracker",
+                    use_container_width=True, key="review_submit_btn",
+                )
+            with _btn_c2:
+                _save_process = st.button(
+                    "✅ Save Process Grade Only",
+                    use_container_width=True, key="review_process_btn",
+                    help="Update followed_plan and deviation_notes without logging an exit price",
+                )
     
+            if _save_process:
+                _row_id = _sel_row.get("id")
+                if not _row_id:
+                    st.error("Cannot update — this entry has no database ID.")
+                else:
+                    _fp_save = _review_followed_plan.lower()
+                    _dev_save = _review_deviation_notes if _review_followed_plan == "No" else ""
+                    _ok = update_journal_process_grade(
+                        row_id=_row_id,
+                        followed_plan=_fp_save,
+                        deviation_notes=_dev_save,
+                        user_id=_uid,
+                    )
+                    if _ok:
+                        _cached_load_journal.clear()
+                        st.success(
+                            f"Process grade saved: **{'✅ Followed plan' if _fp_save == 'yes' else '⚠️ Deviated'}**"
+                            + (f" — {_dev_save}" if _dev_save else "")
+                        )
+                    else:
+                        st.error("Failed to save process grade — check database connection.")
+
             if _submit_review:
                 if _exit_price <= 0:
                     st.error("Exit price must be greater than zero.")
@@ -2790,6 +2982,18 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                             direction=_direction,
                             user_id=_uid,
                         )
+                        # Also persist process grade alongside outcome review
+                        _row_id = _sel_row.get("id")
+                        if _row_id:
+                            _fp_rv = _review_followed_plan.lower()
+                            _dev_rv = _review_deviation_notes if _review_followed_plan == "No" else ""
+                            update_journal_process_grade(
+                                row_id=_row_id,
+                                followed_plan=_fp_rv,
+                                deviation_notes=_dev_rv,
+                                user_id=_uid,
+                            )
+                            _cached_load_journal.clear()
                     if _res.get("error"):
                         st.error(f"Error: {_res['error']}")
                     else:
@@ -2815,7 +3019,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                             f'{_pnl_sign}${_pnl_d:.4f} ({_pnl_sign}{_pnl_p:.2f}%)</b>'
                             f'&nbsp;&nbsp;·&nbsp;&nbsp;{_struct_badge}</div>'
                             f'<div style="font-size:11px; color:#666; margin-top:4px;">'
-                            f'Saved to Accuracy Tracker · '
+                            f'Saved to Accuracy Tracker + Process Grade · '
                             f'{_direction} {_sel_row.get("ticker","")} '
                             f'${_entry_px:.4f} → ${_exit_price:.4f}</div>'
                             f'</div>',

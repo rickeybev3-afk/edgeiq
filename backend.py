@@ -1134,6 +1134,7 @@ _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
+    "followed_plan", "deviation_notes",
 ]
 
 _BRAIN_WEIGHT_KEYS = [
@@ -5457,6 +5458,7 @@ _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
+    "followed_plan", "deviation_notes",
 ]
 
 
@@ -5544,6 +5546,55 @@ def ensure_cognitive_columns() -> bool:
         return True
     except Exception:
         return False
+
+
+def update_journal_process_grade(row_id, followed_plan: str, deviation_notes: str, user_id: str = "") -> bool:
+    """Update the followed_plan and deviation_notes on an existing trade_journal row.
+
+    Parameters
+    ----------
+    row_id        : the Supabase row id (integer primary key) of the journal entry
+    followed_plan : "yes" or "no"
+    deviation_notes: free-text explanation when plan was not followed
+    user_id       : optional user_id for safety filter
+    Returns True on success, False on failure.
+    """
+    if not supabase:
+        return False
+    try:
+        q = supabase.table("trade_journal").update({
+            "followed_plan": followed_plan,
+            "deviation_notes": deviation_notes,
+        }).eq("id", row_id)
+        if user_id:
+            q = q.eq("user_id", user_id)
+        q.execute()
+        return True
+    except Exception as e:
+        print(f"update_journal_process_grade error: {e}")
+        return False
+
+
+def ensure_process_columns() -> bool:
+    """Add process-quality columns to trade_journal if they don't exist.
+    Safe to call on startup — uses IF NOT EXISTS."""
+    if not supabase:
+        return False
+    cols = [
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS followed_plan TEXT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS deviation_notes TEXT",
+    ]
+    try:
+        for sql in cols:
+            supabase.rpc("exec_sql", {"query": sql}).execute()
+        return True
+    except Exception:
+        try:
+            supabase.table("trade_journal").select("followed_plan,deviation_notes").limit(1).execute()
+            return True
+        except Exception as e:
+            print(f"ensure_process_columns warning: {e}")
+            return False
 
 
 def extract_cognitive_tags(transcript: str) -> dict:
