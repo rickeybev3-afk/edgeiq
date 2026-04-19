@@ -3,6 +3,21 @@
 
 ---
 
+## 🔁 DEFERRED DECISIONS — Come Back To These
+
+### Exit Logic Review — After 3–4 Weeks of Live Fills (noted Apr 19, 2026)
+Current live bot: places fixed bracket to T1 (1.0–1.5R from adaptive_exits.json), then cancels and switches to trailing stop when T1 is hit. Trail size = 1R.
+
+The sim log (Apr 14–17) shows trailing-from-entry captures significantly more on big moves (e.g. CADL: sim got 5.86R vs bot's ~3-4R). But sim has perfect fills and no slippage.
+
+**What to do after live data:** Compare actual Alpaca booked R vs sim P&L (R) on the same tickers/dates. If the gap is consistently large (bot leaving >1R on the table vs sim), consider:
+- Lowering T1 trigger so trailing starts sooner
+- Or switching to pure trail-from-entry approach
+
+**Do not change exit logic before having 3–4 weeks of live fills. The adaptive_exits targets were E[R]-optimized from the backtest — don't override them on sim visuals alone.**
+
+---
+
 ## 📝 SESSION NOTE — April 19, 2026 (Late — overnight builds)
 
 ### What was built tonight (full changelog)
