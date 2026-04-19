@@ -265,6 +265,9 @@ MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", _default_po
 PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
 # Cooldown between repeated PDT floor warnings (seconds) — default 4 hours
 PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
+# Tracks the date a PDT-block Telegram alert was last sent — prevents N duplicate
+# alerts when N setups all hit the same block in one scan session.
+_PDT_BLOCK_ALERTED_DATE: "date | None" = None
 
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -974,12 +977,20 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"  [{ticker}] ORDER BLOCKED — PDT limit reached "
             f"({_dt_count} day trades in rolling 5 days, max {PDT_MAX_DAY_TRADES})"
         )
-        tg_send(
-            f"🚫 <b>{ticker} Order Blocked — PDT Limit Reached</b>\n"
-            f"Day trades used: <b>{_dt_count}/{PDT_MAX_DAY_TRADES}</b> in rolling 5-day window\n"
-            f"No new orders will be placed until a trade day rolls off.\n"
-            f"<i>FINRA PDT rule: &lt;$25k accounts limited to 3 round-trips / 5 days.</i>"
-        )
+        # Send Telegram only once per calendar day — prevents N duplicate alerts
+        # when N setups all hit the same PDT block in one scan session.
+        global _PDT_BLOCK_ALERTED_DATE
+        _today_pdt = datetime.now(EASTERN).date()
+        if _PDT_BLOCK_ALERTED_DATE != _today_pdt:
+            _PDT_BLOCK_ALERTED_DATE = _today_pdt
+            tg_send(
+                f"🚫 <b>PDT Limit Reached — All Orders Blocked</b>\n"
+                f"Day trades used: <b>{_dt_count}/{PDT_MAX_DAY_TRADES}</b> in rolling 5-day window\n"
+                f"No new orders will be placed until a trade day rolls off.\n"
+                f"<i>FINRA PDT rule: &lt;$25k accounts limited to 3 round-trips / 5 days.</i>"
+            )
+        else:
+            log.info(f"  [{ticker}] PDT block alert suppressed — already sent today")
         _patch_skip_reason(r, ticker, "pdt_blocked")
         return
 
