@@ -3368,6 +3368,122 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        # ── Process Grade Trend ───────────────────────────────────────────────
+        st.markdown("**Process Grade Trend**")
+        _pgt_has_col = "process_grade" in df.columns
+        _pgt_df = df[df["process_grade"].notna() & (df["process_grade"] != "")].copy() if _pgt_has_col else df.iloc[0:0].copy()
+
+        if _pgt_df.empty:
+            st.caption(
+                "No process grades recorded yet — use the Voice Memo Logger or the "
+                "'💾 Log This Trade Entry' form to capture behavioral signals."
+            )
+        else:
+            _pgt_window_options = {"Last 5": 5, "Last 10": 10, "Last 20": 20, "All-time": None}
+            _pgt_col1, _pgt_col2 = st.columns([2, 2])
+            with _pgt_col1:
+                _pgt_window_label = st.selectbox(
+                    "Rolling window",
+                    options=list(_pgt_window_options.keys()),
+                    index=3,
+                    key="pgt_window_select",
+                    label_visibility="collapsed",
+                )
+            with _pgt_col2:
+                _pgt_show_outcome = st.checkbox(
+                    "Overlay outcome grade",
+                    value=True,
+                    key="pgt_show_outcome",
+                )
+
+            _pgt_window = _pgt_window_options[_pgt_window_label]
+
+            # Map grades to 0–4 numeric scale (F=0, D=1, C=2, B=3, A=4)
+            _PROC_GRADE_SCORE = {"A": 4, "B": 3, "C": 2, "D": 1, "F": 0}
+            # Sort chronologically so the trend reflects true time order
+            if "timestamp" in _pgt_df.columns:
+                _pgt_df = _pgt_df.sort_values("timestamp", ascending=True)
+            _pgt_df = _pgt_df.reset_index(drop=True)
+            _pgt_df["_entry_num"]      = range(1, len(_pgt_df) + 1)
+            # Normalise before mapping to avoid silent NaNs from casing/whitespace
+            _pgt_df["_proc_grade_norm"] = _pgt_df["process_grade"].astype(str).str.strip().str.upper()
+            _pgt_df["_proc_score"]     = _pgt_df["_proc_grade_norm"].map(_PROC_GRADE_SCORE)
+            _pgt_df["_outcome_score"]  = _pgt_df["grade"].map(_GRADE_SCORE).fillna(float("nan"))
+
+            if _pgt_window is None:
+                _pgt_df["_proc_roll"]    = _pgt_df["_proc_score"].expanding().mean()
+                _pgt_df["_outcome_roll"] = _pgt_df["_outcome_score"].expanding().mean()
+                _pgt_win_str = "all-time avg"
+            else:
+                _pgt_df["_proc_roll"]    = _pgt_df["_proc_score"].rolling(_pgt_window, min_periods=1).mean()
+                _pgt_df["_outcome_roll"] = _pgt_df["_outcome_score"].rolling(_pgt_window, min_periods=1).mean()
+                _pgt_win_str = f"last-{_pgt_window} avg"
+
+            _pgt_point_colors = _pgt_df["_proc_grade_norm"].map(
+                {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "D": "#ef9a9a", "F": "#ef5350"}
+            ).fillna("#aaa")
+
+            _fig_pgt = _go.Figure()
+            _fig_pgt.add_trace(_go.Scatter(
+                x=_pgt_df["_entry_num"],
+                y=_pgt_df["_proc_roll"],
+                mode="lines+markers",
+                line=dict(color="#7986cb", width=2.5),
+                marker=dict(size=8, color=_pgt_point_colors, line=dict(width=1, color="#1a1a2e")),
+                name="Process Grade",
+                hovertemplate=(
+                    "Entry %{x}<br>"
+                    "Process Grade: %{customdata}<br>"
+                    f"{_pgt_win_str}: %{{y:.2f}}<extra></extra>"
+                ),
+                customdata=_pgt_df["process_grade"],
+            ))
+            if _pgt_show_outcome:
+                _outcome_pt_colors = _pgt_df["grade"].map(
+                    {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "D": "#ef9a9a", "F": "#ef5350"}
+                ).fillna("#aaa")
+                _fig_pgt.add_trace(_go.Scatter(
+                    x=_pgt_df["_entry_num"],
+                    y=_pgt_df["_outcome_roll"],
+                    mode="lines+markers",
+                    line=dict(color="#00bcd4", width=2, dash="dot"),
+                    marker=dict(size=6, color=_outcome_pt_colors, line=dict(width=1, color="#1a1a2e")),
+                    name="Outcome Grade",
+                    hovertemplate=(
+                        "Entry %{x}<br>"
+                        "Outcome Grade: %{customdata}<br>"
+                        f"{_pgt_win_str}: %{{y:.2f}}<extra></extra>"
+                    ),
+                    customdata=_pgt_df["grade"].fillna("—"),
+                ))
+            _fig_pgt.add_hline(
+                y=3.0,
+                line=dict(color="rgba(76,175,80,0.35)", dash="dot"),
+                annotation_text="B threshold",
+                annotation_font_color="#4caf50",
+            )
+            _fig_pgt.update_layout(
+                paper_bgcolor="#1a1a2e",
+                plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"),
+                height=240,
+                xaxis=dict(title="Entry #", gridcolor="#2a2a4a"),
+                yaxis=dict(
+                    title="Grade (F=0 – A=4)",
+                    gridcolor="#2a2a4a",
+                    tickvals=[0, 1, 2, 3, 4],
+                    ticktext=["F", "D", "C", "B", "A"],
+                    range=[-0.5, 4.5],
+                ),
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1,
+                    font=dict(size=11),
+                ),
+                margin=dict(l=10, r=10, t=30, b=40),
+            )
+            st.plotly_chart(_fig_pgt, use_container_width=True)
+
         # ── Process Discipline Rate ───────────────────────────────────────────
         st.markdown("**Process Discipline Rate**")
         if "followed_plan" in df.columns:
