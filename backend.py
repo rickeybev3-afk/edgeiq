@@ -8416,6 +8416,13 @@ def run_pending_migrations() -> dict:
         # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol_mult REAL DEFAULT 1.0",
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol_size_mult REAL",
+        # Trailing stop context — written by _monitor_trailing_stops in paper_trader_bot.py
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS trail_activated BOOLEAN",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS trail_size_r REAL",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS trail_sr_level REAL",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS trail_sr_source TEXT",
+        # Free-text notes field — used by force-close and trailing stop patches
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS notes TEXT",
         # RVOL size bonus multiplier for batch backtest rows — mirrors the live bot bonus.
         # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
         # pnl_r_sim already reflects this multiplier when rvol_mult > 1.0.

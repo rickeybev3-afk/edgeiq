@@ -1186,7 +1186,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     "order_placed_at":  datetime.utcnow().isoformat(),
                     "skip_reason":      "order_placed",
                     "rvol_mult":        _rvol_mult,
-                }).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date", ""))).eq("ticker", ticker).execute()
+                }).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date") or r.get("trade_date") or "")).eq("ticker", ticker).execute()
             except Exception as _patch_err:
                 log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")
     else:
