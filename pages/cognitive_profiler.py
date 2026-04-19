@@ -2,11 +2,9 @@ import streamlit as st
 import json
 import os
 import io
-import tempfile
-import re
 from datetime import datetime, date
 import plotly.graph_objects as go
-from backend import get_supabase_client
+from backend import get_supabase_client, transcribe_audio_bytes, ai_extract_signals
 
 st.set_page_config(page_title="Cognitive Profiler", page_icon="🧠", layout="wide")
 
@@ -132,65 +130,14 @@ def render_radar(scores: dict, trader_name: str):
 
 
 def transcribe_audio(file_bytes: bytes, filename: str) -> str:
+    """Transcribe audio using the shared Whisper helper from backend."""
     if not HAS_AI:
         return ""
-    try:
-        import openai
-        client = openai.OpenAI(api_key=OPENAI_KEY)
-        with tempfile.NamedTemporaryFile(suffix=os.path.splitext(filename)[-1], delete=False) as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-        with open(tmp_path, "rb") as f:
-            result = client.audio.transcriptions.create(model="whisper-1", file=f)
-        os.unlink(tmp_path)
-        return result.text
-    except Exception as e:
-        st.error(f"Transcription failed: {e}")
-        return ""
-
-
-def ai_extract_signals(transcript: str) -> dict:
-    if not HAS_AI or not transcript.strip():
-        return {}
-    try:
-        import openai
-        client = openai.OpenAI(api_key=OPENAI_KEY)
-        prompt = f"""You are a behavioral trading analyst. Read this trader's live session transcript and identify which behavioral signals are present.
-
-TRANSCRIPT:
-{transcript[:6000]}
-
-Return a JSON object with ONLY these keys, each value true or false:
-fomo_entry, panic_exit, thesis_drift, revenge_trade, oversized, high_stress_language,
-held_drawdown, followed_plan, scaled_exits, key_level_ref, setup_named, adapted_tape
-
-Definitions:
-- fomo_entry: trader entered before planned level or chased price
-- panic_exit: exited early due to fear or drawdown without thesis change
-- thesis_drift: changed plan or reasoning mid-trade
-- revenge_trade: entered a new trade immediately after a losing trade out of frustration
-- oversized: took a position too large relative to their stated conviction
-- high_stress_language: expressed frustration, panic, or emotional distress verbally
-- held_drawdown: held through a drawdown with thesis intact and conviction
-- followed_plan: executed exactly as they pre-planned
-- scaled_exits: took partial profits in a systematic, planned way
-- key_level_ref: referenced specific price levels, volume nodes, or structure levels
-- setup_named: named the pattern or structure type before entering
-- adapted_tape: changed approach when market conditions changed, showing regime awareness
-
-Return ONLY valid JSON, no explanation."""
-
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-        )
-        raw = resp.choices[0].message.content.strip()
-        raw = re.sub(r"```json|```", "", raw).strip()
-        return json.loads(raw)
-    except Exception as e:
-        st.error(f"AI analysis failed: {e}")
-        return {}
+    suffix = os.path.splitext(filename)[-1] or ".wav"
+    result = transcribe_audio_bytes(file_bytes, suffix=suffix)
+    if not result and HAS_AI:
+        st.error("Transcription failed or returned empty — check OPENAI_API_KEY and file format.")
+    return result
 
 
 def save_profile(data: dict) -> bool:

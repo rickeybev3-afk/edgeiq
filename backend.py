@@ -1134,7 +1134,7 @@ _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
-    "followed_plan", "deviation_notes",
+    "followed_plan", "deviation_notes", "transcript", "audio_b64",
 ]
 
 _BRAIN_WEIGHT_KEYS = [
@@ -5458,7 +5458,7 @@ _JOURNAL_COLS = [
     "timestamp", "ticker", "price", "structure", "tcs", "rvol",
     "ib_high", "ib_low", "notes", "grade", "grade_reason",
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
-    "followed_plan", "deviation_notes",
+    "followed_plan", "deviation_notes", "transcript", "audio_b64",
 ]
 
 
@@ -5500,6 +5500,111 @@ def save_journal_entry(entry: dict, user_id: str = ""):
         supabase.table("trade_journal").insert(row).execute()
     except Exception as e:
         print(f"Database write error (journal): {e}")
+
+
+_VJ_SIGNAL_KEYS = [
+    "fomo_entry", "panic_exit", "thesis_drift", "revenge_trade",
+    "oversized", "high_stress_language", "held_drawdown", "followed_plan",
+    "scaled_exits", "key_level_ref", "setup_named", "adapted_tape",
+]
+
+_VJ_SIGNAL_LABELS = {
+    "fomo_entry":           "FOMO Entry",
+    "panic_exit":           "Panic Exit",
+    "thesis_drift":         "Thesis Drift",
+    "revenge_trade":        "Revenge Trade",
+    "oversized":            "Oversized",
+    "high_stress_language": "High Stress Language",
+    "held_drawdown":        "Held Drawdown",
+    "followed_plan":        "Followed Plan",
+    "scaled_exits":         "Scaled Exits",
+    "key_level_ref":        "Key Level Reference",
+    "setup_named":          "Setup Named",
+    "adapted_tape":         "Adapted to Tape",
+}
+
+_VJ_POSITIVE_SIGNALS = frozenset(
+    {"followed_plan", "scaled_exits", "key_level_ref", "setup_named", "adapted_tape", "held_drawdown"}
+)
+_VJ_NEGATIVE_SIGNALS = frozenset(
+    {"fomo_entry", "panic_exit", "thesis_drift", "revenge_trade", "oversized", "high_stress_language"}
+)
+
+
+def transcribe_audio_bytes(audio_bytes: bytes, suffix: str = ".wav") -> str:
+    """Transcribe raw audio bytes using Whisper.
+
+    Returns the transcript string, or an empty string if transcription fails or
+    OPENAI_API_KEY is not configured.
+    """
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if not openai_key:
+        return ""
+    try:
+        import openai as _openai
+        import tempfile as _tempfile
+        client = _openai.OpenAI(api_key=openai_key)
+        with _tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        with open(tmp_path, "rb") as f:
+            result = client.audio.transcriptions.create(model="whisper-1", file=f)
+        os.unlink(tmp_path)
+        return result.text
+    except Exception as e:
+        print(f"transcribe_audio_bytes error: {e}")
+        return ""
+
+
+def ai_extract_signals(transcript: str) -> dict:
+    """Extract 12 behavioral trading signals from a transcript using GPT-4.
+
+    Returns a dict mapping each signal key to a bool. Returns an empty dict
+    if the API key is missing or the call fails.
+    """
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if not openai_key or not transcript.strip():
+        return {}
+    try:
+        import openai as _openai
+        import json as _json
+        import re as _re
+        client = _openai.OpenAI(api_key=openai_key)
+        prompt = f"""You are a behavioral trading analyst. Read this trader's live trade commentary and identify which behavioral signals are present.
+
+TRANSCRIPT:
+{transcript[:6000]}
+
+Return a JSON object with ONLY these keys, each value true or false:
+fomo_entry, panic_exit, thesis_drift, revenge_trade, oversized, high_stress_language,
+held_drawdown, followed_plan, scaled_exits, key_level_ref, setup_named, adapted_tape
+
+Definitions:
+- fomo_entry: trader entered before planned level or chased price
+- panic_exit: exited early due to fear or drawdown without thesis change
+- thesis_drift: changed plan or reasoning mid-trade
+- revenge_trade: entered a new trade immediately after a losing trade out of frustration
+- oversized: took a position too large relative to their stated conviction
+- high_stress_language: expressed frustration, panic, or emotional distress verbally
+- held_drawdown: held through a drawdown with thesis intact and conviction
+- followed_plan: executed exactly as they pre-planned
+- scaled_exits: took partial profits in a systematic, planned way
+- key_level_ref: referenced specific price levels, volume nodes, or structure levels
+- setup_named: named the pattern or structure type before entering
+- adapted_tape: changed approach when market conditions changed, showing regime awareness
+
+Return ONLY valid JSON, no explanation."""
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        raw = _re.sub(r"```json|```", "", raw).strip()
+        return _json.loads(raw)
+    except Exception as e:
+        print(f"ai_extract_signals error: {e}")
+        return {}
 
 
 def ensure_telegram_columns() -> bool:
@@ -8146,6 +8251,9 @@ def run_pending_migrations() -> dict:
         # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
         # pnl_r_sim already reflects this multiplier when rvol_mult > 1.0.
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS rvol_mult REAL DEFAULT 1.0",
+        # Voice trade journal — transcript and audio stored alongside each entry
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS transcript TEXT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS audio_b64 TEXT",
     ]
 
     ran = 0

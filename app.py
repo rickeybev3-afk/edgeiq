@@ -77,6 +77,12 @@ from backend import (
     R_PROJECTION_SCENARIOS,
     _RUNTIME_CHECK_INTERVAL_S,
     _providers_confirmed_ok,
+    transcribe_audio_bytes,
+    ai_extract_signals,
+    _VJ_SIGNAL_KEYS,
+    _VJ_SIGNAL_LABELS,
+    _VJ_POSITIVE_SIGNALS,
+    _VJ_NEGATIVE_SIGNALS,
 )
 
 # ── Cached DB-loader wrappers (ttl=300 s ≈ 5 min) ────────────────────────────
@@ -2076,6 +2082,90 @@ def render_log_entry_ui():
             step=60,
         )
 
+        # ── Voice Trade Journal ───────────────────────────────────────────────
+        st.markdown(
+            '<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+            'letter-spacing:1px; margin:12px 0 6px 0;">🎙 Voice Trade Journal</div>',
+            unsafe_allow_html=True,
+        )
+        _vj_has_ai = bool(os.environ.get("OPENAI_API_KEY", ""))
+
+        _vj_rec_ver = st.session_state.get("vj_recorder_version", 0)
+        _vj_audio = st.audio_input(
+            "Record your trade commentary",
+            key=f"voice_memo_recorder_{_vj_rec_ver}",
+            help="Speak your entry thesis, emotional state, and decision rationale while the trade is live.",
+        )
+
+        if _vj_audio is not None:
+            import hashlib as _hashlib, base64 as _base64
+            _vj_audio_bytes = _vj_audio.read()
+            _vj_audio_hash  = _hashlib.md5(_vj_audio_bytes).hexdigest()
+            _vj_b64 = _base64.b64encode(_vj_audio_bytes).decode("utf-8")
+            _VJ_AUDIO_MAX_B64_LEN = 1_400_000
+            if len(_vj_b64) <= _VJ_AUDIO_MAX_B64_LEN:
+                st.session_state["vj_audio_b64"] = _vj_b64
+            else:
+                st.session_state["vj_audio_b64"] = ""
+                st.warning(
+                    f"Recording is too large to store ({len(_vj_audio_bytes) // 1024} KB). "
+                    "Keep recordings under ~1 MB. Transcript will still be saved."
+                )
+
+            if _vj_has_ai and st.session_state.get("vj_audio_hash") != _vj_audio_hash:
+                st.session_state["vj_audio_hash"] = _vj_audio_hash
+                with st.spinner("Transcribing with Whisper…"):
+                    _vj_tx = transcribe_audio_bytes(_vj_audio_bytes, suffix=".wav")
+                if _vj_tx:
+                    st.session_state["vj_transcript"] = _vj_tx
+                    with st.spinner("Extracting behavioral signals with GPT-4…"):
+                        _vj_sigs = ai_extract_signals(_vj_tx)
+                    if _vj_sigs:
+                        st.session_state["vj_signals"] = _vj_sigs
+                    st.success("Transcription complete — review and adjust below, then log entry.")
+                else:
+                    st.warning("Transcription returned empty. Check your OPENAI_API_KEY.")
+            elif not _vj_has_ai:
+                st.caption("Add `OPENAI_API_KEY` to secrets to enable automatic Whisper transcription.")
+
+        if not _vj_has_ai:
+            st.info(
+                "**AI transcription is off.** Add `OPENAI_API_KEY` to your Replit secrets to enable "
+                "automatic Whisper transcription and GPT-4 behavioral signal extraction. "
+                "Until then, paste your transcript manually below.",
+                icon="ℹ️",
+            )
+
+        _vj_transcript_value = st.session_state.get("vj_transcript", "")
+        _vj_transcript = st.text_area(
+            "Transcript (auto-populated after recording, or paste manually)",
+            value=_vj_transcript_value,
+            height=100,
+            placeholder="Paste your spoken trade commentary here, or record above…",
+            key="vj_transcript_input",
+        )
+        st.session_state["vj_transcript"] = _vj_transcript
+
+        _vj_ai_signals = st.session_state.get("vj_signals", {})
+        st.markdown(
+            '<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+            'letter-spacing:1px; margin:10px 0 4px 0;">Behavioral Signals '
+            '(pre-filled by AI — adjust as needed)</div>',
+            unsafe_allow_html=True,
+        )
+        _vj_col1, _vj_col2 = st.columns(2)
+        _vj_checked = {}
+        for _i, _sk in enumerate(_VJ_SIGNAL_KEYS):
+            _ai_val = bool(_vj_ai_signals.get(_sk, False))
+            _is_neg = _sk in _VJ_NEGATIVE_SIGNALS
+            _label = f"{'⚠ ' if _is_neg else '✅ '}{_VJ_SIGNAL_LABELS[_sk]}"
+            with (_vj_col1 if _i % 2 == 0 else _vj_col2):
+                _vj_checked[_sk] = st.checkbox(
+                    _label,
+                    value=_ai_val,
+                    key=f"vj_sig_{_sk}",
+                )
+
         notes = st.text_input(
             "Mental State / Notes",
             placeholder="e.g. Calm, FOMO, Greed, Hesitated...",
@@ -2126,12 +2216,19 @@ def render_log_entry_ui():
                 "social_bull_pct":  state.get("social_bull_pct"),
                 "social_bear_pct":  state.get("social_bear_pct"),
                 "social_msg_count": state.get("social_msg_count"),
+                "transcript": st.session_state.get("vj_transcript", "") or "",
+                "audio_b64":  st.session_state.get("vj_audio_b64", "") or "",
             }
             save_journal_entry(entry, user_id=st.session_state.get("auth_user_id", ""))
             _cached_load_journal.clear()
-            # Clear fetched price state so next log starts fresh
-            for _ck in ("_fetched_price", "_fetched_volume", "_fetched_symbol"):
+            # Clear fetched price state and voice journal state so next log starts fresh
+            for _ck in ("_fetched_price", "_fetched_volume", "_fetched_symbol",
+                        "vj_transcript", "vj_signals", "vj_audio_b64", "vj_audio_hash"):
                 st.session_state.pop(_ck, None)
+            # Increment recorder version to force a fresh audio widget on next render
+            st.session_state["vj_recorder_version"] = (
+                st.session_state.get("vj_recorder_version", 0) + 1
+            )
             gc = _GRADE_COLORS.get(grade, "#aaa")
             st.success(f"Logged! **Grade {grade}** — {reason}")
             st.markdown(
