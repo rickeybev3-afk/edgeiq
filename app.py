@@ -35741,7 +35741,6 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             with st.expander("📅 Per-Day Breakdown", expanded=False):
                 _bvy_active_days = [d for d in _bvy_daily if d["bot_count"] > 0 or d["user_followed"] > 0]
                 if _bvy_active_days:
-                    import pandas as pd
                     _bvy_rows = []
                     for _d in reversed(_bvy_active_days):
                         _bvy_rows.append({
