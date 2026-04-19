@@ -8982,6 +8982,11 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
                     else:
                         _exit_trigger_val = "time_based"
 
+        _bt_grade, _bt_grade_reason = compute_trade_grade(
+            _rvol_val, tcs, pm_close, ib_high, ib_low, predicted_struct,
+            voice_signals=None,
+        )
+
         return {
             "ticker":           sym,
             "open_price":       round(open_px, 2),
@@ -8996,6 +9001,7 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             "actual_outcome":   actual_outcome,
             "actual_icon":      actual_icon,
             "close_price":      round(close_px, 2),
+            "cutoff_price":     round(pm_close, 2),
             "aft_move_pct":     round(aft_move, 2),
             "win_loss":         "Pending" if win is None else ("Win" if win else "Loss"),
             "false_break_up":   false_break_up,
@@ -9005,6 +9011,8 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
             "entry_time":       _entry_time_val,
             "exit_trigger":     _exit_trigger_val,
             "entry_ib_distance": _entry_ib_dist_val,
+            "grade":            _bt_grade,
+            "grade_reason":     _bt_grade_reason,
         }
     except Exception:
         return None

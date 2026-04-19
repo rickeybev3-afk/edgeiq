@@ -14721,6 +14721,85 @@ Measures how accurately the 7-structure framework classified those days in hinds
             import sys as _sys_bt_eod
             print(f"[bt_eod_enrich] Could not load EOD/Tiered R: {_bt_eod_exc}", file=_sys_bt_eod.stderr)
 
+    # ── Enrich grades with voice_signals from trade_journal ──────────────────
+    # Where a trader has journaled a trade for the same ticker + date, pull any
+    # voice_signals they recorded and re-run compute_trade_grade so that
+    # behavioural context is reflected in the backtest process score.
+    # Trades with no matching journal row keep their setup-quality-only grade.
+    if not _bt_df.empty and "ticker" in _bt_df.columns and supabase and _AUTH_USER_ID:
+        try:
+            _jnl_tickers = _bt_df["ticker"].dropna().unique().tolist()
+            _jnl_dates = (
+                _bt_df["sim_date"].dropna().astype(str).unique().tolist()
+                if "sim_date" in _bt_df.columns
+                else [str(_sim_date)]
+            )
+            if _jnl_tickers and _jnl_dates:
+                _jnl_resp = (
+                    supabase.table("trade_journal")
+                    .select("ticker,timestamp,voice_signals,rvol,tcs,ib_high,ib_low,structure")
+                    .eq("user_id", _AUTH_USER_ID)
+                    .in_("ticker", _jnl_tickers)
+                    .execute()
+                )
+                _jnl_rows = _jnl_resp.data or []
+                if _jnl_rows:
+                    import pandas as _pd_jnl
+                    _jnl_df = _pd_jnl.DataFrame(_jnl_rows)
+                    _jnl_df["_jnl_date"] = (
+                        _pd_jnl.to_datetime(_jnl_df["timestamp"], errors="coerce")
+                        .dt.strftime("%Y-%m-%d")
+                    )
+                    _jnl_df = _jnl_df[_jnl_df["_jnl_date"].isin(_jnl_dates)]
+                    _jnl_df = _jnl_df.dropna(subset=["voice_signals"])
+                    _jnl_df = _jnl_df[
+                        _jnl_df["voice_signals"].apply(
+                            lambda v: isinstance(v, dict) and any(v.values())
+                        )
+                    ]
+                    if not _jnl_df.empty:
+                        # Keep only the latest journal entry per (ticker, date) to
+                        # ensure deterministic enrichment when a trader has logged
+                        # multiple entries for the same ticker on the same day.
+                        _jnl_df = _jnl_df.sort_values("timestamp", ascending=False)
+                        _jnl_df = _jnl_df.drop_duplicates(
+                            subset=["ticker", "_jnl_date"], keep="first"
+                        )
+                        _jnl_lookup = {}
+                        for _, _jrow in _jnl_df.iterrows():
+                            _jkey = (_jrow["ticker"], _jrow["_jnl_date"])
+                            _jnl_lookup[_jkey] = _jrow["voice_signals"]
+
+                        _bt_date_col = (
+                            "sim_date" if "sim_date" in _bt_df.columns else None
+                        )
+
+                        def _enrich_grade(row):
+                            _date_str = (
+                                str(row[_bt_date_col]) if _bt_date_col else str(_sim_date)
+                            )
+                            _vs = _jnl_lookup.get((row["ticker"], _date_str))
+                            if _vs:
+                                # Use cutoff_price (IB-close price at prediction time)
+                                # to avoid hindsight bias from afternoon movement.
+                                _px = row.get("cutoff_price") or row.get("open_price")
+                                _g, _gr = compute_trade_grade(
+                                    row.get("rvol"), row.get("tcs"),
+                                    _px,
+                                    row.get("ib_high"), row.get("ib_low"),
+                                    row.get("predicted_struct") or row.get("predicted", ""),
+                                    voice_signals=_vs,
+                                )
+                                return _pd_jnl.Series({"grade": _g, "grade_reason": _gr})
+                            return _pd_jnl.Series({"grade": row.get("grade"), "grade_reason": row.get("grade_reason")})
+
+                        _enriched = _bt_df.apply(_enrich_grade, axis=1)
+                        _bt_df["grade"] = _enriched["grade"]
+                        _bt_df["grade_reason"] = _enriched["grade_reason"]
+        except Exception as _jnl_exc:
+            import sys as _sys_jnl
+            print(f"[bt_grade_enrich] Could not enrich grades from journal: {_jnl_exc}", file=_sys_jnl.stderr)
+
     if not _bt_df.empty and "ticker" in _bt_df.columns:
         with st.expander(
             f"📊 Per-Ticker Breakdown — {_bt_df['ticker'].nunique()} tickers across all dates",
