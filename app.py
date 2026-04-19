@@ -2233,7 +2233,7 @@ def render_log_entry_ui():
             # Use the checkbox state as the authoritative signals dict so manual
             # overrides are reflected in both the grade and the saved record.
             _final_signals = _vj_checked if _vj_checked else (st.session_state.get("vj_signals") or {})
-            grade, reason = compute_trade_grade(
+            grade, reason, _sig_meta = compute_trade_grade(
                 state.get("rvol"), state.get("tcs"), state.get("price"),
                 state.get("ib_high"), state.get("ib_low"), state.get("structure"),
                 voice_signals=_final_signals,
@@ -2276,7 +2276,8 @@ def render_log_entry_ui():
             )
             gc  = _GRADE_COLORS.get(grade, "#aaa")
             pgc = _GRADE_COLORS.get(proc_grade, "#aaa")
-            st.success(f"Logged! **Outcome {grade}** · **Process {proc_grade}** — {proc_reason}")
+            st.success(f"Logged! **Outcome {grade}** · **Process {proc_grade}**")
+            st.caption(reason)
             st.markdown(
                 f'<div style="display:flex; gap:12px; align-items:center;">'
                 f'<div>'
@@ -2294,6 +2295,41 @@ def render_log_entry_ui():
                 f'</div>',
                 unsafe_allow_html=True,
             )
+            # ── Behavioural signals breakdown ────────────────────────────────
+            _sm_pos    = _sig_meta.get("pos_signals", [])
+            _sm_neg    = _sig_meta.get("neg_signals", [])
+            _sm_impact = _sig_meta.get("impact")
+            if _sm_pos or _sm_neg:
+                _impact_label_map = {
+                    "raised":         ("Raised outcome grade", "#4caf50"),
+                    "lowered":        ("Lowered outcome grade", "#ef5350"),
+                    "noted_positive": ("Noted \u2014 did not change grade", "#888"),
+                    "noted_negative": ("Noted \u2014 did not change grade", "#888"),
+                }
+                _il_text, _il_color = _impact_label_map.get(
+                    _sm_impact, ("Behavioural signals", "#888")
+                )
+                _chips_html = '<div style="margin-top:10px;">'
+                _chips_html += (
+                    f'<div style="font-size:11px; color:{_il_color}; margin-bottom:6px; '
+                    f'font-weight:600; letter-spacing:0.05em;">'
+                    f'BEHAVIOURAL SIGNALS &mdash; {_il_text}</div>'
+                )
+                _chips_html += '<div style="display:flex; flex-wrap:wrap; gap:6px;">'
+                for _lbl in _sm_pos:
+                    _chips_html += (
+                        f'<span style="background:#1b5e2033; border:1px solid #4caf50; color:#4caf50; '
+                        f'border-radius:12px; padding:2px 10px; font-size:12px; font-weight:600;">'
+                        f'&#9650; {_lbl}</span>'
+                    )
+                for _lbl in _sm_neg:
+                    _chips_html += (
+                        f'<span style="background:#b71c1c33; border:1px solid #ef5350; color:#ef5350; '
+                        f'border-radius:12px; padding:2px 10px; font-size:12px; font-weight:600;">'
+                        f'&#9660; {_lbl}</span>'
+                    )
+                _chips_html += '</div></div>'
+                st.markdown(_chips_html, unsafe_allow_html=True)
 
     # ── Recent Trades preview (last 10 from Supabase) ─────────────────────────
     _recent_df = _cached_load_journal(user_id=st.session_state.get("auth_user_id", ""))

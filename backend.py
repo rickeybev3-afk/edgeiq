@@ -6918,12 +6918,17 @@ def save_trade_review(journal_row: dict, exit_price: float,
 
 
 def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label, voice_signals=None):
-    """Return (grade, reason) based on RVOL, TCS, price relative to IB, and behavioural signals.
+    """Return (grade, reason, signal_meta) based on RVOL, TCS, price relative to IB, and behavioural signals.
 
     voice_signals, if provided, is a dict keyed by _VJ_SIGNAL_KEYS.  Positive signals
     (followed_plan, scaled_exits, etc.) can raise the base grade by one step; negative
     signals (fomo_entry, panic_exit, etc.) can lower it.  Hard disqualifiers (RVOL < 1.0
     or trend-inside-IB) are never overridden by behavioural data.
+
+    signal_meta is a dict with keys:
+      - "impact": "raised" | "lowered" | "noted_positive" | "noted_negative" | None
+      - "pos_signals": list of human-readable labels for positive signals that fired
+      - "neg_signals": list of human-readable labels for negative signals that fired
     """
     rvol_val = rvol if rvol is not None else 0.0
     is_trend  = "trend" in structure_label.lower()
@@ -6933,10 +6938,11 @@ def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label, voic
     price_above_ib = (ib_high is not None) and (price > ib_high)
 
     # F — disqualifying conditions first (cannot be rescued by behaviour)
+    _empty_meta = {"impact": None, "pos_signals": [], "neg_signals": []}
     if rvol_val < 1.0:
-        return "F", f"Grade F: Low-volume setup (RVOL {rvol_val:.1f}×) — unfavorable odds."
+        return "F", f"Grade F: Low-volume setup (RVOL {rvol_val:.1f}×) — unfavorable odds.", _empty_meta
     if is_trend and price_inside_ib:
-        return "F", "Grade F: Trend attempt but price is still inside IB — no breakout confirmation."
+        return "F", "Grade F: Trend attempt but price is still inside IB — no breakout confirmation.", _empty_meta
 
     # A — ideal setup
     if rvol_val > 4.0 and tcs > 70 and price_above_ib:
@@ -6987,7 +6993,24 @@ def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label, voic
         behaviour_note = f" Negative signals noted: {neg_labels}."
 
     reason = f"Grade {adjusted_grade}: {base_reason}{behaviour_note}"
-    return adjusted_grade, reason
+
+    if net >= 2 and base_grade != "A":
+        _impact = "raised"
+    elif net <= -2 and base_grade != "F":
+        _impact = "lowered"
+    elif net > 0:
+        _impact = "noted_positive"
+    elif net < 0:
+        _impact = "noted_negative"
+    else:
+        _impact = None
+
+    signal_meta = {
+        "impact":      _impact,
+        "pos_signals": [(_VJ_SIGNAL_LABELS.get(k, k)) for k in pos_hits],
+        "neg_signals": [(_VJ_SIGNAL_LABELS.get(k, k)) for k in neg_hits],
+    }
+    return adjusted_grade, reason, signal_meta
 
 
 def compute_process_grade(signals: dict) -> tuple:
