@@ -9410,7 +9410,9 @@ def render_playbook_tab(api_key: str = "", secret_key: str = ""):
                                 key="playbook_refresh_btn")
     with _pb_c3:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _url_init_bool("pb_auto_refresh", "playbook_auto_refresh", False)
         _pb_auto = st.checkbox("Auto-refresh (60 s)", value=False, key="playbook_auto_refresh")
+        _url_push("pb_auto_refresh", "true" if _pb_auto else "false")
 
     # ── Quant scoring controls ───────────────────────────────────────────────────
     st.markdown(
