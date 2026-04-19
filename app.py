@@ -26107,6 +26107,22 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_tier_ts}</p>', unsafe_allow_html=True)
         else:
             st.caption(f"Updated {_sp_tier_ts}")
+        @st.fragment(run_every=5)
+        def _sp_tier_countdown():
+            _ctdn_interval = st.session_state.get("sp_tier_auto_interval", "Off")
+            if _ctdn_interval == "Off":
+                return
+            _ctdn_secs = {"1 min": 60, "5 min": 300, "15 min": 900}[_ctdn_interval]
+            _ctdn_last = st.session_state.get("_sp_tier_last_auto_rerun")
+            if _ctdn_last is None:
+                _ctdn_remaining = _ctdn_secs
+            else:
+                _ctdn_elapsed = (datetime.now() - _ctdn_last).total_seconds()
+                _ctdn_remaining = max(0, _ctdn_secs - _ctdn_elapsed)
+            _ctdn_m = int(_ctdn_remaining // 60)
+            _ctdn_s = int(_ctdn_remaining % 60)
+            st.caption(f"⏱ {_ctdn_m}:{_ctdn_s:02d}")
+        _sp_tier_countdown()
     _sp_tier_run_every = {"1 min": 60, "5 min": 300, "15 min": 900}.get(
         st.session_state.get("sp_tier_auto_interval", "Off")
     )
@@ -31813,6 +31829,22 @@ function _bqCopyShareLink() {
                 st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_grid_ts}</p>', unsafe_allow_html=True)
             else:
                 st.caption(f"Updated {_sp_grid_ts}")
+            @st.fragment(run_every=5)
+            def _sp_grid_countdown():
+                _ctdn_interval = st.session_state.get("sp_grid_auto_interval", "Off")
+                if _ctdn_interval == "Off":
+                    return
+                _ctdn_secs = {"1 min": 60, "5 min": 300, "15 min": 900}[_ctdn_interval]
+                _ctdn_last = st.session_state.get("_sp_grid_last_auto_rerun")
+                if _ctdn_last is None:
+                    _ctdn_remaining = _ctdn_secs
+                else:
+                    _ctdn_elapsed = (datetime.now() - _ctdn_last).total_seconds()
+                    _ctdn_remaining = max(0, _ctdn_secs - _ctdn_elapsed)
+                _ctdn_m = int(_ctdn_remaining // 60)
+                _ctdn_s = int(_ctdn_remaining % 60)
+                st.caption(f"⏱ {_ctdn_m}:{_ctdn_s:02d}")
+            _sp_grid_countdown()
         _sp_grid_run_every = {"1 min": 60, "5 min": 300, "15 min": 900}.get(
             st.session_state.get("sp_grid_auto_interval", "Off")
         )
