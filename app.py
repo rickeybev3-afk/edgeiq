@@ -31272,15 +31272,21 @@ function _bqCopyShareLink() {
 
         Returns a list of row dicts with keys: screener_pass, tcs, scan_type, pnl_r_sim.
         Fetches the full history (not capped at 5,000 rows).
+        Only resolved outcomes are included, matching _load_screener_pass_grid for
+        consistent sample sizes between the top-level card and the per-tier table.
         """
+        RESOLVED = [
+            "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
+            "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
+        ]
         all_rows, offset, fetch_error = [], 0, None
         try:
             while True:
                 q = (
                     supabase.table("backtest_sim_runs")
-                    .select("screener_pass,tcs,scan_type,pnl_r_sim,sim_date")
+                    .select("screener_pass,tcs,scan_type,pnl_r_sim,actual_outcome,sim_date")
                     .eq("user_id", uid)
-                    .not_.is_("pnl_r_sim", "null")
+                    .in_("actual_outcome", RESOLVED)
                 )
                 if start_date:
                     q = q.gte("sim_date", str(start_date))
