@@ -26024,7 +26024,16 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     st.markdown("<br>", unsafe_allow_html=True)
     if "sp_tier_last_refresh" not in st.session_state:
         st.session_state["sp_tier_last_refresh"] = datetime.now()
-    _sp_hdr_col, _sp_refresh_col = st.columns([9, 1])
+    _sp_hdr_col, _sp_auto_col, _sp_refresh_col = st.columns([5.5, 2, 1.5])
+    with _sp_auto_col:
+        st.selectbox(
+            "Auto-refresh",
+            options=["Off", "5 min", "15 min"],
+            key="sp_tier_auto_interval",
+            label_visibility="collapsed",
+            help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
+        )
+        st.caption("🔁 Auto-refresh")
     with _sp_refresh_col:
         if st.button("🔄 Refresh", key="refresh_screener_pass_tier", help="Clear cache and reload screener pass data immediately"):
             st.session_state["sp_tier_last_refresh"] = datetime.now()
@@ -26039,6 +26048,29 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_tier_ts}</p>', unsafe_allow_html=True)
         else:
             st.caption(f"Updated {_sp_tier_ts}")
+    _sp_tier_run_every = {"5 min": 300, "15 min": 900}.get(
+        st.session_state.get("sp_tier_auto_interval", "Off")
+    )
+
+    @st.fragment(run_every=_sp_tier_run_every)
+    def _sp_tier_auto_timer():
+        _at_interval = st.session_state.get("sp_tier_auto_interval", "Off")
+        if _at_interval == "Off" or _sp_tier_run_every is None:
+            return
+        _at_secs = {"5 min": 300, "15 min": 900}[_at_interval]
+        _at_now = datetime.now()
+        _at_last = st.session_state.get("_sp_tier_last_auto_rerun")
+        if _at_last is None:
+            st.session_state["_sp_tier_last_auto_rerun"] = _at_now
+            return
+        if (_at_now - _at_last).total_seconds() >= _at_secs * 0.8:
+            st.session_state["_sp_tier_last_auto_rerun"] = _at_now
+            st.session_state["sp_tier_last_refresh"] = _at_now
+            _load_tier_screener_pass_data.clear()
+            _load_screener_pass_grid.clear()
+            st.rerun()
+
+    _sp_tier_auto_timer()
     with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
         st.caption("Gap = ≥3% close-to-close daily change (directional, positive only) · Trend = ≥1% change + close > SMA20 & SMA50 · Other = all else (incl. down days) · PF = Profit Factor · — = <30 trades (insufficient)")
 
@@ -31747,7 +31779,7 @@ function _bqCopyShareLink() {
         st.markdown("<br>", unsafe_allow_html=True)
         if "sp_grid_last_refresh" not in st.session_state:
             st.session_state["sp_grid_last_refresh"] = datetime.now()
-        _sp2_hdr_col, _sp2_refresh_col = st.columns([9, 1])
+        _sp2_hdr_col, _sp2_auto_col, _sp2_refresh_col = st.columns([4.5, 2, 1.5])
         with _sp2_hdr_col:
             st.markdown(
                 "**Screener Pass — Gap vs Trend vs All (5-yr Backtest)**",
@@ -31757,6 +31789,15 @@ function _bqCopyShareLink() {
                     "Run `python backfill_screener_pass.py` to classify historical rows if counts look low."
                 ),
             )
+        with _sp2_auto_col:
+            st.selectbox(
+                "Auto-refresh",
+                options=["Off", "5 min", "15 min"],
+                key="sp_grid_auto_interval",
+                label_visibility="collapsed",
+                help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
+            )
+            st.caption("🔁 Auto-refresh")
         with _sp2_refresh_col:
             if st.button("🔄 Refresh", key="refresh_screener_pass_grid", help="Clear cache and reload screener pass data immediately"):
                 st.session_state["sp_grid_last_refresh"] = datetime.now()
@@ -31771,6 +31812,29 @@ function _bqCopyShareLink() {
                 st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_grid_ts}</p>', unsafe_allow_html=True)
             else:
                 st.caption(f"Updated {_sp_grid_ts}")
+        _sp_grid_run_every = {"5 min": 300, "15 min": 900}.get(
+            st.session_state.get("sp_grid_auto_interval", "Off")
+        )
+
+        @st.fragment(run_every=_sp_grid_run_every)
+        def _sp_grid_auto_timer():
+            _ag_interval = st.session_state.get("sp_grid_auto_interval", "Off")
+            if _ag_interval == "Off" or _sp_grid_run_every is None:
+                return
+            _ag_secs = {"5 min": 300, "15 min": 900}[_ag_interval]
+            _ag_now = datetime.now()
+            _ag_last = st.session_state.get("_sp_grid_last_auto_rerun")
+            if _ag_last is None:
+                st.session_state["_sp_grid_last_auto_rerun"] = _ag_now
+                return
+            if (_ag_now - _ag_last).total_seconds() >= _ag_secs * 0.8:
+                st.session_state["_sp_grid_last_auto_rerun"] = _ag_now
+                st.session_state["sp_grid_last_refresh"] = _ag_now
+                _load_screener_pass_grid.clear()
+                _load_tier_screener_pass_data.clear()
+                st.rerun()
+
+        _sp_grid_auto_timer()
         _sp_result = _load_screener_pass_grid(
             st.session_state.get("auth_user_id", ""),
             start_date=_grid_start,
