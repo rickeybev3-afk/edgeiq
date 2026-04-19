@@ -2755,6 +2755,43 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 unsafe_allow_html=True,
             )
 
+        # ── Per-structure discipline rate breakdown ─────────────────────────────
+        if _has_process_data and "structure" in df.columns:
+            _struct_groups = (
+                _pdr_all[_pdr_all["structure"].notna() & (_pdr_all["structure"] != "")]
+                .groupby("structure")
+            )
+            _struct_rows = []
+            for _sname, _sdf in _struct_groups:
+                _s_yes = (_sdf["followed_plan"] == "yes").sum()
+                _s_total = len(_sdf)
+                _s_pct = round(_s_yes / _s_total * 100) if _s_total else 0
+                _struct_rows.append((_sname, _s_yes, _s_total, _s_pct))
+
+            if _struct_rows:
+                st.markdown(
+                    '<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;'
+                    'letter-spacing:1px;margin-bottom:8px;margin-top:18px;">'
+                    'Discipline by Structure</div>',
+                    unsafe_allow_html=True,
+                )
+                _ncols = min(len(_struct_rows), 4)
+                _scols = st.columns(_ncols)
+                for _i, (_sname, _s_yes, _s_total, _s_pct) in enumerate(_struct_rows):
+                    _s_col = "#4caf50" if _s_pct >= 70 else "#ffa726" if _s_pct >= 50 else "#ef5350"
+                    with _scols[_i % _ncols]:
+                        st.markdown(
+                            f'<div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;'
+                            f'padding:10px 14px;text-align:center;">'
+                            f'<div style="font-size:10px;color:#90a4ae;text-transform:uppercase;'
+                            f'letter-spacing:1px;margin-bottom:4px;">{_sname}</div>'
+                            f'<div style="font-size:22px;font-weight:800;color:{_s_col};">{_s_pct}%</div>'
+                            f'<div style="font-size:10px;color:#546e7a;margin-top:2px;">'
+                            f'{_s_yes}/{_s_total} followed plan</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
         for _, row in df.iterrows():
