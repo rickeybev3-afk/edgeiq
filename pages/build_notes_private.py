@@ -2,11 +2,12 @@ import streamlit as st
 import os
 
 def _find_notes_path():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = [
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".local", "build_notes_private.md"),
+        os.path.join(root, "_private_notes.md"),
+        os.path.join(os.getcwd(), "_private_notes.md"),
+        os.path.join(root, ".local", "build_notes_private.md"),
         os.path.join(os.getcwd(), ".local", "build_notes_private.md"),
-        "/home/runner/workspace/.local/build_notes_private.md",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".local", "build_notes_private.md"),
     ]
     for p in candidates:
         if os.path.isfile(p):
