@@ -2955,7 +2955,45 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
 
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
-        for _, row in df.iterrows():
+        # ── Transcript filter ──────────────────────────────────────────────────
+        _transcript_filter = st.radio(
+            "Show entries",
+            options=["All entries", "With transcript", "Without transcript"],
+            index=0,
+            horizontal=True,
+            key="journal_transcript_filter",
+        )
+        _has_transcript_col = "transcript" in df.columns
+
+        def _has_transcript(x) -> bool:
+            return pd.notna(x) and bool(str(x).strip())
+
+        if _transcript_filter == "With transcript":
+            if _has_transcript_col:
+                _df_display = df[df["transcript"].apply(_has_transcript)]
+            else:
+                _df_display = df.iloc[0:0]
+        elif _transcript_filter == "Without transcript":
+            if _has_transcript_col:
+                _df_display = df[~df["transcript"].apply(_has_transcript)]
+            else:
+                _df_display = df
+        else:
+            _df_display = df
+
+        if _transcript_filter != "All entries":
+            _shown = len(_df_display)
+            _total = len(df)
+            st.caption(f"Showing {_shown} of {_total} entries")
+
+        if _df_display.empty:
+            st.info(
+                "No entries match this filter."
+                if _transcript_filter != "All entries"
+                else "No entries yet."
+            )
+
+        for _, row in _df_display.iterrows():
             grade = str(row.get("grade", "?"))
             gc = _GRADE_COLORS.get(grade, "#aaaaaa")
             reason = row.get("grade_reason", "")
