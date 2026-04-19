@@ -27,7 +27,7 @@ Optional env vars:
   PAPER_TRADE_MIN_TCS        — minimum TCS threshold (default: 50)
   PAPER_TRADE_FEED           — sip or iex (default: sip)
   PAPER_TRADE_PRICE_MIN      — min price filter (default: 1.0)
-  PAPER_TRADE_PRICE_MAX      — max price filter (default: 20.0)
+  PAPER_TRADE_PRICE_MAX      — max price filter (default: 50.0)
   SWEEP_ALERT_MAX_TICKERS    — max tickers shown in the close-price sweep Telegram alert (default: 10)
   BACKTEST_CLOSE_LOOKBACK_DAYS — how many calendar days the nightly backtest close-price sweep
                                  covers (default: 60)
@@ -83,7 +83,7 @@ USER_ID           = os.getenv("PAPER_TRADE_USER_ID", "a5e1fcab-8369-42c4-8550-a8
 MIN_TCS           = int(os.getenv("PAPER_TRADE_MIN_TCS", "50"))
 FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
 PRICE_MIN               = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
-PRICE_MAX               = float(os.getenv("PAPER_TRADE_PRICE_MAX", "20.0"))
+PRICE_MAX               = float(os.getenv("PAPER_TRADE_PRICE_MAX", "50.0"))
 SWEEP_ALERT_MAX_TICKERS      = int(os.getenv("SWEEP_ALERT_MAX_TICKERS", "10"))
 BACKTEST_CLOSE_LOOKBACK_DAYS    = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 BACKTEST_STALE_THRESHOLD_DAYS   = int(os.getenv("BACKTEST_STALE_THRESHOLD_DAYS", "3"))
