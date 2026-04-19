@@ -325,6 +325,7 @@ def _sim_patch(r: dict) -> dict | None:
         )
         _eod_r = tiered.get("eod_pnl_r")
         if _eod_r is not None:
+            # Apply RVOL bonus multiplier — mirrors live bot sizing
             _rvol_raw = r.get("rvol")
             if _rvol_raw is not None:
                 try:
@@ -333,6 +334,14 @@ def _sim_patch(r: dict) -> dict | None:
                         _eod_r = round(float(_eod_r) * _rvol_mult, 4)
                 except (TypeError, ValueError):
                     pass
+            # Apply screener-pass multiplier — mirrors live bot sizing
+            # other=1.15×  gap=1.00×  trend=0.85×  squeeze=1.00×
+            # Derived from 5-yr backtest (33,776 trades, 2021-2026).
+            _SP_MULT = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00}
+            _sp_tag  = (r.get("screener_pass") or "").strip().lower()
+            _sp_mult = _SP_MULT.get(_sp_tag, 1.00)
+            if _sp_mult != 1.0:
+                _eod_r = round(float(_eod_r) * _sp_mult, 4)
             patch["eod_pnl_r"] = _eod_r
             patch["tiered_sim_version"] = backend.TIERED_SIM_VERSION
     return patch

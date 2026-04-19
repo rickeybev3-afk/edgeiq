@@ -31612,6 +31612,33 @@ function _bqCopyShareLink() {
             else:
                 st.info("No resolved live paper trades to break down.")
 
+        # ── Live paper trades — Screener Pass breakdown ───────────────────────
+        if not _live_resolved.empty and "screener_pass" in _live_resolved.columns:
+            _sp_live = _live_resolved.copy()
+            _sp_live["screener_pass"] = _sp_live["screener_pass"].fillna("untagged").str.strip().str.lower()
+            _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00}
+            _sp_live_rows = []
+            for _spass in ["gap", "trend", "other", "squeeze", "untagged"]:
+                _sg = _sp_live[_sp_live["screener_pass"] == _spass]
+                if _sg.empty:
+                    continue
+                _sw = _sg["is_win"].sum() if "is_win" in _sg.columns else 0
+                _sn = len(_sg)
+                _swr = _sw / _sn * 100 if _sn > 0 else 0
+                _smult = _SP_MULT_LIVE.get(_spass, 1.00)
+                _sp_live_rows.append({
+                    "Pass":     _spass.capitalize(),
+                    "Trades":   _sn,
+                    "Wins":     int(_sw),
+                    "WR":       f"{_swr:.0f}%",
+                    "sp_mult":  f"{_smult:.2f}×",
+                })
+            if _sp_live_rows:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("**Live Paper Trades — by Screener Pass**")
+                st.caption("sp_mult = position-size multiplier applied by the bot at order placement · derived from 5-yr backtest")
+                st.dataframe(pd.DataFrame(_sp_live_rows), use_container_width=True, hide_index=True)
+
         # ── Screener Pass — 5-yr Backtest Breakdown (Gap vs Trend vs All) ────
         st.markdown("<br>", unsafe_allow_html=True)
         _sp2_hdr_col, _sp2_refresh_col = st.columns([9, 1])
