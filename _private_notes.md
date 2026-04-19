@@ -164,6 +164,145 @@ Title: *"Adversity-Forged Cognition: Identifying High-Performance Behavioral Pro
 
 ---
 
+## 🧠 MASTER FRAMEWORK — Dual-Track Behavioral Intelligence
+*Captured April 19, 2026 — the organizing architecture for everything*
+
+This is the connective tissue that ties trade grades, brain weights, cognitive profiler, voice journal, and the Alpaca bot into one coherent system. Everything already built is a component of this. Nothing needs to be rebuilt — it needs to be wired together.
+
+---
+
+### THE CORE CONCEPT — Two Parallel Tracks
+
+**Track A — User Trader:**
+- Data sources: CSV imports, manual journal entries, voice recordings
+- Graded on: P&L outcome (A-F) + process execution ("did you follow your plan?") + setup validity (TCS ≥ threshold, structure confirmed)
+- Behavioral signals: 12 cognitive profiler signals extracted from voice journal transcripts
+- Composite output: **Trade Quality Score** = outcome grade (40%) + process grade (40%) + setup validity (20%)
+
+**Track B — Alpaca Bot:**
+- Data sources: autonomous paper trades — no human behavioral noise, perfect plan adherence by definition
+- Graded on: P&L outcome + structure prediction accuracy
+- "Behavioral signals": implicit — hold time, exit timing, position sizing. Bot process grade = 100% always. It never rationalizes. It never revenge trades. It never panic exits.
+- Composite output: **Bot Execution Score** = outcome + setup validity only (no process grade needed)
+- **Key insight:** The bot is not just a trading tool. It is a behavioral reference standard — the cleanest possible benchmark for systematic execution.
+
+---
+
+### GAP ANALYSIS — The Primary Signal
+
+The difference between what the bot did and what the user did on the same trading day IS the behavioral fingerprint. No self-reported data required — the gap is observable, quantifiable, and longitudinal.
+
+| Scenario | Signal |
+|---|---|
+| Bot takes trade, user takes trade, both win | Strong setup — bot validates user judgment |
+| Bot takes trade, user takes trade, user loses | Execution divergence — same setup, different result. Dig into behavioral signals. |
+| Bot takes trade, user skips | Why? FOMO avoidance? Missed it? User sensing something bot can't? |
+| User takes trade, bot skips | Red flag — user trading outside the system OR ahead of the model |
+| Both skip | Agreement on no-trade day — high alignment signal |
+
+**Direction of deviation over time maps directly to cognitive profile:**
+- Consistent over-holding → stress tolerance + ego protection (thesis drift)
+- Consistent early exits → impulse dysregulation under pressure
+- Consistent oversizing after wins → risk calibration failure (overconfidence cycle)
+- Consistent undersizing after losses → loss aversion imprint
+
+**Consistency > one-off.** A single deviation is noise. The same deviation pattern across 30+ trading days is a cognitive signal. That's what gets reported to the employer product.
+
+---
+
+### TRADE QUALITY SCORE — The Composite Metric
+
+Currently three grading systems exist as silos with no connection to each other:
+- Trade grades (A-F) → pure P&L outcome from Alpaca fills / CSV import
+- Brain weights → per-structure prediction accuracy
+- Cognitive profiler → 12 behavioral signals, 6 radar dimensions
+
+They should combine into one **Trade Quality Score:**
+
+| Component | Weight | Source | Question answered |
+|---|---|---|---|
+| Outcome grade | 40% | P&L result (A-F) | Did the trade make money? |
+| Process grade | 40% | Voice journal + "did you follow your plan?" field | Did you execute correctly? |
+| Setup validity | 20% | TCS ≥ threshold + structure confirmed | Was this a legitimate setup? |
+
+**Why this matters:**
+- A lucky bad trade (F process, A outcome) scores very differently from a disciplined losing trade (A process, F outcome)
+- The gap between process grade and outcome grade over time is the most important longitudinal signal
+- Process consistently beating outcome → variance is robbing you, system is sound, stay the course
+- Outcome consistently beating process → getting lucky, not building a repeatable edge, dangerous long-term
+
+**New field required:** "Did you execute your plan?" — yes/no + optional voice note, added to the trade journal. This is the bridge between Track A and Track B.
+
+---
+
+### CONVERGENCE RATE — Cognitive Dimension 7
+
+The 6 existing radar dimensions: Impulse Control · Stress Tolerance · Pattern Recognition · Risk Calibration · Process Discipline · Adaptability
+
+**Dimension 7: Convergence Rate** — how fast is the user's execution closing the gap toward bot-level discipline?
+
+| Rate | Interpretation |
+|---|---|
+| High (gap shrinking fast) | Learning system working — user is actively adapting |
+| Flat (gap stable) | Plateau — possible cognitive blocker, investigate |
+| Negative (gap widening) | Emotional override increasing — red flag |
+
+This dimension maps simultaneously to:
+- **Coachability** — how quickly feedback translates to behavior change
+- **Metacognition** — awareness of own cognitive patterns in real time
+- **Process discipline** — consistency of plan adherence over time
+
+It is one of the highest-signal dimensions for the employer product — more predictive than raw win rate for long-term role performance in any high-pressure domain.
+
+---
+
+### EMPLOYER PRODUCT FLOW
+
+The employer product output is not "this trader wins 80%." That tells an employer nothing useful about how the person will behave managing a team, handling a deadline, or making decisions under resource constraints.
+
+The output is: *"This person consistently deviates from optimal execution in the following direction under the following conditions — and here is what that predicts about their cognitive behavior in high-pressure non-trading contexts."*
+
+| Observed trading deviation | Employer-relevant prediction |
+|---|---|
+| Holds losses too long in the morning session | Sunk cost fallacy — difficulty admitting error, potential stubbornness on failed projects |
+| Cuts winners early, holds losers long | Asymmetric loss aversion — may under-invest in winning initiatives |
+| Oversizes immediately after strong wins | Overconfidence cycle — may over-commit resources post-success |
+| Undersizes after losses, misses recovery trades | Loss aversion imprint — may be risk-paralyzed after team failures |
+
+The profiling app never labels trauma, pathology, or personal history. It reports behavioral patterns under quantified pressure and maps them to role-relevant predictions. The trading context is not mentioned in employer-facing output.
+
+---
+
+### CROSS-REFERENCES — Already Documented Pieces This Framework Unifies
+
+**The Three Feedback Loops (see "THE THREE FEEDBACK LOOPS" section):**
+Loop 3 (Behavioral Loop) IS Track A of this framework. Loop 1 (Structure Accuracy Loop) IS Track B. They are the same dual-track system described from different angles. The Dual-Track Framework is the unifying name for what was already described as three separate loops.
+
+**Cognitive Profile × Brain Weights integration:**
+"Traders with high pattern-recognition cognitive profiles have 12% higher structure accuracy on Trend Days — weight their collective contributions more."
+→ This is the first documented example of Track A behavioral output (cognitive dimension score) feeding into Track B calibration (brain weight adjustment). This is exactly how the two tracks are intended to interact at scale.
+
+**Latent inhibition, metacognition, pattern recognition style (see Cognitive Profiling App section):**
+Already documented as the sub-components of cognitive architecture. These underlying traits produce the 7 radar dimensions. Dimension 7 (Convergence Rate) directly measures metacognition — the ability to observe and adjust one's own cognitive patterns in real time.
+
+**Separate brand + shared data layer (see Cognitive Profiling App section):**
+"The profiling app needs its own identity to sell to HR teams at Goldman or McKinsey without the trading association confusing the pitch. But the data flows back."
+→ The Dual-Track Framework IS the mechanism by which data flows back. User gap data (Track A vs Track B deviation) is what gets matched against real performance outcomes to validate the profiler's predictive accuracy for employers. That matched dataset is the exit asset.
+
+---
+
+### BUILD PRIORITY FOR THIS FRAMEWORK
+
+None of this is Phase 1 work. Sequence in dependency order:
+
+1. **Voice journal** — generates all process-grade data. Nothing else in this framework works without it. Build after go-live, first month of real trades.
+2. **"Did you execute your plan?" field** — add to trade journal (yes/no + voice note). The bridge question.
+3. **Trade Quality Score composite** — wires outcome grade + process grade + setup validity into one metric.
+4. **Bot/User convergence tracker** — cross-references what bot took vs what user took on the same day. Quantifies the gap.
+5. **Dimension 7 (Convergence Rate)** — adds convergence tracking to the cognitive profiler radar as the 7th spoke.
+
+---
+
 ## ⚡ QUICK STATUS
 
 > **PHASE 1 COMPLETE — April 17, 2026**
