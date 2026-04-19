@@ -1230,6 +1230,7 @@ _DEFAULTS = {
     "breadth_regime":       None,   # cached classify_macro_regime() result
     "sa_vap":               None,   # VP volumes for SA tab
     "skip_reason_backfill_done": False,  # one-time paper_trades skip_reason backfill
+    "perf_require_vwap":        False,  # Performance tab VWAP filter — default OFF
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
