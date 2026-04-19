@@ -1,5 +1,76 @@
 # EdgeIQ — Private Build Notes (Reorganized)
-*Last updated: April 19, 2026 — Session note added*
+*Last updated: April 19, 2026 — Full session changelog + interview pipeline added*
+
+---
+
+## 📝 SESSION NOTE — April 19, 2026 (Late — overnight builds)
+
+### What was built tonight (full changelog)
+
+**Process Grade Layer (trade journal):**
+- "Did you execute your plan?" radio field added to both manual log form and voice memo logger
+- Process grade auto-filled from 12 behavioral signals (A–F, net positive vs negative signals)
+- Process grade badge shown on every journal card (green/orange/red)
+- "Edit Process Grade" expander on every card — pre-filled, saves without re-logging
+- Process vs Outcome stats panel: followed plan %, deviated %, gap analysis
+- Process Discipline Rate headline card in journal header (color-coded by personal target)
+- Personal discipline-rate target input (proportional amber/red thresholds)
+- Discipline by Structure mini-cards — sorted weakest first, toggle for best/worst
+- Discipline by Structure included in journal CSV export
+
+**Voice Trade Journal:**
+- `st.audio_input()` recorder added to Log Entry form
+- Whisper auto-transcription on new recording capture (MD5 hash-detected to avoid reruns)
+- GPT-4o-mini extracts all 12 behavioral signals from transcript automatically
+- Signal checkboxes pre-filled by AI, manually editable before saving
+- Transcript + audio stored to Supabase (base64, 1MB cap)
+- "Did you follow your plan?" auto-detected from deviation keywords in transcript
+- View Transcript expander on every journal card — shows transcript, behavioral summary, signal pills (HTML-escaped)
+- Voice memo logger also captures process grade (followed_plan + deviation_notes)
+
+**Behavioral Signals:**
+- 12 signals stored as JSONB in `voice_signals` column (Supabase migration on startup)
+- Signals expanded as 12 boolean columns in journal CSV export (1/0)
+- `followed_plan` signal auto-synced with process-quality radio (one-directional)
+- Process grade (A–F) computed from net signal score, stored alongside entry
+- `process_grade` + `process_grade_reason` columns added to schema
+
+**Bot vs Trader Convergence Tracker:**
+- `compute_bot_vs_trader_stats()` in backend — loads paper_trades + cognitive_delta_log, deduplicates per (date, ticker), returns per-day convergence rate
+- Behavioral pattern flags generated (RVOL bands, TCS bands, per-structure outliers)
+- Convergence trend via linear regression over last 30 active days
+- "Bot vs You" panel in Paper Trade tab — 4 KPI cards, convergence rate chart, per-day breakdown table, behavioral flags
+- Cognitive Profiler updated: Convergence Rate added as Dimension 7 (7th radar spoke)
+
+**Discipline Charts:**
+- Grade Discipline Curve rolling-window picker (Last 5/10/20/All-time)
+- Process Discipline Rate rolling-window picker (same options)
+- Both window choices persist across page refresh via URL query params (`gdc_window`, `pdr_window`)
+- Process Discipline Rate chart with color-coded markers (green = followed, red = deviated), purple line, 70% dotted target
+
+**Cognitive Profiler:**
+- Deduplication: `transcribe_audio_bytes` and `ai_extract_signals` moved to backend, cognitive_profiler.py imports from there (removed duplicate implementations)
+- Convergence Rate (Dimension 7) added to radar — score maps from trend direction (rising_fast=90, flat=50, falling_fast=15)
+- Old 6-dimension saved profiles remain compatible (default 50 for Dimension 7)
+
+---
+
+### Interview Pipeline Architecture
+*(Discussed April 19, 2026 — document so it doesn't get lost)*
+
+The same voice recording + AI extraction infrastructure being built for EdgeIQ's trading journal is the prototype for the interview pipeline. Sequence:
+
+1. **EdgeIQ (now)** — voice journal captures behavioral data under real financial pressure. Personal case study builds. Validates which signals are stable and predictive.
+
+2. **Interview recordings** — sit with real people (not necessarily traders). Voice record the conversation. Same Whisper + GPT-4 extraction layer pulls cognitive markers from interview transcripts. Same 12 signals, same extraction prompt, different context.
+
+3. **Cross-interview pattern analysis** — which markers appear consistently? Which ones correlate with what the EdgeIQ case study flagged as high-signal? Which ones require reframing for a non-trading context?
+
+4. **Test design phase** — from the interview patterns, draft a formal standalone cognitive assessment. Not an interview. Not a trading session. A purpose-built test that tracks the same underlying markers without requiring any financial context at all.
+
+5. **The employer product** — that test. Separate brand. Separate company. Citations attached to every output. Never mentions trading.
+
+The voice infrastructure being built now is not just for trading. It's the first working version of the data collection layer for the employer product research phase.
 
 ---
 
