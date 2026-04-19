@@ -21851,7 +21851,11 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 else:
                     _flagged = bool(_v)
                 if _flagged:
-                    _bs_rows.append({"signal": _k, "date": _dt})
+                    _bs_rows.append({
+                        "signal":   _k,
+                        "date":     _dt,
+                        "win_loss": str(_brow.get("win_loss", "") or "").strip(),
+                    })
 
         _bs_df = _pd_bs.DataFrame(_bs_rows)
 
@@ -22021,6 +22025,158 @@ Nothing here requires any input from you. All numbers update automatically as yo
                             margin=dict(l=10, r=10, t=20, b=90),
                         )
                         st.plotly_chart(fig_per, use_container_width=True)
+
+            # ── Signal → Outcome Correlation ──────────────────────────────
+            _bs_outcome_df = (
+                _bs_df[_bs_df["win_loss"].isin(["Win", "Loss", "Breakeven"])].copy()
+                if "win_loss" in _bs_df.columns
+                else _pd_bs.DataFrame()
+            )
+
+            if not _bs_outcome_df.empty:
+                st.markdown("#### 🎯 Signal → Outcome Correlation")
+                st.caption(
+                    "For each behavioral signal, the split of trade outcomes across all "
+                    "trades where that signal was logged. Shows whether bad habits actually "
+                    "correlate with losses — and whether good habits correlate with wins."
+                )
+
+                _oc_grouped = (
+                    _bs_outcome_df.groupby(["signal", "win_loss"])
+                    .size()
+                    .reset_index(name="n")
+                )
+                _oc_totals = (
+                    _oc_grouped.groupby("signal")["n"].sum().rename("total")
+                )
+                _oc_grouped = _oc_grouped.join(_oc_totals, on="signal")
+                _oc_grouped["pct"] = (
+                    _oc_grouped["n"] / _oc_grouped["total"] * 100
+                )
+
+                _oc_sigs = (
+                    _oc_grouped.groupby("signal")["total"]
+                    .first()
+                    .sort_values(ascending=True)
+                    .index.tolist()
+                )
+                _oc_labels = [_bs_label_map.get(s, s) for s in _oc_sigs]
+
+                _oc_wl_colors = {
+                    "Win":       "#4caf50",
+                    "Loss":      "#ef5350",
+                    "Breakeven": "#90a4ae",
+                }
+
+                fig_oc = _go.Figure()
+                for _wl_cat, _wl_color in _oc_wl_colors.items():
+                    _pcts, _ns, _tots = [], [], []
+                    for _sig in _oc_sigs:
+                        _row = _oc_grouped[
+                            (_oc_grouped["signal"] == _sig) &
+                            (_oc_grouped["win_loss"] == _wl_cat)
+                        ]
+                        _tot_n = int(
+                            _oc_grouped[_oc_grouped["signal"] == _sig]["total"].max()
+                            if not _oc_grouped[_oc_grouped["signal"] == _sig].empty
+                            else 0
+                        )
+                        if not _row.empty:
+                            _pcts.append(round(float(_row.iloc[0]["pct"]), 1))
+                            _ns.append(int(_row.iloc[0]["n"]))
+                        else:
+                            _pcts.append(0.0)
+                            _ns.append(0)
+                        _tots.append(_tot_n)
+
+                    fig_oc.add_trace(_go.Bar(
+                        name=_wl_cat,
+                        x=_pcts,
+                        y=_oc_labels,
+                        orientation="h",
+                        marker_color=_wl_color,
+                        text=[f"{p:.0f}%" if p > 5 else "" for p in _pcts],
+                        textposition="inside",
+                        textfont=dict(size=10, color="#fff"),
+                        hovertemplate=(
+                            f"<b>%{{y}}</b><br>{_wl_cat}: %{{x:.1f}}%<br>"
+                            "(%{customdata[0]} of %{customdata[1]} trades)"
+                            "<extra></extra>"
+                        ),
+                        customdata=list(zip(_ns, _tots)),
+                    ))
+
+                fig_oc.update_layout(
+                    barmode="stack",
+                    paper_bgcolor="#1a1a2e",
+                    plot_bgcolor="#16213e",
+                    font=dict(color="#e0e0e0"),
+                    height=max(260, len(_oc_sigs) * 34 + 100),
+                    xaxis=dict(
+                        title="% of tagged trades",
+                        range=[0, 100],
+                        gridcolor="#2a2a4a",
+                        ticksuffix="%",
+                    ),
+                    yaxis=dict(gridcolor="#2a2a4a", tickfont=dict(size=11)),
+                    legend=dict(
+                        orientation="h", y=-0.18, x=0,
+                        font=dict(color="#e0e0e0", size=11),
+                        bgcolor="rgba(0,0,0,0)",
+                        traceorder="normal",
+                    ),
+                    margin=dict(l=10, r=30, t=20, b=70),
+                )
+                st.plotly_chart(fig_oc, use_container_width=True)
+
+                _oc_insights = []
+                for _sig in [s for s in _oc_sigs if s in _bs_negative]:
+                    _sig_rows = _oc_grouped[_oc_grouped["signal"] == _sig]
+                    _loss_row = _sig_rows[_sig_rows["win_loss"] == "Loss"]
+                    _total_n  = int(_sig_rows["n"].sum())
+                    if not _loss_row.empty and _total_n >= 2:
+                        _lp = round(float(_loss_row.iloc[0]["pct"]), 0)
+                        if _lp >= 50:
+                            _oc_insights.append((
+                                f'<b style="color:#ef5350;">'
+                                f'{_bs_label_map.get(_sig, _sig)}</b> → '
+                                f'<b style="color:#ef5350;">'
+                                f'{int(_lp)}% of tagged trades were losses</b> '
+                                f'({int(_loss_row.iloc[0]["n"])} of {_total_n})',
+                                "#ef535022", "#ef5350",
+                            ))
+
+                for _sig in [s for s in _oc_sigs if s in _bs_positive]:
+                    _sig_rows = _oc_grouped[_oc_grouped["signal"] == _sig]
+                    _win_row  = _sig_rows[_sig_rows["win_loss"] == "Win"]
+                    _total_n  = int(_sig_rows["n"].sum())
+                    if not _win_row.empty and _total_n >= 2:
+                        _wp = round(float(_win_row.iloc[0]["pct"]), 0)
+                        if _wp >= 50:
+                            _oc_insights.append((
+                                f'<b style="color:#4caf50;">'
+                                f'{_bs_label_map.get(_sig, _sig)}</b> → '
+                                f'<b style="color:#4caf50;">'
+                                f'{int(_wp)}% of tagged trades were wins</b> '
+                                f'({int(_win_row.iloc[0]["n"])} of {_total_n})',
+                                "#4caf5022", "#4caf50",
+                            ))
+
+                if _oc_insights:
+                    st.markdown("**Key findings:**")
+                    for _txt, _bg, _border in _oc_insights:
+                        st.markdown(
+                            f'<div style="background:{_bg};border-left:3px solid '
+                            f'{_border};padding:7px 12px;border-radius:4px;'
+                            f'margin:4px 0;font-size:12px;color:#cfd8dc;">'
+                            f'{_txt}</div>',
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption(
+                        "Not enough data yet to draw strong conclusions — "
+                        "keep logging trades with voice signals to see patterns emerge."
+                    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION — Webull Pattern Correlation
