@@ -5,6 +5,23 @@
 
 ## 🔁 DEFERRED DECISIONS — Come Back To These
 
+### Stop Logic Optimization Study — After Go-Live Data Accumulates (noted Apr 19, 2026)
+The Apr 14-17 sim fix revealed 29 trades where MAE >= 1R (stopped out at IB low) but MFE was large — price shook out the stop then ran massive. These are false shakeouts and represent recoverable P&L if stops were smarter.
+
+**Research task:** Split those 29 trades vs clean stopped-outs. Look for separating signals:
+- RVOL > 3.5× — high volume runners tend to recover after shakeouts
+- Gap % > 15% — big gap stocks often find real support above IB low
+- IB range % — wide IB = stop at IB low is too tight, need a buffer
+- Nearest support level below IB low (already in backtest_context_levels)
+- VWAP position at IB time — if VWAP > IB low, use VWAP as stop floor
+- Scan type: morning vs intraday shakeout patterns differ
+
+**Output goal:** Conditional stop-widening rules. E.g. "if RVOL > 3.5 and gap > 15%, stop = IB low - 0.5R buffer." Feed back into adaptive_exits.json.
+
+**Do NOT touch stop logic before accumulating 4+ weeks of live fills.** Optimize on real execution data, not paper noise.
+
+---
+
 ### Exit Logic Review — After 3–4 Weeks of Live Fills (noted Apr 19, 2026)
 Current live bot: places fixed bracket to T1 (1.0–1.5R from adaptive_exits.json), then cancels and switches to trailing stop when T1 is hit. Trail size = 1R.
 
