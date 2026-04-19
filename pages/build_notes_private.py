@@ -20,10 +20,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-is_deployed = os.environ.get("REPL_DEPLOYMENT", "") == "1" or os.environ.get("REPLIT_DEPLOYMENT", "") == "1"
+_NOTES_PASSCODE = os.environ.get("NOTES_PASSCODE", "")
 
-if is_deployed:
-    st.error("🔒 This page is not available on the public site.")
+if not _NOTES_PASSCODE:
+    st.error("NOTES_PASSCODE environment variable not set.")
+    st.stop()
+
+if "private_notes_unlocked" not in st.session_state:
+    st.session_state.private_notes_unlocked = False
+
+if not st.session_state.private_notes_unlocked:
+    st.markdown("## 🔒 Private Build Notes")
+    code_input = st.text_input("Passcode", type="password", placeholder="Enter passcode")
+    if st.button("Unlock"):
+        if code_input == _NOTES_PASSCODE:
+            st.session_state.private_notes_unlocked = True
+            st.rerun()
+        else:
+            st.error("Incorrect passcode.")
     st.stop()
 
 st.markdown("# 🔒 EdgeIQ Build Notes — Full Private")
