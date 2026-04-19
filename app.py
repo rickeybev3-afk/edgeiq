@@ -3256,14 +3256,45 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         _gdc_window_options = {"Last 5": 5, "Last 10": 10, "Last 20": 20, "All-time": None}
         _gdc_saved = st.query_params.get("gdc_window", "All-time")
         _gdc_default_idx = list(_gdc_window_options.keys()).index(_gdc_saved) if _gdc_saved in _gdc_window_options else 3
-        _gdc_window_label = st.selectbox(
-            "Averaging window",
-            options=list(_gdc_window_options.keys()),
-            index=_gdc_default_idx,
-            key="gdc_window_select",
-            help="Choose how many recent entries the grade average is calculated over.",
-            label_visibility="collapsed",
-        )
+        _gdc_row = st.columns([5, 1])
+        with _gdc_row[0]:
+            _gdc_window_label = st.selectbox(
+                "Averaging window",
+                options=list(_gdc_window_options.keys()),
+                index=_gdc_default_idx,
+                key="gdc_window_select",
+                help="Choose how many recent entries the grade average is calculated over.",
+                label_visibility="collapsed",
+            )
+        with _gdc_row[1]:
+            if st.button("🔗 Copy link", key="gdc_copy_link", help="Copy the current page URL (with this window setting) to your clipboard"):
+                import streamlit.components.v1 as _comp_v1
+                _comp_v1.html(
+                    """<script>
+(function(){
+    var url=window.parent.location.href;
+    function showToast(msg,border){
+        var t=document.createElement('div');
+        t.textContent=msg;
+        t.style.cssText='position:fixed;bottom:28px;right:28px;background:#1e1e3a;color:#e0e0e0;'
+            +'border:1px solid '+border+';padding:10px 20px;border-radius:10px;'
+            +'z-index:9999;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,0.5);';
+        window.parent.document.body.appendChild(t);
+        setTimeout(function(){t.style.transition='opacity 0.4s';t.style.opacity='0';setTimeout(function(){t.remove();},400);},2200);
+    }
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(url).then(function(){
+            showToast('🔗 Link copied!','#00bcd4');
+        },function(){
+            showToast('⚠️ Copy failed — please copy the URL manually','#ef5350');
+        });
+    } else {
+        showToast('⚠️ Clipboard not available — please copy the URL manually','#ef5350');
+    }
+})();
+</script>""",
+                    height=0,
+                )
         if st.query_params.get("gdc_window") != _gdc_window_label:
             st.query_params["gdc_window"] = _gdc_window_label
         _gdc_window = _gdc_window_options[_gdc_window_label]
@@ -3317,14 +3348,45 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _pdr_window_options = {"Last 5": 5, "Last 10": 10, "Last 20": 20, "All-time": None}
             _pdr_saved = st.query_params.get("pdr_window", "All-time")
             _pdr_default_idx = list(_pdr_window_options.keys()).index(_pdr_saved) if _pdr_saved in _pdr_window_options else 3
-            _pdr_window_label = st.selectbox(
-                "Averaging window",
-                options=list(_pdr_window_options.keys()),
-                index=_pdr_default_idx,
-                key="pdr_window_select",
-                help="Choose how many recent entries the discipline rate is averaged over.",
-                label_visibility="collapsed",
-            )
+            _pdr_row = st.columns([5, 1])
+            with _pdr_row[0]:
+                _pdr_window_label = st.selectbox(
+                    "Averaging window",
+                    options=list(_pdr_window_options.keys()),
+                    index=_pdr_default_idx,
+                    key="pdr_window_select",
+                    help="Choose how many recent entries the discipline rate is averaged over.",
+                    label_visibility="collapsed",
+                )
+            with _pdr_row[1]:
+                if st.button("🔗 Copy link", key="pdr_copy_link", help="Copy the current page URL (with this window setting) to your clipboard"):
+                    import streamlit.components.v1 as _comp_v1_pdr
+                    _comp_v1_pdr.html(
+                        """<script>
+(function(){
+    var url=window.parent.location.href;
+    function showToast(msg,border){
+        var t=document.createElement('div');
+        t.textContent=msg;
+        t.style.cssText='position:fixed;bottom:28px;right:28px;background:#1e1e3a;color:#e0e0e0;'
+            +'border:1px solid '+border+';padding:10px 20px;border-radius:10px;'
+            +'z-index:9999;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,0.5);';
+        window.parent.document.body.appendChild(t);
+        setTimeout(function(){t.style.transition='opacity 0.4s';t.style.opacity='0';setTimeout(function(){t.remove();},400);},2200);
+    }
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(url).then(function(){
+            showToast('🔗 Link copied!','#ab47bc');
+        },function(){
+            showToast('⚠️ Copy failed — please copy the URL manually','#ef5350');
+        });
+    } else {
+        showToast('⚠️ Clipboard not available — please copy the URL manually','#ef5350');
+    }
+})();
+</script>""",
+                        height=0,
+                    )
             if st.query_params.get("pdr_window") != _pdr_window_label:
                 st.query_params["pdr_window"] = _pdr_window_label
             _pdr_window = _pdr_window_options[_pdr_window_label]
