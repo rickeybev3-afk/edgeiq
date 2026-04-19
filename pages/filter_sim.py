@@ -12,6 +12,9 @@ import plotly.graph_objects as go
 import sys, os, time
 from datetime import datetime
 
+if "fs_use_vwap" not in st.session_state:
+    st.session_state["fs_use_vwap"] = False
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import backend
 
@@ -255,7 +258,7 @@ with ctrl_col2:
     )
 
 with ctrl_col3:
-    use_vwap = st.toggle("Require VWAP side", value=False,
+    use_vwap = st.toggle("Require VWAP side", key="fs_use_vwap",
                          help="Only take Bullish Breaks where close was above VWAP (and Bearish Breaks below). Removes setups fighting the intraday trend.")
 
 with ctrl_col4:
