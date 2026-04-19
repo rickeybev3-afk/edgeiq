@@ -256,7 +256,10 @@ RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars 
 # PDT guard: block new orders when day-trade count >= this limit (FINRA: 3 in rolling 5 days)
 PDT_MAX_DAY_TRADES       = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
 # Concurrent position cap: block new orders when open positions >= this limit
-MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", "2"))
+# Paper mode: high cap (20) so all qualifying signals are taken, not just top 2.
+# Live mode: default 2 to protect capital. Override via MAX_CONCURRENT_POSITIONS env var.
+_default_pos_cap = "20" if os.getenv("IS_PAPER_ALPACA", "true").lower() == "true" else "2"
+MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", _default_pos_cap))
 # PDT equity floor: fire a Telegram warning when live account equity drops below this level
 # Default $26k gives a ~$1k buffer above the $25k PDT threshold (5 losses of $500 each = $2,500 drawdown cushion)
 PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
