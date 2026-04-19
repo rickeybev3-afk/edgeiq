@@ -2298,7 +2298,7 @@ def render_log_entry_ui():
     # ── Recent Trades preview (last 10 from Supabase) ─────────────────────────
     _recent_df = _cached_load_journal(user_id=st.session_state.get("auth_user_id", ""))
     if not _recent_df.empty:
-        _cols = [c for c in ["timestamp", "ticker", "price", "structure", "grade"]
+        _cols = [c for c in ["timestamp", "ticker", "price", "structure", "grade", "process_grade"]
                  if c in _recent_df.columns]
         _show = _recent_df[_cols].head(10).copy()
 
@@ -2310,11 +2310,22 @@ def render_log_entry_ui():
 
         # Grade → colored badge via styled HTML
         _grade_row_colors = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}
+        _has_proc_col = "process_grade" in _show.columns
         rows_html = ""
         for _, row in _show.iterrows():
             g  = str(row.get("grade", ""))
             gc = _grade_row_colors.get(g, "#555")
             ts = str(row.get("timestamp", ""))[:16]   # trim seconds
+            _pg_raw = row.get("process_grade", None) if _has_proc_col else None
+            _pg = str(_pg_raw).strip() if _pg_raw is not None else ""
+            if _pg.lower() in ("nan", "none", ""):
+                _pg = ""
+            _pgc = _grade_row_colors.get(_pg, "#555")
+            _pg_cell = (
+                f'<span style="background:{_pgc}22; border:1px solid {_pgc}; color:{_pgc}; '
+                f'border-radius:4px; padding:2px 8px; font-weight:700; font-size:12px;">{_pg}</span>'
+                if _pg else '<span style="color:#555;">—</span>'
+            )
             rows_html += (
                 f'<tr>'
                 f'<td style="color:#888; font-size:11px; padding:5px 8px; white-space:nowrap;">{ts}</td>'
@@ -2325,6 +2336,7 @@ def render_log_entry_ui():
                 f'<span style="background:{gc}22; border:1px solid {gc}; color:{gc}; '
                 f'border-radius:4px; padding:2px 8px; font-weight:700; font-size:12px;">{g}</span>'
                 f'</td>'
+                f'<td style="padding:5px 8px; text-align:center;">{_pg_cell}</td>'
                 f'</tr>'
             )
 
@@ -2345,6 +2357,8 @@ def render_log_entry_ui():
             f'text-transform:uppercase; letter-spacing:1px;">Structure</th>'
             f'<th style="text-align:center; color:#5c6bc0; font-size:10px; padding:6px 8px; '
             f'text-transform:uppercase; letter-spacing:1px;">Grade</th>'
+            f'<th style="text-align:center; color:#5c6bc0; font-size:10px; padding:6px 8px; '
+            f'text-transform:uppercase; letter-spacing:1px;">Process</th>'
             f'</tr></thead>'
             f'<tbody>{rows_html}</tbody>'
             f'</table></div>',
@@ -3088,7 +3102,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 "", notes_v
             ).strip(" |·").strip()
 
-            # Process-grade badge
+            # Process-grade badge (followed-plan discipline indicator)
             _fp_val = str(row.get("followed_plan", "") or "").strip().lower()
             _dev_v  = str(row.get("deviation_notes", "") or "").strip()
             if _fp_val == "yes":
@@ -3107,6 +3121,24 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             else:
                 _process_badge = ""
 
+            # Process grade letter badge (A/B/C/F)
+            _proc_grade_raw = row.get("process_grade", None)
+            _proc_grade_val = str(_proc_grade_raw).strip() if _proc_grade_raw is not None else ""
+            if _proc_grade_val.lower() in ("nan", "none", ""):
+                _proc_grade_val = ""
+            _pgc_card = _GRADE_COLORS.get(_proc_grade_val, "#aaa")
+            if _proc_grade_val:
+                _proc_grade_badge = (
+                    f'<span style="background:{_pgc_card}22;border:1px solid {_pgc_card};'
+                    f'color:{_pgc_card};font-size:10px;font-weight:700;padding:2px 8px;'
+                    f'border-radius:4px;white-space:nowrap;">Process {_proc_grade_val}</span>'
+                )
+            else:
+                _proc_grade_badge = (
+                    '<span style="color:#555;font-size:10px;font-weight:600;padding:2px 4px;'
+                    'white-space:nowrap;">Process —</span>'
+                )
+
             _j_cols = st.columns([8, 1])
             with _j_cols[0]:
                 st.markdown(
@@ -3120,6 +3152,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     f'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
                     f'<span style="font-size:20px;font-weight:800;color:#e0e0e0;">{sym}</span>'
                     f'{_hold_badge}'
+                    f'{(" " + _proc_grade_badge) if _proc_grade_badge else ""}'
                     f'{(" " + _process_badge) if _process_badge else ""}'
                     f'<span style="font-size:11px;color:#666;">{ts}</span>'
                     f'</div>'
