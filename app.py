@@ -2881,12 +2881,30 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         if _pdr_df.empty:
             st.caption("No process data yet — log trades with '💾 Log This Trade Entry' and record whether you followed your plan.")
         else:
+            _pdr_window_options = {"Last 5": 5, "Last 10": 10, "Last 20": 20, "All-time": None}
+            _pdr_window_label = st.selectbox(
+                "Averaging window",
+                options=list(_pdr_window_options.keys()),
+                index=3,
+                key="pdr_window_select",
+                help="Choose how many recent entries the discipline rate is averaged over.",
+                label_visibility="collapsed",
+            )
+            _pdr_window = _pdr_window_options[_pdr_window_label]
+
             _pdr_df = _pdr_df.reset_index(drop=True)
             _pdr_df["_entry_num"] = range(1, len(_pdr_df) + 1)
             _pdr_df["_followed_bin"] = (_pdr_df["followed_plan"] == "yes").astype(int)
-            _pdr_df["_rolling_pct"] = (
-                _pdr_df["_followed_bin"].expanding().mean() * 100
-            )
+            if _pdr_window is None:
+                _pdr_df["_rolling_pct"] = (
+                    _pdr_df["_followed_bin"].expanding().mean() * 100
+                )
+                _window_label_str = "all-time avg"
+            else:
+                _pdr_df["_rolling_pct"] = (
+                    _pdr_df["_followed_bin"].rolling(_pdr_window, min_periods=1).mean() * 100
+                )
+                _window_label_str = f"last-{_pdr_window} avg"
             _pdr_df["_point_color"] = _pdr_df["followed_plan"].map(
                 {"yes": "#4caf50", "no": "#ef5350"}
             ).fillna("#aaa")
@@ -2899,7 +2917,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 line=dict(color="#ab47bc", width=2.5),
                 marker=dict(size=7, color=_pdr_df["_point_color"]),
                 name="Process Discipline Rate",
-                hovertemplate="Entry %{x} — %{y:.1f}% followed plan<extra></extra>",
+                hovertemplate=f"Entry %{{x}} — %{{y:.1f}}% followed plan ({_window_label_str})<extra></extra>",
             ))
             _fig_pdr.add_hline(
                 y=70,
@@ -2911,7 +2929,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
                 font=dict(color="#e0e0e0"), height=220,
                 xaxis=dict(title="Entry #", gridcolor="#2a2a4a"),
-                yaxis=dict(title="Rolling % Followed Plan", gridcolor="#2a2a4a",
+                yaxis=dict(title="% Followed Plan", gridcolor="#2a2a4a",
                            range=[-5, 105], ticksuffix="%"),
                 margin=dict(l=10, r=10, t=20, b=40),
                 showlegend=False,
