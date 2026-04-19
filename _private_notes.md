@@ -343,6 +343,150 @@ None of this is Phase 1 work. Sequence in dependency order:
 
 ---
 
+### RESEARCH CITATIONS LAYER — Defensibility Infrastructure for the Employer Product
+*Critical: EdgeIQ bot needs none of this. The cognitive profiler employer product needs all of it.*
+*Every claim made to a B2B buyer (Goldman, McKinsey, DoD, hospital systems) must trace to peer-reviewed literature.*
+
+---
+
+#### THE 12 BEHAVIORAL SIGNALS — Academic Backing
+
+**🔴 FOMO Entry** *(entered before planned level / chased price)*
+- **Herding behavior:** Banerjee (1992) "A Simple Model of Herd Behavior," *Quarterly Journal of Economics*; Bikhchandani et al. (1992) "A Theory of Fads, Fashion, Custom, and Cultural Change"
+- **Regret theory:** Loomes & Sugden (1982) — anticipatory regret drives premature entry to avoid missing a move
+- **FOMO in financial markets:** Shiller (2000) *Irrational Exuberance* — narrative-driven chasing of price momentum
+- **Employer translation:** Susceptibility to social pressure and peer behavior overriding individual judgment; difficulty maintaining independent conviction in group settings
+
+**🔴 Panic Exit** *(exited before stop / abandoned plan under pressure)*
+- **Acute stress and decision-making:** Starcke & Brand (2012) "Decision Making Under Stress," *Neuroscience & Biobehavioral Reviews* — stress impairs prefrontal function and shifts control to amygdala-driven responses
+- **Amygdala hijack:** LeDoux (1994) — emotional brain overrides rational evaluation under perceived threat
+- **Prospect Theory:** Kahneman & Tversky (1979) — accelerating loss aversion as losses mount produces irrational exit behavior
+- **Employer translation:** Abandons plans under pressure; decisions degrade significantly in high-stakes moments
+
+**🔴 Thesis Drift** *(changed the plan mid-trade without new information)*
+- **Confirmation bias:** Wason (1960) "On the Failure to Eliminate Hypotheses" — humans preferentially seek confirming evidence and resist disconfirming information
+- **Belief perseverance:** Ross & Lepper (1980) — beliefs persist even after the evidence forming them is discredited
+- **Anchoring:** Tversky & Kahneman (1974) "Judgment Under Uncertainty" — initial trade thesis anchors evaluation of new information
+- **Employer translation:** Difficulty updating beliefs when contradicting evidence emerges; may over-commit to initial strategy
+
+**🔴 Revenge Trade** *(entered immediately after a loss, emotionally driven)*
+- **Affect and decision-making:** Loewenstein et al. (2001) "Risk as Feelings," *Psychological Bulletin* — emotional states directly influence risk-taking independent of cognitive assessment
+- **Loss chasing:** O'Connor & Dickerson (2003) — pattern of escalating risk after losses to recover; closely related to problem gambling literature
+- **Hot system activation:** Metcalfe & Mischel (1999) "A Hot/Cool System Analysis of Delay of Gratification" — emotional (hot) system dominates cool rational system under frustration
+- **Employer translation:** Emotional reactivity to setbacks produces poor subsequent decisions; may escalate commitment to recover sunk costs
+
+**🔴 Oversized Position** *(position larger than risk parameters allow)*
+- **Overconfidence bias:** De Bondt & Thaler (1985) "Does the Stock Market Overreact?" — systematic overconfidence in own judgment
+- **Gervais & Odean (2001)** "Learning to Be Overconfident," *Review of Financial Studies* — success produces overconfidence which produces larger subsequent bets
+- **Kelly criterion violations:** Kelly (1956) — mathematical proof that overbetting reduces long-run growth even with positive expected value
+- **Employer translation:** Poor resource allocation under confidence; over-commits assets/team capacity when feeling momentum
+
+**🔴 High Stress Language** *(verbal indicators of emotional state during trade)*
+- **Stress response and cognition:** McEwen & Sapolsky (1995) — chronic stress degrades prefrontal cortex function, memory consolidation, and executive control
+- **Yerkes-Dodson Law (1908)** — performance peaks at moderate arousal; high arousal degrades complex decision-making
+- **Verbal content and emotional state:** Pennebaker (1997) *Opening Up* — language patterns reliably indicate emotional regulation state
+- **Employer translation:** Operates under sustained emotional pressure that degrades decision quality; may not self-monitor effectively in high-stakes environments
+
+---
+
+**🟢 Held Drawdown with Conviction** *(held through drawdown with thesis intact)*
+- **Evidence-based decision making:** Distinguished from denial by the presence of a logical thesis check — related to Klein (1998) *Sources of Power* naturalistic decision-making
+- **Distinguishing signal from noise:** Kahneman (2011) *Thinking Fast and Slow* — System 2 rational override of System 1 panic response
+- **Employer translation:** Maintains positions under pressure when the underlying logic is sound; doesn't abandon strategy at first sign of difficulty
+
+**🟢 Followed Plan** *(executed exactly as planned before entry)*
+- **Protocol adherence and performance:** Gawande (2009) *The Checklist Manifesto* — systematic adherence to pre-defined procedures reduces error rates across medicine, aviation, finance
+- **Implementation intentions:** Gollwitzer (1999) — pre-planned "if-then" responses dramatically improve follow-through under pressure
+- **Employer translation:** Executes under uncertainty without improvising outside the plan; reliable process adherence in high-stakes settings
+
+**🟢 Scaled Exits** *(systematic partial exits as trade develops)*
+- **Optimal stopping and partial liquidation:** Related to Kelly (1956) and risk management theory
+- **Executive function and planning:** Miyake et al. (2000) — complex multi-step planning under uncertainty is a core executive function
+- **Employer translation:** Manages complex, multi-stage decisions systematically rather than binary all-or-nothing choices
+
+**🟢 Key Level Reference** *(explicitly referenced structural levels before/during trade)*
+- **Expert pattern recognition:** Chase & Simon (1973) "Perception in Chess" — experts organize information into larger meaningful chunks (structures), novices see individual pieces
+- **Recognition-Primed Decision (RPD) model:** Klein (1998) — expert decision-makers recognize patterns that trigger appropriate action without exhaustive analysis
+- **Employer translation:** Operates from an organized mental model of the environment; decision-making anchored to structural reality rather than noise
+
+**🟢 Setup Named** *(explicitly named the setup type before entry)*
+- **Metacognition:** Flavell (1979) "Metacognition and Cognitive Monitoring" — awareness of one's own cognitive process is a predictor of performance quality
+- **Expert labeling and performance:** de Groot (1965) on chess master categorization — naming a pattern before acting on it reflects deep schema formation
+- **Self-explanation effect:** Chi et al. (1989) — explicit verbalization of reasoning improves decision quality and error detection
+- **Employer translation:** High metacognitive awareness; able to name what they're doing and why before committing. Strongest predictor of learning from feedback.
+
+**🟢 Adapted to Tape** *(changed approach based on market feedback, not emotion)*
+- **Cognitive flexibility:** Miyake et al. (2000) "The Unity and Diversity of Executive Functions" — task-switching and mental set-shifting are measurable executive functions
+- **Adaptive expertise:** Hatano & Inagaki (1986) — distinguishes routine experts (rigid) from adaptive experts (update models with new evidence)
+- **Attention switching:** Monsell (2003) — ability to redirect attention based on new information without perseveration
+- **Employer translation:** Updates strategy based on new information without emotional resistance; distinguishes evidence-based adaptation from emotional reactivity
+
+---
+
+#### THE 7 RADAR DIMENSIONS — Academic Backing
+
+**1. Impulse Control**
+- Barkley (1997) "Behavioral Inhibition, Sustained Attention, and Executive Functions" — behavioral inhibition as the core executive function underlying all self-regulation
+- Mischel, Shoda & Rodriguez (1989) — delay of gratification as a stable trait predictive of life outcomes (the marshmallow study and subsequent longitudinal research)
+- Baumeister et al. (1998) "Ego Depletion" — self-control is a limited resource that depletes under sustained use
+
+**2. Stress Tolerance**
+- Kobasa (1979) "Stressful Life Events, Personality, and Health" — hardiness as a personality dimension that moderates stress-performance relationship
+- Lazarus & Folkman (1984) *Stress, Appraisal, and Coping* — cognitive appraisal determines whether a stressor produces performance degradation or growth
+- Seery (2011) — moderate adversity exposure builds stress resilience; total absence of adversity does not
+
+**3. Pattern Recognition**
+- Chase & Simon (1973) — foundational chess expertise research establishing pattern recognition as the primary mechanism of expert performance
+- Klein (1998) *Sources of Power* — Recognition-Primed Decision model: experts recognize situations, not options
+- Ericsson et al. (1993) "The Role of Deliberate Practice" — pattern recognition is a trainable skill, not a fixed trait
+
+**4. Risk Calibration**
+- Kahneman & Tversky (1979) Prospect Theory — systematic miscalibration of probabilities, especially for low-probability events
+- Lichtenstein, Fischhoff & Phillips (1982) — calibration research showing consistent overconfidence in probability estimates
+- Thaler (1985) "Mental Accounting Matters" — psychological framing of gains/losses distorts rational risk assessment
+
+**5. Process Discipline**
+- Gawande (2009) *The Checklist Manifesto* — procedural adherence dramatically reduces error rates in high-complexity domains
+- Reason (1990) *Human Error* — systematic analysis of how plan deviations occur and their consequences
+- Gollwitzer (1999) implementation intentions research — pre-commitment to process dramatically improves performance under pressure
+
+**6. Adaptability**
+- Miyake et al. (2000) — cognitive flexibility as a separable and measurable executive function
+- Hatano & Inagaki (1986) adaptive vs routine expertise
+- Dweck (2006) *Mindset* — growth mindset as the cognitive foundation of adaptive response to failure
+
+**7. Convergence Rate** *(new — most important for employer product)*
+- **Metacognition:** Flavell (1979); Nelson & Narens (1990) "Metamemory: A Theoretical Framework" — monitoring and controlling one's own cognitive processes
+- **Learning from feedback:** Kluger & DeNisi (1996) "The Effects of Feedback Interventions on Performance" — feedback only improves performance under specific cognitive conditions; convergence rate measures whether those conditions are present
+- **Growth mindset and learning rate:** Dweck (2006) — rate of improvement from performance feedback is a stable, measurable trait
+- **Employer translation:** The single highest-signal dimension for coachability, long-term development trajectory, and leadership potential. More predictive than current performance level.
+
+---
+
+#### GAP ANALYSIS MAPPINGS — Academic Backing
+
+| Trading deviation | Cognitive label | Primary citation |
+|---|---|---|
+| Consistent over-holding losses | Sunk cost / escalation of commitment | Arkes & Blumer (1985); Staw (1976); Disposition Effect: Shefrin & Statman (1985) |
+| Consistent early exits on winners | Disposition Effect (selling winners too soon) | Shefrin & Statman (1985); Prospect Theory: Kahneman & Tversky (1979) |
+| Consistent oversizing after wins | Overconfidence cycle | Gervais & Odean (2001); De Bondt & Thaler (1985) |
+| Consistent undersizing after losses | Loss aversion imprint | Prospect Theory: Kahneman & Tversky (1979); Benartzi & Thaler (1995) |
+| Pattern consistent across 30+ days | Stable trait (not situational noise) | Mischel & Shoda (1995) "A Cognitive-Affective System Theory" — behavioral consistency across situations indicates stable underlying trait |
+
+**Important framing note for employer product:**
+All mappings report behavioral patterns and their role-relevant implications. None of these terms (sunk cost, loss aversion, overconfidence) appear in employer-facing output. The output is translated into observable behavioral predictions: "tends to maintain positions beyond new contradicting evidence" not "has a sunk cost bias."
+
+---
+
+#### RECOMMENDED VALIDATION PATH
+Before scaling the employer product:
+1. Recruit 1 I/O psychologist as an advisor or co-author — changes every room you walk into
+2. Run a validation study: does the profiler predict real performance outcomes (3-6 month job performance ratings) for a cohort of 50+ users?
+3. Publish the methodology and validation data — academic credibility is the moat that Pymetrics, HireVue and competitors lack in this specific real-stakes behavioral data approach
+4. Legal review of employer-facing output language before any B2B sale
+
+---
+
 ## ⚡ QUICK STATUS
 
 > **PHASE 1 COMPLETE — April 17, 2026**
