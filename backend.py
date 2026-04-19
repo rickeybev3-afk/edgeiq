@@ -5853,6 +5853,13 @@ def log_voice_memo(
         import json as _json
         from datetime import datetime as _dt
 
+        # Auto-detect plan deviation from transcript keywords.
+        # If the transcript contains clear deviation signals, override followed_plan
+        # to "no" regardless of the default value passed in.
+        _deviation_signals = {"fomo_entry", "thesis_drift", "no_premarket_research"}
+        if any(tags.get(sig) for sig in _deviation_signals):
+            followed_plan = "no"
+
         notes = f"[Voice Memo] {notes_extra}" if notes_extra else "[Voice Memo]"
 
         row = {
@@ -5888,7 +5895,13 @@ def log_voice_memo(
                     "error": "Duplicate — already logged"}
 
         supabase.table("trade_journal").insert(row).execute()
-        return {"saved": True, "tags": tags, "behavioral_summary": summary, "error": None}
+        return {
+            "saved": True,
+            "tags": tags,
+            "behavioral_summary": summary,
+            "followed_plan": followed_plan.lower() if followed_plan else "yes",
+            "error": None,
+        }
 
     except Exception as e:
         return {"saved": False, "tags": {}, "behavioral_summary": "", "error": str(e)}

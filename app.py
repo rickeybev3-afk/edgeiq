@@ -2685,13 +2685,33 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             'letter-spacing:1px; margin:8px 0 4px 0;">✅ Process Quality</div>',
             unsafe_allow_html=True,
         )
+
+        # Pre-detect plan deviation from the transcript.
+        # Only update the radio when the transcript content actually changes so we
+        # don't fight the user if they manually override the auto-selection.
+        import hashlib as _hashlib
+        _vm_deviation_signals = {"fomo_entry", "thesis_drift", "no_premarket_research"}
+        _vm_prev_transcript = st.session_state.get("vm_transcript_prev_hash", "")
+        _vm_curr_hash = _hashlib.md5(_vm_transcript.encode(), usedforsecurity=False).hexdigest()
+        if _vm_curr_hash != _vm_prev_transcript:
+            st.session_state["vm_transcript_prev_hash"] = _vm_curr_hash
+            if _vm_transcript.strip():
+                _vm_pre_tags = extract_cognitive_tags(_vm_transcript)
+                _vm_auto_plan_no = any(_vm_pre_tags.get(sig) for sig in _vm_deviation_signals)
+                st.session_state["vm_followed_plan"] = "No" if _vm_auto_plan_no else "Yes"
+                st.session_state["vm_plan_was_autoset"] = _vm_auto_plan_no
+            else:
+                st.session_state["vm_plan_was_autoset"] = False
+
         _vm_followed_plan = st.radio(
             "Did you follow your plan?",
             options=["Yes", "No"],
-            index=0,
             horizontal=True,
             key="vm_followed_plan",
         )
+        if st.session_state.get("vm_plan_was_autoset"):
+            st.caption("⚡ Auto-detected from transcript keywords — adjust if needed.")
+
         _vm_deviation_notes = ""
         if _vm_followed_plan == "No":
             _vm_deviation_notes = st.text_input(
