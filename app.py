@@ -3153,6 +3153,80 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 else "No entries yet."
             )
 
+        # ── Behaviour Summary Panel ────────────────────────────────────────────
+        if not _df_display.empty:
+            _total_trades = len(_df_display)
+            _sig_counts: dict[str, int] = {k: 0 for k in _VJ_SIGNAL_KEYS}
+            import json as _json_summary
+            for _, _srow in _df_display.iterrows():
+                _svs_raw = _srow.get("voice_signals")
+                if isinstance(_svs_raw, dict):
+                    _svs = _svs_raw
+                elif isinstance(_svs_raw, str) and str(_svs_raw).strip():
+                    try:
+                        _svs_parsed = _json_summary.loads(_svs_raw)
+                        _svs = _svs_parsed if isinstance(_svs_parsed, dict) else {}
+                    except Exception:
+                        _svs = {}
+                else:
+                    _svs = {}
+                for _sk in _VJ_SIGNAL_KEYS:
+                    if _svs.get(_sk):
+                        _sig_counts[_sk] += 1
+
+            with st.expander("📊 Behaviour Summary", expanded=False):
+                _pos_items = [k for k in _VJ_SIGNAL_KEYS if k in _VJ_POSITIVE_SIGNALS]
+                _neg_items = [k for k in _VJ_SIGNAL_KEYS if k in _VJ_NEGATIVE_SIGNALS]
+
+                def _sig_bar_html(key: str, count: int, total: int, positive: bool) -> str:
+                    label = _VJ_SIGNAL_LABELS.get(key, key)
+                    pct = round(count / total * 100) if total else 0
+                    bar_color = "#4caf50" if positive else "#ef5350"
+                    label_color = "#4caf50" if positive else "#ef5350"
+                    prefix = "+" if positive else "−"
+                    bar_w = max(pct, 2) if count > 0 else 0
+                    return (
+                        f'<div style="display:flex;align-items:center;gap:10px;'
+                        f'padding:5px 0;border-bottom:1px solid #1e1e30;">'
+                        f'<div style="width:150px;font-size:12px;color:{label_color};'
+                        f'font-weight:600;white-space:nowrap;">{prefix} {label}</div>'
+                        f'<div style="flex:1;background:#1a1a2e;border-radius:4px;'
+                        f'height:10px;overflow:hidden;">'
+                        f'<div style="width:{bar_w}%;height:100%;background:{bar_color};'
+                        f'border-radius:4px;"></div></div>'
+                        f'<div style="width:60px;text-align:right;font-size:12px;'
+                        f'color:#90a4ae;">{count}/{total}</div>'
+                        f'<div style="width:42px;text-align:right;font-size:12px;'
+                        f'color:#cfd8dc;font-weight:700;">{pct}%</div>'
+                        f'</div>'
+                    )
+
+                _pcol, _ncol = st.columns(2)
+                with _pcol:
+                    st.markdown(
+                        '<div style="font-size:11px;text-transform:uppercase;'
+                        'letter-spacing:1px;color:#4caf50;margin-bottom:4px;">Positive Signals</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _pos_html = "".join(
+                        _sig_bar_html(k, _sig_counts[k], _total_trades, True)
+                        for k in _pos_items
+                    )
+                    st.markdown(f'<div>{_pos_html}</div>', unsafe_allow_html=True)
+                with _ncol:
+                    st.markdown(
+                        '<div style="font-size:11px;text-transform:uppercase;'
+                        'letter-spacing:1px;color:#ef5350;margin-bottom:4px;">Negative Signals</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _neg_html = "".join(
+                        _sig_bar_html(k, _sig_counts[k], _total_trades, False)
+                        for k in _neg_items
+                    )
+                    st.markdown(f'<div>{_neg_html}</div>', unsafe_allow_html=True)
+
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
         for _, row in _df_display.iterrows():
             grade = str(row.get("grade", "?"))
             gc = _GRADE_COLORS.get(grade, "#aaaaaa")
