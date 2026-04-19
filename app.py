@@ -2837,6 +2837,33 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         st.session_state["_replay_date"] = _replay_dt
                     st.success(f"✅ {sym} loaded — switch to Main Chart tab and click Fetch & Analyze")
 
+            # ── Edit Process Grade inline expander ─────────────────────────────
+            _entry_id = row.get("id", None)
+            if _entry_id is not None:
+                with st.expander("✏️ Edit Process Grade", expanded=False):
+                    _fp_radio_default = "yes" if _fp_val == "yes" else "no"
+                    _fp_new = st.radio(
+                        "Followed plan?",
+                        ["yes", "no"],
+                        index=0 if _fp_radio_default == "yes" else 1,
+                        key=f"_fp_radio_{_entry_id}",
+                        horizontal=True,
+                    )
+                    _dev_new = st.text_area(
+                        "Deviation notes",
+                        value=_dev_v,
+                        key=f"_dev_notes_{_entry_id}",
+                        placeholder="What did you do differently from the plan?",
+                        height=80,
+                    )
+                    if st.button("💾 Save process grade", key=f"_save_pg_{_entry_id}"):
+                        _pg_ok = update_journal_process_grade(_entry_id, _fp_new, _dev_new)
+                        if _pg_ok:
+                            st.success("✅ Process grade updated!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to save — check Supabase connection.")
+
     if not df.empty:
         # Equity curve — grade average over entries
         st.markdown("---")

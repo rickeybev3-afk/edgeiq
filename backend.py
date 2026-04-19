@@ -5609,6 +5609,25 @@ Return ONLY valid JSON, no explanation."""
         return {}
 
 
+def update_journal_process_grade(
+    entry_id, followed_plan: str, deviation_notes: str
+) -> bool:
+    """Update only the process-grade fields on an existing journal entry."""
+    if not supabase:
+        print("Error: Supabase not connected.")
+        return False
+    try:
+        patch = {
+            "followed_plan": followed_plan,
+            "deviation_notes": deviation_notes,
+        }
+        supabase.table("trade_journal").update(patch).eq("id", entry_id).execute()
+        return True
+    except Exception as e:
+        print(f"Database write error (update_journal_process_grade): {e}")
+        return False
+
+
 def ensure_telegram_columns() -> bool:
     """Add Telegram-logging columns to trade_journal if they don't exist.
     Safe to call on every bot startup — uses IF NOT EXISTS.
