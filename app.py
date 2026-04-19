@@ -22102,6 +22102,83 @@ Nothing here requires any input from you. All numbers update automatically as yo
         )
         _bs_jdf["_date"] = _bs_jdf["_ts2"].dt.date
 
+        # ── Filters ────────────────────────────────────────────────────────
+        _bs_flt_c1, _bs_flt_c2, _bs_flt_c3, _bs_flt_c4 = st.columns([2, 2, 3, 1])
+        with _bs_flt_c1:
+            _bs_min_date = (
+                _bs_jdf["_date"].dropna().min()
+                if not _bs_jdf["_date"].dropna().empty
+                else None
+            )
+            _bs_flt_from = st.date_input(
+                "From date",
+                value=None,
+                min_value=_bs_min_date,
+                key="bs_flt_from",
+                help="Only include signals from trades on or after this date",
+                label_visibility="visible",
+            )
+        with _bs_flt_c2:
+            _bs_max_date = (
+                _bs_jdf["_date"].dropna().max()
+                if not _bs_jdf["_date"].dropna().empty
+                else None
+            )
+            _bs_flt_to = st.date_input(
+                "To date",
+                value=None,
+                max_value=_bs_max_date,
+                key="bs_flt_to",
+                help="Only include signals from trades on or before this date",
+                label_visibility="visible",
+            )
+        with _bs_flt_c3:
+            _bs_struct_opts = []
+            if "structure" in _bs_jdf.columns:
+                _bs_struct_opts = sorted(
+                    s for s in _bs_jdf["structure"].dropna().unique()
+                    if str(s).strip() not in ("", "Unknown")
+                )
+            _bs_flt_structs = st.multiselect(
+                "Structure",
+                options=_bs_struct_opts,
+                default=[],
+                key="bs_flt_structs",
+                placeholder="All structures",
+                help="Filter to trades with a specific market structure",
+            )
+        with _bs_flt_c4:
+            st.write("")
+            _bs_any_filter = bool(_bs_flt_from or _bs_flt_to or _bs_flt_structs)
+            if st.button(
+                "↺ Reset",
+                key="bs_flt_reset",
+                disabled=not _bs_any_filter,
+                help="Clear all filters",
+                use_container_width=True,
+            ):
+                for _k in ("bs_flt_from", "bs_flt_to", "bs_flt_structs"):
+                    st.session_state.pop(_k, None)
+                st.rerun()
+
+        # Apply filters to _bs_jdf
+        if _bs_flt_from:
+            _bs_jdf = _bs_jdf[
+                _bs_jdf["_date"].apply(
+                    lambda d: d is not None and d >= _bs_flt_from
+                )
+            ]
+        if _bs_flt_to:
+            _bs_jdf = _bs_jdf[
+                _bs_jdf["_date"].apply(
+                    lambda d: d is not None and d <= _bs_flt_to
+                )
+            ]
+        if _bs_flt_structs and "structure" in _bs_jdf.columns:
+            _bs_jdf = _bs_jdf[_bs_jdf["structure"].isin(_bs_flt_structs)]
+
+        _bs_total_trades = len(_bs_jdf)
+
         _bs_rows = []
         for _, _brow in _bs_jdf.iterrows():
             _vs = _brow["_vs"]
@@ -22124,266 +22201,194 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
         _bs_df = _pd_bs.DataFrame(_bs_rows)
 
-        if not _bs_df.empty:
+        if _bs_df.empty and _bs_any_filter:
             st.markdown("---")
             st.markdown("### 🧠 Behavioral Signal Trends")
-
-            # ── Date range filter ──────────────────────────────────────
-            import datetime as _dt_bsrange
-            _bs_range_opts = {
-                "Last 30 days":  30,
-                "Last 60 days":  60,
-                "Last 90 days":  90,
-                "Last 6 months": 180,
-                "Last 12 months": 365,
-                "All time":      None,
-                "Custom range":  "custom",
-            }
-            _url_init_str(
-                "bs_range", "bs_date_range", "Last 90 days",
-                allowed=list(_bs_range_opts.keys()),
+            st.info(
+                "No behavioral signals found for the selected filters. "
+                "Try widening the date range or selecting different structures."
             )
-            _bs_range_sel = st.selectbox(
-                "Date range",
-                options=list(_bs_range_opts.keys()),
-                key="bs_date_range",
-            )
-            _url_push("bs_range", _bs_range_sel)
-            _bs_days = _bs_range_opts[_bs_range_sel]
-            if _bs_days == "custom":
-                _bs_today = _dt_bsrange.date.today()
-                _bs_dated_dates = _bs_df["date"].dropna()
-                _bs_min_date = (
-                    _bs_dated_dates.min()
-                    if not _bs_dated_dates.empty
-                    else _bs_today - _dt_bsrange.timedelta(days=365)
-                )
-                _bs_default_start = max(
-                    _bs_min_date,
-                    _bs_today - _dt_bsrange.timedelta(days=90),
-                )
-                _bs_custom_col1, _bs_custom_col2 = st.columns(2)
-                with _bs_custom_col1:
-                    _bs_custom_start = st.date_input(
-                        "From",
-                        value=_bs_default_start,
-                        min_value=_bs_min_date,
-                        max_value=_bs_today,
-                        key="bs_custom_start",
-                    )
-                with _bs_custom_col2:
-                    _bs_custom_end = st.date_input(
-                        "To",
-                        value=_bs_today,
-                        min_value=_bs_min_date,
-                        max_value=_bs_today,
-                        key="bs_custom_end",
-                    )
-                if _bs_custom_start > _bs_custom_end:
-                    st.warning("'From' date must be on or before the 'To' date.")
-                    _bs_custom_start, _bs_custom_end = _bs_custom_end, _bs_custom_start
-                _bs_undated_excluded = int(_bs_df["date"].isna().sum())
-                _bs_df = _bs_df[
-                    (_bs_df["date"] >= _bs_custom_start) & (_bs_df["date"] <= _bs_custom_end)
-                ]
-                _bs_range_note = (
-                    f"Showing signals from **{_bs_custom_start.strftime('%b %d, %Y')}** "
-                    f"to **{_bs_custom_end.strftime('%b %d, %Y')}**."
-                )
-                if _bs_undated_excluded > 0:
-                    _bs_range_note += (
-                        f" {_bs_undated_excluded} signal"
-                        f"{'s' if _bs_undated_excluded != 1 else ''} without a timestamp "
-                        "are excluded when a date filter is active."
-                    )
-                st.caption(_bs_range_note)
-            elif _bs_days is not None:
-                _bs_cutoff = _dt_bsrange.date.today() - _dt_bsrange.timedelta(days=_bs_days)
-                _bs_df_unfiltered_count = len(_bs_df)
-                _bs_df = _bs_df[_bs_df["date"] >= _bs_cutoff]
-                _bs_undated_excluded = _bs_df_unfiltered_count - len(
-                    _bs_df[_bs_df["date"].notna()]
-                )
-                _bs_range_note = f"Showing signals from the **{_bs_range_sel.lower()}**."
-                if _bs_undated_excluded > 0:
-                    _bs_range_note += (
-                        f" {_bs_undated_excluded} signal"
-                        f"{'s' if _bs_undated_excluded != 1 else ''} without a timestamp "
-                        "are excluded when a date filter is active."
-                    )
-                st.caption(_bs_range_note)
-            else:
-                st.caption("Showing **all-time** signals.")
 
-            if _bs_df.empty:
-                st.info(
-                    "No behavioral signals found in the selected date range. "
-                    "Try widening the range."
+        if not _bs_df.empty:
+            st.markdown("---")
+            _bs_heading_parts = ["### 🧠 Behavioral Signal Trends"]
+            st.markdown(" ".join(_bs_heading_parts))
+            _bs_filter_tags = []
+            if _bs_flt_from:
+                _bs_filter_tags.append(f"from {_bs_flt_from}")
+            if _bs_flt_to:
+                _bs_filter_tags.append(f"to {_bs_flt_to}")
+            if _bs_flt_structs:
+                _bs_filter_tags.append(
+                    "structure: " + ", ".join(_bs_flt_structs)
                 )
-            else:
-                st.caption(
-                    "How often each behavioral signal appeared across your voice-journalled trades. "
-                    "Green = positive habits · Red = bad habits to watch."
+            _bs_trade_summary = f"{_bs_total_trades} trade{'s' if _bs_total_trades != 1 else ''} in scope"
+            if _bs_filter_tags:
+                _bs_trade_summary += " · filter: " + " · ".join(_bs_filter_tags)
+            st.caption(
+                "How often each behavioral signal appeared across your voice-journalled trades. "
+                "Green = positive habits · Red = bad habits to watch. "
+                f"({_bs_trade_summary})"
+            )
+
+            _bs_counts = (
+                _bs_df.groupby("signal")
+                .size()
+                .reset_index(name="count")
+                .sort_values("count", ascending=True)
+            )
+            _bs_counts["label"] = _bs_counts["signal"].map(_bs_label_map)
+            _bs_counts["is_positive"] = _bs_counts["signal"].isin(_bs_positive)
+            _bs_counts["color"] = _bs_counts["is_positive"].map(
+                {True: "#4caf50", False: "#ef5350"}
+            )
+
+            _bs_col1, _bs_col2 = st.columns([3, 2])
+
+            with _bs_col1:
+                fig_bs = _go.Figure(_go.Bar(
+                    x=_bs_counts["count"],
+                    y=_bs_counts["label"],
+                    orientation="h",
+                    marker_color=_bs_counts["color"].tolist(),
+                    text=_bs_counts["count"].astype(str),
+                    textposition="outside",
+                    textfont=dict(size=11, color="#e0e0e0"),
+                    hovertemplate="<b>%{y}</b><br>Count: %{x}<extra></extra>",
+                ))
+                fig_bs.update_layout(
+                    paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                    font=dict(color="#e0e0e0"),
+                    height=max(280, len(_bs_counts) * 36 + 60),
+                    xaxis=dict(title="Occurrences", gridcolor="#2a2a4a"),
+                    yaxis=dict(gridcolor="#2a2a4a", tickfont=dict(size=11)),
+                    margin=dict(l=10, r=60, t=20, b=40),
+                    showlegend=False,
                 )
-    
-                _bs_counts = (
-                    _bs_df.groupby("signal")
+                st.plotly_chart(fig_bs, use_container_width=True)
+
+            with _bs_col2:
+                _total_neg = int(_bs_counts[~_bs_counts["is_positive"]]["count"].sum())
+                _total_pos = int(_bs_counts[_bs_counts["is_positive"]]["count"].sum())
+                _total_sig = _total_neg + _total_pos
+                _pos_pct = round(_total_pos / _total_sig * 100) if _total_sig else 0
+                _neg_pct = 100 - _pos_pct
+
+                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                for _lbl, _val, _col in [
+                    ("Total signals logged", str(_total_sig), "#90caf9"),
+                    ("Positive signals", f"{_total_pos} ({_pos_pct}%)", "#4caf50"),
+                    ("Negative signals", f"{_total_neg} ({_neg_pct}%)", "#ef5350"),
+                ]:
+                    st.markdown(
+                        f'<div style="background:#12122288;border:1px solid #2a2a4a;'
+                        f'border-radius:8px;padding:10px 14px;margin:6px 0;">'
+                        f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
+                        f'letter-spacing:1px;margin-bottom:3px;">{_lbl}</div>'
+                        f'<div style="font-size:22px;font-weight:900;color:{_col};">'
+                        f'{_val}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                if _total_neg > 0 and _total_sig > 0:
+                    _top_neg = (
+                        _bs_counts[~_bs_counts["is_positive"]]
+                        .sort_values("count", ascending=False)
+                        .iloc[0]
+                    )
+                    st.markdown(
+                        f'<div style="background:#ef535011;border-left:3px solid #ef5350;'
+                        f'padding:8px 12px;border-radius:4px;margin-top:10px;font-size:12px;'
+                        f'color:#cfd8dc;">'
+                        f'<b style="color:#ef5350;">Watch out:</b> '
+                        f'"{_top_neg["label"]}" is your most frequent bad habit '
+                        f'({int(_top_neg["count"])} occurrences).'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            _bs_dated = _bs_df.dropna(subset=["date"])
+            _bs_no_ts = len(_bs_df) - len(_bs_dated)
+            if not _bs_dated.empty and len(_bs_dated["date"].unique()) >= 2:
+                st.markdown("#### Per-Signal Frequency Over Time")
+                _ts_caption = (
+                    "Weekly rollup — one line per signal so you can see if FOMO entries "
+                    "or panic exits are rising or falling. Red lines = bad habits · "
+                    "Green lines = positive habits."
+                )
+                if _bs_no_ts > 0:
+                    _ts_caption += (
+                        f" ({_bs_no_ts} signal{'s' if _bs_no_ts != 1 else ''} excluded from "
+                        "trend chart because their journal entry has no timestamp.)"
+                    )
+                st.caption(_ts_caption)
+
+                _bs_dated2 = _bs_dated.copy()
+                _bs_dated2["date"] = _pd_bs.to_datetime(_bs_dated2["date"])
+                _bs_dated2["week"] = _bs_dated2["date"].dt.to_period("W").apply(
+                    lambda p: p.start_time.date()
+                )
+
+                _sig_weekly = (
+                    _bs_dated2.groupby(["week", "signal"])
                     .size()
                     .reset_index(name="count")
-                    .sort_values("count", ascending=True)
                 )
-                _bs_counts["label"] = _bs_counts["signal"].map(_bs_label_map)
-                _bs_counts["is_positive"] = _bs_counts["signal"].isin(_bs_positive)
-                _bs_counts["color"] = _bs_counts["is_positive"].map(
-                    {True: "#4caf50", False: "#ef5350"}
-                )
-    
-                _bs_col1, _bs_col2 = st.columns([3, 2])
-    
-                with _bs_col1:
-                    fig_bs = _go.Figure(_go.Bar(
-                        x=_bs_counts["count"],
-                        y=_bs_counts["label"],
-                        orientation="h",
-                        marker_color=_bs_counts["color"].tolist(),
-                        text=_bs_counts["count"].astype(str),
-                        textposition="outside",
-                        textfont=dict(size=11, color="#e0e0e0"),
-                        hovertemplate="<b>%{y}</b><br>Count: %{x}<extra></extra>",
-                    ))
-                    fig_bs.update_layout(
-                        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
-                        font=dict(color="#e0e0e0"),
-                        height=max(280, len(_bs_counts) * 36 + 60),
-                        xaxis=dict(title="Occurrences", gridcolor="#2a2a4a"),
-                        yaxis=dict(gridcolor="#2a2a4a", tickfont=dict(size=11)),
-                        margin=dict(l=10, r=60, t=20, b=40),
-                        showlegend=False,
-                    )
-                    st.plotly_chart(fig_bs, use_container_width=True)
-    
-                with _bs_col2:
-                    _total_neg = int(_bs_counts[~_bs_counts["is_positive"]]["count"].sum())
-                    _total_pos = int(_bs_counts[_bs_counts["is_positive"]]["count"].sum())
-                    _total_sig = _total_neg + _total_pos
-                    _pos_pct = round(_total_pos / _total_sig * 100) if _total_sig else 0
-                    _neg_pct = 100 - _pos_pct
-    
-                    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-                    for _lbl, _val, _col in [
-                        ("Total signals logged", str(_total_sig), "#90caf9"),
-                        ("Positive signals", f"{_total_pos} ({_pos_pct}%)", "#4caf50"),
-                        ("Negative signals", f"{_total_neg} ({_neg_pct}%)", "#ef5350"),
-                    ]:
-                        st.markdown(
-                            f'<div style="background:#12122288;border:1px solid #2a2a4a;'
-                            f'border-radius:8px;padding:10px 14px;margin:6px 0;">'
-                            f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
-                            f'letter-spacing:1px;margin-bottom:3px;">{_lbl}</div>'
-                            f'<div style="font-size:22px;font-weight:900;color:{_col};">'
-                            f'{_val}</div></div>',
-                            unsafe_allow_html=True,
-                        )
-    
-                    if _total_neg > 0 and _total_sig > 0:
-                        _top_neg = (
-                            _bs_counts[~_bs_counts["is_positive"]]
-                            .sort_values("count", ascending=False)
-                            .iloc[0]
-                        )
-                        st.markdown(
-                            f'<div style="background:#ef535011;border-left:3px solid #ef5350;'
-                            f'padding:8px 12px;border-radius:4px;margin-top:10px;font-size:12px;'
-                            f'color:#cfd8dc;">'
-                            f'<b style="color:#ef5350;">Watch out:</b> '
-                            f'"{_top_neg["label"]}" is your most frequent bad habit '
-                            f'({int(_top_neg["count"])} occurrences).'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-    
-                _bs_dated = _bs_df.dropna(subset=["date"])
-                _bs_no_ts = len(_bs_df) - len(_bs_dated)
-                if not _bs_dated.empty and len(_bs_dated["date"].unique()) >= 2:
-                    st.markdown("#### Per-Signal Frequency Over Time")
-                    _ts_caption = (
-                        "Weekly rollup — one line per signal so you can see if FOMO entries "
-                        "or panic exits are rising or falling. Red lines = bad habits · "
-                        "Green lines = positive habits."
-                    )
-                    if _bs_no_ts > 0:
-                        _ts_caption += (
-                            f" ({_bs_no_ts} signal{'s' if _bs_no_ts != 1 else ''} excluded from "
-                            "trend chart because their journal entry has no timestamp.)"
-                        )
-                    st.caption(_ts_caption)
-    
-                    _bs_dated2 = _bs_dated.copy()
-                    _bs_dated2["date"] = _pd_bs.to_datetime(_bs_dated2["date"])
-                    _bs_dated2["week"] = _bs_dated2["date"].dt.to_period("W").apply(
-                        lambda p: p.start_time.date()
-                    )
-    
-                    _sig_weekly = (
-                        _bs_dated2.groupby(["week", "signal"])
-                        .size()
-                        .reset_index(name="count")
-                    )
-                    _weeks_sorted = sorted(_sig_weekly["week"].unique())
-                    _sig_present  = sorted(_sig_weekly["signal"].unique())
-    
-                    _neg_palette = ["#ef5350", "#e57373", "#ff7043", "#ffa726", "#ef9a9a", "#ff8a65"]
-                    _pos_palette = ["#4caf50", "#66bb6a", "#26a69a", "#29b6f6", "#42a5f5", "#7e57c2"]
-    
-                    _neg_sigs = [s for s in _sig_present if s in _bs_negative]
-                    _pos_sigs = [s for s in _sig_present if s in _bs_positive]
-    
-                    _neg_tab, _pos_tab = st.tabs(["🔴 Bad Habits", "🟢 Positive Habits"])
-    
-                    for _tab_widget, _tab_sigs, _palette, _tab_label in [
-                        (_neg_tab, _neg_sigs, _neg_palette, "bad"),
-                        (_pos_tab, _pos_sigs, _pos_palette, "positive"),
-                    ]:
-                        with _tab_widget:
-                            if not _tab_sigs:
-                                st.caption(f"No {_tab_label} signals logged yet.")
-                                continue
-                            fig_per = _go.Figure()
-                            for _si, _sig_key in enumerate(_tab_sigs):
-                                _sig_data = (
-                                    _sig_weekly[_sig_weekly["signal"] == _sig_key]
-                                    .set_index("week")["count"]
-                                    .reindex(_weeks_sorted)
-                                    .fillna(0)
-                                )
-                                _sig_color = _palette[_si % len(_palette)]
-                                _sig_label = _bs_label_map.get(_sig_key, _sig_key)
-                                fig_per.add_trace(_go.Scatter(
-                                    x=[str(w) for w in _weeks_sorted],
-                                    y=_sig_data.values,
-                                    mode="lines+markers",
-                                    name=_sig_label,
-                                    line=dict(color=_sig_color, width=2),
-                                    marker=dict(size=6),
-                                    hovertemplate=(
-                                        f"<b>{_sig_label}</b><br>"
-                                        "Week of %{x}<br>Count: %{y}<extra></extra>"
-                                    ),
-                                ))
-                            fig_per.update_layout(
-                                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
-                                font=dict(color="#e0e0e0"), height=320,
-                                xaxis=dict(gridcolor="#2a2a4a", tickangle=-20),
-                                yaxis=dict(title="Times flagged", gridcolor="#2a2a4a",
-                                           rangemode="tozero"),
-                                legend=dict(
-                                    orientation="h", y=-0.3, x=0,
-                                    font=dict(color="#e0e0e0", size=11),
-                                    bgcolor="rgba(0,0,0,0)",
-                                ),
-                                margin=dict(l=10, r=10, t=20, b=90),
+                _weeks_sorted = sorted(_sig_weekly["week"].unique())
+                _sig_present  = sorted(_sig_weekly["signal"].unique())
+
+                _neg_palette = ["#ef5350", "#e57373", "#ff7043", "#ffa726", "#ef9a9a", "#ff8a65"]
+                _pos_palette = ["#4caf50", "#66bb6a", "#26a69a", "#29b6f6", "#42a5f5", "#7e57c2"]
+
+                _neg_sigs = [s for s in _sig_present if s in _bs_negative]
+                _pos_sigs = [s for s in _sig_present if s in _bs_positive]
+
+                _neg_tab, _pos_tab = st.tabs(["🔴 Bad Habits", "🟢 Positive Habits"])
+
+                for _tab_widget, _tab_sigs, _palette, _tab_label in [
+                    (_neg_tab, _neg_sigs, _neg_palette, "bad"),
+                    (_pos_tab, _pos_sigs, _pos_palette, "positive"),
+                ]:
+                    with _tab_widget:
+                        if not _tab_sigs:
+                            st.caption(f"No {_tab_label} signals logged yet.")
+                            continue
+                        fig_per = _go.Figure()
+                        for _si, _sig_key in enumerate(_tab_sigs):
+                            _sig_data = (
+                                _sig_weekly[_sig_weekly["signal"] == _sig_key]
+                                .set_index("week")["count"]
+                                .reindex(_weeks_sorted)
+                                .fillna(0)
                             )
-                            st.plotly_chart(fig_per, use_container_width=True)
+                            _sig_color = _palette[_si % len(_palette)]
+                            _sig_label = _bs_label_map.get(_sig_key, _sig_key)
+                            fig_per.add_trace(_go.Scatter(
+                                x=[str(w) for w in _weeks_sorted],
+                                y=_sig_data.values,
+                                mode="lines+markers",
+                                name=_sig_label,
+                                line=dict(color=_sig_color, width=2),
+                                marker=dict(size=6),
+                                hovertemplate=(
+                                    f"<b>{_sig_label}</b><br>"
+                                    "Week of %{x}<br>Count: %{y}<extra></extra>"
+                                ),
+                            ))
+                        fig_per.update_layout(
+                            paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                            font=dict(color="#e0e0e0"), height=320,
+                            xaxis=dict(gridcolor="#2a2a4a", tickangle=-20),
+                            yaxis=dict(title="Times flagged", gridcolor="#2a2a4a",
+                                       rangemode="tozero"),
+                            legend=dict(
+                                orientation="h", y=-0.3, x=0,
+                                font=dict(color="#e0e0e0", size=11),
+                                bgcolor="rgba(0,0,0,0)",
+                            ),
+                            margin=dict(l=10, r=10, t=20, b=90),
+                        )
+                        st.plotly_chart(fig_per, use_container_width=True)
 
             # ── Signal → Outcome Correlation ──────────────────────────────
             _bs_outcome_df = (
