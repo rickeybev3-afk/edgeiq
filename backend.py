@@ -14592,7 +14592,7 @@ def ensure_daily_scan_log_table() -> bool:
         err = str(e).lower()
         if "404" in err or "relation" in err or "does not exist" in err or "not found" in err:
             try:
-                supabase.rpc("exec_sql", {"sql": _DAILY_SCAN_LOG_DDL}).execute()
+                supabase.rpc("exec_sql", {"query": _DAILY_SCAN_LOG_DDL}).execute()
                 return True
             except Exception as e2:
                 logging.warning(f"ensure_daily_scan_log_table create error: {e2}")
