@@ -1,4 +1,170 @@
 # EdgeIQ — Private Build Notes (Reorganized)
+*Last updated: April 19, 2026 — Session note added*
+
+---
+
+## 📝 SESSION NOTE — April 19, 2026 (1:43 AM)
+
+### What was built tonight
+1. **Filter Sim trade cap fixed** — simulation now correctly caps at N trades/day (default 2) by picking highest TCS per day. Fixed datetime grouping bug (`[:10]` truncation) that was causing 2854 trades/yr instead of ~345. Numbers are now realistic.
+2. **VWAP default changed to OFF** — `pages/filter_sim.py` toggle now defaults to `False`. All sim numbers going forward reflect the actual live bot behaviour (no VWAP filter unless manually enabled).
+3. **Cognitive Profiler page built** — `pages/cognitive_profiler.py` is live. Upload audio/video of any trader's live session, tag 12 behavioral signals, see a 6-dimension radar chart, save to Supabase. AI transcription (Whisper) + auto-signal extraction (GPT-4) activates automatically when `OPENAI_API_KEY` is added to secrets.
+
+### What to do tomorrow
+- **Add `OPENAI_API_KEY` to secrets** — unlocks Whisper transcription in Cognitive Profiler AND will power the voice trade journal (next build)
+- **Build voice trade journal** — `st.audio_input()` recorder in the trade journal page. Record during/after a live trade, Whisper transcribes, GPT-4 pre-fills behavioral signals. This is the Layer 3 cognitive data capture described in the build notes.
+- **Start uploading trader recordings** to the Cognitive Profiler — even manual transcript paste works now. Build the dataset early.
+
+### What was discussed tonight (strategic)
+- Realistic year 1 target: **$100k with compounding**, $125k flat-sized per sim (345 trades/yr, $1,500/trade, 80.8% WR). Scaling to $5-6k/trade at $25k account.
+- 5-year vision reread from build notes: trading account $1.9M (conservative) to $3.4M (expected). Company $4.5M ARR, $300M-$1.2B exit ceiling.
+- Cognitive profiling → employer product: the real moat is real-stakes behavioral data (not synthetic games like Pymetrics). Three revenue streams: SaaS subscriptions + employer licensing + user revenue share.
+- Voice journal is the critical data source — overnight conviction notes + live trade recordings = richest behavioral dataset a trader can generate.
+- Go live date: **May 6, 2026**. First real Alpaca orders expected week of April 21.
+- Confidence on Porsche by Jan 2028: **55%**. Apartment by April 2027: **75%**. Leave the bot alone — that's the only real variable.
+
+---
+
+### 🧠 BUILD INSIGHT — Historical Brain Pre-Training with Recency Weighting
+*Captured April 19, 2026 — high-leverage Phase 2 feature*
+
+**The gap that exists right now:**
+The brain weights (`compute_adaptive_weights()`) currently learn exclusively from live paper trades — 111 rows as of April 19. The 74,000+ row historical backtest dataset exists in Supabase and powers the Filter Sim, TCS Optimizer, and backtest engine — but it does NOT feed into the brain weights at all. The two systems are completely separate. This means the brain is calibrating from a thin sample when a massive, structured dataset already exists.
+
+**What this feature does:**
+Pre-train the brain on historical backtest data before live trades begin accumulating, so the weight system starts from a properly calibrated state instead of near-neutral.
+
+**Why not just use all 5 years equally:**
+Historical data is hindsight. Regimes shift. A setup that printed 90% in 2021 (momentum era, easy breakouts) behaves differently in 2025 (mean-reverting, choppier tape). Pre-training on stale regime data anchors the brain to patterns that may no longer be live.
+
+**The correct approach — Recency-Weighted Pre-Training:**
+
+| Data window | Weight multiplier |
+|---|---|
+| 12–18 months ago | 1× (baseline) |
+| 6–12 months ago | 2× |
+| 3–6 months ago | 3× |
+| 0–3 months ago | 5× |
+| Live paper trades | 10× (current signal, most trusted) |
+
+This way recent data dominates, older data provides volume and context without anchoring to dead regimes. Live paper trades still have the highest weight — they're your actual execution, your slippage, your fills, not simulated closes.
+
+**Architecture (when building):**
+1. Pull historical `accuracy_tracker`-equivalent data from the backtest history table, structured identically to the live `accuracy_tracker` schema
+2. Tag each row with its age bucket and apply the multiplier above (duplicate rows proportionally, or use weighted sampling in the Pearson correlation)
+3. Run the same `compute_adaptive_weights()` logic on this blended dataset as a one-time pre-calibration pass
+4. Store as the starting brain weights before the live paper trading day begins
+5. Live paper trade nightly recalibration proceeds on top of this pre-trained baseline
+
+**What this changes operationally:**
+- Brain starts with structure-level weights derived from thousands of examples, not 111
+- Structures that are rarely seen in live trading (Double Distribution, Bracketing) have enough historical examples to be properly weighted instead of defaulting to neutral
+- The TCS correlation, false-break penalty, environment factor — all are calibrated from real data on day 1 instead of converging slowly over months
+- Estimated impact: live win rate starts at 83–86% instead of 80.8%, converging faster to the model's true edge
+
+**What this does NOT do:**
+- Replace the live feedback loop — live paper trade nightly recalibration still runs and still overrides stale historical data over time
+- Fix regime drift — this is a starting position improvement, not a permanent ceiling. The live loop handles drift.
+- Require new data collection — everything needed already exists in Supabase
+
+**Priority:** Phase 2 task, after 6 months of live paper trades confirm the base edge. At that point the live data is rich enough to validate whether the pre-trained weights improved convergence speed vs. the naive starting point.
+
+**File targets when building:**
+- `paper_trader_bot.py` → `compute_adaptive_weights()` — extend to accept weighted data
+- `backend.py` → new function `load_historical_weight_training_data(recency_weighted=True)`
+- `pages/brain_calibration.py` → UI toggle: "Pre-train from historical data" button for operators
+
+---
+
+### 🧠 THEORY NOTE — Trauma, Intelligence & the Cognitive Profiler
+*Captured April 19, 2026 — develop this further when sober*
+
+**The core insight:**
+Trauma doesn't uniformly damage cognition — it reshapes it in specific, adaptive directions. The brain under chronic stress or acute threat rewires toward survival. This creates a distinct cognitive fingerprint that shows up clearly in high-pressure behavioral data, including live trading.
+
+**How trauma maps to cognitive dimensions:**
+
+| Trauma response | Cognitive effect | Trading signal |
+|---|---|---|
+| Hypervigilant threat scanning | Elevated pattern recognition | Reads tape before being able to explain why |
+| Unpredictable early environment | Rapid in-the-moment processing | Strong short-term decisions, weaker long-term planning |
+| Chronic stress exposure | Altered risk calculus | Either extreme risk aversion OR paradoxical risk-seeking |
+| Loss of control experiences | Thesis drift under pressure | Plan changes mid-trade when drawdown hits |
+| Learned hypervigilance | High stress tolerance + erratic exits | Holds well until a specific threshold, then panic-exits |
+
+**What makes this groundbreaking for the profiler:**
+- Trauma-shaped cognitive profiles are *identifiable through trading behavior* without ever asking about trauma directly
+- The behavioral fingerprint emerges naturally from the 12 signals already being captured — no new data fields needed
+- No other assessment tool puts people under real financial pressure over months and watches what happens. Pymetrics uses games. This is real stakes, longitudinal, uncoachable.
+- A trauma survivor's profile has a specific shape: often high on Pattern Recognition and Stress Tolerance (adaptive resilience), but with characteristic weak points on Impulse Control or Process Discipline at specific stress thresholds
+
+**The ethical line — CRITICAL:**
+The profiler can *infer* trauma-shaped cognition. It must never *label* it. The employer product shows cognitive strengths and behavioral patterns under pressure — not what formed them. Specifically:
+- Output to employers: "High pattern recognition, stress-tolerant, adapts to conditions" ✅
+- Output to employers: "Probable trauma history detected" ❌ (discriminatory, legally indefensible, ethically wrong)
+- The trauma research informs how the model is *built*, not what it *reports*
+
+**Why this matters for the product:**
+The insight that adversity forges specific cognitive strengths means the profiler can surface high-performers who would be *screened out* by traditional assessments — people whose unconventional backgrounds produced exactly the cognitive traits that high-pressure roles demand. That's the pitch to employers. Not "here's their trauma" — but "here's someone your filter would have missed."
+
+**Next steps on this (when ready):**
+- Map each of the 12 behavioral signals to trauma-adjacent literature (fomo_entry → impulse dysregulation, held_drawdown → dissociative tolerance, etc.)
+- Design the dimension scoring to distinguish between "trauma-forged strength" and "raw natural strength" — they look similar in aggregate but have different fragility profiles under novel stress
+- Consider whether to publish a research paper on this framing before competitors catch on — first-mover academic credibility is a moat
+
+---
+
+### 🚨 BIGGER INSIGHT — Trading as Universal Behavioral Assessment Laboratory
+*Captured April 19, 2026 — this changes the total addressable market*
+
+**The core reframe:**
+Trading is not what the product is assessing. Trading is the *mechanism* — a controlled, high-pressure, quantifiable environment to observe how a person makes decisions when stakes are real. The profile is the output. And if the profile reflects genuine psychological functioning (which research strongly supports), it applies to every high-pressure role in existence — not just finance.
+
+**The research foundation:**
+- Kahneman & Tversky's loss aversion work was never about trading — it was about human decision-making under uncertainty. Trading is just the cleanest lab.
+- Brett Steenbarger (leading trading psychologist): trading behavior directly mirrors psychological patterns from every other life domain. How someone handles a losing trade mirrors how they handle conflict, failure, sunk costs in every context.
+- The disposition effect (holding losers, cutting winners early) appears identically across trading, relationships, career decisions, and project management.
+- Risk tolerance in financial decisions correlates directly with risk tolerance in all other domains.
+
+**The reframe in one sentence:**
+EdgeIQ isn't a trading assessment platform. It's a universal behavioral assessment platform that uses trading as its data collection method — because trading is the most rigorous, real-stakes, longitudinal, uncoachable behavioral laboratory that exists.
+
+**What this means for TAM:**
+- Old framing: trading SaaS → trading-adjacent hiring (prop firms, hedge funds)
+- New framing: anyone who hires people for roles requiring decision-making under pressure
+- That includes: finance, military, emergency services, executive leadership, high-stakes sales, consulting, medicine, law enforcement, intelligence agencies
+- This is a completely different company at scale
+
+**Why the same external behavior can have completely different internal drivers:**
+Example — held_drawdown signal (held a losing trade through drawdown):
+- Driver A: thesis still intact, volume confirming — rational discipline
+- Driver B: self-destructive, comfortable with pain, familiar emotional state
+- Driver C: can't admit being wrong — ego protection
+- Driver D: overweighting the 5% reversal probability under emotional stress
+
+All four look identical from the outside. The behavior is the same. The cognitive profile behind it is completely different. The development path for each is completely different.
+
+**This is exactly why voice journaling is non-negotiable.**
+The transcript during a trade is the only way to capture which internal driver is actually running. "I'm holding because volume is supporting my thesis" vs. "I just can't close this, I feel like I deserve to sit in it" — same behavior, completely different profiles. The behavior alone is not the data. The internal narrative is the data.
+
+**Founder case study note (personal — do not publish):**
+Recognition that holding losing trades past the plan has two simultaneous drivers: (1) self-destructive comfort with pain — familiar emotional state from childhood environment, (2) systematic overweighting of small reversal probability under emotional pressure (the "5% that feels like 30%" cognitive bias). Both live in the same signal. The bot eliminates both by removing the ability to override the stop. This is not incidental — the automation is psychologically protective by design.
+
+**Voice journaling as the critical data layer:**
+The voice journal during/after trades is what separates behavioral signal from behavioral noise. Without the internal narrative, you have a behavioral record but no psychological ground truth. With it, you can distinguish which driver is producing which behavior — and that distinction is what makes the employer product genuinely predictive rather than just descriptive.
+
+**Research paper angle (supporting, not primary):**
+Title: *"Adversity-Forged Cognition: Identifying High-Performance Behavioral Profiles Through Real-Stakes Financial Decision Data"*
+- Argue that trauma reshapes cognition in specific adaptive directions
+- Argue that traditional assessments miss or actively penalize these profiles
+- Show that real-stakes longitudinal behavioral data identifies them accurately
+- Publish when 100-200 profiles with outcome data exist
+- One I/O psychologist co-author changes every room you walk into
+- This is credibility infrastructure for the employer product — not the product itself
+
+---
+
+# EdgeIQ — Private Build Notes (Reorganized)
 *Last updated: April 18, 2026 — Reorganized for navigation*
 
 ---

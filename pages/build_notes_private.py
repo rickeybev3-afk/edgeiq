@@ -56,9 +56,10 @@ st.markdown("# 🔒 EdgeIQ Build Notes — Full Private")
 st.caption("Everything. Keep this URL to yourself.")
 st.divider()
 
-tab_current, tab_original = st.tabs(["📝 Current (Live)", "🗂️ Original (Pre-April 19)"])
+tab_current, tab_original = st.tabs(["🗂️ New Private (Organized)", "📦 Old Private (Everything)"])
 
 with tab_current:
+    st.caption("Organized, curated version of the full build notes.")
     try:
         with open(NOTES_PATH, "r") as f:
             content = f.read()
@@ -67,10 +68,10 @@ with tab_current:
         st.error(f"File not found: `{NOTES_PATH}`")
 
 with tab_original:
-    st.caption("Snapshot of the build notes before the April 19, 2026 session. Read-only reference.")
+    st.caption("Master dump — absolutely everything, including personal notes. Never trimmed.")
     try:
         with open(NOTES_ORIGINAL_PATH, "r") as f:
             original = f.read()
         st.markdown(original, unsafe_allow_html=True)
     except FileNotFoundError:
-        st.error(f"Original snapshot not found: `{NOTES_ORIGINAL_PATH}`")
+        st.error(f"Original file not found: `{NOTES_ORIGINAL_PATH}`")
