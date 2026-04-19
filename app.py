@@ -25786,80 +25786,130 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 
     # ── Screener Pass × P-Tier Backtest Analysis ─────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(
-        '<div style="font-size:12px;color:#90a4ae;letter-spacing:1px;'
-        'text-transform:uppercase;margin-bottom:8px;">'
-        'Screener Pass × Tier Breakdown — Gap vs Trend vs Other (5-yr Backtest)</div>',
-        unsafe_allow_html=True,
-    )
-    st.caption("Gap = ≥3% gap · Trend = ≥1% + above SMA20 & SMA50 · Other = remaining · PF = Profit Factor")
+    with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
+        st.caption("Gap = ≥3% abs gap · Trend = ≥1% abs + close > SMA20 & SMA50 · Other = all else · PF = Profit Factor · — = <30 trades (insufficient)")
 
-    _sp_bt_df = _bt_sim_df.copy() if not _bt_sim_df.empty else pd.DataFrame()
-    _sp_has_pass = not _sp_bt_df.empty and "screener_pass" in _sp_bt_df.columns and _sp_bt_df["screener_pass"].notna().any()
+        _sp_bt_df = _bt_sim_df.copy() if not _bt_sim_df.empty else pd.DataFrame()
+        _sp_has_pass = (
+            not _sp_bt_df.empty
+            and "screener_pass" in _sp_bt_df.columns
+            and _sp_bt_df["screener_pass"].notna().any()
+        )
 
-    if not _sp_has_pass:
-        st.info("screener_pass not yet populated — run `python backfill_screener_pass.py` to classify historical rows.")
-    else:
-        _sp_bt_df = _sp_bt_df[_sp_bt_df["pnl_r_sim"].notna() & _sp_bt_df["screener_pass"].notna()].copy()
-        _sp_bt_df["tcs"]          = pd.to_numeric(_sp_bt_df.get("tcs", pd.Series(dtype=float)), errors="coerce").fillna(0)
-        _sp_bt_df["scan_type"]    = _sp_bt_df.get("scan_type", pd.Series(dtype=str)).fillna("morning")
-        _sp_bt_df["pnl_r_sim"]    = pd.to_numeric(_sp_bt_df["pnl_r_sim"], errors="coerce")
-
-        _sp_tier_defs = [
-            ("P1", "🔴", "intraday", 70, 999),
-            ("P2", "🟠", "morning",  70, 999),
-            ("P3", "🟡", "intraday", 50,  69),
-            ("P4", "🟢", "morning",  50,  69),
-        ]
-        _sp_passes = ["gap", "trend", "other"]
-
-        _sp_rows = []
-        for _spass in _sp_passes:
-            _pass_df = _sp_bt_df[_sp_bt_df["screener_pass"] == _spass]
-            if _pass_df.empty:
-                continue
-            for _stlabel, _stemoji, _stst, _stlo, _sthi in _sp_tier_defs:
-                _sub = _pass_df[
-                    (_pass_df["scan_type"] == _stst) &
-                    (_pass_df["tcs"] >= _stlo) &
-                    (_pass_df["tcs"] <= _sthi) &
-                    _pass_df["pnl_r_sim"].notna()
-                ]
-                if _sub.empty or len(_sub) < 5:
-                    continue
-                _r = _sub["pnl_r_sim"]
-                _wins_r = _r[_r > 0]
-                _loss_r = _r[_r < 0]
-                _n   = len(_r)
-                _w   = len(_wins_r)
-                _wr  = _w / _n * 100
-                _avg = float(_r.mean())
-                _pf  = (float(_wins_r.sum()) / abs(float(_loss_r.sum()))) if len(_loss_r) > 0 and float(_loss_r.sum()) != 0 else float("inf")
-                _pf_str = f"{_pf:.2f}" if _pf != float("inf") else "∞"
-                _avg_col = "#4caf50" if _avg > 0 else ("#ef6c00" if _avg > -0.2 else "#ef5350")
-                _sp_rows.append({
-                    "Pass":      _spass.capitalize(),
-                    "Tier":      f"{_stemoji} {_stlabel}",
-                    "Trades":    _n,
-                    "Wins":      _w,
-                    "Win Rate":  f"{_wr:.1f}%",
-                    "Avg R":     f"{_avg:+.3f}R",
-                    "PF":        _pf_str,
-                    "_avg_r":    _avg,
-                })
-
-        if _sp_rows:
-            _sp_rows.sort(key=lambda r: r["_avg_r"], reverse=True)
-            _sp_display = [{k: v for k, v in r.items() if k != "_avg_r"} for r in _sp_rows]
-            st.dataframe(pd.DataFrame(_sp_display), use_container_width=True, hide_index=True)
-            _sp_n_classified = _sp_bt_df["screener_pass"].notna().sum()
-            _sp_n_total_bt   = len(_sp_bt_df)
-            st.caption(
-                f"Based on {_sp_n_classified:,} rows with screener_pass out of {_sp_n_total_bt:,} "
-                f"sim rows shown (latest 5,000). Run `python backfill_screener_pass.py` for full 52k history."
-            )
+        if not _sp_has_pass:
+            st.info("screener_pass not yet populated — run `python backfill_screener_pass.py` to classify historical rows.")
         else:
-            st.info("Not enough tagged rows yet — run the full backfill to populate this table.")
+            _sp_bt_df = _sp_bt_df[_sp_bt_df["pnl_r_sim"].notna()].copy()
+            _sp_bt_df["tcs"]       = pd.to_numeric(_sp_bt_df.get("tcs", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            _sp_bt_df["scan_type"] = _sp_bt_df.get("scan_type", pd.Series(dtype=str)).fillna("morning")
+            _sp_bt_df["pnl_r_sim"] = pd.to_numeric(_sp_bt_df["pnl_r_sim"], errors="coerce")
+
+            _sp_tier_defs = [
+                ("P1", "🔴", "intraday", 70, 999),
+                ("P2", "🟠", "morning",  70, 999),
+                ("P3", "🟡", "intraday", 50,  69),
+                ("P4", "🟢", "morning",  50,  69),
+            ]
+            _sp_passes = ["gap", "trend", "other"]
+            _SP_MIN_TRADES = 30   # minimum trades for a cell to show stats
+
+            # Build HTML table with all pass×tier cells (—  if <30 trades)
+            _sp_hdr = (
+                '<tr style="background:#1e2d3d;color:#90a4ae;font-size:11px;">'
+                '<th style="padding:7px 10px;text-align:left;">Pass</th>'
+                '<th style="padding:7px 10px;text-align:left;">Tier</th>'
+                '<th style="padding:7px 10px;text-align:right;">Trades</th>'
+                '<th style="padding:7px 10px;text-align:right;">Win Rate</th>'
+                '<th style="padding:7px 10px;text-align:right;">Avg R</th>'
+                '<th style="padding:7px 10px;text-align:right;">Profit Factor</th>'
+                '</tr>'
+            )
+            _sp_body = ""
+
+            # Compute best Avg R per tier to drive color comparison (gap vs trend)
+            _sp_tier_best_avg: dict[str, float] = {}
+            for _stlabel, _stemoji, _stst, _stlo, _sthi in _sp_tier_defs:
+                _best = None
+                for _spass in ["gap", "trend"]:
+                    _sub = _sp_bt_df[
+                        (_sp_bt_df["screener_pass"] == _spass) &
+                        (_sp_bt_df["scan_type"] == _stst) &
+                        (_sp_bt_df["tcs"] >= _stlo) &
+                        (_sp_bt_df["tcs"] <= _sthi) &
+                        _sp_bt_df["pnl_r_sim"].notna()
+                    ]
+                    if len(_sub) >= _SP_MIN_TRADES:
+                        _avg = float(_sub["pnl_r_sim"].mean())
+                        if _best is None or _avg > _best:
+                            _best = _avg
+                _sp_tier_best_avg[_stlabel] = _best if _best is not None else 0.0
+
+            for _spass in _sp_passes:
+                _pass_df = _sp_bt_df[_sp_bt_df["screener_pass"] == _spass]
+                _pass_color = "#1565c0" if _spass == "gap" else ("#2e7d32" if _spass == "trend" else "#546e7a")
+                for _si, (_stlabel, _stemoji, _stst, _stlo, _sthi) in enumerate(_sp_tier_defs):
+                    _sub = _pass_df[
+                        (_pass_df["scan_type"] == _stst) &
+                        (_pass_df["tcs"] >= _stlo) &
+                        (_pass_df["tcs"] <= _sthi) &
+                        _pass_df["pnl_r_sim"].notna()
+                    ]
+                    _n = len(_sub)
+                    _row_bg = "#131f2e" if _si % 2 == 0 else "#0f1923"
+                    if _n < _SP_MIN_TRADES:
+                        _sp_body += (
+                            f'<tr style="background:{_row_bg};">'
+                            f'<td style="padding:6px 10px;color:{_pass_color};font-weight:600;">{_spass.capitalize()}</td>'
+                            f'<td style="padding:6px 10px;color:#cfd8dc;">{_stemoji} {_stlabel}</td>'
+                            f'<td style="padding:6px 10px;text-align:right;color:#455a64;">{_n}</td>'
+                            f'<td style="padding:6px 10px;text-align:right;color:#455a64;">—</td>'
+                            f'<td style="padding:6px 10px;text-align:right;color:#455a64;">—</td>'
+                            f'<td style="padding:6px 10px;text-align:right;color:#455a64;font-style:italic;">insufficient data</td>'
+                            f'</tr>'
+                        )
+                        continue
+                    _r    = _sub["pnl_r_sim"]
+                    _wins = _r[_r > 0]
+                    _loss = _r[_r < 0]
+                    _wr   = len(_wins) / _n * 100
+                    _avg  = float(_r.mean())
+                    _pf   = (float(_wins.sum()) / abs(float(_loss.sum()))) if len(_loss) > 0 and float(_loss.sum()) != 0 else float("inf")
+                    _pf_str = f"{_pf:.2f}" if _pf != float("inf") else "∞"
+                    # Color: green if this pass has the best Avg R for this tier, otherwise neutral
+                    _is_best = (_spass in ["gap", "trend"]) and (_avg == _sp_tier_best_avg.get(_stlabel, None))
+                    _avg_col  = "#4caf50" if _avg > 0 else ("#ef6c00" if _avg > -0.1 else "#ef5350")
+                    _wr_col   = "#2e7d32" if _wr >= 60 else ("#ef6c00" if _wr >= 50 else "#c62828")
+                    _pf_col   = "#4caf50" if _pf >= 1.5 else ("#ef6c00" if _pf >= 1.0 else "#ef5350")
+                    _best_badge = ' ★' if _is_best else ''
+                    _sp_body += (
+                        f'<tr style="background:{_row_bg};">'
+                        f'<td style="padding:6px 10px;color:{_pass_color};font-weight:600;">{_spass.capitalize()}{_best_badge}</td>'
+                        f'<td style="padding:6px 10px;color:#cfd8dc;">{_stemoji} {_stlabel}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;color:#b0bec5;">{_n:,}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;"><span style="color:{_wr_col};font-weight:600;">{_wr:.1f}%</span></td>'
+                        f'<td style="padding:6px 10px;text-align:right;"><span style="color:{_avg_col};font-weight:600;">{"+" if _avg >= 0 else ""}{_avg:.3f}R</span></td>'
+                        f'<td style="padding:6px 10px;text-align:right;"><span style="color:{_pf_col};font-weight:600;">{_pf_str}</span></td>'
+                        f'</tr>'
+                    )
+
+            if _sp_body:
+                st.markdown(
+                    f'<div style="overflow-x:auto;">'
+                    f'<table style="width:100%;border-collapse:collapse;background:#131f2e;border-radius:8px;'
+                    f'overflow:hidden;font-size:12px;color:#cfd8dc;">'
+                    f'<thead>{_sp_hdr}</thead><tbody>{_sp_body}</tbody>'
+                    f'</table></div>',
+                    unsafe_allow_html=True,
+                )
+                _sp_n_classified = int(_sp_bt_df["screener_pass"].notna().sum())
+                _sp_n_total_bt   = int(len(_sp_bt_df))
+                st.caption(
+                    f"★ = best Avg R among gap/trend for that tier · "
+                    f"{_sp_n_classified:,} of {_sp_n_total_bt:,} sim rows classified "
+                    f"(latest 5,000 loaded) · run `python backfill_screener_pass.py` for full history"
+                )
+            else:
+                st.info("Not enough tagged rows yet (<30 per cell) — run the full backfill to populate this table.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
