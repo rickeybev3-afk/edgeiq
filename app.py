@@ -21250,7 +21250,12 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
     # ── JOURNAL × MODEL CROSS-REFERENCE (runs regardless of tracker state) ────
     st.markdown("---")
-    st.markdown("### 🔬 Personal Trades × Model Predictions — Cross-Reference")
+    _xref_hdr_col, _xref_btn_col = st.columns([8, 1])
+    with _xref_hdr_col:
+        st.markdown("### 🔬 Personal Trades × Model Predictions — Cross-Reference")
+    with _xref_btn_col:
+        if st.button("🔄 Refresh", key="refresh_xref_bt", help="Reload cross-reference data"):
+            _load_xref_bt_hist.clear()
     st.caption(
         "Joins your journal trades to the model's structure call on that same day & ticker. "
         "Shows whether the model was warning you on days you lost."
@@ -24562,6 +24567,8 @@ def render_performance_tab():
         )
 
     # ── Load backtest sim history (backtest_sim_runs) ────────────────────────
+    if st.button("🔄 Refresh", key="refresh_bt_sim", help="Reload backtest sim history"):
+        _load_bt_sim_history.clear()
     _bt_sim_df = _load_bt_sim_history(uid=_AUTH_USER_ID)
 
     # ── Load accuracy_tracker (bot watchlist calls + ALL combined) ──
@@ -24607,6 +24614,8 @@ def render_performance_tab():
     # see a live running tally of realized R as trailing-stop fills come in,
     # instead of waiting for the nightly 3:30 PM sweep.
     # ════════════════════════════════════════════════════════════════════════════
+    if st.button("🔄 Refresh", key="refresh_intraday_closed", help="Reload intraday closed trades"):
+        _load_intraday_closed.clear()
     _intraday_closed = _load_intraday_closed(uid=_AUTH_USER_ID)
 
     _today_label = __import__("datetime").date.today().strftime("%a %b %-d")
@@ -24858,6 +24867,9 @@ def render_performance_tab():
         )
 
     # ── Live-filter pace target (cached, computed from backtest_sim_runs) ────────
+    if st.button("🔄 Refresh", key="refresh_pace_target", help="Reload pace target data"):
+        _load_pace_target_alltime.clear()
+        _load_pace_target_scoped.clear()
     _pace_rp_start = st.session_state.get("rp_start_date")
     _pace_rp_end   = st.session_state.get("rp_end_date")
     _pace_start_str = str(_pace_rp_start) if _pace_rp_start else ""
