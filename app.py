@@ -3134,6 +3134,49 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             rvol_v = row.get("rvol", "")
             notes_v = str(row.get("notes", "") or "")
 
+            # Behavioural signals — sourced from voice_signals JSON field
+            _vs_raw = row.get("voice_signals")
+            if isinstance(_vs_raw, dict):
+                _vs_sigs = _vs_raw
+            elif isinstance(_vs_raw, str) and _vs_raw.strip():
+                try:
+                    import json as _json_card
+                    _vs_parsed = _json_card.loads(_vs_raw)
+                    _vs_sigs = _vs_parsed if isinstance(_vs_parsed, dict) else {}
+                except Exception:
+                    _vs_sigs = {}
+            else:
+                _vs_sigs = {}
+            _sig_pos = [
+                _VJ_SIGNAL_LABELS.get(k, k)
+                for k in _VJ_SIGNAL_KEYS
+                if k in _VJ_POSITIVE_SIGNALS and _vs_sigs.get(k)
+            ]
+            _sig_neg = [
+                _VJ_SIGNAL_LABELS.get(k, k)
+                for k in _VJ_SIGNAL_KEYS
+                if k in _VJ_NEGATIVE_SIGNALS and _vs_sigs.get(k)
+            ]
+            _signals_html = ""
+            if _sig_pos or _sig_neg:
+                _sp = (
+                    '<span style="color:#4caf50;font-size:11px;font-weight:600;">'
+                    + " ".join(f"+{s}" for s in _sig_pos)
+                    + "</span>"
+                ) if _sig_pos else ""
+                _sn = (
+                    '<span style="color:#ef5350;font-size:11px;font-weight:600;">'
+                    + " ".join(f"-{s}" for s in _sig_neg)
+                    + "</span>"
+                ) if _sig_neg else ""
+                _signals_inner = (
+                    (f"{_sp}" + (f'<span style="color:#555;margin:0 6px;">·</span>{_sn}' if _sn else ""))
+                    if _sp else _sn
+                )
+                _signals_html = (
+                    f'<div style="font-size:11px;margin-top:3px;">{_signals_inner}</div>'
+                )
+
             # Parse exit price, P&L, shares, and exit timestamp from notes
             _ex_m   = _re_j.search(r"Exit:\s*\$([0-9.]+)", notes_v)
             _pnl_m  = _re_j.search(r"P&L:\s*\$([+-]?[0-9.]+)\s*\(([+-]?[0-9.]+)%\)", notes_v)
@@ -3273,6 +3316,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     f'TCS {tcs_v}%  ·  RVOL {rvol_v}x'
                     f'{("  ·  <em>" + _clean_notes + "</em>") if _clean_notes else ""}'
                     f'</div>'
+                    f'{_signals_html}'
                     f'<div style="font-size:12px;color:{gc};margin-top:4px;">{reason}</div>'
                     f'</div></div>',
                     unsafe_allow_html=True,
