@@ -1,20 +1,19 @@
 import streamlit as st
 import os
 
-def _find_notes_path():
+def _find_notes_path(filename):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = [
-        os.path.join(root, "_private_notes.md"),
-        os.path.join(os.getcwd(), "_private_notes.md"),
-        os.path.join(root, ".local", "build_notes_private.md"),
-        os.path.join(os.getcwd(), ".local", "build_notes_private.md"),
+        os.path.join(root, filename),
+        os.path.join(os.getcwd(), filename),
     ]
     for p in candidates:
         if os.path.isfile(p):
             return p
     return candidates[0]
 
-NOTES_PATH = _find_notes_path()
+NOTES_PATH          = _find_notes_path("_private_notes.md")
+NOTES_ORIGINAL_PATH = _find_notes_path("_private_notes_original.md")
 
 st.set_page_config(
     page_title="EdgeIQ — Full Build Notes (Private)",
@@ -57,9 +56,21 @@ st.markdown("# 🔒 EdgeIQ Build Notes — Full Private")
 st.caption("Everything. Keep this URL to yourself.")
 st.divider()
 
-try:
-    with open(NOTES_PATH, "r") as f:
-        content = f.read()
-    st.markdown(content, unsafe_allow_html=True)
-except FileNotFoundError:
-    st.error(f"Private build notes file not found. Tried: `{NOTES_PATH}` | cwd: `{os.getcwd()}`")
+tab_current, tab_original = st.tabs(["📝 Current (Live)", "🗂️ Original (Pre-April 19)"])
+
+with tab_current:
+    try:
+        with open(NOTES_PATH, "r") as f:
+            content = f.read()
+        st.markdown(content, unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.error(f"File not found: `{NOTES_PATH}`")
+
+with tab_original:
+    st.caption("Snapshot of the build notes before the April 19, 2026 session. Read-only reference.")
+    try:
+        with open(NOTES_ORIGINAL_PATH, "r") as f:
+            original = f.read()
+        st.markdown(original, unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.error(f"Original snapshot not found: `{NOTES_ORIGINAL_PATH}`")
