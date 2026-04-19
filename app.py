@@ -2334,7 +2334,7 @@ def render_log_entry_ui():
     # ── Recent Trades preview (last 10 from Supabase) ─────────────────────────
     _recent_df = _cached_load_journal(user_id=st.session_state.get("auth_user_id", ""))
     if not _recent_df.empty:
-        _cols = [c for c in ["timestamp", "ticker", "price", "structure", "grade", "process_grade"]
+        _cols = [c for c in ["timestamp", "ticker", "price", "structure", "grade", "process_grade", "voice_signals"]
                  if c in _recent_df.columns]
         _show = _recent_df[_cols].head(10).copy()
 
@@ -2343,6 +2343,29 @@ def render_log_entry_ui():
             _show["price"] = _show["price"].apply(
                 lambda x: f"${float(x):.2f}" if x not in (None, "", "nan") else "—"
             )
+
+        import json as _json_rt
+
+        def _parse_behaviour_cell(val):
+            """Return (pos_labels, neg_labels) for a voice_signals value."""
+            if isinstance(val, dict):
+                sigs = val
+            elif isinstance(val, str):
+                try:
+                    sigs = _json_rt.loads(val)
+                    if not isinstance(sigs, dict):
+                        sigs = {}
+                except Exception:
+                    sigs = {}
+            else:
+                sigs = {}
+            pos = [_VJ_SIGNAL_LABELS.get(k, k) for k in _VJ_SIGNAL_KEYS
+                   if k in _VJ_POSITIVE_SIGNALS and sigs.get(k)]
+            neg = [_VJ_SIGNAL_LABELS.get(k, k) for k in _VJ_SIGNAL_KEYS
+                   if k in _VJ_NEGATIVE_SIGNALS and sigs.get(k)]
+            return pos, neg
+
+        _has_signals_col = "voice_signals" in _show.columns
 
         # Grade → colored badge via styled HTML
         _grade_row_colors = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}
@@ -2362,6 +2385,26 @@ def render_log_entry_ui():
                 f'border-radius:4px; padding:2px 8px; font-weight:700; font-size:12px;">{_pg}</span>'
                 if _pg else '<span style="color:#555;">—</span>'
             )
+
+            # Build behaviour cell
+            _beh_cell = ""
+            if _has_signals_col:
+                _pos, _neg = _parse_behaviour_cell(row.get("voice_signals"))
+                _beh_parts = []
+                for _lbl in _pos:
+                    _beh_parts.append(
+                        f'<span style="color:#4caf50; font-size:10px; white-space:nowrap;">+{_lbl}</span>'
+                    )
+                for _lbl in _neg:
+                    _beh_parts.append(
+                        f'<span style="color:#ef5350; font-size:10px; white-space:nowrap;">−{_lbl}</span>'
+                    )
+                if _beh_parts:
+                    _beh_cell = '<br>'.join(_beh_parts)
+                else:
+                    _beh_cell = '<span style="color:#444; font-size:10px;">—</span>'
+
+
             rows_html += (
                 f'<tr>'
                 f'<td style="color:#888; font-size:11px; padding:5px 8px; white-space:nowrap;">{ts}</td>'
@@ -2373,8 +2416,16 @@ def render_log_entry_ui():
                 f'border-radius:4px; padding:2px 8px; font-weight:700; font-size:12px;">{g}</span>'
                 f'</td>'
                 f'<td style="padding:5px 8px; text-align:center;">{_pg_cell}</td>'
-                f'</tr>'
+                + (f'<td style="padding:5px 8px; vertical-align:top; line-height:1.6;">{_beh_cell}</td>'
+                   if _has_signals_col else '')
+                + f'</tr>'
             )
+
+        _beh_header = (
+            f'<th style="text-align:left; color:#5c6bc0; font-size:10px; padding:6px 8px; '
+            f'text-transform:uppercase; letter-spacing:1px;">Behaviour</th>'
+            if _has_signals_col else ''
+        )
 
         st.markdown(
             f'<div style="margin-top:12px;">'
@@ -2395,6 +2446,7 @@ def render_log_entry_ui():
             f'text-transform:uppercase; letter-spacing:1px;">Grade</th>'
             f'<th style="text-align:center; color:#5c6bc0; font-size:10px; padding:6px 8px; '
             f'text-transform:uppercase; letter-spacing:1px;">Process</th>'
+            f'{_beh_header}'
             f'</tr></thead>'
             f'<tbody>{rows_html}</tbody>'
             f'</table></div>',
@@ -2526,11 +2578,34 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     else:
                         signals = {}
                     return {k: int(bool(signals.get(k, False))) for k in _VJ_SIGNAL_KEYS}
+
+                def _summarise_signals(val):
+                    """Return a human-readable text summary of active behavioural signals."""
+                    if isinstance(val, dict):
+                        signals = val
+                    elif isinstance(val, str):
+                        try:
+                            signals = _json.loads(val)
+                            if not isinstance(signals, dict):
+                                signals = {}
+                        except Exception:
+                            signals = {}
+                    else:
+                        signals = {}
+                    pos = [_VJ_SIGNAL_LABELS.get(k, k) for k in _VJ_SIGNAL_KEYS
+                           if k in _VJ_POSITIVE_SIGNALS and signals.get(k)]
+                    neg = [_VJ_SIGNAL_LABELS.get(k, k) for k in _VJ_SIGNAL_KEYS
+                           if k in _VJ_NEGATIVE_SIGNALS and signals.get(k)]
+                    parts = [f"+{l}" for l in pos] + [f"-{l}" for l in neg]
+                    return "; ".join(parts) if parts else ""
+
                 _sig_df = _journal_export["voice_signals"].apply(_expand_signals).apply(pd.Series)
                 _drop_col = _journal_export.columns.get_loc("voice_signals")
                 _left = _journal_export.iloc[:, :_drop_col]
                 _right = _journal_export.iloc[:, _drop_col + 1:]
-                _journal_export = pd.concat([_left, _sig_df, _right], axis=1)
+                # Insert a human-readable summary column before the individual signal columns
+                _summary_col = _journal_export["voice_signals"].apply(_summarise_signals).rename("behaviour_signals")
+                _journal_export = pd.concat([_left, _summary_col, _sig_df, _right], axis=1)
             _csv_parts = [_journal_export.to_csv(index=False)]
 
             # Append per-structure discipline rate summary block
