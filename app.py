@@ -2612,6 +2612,27 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             key="vm_transcript",
             label_visibility="collapsed",
         )
+
+        st.markdown(
+            '<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+            'letter-spacing:1px; margin:8px 0 4px 0;">✅ Process Quality</div>',
+            unsafe_allow_html=True,
+        )
+        _vm_followed_plan = st.radio(
+            "Did you follow your plan?",
+            options=["Yes", "No"],
+            index=0,
+            horizontal=True,
+            key="vm_followed_plan",
+        )
+        _vm_deviation_notes = ""
+        if _vm_followed_plan == "No":
+            _vm_deviation_notes = st.text_input(
+                "What deviated from your plan?",
+                placeholder="e.g. Moved stop early, sized up without signal...",
+                key="vm_deviation_notes",
+            )
+
         _vm_btn = st.button("🧠 Analyze & Log", type="primary", use_container_width=True, key="vm_log_btn")
 
         if _vm_btn:
@@ -2633,6 +2654,8 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                         pnl_pct=_vm_pnl,
                         win_loss=_vm_wl,
                         user_id=_vm_uid,
+                        followed_plan=_vm_followed_plan.lower(),
+                        deviation_notes=_vm_deviation_notes,
                     )
                 if _vm_result.get("saved"):
                     st.success(f"✅ Logged {_vm_ticker} — {len(_vm_result['tags'].get('flags', []))} behavioral tags detected")

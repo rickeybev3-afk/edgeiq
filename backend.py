@@ -5798,15 +5798,17 @@ def _build_behavioral_summary(tags: dict, ticker: str, win_loss: str) -> str:
 
 
 def log_voice_memo(
-    transcript:   str,
-    ticker:       str,
-    trade_date:   str,
-    entry_price:  float,
-    exit_price:   float,
-    pnl_pct:      float,
-    win_loss:     str  = "Win",
-    user_id:      str  = "",
-    notes_extra:  str  = "",
+    transcript:      str,
+    ticker:          str,
+    trade_date:      str,
+    entry_price:     float,
+    exit_price:      float,
+    pnl_pct:         float,
+    win_loss:        str  = "Win",
+    user_id:         str  = "",
+    notes_extra:     str  = "",
+    followed_plan:   str  = "yes",
+    deviation_notes: str  = "",
 ) -> dict:
     """Full pipeline: extract cognitive tags from transcript → save to trade_journal.
 
@@ -5843,6 +5845,8 @@ def log_voice_memo(
             "grade":              "A" if win_loss == "Win" else "F",
             "grade_reason":       f"Voice memo — P&L: {pnl_pct:+.2f}%",
             "dedup_key":          f"voice_{ticker.upper()}_{trade_date}",
+            "followed_plan":      followed_plan.lower() if followed_plan else "yes",
+            "deviation_notes":    deviation_notes if followed_plan and followed_plan.lower() == "no" else "",
         }
 
         existing = (
