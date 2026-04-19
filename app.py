@@ -34118,23 +34118,13 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
-    # Apply current bot filter settings as a hypothetical overlay on all logged trades:
-    #   intraday TCS ≥ 50 | morning (or unknown) TCS ≥ 60 | IB < 10%
-    # Unknown / NULL scan_type defaults to the STRICT morning floor (≥60) — old entries
-    # without scan_type were predominantly morning scans; permissive default would let
-    # trades through that the bot would have rejected.
+    # Apply TCS ≥ 60 to ALL rows regardless of scan_type.
+    # Section 1 paper trades are all from the morning IB scan; old DB rows were
+    # historically mislabeled as "intraday" causing wrong delta columns and
+    # passing trades the bot would have rejected. Flat ≥60 floor fixes both.
     if "tcs" in _pt_df.columns:
         _pt_tcs_num = pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0)
-        if "scan_type" in _pt_df.columns:
-            _pt_scan_norm = _pt_df["scan_type"].str.lower().str.strip().fillna("")
-            _pt_is_intraday = _pt_scan_norm.str.startswith("intraday")
-            _pt_tcs_mask = (
-                (_pt_is_intraday  & (_pt_tcs_num >= 50)) |
-                (~_pt_is_intraday & (_pt_tcs_num >= 60))
-            )
-        else:
-            _pt_tcs_mask = _pt_tcs_num >= 60
-        _pt_df = _pt_df[_pt_tcs_mask]
+        _pt_df = _pt_df[_pt_tcs_num >= 60]
     if "ib_range_pct" in _pt_df.columns:
         _pt_df = _pt_df[
             _pt_df["ib_range_pct"].isna() | (pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce") < 10.0)
@@ -34142,8 +34132,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
     if _pt_df.empty:
         st.info(
-            "No logged trades pass the current bot filters (intraday TCS ≥ 50 / morning or unknown TCS ≥ 60 / IB < 10%). "
-            "Trades from old settings or without a scan type that don't meet the current floor are excluded.",
+            "No logged trades pass the current bot filters (TCS ≥ 60 / IB < 10%). "
+            "Trades logged under old looser settings are excluded from stats.",
             icon="📋",
         )
         return
