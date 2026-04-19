@@ -11459,6 +11459,16 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
 
         # ── v5: Trailing stop sim — mirrors paper bot T1 → trail 1R below peak ─
         if _use_trail_sim:
+            # MAE check FIRST: if stop was hit (MAE >= 1R), trade is closed regardless
+            # of subsequent MFE. Checking MFE first would incorrectly credit post-stopout
+            # recoveries as trailing exit winners.
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
             if _mfe_r >= target_r:
                 # T1 hit: trailing stop converts bracket. Trail = 1R below MFE peak.
                 captured_r = max(0.0, round(_mfe_r - 1.0, 3))
@@ -11469,6 +11479,11 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
                     "sim_outcome": "trailing_exit", "sim_version": SIM_VERSION,
                 }
+            # T1 not hit, stop not hit — held to EOD, fall through
+
+        # ── v6: S/R-aware trail tightening (Bullish) ─────────────────────────
+        if _use_trail_sim_v6:
+            # MAE check FIRST: stop hit means trade is closed — post-stopout MFE is irrelevant.
             if _mae_r >= 1.0:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
@@ -11476,10 +11491,6 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
                     "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
-            # T1 not hit, stop not hit — held to EOD, fall through
-
-        # ── v6: S/R-aware trail tightening (Bullish) ─────────────────────────
-        if _use_trail_sim_v6:
             if _mfe_r >= target_r:
                 # Check if nearest_resistance is within 0.3R ABOVE entry (bounded: 0 ≤ dist ≤ 0.3R).
                 # Level must be above entry (dist >= 0) to avoid false tightening on wrong-side data.
@@ -11496,13 +11507,6 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
                     "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
                     "sim_outcome": _outcome, "sim_version": SIM_VERSION,
-                }
-            if _mae_r >= 1.0:
-                return {
-                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
-                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
-                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             # T1 not hit, stop not hit — held to EOD, fall through
 
@@ -11558,6 +11562,14 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
 
         # ── v5: Trailing stop sim — mirrors paper bot T1 → trail 1R below peak ─
         if _use_trail_sim:
+            # MAE check FIRST: stop hit means trade is closed — post-stopout MFE is irrelevant.
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
             if _mfe_r >= target_r:
                 captured_r = max(0.0, round(_mfe_r - 1.0, 3))
                 captured_pct = captured_r * stop_dist_pct
@@ -11567,6 +11579,11 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
                     "sim_outcome": "trailing_exit", "sim_version": SIM_VERSION,
                 }
+            # T1 not hit, stop not hit — held to EOD, fall through
+
+        # ── v6: S/R-aware trail tightening (Bearish) ─────────────────────────
+        if _use_trail_sim_v6:
+            # MAE check FIRST: stop hit means trade is closed — post-stopout MFE is irrelevant.
             if _mae_r >= 1.0:
                 return {
                     "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
@@ -11574,10 +11591,6 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
                     "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
-            # T1 not hit, stop not hit — held to EOD, fall through
-
-        # ── v6: S/R-aware trail tightening (Bearish) ─────────────────────────
-        if _use_trail_sim_v6:
             if _mfe_r >= target_r:
                 # Check if nearest_support is within 0.3R BELOW entry (bounded: 0 ≤ dist ≤ 0.3R).
                 # Level must be below entry (dist >= 0) to avoid false tightening on wrong-side data.
@@ -11594,13 +11607,6 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
                     "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
                     "sim_outcome": _outcome, "sim_version": SIM_VERSION,
-                }
-            if _mae_r >= 1.0:
-                return {
-                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
-                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
-                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
                 }
             # T1 not hit, stop not hit — held to EOD, fall through
 
