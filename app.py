@@ -2940,10 +2940,26 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         # Equity curve — grade average over entries
         st.markdown("---")
         st.markdown("**Grade Discipline Curve**")
+        _gdc_window_options = {"Last 5": 5, "Last 10": 10, "Last 20": 20, "All-time": None}
+        _gdc_window_label = st.selectbox(
+            "Averaging window",
+            options=list(_gdc_window_options.keys()),
+            index=3,
+            key="gdc_window_select",
+            help="Choose how many recent entries the grade average is calculated over.",
+            label_visibility="collapsed",
+        )
+        _gdc_window = _gdc_window_options[_gdc_window_label]
+
         df2 = df.copy()
         df2["grade_score"] = df2["grade"].map(_GRADE_SCORE).fillna(1)
         df2["entry_num"]   = range(1, len(df2) + 1)
-        df2["rolling_avg"] = df2["grade_score"].expanding().mean()
+        if _gdc_window is None:
+            df2["rolling_avg"] = df2["grade_score"].expanding().mean()
+            _gdc_window_label_str = "all-time avg"
+        else:
+            df2["rolling_avg"] = df2["grade_score"].rolling(_gdc_window, min_periods=1).mean()
+            _gdc_window_label_str = f"last-{_gdc_window} avg"
     
         import plotly.graph_objects as _go
         fig = _go.Figure()
@@ -2955,7 +2971,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 {4: "#4caf50", 3: "#26a69a", 2: "#ffa726", 1: "#ef5350"}
             ).fillna("#aaa")),
             name="Grade Average",
-            hovertemplate="Entry %{x} — Avg %{y:.2f}<extra></extra>",
+            hovertemplate=f"Entry %{{x}} — {_gdc_window_label_str} %{{y:.2f}}<extra></extra>",
         ))
         fig.add_hline(y=3.0, line=dict(color="rgba(76,175,80,0.4)", dash="dot"),
                       annotation_text="B threshold", annotation_font_color="#4caf50")
