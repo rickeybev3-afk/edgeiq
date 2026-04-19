@@ -2767,6 +2767,17 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         )
         _has_process_data = not _pdr_all.empty
 
+        _pdr_target_raw = st.number_input(
+            "🎯 My discipline-rate target (%)",
+            min_value=0,
+            max_value=100,
+            value=st.session_state.get("pdr_personal_target", 0),
+            step=5,
+            help="Set your personal process discipline target. 0 = use default thresholds (70% / 50%).",
+            key="pdr_personal_target",
+        )
+        _pdr_personal_target = int(_pdr_target_raw) if _pdr_target_raw else 0
+
         _summary_cols = st.columns(3)
 
         with _summary_cols[0]:
@@ -2791,7 +2802,17 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 _pdr_yes = (_pdr_all["followed_plan"] == "yes").sum()
                 _pdr_total = len(_pdr_all)
                 _pdr_pct = round(_pdr_yes / _pdr_total * 100) if _pdr_total else 0
-                _pdr_col = "#4caf50" if _pdr_pct >= 70 else "#ffa726" if _pdr_pct >= 50 else "#ef5350"
+                if _pdr_personal_target > 0:
+                    _t = _pdr_personal_target
+                    _pdr_col = (
+                        "#4caf50" if _pdr_pct >= _t else
+                        "#ffa726" if _pdr_pct >= round(_t * 0.75) else
+                        "#ef5350"
+                    )
+                    _pdr_target_label = f"target {_t}%"
+                else:
+                    _pdr_col = "#4caf50" if _pdr_pct >= 70 else "#ffa726" if _pdr_pct >= 50 else "#ef5350"
+                    _pdr_target_label = "target 70%"
                 st.markdown(
                     f'<div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;'
                     f'padding:14px 18px;text-align:center;">'
@@ -2799,7 +2820,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                     f'letter-spacing:1px;margin-bottom:4px;">Process Discipline Rate</div>'
                     f'<div style="font-size:28px;font-weight:800;color:{_pdr_col};">{_pdr_pct}%</div>'
                     f'<div style="font-size:11px;color:#546e7a;margin-top:2px;">'
-                    f'{_pdr_yes} of {_pdr_total} trades followed plan</div>'
+                    f'{_pdr_yes} of {_pdr_total} trades followed plan · {_pdr_target_label}</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
