@@ -41,15 +41,7 @@ args = "Batch Backtest (60 days)"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Backtest: Trend 90-Day (Preview)"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "Nightly Tiered P&L Refresh"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "MFE Rebackfill (force)"
 
 [[workflows.workflow]]
 name = "Start application"
@@ -97,31 +89,12 @@ task = "shell.exec"
 args = "python backfill_close_prices.py && python run_sim_backfill.py"
 
 [[workflows.workflow]]
-name = "Backtest: Trend 90-Day (Preview)"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python batch_backtest.py --days 90 --screener trend --dry-run --user-id a5e1fcab-8369-42c4-8550-a8a19734510c"
-
-[[workflows.workflow]]
 name = "Nightly Tiered P&L Refresh"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python nightly_tiered_pnl_refresh.py"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow]]
-name = "MFE Rebackfill (force)"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python backfill_mfe_mae.py --force-recompute"
 
 [workflows.workflow.metadata]
 outputType = "console"
