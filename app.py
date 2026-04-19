@@ -31870,16 +31870,31 @@ function _bqCopyShareLink() {
             if not st.session_state.get("_daily_scan_log_ensured"):
                 ensure_daily_scan_log_table()
                 st.session_state["_daily_scan_log_ensured"] = True
-            _dsl = load_daily_scan_log(date.today())
+            _dsl_picked_date = st.date_input(
+                "Scan date",
+                value=date.today(),
+                max_value=date.today(),
+                key="scanner_funnel_date",
+                help="Browse scan logs for any past day. Defaults to today.",
+            )
+            _dsl = load_daily_scan_log(_dsl_picked_date)
             if _dsl["total"] == 0:
-                st.info(
-                    "No scan log for today yet. The bot writes here after its 9:35 AM "
-                    "Finviz watchlist refresh — check back after market open.",
-                    icon="🔍",
-                )
+                if _dsl_picked_date == date.today():
+                    st.info(
+                        "No scan log for today yet. The bot writes here after its 9:35 AM "
+                        "Finviz watchlist refresh — check back after market open.",
+                        icon="🔍",
+                    )
+                else:
+                    st.info(
+                        f"No scan log found for {_dsl_picked_date.strftime('%B %d, %Y')}. "
+                        "Logs are only available from the date this feature was shipped onwards.",
+                        icon="📭",
+                    )
             else:
-                _dsl_today_trades = (
-                    _pt_df[_pt_df["trade_date"] == str(date.today())].shape[0]
+                _dsl_date_str = str(_dsl_picked_date)
+                _dsl_day_trades = (
+                    _pt_df[_pt_df["trade_date"] == _dsl_date_str].shape[0]
                     if not _pt_df.empty and "trade_date" in _pt_df.columns
                     else 0
                 )
@@ -31891,8 +31906,8 @@ function _bqCopyShareLink() {
                 with _dsl_col3:
                     st.metric("Trend / Squeeze", f"{len(_dsl['trend'])} / {len(_dsl['squeeze'])}")
                 with _dsl_col4:
-                    st.metric("Paper trades fired", _dsl_today_trades,
-                              help="Paper trades logged today (all TCS levels, resolved + pending)")
+                    st.metric("Paper trades fired", _dsl_day_trades,
+                              help="Paper trades logged on this day (all TCS levels, resolved + pending)")
                 if _dsl["all"]:
                     st.caption(f"**Scanned tickers:** {', '.join(_dsl['all'])}")
 
