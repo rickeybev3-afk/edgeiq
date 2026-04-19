@@ -356,10 +356,21 @@ except ImportError as e:
 def _struct_tcs_floor(r: dict, tcs_thresholds: dict, regime_floor: int) -> int:
     """Return the effective TCS floor for a scan result.
 
-    Uses the calibrated per-structure threshold from tcs_thresholds.json
-    (written nightly by the recalibration), then applies the macro regime
-    adjustment on top.  Falls back to MIN_TCS if no match.
+    For INTRADAY scans: always returns max(MIN_TCS, regime_floor).
+    5-yr data shows intraday TCS 50-59 is +1.265R / 74.8% WR across ALL
+    structures — per-structure calibration adds no value here and would be
+    overwritten nightly to 62-65, blocking profitable setups.
+
+    For MORNING / EOD scans: uses calibrated per-structure threshold from
+    tcs_thresholds.json (written nightly by the recalibration), then applies
+    the macro regime adjustment on top.  Falls back to MIN_TCS if no match.
+    The separate MORNING_TCS_FLOOR=60 hard gate in _place_order_for_setup
+    acts as the primary morning filter independent of this function.
     """
+    scan_type = str(r.get("scan_type") or "").lower()
+    if scan_type == "intraday":
+        # Bypass per-structure calibration for intraday — use global floor only
+        return max(MIN_TCS, regime_floor)
     predicted = str(r.get("predicted") or "").strip()
     wk        = label_to_weight_key(predicted) if predicted else ""
     cal_tcs   = tcs_thresholds.get(wk, MIN_TCS) if wk else MIN_TCS
