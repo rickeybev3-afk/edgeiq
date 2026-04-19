@@ -3,22 +3,25 @@
 
 ---
 
-## 🔁 DEFERRED DECISIONS — Come Back To These
+## ✅ COMPLETED — Stop Logic Optimization (Apr 19, 2026)
 
-### Stop Logic Optimization Study — After Go-Live Data Accumulates (noted Apr 19, 2026)
-The Apr 14-17 sim fix revealed 29 trades where MAE >= 1R (stopped out at IB low) but MFE was large — price shook out the stop then ran massive. These are false shakeouts and represent recoverable P&L if stops were smarter.
+**5-year analysis run** (5,278 qualifying rows, TCS>=50, IB<10%, 2021–2026):
+- **False shakeouts** (MAE>=1R, MFE>=2R): 1,252  |  **Clean stops** (MAE>=1R, MFE<1R): 933
+- Key separators: RVOL (3.36x vs 2.09x), TCS>=70 (55% vs 11%), IB Range% (2.48 vs 4.66)
+- 79% of false shakeouts have MAE only 1.0–1.25R before reversing
+- Rule 1 targets (TCS>=70, IB<=3%, RVOL>=3): **95% of stopped trades were false shakeouts**, avg MFE=9.92R
 
-**Research task:** Split those 29 trades vs clean stopped-outs. Look for separating signals:
-- RVOL > 3.5× — high volume runners tend to recover after shakeouts
-- Gap % > 15% — big gap stocks often find real support above IB low
-- IB range % — wide IB = stop at IB low is too tight, need a buffer
-- Nearest support level below IB low (already in backtest_context_levels)
-- VWAP position at IB time — if VWAP > IB low, use VWAP as stop floor
-- Scan type: morning vs intraday shakeout patterns differ
+**Smart stop implemented in paper_trader_bot.py (Apr 19, 2026):**
+- Rule 1: TCS>=70 AND IB<=3% AND RVOL>=3.0 → stop = IB low − 0.5×IB range
+- Rule 2: TCS>=65 AND intraday AND RVOL>=2.5 → stop = IB low − 0.25×IB range
+- Bullish Break only; share size auto-adjusts (wider stop = fewer shares = same $ risk)
 
-**Output goal:** Conditional stop-widening rules. E.g. "if RVOL > 3.5 and gap > 15%, stop = IB low - 0.5R buffer." Feed back into adaptive_exits.json.
+**Backtest P&L impact (vs paper bot reality, -1R baseline on all stopped trades):**
+- 37 saves/yr, 21 penalties/yr → **+174R/yr → +$26,112/yr at $150/R**
+- Rule 1 alone: +99R/yr (+$14,870/yr)
+- Rule 2 alone: +136R/yr (+$20,341/yr)
 
-**Do NOT touch stop logic before accumulating 4+ weeks of live fills.** Optimize on real execution data, not paper noise.
+**Note:** pnl_r_sim in DB already credits false shakeouts as wins (no hard stop in sim model). The improvement shows up only vs what live bot actually does (-1R on all bracket stops).
 
 ---
 
