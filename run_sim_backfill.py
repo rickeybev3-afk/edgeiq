@@ -421,7 +421,8 @@ def backfill_table(table: str, id_col: str, user_id: str,
                     .select(f"{id_col},ticker,predicted,actual_outcome,ib_low,ib_high,"
                             f"follow_thru_pct,false_break_up,false_break_down,close_price,"
                             f"tcs,scan_type,mfe,mae,rvol,ib_range_pct,{_date_col},"
-                            f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version")
+                            f"sim_outcome,eod_pnl_r,sim_version,tiered_sim_version,"
+                            f"pnl_r_actual,alpaca_exit_fill_price,alpaca_fill_price,win_loss")
                     .eq("user_id", user_id)
                     .eq("actual_outcome", direction)
                 )
@@ -567,16 +568,24 @@ def print_summary(user_id: str):
 
     for table in ("backtest_sim_runs", "paper_trades"):
         try:
-            resp = (
-                backend.supabase.table(table)
-                .select("scan_type,sim_outcome,pnl_r_sim")
-                .eq("user_id", user_id)
-                .not_.is_("sim_outcome", "null")
-                .neq("sim_outcome", "no_trade")
-                .limit(15000)
-                .execute()
-            )
-            rows = resp.data or []
+            rows = []
+            _offset = 0
+            while True:
+                resp = (
+                    backend.supabase.table(table)
+                    .select("scan_type,sim_outcome,pnl_r_sim")
+                    .eq("user_id", user_id)
+                    .not_.is_("sim_outcome", "null")
+                    .neq("sim_outcome", "no_trade")
+                    .not_.is_("pnl_r_sim", "null")
+                    .range(_offset, _offset + 999)
+                    .execute()
+                )
+                batch = resp.data or []
+                rows.extend(batch)
+                if len(batch) < 1000:
+                    break
+                _offset += 1000
             if not rows:
                 print(f"\n  {table}: no sim data yet")
                 continue

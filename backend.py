@@ -8415,6 +8415,7 @@ def run_pending_migrations() -> dict:
         # RVOL size bonus multiplier — written by _place_order_for_setup() in paper_trader_bot.py
         # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol_mult REAL DEFAULT 1.0",
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS rvol_size_mult REAL",
         # RVOL size bonus multiplier for batch backtest rows — mirrors the live bot bonus.
         # 1.00 = no bonus; 1.25 = RVOL 2.0-2.99; 1.50 = RVOL ≥ 3.0
         # pnl_r_sim already reflects this multiplier when rvol_mult > 1.0.
@@ -11391,7 +11392,7 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
     _mae_r = r.get("mae")
     _has_clean_mfe = (
         _mfe_r is not None and _mae_r is not None
-        and float(_mfe_r) >= 0 and float(_mae_r) >= 0   # exclude sentinel -9999 rows
+        and float(_mfe_r) > -9000 and float(_mae_r) > -9000   # exclude sentinel -9999; negative MAE is valid (price never dipped below entry)
     )
     _use_bracket_sim  = SIM_VERSION == "v4" and _has_clean_mfe
     _use_trail_sim    = SIM_VERSION == "v5" and _has_clean_mfe
@@ -11414,6 +11415,29 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
     NO_TRADE = {"sim_outcome": "no_trade",  "pnl_r_sim": None, "pnl_pct_sim": None,
                 "entry_price_sim": None, "stop_price_sim": None,
                 "stop_dist_pct": None, "target_price_sim": None}
+
+    # ── Actual fill override: if we have real Alpaca exit data, use it directly ─
+    # This makes the "sim" perfectly match the actual bot for reconciled paper trades.
+    _actual_r = r.get("pnl_r_actual")
+    _actual_exit = r.get("alpaca_exit_fill_price")
+    if _actual_r is not None and _actual_exit is not None:
+        _actual_r_f = float(_actual_r)
+        _wl = r.get("win_loss", "")
+        if _wl == "Win":
+            _actual_outcome = "t1_hit" if _actual_r_f >= 1.8 else "trailing_exit"
+        elif _actual_r_f <= -0.9:
+            _actual_outcome = "stopped_out"
+        else:
+            _actual_outcome = "partial_loss"
+        return {
+            "sim_outcome":      _actual_outcome,
+            "pnl_r_sim":        round(_actual_r_f, 3),
+            "pnl_pct_sim":      None,
+            "entry_price_sim":  r.get("alpaca_fill_price"),
+            "stop_price_sim":   r.get("ib_low"),
+            "stop_dist_pct":    None,
+            "target_price_sim": None,
+        }
 
     # Determine trade direction — use actual_outcome (confirmed market move)
     # actual_outcome = "Bullish Break" / "Bearish Break" → market broke that direction
@@ -11498,15 +11522,10 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
 
         # ── v6: S/R-aware trail tightening (Bullish) ─────────────────────────
         if _use_trail_sim_v6:
-            # MAE check FIRST: stop hit means trade is closed — post-stopout MFE is irrelevant.
+            # MFE check FIRST: if T1 was hit the trailing stop locks in profit.
+            # Even if MAE later exceeds eff_stop_r, the position was already closed at
+            # the trail level — so MAE after T1 is irrelevant (the bot already exited).
             # Smart stop widens the effective stop for qualifying high-TCS/tight-IB/high-RVOL trades.
-            if _mae_r >= _eff_stop_r:
-                return {
-                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
-                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-_eff_stop_pct, 2), "pnl_r_sim": -_eff_stop_r,
-                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
-                }
             if _mfe_r >= target_r:
                 # Check if nearest_resistance is within 0.3R ABOVE entry (bounded: 0 ≤ dist ≤ 0.3R).
                 # Level must be above entry (dist >= 0) to avoid false tightening on wrong-side data.
@@ -11524,7 +11543,15 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
                     "sim_outcome": _outcome, "sim_version": SIM_VERSION,
                 }
-            # T1 not hit, stop not hit — held to EOD, fall through
+            # T1 not hit — now check if stop was hit (MAE >= eff_stop_r).
+            if _mae_r >= _eff_stop_r:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-_eff_stop_pct, 2), "pnl_r_sim": -_eff_stop_r,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            # Neither T1 nor stop hit — held to EOD, fall through
 
         # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
@@ -11600,14 +11627,8 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
 
         # ── v6: S/R-aware trail tightening (Bearish) ─────────────────────────
         if _use_trail_sim_v6:
-            # MAE check FIRST: stop hit means trade is closed — post-stopout MFE is irrelevant.
-            if _mae_r >= 1.0:
-                return {
-                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
-                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
-                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
-                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
-                }
+            # MFE check FIRST: if T1 was hit the trailing stop locks in profit.
+            # MAE after T1 is irrelevant — the position was already closed at the trail level.
             if _mfe_r >= target_r:
                 # Check if nearest_support is within 0.3R BELOW entry (bounded: 0 ≤ dist ≤ 0.3R).
                 # Level must be below entry (dist >= 0) to avoid false tightening on wrong-side data.
@@ -11625,7 +11646,15 @@ def compute_trade_sim(r: dict, target_r: float = 2.0,
                     "pnl_pct_sim": round(captured_pct, 2), "pnl_r_sim": captured_r,
                     "sim_outcome": _outcome, "sim_version": SIM_VERSION,
                 }
-            # T1 not hit, stop not hit — held to EOD, fall through
+            # T1 not hit — now check if stop was hit (MAE >= 1R for bearish).
+            if _mae_r >= 1.0:
+                return {
+                    "entry_price_sim": round(entry, 4), "stop_price_sim": round(stop, 4),
+                    "stop_dist_pct": round(stop_dist_pct, 2), "target_price_sim": round(target, 4),
+                    "pnl_pct_sim": round(-stop_dist_pct, 2), "pnl_r_sim": -1.0,
+                    "sim_outcome": "stopped_out", "sim_version": SIM_VERSION,
+                }
+            # Neither T1 nor stop hit — held to EOD, fall through
 
         # ── EOD close fallback ────────────────────────────────────────────────
         if close_price is not None:
