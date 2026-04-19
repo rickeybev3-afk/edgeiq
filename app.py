@@ -26108,6 +26108,14 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
         )
         st.caption("🔁 Auto-refresh")
+        st.selectbox(
+            "Countdown tick",
+            options=["5s", "10s", "30s"],
+            key="sp_tier_ctdn_tick",
+            label_visibility="collapsed",
+            help="How often the countdown timer updates — choose a longer tick to reduce server polling on slow connections",
+        )
+        st.caption("⏱ Tick speed")
     with _sp_refresh_col:
         if st.button("🔄 Refresh", key="refresh_screener_pass_tier", help="Clear cache and reload screener pass data immediately"):
             st.session_state["sp_tier_last_refresh"] = datetime.now()
@@ -26122,7 +26130,10 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_tier_ts}</p>', unsafe_allow_html=True)
         else:
             st.caption(f"Updated {_sp_tier_ts}")
-        @st.fragment(run_every=5)
+        _sp_tier_ctdn_tick_secs = {"5s": 5, "10s": 10, "30s": 30}.get(
+            st.session_state.get("sp_tier_ctdn_tick", "5s"), 5
+        )
+        @st.fragment(run_every=_sp_tier_ctdn_tick_secs)
         def _sp_tier_countdown():
             _ctdn_interval = st.session_state.get("sp_tier_auto_interval", "Off")
             if _ctdn_interval == "Off":
@@ -31917,6 +31928,14 @@ function _bqCopyShareLink() {
                 help="Auto-refresh screener pass data on a timer — page reruns at the chosen frequency",
             )
             st.caption("🔁 Auto-refresh")
+            st.selectbox(
+                "Countdown tick",
+                options=["5s", "10s", "30s"],
+                key="sp_grid_ctdn_tick",
+                label_visibility="collapsed",
+                help="How often the countdown timer updates — choose a longer tick to reduce server polling on slow connections",
+            )
+            st.caption("⏱ Tick speed")
         with _sp2_refresh_col:
             if st.button("🔄 Refresh", key="refresh_screener_pass_grid", help="Clear cache and reload screener pass data immediately"):
                 st.session_state["sp_grid_last_refresh"] = datetime.now()
@@ -31931,7 +31950,10 @@ function _bqCopyShareLink() {
                 st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_grid_ts}</p>', unsafe_allow_html=True)
             else:
                 st.caption(f"Updated {_sp_grid_ts}")
-            @st.fragment(run_every=5)
+            _sp_grid_ctdn_tick_secs = {"5s": 5, "10s": 10, "30s": 30}.get(
+                st.session_state.get("sp_grid_ctdn_tick", "5s"), 5
+            )
+            @st.fragment(run_every=_sp_grid_ctdn_tick_secs)
             def _sp_grid_countdown():
                 _ctdn_interval = st.session_state.get("sp_grid_auto_interval", "Off")
                 if _ctdn_interval == "Off":
