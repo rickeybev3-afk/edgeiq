@@ -24342,6 +24342,10 @@ def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False)
         1 for yr, months in by_year_months.items()
         if months & FIRST_HALF and months & SECOND_HALF
     )
+    partial_years = sorted(
+        yr for yr, months in by_year_months.items()
+        if not (months & FIRST_HALF and months & SECOND_HALF)
+    )
 
     yearly_results = []
     for yr in sorted(by_year_pass.keys()):
@@ -24357,7 +24361,7 @@ def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False)
                     row[f"{spass}_{k}"] = None
         yearly_results.append(row)
 
-    return {"aggregate": results, "by_year": yearly_results, "full_year_count": full_year_count}
+    return {"aggregate": results, "by_year": yearly_results, "full_year_count": full_year_count, "partial_years": partial_years}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -31844,6 +31848,7 @@ function _bqCopyShareLink() {
         _sp_grid          = _sp_result.get("aggregate", [])    if isinstance(_sp_result, dict) else (_sp_result or [])
         _sp_by_year       = _sp_result.get("by_year", [])      if isinstance(_sp_result, dict) else []
         _sp_full_yrs      = _sp_result.get("full_year_count", 0) if isinstance(_sp_result, dict) else 0
+        _sp_partial_yrs   = set(_sp_result.get("partial_years", [])) if isinstance(_sp_result, dict) else set()
         _sp_fetch_err = _sp_grid[0].get("_error") if _sp_grid else None
         if _sp_fetch_err:
             st.warning(f"Could not load screener pass data: {_sp_fetch_err}")
@@ -31910,6 +31915,9 @@ function _bqCopyShareLink() {
                 with st.expander("📅 Year-by-year edge trend (Gap vs Trend vs All)", expanded=False):
                     # ── Sparkline charts ─────────────────────────────────────────────
                     _spark_years  = [_r.get("year")           for _r in _sp_by_year]
+                    _spark_pt_symbols = ["circle-open" if yr in _sp_partial_yrs else "circle" for yr in _spark_years]
+                    _spark_pt_opacity = [0.45 if yr in _sp_partial_yrs else 1.0 for yr in _spark_years]
+                    _spark_pt_custom  = ["(partial year)" if yr in _sp_partial_yrs else "" for yr in _spark_years]
                     _spark_gap_wr = [_r.get("gap_wr_pct")     for _r in _sp_by_year]
                     _spark_trd_wr = [_r.get("trend_wr_pct")   for _r in _sp_by_year]
                     _spark_all_wr = [_r.get("all_wr_pct")     for _r in _sp_by_year]
@@ -31931,18 +31939,24 @@ function _bqCopyShareLink() {
                     if _spark_metric == "Win Rate %":
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_gap_wr, mode="lines+markers",
-                            name="Gap", line=dict(color="#5c8ee6", width=2), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:.1f}%<extra>Gap</extra>",
+                            name="Gap", line=dict(color="#5c8ee6", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:.1f}% %{customdata}<extra>Gap</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_trd_wr, mode="lines+markers",
-                            name="Trend", line=dict(color="#66bb6a", width=2), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:.1f}%<extra>Trend</extra>",
+                            name="Trend", line=dict(color="#66bb6a", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:.1f}% %{customdata}<extra>Trend</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_wr, mode="lines+markers",
-                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:.1f}%<extra>All</extra>",
+                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:.1f}% %{customdata}<extra>All</extra>",
                         ))
                         _fig_spark.update_layout(
                             title=dict(text="Win Rate % by Year", font=dict(size=12, color="#90a4ae"), x=0.5),
@@ -31952,18 +31966,24 @@ function _bqCopyShareLink() {
                     elif _spark_metric == "Avg R":
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_gap_ar, mode="lines+markers",
-                            name="Gap", line=dict(color="#5c8ee6", width=2), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:+.3f}R<extra>Gap</extra>",
+                            name="Gap", line=dict(color="#5c8ee6", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Gap</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_trd_ar, mode="lines+markers",
-                            name="Trend", line=dict(color="#66bb6a", width=2), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:+.3f}R<extra>Trend</extra>",
+                            name="Trend", line=dict(color="#66bb6a", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Trend</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_ar, mode="lines+markers",
-                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:+.3f}R<extra>All</extra>",
+                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>All</extra>",
                         ))
                         _fig_spark.add_hline(y=0, line_color="#546e7a", line_dash="dot", line_width=1)
                         _fig_spark.update_layout(
@@ -31974,18 +31994,24 @@ function _bqCopyShareLink() {
                     else:
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_gap_te, mode="lines+markers",
-                            name="Gap", line=dict(color="#5c8ee6", width=2), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:+.3f}R<extra>Gap</extra>",
+                            name="Gap", line=dict(color="#5c8ee6", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Gap</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_trd_te, mode="lines+markers",
-                            name="Trend", line=dict(color="#66bb6a", width=2), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:+.3f}R<extra>Trend</extra>",
+                            name="Trend", line=dict(color="#66bb6a", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Trend</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_te, mode="lines+markers",
-                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"), marker=dict(size=5),
-                            hovertemplate="%{x}: %{y:+.3f}R<extra>All</extra>",
+                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>All</extra>",
                         ))
                         _fig_spark.add_hline(y=0, line_color="#546e7a", line_dash="dot", line_width=1)
                         _fig_spark.update_layout(
@@ -32043,8 +32069,12 @@ function _bqCopyShareLink() {
                     for _yi, _yrow in enumerate(_sp_by_year):
                         _yr_bg = "#131f2e" if _yi % 2 == 0 else "#0f1923"
                         _yr_val = _yrow.get("year", "?")
-                        _yr_body += f'<tr style="background:{_yr_bg};">'
-                        _yr_body += f'<td style="padding:5px 10px;color:#b0bec5;font-weight:700;">{_yr_val}</td>'
+                        _is_partial_yr = _yr_val in _sp_partial_yrs
+                        _yr_body += f'<tr style="background:{_yr_bg};opacity:{0.7 if _is_partial_yr else 1.0};">'
+                        _yr_label = f"~ {_yr_val}" if _is_partial_yr else str(_yr_val)
+                        _yr_clr   = "#78909c" if _is_partial_yr else "#b0bec5"
+                        _yr_title = ' title="Partial year — data does not cover both H1 and H2"' if _is_partial_yr else ""
+                        _yr_body += f'<td style="padding:5px 10px;color:{_yr_clr};font-weight:700;font-style:{"italic" if _is_partial_yr else "normal"};"  {_yr_title}>{_yr_label}</td>'
                         for _sp3 in ["gap", "trend", "all"]:
                             _t3  = _yrow.get(f"{_sp3}_trades")
                             _wr3 = _yrow.get(f"{_sp3}_wr_pct")
@@ -32077,7 +32107,9 @@ function _bqCopyShareLink() {
                         "Each row = one calendar year of backtest data. "
                         "WR%, Avg R, and True Exp use the same break-outcome definition as the summary above. "
                         "A year counts as 'full' when data covers both H1 (Jan-Jun) and H2 (Jul-Dec). "
-                        "Years with only edge months will appear in the table but may have lower trade counts."
+                        "Partial years (~ prefix, dimmed row) do not cover the full calendar year and may "
+                        "show misleadingly low or high stats due to fewer trades — interpret with caution. "
+                        "On the sparklines, partial-year points appear as hollow (open) markers at reduced opacity."
                     )
                     # ── Trend charts ─────────────────────────────────────────────────
                     _spark_years  = [_r.get("year")         for _r in _sp_by_year]
