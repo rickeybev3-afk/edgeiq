@@ -8438,6 +8438,10 @@ def run_pending_migrations() -> dict:
         # Written by paper_trader_bot at order placement; backfilled from SMA20/SMA50 for history.
         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS screener_pass TEXT",
         "ALTER TABLE backtest_sim_runs ADD COLUMN IF NOT EXISTS screener_pass TEXT",
+        # Screener-pass position-size multiplier applied at order placement.
+        # Derived from 5-yr backtest: other=1.15×, gap=1.00×, trend=0.85×, squeeze=1.00×.
+        # Stored for audit — multiplier table may change over time; this records what was used.
+        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS sp_mult REAL DEFAULT 1.0",
     ]
 
     ran = 0

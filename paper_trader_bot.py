@@ -492,6 +492,32 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
     return 1.00  # fallback — unknown tier, baseline sizing
 
 
+# ── Screener-pass position-size multiplier ─────────────────────────────────
+# Derived from 5-year backtest (33,776 simulated trades, 2021-2026):
+#   'other'  (< 3% daily change, same screener pool): 87% WR / +0.622R avg → 1.15×
+#   'gap'    (≥ 3% daily change):                      65% WR / +0.327R avg → 1.00×
+#   'trend'  (1-3% + above SMA20/50):                  only 12 trades       → 0.85×
+#   'squeeze' / unclassified:                           no backtest data     → 1.00×
+# Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
+_SP_MULT_TABLE: dict[str, float] = {
+    "other":   1.15,
+    "gap":     1.00,
+    "trend":   0.85,
+    "squeeze": 1.00,
+}
+
+def _sp_size_mult(screener_pass: str | None) -> float:
+    """Return position-size multiplier for a given screener_pass label.
+
+    Derived from 5-year backtest (33,776 simulated trades across 2021-2026).
+    'other' stocks (smaller-move days, tighter IB) consistently outperform
+    'gap' stocks on every metric in every year — 87% vs 65% WR — because
+    smaller gaps produce cleaner, less volatile initial balance structures.
+    Returns 1.0 for unknown / unclassified passes (safe baseline).
+    """
+    return _SP_MULT_TABLE.get((screener_pass or "").lower().strip(), 1.00)
+
+
 # ── RVOL bonus position-size multiplier ────────────────────────────────────
 # High RVOL confirms institutional participation and momentum follow-through.
 # Tiers sourced from adaptive_exits.json (rvol_size_tiers), sorted descending.
@@ -1098,6 +1124,19 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"(TCS {_tcs_val:.0f}, {_scan_type_v}) → risk ${risk_dollars:,.0f}"
         )
 
+    # ── Screener-pass position-size multiplier ────────────────────────────────
+    # 5-yr backtest (33,776 trades, 2021-2026) shows consistent WR difference:
+    #   other 87% WR / +0.622R  →  1.15×   gap 65% WR / +0.327R  →  1.00×
+    #   trend only 12 trades    →  0.85×   squeeze no data        →  1.00×
+    _sp_tag  = _TICKER_SCREENER_PASS.get(ticker) or _TICKER_SCREENER_PASS.get(ticker.upper())
+    _sp_mult = _sp_size_mult(_sp_tag)
+    risk_dollars = round(risk_dollars * _sp_mult, 2)
+    if _sp_mult != 1.0:
+        log.info(
+            f"  [{ticker}] screener-pass mult {_sp_mult:.2f}× "
+            f"({_sp_tag or 'unclassified'}) → risk ${risk_dollars:,.0f}"
+        )
+
     # ── Entry quality filter 2: VWAP directional alignment ────────────────────
     # DISABLED 2026-04-18: backtest showed removing this filter nearly doubled
     # annual return (+20%+ weekly) — counter-VWAP setups that pass TCS≥50 +
@@ -1192,13 +1231,18 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             if _rvol_mult is not None and _rvol_mult != 1.0
             else ""
         )
+        _sp_label = (
+            f" · {_sp_mult:.2f}× {_sp_tag or 'unk'}"
+            if _sp_mult != 1.0
+            else ""
+        )
         tg_send(
             f"📋 <b>{acct_type} Order Placed — {ticker}</b>\n"
             f"{'🟡' if direction == 'Bullish Break' else '🔴'} {direction}\n"
             f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
             f"Target: ${result['target']}\n"
             f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} "
-            f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier{_rvol_bonus_label} · 1R base)\n"
+            f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier{_rvol_bonus_label}{_sp_label} · 1R base)\n"
             f"<code>{order_id[:8]}…</code>"
         )
         # Patch Supabase paper_trades row with order metadata + skip_reason
@@ -1211,6 +1255,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     "order_placed_at":  datetime.utcnow().isoformat(),
                     "skip_reason":      "order_placed",
                     "rvol_mult":        _rvol_mult,
+                    "sp_mult":          _sp_mult,
                 }
                 if _sp:
                     _order_patch["screener_pass"] = _sp
