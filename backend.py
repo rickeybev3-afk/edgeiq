@@ -1136,6 +1136,7 @@ _JOURNAL_COLS = [
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
     "followed_plan", "deviation_notes", "transcript", "audio_b64",
     "voice_signals",
+    "process_grade", "process_grade_reason",
 ]
 
 _BRAIN_WEIGHT_KEYS = [
@@ -5461,6 +5462,7 @@ _JOURNAL_COLS = [
     "source", "entry_price", "exit_price", "pnl_pct", "win_loss",
     "followed_plan", "deviation_notes", "transcript", "audio_b64",
     "voice_signals",
+    "process_grade", "process_grade_reason",
 ]
 
 
@@ -5709,6 +5711,8 @@ def ensure_process_columns() -> bool:
     cols = [
         "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS followed_plan TEXT",
         "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS deviation_notes TEXT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS process_grade TEXT",
+        "ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS process_grade_reason TEXT",
     ]
     try:
         for sql in cols:
@@ -5716,7 +5720,9 @@ def ensure_process_columns() -> bool:
         return True
     except Exception:
         try:
-            supabase.table("trade_journal").select("followed_plan,deviation_notes").limit(1).execute()
+            supabase.table("trade_journal").select(
+                "followed_plan,deviation_notes,process_grade,process_grade_reason"
+            ).limit(1).execute()
             return True
         except Exception as e:
             print(f"ensure_process_columns warning: {e}")
@@ -6933,8 +6939,71 @@ def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
                  f"avoid or reduce size significantly.")
 
 
-_GRADE_COLORS = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "F": "#ef5350"}
-_GRADE_SCORE  = {"A": 4, "B": 3, "C": 2, "F": 1}
+def compute_process_grade(signals: dict) -> tuple:
+    """Map 12 behavioral signals to a process grade (A/B/C/D/F) and reason.
+
+    Positive signals (followed_plan, scaled_exits, setup_named, key_level_ref,
+    adapted_tape, held_drawdown) each add +1 to the score.
+    Risk signals (fomo_entry, panic_exit, revenge_trade, thesis_drift,
+    oversized, high_stress_language) each subtract -1 from the score.
+
+    Score → Grade:  >= 4 → A | >= 2 → B | >= 0 → C | >= -2 → D | < -2 → F
+
+    Returns (grade, reason).
+    """
+    _pos = frozenset({
+        "followed_plan", "scaled_exits", "key_level_ref",
+        "setup_named", "adapted_tape", "held_drawdown",
+    })
+    _neg = frozenset({
+        "fomo_entry", "panic_exit", "thesis_drift",
+        "revenge_trade", "oversized", "high_stress_language",
+    })
+    _labels = {
+        "fomo_entry":           "FOMO Entry",
+        "panic_exit":           "Panic Exit",
+        "thesis_drift":         "Thesis Drift",
+        "revenge_trade":        "Revenge Trade",
+        "oversized":            "Oversized",
+        "high_stress_language": "High Stress Language",
+        "held_drawdown":        "Held Drawdown",
+        "followed_plan":        "Followed Plan",
+        "scaled_exits":         "Scaled Exits",
+        "key_level_ref":        "Key Level Reference",
+        "setup_named":          "Setup Named",
+        "adapted_tape":         "Adapted to Tape",
+    }
+
+    active_pos = [k for k in _pos if signals.get(k)]
+    active_neg = [k for k in _neg if signals.get(k)]
+    net = len(active_pos) - len(active_neg)
+
+    if net >= 4:
+        grade = "A"
+    elif net >= 2:
+        grade = "B"
+    elif net >= 0:
+        grade = "C"
+    elif net >= -2:
+        grade = "D"
+    else:
+        grade = "F"
+
+    if not active_pos and not active_neg:
+        reason = f"Process Grade {grade}: No behavioral signals detected — grade reflects neutral baseline."
+    else:
+        parts = []
+        if active_pos:
+            parts.append(f"Strengths: {', '.join(_labels[k] for k in active_pos)}")
+        if active_neg:
+            parts.append(f"Risk signals: {', '.join(_labels[k] for k in active_neg)}")
+        reason = f"Process Grade {grade}: {' · '.join(parts)}."
+
+    return grade, reason
+
+
+_GRADE_COLORS = {"A": "#4caf50", "B": "#26a69a", "C": "#ffa726", "D": "#ef9a9a", "F": "#ef5350"}
+_GRADE_SCORE  = {"A": 4, "B": 3, "C": 2, "D": 1, "F": 0}
 
 
 def fetch_snapshots_bulk(api_key, secret_key, tickers, feed="iex"):

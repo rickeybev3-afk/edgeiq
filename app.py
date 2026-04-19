@@ -79,6 +79,7 @@ from backend import (
     _providers_confirmed_ok,
     transcribe_audio_bytes,
     ai_extract_signals,
+    compute_process_grade,
     _VJ_SIGNAL_KEYS,
     _VJ_SIGNAL_LABELS,
     _VJ_POSITIVE_SIGNALS,
@@ -2170,6 +2171,32 @@ def render_log_entry_ui():
                     key=f"vj_sig_{_sk}",
                 )
 
+        # ── Live process-grade preview ─────────────────────────────────────────
+        _vj_has_transcript = bool(st.session_state.get("vj_transcript", "").strip())
+        _pg, _pg_reason = compute_process_grade(_vj_checked)
+        _pg_color = _GRADE_COLORS.get(_pg, "#aaa")
+        _pg_label = (
+            "Auto-computed from behavioral signals above"
+            if _vj_has_transcript else
+            "Check behavioral signals above to compute"
+        )
+        st.markdown(
+            f'<div style="display:flex; align-items:center; gap:14px; '
+            f'background:#0d0d22; border:1px solid {_pg_color}44; '
+            f'border-radius:8px; padding:10px 14px; margin:10px 0;">'
+            f'<div style="font-size:11px; color:#5c6bc0; text-transform:uppercase; '
+            f'letter-spacing:1px; white-space:nowrap;">Process Grade</div>'
+            f'<div style="background:{_pg_color}22; border:2px solid {_pg_color}; '
+            f'border-radius:50%; width:40px; height:40px; line-height:40px; '
+            f'text-align:center; font-size:20px; font-weight:900; color:{_pg_color}; '
+            f'flex-shrink:0;">{_pg}</div>'
+            f'<div style="font-size:11px; color:#aaa; line-height:1.4;">'
+            f'<span style="color:{_pg_color}; font-weight:600;">{_pg_reason}</span>'
+            f'<br><span style="color:#666; font-size:10px;">{_pg_label}</span>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
         notes = st.text_input(
             "Mental State / Notes",
             placeholder="e.g. Calm, FOMO, Greed, Hesitated...",
@@ -2201,6 +2228,7 @@ def render_log_entry_ui():
                 state.get("rvol"), state.get("tcs"), state.get("price"),
                 state.get("ib_high"), state.get("ib_low"), state.get("structure"),
             )
+            proc_grade, proc_reason = compute_process_grade(_vj_checked)
             _log_ticker = st.session_state.get("_fetched_symbol") or state.get("ticker", "")
             _entry_dt = datetime.combine(_entry_date, _entry_time)
             entry = {
@@ -2220,9 +2248,11 @@ def render_log_entry_ui():
                 "social_bull_pct":  state.get("social_bull_pct"),
                 "social_bear_pct":  state.get("social_bear_pct"),
                 "social_msg_count": state.get("social_msg_count"),
-                "transcript":   st.session_state.get("vj_transcript", "") or "",
-                "audio_b64":    st.session_state.get("vj_audio_b64", "") or "",
+                "transcript":    st.session_state.get("vj_transcript", "") or "",
+                "audio_b64":     st.session_state.get("vj_audio_b64", "") or "",
                 "voice_signals": st.session_state.get("vj_signals") or {},
+                "process_grade":        proc_grade,
+                "process_grade_reason": proc_reason,
             }
             save_journal_entry(entry, user_id=st.session_state.get("auth_user_id", ""))
             _cached_load_journal.clear()
@@ -2234,13 +2264,24 @@ def render_log_entry_ui():
             st.session_state["vj_recorder_version"] = (
                 st.session_state.get("vj_recorder_version", 0) + 1
             )
-            gc = _GRADE_COLORS.get(grade, "#aaa")
-            st.success(f"Logged! **Grade {grade}** — {reason}")
+            gc  = _GRADE_COLORS.get(grade, "#aaa")
+            pgc = _GRADE_COLORS.get(proc_grade, "#aaa")
+            st.success(f"Logged! **Outcome {grade}** · **Process {proc_grade}** — {proc_reason}")
             st.markdown(
+                f'<div style="display:flex; gap:12px; align-items:center;">'
+                f'<div>'
+                f'<div style="font-size:10px; color:#888; text-align:center; margin-bottom:2px;">Outcome</div>'
                 f'<div style="display:inline-block; background:{gc}22; border:2px solid {gc}; '
                 f'border-radius:50%; width:52px; height:52px; line-height:52px; '
                 f'text-align:center; font-size:24px; font-weight:900; color:{gc};">'
-                f'{grade}</div>',
+                f'{grade}</div></div>'
+                f'<div>'
+                f'<div style="font-size:10px; color:#888; text-align:center; margin-bottom:2px;">Process</div>'
+                f'<div style="display:inline-block; background:{pgc}22; border:2px solid {pgc}; '
+                f'border-radius:50%; width:52px; height:52px; line-height:52px; '
+                f'text-align:center; font-size:24px; font-weight:900; color:{pgc};">'
+                f'{proc_grade}</div></div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
 
