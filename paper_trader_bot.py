@@ -389,23 +389,25 @@ def _compute_risk_dollars() -> float:
 
 
 # ── P1–P4 tier priority ordering ───────────────────────────────────────────────
-# Expected R per tier (v5 trailing-stop sim, 33,773 rows, April 2026):
-#   P3: Morning  TCS≥70   → +4.607R / 81.9% WR  (fires ~2×/month — NEVER miss)
-#   P1: Intraday TCS≥70   → +2.998R / 88.8% WR
-#   P2: Intraday TCS50-69 → +0.947R / 75.1% WR  (acceptable — take with 1.0× size)
-#   P4: Morning  TCS50-69 → +0.324R / 41.3% WR  ← BLOCKED (morning TCS floor = 70)
+# Expected R per tier (5-yr backtest, 33,773 rows, April 2026):
+#   P3: Morning  TCS≥70   → +6.102R / 79.7% WR  (67/yr  — NEVER miss)
+#   P1: Intraday TCS≥70   → +3.715R / 89.8% WR  (631/yr)
+#   P2: Intraday TCS50-69 → +1.265R / 74.8% WR  (979/yr — take with 1.0× size)
+#   P4: Morning  TCS60-69 → +0.366R / 36.9% WR  (203/yr — marginal but +EV)
+#   BLOCKED: Morning TCS<60 → negative expectancy (do not trade)
 _TIER_EXPECTED_R = {
-    "P3": 4.607,
-    "P1": 2.998,
-    "P2": 0.947,
-    "P4": 0.324,
+    "P3": 6.102,
+    "P1": 3.715,
+    "P2": 1.265,
+    "P4": 0.366,
 }
 
 # ── Morning-scan TCS floor ──────────────────────────────────────────────────────
-# v5 data: morning TCS<70 (P4) → 41.3% WR / +0.324R on 886 trades.
-# This is the primary reason raw morning backtest was -0.287R overall.
-# Hard block P4 morning setups — they destroy expectancy without enough WR.
-MORNING_TCS_FLOOR = int(os.environ.get("MORNING_TCS_FLOOR", "70"))
+# 5-yr data: morning TCS 60-69 → +0.366R / 36.9% WR on 203 trades/yr (+$111K/yr at $1500R).
+# Morning TCS 50-59 → +0.386R / 42.8% WR but only 217/yr and collapses in weak regimes.
+# Morning TCS<60 is net negative expectancy — hard block.
+# Intraday TCS 50-59 → +1.265R / 74.8% WR (979/yr, +$1.86M/yr) — allowed via MIN_TCS.
+MORNING_TCS_FLOOR = int(os.environ.get("MORNING_TCS_FLOOR", "60"))
 
 # ── Lunch blackout window ───────────────────────────────────────────────────────
 # Intraday setups firing 11:30 AM–1:30 PM ET have structurally lower follow-through
@@ -917,21 +919,21 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         _patch_skip_reason(r, _ticker_raw, "bearish_break_filtered")
         return
 
-    # ── Morning TCS floor (P4 blocker) ────────────────────────────────────────
-    # v5 data: Morning TCS<70 (P4) → 41.3% WR / +0.324R on 886 trades.
-    # This low-WR bucket dragged raw morning backtest to -0.287R.
-    # Only morning setups — intraday TCS floor is the per-structure calibration.
+    # ── Morning TCS floor ─────────────────────────────────────────────────────
+    # 5-yr data: Morning TCS<60 → net negative expectancy across all structures.
+    # Morning TCS 60-69 → +0.366R / 36.9% WR (203/yr) — positive, take it.
+    # Intraday TCS 50-59 handled by MIN_TCS + per-structure floor (not blocked here).
     _tcs_val     = float(r.get("tcs", 0))
     _scan_type_v = (r.get("scan_type") or scan_label or "").lower()
     if _scan_type_v == "morning" and _tcs_val < MORNING_TCS_FLOOR:
         log.info(
             f"  [{_ticker_raw}] skip order — morning TCS {_tcs_val:.0f} < floor {MORNING_TCS_FLOOR} "
-            f"(P4 tier: 41.3% WR / +0.324R, not worth trading)"
+            f"(hist: negative expectancy below TCS {MORNING_TCS_FLOOR})"
         )
         tg_send(
             f"⛔ <b>{_ticker_raw} Blocked — Morning TCS too low</b>\n"
-            f"TCS <b>{_tcs_val:.0f}</b> < floor <b>{MORNING_TCS_FLOOR}</b> (P4 tier)\n"
-            f"P4 hist: 41.3% WR / +0.324R — skipping to preserve expectancy"
+            f"TCS <b>{_tcs_val:.0f}</b> < floor <b>{MORNING_TCS_FLOOR}</b>\n"
+            f"Morning TCS &lt;{MORNING_TCS_FLOOR} hist: negative expectancy — skipping"
         )
         _patch_skip_reason(r, _ticker_raw, "morning_tcs_below_floor")
         return

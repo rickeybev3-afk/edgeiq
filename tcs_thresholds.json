@@ -1,9 +1,9 @@
 {
   "double_dist": 48,
-  "ntrl_extreme": 53,
-  "trend_bull": 54,
-  "nrml_variation": 57,
-  "neutral": 62,
-  "normal": 64,
-  "non_trend": 65
+  "ntrl_extreme": 50,
+  "trend_bull": 50,
+  "nrml_variation": 50,
+  "neutral": 50,
+  "normal": 50,
+  "non_trend": 50
 }
