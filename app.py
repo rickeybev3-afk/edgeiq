@@ -26136,7 +26136,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 _ctdn_remaining = max(0, _ctdn_secs - _ctdn_elapsed)
             _ctdn_m = int(_ctdn_remaining // 60)
             _ctdn_s = int(_ctdn_remaining % 60)
-            st.caption(f"⏱ {_ctdn_m}:{_ctdn_s:02d}")
+            st.caption(f"⏱ Next refresh in {_ctdn_m}:{_ctdn_s:02d}")
+            st.progress(max(0.0, min(1.0, _ctdn_remaining / _ctdn_secs)))
         _sp_tier_countdown()
     _sp_tier_run_every = {"1 min": 60, "5 min": 300, "15 min": 900}.get(
         st.session_state.get("sp_tier_auto_interval", "Off")
@@ -31944,7 +31945,8 @@ function _bqCopyShareLink() {
                     _ctdn_remaining = max(0, _ctdn_secs - _ctdn_elapsed)
                 _ctdn_m = int(_ctdn_remaining // 60)
                 _ctdn_s = int(_ctdn_remaining % 60)
-                st.caption(f"⏱ {_ctdn_m}:{_ctdn_s:02d}")
+                st.caption(f"⏱ Next refresh in {_ctdn_m}:{_ctdn_s:02d}")
+                st.progress(max(0.0, min(1.0, _ctdn_remaining / _ctdn_secs)))
             _sp_grid_countdown()
         _sp_grid_run_every = {"1 min": 60, "5 min": 300, "15 min": 900}.get(
             st.session_state.get("sp_grid_auto_interval", "Off")
