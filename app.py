@@ -26031,7 +26031,14 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             _load_tier_screener_pass_data.clear()
             _load_screener_pass_grid.clear()
             st.rerun()
-        st.caption(f"Updated {st.session_state['sp_tier_last_refresh'].strftime('%-I:%M %p')}")
+        _sp_tier_age_mins = (datetime.now() - st.session_state["sp_tier_last_refresh"]).total_seconds() / 60
+        _sp_tier_ts = st.session_state["sp_tier_last_refresh"].strftime("%-I:%M %p")
+        if _sp_tier_age_mins > 60:
+            st.markdown(f'<p style="font-size:0.8em;color:#cc0000;margin:0">⚠️ Updated {_sp_tier_ts}</p>', unsafe_allow_html=True)
+        elif _sp_tier_age_mins > 30:
+            st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_tier_ts}</p>', unsafe_allow_html=True)
+        else:
+            st.caption(f"Updated {_sp_tier_ts}")
     with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
         st.caption("Gap = ≥3% close-to-close daily change (directional, positive only) · Trend = ≥1% change + close > SMA20 & SMA50 · Other = all else (incl. down days) · PF = Profit Factor · — = <30 trades (insufficient)")
 
@@ -26046,10 +26053,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             st.warning(f"Could not load backtest data: {_sp_raw_rows[0]['_error']}")
             _sp_bt_df = pd.DataFrame()
         elif _sp_raw_rows:
-            st.session_state["sp_tier_last_refresh"] = datetime.now()
             _sp_bt_df = pd.DataFrame(_sp_raw_rows)
         else:
-            st.session_state["sp_tier_last_refresh"] = datetime.now()
             _sp_bt_df = pd.DataFrame()
 
         _sp_has_pass = (
@@ -31758,7 +31763,14 @@ function _bqCopyShareLink() {
                 _load_screener_pass_grid.clear()
                 _load_tier_screener_pass_data.clear()
                 st.rerun()
-            st.caption(f"Updated {st.session_state['sp_grid_last_refresh'].strftime('%-I:%M %p')}")
+            _sp_grid_age_mins = (datetime.now() - st.session_state["sp_grid_last_refresh"]).total_seconds() / 60
+            _sp_grid_ts = st.session_state["sp_grid_last_refresh"].strftime("%-I:%M %p")
+            if _sp_grid_age_mins > 60:
+                st.markdown(f'<p style="font-size:0.8em;color:#cc0000;margin:0">⚠️ Updated {_sp_grid_ts}</p>', unsafe_allow_html=True)
+            elif _sp_grid_age_mins > 30:
+                st.markdown(f'<p style="font-size:0.8em;color:#cc7700;margin:0">⚠️ Updated {_sp_grid_ts}</p>', unsafe_allow_html=True)
+            else:
+                st.caption(f"Updated {_sp_grid_ts}")
         _sp_result = _load_screener_pass_grid(
             st.session_state.get("auth_user_id", ""),
             start_date=_grid_start,
@@ -31772,13 +31784,11 @@ function _bqCopyShareLink() {
         if _sp_fetch_err:
             st.warning(f"Could not load screener pass data: {_sp_fetch_err}")
         elif not _sp_grid:
-            st.session_state["sp_grid_last_refresh"] = datetime.now()
             st.info(
                 "Screener pass data unavailable — either `screener_pass` has not been backfilled "
                 "yet or no backtest rows are loaded. Run `python backfill_screener_pass.py`."
             )
         else:
-            st.session_state["sp_grid_last_refresh"] = datetime.now()
             _sp_pass_order = {"gap": 0, "trend": 1, "all": 2}
             _sp_grid_sorted = sorted(_sp_grid, key=lambda r: _sp_pass_order.get(r["screener_pass"], 9))
             _sp_hdr2 = (
