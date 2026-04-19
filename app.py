@@ -31908,6 +31908,102 @@ function _bqCopyShareLink() {
                 st.caption("📅 Year-by-year trend not available — fewer than 2 full years of data.")
             else:
                 with st.expander("📅 Year-by-year edge trend (Gap vs Trend vs All)", expanded=False):
+                    # ── Sparkline charts ─────────────────────────────────────────────
+                    _spark_years  = [_r.get("year")           for _r in _sp_by_year]
+                    _spark_gap_wr = [_r.get("gap_wr_pct")     for _r in _sp_by_year]
+                    _spark_trd_wr = [_r.get("trend_wr_pct")   for _r in _sp_by_year]
+                    _spark_all_wr = [_r.get("all_wr_pct")     for _r in _sp_by_year]
+                    _spark_gap_ar = [_r.get("gap_avg_r")      for _r in _sp_by_year]
+                    _spark_trd_ar = [_r.get("trend_avg_r")    for _r in _sp_by_year]
+                    _spark_all_ar = [_r.get("all_avg_r")      for _r in _sp_by_year]
+                    _spark_gap_te = [_r.get("gap_true_exp")   for _r in _sp_by_year]
+                    _spark_trd_te = [_r.get("trend_true_exp") for _r in _sp_by_year]
+                    _spark_all_te = [_r.get("all_true_exp")   for _r in _sp_by_year]
+                    _spark_metric = st.radio(
+                        "Metric",
+                        options=["Win Rate %", "Avg R", "True Expectancy"],
+                        index=0,
+                        horizontal=True,
+                        key="sparkline_metric_toggle",
+                        label_visibility="collapsed",
+                    )
+                    _fig_spark = go.Figure()
+                    if _spark_metric == "Win Rate %":
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gap_wr, mode="lines+markers",
+                            name="Gap", line=dict(color="#5c8ee6", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:.1f}%<extra>Gap</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_trd_wr, mode="lines+markers",
+                            name="Trend", line=dict(color="#66bb6a", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:.1f}%<extra>Trend</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_all_wr, mode="lines+markers",
+                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:.1f}%<extra>All</extra>",
+                        ))
+                        _fig_spark.update_layout(
+                            title=dict(text="Win Rate % by Year", font=dict(size=12, color="#90a4ae"), x=0.5),
+                            yaxis=dict(tickfont=dict(size=10, color="#78909c"), gridcolor="#1e2d3d",
+                                       showgrid=True, ticksuffix="%"),
+                        )
+                    elif _spark_metric == "Avg R":
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gap_ar, mode="lines+markers",
+                            name="Gap", line=dict(color="#5c8ee6", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:+.3f}R<extra>Gap</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_trd_ar, mode="lines+markers",
+                            name="Trend", line=dict(color="#66bb6a", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:+.3f}R<extra>Trend</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_all_ar, mode="lines+markers",
+                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:+.3f}R<extra>All</extra>",
+                        ))
+                        _fig_spark.add_hline(y=0, line_color="#546e7a", line_dash="dot", line_width=1)
+                        _fig_spark.update_layout(
+                            title=dict(text="Avg R by Year", font=dict(size=12, color="#90a4ae"), x=0.5),
+                            yaxis=dict(tickfont=dict(size=10, color="#78909c"), gridcolor="#1e2d3d",
+                                       showgrid=True, ticksuffix="R"),
+                        )
+                    else:
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gap_te, mode="lines+markers",
+                            name="Gap", line=dict(color="#5c8ee6", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:+.3f}R<extra>Gap</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_trd_te, mode="lines+markers",
+                            name="Trend", line=dict(color="#66bb6a", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:+.3f}R<extra>Trend</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_all_te, mode="lines+markers",
+                            name="All", line=dict(color="#90a4ae", width=2, dash="dot"), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:+.3f}R<extra>All</extra>",
+                        ))
+                        _fig_spark.add_hline(y=0, line_color="#546e7a", line_dash="dot", line_width=1)
+                        _fig_spark.update_layout(
+                            title=dict(text="True Expectancy by Year", font=dict(size=12, color="#90a4ae"), x=0.5),
+                            yaxis=dict(tickfont=dict(size=10, color="#78909c"), gridcolor="#1e2d3d",
+                                       showgrid=True, ticksuffix="R"),
+                        )
+                    _fig_spark.update_layout(
+                        height=220, margin=dict(l=35, r=10, t=35, b=30),
+                        paper_bgcolor="#0f1923", plot_bgcolor="#0f1923",
+                        xaxis=dict(tickfont=dict(size=10, color="#78909c"), gridcolor="#1e2d3d",
+                                   showgrid=True, dtick=1),
+                        legend=dict(font=dict(size=10, color="#90a4ae"), bgcolor="rgba(0,0,0,0)",
+                                    orientation="h", y=-0.25),
+                        hovermode="x unified",
+                    )
+                    st.plotly_chart(_fig_spark, use_container_width=True,
+                                    config={"displayModeBar": False})
                     def _yr_color_wr(v):
                         if v is None:
                             return "#546e7a"
