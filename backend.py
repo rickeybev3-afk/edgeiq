@@ -6917,8 +6917,14 @@ def save_trade_review(journal_row: dict, exit_price: float,
     }
 
 
-def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
-    """Return (grade, reason) based on RVOL, TCS, price relative to IB."""
+def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label, voice_signals=None):
+    """Return (grade, reason) based on RVOL, TCS, price relative to IB, and behavioural signals.
+
+    voice_signals, if provided, is a dict keyed by _VJ_SIGNAL_KEYS.  Positive signals
+    (followed_plan, scaled_exits, etc.) can raise the base grade by one step; negative
+    signals (fomo_entry, panic_exit, etc.) can lower it.  Hard disqualifiers (RVOL < 1.0
+    or trend-inside-IB) are never overridden by behavioural data.
+    """
     rvol_val = rvol if rvol is not None else 0.0
     is_trend  = "trend" in structure_label.lower()
     price_inside_ib = (
@@ -6926,7 +6932,7 @@ def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
     )
     price_above_ib = (ib_high is not None) and (price > ib_high)
 
-    # F — disqualifying conditions first
+    # F — disqualifying conditions first (cannot be rescued by behaviour)
     if rvol_val < 1.0:
         return "F", f"Grade F: Low-volume setup (RVOL {rvol_val:.1f}×) — unfavorable odds."
     if is_trend and price_inside_ib:
@@ -6934,22 +6940,54 @@ def compute_trade_grade(rvol, tcs, price, ib_high, ib_low, structure_label):
 
     # A — ideal setup
     if rvol_val > 4.0 and tcs > 70 and price_above_ib:
-        return "A", (f"Grade A: RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%, price above IB High — "
-                     f"elite, high-conviction setup.")
-
+        base_grade = "A"
+        base_reason = (f"RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%, price above IB High — "
+                       f"elite, high-conviction setup.")
     # B — solid
-    if rvol_val > 2.0 and tcs > 50:
-        return "B", (f"Grade B: RVOL {rvol_val:.1f}×, TCS {tcs:.0f}% — solid participation "
-                     f"with reasonable confidence.")
-
+    elif rvol_val > 2.0 and tcs > 50:
+        base_grade = "B"
+        base_reason = (f"RVOL {rvol_val:.1f}×, TCS {tcs:.0f}% — solid participation "
+                       f"with reasonable confidence.")
     # C — moderate
-    if (1.0 <= rvol_val <= 2.0) or (30 <= tcs <= 50):
-        return "C", (f"Grade C: Moderate quality (RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%) — "
-                     f"acceptable but below ideal thresholds.")
-
+    elif (1.0 <= rvol_val <= 2.0) or (30 <= tcs <= 50):
+        base_grade = "C"
+        base_reason = (f"Moderate quality (RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%) — "
+                       f"acceptable but below ideal thresholds.")
     # F — catch-all low confidence
-    return "F", (f"Grade F: Low confidence (RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%) — "
-                 f"avoid or reduce size significantly.")
+    else:
+        base_grade = "F"
+        base_reason = (f"Low confidence (RVOL {rvol_val:.1f}×, TCS {tcs:.0f}%) — "
+                       f"avoid or reduce size significantly.")
+
+    # ── Behavioural adjustment ────────────────────────────────────────────────
+    _grade_order = ["F", "C", "B", "A"]
+    signals = voice_signals or {}
+    pos_hits = [k for k in _VJ_POSITIVE_SIGNALS if signals.get(k)]
+    neg_hits = [k for k in _VJ_NEGATIVE_SIGNALS if signals.get(k)]
+    net = len(pos_hits) - len(neg_hits)
+
+    adjusted_grade = base_grade
+    behaviour_note = ""
+
+    if net >= 2 and base_grade != "A":
+        idx = _grade_order.index(base_grade)
+        adjusted_grade = _grade_order[min(idx + 1, len(_grade_order) - 1)]
+        pos_labels = ", ".join(_VJ_SIGNAL_LABELS.get(k, k) for k in pos_hits)
+        behaviour_note = f" Raised by positive behaviour ({pos_labels})."
+    elif net <= -2 and base_grade != "F":
+        idx = _grade_order.index(base_grade)
+        adjusted_grade = _grade_order[max(idx - 1, 0)]
+        neg_labels = ", ".join(_VJ_SIGNAL_LABELS.get(k, k) for k in neg_hits)
+        behaviour_note = f" Lowered by negative behaviour ({neg_labels})."
+    elif net > 0:
+        pos_labels = ", ".join(_VJ_SIGNAL_LABELS.get(k, k) for k in pos_hits)
+        behaviour_note = f" Positive signals noted: {pos_labels}."
+    elif net < 0:
+        neg_labels = ", ".join(_VJ_SIGNAL_LABELS.get(k, k) for k in neg_hits)
+        behaviour_note = f" Negative signals noted: {neg_labels}."
+
+    reason = f"Grade {adjusted_grade}: {base_reason}{behaviour_note}"
+    return adjusted_grade, reason
 
 
 def compute_process_grade(signals: dict) -> tuple:

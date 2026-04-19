@@ -2230,9 +2230,13 @@ def render_log_entry_ui():
             )
 
         if st.button("💾 LOG ENTRY", use_container_width=True, key="journal_log_btn"):
+            # Use the checkbox state as the authoritative signals dict so manual
+            # overrides are reflected in both the grade and the saved record.
+            _final_signals = _vj_checked if _vj_checked else (st.session_state.get("vj_signals") or {})
             grade, reason = compute_trade_grade(
                 state.get("rvol"), state.get("tcs"), state.get("price"),
                 state.get("ib_high"), state.get("ib_low"), state.get("structure"),
+                voice_signals=_final_signals,
             )
             proc_grade, proc_reason = compute_process_grade(_vj_checked)
             _log_ticker = st.session_state.get("_fetched_symbol") or state.get("ticker", "")
@@ -2256,7 +2260,7 @@ def render_log_entry_ui():
                 "social_msg_count": state.get("social_msg_count"),
                 "transcript":    st.session_state.get("vj_transcript", "") or "",
                 "audio_b64":     st.session_state.get("vj_audio_b64", "") or "",
-                "voice_signals": st.session_state.get("vj_signals") or {},
+                "voice_signals": _final_signals,
                 "process_grade":        proc_grade,
                 "process_grade_reason": proc_reason,
             }
