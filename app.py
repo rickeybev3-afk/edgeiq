@@ -25789,7 +25789,21 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
         st.caption("Gap = ≥3% close-to-close daily change (directional, positive only) · Trend = ≥1% change + close > SMA20 & SMA50 · Other = all else (incl. down days) · PF = Profit Factor · — = <30 trades (insufficient)")
 
-        _sp_bt_df = _bt_sim_df.copy() if not _bt_sim_df.empty else pd.DataFrame()
+        _sp_grid_dr_start = st.session_state.get("grid_dr_start")
+        _sp_grid_dr_end   = st.session_state.get("grid_dr_end")
+        _sp_raw_rows = _load_tier_screener_pass_data(
+            uid=_AUTH_USER_ID,
+            start_date=_sp_grid_dr_start,
+            end_date=_sp_grid_dr_end,
+        )
+        if _sp_raw_rows and "_error" in (_sp_raw_rows[0] if _sp_raw_rows else {}):
+            st.warning(f"Could not load backtest data: {_sp_raw_rows[0]['_error']}")
+            _sp_bt_df = pd.DataFrame()
+        elif _sp_raw_rows:
+            _sp_bt_df = pd.DataFrame(_sp_raw_rows)
+        else:
+            _sp_bt_df = pd.DataFrame()
+
         _sp_has_pass = (
             not _sp_bt_df.empty
             and "screener_pass" in _sp_bt_df.columns
@@ -25799,7 +25813,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         if not _sp_has_pass:
             st.info("screener_pass not yet populated — run `python backfill_screener_pass.py` to classify historical rows.")
         else:
-            _sp_bt_df = _sp_bt_df[_sp_bt_df["pnl_r_sim"].notna()].copy()
+            _sp_bt_df["screener_pass"] = _sp_bt_df["screener_pass"].fillna("other").str.strip().str.lower()
             _sp_bt_df["tcs"]       = pd.to_numeric(_sp_bt_df.get("tcs", pd.Series(dtype=float)), errors="coerce").fillna(0)
             _sp_bt_df["scan_type"] = _sp_bt_df.get("scan_type", pd.Series(dtype=str)).fillna("morning")
             _sp_bt_df["pnl_r_sim"] = pd.to_numeric(_sp_bt_df["pnl_r_sim"], errors="coerce")
@@ -25903,10 +25917,13 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 )
                 _sp_n_classified = int(_sp_bt_df["screener_pass"].notna().sum())
                 _sp_n_total_bt   = int(len(_sp_bt_df))
+                _sp_date_note = ""
+                if _sp_grid_dr_start or _sp_grid_dr_end:
+                    _sp_date_note = f" · date filter: {_sp_grid_dr_start or 'any'} → {_sp_grid_dr_end or 'any'}"
                 st.caption(
                     f"★ = best Avg R among gap/trend for that tier · "
-                    f"{_sp_n_classified:,} of {_sp_n_total_bt:,} sim rows classified "
-                    f"(latest 5,000 loaded) · run `python backfill_screener_pass.py` for full history"
+                    f"{_sp_n_classified:,} of {_sp_n_total_bt:,} sim rows classified"
+                    f"{_sp_date_note} · run `python backfill_screener_pass.py` to classify untagged rows"
                 )
             else:
                 st.info("Not enough tagged rows yet (<30 per cell) — run the full backfill to populate this table.")
@@ -31248,6 +31265,40 @@ function _bqCopyShareLink() {
         if all_stats:
             results.append({"screener_pass": "all", **all_stats})
         return results
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _load_tier_screener_pass_data(uid, start_date=None, end_date=None):
+        """Paginated fetch of backtest_sim_runs for the per-tier screener-pass table.
+
+        Returns a list of row dicts with keys: screener_pass, tcs, scan_type, pnl_r_sim.
+        Fetches the full history (not capped at 5,000 rows).
+        """
+        all_rows, offset, fetch_error = [], 0, None
+        try:
+            while True:
+                q = (
+                    supabase.table("backtest_sim_runs")
+                    .select("screener_pass,tcs,scan_type,pnl_r_sim,sim_date")
+                    .eq("user_id", uid)
+                    .not_.is_("pnl_r_sim", "null")
+                )
+                if start_date:
+                    q = q.gte("sim_date", str(start_date))
+                if end_date:
+                    q = q.lte("sim_date", str(end_date))
+                batch = q.range(offset, offset + 999).execute().data or []
+                if not batch:
+                    break
+                all_rows += batch
+                if len(batch) < 1000:
+                    break
+                offset += 1000
+        except Exception as exc:
+            fetch_error = str(exc)
+
+        if fetch_error:
+            return [{"_error": fetch_error}]
+        return all_rows
 
     # ── Date-range filter for SECTION 1c ─────────────────────────────────────
     # Sync button: copy the Backtest P&L date range into the edge map filter
