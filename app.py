@@ -34873,6 +34873,26 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_log_has_ib_pct   = "ib_range_pct" in _pt_log_show.columns
         _pt_log_has_vwap     = "vwap_at_ib" in _pt_log_show.columns
 
+        # ── Classification override ────────────────────────────────────────────
+        # False-breakdown trades can cause match_fills_to_roundtrips to average
+        # both the stop-loss fill AND the take-profit fill, producing a spurious
+        # "Win" in the Alpaca roundtrip data even though the sim shows -1.00R.
+        # Rule: if Sim P&L ≤ -0.95R the trade is definitively stopped out →
+        #       force win_loss to "Loss" in the display dataframe so the table,
+        #       row colours, and any downstream KPI that reads this slice are all
+        #       consistent with the simulation outcome.
+        if _pt_log_has_sim_pnl and "win_loss" in _pt_log_show.columns:
+            def _fix_win_loss_classification(row):
+                try:
+                    if float(row["Sim P&L (R)"]) <= -0.95:
+                        return "Loss"
+                except (TypeError, ValueError):
+                    pass
+                return row["win_loss"]
+            _pt_log_show["win_loss"] = _pt_log_show.apply(
+                _fix_win_loss_classification, axis=1
+            )
+
         _ib_threshold = _cached_load_ib_range_pct_threshold()
 
         _PT_GREEN_STRONG  = "background-color:rgba(76,175,80,0.30);color:#66bb6a;font-weight:700"
