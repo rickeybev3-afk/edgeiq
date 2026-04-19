@@ -34118,22 +34118,42 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         )
         return
 
-    # Apply TCS ≥ 60 to ALL rows regardless of scan_type.
-    # Section 1 paper trades are all from the morning IB scan; old DB rows were
-    # historically mislabeled as "intraday" causing wrong delta columns and
-    # passing trades the bot would have rejected. Flat ≥60 floor fixes both.
+    # ── Exact bot filters (paper_trader_bot.py _place_order_for_setup) ─────────
+    # 1. Bearish Break → bot always skips (gap-up universe, hist WR 40%)
+    if "predicted" in _pt_df.columns:
+        _pt_df = _pt_df[_pt_df["predicted"].str.lower().str.strip().ne("bearish break")]
+
+    # 2. TCS floor — mirrors bot exactly:
+    #    morning (or NULL, bot defaults to morning) → TCS ≥ 60 (MORNING_TCS_FLOOR)
+    #    intraday → TCS ≥ 50 (MIN_TCS)
     if "tcs" in _pt_df.columns:
         _pt_tcs_num = pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0)
-        _pt_df = _pt_df[_pt_tcs_num >= 60]
-    if "ib_range_pct" in _pt_df.columns:
+        _pt_scan_norm = (
+            _pt_df["scan_type"].str.lower().str.strip().fillna("morning")
+            if "scan_type" in _pt_df.columns
+            else pd.Series("morning", index=_pt_df.index)
+        )
+        _pt_is_intraday = _pt_scan_norm.str.startswith("intraday")
         _pt_df = _pt_df[
-            _pt_df["ib_range_pct"].isna() | (pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce") < 10.0)
+            (_pt_is_intraday  & (_pt_tcs_num >= 50)) |
+            (~_pt_is_intraday & (_pt_tcs_num >= 60))
         ]
+
+    # 3. IB range < threshold (10% default) — NULL passes (same as bot)
+    if "ib_range_pct" in _pt_df.columns:
+        _pt_ib_num = pd.to_numeric(_pt_df["ib_range_pct"], errors="coerce")
+        _pt_df = _pt_df[_pt_ib_num.isna() | (_pt_ib_num < 10.0)]
+
+    # 4. RVOL ≥ 1.0 — only applied when data is present (NULL = no data = passes, same as bot)
+    if "rvol" in _pt_df.columns:
+        _pt_rvol_num = pd.to_numeric(_pt_df["rvol"], errors="coerce")
+        _pt_df = _pt_df[_pt_rvol_num.isna() | (_pt_rvol_num >= 1.0)]
 
     if _pt_df.empty:
         st.info(
-            "No logged trades pass the current bot filters (TCS ≥ 60 / IB < 10%). "
-            "Trades logged under old looser settings are excluded from stats.",
+            "No logged trades pass the current bot filters "
+            "(no Bearish Break / TCS ≥ 60 morning or ≥ 50 intraday / IB < 10% / RVOL ≥ 1.0). "
+            "Trades from old settings are excluded.",
             icon="📋",
         )
         return
