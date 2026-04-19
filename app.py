@@ -31162,6 +31162,93 @@ function _bqCopyShareLink() {
                     continue
         return grid
 
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _load_screener_pass_grid(uid, start_date=None, end_date=None):
+        """Single-pass fetch of backtest_sim_runs; groups by screener_pass in memory."""
+        from datetime import date as _date_cls
+        RESOLVED = {
+            "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
+            "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
+        }
+        BREAK_OUTCOMES = {"Bullish Break", "Bearish Break"}
+        all_rows, offset, fetch_error = [], 0, None
+        try:
+            while True:
+                q = (
+                    supabase.table("backtest_sim_runs")
+                    .select("actual_outcome,pnl_r_sim,sim_date,screener_pass")
+                    .eq("user_id", uid)
+                    .in_("actual_outcome", list(RESOLVED))
+                )
+                if start_date:
+                    q = q.gte("sim_date", str(start_date))
+                if end_date:
+                    q = q.lte("sim_date", str(end_date))
+                batch = q.range(offset, offset + 999).execute().data or []
+                if not batch:
+                    break
+                all_rows += batch
+                if len(batch) < 1000:
+                    break
+                offset += 1000
+        except Exception as exc:
+            fetch_error = str(exc)
+
+        if fetch_error:
+            return [{"_error": fetch_error}]
+        if not all_rows:
+            return []
+
+        # Estimate years from actual date span in the fetched rows
+        dates = []
+        for r in all_rows:
+            raw = r.get("sim_date")
+            if raw:
+                try:
+                    dates.append(_date_cls.fromisoformat(str(raw)[:10]))
+                except Exception:
+                    pass
+        if len(dates) >= 2:
+            _years = max((max(dates) - min(dates)).days / 365.25, 0.1)
+        else:
+            _years = 5.0
+
+        def _stats(subset):
+            if not subset:
+                return None
+            breaks = [
+                r for r in subset
+                if r.get("actual_outcome") in BREAK_OUTCOMES
+                and r.get("pnl_r_sim") is not None
+            ]
+            p_break = len(breaks) / len(subset)
+            avg_r   = (
+                sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks)
+                if breaks else 0.0
+            )
+            return {
+                "trades":        len(subset),
+                "trades_per_yr": round(len(subset) / _years, 1),
+                "wr_pct":        round(p_break * 100, 1),
+                "avg_r":         round(avg_r, 3),
+                "true_exp":      round(p_break * avg_r, 3),
+            }
+
+        results = []
+        by_pass: dict = {}
+        for r in all_rows:
+            sp = (r.get("screener_pass") or "other").strip().lower()
+            by_pass.setdefault(sp, []).append(r)
+
+        for spass in ["gap", "trend"]:
+            s = _stats(by_pass.get(spass, []))
+            if s:
+                results.append({"screener_pass": spass, **s})
+        all_stats = _stats(all_rows)
+        if all_stats:
+            results.append({"screener_pass": "all", **all_stats})
+        return results
+
     # ── Date-range filter for SECTION 1c ─────────────────────────────────────
     # Sync button: copy the Backtest P&L date range into the edge map filter
     _bts_sync_start = st.session_state.get("bts_dr_start")
@@ -31469,6 +31556,80 @@ function _bqCopyShareLink() {
                 )
             else:
                 st.info("No resolved live paper trades to break down.")
+
+        # ── Screener Pass — 5-yr Backtest Breakdown (Gap vs Trend vs All) ────
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(
+            "**Screener Pass — Gap vs Trend vs All (5-yr Backtest)**",
+            help=(
+                "Gap = ≥3% daily gap classified rows · Trend = ≥1% change + above SMA20 & SMA50 · "
+                "All = every resolved backtest row regardless of screener_pass. "
+                "Run `python backfill_screener_pass.py` to classify historical rows if counts look low."
+            ),
+        )
+        _sp_grid = _load_screener_pass_grid(
+            st.session_state.get("auth_user_id", ""),
+            start_date=_grid_start,
+            end_date=_grid_end,
+        )
+        _sp_fetch_err = _sp_grid[0].get("_error") if _sp_grid else None
+        if _sp_fetch_err:
+            st.warning(f"Could not load screener pass data: {_sp_fetch_err}")
+        elif not _sp_grid:
+            st.info(
+                "Screener pass data unavailable — either `screener_pass` has not been backfilled "
+                "yet or no backtest rows are loaded. Run `python backfill_screener_pass.py`."
+            )
+        else:
+            _sp_pass_order = {"gap": 0, "trend": 1, "all": 2}
+            _sp_grid_sorted = sorted(_sp_grid, key=lambda r: _sp_pass_order.get(r["screener_pass"], 9))
+            _sp_hdr2 = (
+                '<tr style="background:#1e2d3d;color:#90a4ae;font-size:11px;">'
+                '<th style="padding:7px 12px;text-align:left;">Screener Pass</th>'
+                '<th style="padding:7px 12px;text-align:right;">Trades</th>'
+                '<th style="padding:7px 12px;text-align:right;">Trades / yr</th>'
+                '<th style="padding:7px 12px;text-align:right;">Win Rate</th>'
+                '<th style="padding:7px 12px;text-align:right;">Avg R</th>'
+                '<th style="padding:7px 12px;text-align:right;">True Exp</th>'
+                '</tr>'
+            )
+            _sp_body2 = ""
+            _pass_colors = {"gap": "#1565c0", "trend": "#2e7d32", "all": "#546e7a"}
+            _pass_labels = {"gap": "🔵 Gap", "trend": "🟢 Trend", "all": "⬜ All"}
+            for _si2, _spr in enumerate(_sp_grid_sorted):
+                _spass2 = _spr["screener_pass"]
+                _row_bg2 = "#131f2e" if _si2 % 2 == 0 else "#0f1923"
+                _pc2 = _pass_colors.get(_spass2, "#546e7a")
+                _lbl2 = _pass_labels.get(_spass2, _spass2.capitalize())
+                _wr2 = _spr["wr_pct"]
+                _avg2 = _spr["avg_r"]
+                _exp2 = _spr["true_exp"]
+                _wr_col2 = "#2e7d32" if _wr2 >= 60 else ("#ef6c00" if _wr2 >= 50 else "#c62828")
+                _avg_col2 = "#4caf50" if _avg2 > 0 else ("#ef6c00" if _avg2 > -0.1 else "#ef5350")
+                _exp_col2 = "#c62828" if _exp2 >= 2.0 else ("#ef6c00" if _exp2 >= 1.0 else ("#2e7d32" if _exp2 >= 0.5 else "#546e7a"))
+                _sp_body2 += (
+                    f'<tr style="background:{_row_bg2};">'
+                    f'<td style="padding:7px 12px;color:{_pc2};font-weight:700;">{_lbl2}</td>'
+                    f'<td style="padding:7px 12px;text-align:right;color:#b0bec5;">{_spr["trades"]:,}</td>'
+                    f'<td style="padding:7px 12px;text-align:right;color:#b0bec5;">{_spr["trades_per_yr"]:.1f}</td>'
+                    f'<td style="padding:7px 12px;text-align:right;"><span style="color:{_wr_col2};font-weight:600;">{_wr2:.1f}%</span></td>'
+                    f'<td style="padding:7px 12px;text-align:right;"><span style="color:{_avg_col2};font-weight:600;">{"+" if _avg2 >= 0 else ""}{_avg2:.3f}R</span></td>'
+                    f'<td style="padding:7px 12px;text-align:right;"><span style="color:{_exp_col2};font-weight:700;">{"+" if _exp2 >= 0 else ""}{_exp2:.3f}R</span></td>'
+                    f'</tr>'
+                )
+            st.markdown(
+                f'<div style="overflow-x:auto;">'
+                f'<table style="width:100%;border-collapse:collapse;background:#131f2e;'
+                f'border-radius:8px;overflow:hidden;font-size:12px;color:#cfd8dc;">'
+                f'<thead>{_sp_hdr2}</thead><tbody>{_sp_body2}</tbody>'
+                f'</table></div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                "Gap = ≥3% close-to-close daily gap · Trend = ≥1% change + close above SMA20 & SMA50 · "
+                "All = full backtest universe · Trades/yr estimated from earliest→latest sim_date span. "
+                "Run `python backfill_screener_pass.py` if Gap/Trend counts look too low."
+            )
 
     # ── Screener Pass Breakdown ───────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
