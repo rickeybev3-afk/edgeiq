@@ -10133,7 +10133,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
     with _bt_col3:
         _bt_price_range = st.slider(
             "Price Range ($)", min_value=1.0, max_value=50.0,
-            value=(2.0, 20.0), step=0.5, key="bt_price_range",
+            value=(2.0, 50.0), step=0.5, key="bt_price_range",
         )
     with _bt_col4:
         _bt_end_date = st.date_input(
@@ -33769,8 +33769,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
 
     _pt_price_range = st.slider(
         "Price Range ($)",
-        min_value=0.5, max_value=30.0,
-        value=(1.0, 20.0), step=0.5,
+        min_value=0.5, max_value=50.0,
+        value=(1.0, 50.0), step=0.5,
         key="pt_price_range",
     )
     # Persist pt_price_range to user prefs when it changes
@@ -37071,7 +37071,7 @@ if st.session_state.get("_pt_live_mode"):
             ]
             _pt_min  = st.session_state.get("pt_min_tcs", 50)
             _pt_fd   = "sip" if "SIP" in st.session_state.get("pt_feed", "SIP") else "iex"
-            _pt_pr   = st.session_state.get("pt_price_range", (1.0, 20.0))
+            _pt_pr   = st.session_state.get("pt_price_range", (1.0, 50.0))
             if _pt_tkrs and api_key and secret_key:
                 _auto_res, _auto_sum = run_historical_backtest(
                     api_key, secret_key,
