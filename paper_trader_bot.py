@@ -1024,26 +1024,6 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     # ── PDT equity floor warning (fires if equity near $25k boundary) ──────────
     _warn_pdt_equity_floor()
 
-    # ── PDT priority basket (live + <$25k only) ────────────────────────────────
-    # Under PDT rules only P3 setups (TCS ≥ 70) are taken — first qualified
-    # setup of the day gets slot 1, next gets slot 2, etc.  No slot-counting
-    # logic; the existing PDT hard block above handles the 3-trade ceiling.
-    # Auto-disables once equity crosses $25k (pdt_in_effect becomes False).
-    if _pdt_in_effect:
-        _tcs_val = float(r.get("tcs", 0))
-        if _tcs_val < 70:
-            log.warning(
-                f"  [{ticker}] ORDER SKIPPED — PDT priority basket "
-                f"(TCS {_tcs_val:.0f} < 70, P3 required under PDT)"
-            )
-            tg_send(
-                f"⏭️ <b>{ticker} Skipped — PDT Priority Basket</b>\n"
-                f"TCS <b>{_tcs_val:.0f}</b> — P3 (70+) required while under PDT cap.\n"
-                f"<i>Only highest-conviction setups taken until equity reaches $25k.</i>"
-            )
-            _patch_skip_reason(r, ticker, "pdt_priority_basket")
-            return
-
     # ── Concurrent position cap ────────────────────────────────────────────────
     _pos_blocked, _pos_count = _check_concurrent_positions_guard()
     if _pos_blocked:
