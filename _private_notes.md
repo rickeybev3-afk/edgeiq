@@ -25,6 +25,44 @@
 
 ---
 
+### 🧠 THEORY NOTE — Trauma, Intelligence & the Cognitive Profiler
+*Captured April 19, 2026 — develop this further when sober*
+
+**The core insight:**
+Trauma doesn't uniformly damage cognition — it reshapes it in specific, adaptive directions. The brain under chronic stress or acute threat rewires toward survival. This creates a distinct cognitive fingerprint that shows up clearly in high-pressure behavioral data, including live trading.
+
+**How trauma maps to cognitive dimensions:**
+
+| Trauma response | Cognitive effect | Trading signal |
+|---|---|---|
+| Hypervigilant threat scanning | Elevated pattern recognition | Reads tape before being able to explain why |
+| Unpredictable early environment | Rapid in-the-moment processing | Strong short-term decisions, weaker long-term planning |
+| Chronic stress exposure | Altered risk calculus | Either extreme risk aversion OR paradoxical risk-seeking |
+| Loss of control experiences | Thesis drift under pressure | Plan changes mid-trade when drawdown hits |
+| Learned hypervigilance | High stress tolerance + erratic exits | Holds well until a specific threshold, then panic-exits |
+
+**What makes this groundbreaking for the profiler:**
+- Trauma-shaped cognitive profiles are *identifiable through trading behavior* without ever asking about trauma directly
+- The behavioral fingerprint emerges naturally from the 12 signals already being captured — no new data fields needed
+- No other assessment tool puts people under real financial pressure over months and watches what happens. Pymetrics uses games. This is real stakes, longitudinal, uncoachable.
+- A trauma survivor's profile has a specific shape: often high on Pattern Recognition and Stress Tolerance (adaptive resilience), but with characteristic weak points on Impulse Control or Process Discipline at specific stress thresholds
+
+**The ethical line — CRITICAL:**
+The profiler can *infer* trauma-shaped cognition. It must never *label* it. The employer product shows cognitive strengths and behavioral patterns under pressure — not what formed them. Specifically:
+- Output to employers: "High pattern recognition, stress-tolerant, adapts to conditions" ✅
+- Output to employers: "Probable trauma history detected" ❌ (discriminatory, legally indefensible, ethically wrong)
+- The trauma research informs how the model is *built*, not what it *reports*
+
+**Why this matters for the product:**
+The insight that adversity forges specific cognitive strengths means the profiler can surface high-performers who would be *screened out* by traditional assessments — people whose unconventional backgrounds produced exactly the cognitive traits that high-pressure roles demand. That's the pitch to employers. Not "here's their trauma" — but "here's someone your filter would have missed."
+
+**Next steps on this (when ready):**
+- Map each of the 12 behavioral signals to trauma-adjacent literature (fomo_entry → impulse dysregulation, held_drawdown → dissociative tolerance, etc.)
+- Design the dimension scoring to distinguish between "trauma-forged strength" and "raw natural strength" — they look similar in aggregate but have different fragility profiles under novel stress
+- Consider whether to publish a research paper on this framing before competitors catch on — first-mover academic credibility is a moat
+
+---
+
 ## ⚡ QUICK STATUS
 
 > **PHASE 1 COMPLETE — April 17, 2026**
