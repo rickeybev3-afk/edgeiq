@@ -4893,10 +4893,65 @@ def update_daily_build_notes() -> bool:
             f"Build notes updated: {len(trade_rows)} trade row(s) | "
             f"wins={win_n} losses={loss_n} | sim P&L {_sign}${abs(sim_pnl):.2f}"
         )
+        # ── Refresh timestamps in all 4 doc files ────────────────────────────
+        _refresh_all_doc_timestamps()
         return True
     except Exception as _exc:
         log.error(f"update_daily_build_notes: write failed: {_exc}")
         return False
+
+
+def _refresh_all_doc_timestamps() -> None:
+    """Update the 'Last updated / Updated / Created' date stamp in all 4 build
+    note files so every nightly PDF export shows the correct date.
+
+    Patterns handled per file:
+      build_notes.md        — *Last updated: Month D, YYYY*
+      build_notes_private.md — *Last updated: Month D, YYYY — <suffix>*
+      ip_documentation.md   — **Created:** Month D, YYYY
+      PRIORITIES.md         — _Updated: Month D, YYYY. <suffix>_
+    """
+    import re as _re
+
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _today_long = datetime.now(EASTERN).strftime("%B %-d, %Y")   # e.g. "April 19, 2026"
+
+    _FILES = {
+        "build_notes.md": (
+            r"(\*Last updated: )[A-Za-z]+ \d+, \d+(\*)",
+            r"\g<1>" + _today_long + r"\g<2>",
+        ),
+        "build_notes_private.md": (
+            r"(\*Last updated: )[A-Za-z]+ \d+, \d+",
+            r"\g<1>" + _today_long,
+        ),
+        "ip_documentation.md": (
+            r"(\*\*Created:\*\* )[A-Za-z]+ \d+, \d+",
+            r"\g<1>" + _today_long,
+        ),
+        "PRIORITIES.md": (
+            r"(_Updated: )[A-Za-z]+ \d+, \d+(\. )",
+            r"\g<1>" + _today_long + r"\g<2>",
+        ),
+    }
+
+    for _fname, (_pattern, _repl) in _FILES.items():
+        _path = os.path.join(_script_dir, ".local", _fname)
+        if not os.path.exists(_path):
+            log.info(f"[DocTimestamp] {_fname} not found — skipping")
+            continue
+        try:
+            with open(_path, "r", encoding="utf-8") as _f:
+                _text = _f.read()
+            _new_text, _n = _re.subn(_pattern, _repl, _text, count=1)
+            if _n:
+                with open(_path, "w", encoding="utf-8") as _f:
+                    _f.write(_new_text)
+                log.info(f"[DocTimestamp] {_fname} — timestamp updated to {_today_long}")
+            else:
+                log.info(f"[DocTimestamp] {_fname} — no timestamp pattern found, skipped")
+        except Exception as _exc:
+            log.warning(f"[DocTimestamp] {_fname} failed: {_exc}")
 
 
 def nightly_recalibration():
