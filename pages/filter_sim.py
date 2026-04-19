@@ -533,8 +533,8 @@ st.divider()
 # ── Projected P&L ─────────────────────────────────────────────────────────────
 st.markdown("### 💰 Projected P&L — Current Filter Settings")
 st.caption(
-    f"Simulates your account running through every trade in the **{s3['n']:,}-trade "
-    "live-filter set**, in chronological order. Adjust sizing below."
+    f"Simulates your account taking the top-TCS trades each day from the "
+    f"**{s3['n']:,}-signal live-filter set**. Use 'Max trades / day' below to set your concurrency."
 )
 
 # ── Primary sizing inputs (plain English) ─────────────────────────────────────
@@ -598,7 +598,7 @@ _all_sim_dates = [r["sim_date"] for r in _all_sorted if r.get("sim_date")]
 _data_min = datetime.strptime(_all_sim_dates[0],  "%Y-%m-%d").date() if _all_sim_dates else datetime(2021, 6, 1).date()
 _data_max = datetime.strptime(_all_sim_dates[-1], "%Y-%m-%d").date() if _all_sim_dates else datetime.today().date()
 
-_dr_c1, _dr_c2 = st.columns(2)
+_dr_c1, _dr_c2, _dr_c3 = st.columns([1, 1, 0.8])
 with _dr_c1:
     pnl_date_start = st.date_input(
         "Sim start date", value=_data_min, min_value=_data_min, max_value=_data_max,
@@ -611,16 +611,43 @@ with _dr_c2:
         key="fs_pnl_date_end",
         help="Only include trades on or before this date in the P&L simulation.",
     )
+with _dr_c3:
+    pnl_max_per_day = st.number_input(
+        "Max trades / day", min_value=1, max_value=20, value=2, step=1,
+        key="fs_pnl_max_per_day",
+        help="Caps how many trades are taken per calendar day — picks the highest-TCS "
+             "signals first. Set to 2 to match the live bot's concurrent cap. "
+             "The raw dataset has ~21 qualifying signals/day across all tickers; "
+             "your live account actually takes ~1–2.",
+    )
+
+st.caption(
+    f"ℹ️ The full dataset has **{s3['n']:,} qualifying signals** across all tickers — "
+    f"but your live account takes at most **{pnl_max_per_day}/day** "
+    f"(highest TCS first). Adjust 'Max trades / day' to model different concurrency."
+)
 
 if s3["n"] == 0:
     st.info("No trades pass the current filters. Adjust sliders above.")
 else:
     # ── Sort and extract date range ────────────────────────────────────────────
-    sorted_trades = [
+    _date_filtered = [
         r for r in _all_sorted
         if r.get("sim_date")
         and str(pnl_date_start) <= r["sim_date"] <= str(pnl_date_end)
     ]
+    # ── Per-day cap: take top N by TCS per trading day ──────────────────────
+    if pnl_max_per_day and pnl_max_per_day > 0:
+        from collections import defaultdict as _dd
+        _by_date: dict = _dd(list)
+        for _r in _date_filtered:
+            _by_date[_r["sim_date"]].append(_r)
+        sorted_trades = []
+        for _d in sorted(_by_date.keys()):
+            _day_trades = sorted(_by_date[_d], key=lambda x: float(x.get("tcs") or 0), reverse=True)
+            sorted_trades.extend(_day_trades[:pnl_max_per_day])
+    else:
+        sorted_trades = _date_filtered
     if not sorted_trades:
         st.info("No trades fall within the selected date range. Adjust the sim start/end dates above.")
         st.stop()
@@ -688,7 +715,8 @@ else:
 
     final_equity   = curve[-1]
     net_return_pct = (final_equity - float(pnl_equity)) / float(pnl_equity) * 100
-    avg_trade_amt  = (final_equity - float(pnl_equity)) / s3["n"] if s3["n"] else 0
+    _sim_n         = len(sorted_trades)
+    avg_trade_amt  = (final_equity - float(pnl_equity)) / _sim_n if _sim_n else 0
 
     # Annualised return (CAGR) — skip if period too short to annualise meaningfully
     ann_return = None
@@ -699,7 +727,7 @@ else:
         except (OverflowError, ZeroDivisionError, ValueError):
             ann_return = None
 
-    trades_per_yr = s3["n"] / trading_years if trading_years else None
+    trades_per_yr = _sim_n / trading_years if trading_years else None
 
     # ── Period header ──────────────────────────────────────────────────────────
     if sim_start_str and sim_end_str:
@@ -800,7 +828,7 @@ else:
         else f"{pnl_risk_pct}% of equity (compounding)"
     )
     st.caption(
-        f"Simulation: {s3['n']:,} batch-backtest trades · {sizing_label} · "
+        f"Simulation: {_sim_n:,} trades (capped {pnl_max_per_day}/day by TCS rank, {s3['n']:,} total signals) · {sizing_label} · "
         "sorted chronologically by sim_date. "
         "Does not include slippage, commissions, or execution gaps. "
         "Past backtest performance does not guarantee future results."
