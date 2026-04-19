@@ -1343,6 +1343,11 @@ _TARGET_JS = """(function(){
 
 EASTERN = pytz.timezone("America/New_York")
 
+RESOLVED_OUTCOMES = [
+    "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
+    "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
+]
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CORE MATH
 # ══════════════════════════════════════════════════════════════════════════════
@@ -31124,10 +31129,6 @@ function _bqCopyShareLink() {
 
     @st.cache_data(ttl=3600, show_spinner=False)
     def _load_backtest_grid(uid, start_date=None, end_date=None):
-        RESOLVED = [
-            "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
-            "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
-        ]
         grid = []
         for st_name in ["morning", "intraday"]:
             for lo, hi in [(0, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 101)]:
@@ -31141,7 +31142,7 @@ function _bqCopyShareLink() {
                             .eq("scan_type", st_name)
                             .gte("tcs", lo)
                             .lt("tcs", min(hi, 100) if hi < 101 else 200)
-                            .in_("actual_outcome", RESOLVED)
+                            .in_("actual_outcome", RESOLVED_OUTCOMES)
                         )
                         if start_date:
                             q = q.gte("sim_date", str(start_date))
@@ -31188,10 +31189,6 @@ function _bqCopyShareLink() {
     def _load_screener_pass_grid(uid, start_date=None, end_date=None):
         """Single-pass fetch of backtest_sim_runs; groups by screener_pass in memory."""
         from datetime import date as _date_cls
-        RESOLVED = {
-            "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
-            "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
-        }
         BREAK_OUTCOMES = {"Bullish Break", "Bearish Break"}
         all_rows, offset, fetch_error = [], 0, None
         try:
@@ -31200,7 +31197,7 @@ function _bqCopyShareLink() {
                     supabase.table("backtest_sim_runs")
                     .select("actual_outcome,pnl_r_sim,sim_date,screener_pass")
                     .eq("user_id", uid)
-                    .in_("actual_outcome", list(RESOLVED))
+                    .in_("actual_outcome", RESOLVED_OUTCOMES)
                 )
                 if start_date:
                     q = q.gte("sim_date", str(start_date))
@@ -31280,10 +31277,6 @@ function _bqCopyShareLink() {
         Only resolved outcomes are included, matching _load_screener_pass_grid for
         consistent sample sizes between the top-level card and the per-tier table.
         """
-        RESOLVED = [
-            "Bullish Break", "Bearish Break", "Range-Bound", "Both Sides",
-            "Neutral", "Ntrl Extreme", "Normal Var", "Nrml Var",
-        ]
         all_rows, offset, fetch_error = [], 0, None
         try:
             while True:
@@ -31291,7 +31284,7 @@ function _bqCopyShareLink() {
                     supabase.table("backtest_sim_runs")
                     .select("screener_pass,tcs,scan_type,pnl_r_sim,actual_outcome,sim_date")
                     .eq("user_id", uid)
-                    .in_("actual_outcome", RESOLVED)
+                    .in_("actual_outcome", RESOLVED_OUTCOMES)
                 )
                 if start_date:
                     q = q.gte("sim_date", str(start_date))
