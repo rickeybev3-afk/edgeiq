@@ -25787,7 +25787,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     # ── Screener Pass × P-Tier Backtest Analysis ─────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
-        st.caption("Gap = ≥3% abs gap · Trend = ≥1% abs + close > SMA20 & SMA50 · Other = all else · PF = Profit Factor · — = <30 trades (insufficient)")
+        st.caption("Gap = ≥3% close-to-close daily change (directional, positive only) · Trend = ≥1% change + close > SMA20 & SMA50 · Other = all else (incl. down days) · PF = Profit Factor · — = <30 trades (insufficient)")
 
         _sp_bt_df = _bt_sim_df.copy() if not _bt_sim_df.empty else pd.DataFrame()
         _sp_has_pass = (

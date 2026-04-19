@@ -3012,6 +3012,25 @@ def _alert_eod_summary(
         if global_filtered:
             filter_parts.append(f"{global_filtered} below global floor")
         lines.append(f"🚫 Filtered: " + " · ".join(filter_parts))
+
+    # Health check: flag any today's paper_trades rows missing screener_pass
+    try:
+        if _supabase_client:
+            _null_sp = (
+                _supabase_client.table("paper_trades")
+                .select("id", count="exact")
+                .eq("trade_date", str(trade_date))
+                .is_("screener_pass", "null")
+                .execute()
+            ).count or 0
+            if _null_sp > 0:
+                lines.append(
+                    f"⚠️ <b>screener_pass NULL</b>: {_null_sp} trade(s) today "
+                    f"missing pass tag — run backfill_screener_pass.py --table paper_trades"
+                )
+    except Exception as _hce:
+        log.warning(f"[screener_pass] EOD health check failed: {_hce}")
+
     tg_send("\n".join(lines))
 
 
