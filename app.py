@@ -24161,6 +24161,192 @@ def render_sa_tab():
         st.info("No trades logged yet. Use the expander above to log your first sniper trade.")
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False):
+    """Single-pass fetch of backtest_sim_runs; groups by screener_pass in memory."""
+    from datetime import date as _date_cls
+    BREAK_OUTCOMES = {"Bullish Break", "Bearish Break"}
+    all_rows, offset, fetch_error = [], 0, None
+    try:
+        while True:
+            q = (
+                supabase.table("backtest_sim_runs")
+                .select("actual_outcome,pnl_r_sim,sim_date,screener_pass")
+                .eq("user_id", uid)
+                .in_("actual_outcome", RESOLVED_OUTCOMES)
+            )
+            if start_date:
+                q = q.gte("sim_date", str(start_date))
+            if end_date:
+                q = q.lte("sim_date", str(end_date))
+            batch = q.range(offset, offset + 999).execute().data or []
+            if not batch:
+                break
+            all_rows += batch
+            if len(batch) < 1000:
+                break
+            offset += 1000
+    except Exception as exc:
+        fetch_error = str(exc)
+
+    if fetch_error:
+        return [{"_error": fetch_error}]
+    if not all_rows:
+        return []
+
+    # Estimate years from actual date span in the fetched rows
+    dates = []
+    for r in all_rows:
+        raw = r.get("sim_date")
+        if raw:
+            try:
+                dates.append(_date_cls.fromisoformat(str(raw)[:10]))
+            except Exception:
+                pass
+    if len(dates) >= 2:
+        _years = max((max(dates) - min(dates)).days / 365.25, 0.1)
+    else:
+        _years = 5.0
+
+    def _stats(subset):
+        if not subset:
+            return None
+        breaks = [
+            r for r in subset
+            if r.get("actual_outcome") in BREAK_OUTCOMES
+            and r.get("pnl_r_sim") is not None
+        ]
+        p_break = len(breaks) / len(subset)
+        avg_r   = (
+            sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks)
+            if breaks else 0.0
+        )
+        return {
+            "trades":        len(subset),
+            "trades_per_yr": round(len(subset) / _years, 1),
+            "wr_pct":        round(p_break * 100, 1),
+            "avg_r":         round(avg_r, 3),
+            "true_exp":      round(p_break * avg_r, 3),
+        }
+
+    results = []
+    by_pass: dict = {}
+    for r in all_rows:
+        sp = (r.get("screener_pass") or "other").strip().lower()
+        by_pass.setdefault(sp, []).append(r)
+
+    for spass in ["gap", "trend"]:
+        s = _stats(by_pass.get(spass, []))
+        if s:
+            results.append({"screener_pass": spass, **s})
+    all_stats = _stats(all_rows)
+    if all_stats:
+        results.append({"screener_pass": "all", **all_stats})
+
+    if not by_year:
+        return results
+
+    # ── Year-by-year breakdown (only when by_year=True) ─────────────────
+    def _yr_stats(subset):
+        """Like _stats but without trades_per_yr (scoped to one calendar year)."""
+        if not subset:
+            return None
+        breaks = [
+            r for r in subset
+            if r.get("actual_outcome") in BREAK_OUTCOMES
+            and r.get("pnl_r_sim") is not None
+        ]
+        p_break = len(breaks) / len(subset)
+        avg_r = (
+            sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks)
+            if breaks else 0.0
+        )
+        return {
+            "trades":   len(subset),
+            "wr_pct":   round(p_break * 100, 1),
+            "avg_r":    round(avg_r, 3),
+            "true_exp": round(p_break * avg_r, 3),
+        }
+
+    # Bucket rows by (year, month) to determine full-year coverage
+    by_year_months: dict = {}
+    by_year_pass: dict = {}
+    for r in all_rows:
+        raw = r.get("sim_date")
+        if not raw:
+            continue
+        try:
+            parsed = _date_cls.fromisoformat(str(raw)[:10])
+            yr, mo = parsed.year, parsed.month
+        except Exception:
+            continue
+        by_year_months.setdefault(yr, set()).add(mo)
+        sp = (r.get("screener_pass") or "other").strip().lower()
+        by_year_pass.setdefault(yr, {}).setdefault("all", []).append(r)
+        by_year_pass[yr].setdefault(sp, []).append(r)
+
+    # A calendar year is "full" if data covers both H1 (Jan-Jun) and H2 (Jul-Dec)
+    FIRST_HALF  = {1, 2, 3, 4, 5, 6}
+    SECOND_HALF = {7, 8, 9, 10, 11, 12}
+    full_year_count = sum(
+        1 for yr, months in by_year_months.items()
+        if months & FIRST_HALF and months & SECOND_HALF
+    )
+
+    yearly_results = []
+    for yr in sorted(by_year_pass.keys()):
+        yr_data = by_year_pass[yr]
+        row = {"year": yr}
+        for spass in ["gap", "trend", "all"]:
+            s = _yr_stats(yr_data.get(spass, []))
+            if s:
+                for k, v in s.items():
+                    row[f"{spass}_{k}"] = v
+            else:
+                for k in ["trades", "wr_pct", "avg_r", "true_exp"]:
+                    row[f"{spass}_{k}"] = None
+        yearly_results.append(row)
+
+    return {"aggregate": results, "by_year": yearly_results, "full_year_count": full_year_count}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_tier_screener_pass_data(uid, start_date=None, end_date=None):
+    """Paginated fetch of backtest_sim_runs for the per-tier screener-pass table.
+
+    Returns a list of row dicts with keys: screener_pass, tcs, scan_type, pnl_r_sim.
+    Fetches the full history (not capped at 5,000 rows).
+    Only resolved outcomes are included, matching _load_screener_pass_grid for
+    consistent sample sizes between the top-level card and the per-tier table.
+    """
+    all_rows, offset, fetch_error = [], 0, None
+    try:
+        while True:
+            q = (
+                supabase.table("backtest_sim_runs")
+                .select("screener_pass,tcs,scan_type,pnl_r_sim,actual_outcome,sim_date")
+                .eq("user_id", uid)
+                .in_("actual_outcome", RESOLVED_OUTCOMES)
+            )
+            if start_date:
+                q = q.gte("sim_date", str(start_date))
+            if end_date:
+                q = q.lte("sim_date", str(end_date))
+            batch = q.range(offset, offset + 999).execute().data or []
+            if not batch:
+                break
+            all_rows += batch
+            if len(batch) < 1000:
+                break
+            offset += 1000
+    except Exception as exc:
+        fetch_error = str(exc)
+
+    if fetch_error:
+        return [{"_error": fetch_error}]
+    return all_rows
+
+
 def render_performance_tab():
     """Live performance dashboard — paper trades, structure win rates, brain weights."""
     import json as _json
@@ -25797,7 +25983,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
     with _sp_refresh_col:
         if st.button("🔄 Refresh", key="refresh_screener_pass_tier", help="Clear cache and reload screener pass data immediately"):
             st.session_state["sp_tier_last_refresh"] = datetime.now()
-            st.cache_data.clear()
+            _load_tier_screener_pass_data.clear()
+            _load_screener_pass_grid.clear()
             st.rerun()
         st.caption(f"Updated {st.session_state['sp_tier_last_refresh'].strftime('%-I:%M %p')}")
     with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
@@ -31191,190 +31378,6 @@ function _bqCopyShareLink() {
                     continue
         return grid
 
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False):
-        """Single-pass fetch of backtest_sim_runs; groups by screener_pass in memory."""
-        from datetime import date as _date_cls
-        BREAK_OUTCOMES = {"Bullish Break", "Bearish Break"}
-        all_rows, offset, fetch_error = [], 0, None
-        try:
-            while True:
-                q = (
-                    supabase.table("backtest_sim_runs")
-                    .select("actual_outcome,pnl_r_sim,sim_date,screener_pass")
-                    .eq("user_id", uid)
-                    .in_("actual_outcome", RESOLVED_OUTCOMES)
-                )
-                if start_date:
-                    q = q.gte("sim_date", str(start_date))
-                if end_date:
-                    q = q.lte("sim_date", str(end_date))
-                batch = q.range(offset, offset + 999).execute().data or []
-                if not batch:
-                    break
-                all_rows += batch
-                if len(batch) < 1000:
-                    break
-                offset += 1000
-        except Exception as exc:
-            fetch_error = str(exc)
-
-        if fetch_error:
-            return [{"_error": fetch_error}]
-        if not all_rows:
-            return []
-
-        # Estimate years from actual date span in the fetched rows
-        dates = []
-        for r in all_rows:
-            raw = r.get("sim_date")
-            if raw:
-                try:
-                    dates.append(_date_cls.fromisoformat(str(raw)[:10]))
-                except Exception:
-                    pass
-        if len(dates) >= 2:
-            _years = max((max(dates) - min(dates)).days / 365.25, 0.1)
-        else:
-            _years = 5.0
-
-        def _stats(subset):
-            if not subset:
-                return None
-            breaks = [
-                r for r in subset
-                if r.get("actual_outcome") in BREAK_OUTCOMES
-                and r.get("pnl_r_sim") is not None
-            ]
-            p_break = len(breaks) / len(subset)
-            avg_r   = (
-                sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks)
-                if breaks else 0.0
-            )
-            return {
-                "trades":        len(subset),
-                "trades_per_yr": round(len(subset) / _years, 1),
-                "wr_pct":        round(p_break * 100, 1),
-                "avg_r":         round(avg_r, 3),
-                "true_exp":      round(p_break * avg_r, 3),
-            }
-
-        results = []
-        by_pass: dict = {}
-        for r in all_rows:
-            sp = (r.get("screener_pass") or "other").strip().lower()
-            by_pass.setdefault(sp, []).append(r)
-
-        for spass in ["gap", "trend"]:
-            s = _stats(by_pass.get(spass, []))
-            if s:
-                results.append({"screener_pass": spass, **s})
-        all_stats = _stats(all_rows)
-        if all_stats:
-            results.append({"screener_pass": "all", **all_stats})
-
-        if not by_year:
-            return results
-
-        # ── Year-by-year breakdown (only when by_year=True) ─────────────────
-        def _yr_stats(subset):
-            """Like _stats but without trades_per_yr (scoped to one calendar year)."""
-            if not subset:
-                return None
-            breaks = [
-                r for r in subset
-                if r.get("actual_outcome") in BREAK_OUTCOMES
-                and r.get("pnl_r_sim") is not None
-            ]
-            p_break = len(breaks) / len(subset)
-            avg_r = (
-                sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks)
-                if breaks else 0.0
-            )
-            return {
-                "trades":   len(subset),
-                "wr_pct":   round(p_break * 100, 1),
-                "avg_r":    round(avg_r, 3),
-                "true_exp": round(p_break * avg_r, 3),
-            }
-
-        # Bucket rows by (year, month) to determine full-year coverage
-        by_year_months: dict = {}
-        by_year_pass: dict = {}
-        for r in all_rows:
-            raw = r.get("sim_date")
-            if not raw:
-                continue
-            try:
-                parsed = _date_cls.fromisoformat(str(raw)[:10])
-                yr, mo = parsed.year, parsed.month
-            except Exception:
-                continue
-            by_year_months.setdefault(yr, set()).add(mo)
-            sp = (r.get("screener_pass") or "other").strip().lower()
-            by_year_pass.setdefault(yr, {}).setdefault("all", []).append(r)
-            by_year_pass[yr].setdefault(sp, []).append(r)
-
-        # A calendar year is "full" if data covers both H1 (Jan-Jun) and H2 (Jul-Dec)
-        FIRST_HALF  = {1, 2, 3, 4, 5, 6}
-        SECOND_HALF = {7, 8, 9, 10, 11, 12}
-        full_year_count = sum(
-            1 for yr, months in by_year_months.items()
-            if months & FIRST_HALF and months & SECOND_HALF
-        )
-
-        yearly_results = []
-        for yr in sorted(by_year_pass.keys()):
-            yr_data = by_year_pass[yr]
-            row = {"year": yr}
-            for spass in ["gap", "trend", "all"]:
-                s = _yr_stats(yr_data.get(spass, []))
-                if s:
-                    for k, v in s.items():
-                        row[f"{spass}_{k}"] = v
-                else:
-                    for k in ["trades", "wr_pct", "avg_r", "true_exp"]:
-                        row[f"{spass}_{k}"] = None
-            yearly_results.append(row)
-
-        return {"aggregate": results, "by_year": yearly_results, "full_year_count": full_year_count}
-
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def _load_tier_screener_pass_data(uid, start_date=None, end_date=None):
-        """Paginated fetch of backtest_sim_runs for the per-tier screener-pass table.
-
-        Returns a list of row dicts with keys: screener_pass, tcs, scan_type, pnl_r_sim.
-        Fetches the full history (not capped at 5,000 rows).
-        Only resolved outcomes are included, matching _load_screener_pass_grid for
-        consistent sample sizes between the top-level card and the per-tier table.
-        """
-        all_rows, offset, fetch_error = [], 0, None
-        try:
-            while True:
-                q = (
-                    supabase.table("backtest_sim_runs")
-                    .select("screener_pass,tcs,scan_type,pnl_r_sim,actual_outcome,sim_date")
-                    .eq("user_id", uid)
-                    .in_("actual_outcome", RESOLVED_OUTCOMES)
-                )
-                if start_date:
-                    q = q.gte("sim_date", str(start_date))
-                if end_date:
-                    q = q.lte("sim_date", str(end_date))
-                batch = q.range(offset, offset + 999).execute().data or []
-                if not batch:
-                    break
-                all_rows += batch
-                if len(batch) < 1000:
-                    break
-                offset += 1000
-        except Exception as exc:
-            fetch_error = str(exc)
-
-        if fetch_error:
-            return [{"_error": fetch_error}]
-        return all_rows
-
     # ── Date-range filter for SECTION 1c ─────────────────────────────────────
     # Sync button: copy the Backtest P&L date range into the edge map filter
     _bts_sync_start = st.session_state.get("bts_dr_start")
@@ -31727,7 +31730,8 @@ function _bqCopyShareLink() {
         with _sp2_refresh_col:
             if st.button("🔄 Refresh", key="refresh_screener_pass_grid", help="Clear cache and reload screener pass data immediately"):
                 st.session_state["sp_grid_last_refresh"] = datetime.now()
-                st.cache_data.clear()
+                _load_screener_pass_grid.clear()
+                _load_tier_screener_pass_data.clear()
                 st.rerun()
             st.caption(f"Updated {st.session_state['sp_grid_last_refresh'].strftime('%-I:%M %p')}")
         _sp_result = _load_screener_pass_grid(
