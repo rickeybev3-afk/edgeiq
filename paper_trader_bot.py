@@ -1024,30 +1024,24 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     # ── PDT equity floor warning (fires if equity near $25k boundary) ──────────
     _warn_pdt_equity_floor()
 
-    # ── PDT budget gate (live + <$25k only) ────────────────────────────────────
-    # When the rolling 5-day trade count is non-zero we become more selective:
-    #   remaining == 2  (1 trade used)  → require TCS ≥ 60  (skip borderline P4)
-    #   remaining == 1  (2 trades used) → require TCS ≥ 70  (P3 only, highest edge)
-    # This preserves the best setups for the scarce last slots and auto-releases
-    # once equity crosses $25k (pdt_in_effect becomes False).
-    if _pdt_in_effect and _dt_count > 0:
-        _remaining  = max(0, PDT_MAX_DAY_TRADES - _dt_count)
-        _tcs_val    = float(r.get("tcs", 0))
-        _min_tcs    = 60 if _remaining == 2 else (70 if _remaining == 1 else 50)
-        if _tcs_val < _min_tcs:
+    # ── PDT priority basket (live + <$25k only) ────────────────────────────────
+    # Under PDT rules only P3 setups (TCS ≥ 70) are taken — first qualified
+    # setup of the day gets slot 1, next gets slot 2, etc.  No slot-counting
+    # logic; the existing PDT hard block above handles the 3-trade ceiling.
+    # Auto-disables once equity crosses $25k (pdt_in_effect becomes False).
+    if _pdt_in_effect:
+        _tcs_val = float(r.get("tcs", 0))
+        if _tcs_val < 70:
             log.warning(
-                f"  [{ticker}] ORDER SKIPPED — PDT budget gate "
-                f"(slots remaining={_remaining}, TCS={_tcs_val:.0f} < floor {_min_tcs})"
+                f"  [{ticker}] ORDER SKIPPED — PDT priority basket "
+                f"(TCS {_tcs_val:.0f} < 70, P3 required under PDT)"
             )
             tg_send(
-                f"⏭️ <b>{ticker} Skipped — PDT Budget Gate</b>\n"
-                f"Trade slots remaining today: <b>{_remaining}/{PDT_MAX_DAY_TRADES}</b>\n"
-                f"TCS {_tcs_val:.0f} is below the floor for this slot "
-                f"(min <b>{_min_tcs}</b> — "
-                f"{'P3 only (last slot)' if _remaining == 1 else 'P3 preferred (1 slot used)'}).\n"
-                f"<i>Preserving slot for a higher-conviction setup.</i>"
+                f"⏭️ <b>{ticker} Skipped — PDT Priority Basket</b>\n"
+                f"TCS <b>{_tcs_val:.0f}</b> — P3 (70+) required while under PDT cap.\n"
+                f"<i>Only highest-conviction setups taken until equity reaches $25k.</i>"
             )
-            _patch_skip_reason(r, ticker, "pdt_budget_gate")
+            _patch_skip_reason(r, ticker, "pdt_priority_basket")
             return
 
     # ── Concurrent position cap ────────────────────────────────────────────────
