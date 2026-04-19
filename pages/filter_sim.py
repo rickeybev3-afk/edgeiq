@@ -616,12 +616,12 @@ with _dr_c2:
     )
 with _dr_c3:
     pnl_max_per_day = st.number_input(
-        "Max trades / day", min_value=1, max_value=20, value=2, step=1,
+        "Max trades / day", min_value=1, max_value=100, value=20, step=1,
         key="fs_pnl_max_per_day",
         help="Caps how many trades are taken per calendar day — picks the highest-TCS "
-             "signals first. Set to 2 to match the live bot's concurrent cap. "
-             "The raw dataset has ~21 qualifying signals/day across all tickers; "
-             "your live account actually takes ~1–2.",
+             "signals first. Set to 20 to match the live paper bot's concurrent cap. "
+             "The raw dataset has ~21 qualifying signals/day across all tickers. "
+             "Set to 100 to model taking all signals.",
     )
 
 st.caption(
