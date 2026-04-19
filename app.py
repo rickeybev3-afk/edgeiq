@@ -468,6 +468,25 @@ def _load_backtest_grid(uid, start_date=None, end_date=None):
                 continue
     return grid
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_cred_check(_key: str, _secret: str, _is_paper: bool) -> dict:
+    return check_credential_match_sync(_key, _secret, _is_paper)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_tcs_thresholds():
+    try:
+        return compute_structure_tcs_thresholds()
+    except Exception:
+        return []
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_r_trend(uid, src):
+    return compute_r_trend_history(user_id=uid, r_source=src)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_ladder_pnl_cache(uid):
+    return get_ladder_pnl_summary(user_id=uid)
+
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
 def _regenerate_notes_html():
     import json as _json
@@ -7125,10 +7144,6 @@ with st.sidebar:
     )
     st.header("🔀 Trading Mode")
 
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _cached_cred_check(_key: str, _secret: str, _is_paper: bool) -> dict:
-        return check_credential_match_sync(_key, _secret, _is_paper)
-
     # If the user cancelled a Paper→Live switch in the previous run, reset the
     # radio widget key BEFORE the widget is rendered so Streamlit honours the
     # value (setting it after render is silently ignored).
@@ -10483,14 +10498,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
 
         _rp_uid = st.session_state.get("auth_user_id", "")
-
-        # Cache TCS thresholds — avoids slow 11k-row paginated query on every render
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _cached_tcs_thresholds():
-            try:
-                return compute_structure_tcs_thresholds()
-            except Exception:
-                return []
 
         _RP_SIZING_OPTIONS = ["📊 % Risk (custom)", "🤖 Match Live Bot (100 shares flat)"]
         import streamlit.components.v1 as _cmp_rp_filters
@@ -21112,10 +21119,6 @@ Nothing here requires any input from you. All numbers update automatically as yo
             "Dashed lines mark the Conservative (0.50R), Expected (0.79R), and Stretch (1.20R) thresholds."
         )
 
-        @st.cache_data(ttl=300, show_spinner=False)
-        def _load_r_trend(uid, src):
-            return compute_r_trend_history(user_id=uid, r_source=src)
-
         _trend_df = _load_r_trend(_uid, _r_source)
 
         if _trend_df.empty or len(_trend_df) < 2:
@@ -28058,10 +28061,6 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
         # ── Load pre-aggregated Ladder P&L summary (mv_tiered_pnl_summary) ──────
         # Only load the unfiltered all-time summary.  Cache is month-granular so it
         # cannot be used safely when an exact-day date filter is active (see guard below).
-        @st.cache_data(ttl=300, show_spinner=False)
-        def _load_ladder_pnl_cache(uid):
-            return get_ladder_pnl_summary(user_id=uid)
-
         _bts_ldr_cache = _load_ladder_pnl_cache(uid=_AUTH_USER_ID)
         if not _bts_ldr_cache.empty:
             _bts_ldr_tot   = int(_bts_ldr_cache["total_trades"].sum())
