@@ -11535,10 +11535,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _tkr      = str(_rp_r.get("ticker") or "")
 
                             # TCS filter — per-structure threshold in bot mode, flat slider otherwise
+                            # Mirrors paper_trader_bot._struct_tcs_floor() logic exactly:
+                            #   Intraday → always MIN_TCS (50); per-structure calibration bypassed
+                            #   Morning  → max(per-structure threshold, MORNING_TCS_FLOOR=60)
                             _rec_tcs = None
+                            _rp_scan_type_filt = str(_rp_r.get("scan_type") or "morning").lower()
                             if _rp_bot_mode:
-                                _pred_wk  = _label_to_weight_key(str(_rp_r.get("predicted") or ""))
-                                _rec_tcs  = _struct_tcs_map.get(_pred_wk, _bot_tcs_fallback)
+                                if _rp_scan_type_filt == "intraday":
+                                    _rec_tcs = _BOT_TCS_DEFAULT  # 50 — bypass per-structure for intraday
+                                else:
+                                    _pred_wk = _label_to_weight_key(str(_rp_r.get("predicted") or ""))
+                                    _rec_tcs = _struct_tcs_map.get(_pred_wk, _bot_tcs_fallback)
+                                    if _rp_scan_type_filt == "morning":
+                                        _rec_tcs = max(_rec_tcs, 60)  # MORNING_TCS_FLOOR=60
                                 if _tcs < _rec_tcs:
                                     continue
                             else:
