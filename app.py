@@ -3155,14 +3155,18 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         st.markdown("---")
         st.markdown("**Grade Discipline Curve**")
         _gdc_window_options = {"Last 5": 5, "Last 10": 10, "Last 20": 20, "All-time": None}
+        _gdc_saved = st.query_params.get("gdc_window", "All-time")
+        _gdc_default_idx = list(_gdc_window_options.keys()).index(_gdc_saved) if _gdc_saved in _gdc_window_options else 3
         _gdc_window_label = st.selectbox(
             "Averaging window",
             options=list(_gdc_window_options.keys()),
-            index=3,
+            index=_gdc_default_idx,
             key="gdc_window_select",
             help="Choose how many recent entries the grade average is calculated over.",
             label_visibility="collapsed",
         )
+        if st.query_params.get("gdc_window") != _gdc_window_label:
+            st.query_params["gdc_window"] = _gdc_window_label
         _gdc_window = _gdc_window_options[_gdc_window_label]
 
         df2 = df.copy()
@@ -3212,14 +3216,18 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             st.caption("No process data yet — log trades with '💾 Log This Trade Entry' and record whether you followed your plan.")
         else:
             _pdr_window_options = {"Last 5": 5, "Last 10": 10, "Last 20": 20, "All-time": None}
+            _pdr_saved = st.query_params.get("pdr_window", "All-time")
+            _pdr_default_idx = list(_pdr_window_options.keys()).index(_pdr_saved) if _pdr_saved in _pdr_window_options else 3
             _pdr_window_label = st.selectbox(
                 "Averaging window",
                 options=list(_pdr_window_options.keys()),
-                index=3,
+                index=_pdr_default_idx,
                 key="pdr_window_select",
                 help="Choose how many recent entries the discipline rate is averaged over.",
                 label_visibility="collapsed",
             )
+            if st.query_params.get("pdr_window") != _pdr_window_label:
+                st.query_params["pdr_window"] = _pdr_window_label
             _pdr_window = _pdr_window_options[_pdr_window_label]
 
             _pdr_df = _pdr_df.reset_index(drop=True)
