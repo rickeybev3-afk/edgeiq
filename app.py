@@ -22298,12 +22298,15 @@ Nothing here requires any input from you. All numbers update automatically as yo
                     "structure: " + ", ".join(_bs_flt_structs)
                 )
 
-            # ── Sort order + Trend grouping (URL-synced) ───────────────
-            _bs_sort_opts  = ["Ascending", "Descending"]
-            _bs_group_opts = ["Weekly", "Monthly"]
-            _url_init_str("bs_sort",  "bs_sort",  "Ascending", allowed=_bs_sort_opts)
-            _url_init_str("bs_group", "bs_group", "Weekly",    allowed=_bs_group_opts)
-            _bs_sort_c1, _bs_sort_c2 = st.columns(2)
+            # ── Sort order + Trend grouping + Signal type (URL-synced) ────
+            # (signal-type tag added below, after widget is rendered)
+            _bs_sort_opts        = ["Ascending", "Descending"]
+            _bs_group_opts       = ["Weekly", "Monthly"]
+            _bs_signal_type_opts = ["All", "Positive only", "Negative only"]
+            _url_init_str("bs_sort",        "bs_sort",        "Ascending",    allowed=_bs_sort_opts)
+            _url_init_str("bs_group",       "bs_group",       "Weekly",       allowed=_bs_group_opts)
+            _url_init_str("bs_signal_type", "bs_signal_type", "All",          allowed=_bs_signal_type_opts)
+            _bs_sort_c1, _bs_sort_c2, _bs_sort_c3 = st.columns(3)
             with _bs_sort_c1:
                 _bs_sort_sel = st.selectbox(
                     "Sort order", options=_bs_sort_opts, key="bs_sort",
@@ -22312,95 +22315,118 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 _bs_group_sel = st.selectbox(
                     "Trend grouping", options=_bs_group_opts, key="bs_group",
                 )
-            _url_push("bs_sort",  _bs_sort_sel)
-            _url_push("bs_group", _bs_group_sel)
+            with _bs_sort_c3:
+                _bs_signal_type_sel = st.selectbox(
+                    "Signal type", options=_bs_signal_type_opts, key="bs_signal_type",
+                )
+            _url_push("bs_sort",        _bs_sort_sel)
+            _url_push("bs_group",       _bs_group_sel)
+            _url_push("bs_signal_type", _bs_signal_type_sel)
+
+            # ── Apply signal-type filter to the working data frame ──────
+            if _bs_signal_type_sel != "All":
+                _bs_filter_tags.append(_bs_signal_type_sel.lower())
+            if _bs_signal_type_sel == "Positive only":
+                _bs_df = _bs_df[_bs_df["signal"].isin(_bs_positive)]
+            elif _bs_signal_type_sel == "Negative only":
+                _bs_df = _bs_df[_bs_df["signal"].isin(_bs_negative)]
+
+            _bs_signal_filtered_empty = _bs_df.empty
             _bs_sort_asc     = (_bs_sort_sel == "Ascending")
             _bs_period_freq  = "W" if _bs_group_sel == "Weekly" else "M"
             _bs_period_label = "Week" if _bs_group_sel == "Weekly" else "Month"
             _bs_trade_summary = f"{_bs_total_trades} trade{'s' if _bs_total_trades != 1 else ''} in scope"
             if _bs_filter_tags:
                 _bs_trade_summary += " · filter: " + " · ".join(_bs_filter_tags)
-            st.caption(
-                "How often each behavioral signal appeared across your voice-journalled trades. "
-                "Green = positive habits · Red = bad habits to watch. "
-                f"({_bs_trade_summary})"
-            )
 
-            _bs_counts = (
-                _bs_df.groupby("signal")
-                .size()
-                .reset_index(name="count")
-                .sort_values("count", ascending=_bs_sort_asc)
-            )
-            _bs_counts["label"] = _bs_counts["signal"].map(_bs_label_map)
-            _bs_counts["is_positive"] = _bs_counts["signal"].isin(_bs_positive)
-            _bs_counts["color"] = _bs_counts["is_positive"].map(
-                {True: "#4caf50", False: "#ef5350"}
-            )
-
-            _bs_col1, _bs_col2 = st.columns([3, 2])
-
-            with _bs_col1:
-                fig_bs = _go.Figure(_go.Bar(
-                    x=_bs_counts["count"],
-                    y=_bs_counts["label"],
-                    orientation="h",
-                    marker_color=_bs_counts["color"].tolist(),
-                    text=_bs_counts["count"].astype(str),
-                    textposition="outside",
-                    textfont=dict(size=11, color="#e0e0e0"),
-                    hovertemplate="<b>%{y}</b><br>Count: %{x}<extra></extra>",
-                ))
-                fig_bs.update_layout(
-                    paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
-                    font=dict(color="#e0e0e0"),
-                    height=max(280, len(_bs_counts) * 36 + 60),
-                    xaxis=dict(title="Occurrences", gridcolor="#2a2a4a"),
-                    yaxis=dict(gridcolor="#2a2a4a", tickfont=dict(size=11)),
-                    margin=dict(l=10, r=60, t=20, b=40),
-                    showlegend=False,
+            if _bs_signal_filtered_empty:
+                st.info(
+                    "No signals match the selected 'Signal type' filter. "
+                    "Try switching to 'All' or a different filter combination."
                 )
-                st.plotly_chart(fig_bs, use_container_width=True)
+            else:
+                st.caption(
+                    "How often each behavioral signal appeared across your voice-journalled trades. "
+                    "Green = positive habits · Red = bad habits to watch. "
+                    f"({_bs_trade_summary})"
+                )
 
-            with _bs_col2:
-                _total_neg = int(_bs_counts[~_bs_counts["is_positive"]]["count"].sum())
-                _total_pos = int(_bs_counts[_bs_counts["is_positive"]]["count"].sum())
-                _total_sig = _total_neg + _total_pos
-                _pos_pct = round(_total_pos / _total_sig * 100) if _total_sig else 0
-                _neg_pct = 100 - _pos_pct
+            if not _bs_signal_filtered_empty:
+                _bs_counts = (
+                    _bs_df.groupby("signal")
+                    .size()
+                    .reset_index(name="count")
+                    .sort_values("count", ascending=_bs_sort_asc)
+                )
+                _bs_counts["label"] = _bs_counts["signal"].map(_bs_label_map)
+                _bs_counts["is_positive"] = _bs_counts["signal"].isin(_bs_positive)
+                _bs_counts["color"] = _bs_counts["is_positive"].map(
+                    {True: "#4caf50", False: "#ef5350"}
+                )
 
-                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-                for _lbl, _val, _col in [
-                    ("Total signals logged", str(_total_sig), "#90caf9"),
-                    ("Positive signals", f"{_total_pos} ({_pos_pct}%)", "#4caf50"),
-                    ("Negative signals", f"{_total_neg} ({_neg_pct}%)", "#ef5350"),
-                ]:
-                    st.markdown(
-                        f'<div style="background:#12122288;border:1px solid #2a2a4a;'
-                        f'border-radius:8px;padding:10px 14px;margin:6px 0;">'
-                        f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
-                        f'letter-spacing:1px;margin-bottom:3px;">{_lbl}</div>'
-                        f'<div style="font-size:22px;font-weight:900;color:{_col};">'
-                        f'{_val}</div></div>',
-                        unsafe_allow_html=True,
-                    )
+                _bs_col1, _bs_col2 = st.columns([3, 2])
 
-                if _total_neg > 0 and _total_sig > 0:
-                    _top_neg = (
-                        _bs_counts[~_bs_counts["is_positive"]]
-                        .sort_values("count", ascending=False)
-                        .iloc[0]
+                with _bs_col1:
+                    fig_bs = _go.Figure(_go.Bar(
+                        x=_bs_counts["count"],
+                        y=_bs_counts["label"],
+                        orientation="h",
+                        marker_color=_bs_counts["color"].tolist(),
+                        text=_bs_counts["count"].astype(str),
+                        textposition="outside",
+                        textfont=dict(size=11, color="#e0e0e0"),
+                        hovertemplate="<b>%{y}</b><br>Count: %{x}<extra></extra>",
+                    ))
+                    fig_bs.update_layout(
+                        paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                        font=dict(color="#e0e0e0"),
+                        height=max(280, len(_bs_counts) * 36 + 60),
+                        xaxis=dict(title="Occurrences", gridcolor="#2a2a4a"),
+                        yaxis=dict(gridcolor="#2a2a4a", tickfont=dict(size=11)),
+                        margin=dict(l=10, r=60, t=20, b=40),
+                        showlegend=False,
                     )
-                    st.markdown(
-                        f'<div style="background:#ef535011;border-left:3px solid #ef5350;'
-                        f'padding:8px 12px;border-radius:4px;margin-top:10px;font-size:12px;'
-                        f'color:#cfd8dc;">'
-                        f'<b style="color:#ef5350;">Watch out:</b> '
-                        f'"{_top_neg["label"]}" is your most frequent bad habit '
-                        f'({int(_top_neg["count"])} occurrences).'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.plotly_chart(fig_bs, use_container_width=True)
+
+                with _bs_col2:
+                    _total_neg = int(_bs_counts[~_bs_counts["is_positive"]]["count"].sum())
+                    _total_pos = int(_bs_counts[_bs_counts["is_positive"]]["count"].sum())
+                    _total_sig = _total_neg + _total_pos
+                    _pos_pct = round(_total_pos / _total_sig * 100) if _total_sig else 0
+                    _neg_pct = 100 - _pos_pct
+
+                    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                    for _lbl, _val, _col in [
+                        ("Total signals logged", str(_total_sig), "#90caf9"),
+                        ("Positive signals", f"{_total_pos} ({_pos_pct}%)", "#4caf50"),
+                        ("Negative signals", f"{_total_neg} ({_neg_pct}%)", "#ef5350"),
+                    ]:
+                        st.markdown(
+                            f'<div style="background:#12122288;border:1px solid #2a2a4a;'
+                            f'border-radius:8px;padding:10px 14px;margin:6px 0;">'
+                            f'<div style="font-size:10px;color:#5c6bc0;text-transform:uppercase;'
+                            f'letter-spacing:1px;margin-bottom:3px;">{_lbl}</div>'
+                            f'<div style="font-size:22px;font-weight:900;color:{_col};">'
+                            f'{_val}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    if _total_neg > 0 and _total_sig > 0:
+                        _top_neg = (
+                            _bs_counts[~_bs_counts["is_positive"]]
+                            .sort_values("count", ascending=False)
+                            .iloc[0]
+                        )
+                        st.markdown(
+                            f'<div style="background:#ef535011;border-left:3px solid #ef5350;'
+                            f'padding:8px 12px;border-radius:4px;margin-top:10px;font-size:12px;'
+                            f'color:#cfd8dc;">'
+                            f'<b style="color:#ef5350;">Watch out:</b> '
+                            f'"{_top_neg["label"]}" is your most frequent bad habit '
+                            f'({int(_top_neg["count"])} occurrences).'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
 
             _bs_dated = _bs_df.dropna(subset=["date"])
             _bs_no_ts = len(_bs_df) - len(_bs_dated)
