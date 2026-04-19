@@ -63,6 +63,56 @@ The insight that adversity forges specific cognitive strengths means the profile
 
 ---
 
+### 🚨 BIGGER INSIGHT — Trading as Universal Behavioral Assessment Laboratory
+*Captured April 19, 2026 — this changes the total addressable market*
+
+**The core reframe:**
+Trading is not what the product is assessing. Trading is the *mechanism* — a controlled, high-pressure, quantifiable environment to observe how a person makes decisions when stakes are real. The profile is the output. And if the profile reflects genuine psychological functioning (which research strongly supports), it applies to every high-pressure role in existence — not just finance.
+
+**The research foundation:**
+- Kahneman & Tversky's loss aversion work was never about trading — it was about human decision-making under uncertainty. Trading is just the cleanest lab.
+- Brett Steenbarger (leading trading psychologist): trading behavior directly mirrors psychological patterns from every other life domain. How someone handles a losing trade mirrors how they handle conflict, failure, sunk costs in every context.
+- The disposition effect (holding losers, cutting winners early) appears identically across trading, relationships, career decisions, and project management.
+- Risk tolerance in financial decisions correlates directly with risk tolerance in all other domains.
+
+**The reframe in one sentence:**
+EdgeIQ isn't a trading assessment platform. It's a universal behavioral assessment platform that uses trading as its data collection method — because trading is the most rigorous, real-stakes, longitudinal, uncoachable behavioral laboratory that exists.
+
+**What this means for TAM:**
+- Old framing: trading SaaS → trading-adjacent hiring (prop firms, hedge funds)
+- New framing: anyone who hires people for roles requiring decision-making under pressure
+- That includes: finance, military, emergency services, executive leadership, high-stakes sales, consulting, medicine, law enforcement, intelligence agencies
+- This is a completely different company at scale
+
+**Why the same external behavior can have completely different internal drivers:**
+Example — held_drawdown signal (held a losing trade through drawdown):
+- Driver A: thesis still intact, volume confirming — rational discipline
+- Driver B: self-destructive, comfortable with pain, familiar emotional state
+- Driver C: can't admit being wrong — ego protection
+- Driver D: overweighting the 5% reversal probability under emotional stress
+
+All four look identical from the outside. The behavior is the same. The cognitive profile behind it is completely different. The development path for each is completely different.
+
+**This is exactly why voice journaling is non-negotiable.**
+The transcript during a trade is the only way to capture which internal driver is actually running. "I'm holding because volume is supporting my thesis" vs. "I just can't close this, I feel like I deserve to sit in it" — same behavior, completely different profiles. The behavior alone is not the data. The internal narrative is the data.
+
+**Founder case study note (personal — do not publish):**
+Recognition that holding losing trades past the plan has two simultaneous drivers: (1) self-destructive comfort with pain — familiar emotional state from childhood environment, (2) systematic overweighting of small reversal probability under emotional pressure (the "5% that feels like 30%" cognitive bias). Both live in the same signal. The bot eliminates both by removing the ability to override the stop. This is not incidental — the automation is psychologically protective by design.
+
+**Voice journaling as the critical data layer:**
+The voice journal during/after trades is what separates behavioral signal from behavioral noise. Without the internal narrative, you have a behavioral record but no psychological ground truth. With it, you can distinguish which driver is producing which behavior — and that distinction is what makes the employer product genuinely predictive rather than just descriptive.
+
+**Research paper angle (supporting, not primary):**
+Title: *"Adversity-Forged Cognition: Identifying High-Performance Behavioral Profiles Through Real-Stakes Financial Decision Data"*
+- Argue that trauma reshapes cognition in specific adaptive directions
+- Argue that traditional assessments miss or actively penalize these profiles
+- Show that real-stakes longitudinal behavioral data identifies them accurately
+- Publish when 100-200 profiles with outcome data exist
+- One I/O psychologist co-author changes every room you walk into
+- This is credibility infrastructure for the employer product — not the product itself
+
+---
+
 ## ⚡ QUICK STATUS
 
 > **PHASE 1 COMPLETE — April 17, 2026**
