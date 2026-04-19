@@ -2848,6 +2848,53 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        # ── Process Discipline Rate ───────────────────────────────────────────
+        st.markdown("**Process Discipline Rate**")
+        if "followed_plan" in df.columns:
+            _pdr_df = df[df["followed_plan"].isin(["yes", "no"])].copy()
+        else:
+            _pdr_df = df.iloc[0:0].copy()
+
+        if _pdr_df.empty:
+            st.caption("No process data yet — log trades with '💾 Log This Trade Entry' and record whether you followed your plan.")
+        else:
+            _pdr_df = _pdr_df.reset_index(drop=True)
+            _pdr_df["_entry_num"] = range(1, len(_pdr_df) + 1)
+            _pdr_df["_followed_bin"] = (_pdr_df["followed_plan"] == "yes").astype(int)
+            _pdr_df["_rolling_pct"] = (
+                _pdr_df["_followed_bin"].expanding().mean() * 100
+            )
+            _pdr_df["_point_color"] = _pdr_df["followed_plan"].map(
+                {"yes": "#4caf50", "no": "#ef5350"}
+            ).fillna("#aaa")
+
+            _fig_pdr = _go.Figure()
+            _fig_pdr.add_trace(_go.Scatter(
+                x=_pdr_df["_entry_num"],
+                y=_pdr_df["_rolling_pct"],
+                mode="lines+markers",
+                line=dict(color="#ab47bc", width=2.5),
+                marker=dict(size=7, color=_pdr_df["_point_color"]),
+                name="Process Discipline Rate",
+                hovertemplate="Entry %{x} — %{y:.1f}% followed plan<extra></extra>",
+            ))
+            _fig_pdr.add_hline(
+                y=70,
+                line=dict(color="rgba(171,71,188,0.4)", dash="dot"),
+                annotation_text="70% target",
+                annotation_font_color="#ab47bc",
+            )
+            _fig_pdr.update_layout(
+                paper_bgcolor="#1a1a2e", plot_bgcolor="#16213e",
+                font=dict(color="#e0e0e0"), height=220,
+                xaxis=dict(title="Entry #", gridcolor="#2a2a4a"),
+                yaxis=dict(title="Rolling % Followed Plan", gridcolor="#2a2a4a",
+                           range=[-5, 105], ticksuffix="%"),
+                margin=dict(l=10, r=10, t=20, b=40),
+                showlegend=False,
+            )
+            st.plotly_chart(_fig_pdr, use_container_width=True)
+
         # ── Process vs Outcome Gap ────────────────────────────────────────────
         st.markdown("---")
         st.markdown("**Process vs Outcome**")
