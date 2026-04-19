@@ -25,6 +25,57 @@
 
 ---
 
+### 🧠 BUILD INSIGHT — Historical Brain Pre-Training with Recency Weighting
+*Captured April 19, 2026 — high-leverage Phase 2 feature*
+
+**The gap that exists right now:**
+The brain weights (`compute_adaptive_weights()`) currently learn exclusively from live paper trades — 111 rows as of April 19. The 74,000+ row historical backtest dataset exists in Supabase and powers the Filter Sim, TCS Optimizer, and backtest engine — but it does NOT feed into the brain weights at all. The two systems are completely separate. This means the brain is calibrating from a thin sample when a massive, structured dataset already exists.
+
+**What this feature does:**
+Pre-train the brain on historical backtest data before live trades begin accumulating, so the weight system starts from a properly calibrated state instead of near-neutral.
+
+**Why not just use all 5 years equally:**
+Historical data is hindsight. Regimes shift. A setup that printed 90% in 2021 (momentum era, easy breakouts) behaves differently in 2025 (mean-reverting, choppier tape). Pre-training on stale regime data anchors the brain to patterns that may no longer be live.
+
+**The correct approach — Recency-Weighted Pre-Training:**
+
+| Data window | Weight multiplier |
+|---|---|
+| 12–18 months ago | 1× (baseline) |
+| 6–12 months ago | 2× |
+| 3–6 months ago | 3× |
+| 0–3 months ago | 5× |
+| Live paper trades | 10× (current signal, most trusted) |
+
+This way recent data dominates, older data provides volume and context without anchoring to dead regimes. Live paper trades still have the highest weight — they're your actual execution, your slippage, your fills, not simulated closes.
+
+**Architecture (when building):**
+1. Pull historical `accuracy_tracker`-equivalent data from the backtest history table, structured identically to the live `accuracy_tracker` schema
+2. Tag each row with its age bucket and apply the multiplier above (duplicate rows proportionally, or use weighted sampling in the Pearson correlation)
+3. Run the same `compute_adaptive_weights()` logic on this blended dataset as a one-time pre-calibration pass
+4. Store as the starting brain weights before the live paper trading day begins
+5. Live paper trade nightly recalibration proceeds on top of this pre-trained baseline
+
+**What this changes operationally:**
+- Brain starts with structure-level weights derived from thousands of examples, not 111
+- Structures that are rarely seen in live trading (Double Distribution, Bracketing) have enough historical examples to be properly weighted instead of defaulting to neutral
+- The TCS correlation, false-break penalty, environment factor — all are calibrated from real data on day 1 instead of converging slowly over months
+- Estimated impact: live win rate starts at 83–86% instead of 80.8%, converging faster to the model's true edge
+
+**What this does NOT do:**
+- Replace the live feedback loop — live paper trade nightly recalibration still runs and still overrides stale historical data over time
+- Fix regime drift — this is a starting position improvement, not a permanent ceiling. The live loop handles drift.
+- Require new data collection — everything needed already exists in Supabase
+
+**Priority:** Phase 2 task, after 6 months of live paper trades confirm the base edge. At that point the live data is rich enough to validate whether the pre-trained weights improved convergence speed vs. the naive starting point.
+
+**File targets when building:**
+- `paper_trader_bot.py` → `compute_adaptive_weights()` — extend to accept weighted data
+- `backend.py` → new function `load_historical_weight_training_data(recency_weighted=True)`
+- `pages/brain_calibration.py` → UI toggle: "Pre-train from historical data" button for operators
+
+---
+
 ### 🧠 THEORY NOTE — Trauma, Intelligence & the Cognitive Profiler
 *Captured April 19, 2026 — develop this further when sober*
 
