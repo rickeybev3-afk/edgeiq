@@ -1,7 +1,19 @@
 import streamlit as st
 import os
 
-NOTES_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".local", "build_notes_private.md")
+def _find_notes_path():
+    candidates = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".local", "build_notes_private.md"),
+        os.path.join(os.getcwd(), ".local", "build_notes_private.md"),
+        "/home/runner/workspace/.local/build_notes_private.md",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".local", "build_notes_private.md"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return candidates[0]
+
+NOTES_PATH = _find_notes_path()
 
 st.set_page_config(
     page_title="EdgeIQ — Full Build Notes (Private)",
@@ -49,4 +61,4 @@ try:
         content = f.read()
     st.markdown(content, unsafe_allow_html=True)
 except FileNotFoundError:
-    st.error("Private build notes file not found.")
+    st.error(f"Private build notes file not found. Tried: `{NOTES_PATH}` | cwd: `{os.getcwd()}`")
