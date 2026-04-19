@@ -1335,6 +1335,7 @@ _DEFAULTS = {
     # BTS sparkline metric preferences — persist across re-renders / filter changes
     "bts_eod_spk_metric_pref":  "Win Rate %",
     "bts_ldr_spk_metric_pref":  "Win Rate %",
+    "all_tickers_spk_metric_pref": "Win Rate %",
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -32112,13 +32113,17 @@ function _bqCopyShareLink() {
                     _spark_gap_te = [_r.get("gap_true_exp")   for _r in _sp_by_year]
                     _spark_trd_te = [_r.get("trend_true_exp") for _r in _sp_by_year]
                     _spark_all_te = [_r.get("all_true_exp")   for _r in _sp_by_year]
+                    if "sparkline_metric_toggle" not in st.session_state:
+                        st.session_state["sparkline_metric_toggle"] = st.session_state.get("all_tickers_spk_metric_pref", "Win Rate %")
                     _spark_metric = st.radio(
                         "Metric",
                         options=["Win Rate %", "Avg R", "True Expectancy"],
-                        index=0,
                         horizontal=True,
                         key="sparkline_metric_toggle",
                         label_visibility="collapsed",
+                        on_change=lambda: st.session_state.update(
+                            all_tickers_spk_metric_pref=st.session_state["sparkline_metric_toggle"]
+                        ),
                     )
                     _fig_spark = go.Figure()
                     if _spark_metric == "Win Rate %":
