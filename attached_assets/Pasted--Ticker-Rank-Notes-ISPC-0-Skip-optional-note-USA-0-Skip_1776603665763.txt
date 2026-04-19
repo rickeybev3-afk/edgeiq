@@ -1,0 +1,418 @@
+
+Ticker
+
+Rank
+
+Notes
+
+ISPC
+
+0 – Skip
+optional note
+USA
+
+0 – Skip
+optional note
+BZAI
+
+0 – Skip
+optional note
+PBM
+
+0 – Skip
+optional note
+AGAE
+
+0 – Skip
+optional note
+MYSE
+
+0 – Skip
+optional note
+RPAY
+
+0 – Skip
+optional note
+SNAL
+
+0 – Skip
+optional note
+DFNS
+
+0 – Skip
+optional note
+ULCC
+
+0 – Skip
+optional note
+ASST
+
+0 – Skip
+optional note
+BEAT
+
+0 – Skip
+optional note
+TRVI
+
+0 – Skip
+optional note
+UPXI
+
+0 – Skip
+optional note
+SG
+
+0 – Skip
+optional note
+IMSR
+
+0 – Skip
+optional note
+OTLK
+
+0 – Skip
+optional note
+TDUP
+
+0 – Skip
+optional note
+ELDN
+
+0 – Skip
+optional note
+CADL
+
+0 – Skip
+optional note
+CWH
+
+0 – Skip
+optional note
+GO
+
+0 – Skip
+optional note
+SRFM
+
+0 – Skip
+optional note
+KURA
+
+0 – Skip
+optional note
+BMEA
+
+0 – Skip
+optional note
+LDI
+
+0 – Skip
+optional note
+SLDE
+
+0 – Skip
+optional note
+PRCH
+
+0 – Skip
+optional note
+JELD
+
+0 – Skip
+optional note
+BBBY
+
+0 – Skip
+optional note
+DGXX
+
+0 – Skip
+optional note
+VSTM
+
+0 – Skip
+optional note
+FUBO
+
+0 – Skip
+optional note
+ANGX
+
+0 – Skip
+optional note
+RLMD
+
+0 – Skip
+optional note
+PTLO
+
+0 – Skip
+optional note
+DCGO
+
+0 – Skip
+optional note
+HPP
+
+0 – Skip
+optional note
+MAMO
+
+0 – Skip
+optional note
+SNBR
+
+0 – Skip
+optional note
+OMER
+
+0 – Skip
+optional note
+BTAI
+
+0 – Skip
+optional note
+EVEX
+
+0 – Skip
+optional note
+ARHS
+
+0 – Skip
+optional note
+BOBS
+
+0 – Skip
+optional note
+PLBY
+
+0 – Skip
+optional note
+AMLX
+
+0 – Skip
+optional note
+BBNX
+
+0 – Skip
+optional note
+AVXL
+
+0 – Skip
+optional note
+NMRA
+
+0 – Skip
+optional note
+CDLX
+
+0 – Skip
+optional note
+RANI
+
+0 – Skip
+optional note
+CGTX
+
+0 – Skip
+optional note
+CRDF
+
+0 – Skip
+optional note
+CMRC
+
+0 – Skip
+optional note
+NAVI
+
+0 – Skip
+optional note
+SKYX
+
+0 – Skip
+optional note
+FULC
+
+0 – Skip
+optional note
+BMNU
+
+0 – Skip
+optional note
+BYND
+
+0 – Skip
+optional note
+TSLL
+
+0 – Skip
+optional note
+BITO
+
+0 – Skip
+optional note
+AMC
+
+0 – Skip
+optional note
+BMNG
+
+0 – Skip
+optional note
+AAL
+
+0 – Skip
+optional note
+IBIT
+
+0 – Skip
+optional note
+MSTU
+
+0 – Skip
+optional note
+SOFI
+
+0 – Skip
+optional note
+HIVE
+
+0 – Skip
+optional note
+SMR
+
+0 – Skip
+optional note
+BMNR
+
+0 – Skip
+optional note
+TSLG
+
+0 – Skip
+optional note
+HIMS
+
+0 – Skip
+optional note
+TOVX
+
+0 – Skip
+optional note
+IONQ
+
+0 – Skip
+optional note
+KWEB
+
+0 – Skip
+optional note
+WULF
+
+0 – Skip
+optional note
+RGTI
+
+0 – Skip
+optional note
+ABTC
+
+0 – Skip
+optional note
+CCL
+
+0 – Skip
+optional note
+RKT
+
+0 – Skip
+optional note
+JBLU
+
+0 – Skip
+optional note
+CIFR
+
+0 – Skip
+optional note
+INFQ
+
+0 – Skip
+optional note
+RIVN
+
+0 – Skip
+optional note
+CONL
+
+0 – Skip
+optional note
+SOUN
+
+0 – Skip
+optional note
+AUR
+
+0 – Skip
+optional note
+CLSK
+
+0 – Skip
+optional note
+OKLL
+
+0 – Skip
+optional note
+HTZ
+
+0 – Skip
+optional note
+QUBT
+
+0 – Skip
+optional note
+FRSH
+
+0 – Skip
+optional note
+RIOT
+
+0 – Skip
+optional note
+USAR
+
+0 – Skip
+optional note
+BULL
+
+0 – Skip
+optional note
+GPRO
+
+0 – Skip
+optional note
+CLF
+
+0 – Skip
+optional note
+STEEL
+
+0 – Skip
+optional note
+BITX
+
+0 – Skip
+optional note
+🟡 Draft auto-saved — your ratings are safe even if the app restarts.
+
+
+
+📊 Accuracy by Rank Tier
+
+Verify rankings from date
+
+2026/04/13
+
+Verified 0, errors on 37 tickers
