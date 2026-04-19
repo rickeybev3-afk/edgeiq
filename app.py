@@ -22297,6 +22297,26 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 _bs_filter_tags.append(
                     "structure: " + ", ".join(_bs_flt_structs)
                 )
+
+            # ── Sort order + Trend grouping (URL-synced) ───────────────
+            _bs_sort_opts  = ["Ascending", "Descending"]
+            _bs_group_opts = ["Weekly", "Monthly"]
+            _url_init_str("bs_sort",  "bs_sort",  "Ascending", allowed=_bs_sort_opts)
+            _url_init_str("bs_group", "bs_group", "Weekly",    allowed=_bs_group_opts)
+            _bs_sort_c1, _bs_sort_c2 = st.columns(2)
+            with _bs_sort_c1:
+                _bs_sort_sel = st.selectbox(
+                    "Sort order", options=_bs_sort_opts, key="bs_sort",
+                )
+            with _bs_sort_c2:
+                _bs_group_sel = st.selectbox(
+                    "Trend grouping", options=_bs_group_opts, key="bs_group",
+                )
+            _url_push("bs_sort",  _bs_sort_sel)
+            _url_push("bs_group", _bs_group_sel)
+            _bs_sort_asc     = (_bs_sort_sel == "Ascending")
+            _bs_period_freq  = "W" if _bs_group_sel == "Weekly" else "M"
+            _bs_period_label = "Week" if _bs_group_sel == "Weekly" else "Month"
             _bs_trade_summary = f"{_bs_total_trades} trade{'s' if _bs_total_trades != 1 else ''} in scope"
             if _bs_filter_tags:
                 _bs_trade_summary += " · filter: " + " · ".join(_bs_filter_tags)
@@ -22310,7 +22330,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 _bs_df.groupby("signal")
                 .size()
                 .reset_index(name="count")
-                .sort_values("count", ascending=True)
+                .sort_values("count", ascending=_bs_sort_asc)
             )
             _bs_counts["label"] = _bs_counts["signal"].map(_bs_label_map)
             _bs_counts["is_positive"] = _bs_counts["signal"].isin(_bs_positive)
@@ -22387,7 +22407,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
             if not _bs_dated.empty and len(_bs_dated["date"].unique()) >= 2:
                 st.markdown("#### Per-Signal Frequency Over Time")
                 _ts_caption = (
-                    "Weekly rollup — one line per signal so you can see if FOMO entries "
+                    f"{_bs_group_sel} rollup — one line per signal so you can see if FOMO entries "
                     "or panic exits are rising or falling. Red lines = bad habits · "
                     "Green lines = positive habits."
                 )
@@ -22400,7 +22420,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
 
                 _bs_dated2 = _bs_dated.copy()
                 _bs_dated2["date"] = _pd_bs.to_datetime(_bs_dated2["date"])
-                _bs_dated2["week"] = _bs_dated2["date"].dt.to_period("W").apply(
+                _bs_dated2["week"] = _bs_dated2["date"].dt.to_period(_bs_period_freq).apply(
                     lambda p: p.start_time.date()
                 )
 
@@ -22447,7 +22467,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                                 marker=dict(size=6),
                                 hovertemplate=(
                                     f"<b>{_sig_label}</b><br>"
-                                    "Week of %{x}<br>Count: %{y}<extra></extra>"
+                                    f"{_bs_period_label} of " + "%{x}<br>Count: %{y}<extra></extra>"
                                 ),
                             ))
                         fig_per.update_layout(
@@ -22496,7 +22516,7 @@ Nothing here requires any input from you. All numbers update automatically as yo
                 _oc_sigs = (
                     _oc_grouped.groupby("signal")["total"]
                     .first()
-                    .sort_values(ascending=True)
+                    .sort_values(ascending=_bs_sort_asc)
                     .index.tolist()
                 )
                 _oc_labels = [_bs_label_map.get(s, s) for s in _oc_sigs]
