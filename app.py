@@ -2973,7 +2973,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             _pog_df = df.iloc[0:0].copy()
 
         if _pog_df.empty:
-            st.caption("No process data yet — use the '💾 Log This Trade Entry' form to record whether you followed your plan.")
+            st.caption("No process data yet — use the '💾 Log This Trade Entry' form or the Voice Memo logger to record whether you followed your plan.")
         else:
             _pog_df["_grade_score"] = _pog_df["grade"].map(_GRADE_SCORE).fillna(1)
             _pog_df["_win"] = _pog_df["win_loss"].str.lower().eq("win") if "win_loss" in _pog_df.columns else False
