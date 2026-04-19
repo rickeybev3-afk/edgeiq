@@ -31891,8 +31891,8 @@ function _bqCopyShareLink() {
                 with _dsl_col3:
                     st.metric("Trend / Squeeze", f"{len(_dsl['trend'])} / {len(_dsl['squeeze'])}")
                 with _dsl_col4:
-                    st.metric("Trades fired today", _dsl_today_trades,
-                              help="Paper trades logged today (all TCS levels)")
+                    st.metric("Paper trades fired", _dsl_today_trades,
+                              help="Paper trades logged today (all TCS levels, resolved + pending)")
                 if _dsl["all"]:
                     st.caption(f"**Scanned tickers:** {', '.join(_dsl['all'])}")
 
