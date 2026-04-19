@@ -2477,7 +2477,46 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 _left = _journal_export.iloc[:, :_drop_col]
                 _right = _journal_export.iloc[:, _drop_col + 1:]
                 _journal_export = pd.concat([_left, _sig_df, _right], axis=1)
-            csv_bytes = _journal_export.to_csv(index=False).encode()
+            _csv_parts = [_journal_export.to_csv(index=False)]
+
+            # Append per-structure discipline rate summary block
+            if (
+                "followed_plan" in df.columns
+                and "structure" in df.columns
+            ):
+                _exp_pdr = df[df["followed_plan"].isin(["yes", "no"])].copy()
+                if "structure" in _exp_pdr.columns:
+                    _exp_pdr["structure"] = _exp_pdr["structure"].apply(_clean_structure_label)
+                _exp_struct = (
+                    _exp_pdr[_exp_pdr["structure"].notna() & (_exp_pdr["structure"] != "")]
+                )
+                if not _exp_struct.empty:
+                    _exp_rows = []
+                    for _s, _sg in _exp_struct.groupby("structure"):
+                        _s_yes   = (_sg["followed_plan"] == "yes").sum()
+                        _s_total = len(_sg)
+                        _s_pct   = round(_s_yes / _s_total * 100) if _s_total else 0
+                        _exp_rows.append({
+                            "structure": _s,
+                            "followed_plan_yes": _s_yes,
+                            "total_tagged": _s_total,
+                            "discipline_rate_pct": _s_pct,
+                        })
+                    # Overall totals row
+                    _all_yes   = (_exp_pdr["followed_plan"] == "yes").sum()
+                    _all_total = len(_exp_pdr)
+                    _all_pct   = round(_all_yes / _all_total * 100) if _all_total else 0
+                    _exp_rows.append({
+                        "structure": "OVERALL",
+                        "followed_plan_yes": _all_yes,
+                        "total_tagged": _all_total,
+                        "discipline_rate_pct": _all_pct,
+                    })
+                    _struct_summary_df = pd.DataFrame(_exp_rows)
+                    _csv_parts.append("\n# Per-Structure Discipline Rate Summary\n")
+                    _csv_parts.append(_struct_summary_df.to_csv(index=False))
+
+            csv_bytes = "".join(_csv_parts).encode()
             st.download_button(
                 "⬇️ Download Journal (CSV)",
                 data=csv_bytes,
