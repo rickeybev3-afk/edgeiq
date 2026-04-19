@@ -2160,6 +2160,12 @@ def render_log_entry_ui():
         )
         _vj_col1, _vj_col2 = st.columns(2)
         _vj_checked = {}
+        # Sync followed_plan checkbox with the process-quality radio button.
+        # The radio's value persists in session_state across re-runs, so we can
+        # read it here (before the checkbox is rendered) and force the checkbox
+        # to the matching value.  The sync is one-directional: radio → checkbox.
+        _radio_plan_val = st.session_state.get("journal_followed_plan", "Yes")
+        st.session_state["vj_sig_followed_plan"] = (_radio_plan_val == "Yes")
         for _i, _sk in enumerate(_VJ_SIGNAL_KEYS):
             _ai_val = bool(_vj_ai_signals.get(_sk, False))
             _is_neg = _sk in _VJ_NEGATIVE_SIGNALS
