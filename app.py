@@ -34122,13 +34122,14 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     if "tcs" in _pt_df.columns:
         _pt_tcs_num = pd.to_numeric(_pt_df["tcs"], errors="coerce").fillna(0)
         if "scan_type" in _pt_df.columns:
-            _pt_is_intraday = _pt_df["scan_type"].str.lower().str.strip().eq("intraday").fillna(False)
+            _pt_scan_norm = _pt_df["scan_type"].str.lower().str.strip().fillna("")
+            _pt_is_morning = _pt_scan_norm.eq("morning")     # only explicit "morning" rows get floor=60
             _pt_tcs_mask = (
-                (_pt_is_intraday  & (_pt_tcs_num >= 50)) |   # intraday: TCS ≥ 50
-                (~_pt_is_intraday & (_pt_tcs_num >= 60))      # morning:  TCS ≥ 60
+                (_pt_is_morning  & (_pt_tcs_num >= 60)) |    # morning: TCS ≥ 60
+                (~_pt_is_morning & (_pt_tcs_num >= 50))       # intraday OR unknown: TCS ≥ 50
             )
         else:
-            _pt_tcs_mask = _pt_tcs_num >= 50  # fallback when scan_type unknown
+            _pt_tcs_mask = _pt_tcs_num >= 50  # fallback when scan_type column missing
         _pt_df = _pt_df[_pt_tcs_mask]
     if "ib_range_pct" in _pt_df.columns:
         _pt_df = _pt_df[
