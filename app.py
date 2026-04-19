@@ -2852,15 +2852,28 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                 _struct_rows.append((_sname, _s_yes, _s_total, _s_pct))
 
             if _struct_rows:
-                st.markdown(
-                    '<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;'
-                    'letter-spacing:1px;margin-bottom:8px;margin-top:18px;">'
-                    'Discipline by Structure</div>',
-                    unsafe_allow_html=True,
-                )
-                _ncols = min(len(_struct_rows), 4)
+                _struct_sort_asc = st.session_state.get("struct_sort_asc", True)
+                _sort_label_col, _sort_btn_col = st.columns([6, 1])
+                with _sort_label_col:
+                    st.markdown(
+                        '<div style="font-size:11px;color:#90a4ae;text-transform:uppercase;'
+                        'letter-spacing:1px;margin-bottom:8px;margin-top:18px;">'
+                        'Discipline by Structure</div>',
+                        unsafe_allow_html=True,
+                    )
+                with _sort_btn_col:
+                    st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
+                    if st.button(
+                        "↓ Show best first" if _struct_sort_asc else "↑ Show worst first",
+                        key="struct_sort_toggle",
+                        help="Toggle sort order",
+                    ):
+                        st.session_state["struct_sort_asc"] = not _struct_sort_asc
+                        st.rerun()
+                _struct_rows_sorted = sorted(_struct_rows, key=lambda x: x[3], reverse=not _struct_sort_asc)
+                _ncols = min(len(_struct_rows_sorted), 4)
                 _scols = st.columns(_ncols)
-                for _i, (_sname, _s_yes, _s_total, _s_pct) in enumerate(_struct_rows):
+                for _i, (_sname, _s_yes, _s_total, _s_pct) in enumerate(_struct_rows_sorted):
                     _s_col = "#4caf50" if _s_pct >= 70 else "#ffa726" if _s_pct >= 50 else "#ef5350"
                     with _scols[_i % _ncols]:
                         st.markdown(
