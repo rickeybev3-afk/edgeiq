@@ -25786,6 +25786,11 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 
     # ── Screener Pass × P-Tier Backtest Analysis ─────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
+    _sp_hdr_col, _sp_refresh_col = st.columns([9, 1])
+    with _sp_refresh_col:
+        if st.button("🔄 Refresh", key="refresh_screener_pass_tier", help="Clear cache and reload screener pass data immediately"):
+            st.cache_data.clear()
+            st.rerun()
     with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
         st.caption("Gap = ≥3% close-to-close daily change (directional, positive only) · Trend = ≥1% change + close > SMA20 & SMA50 · Other = all else (incl. down days) · PF = Profit Factor · — = <30 trades (insufficient)")
 
@@ -31616,14 +31621,20 @@ function _bqCopyShareLink() {
 
         # ── Screener Pass — 5-yr Backtest Breakdown (Gap vs Trend vs All) ────
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(
-            "**Screener Pass — Gap vs Trend vs All (5-yr Backtest)**",
-            help=(
-                "Gap = ≥3% daily gap classified rows · Trend = ≥1% change + above SMA20 & SMA50 · "
-                "All = every resolved backtest row regardless of screener_pass. "
-                "Run `python backfill_screener_pass.py` to classify historical rows if counts look low."
-            ),
-        )
+        _sp2_hdr_col, _sp2_refresh_col = st.columns([9, 1])
+        with _sp2_hdr_col:
+            st.markdown(
+                "**Screener Pass — Gap vs Trend vs All (5-yr Backtest)**",
+                help=(
+                    "Gap = ≥3% daily gap classified rows · Trend = ≥1% change + above SMA20 & SMA50 · "
+                    "All = every resolved backtest row regardless of screener_pass. "
+                    "Run `python backfill_screener_pass.py` to classify historical rows if counts look low."
+                ),
+            )
+        with _sp2_refresh_col:
+            if st.button("🔄 Refresh", key="refresh_screener_pass_grid", help="Clear cache and reload screener pass data immediately"):
+                st.cache_data.clear()
+                st.rerun()
         _sp_grid = _load_screener_pass_grid(
             st.session_state.get("auth_user_id", ""),
             start_date=_grid_start,
