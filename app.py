@@ -386,6 +386,88 @@ def _cached_get_lunar_phase(today: "date" = None) -> dict:
 def _cached_get_recent_env_stats(user_id: str = "", days: int = 5) -> dict:
     return get_recent_env_stats(user_id=user_id, days=days)
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_ls_bt_sim_history(uid):
+    return load_backtest_sim_history(user_id=uid)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_xref_bt_hist(uid):
+    return load_backtest_sim_history(user_id=uid)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_bt_sim_history(uid):
+    return load_backtest_sim_history(user_id=uid)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_intraday_closed(uid: str):
+    return get_intraday_closed_paper_trades(user_id=uid)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_pace_target_alltime(uid):
+    return get_backtest_pace_target(user_id=uid)
+
+@st.cache_data(ttl=300, max_entries=50, show_spinner=False)
+def _load_pace_target_scoped(uid, start_date: str, end_date: str):
+    return get_backtest_pace_target(user_id=uid, start_date=start_date, end_date=end_date)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_backtest_grid(uid, start_date=None, end_date=None):
+    grid = []
+    for st_name in SCAN_TYPES:
+        for lo, hi in [(0, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 101)]:
+            try:
+                rows, offset = [], 0
+                while True:
+                    q = (
+                        supabase.table("backtest_sim_runs")
+                        .select("actual_outcome,pnl_r_sim")
+                        .eq("user_id", uid)
+                        .eq("scan_type", st_name)
+                        .gte("tcs", lo)
+                        .lt("tcs", min(hi, 100) if hi < 101 else 200)
+                        .in_("actual_outcome", RESOLVED_OUTCOMES)
+                    )
+                    if start_date:
+                        q = q.gte("sim_date", str(start_date))
+                    if end_date:
+                        q = q.lte("sim_date", str(end_date))
+                    batch = (
+                        q.range(offset, offset + 999)
+                        .execute()
+                        .data or []
+                    )
+                    if not batch:
+                        break
+                    rows += batch
+                    if len(batch) < 1000:
+                        break
+                    offset += 1000
+                if not rows:
+                    continue
+                breaks = [
+                    r for r in rows
+                    if r.get("actual_outcome") in BREAK_OUTCOMES
+                    and r.get("pnl_r_sim") is not None
+                ]
+                p_break = len(breaks) / len(rows) if rows else 0
+                avg_r   = sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks) if breaks else 0
+                true_e  = p_break * avg_r
+                label   = f"{lo}–{min(hi-1,99)}+" if hi > 99 else f"{lo}–{hi-1}"
+                grid.append({
+                    "scan_type":   st_name,
+                    "tcs_label":   label,
+                    "tcs_lo":      lo,
+                    "tcs_hi":      hi,
+                    "setups":      len(rows),
+                    "breaks":      len(breaks),
+                    "p_break_pct": round(p_break * 100, 1),
+                    "avg_r":       round(avg_r, 3),
+                    "true_exp":    round(true_e, 3),
+                })
+            except Exception:
+                continue
+    return grid
+
 # ── Auto-regenerate build notes HTML on startup ───────────────────────────────
 def _regenerate_notes_html():
     import json as _json
@@ -10265,10 +10347,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
         unsafe_allow_html=True,
     )
     # ── Load Saved Results ──────────────────────────────────────────────────────
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _load_ls_bt_sim_history(uid):
-        return load_backtest_sim_history(user_id=uid)
-
     with st.expander("📂 Load Saved Simulation Results", expanded=False):
         st.caption("Load any previous simulation run from your history without re-fetching Alpaca data.")
         _ls_col1, _ls_col2 = st.columns([1, 1])
@@ -21178,10 +21256,6 @@ Nothing here requires any input from you. All numbers update automatically as yo
         "Shows whether the model was warning you on days you lost."
     )
 
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _load_xref_bt_hist(uid):
-        return load_backtest_sim_history(user_id=uid)
-
     _xref_bt_df = _load_xref_bt_hist(uid=_uid)
 
     _xref = compute_journal_model_crossref(journal_df, _xref_bt_df)
@@ -24488,10 +24562,6 @@ def render_performance_tab():
         )
 
     # ── Load backtest sim history (backtest_sim_runs) ────────────────────────
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _load_bt_sim_history(uid):
-        return load_backtest_sim_history(user_id=uid)
-
     _bt_sim_df = _load_bt_sim_history(uid=_AUTH_USER_ID)
 
     # ── Load accuracy_tracker (bot watchlist calls + ALL combined) ──
@@ -24537,10 +24607,6 @@ def render_performance_tab():
     # see a live running tally of realized R as trailing-stop fills come in,
     # instead of waiting for the nightly 3:30 PM sweep.
     # ════════════════════════════════════════════════════════════════════════════
-    @st.cache_data(ttl=60, show_spinner=False)
-    def _load_intraday_closed(uid: str):
-        return get_intraday_closed_paper_trades(user_id=uid)
-
     _intraday_closed = _load_intraday_closed(uid=_AUTH_USER_ID)
 
     _today_label = __import__("datetime").date.today().strftime("%a %b %-d")
@@ -24792,17 +24858,6 @@ def render_performance_tab():
         )
 
     # ── Live-filter pace target (cached, computed from backtest_sim_runs) ────────
-    # All-time target: one entry per user, no growth risk.
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _load_pace_target_alltime(uid):
-        return get_backtest_pace_target(user_id=uid)
-
-    # Date-scoped target: capped at 50 LRU entries so the cache cannot grow
-    # unbounded as traders explore many unique date ranges.
-    @st.cache_data(ttl=300, max_entries=50, show_spinner=False)
-    def _load_pace_target_scoped(uid, start_date: str, end_date: str):
-        return get_backtest_pace_target(user_id=uid, start_date=start_date, end_date=end_date)
-
     _pace_rp_start = st.session_state.get("rp_start_date")
     _pace_rp_end   = st.session_state.get("rp_end_date")
     _pace_start_str = str(_pace_rp_start) if _pace_rp_start else ""
@@ -31385,64 +31440,6 @@ function _bqCopyShareLink() {
         "All other outcomes (Range-Bound, Neutral, etc.) reduce P(breakout). "
         "Use the date filter below to narrow to a specific window, or leave blank for all-time data."
     )
-
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def _load_backtest_grid(uid, start_date=None, end_date=None):
-        grid = []
-        for st_name in SCAN_TYPES:
-            for lo, hi in [(0, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 101)]:
-                try:
-                    rows, offset = [], 0
-                    while True:
-                        q = (
-                            supabase.table("backtest_sim_runs")
-                            .select("actual_outcome,pnl_r_sim")
-                            .eq("user_id", uid)
-                            .eq("scan_type", st_name)
-                            .gte("tcs", lo)
-                            .lt("tcs", min(hi, 100) if hi < 101 else 200)
-                            .in_("actual_outcome", RESOLVED_OUTCOMES)
-                        )
-                        if start_date:
-                            q = q.gte("sim_date", str(start_date))
-                        if end_date:
-                            q = q.lte("sim_date", str(end_date))
-                        batch = (
-                            q.range(offset, offset + 999)
-                            .execute()
-                            .data or []
-                        )
-                        if not batch:
-                            break
-                        rows += batch
-                        if len(batch) < 1000:
-                            break
-                        offset += 1000
-                    if not rows:
-                        continue
-                    breaks = [
-                        r for r in rows
-                        if r.get("actual_outcome") in BREAK_OUTCOMES
-                        and r.get("pnl_r_sim") is not None
-                    ]
-                    p_break = len(breaks) / len(rows) if rows else 0
-                    avg_r   = sum(float(r["pnl_r_sim"]) for r in breaks) / len(breaks) if breaks else 0
-                    true_e  = p_break * avg_r
-                    label   = f"{lo}–{min(hi-1,99)}+" if hi > 99 else f"{lo}–{hi-1}"
-                    grid.append({
-                        "scan_type":   st_name,
-                        "tcs_label":   label,
-                        "tcs_lo":      lo,
-                        "tcs_hi":      hi,
-                        "setups":      len(rows),
-                        "breaks":      len(breaks),
-                        "p_break_pct": round(p_break * 100, 1),
-                        "avg_r":       round(avg_r, 3),
-                        "true_exp":    round(true_e, 3),
-                    })
-                except Exception:
-                    continue
-        return grid
 
     # ── Date-range filter for SECTION 1c ─────────────────────────────────────
     # Sync button: copy the Backtest P&L date range into the edge map filter
