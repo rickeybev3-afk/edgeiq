@@ -8,6 +8,7 @@ Usage:
   python calibrate_sp_mult.py --pass squeeze        # calibrate the squeeze pass
   python calibrate_sp_mult.py --pass gap_down       # calibrate the gap_down pass
   python calibrate_sp_mult.py --pass squeeze --apply  # calibrate AND patch paper_trader_bot.py
+  python calibrate_sp_mult.py --reset-pass trend    # reset trend back to 1.00x baseline
   python calibrate_sp_mult.py --self-test           # run deterministic unit tests
 
 Methodology (mirrors the 5-year backtest used across passes):
@@ -71,6 +72,11 @@ PASS_CONFIG: dict[str, dict] = {
         "citation_inner": "Bearish Break, ",
         # optional prefix for the comment on the "Next step" line
         "next_step_comment_prefix": "Bearish Break — ",
+        # template for the stale-reset citation comment; {date} is replaced with today's ISO date
+        "stale_comment_template": (
+            "#   'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades as of\n"
+            "#              {date} — 1.00× baseline until >=30 trades settle."
+        ),
     },
     "squeeze": {
         "screener_pass": "squeeze",
@@ -81,6 +87,10 @@ PASS_CONFIG: dict[str, dict] = {
         # squeeze citation: 'squeeze' (2024-01-03 → 2024-12-31): ...
         "citation_inner": "",
         "next_step_comment_prefix": "",
+        "stale_comment_template": (
+            "#   'squeeze':   0 settled trades as of {date} — 1.00× baseline until\n"
+            "#               >=30 trades settle."
+        ),
     },
     "other": {
         "screener_pass": "other",
@@ -90,6 +100,10 @@ PASS_CONFIG: dict[str, dict] = {
         "stat_label": "other",
         "citation_inner": "",
         "next_step_comment_prefix": "",
+        "stale_comment_template": (
+            "#   'other'  (< 3% daily change): 0 settled trades as of {date} — 1.00× baseline until\n"
+            "#               >=30 trades settle."
+        ),
     },
     "trend": {
         "screener_pass": "trend",
@@ -99,6 +113,23 @@ PASS_CONFIG: dict[str, dict] = {
         "stat_label": "trend",
         "citation_inner": "",
         "next_step_comment_prefix": "",
+        "stale_comment_template": (
+            "#   'trend'  (1-3%):              0 settled trades as of {date} — 1.00× baseline until\n"
+            "#               >=30 trades settle."
+        ),
+    },
+    "gap": {
+        "screener_pass": "gap",
+        "predicted": None,
+        "title": "Gap Pass (≥ 3% daily change) Position-Size Multiplier Calibration",
+        "count_label": "gap",
+        "stat_label": "gap",
+        "citation_inner": "",
+        "next_step_comment_prefix": "",
+        "stale_comment_template": (
+            "#   'gap'    (≥ 3% daily change): 0 settled trades as of {date} — 1.00× baseline until\n"
+            "#               >=30 trades settle."
+        ),
     },
 }
 
@@ -535,11 +566,180 @@ def _self_test_apply() -> None:
         expect_value=1.00, expect_comment_fragment="68.0% WR",
     )
 
+    # ── Round-trip tests: reset → verify stale ────────────────────────────────
+    def _run_reset(
+        label: str,
+        pass_name: str,
+        expect_stale_fragment: str,
+        expect_value: float = 1.00,
+        expect_inline_fragment: str = "baseline; recalibrate once >=30 trades settle",
+        fixture: str = _APPLY_FIXTURE,
+    ) -> None:
+        nonlocal all_ok
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+            tmp = tf.name
+            tf.write(fixture)
+        try:
+            _reset_pass_to_baseline(pass_name, bot_path=tmp)
+            with open(tmp) as fh:
+                patched = fh.read()
+            pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*([\d.]+)')
+            m = pat.search(patched)
+            if not m:
+                print(f"  FAIL {label}: '{pass_name}' entry not found after reset")
+                all_ok = False
+                return
+            got_value = float(m.group(1))
+            value_ok = abs(got_value - expect_value) < 0.001
+            stale_ok = expect_stale_fragment in patched
+            inline_ok = expect_inline_fragment in patched
+            ok = value_ok and stale_ok and inline_ok
+            print(
+                f"  {'OK  ' if ok else 'FAIL'} {label}: "
+                f"value={got_value:.2f} (expected {expect_value:.2f}), "
+                f"stale_comment={'found' if stale_ok else 'MISSING'}, "
+                f"inline_comment={'found' if inline_ok else 'MISSING'}"
+            )
+            if not ok:
+                all_ok = False
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            try:
+                os.unlink(tmp + ".bak")
+            except OSError:
+                pass
+
+    _run_reset(
+        "reset trend (calibrated→stale)",
+        "trend",
+        expect_stale_fragment="'trend'  (1-3%):              0 settled trades as of",
+        expect_inline_fragment="baseline; recalibrate once >=30 trades settle",
+    )
+    _run_reset(
+        "reset other (calibrated→stale)",
+        "other",
+        expect_stale_fragment="'other'  (< 3% daily change): 0 settled trades as of",
+        expect_inline_fragment="baseline; recalibrate once >=30 trades settle",
+    )
+    _run_reset(
+        "reset gap_down (already-stale idempotent)",
+        "gap_down",
+        expect_stale_fragment="'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades as of",
+        expect_inline_fragment="Bearish Break — baseline; recalibrate once >=30 trades settle",
+    )
+    _run_reset(
+        "reset squeeze (already-stale idempotent)",
+        "squeeze",
+        expect_stale_fragment="'squeeze':   0 settled trades as of",
+        expect_inline_fragment="baseline; recalibrate once >=30 trades settle",
+    )
+
+    # Round-trip: reset trend → then apply real data → stale comment gone
+    def _run_roundtrip(
+        label: str,
+        pass_name: str,
+        apply_mult: float,
+        apply_comment: str,
+        apply_citation: str,
+        expect_stale_absent: str,
+        expect_citation_fragment: str,
+        fixture: str = _APPLY_FIXTURE,
+    ) -> None:
+        nonlocal all_ok
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+            tmp = tf.name
+            tf.write(fixture)
+        try:
+            _reset_pass_to_baseline(pass_name, bot_path=tmp)
+            _apply_to_bot(pass_name, apply_mult, apply_comment, citation_line=apply_citation, bot_path=tmp)
+            with open(tmp) as fh:
+                patched = fh.read()
+            pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*([\d.]+)')
+            m = pat.search(patched)
+            if not m:
+                print(f"  FAIL {label}: '{pass_name}' entry not found after round-trip")
+                all_ok = False
+                return
+            got_value = float(m.group(1))
+            value_ok = abs(got_value - apply_mult) < 0.001
+            stale_gone = expect_stale_absent not in patched
+            citation_ok = expect_citation_fragment in patched
+            ok = value_ok and stale_gone and citation_ok
+            print(
+                f"  {'OK  ' if ok else 'FAIL'} {label}: "
+                f"value={got_value:.2f} (expected {apply_mult:.2f}), "
+                f"stale_gone={'yes' if stale_gone else 'NO'}, "
+                f"citation={'found' if citation_ok else 'MISSING'}"
+            )
+            if not ok:
+                all_ok = False
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            try:
+                os.unlink(tmp + ".bak")
+            except OSError:
+                pass
+
+    _run_roundtrip(
+        "round-trip trend: reset → apply 1.10×",
+        pass_name="trend",
+        apply_mult=1.10,
+        apply_comment="50 trades, 68.0% WR / +0.350R → 1.10×",
+        apply_citation="#   'trend' (2024-01-03 → 2024-12-31): 50 trades, 68.0% WR / +0.350R avg → 1.10×",
+        expect_stale_absent="'trend'  (1-3%):              0 settled trades as of",
+        expect_citation_fragment="50 trades, 68.0% WR / +0.350R avg → 1.10×",
+    )
+    _run_roundtrip(
+        "round-trip other: reset → apply 1.20×",
+        pass_name="other",
+        apply_mult=1.20,
+        apply_comment="60 trades, 80.0% WR / +0.500R → 1.20×",
+        apply_citation="#   'other' (2024-01-03 → 2024-12-31): 60 trades, 80.0% WR / +0.500R avg → 1.20×",
+        expect_stale_absent="'other'  (< 3% daily change): 0 settled trades as of",
+        expect_citation_fragment="60 trades, 80.0% WR / +0.500R avg → 1.20×",
+    )
+
     if all_ok:
         print("All _apply_to_bot self-tests passed.")
     else:
         print("SELF-TEST FAILURES in _apply_to_bot — check the output above.")
         sys.exit(1)
+
+
+def _reset_pass_to_baseline(pass_name: str, bot_path: str | None = None) -> None:
+    """Reset _SP_MULT_TABLE[pass_name] to 1.00× baseline in paper_trader_bot.py.
+
+    Writes the '0 settled trades as of <today>' stale-warning comment and
+    1.00× baseline value, identical to the state before any calibration data
+    has been collected for the pass.
+    """
+    import datetime as _dt
+
+    resolved_path = bot_path if bot_path is not None else _BOT_FILE
+
+    if pass_name not in PASS_CONFIG:
+        known = ", ".join(PASS_CONFIG)
+        print(f"ERROR: unknown pass '{pass_name}'. Known passes: {known}", file=sys.stderr)
+        sys.exit(1)
+
+    cfg = PASS_CONFIG[pass_name]
+    today_str = _dt.date.today().isoformat()
+
+    stale_template = cfg.get("stale_comment_template", "")
+    citation_line = stale_template.format(date=today_str) if stale_template else ""
+
+    next_step_comment_prefix = cfg.get("next_step_comment_prefix", "")
+    inline_comment = f"{next_step_comment_prefix}baseline; recalibrate once >=30 trades settle"
+
+    print(f"Resetting '{pass_name}' to 1.00\u00d7 baseline in {resolved_path} \u2026")
+    _apply_to_bot(pass_name, 1.00, inline_comment, citation_line=citation_line, bot_path=resolved_path)
+    print(f"\nReset complete: '{pass_name}' is now at 1.00\u00d7 (0 settled trades baseline).")
 
 
 def _list_passes() -> None:
@@ -843,6 +1043,18 @@ if __name__ == "__main__":
         help=f"Screener pass to calibrate. Available: {', '.join(PASS_CONFIG)}",
     )
     parser.add_argument(
+        "--reset-pass",
+        dest="reset_pass",
+        metavar="PASS",
+        help=(
+            "Reset a screener pass back to 1.00\u00d7 baseline in paper_trader_bot.py, "
+            "writing a '0 settled trades as of <today>' stale-warning comment. "
+            "Use this when a strategy change invalidates previous calibration data and "
+            "you want to start fresh data collection. "
+            f"Available passes: {', '.join(PASS_CONFIG)}"
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run deterministic unit tests on _recommend_mult() and exit.",
@@ -862,6 +1074,14 @@ if __name__ == "__main__":
         _self_test()
         print("\nRunning _apply_to_bot() self-tests...")
         _self_test_apply()
+        sys.exit(0)
+
+    if args.reset_pass:
+        if args.reset_pass not in PASS_CONFIG:
+            known = ", ".join(PASS_CONFIG)
+            print(f"ERROR: unknown pass '{args.reset_pass}'. Known passes: {known}", file=sys.stderr)
+            sys.exit(1)
+        _reset_pass_to_baseline(args.reset_pass)
         sys.exit(0)
 
     if not args.pass_name:
