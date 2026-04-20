@@ -1,10 +1,10 @@
 {
-  "trend_bull": 1.4352,
-  "trend_bear": 1.4352,
-  "double_dist": 1.4989,
+  "trend_bull": 1.4767,
+  "trend_bear": 1.4767,
+  "double_dist": 1.4996,
   "non_trend": 1.0,
   "normal": 1.0,
-  "neutral": 1.4352,
-  "ntrl_extreme": 1.4989,
-  "nrml_variation": 1.4989
+  "neutral": 1.4767,
+  "ntrl_extreme": 1.4996,
+  "nrml_variation": 1.4996
 }
