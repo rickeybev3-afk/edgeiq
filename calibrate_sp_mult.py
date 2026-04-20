@@ -841,6 +841,82 @@ def _self_test_apply() -> None:
 
     _run_restore_bak_no_bak("restore-bak missing .bak file → error exit", "trend")
 
+    # ── Preview-bak tests ─────────────────────────────────────────────────────
+    def _run_preview_bak(
+        label: str,
+        pass_name: str,
+        bak_fixture: str,
+        current_fixture: str,
+        expect_unchanged: bool = True,
+    ) -> None:
+        nonlocal all_ok
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+            tmp = tf.name
+            tf.write(current_fixture)
+        bak = tmp + ".bak"
+        try:
+            with open(bak, "w") as fh:
+                fh.write(bak_fixture)
+
+            output_lines: list[str] = []
+            import builtins as _builtins
+
+            original_print_fn = _builtins.print
+
+            def _capture_print(*args, **kwargs):
+                line = " ".join(str(a) for a in args)
+                output_lines.append(line)
+                original_print_fn(*args, **kwargs)
+
+            _builtins.print = _capture_print
+            try:
+                _restore_from_bak(pass_name, bot_path=tmp, dry_run=True)
+            finally:
+                _builtins.print = original_print_fn
+
+            with open(tmp) as fh:
+                after_content = fh.read()
+
+            file_unchanged = after_content == current_fixture
+            dry_run_msg_present = any(
+                "Dry run" in line and "no changes written" in line
+                for line in output_lines
+            )
+            ok = file_unchanged == expect_unchanged and dry_run_msg_present
+            print(
+                f"  {'OK  ' if ok else 'FAIL'} {label}: "
+                f"file_unchanged={file_unchanged} (expected {expect_unchanged}), "
+                f"dry_run_msg={'found' if dry_run_msg_present else 'MISSING'}"
+            )
+            if not ok:
+                all_ok = False
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            try:
+                os.unlink(bak)
+            except OSError:
+                pass
+
+    _run_preview_bak(
+        "preview-bak trend: shows diff, file unchanged",
+        pass_name="trend",
+        bak_fixture=_APPLY_FIXTURE,
+        current_fixture=_APPLY_FIXTURE_TREND_STALE,
+        expect_unchanged=True,
+    )
+    _run_preview_bak(
+        "preview-bak gap: shows diff, file unchanged",
+        pass_name="gap",
+        bak_fixture=_APPLY_FIXTURE,
+        current_fixture=_APPLY_FIXTURE_GAP_STALE,
+        expect_unchanged=True,
+    )
+
     if all_ok:
         print("All _apply_to_bot self-tests passed.")
     else:
@@ -924,14 +1000,15 @@ def _self_test_reset_confirm() -> None:
         sys.exit(1)
 
 
-def _restore_from_bak(pass_name: str, bot_path: str | None = None) -> None:
+def _restore_from_bak(pass_name: str, bot_path: str | None = None, dry_run: bool = False) -> None:
     """Restore paper_trader_bot.py from its .bak backup created by --reset-pass or --apply.
 
     Steps:
       1. Locate paper_trader_bot.py.bak (or <bot_path>.bak).
       2. Verify the backup contains a valid _SP_MULT_TABLE entry for pass_name.
       3. Print a unified diff from the current file to the backup.
-      4. Overwrite the current file with the backup content.
+      4. If dry_run is False: overwrite the current file with the backup content.
+         If dry_run is True:  print a "Dry run" message and exit without writing.
     """
     resolved_path = bot_path if bot_path is not None else _BOT_FILE
     backup_path = resolved_path + ".bak"
@@ -1011,6 +1088,10 @@ def _restore_from_bak(pass_name: str, bot_path: str | None = None) -> None:
         print("".join(diff_lines))
     else:
         print("\n(No change — current file already matches the backup.)")
+
+    if dry_run:
+        print("\nDry run — no changes written. Re-run with --restore-bak to apply.")
+        return
 
     try:
         with open(resolved_path, "w") as fh:
@@ -1441,6 +1522,17 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--preview-bak",
+        dest="preview_bak",
+        metavar="PASS",
+        help=(
+            "Preview what --restore-bak would apply without writing any changes. "
+            "Prints the same diff as --restore-bak, then prints "
+            "'Dry run — no changes written. Re-run with --restore-bak to apply.' "
+            f"Available passes: {', '.join(PASS_CONFIG)}"
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run deterministic unit tests on _recommend_mult() and exit.",
@@ -1504,6 +1596,10 @@ if __name__ == "__main__":
                 print("Aborted — no changes made.")
                 sys.exit(0)
         _reset_pass_to_baseline(args.reset_pass)
+        sys.exit(0)
+
+    if args.preview_bak:
+        _restore_from_bak(args.preview_bak, dry_run=True)
         sys.exit(0)
 
     if args.restore_bak:
