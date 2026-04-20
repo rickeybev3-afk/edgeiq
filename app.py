@@ -32377,6 +32377,39 @@ function _bqCopyShareLink() {
                 _SP_MULT_LIVE = dict(_ptb_mod._SP_MULT_TABLE)
             except Exception:
                 _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00, "gap_down": 1.00}
+            # Calibration metadata: "backtest" passes are calibrated from 5-yr historical data;
+            # "live" passes need MIN_TRADES settled paper trades before proper calibration.
+            _SP_CALIB_MIN = 30
+            _SP_CALIB_META = {
+                "gap":      {
+                    "type": "backtest",
+                    "label": "calibrated (backtest)",
+                    "detail": "5-yr live backtest · ≥3% daily gap universe · 1.00× anchor pass",
+                },
+                "other":    {
+                    "type": "backtest",
+                    "label": "calibrated (backtest)",
+                    "detail": "5-yr live backtest · <3% daily change universe · 87% WR / +0.622R avg",
+                },
+                "trend":    {
+                    "type": "live",
+                    "label": None,
+                    "detail": "Trend pass (1–3% change, above SMA20 & SMA50) · conservative 0.85× baseline from small backtest sample (n=12) · recalibrate once ≥30 live trades settle",
+                    "last_check": None,
+                },
+                "gap_down": {
+                    "type": "live",
+                    "label": None,  # filled in dynamically with progress
+                    "detail": "Bearish Break (≥3% gap-down) · baseline 1.00× until ≥30 live trades settle",
+                    "last_check": "2026-04-20",
+                },
+                "squeeze":  {
+                    "type": "live",
+                    "label": None,
+                    "detail": "Squeeze pass · baseline 1.00× until ≥30 live trades settle",
+                    "last_check": None,
+                },
+            }
             _sp_live_rows = []
             for _spass in ["gap", "trend", "gap_down", "other", "squeeze", "untagged"]:
                 _sg = _sp_live[_sp_live["screener_pass"] == _spass]
@@ -32386,30 +32419,76 @@ function _bqCopyShareLink() {
                 _sn = len(_sg)
                 _swr = _sw / _sn * 100 if _sn > 0 else 0
                 _smult = _SP_MULT_LIVE.get(_spass, 1.00)
+                _smeta = _SP_CALIB_META.get(_spass)
+                if _smeta is None or _smeta["type"] != "live":
+                    _scalib_col = _smeta["label"] if _smeta else "—"
+                    _scalib_tip = _smeta["detail"] if _smeta else "Source unknown"
+                else:
+                    _scalib_needs = _SP_CALIB_MIN - _sn
+                    if _sn >= _SP_CALIB_MIN:
+                        _scalib_col = f"✓ {_sn} of {_SP_CALIB_MIN} settled"
+                    else:
+                        _scalib_col = f"⚠ {_sn} of {_SP_CALIB_MIN} settled"
+                    _scalib_tip = _smeta["detail"]
+                    _last_chk = _smeta.get("last_check")
+                    if _last_chk:
+                        _scalib_tip += f" · last checked {_last_chk}"
+                    if _sn < _SP_CALIB_MIN:
+                        _scalib_tip += f" · needs {_scalib_needs} more trade{'s' if _scalib_needs != 1 else ''} to recalibrate"
                 _sp_live_rows.append({
-                    "Pass":     "Gap-Down" if _spass == "gap_down" else _spass.capitalize(),
-                    "Trades":   _sn,
-                    "Wins":     int(_sw),
-                    "WR":       f"{_swr:.0f}%",
-                    "sp_mult":  f"{_smult:.2f}×",
+                    "Pass":       "Gap-Down" if _spass == "gap_down" else _spass.capitalize(),
+                    "Trades":     _sn,
+                    "Wins":       int(_sw),
+                    "WR":         f"{_swr:.0f}%",
+                    "sp_mult":    f"{_smult:.2f}×",
+                    "_calib_col": _scalib_col,
+                    "_calib_tip": _scalib_tip,
                 })
             if _sp_live_rows:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown("**Live Paper Trades — by Screener Pass**")
-                _gd_mult_live = _SP_MULT_LIVE.get("gap_down", 1.00)
-                _gd_caption_suffix = (
-                    f"gap_down {_gd_mult_live:.2f}× — calibrated via calibrate_sp_mult.py --pass gap_down"
-                    if abs(_gd_mult_live - 1.00) > 0.001
-                    else "gap_down 1.00× baseline (recalibrate via calibrate_sp_mult.py --pass gap_down once ≥30 Bearish Break paper trades settle)"
+                st.caption(
+                    "sp_mult = position-size multiplier applied by the bot at order placement. "
+                    "gap & other: calibrated from 5-yr backtest data. "
+                    "trend, gap_down & squeeze: using conservative baseline until ≥30 live trades settle — "
+                    f"Calibration column shows progress toward the {_SP_CALIB_MIN}-trade threshold. "
+                    "Hover over a row for full calibration detail."
                 )
-                _sq_mult_live = _SP_MULT_LIVE.get("squeeze", 1.00)
-                _sq_caption_suffix = (
-                    f"squeeze {_sq_mult_live:.2f}× — calibrated via calibrate_sp_mult.py --pass squeeze"
-                    if abs(_sq_mult_live - 1.00) > 0.001
-                    else "squeeze 1.00× baseline (recalibrate via calibrate_sp_mult.py --pass squeeze once ≥30 squeeze paper trades settle)"
+                _sp_tbl_hdr = (
+                    '<table style="border-collapse:collapse;width:100%;font-size:0.9em;margin-top:4px">'
+                    '<thead><tr style="border-bottom:2px solid #555;background:rgba(0,0,0,0.05)">'
+                    '<th style="padding:6px 10px;text-align:left">Pass</th>'
+                    '<th style="padding:6px 10px;text-align:right">Trades</th>'
+                    '<th style="padding:6px 10px;text-align:right">Wins</th>'
+                    '<th style="padding:6px 10px;text-align:right">WR</th>'
+                    '<th style="padding:6px 10px;text-align:right">sp_mult</th>'
+                    '<th style="padding:6px 10px;text-align:left" '
+                    f'title="backtest = calibrated from 5-yr historical data · ⚠ = below {_SP_CALIB_MIN}-trade threshold · hover a row for details">'
+                    'Calibration ⓘ</th>'
+                    '</tr></thead><tbody>'
                 )
-                st.caption(f"sp_mult = position-size multiplier applied by the bot at order placement · gap/other/trend from 5-yr live backtest · {_gd_caption_suffix} · {_sq_caption_suffix}")
-                st.dataframe(pd.DataFrame(_sp_live_rows), use_container_width=True, hide_index=True)
+                _sp_tbl_body = ""
+                for _ri, _r in enumerate(_sp_live_rows):
+                    _row_bg = "background:rgba(0,0,0,0.02)" if _ri % 2 == 0 else ""
+                    _calib_color = (
+                        "color:#cc7700;font-weight:600" if _r["_calib_col"].startswith("⚠")
+                        else "color:#2d7a2d;font-weight:600" if _r["_calib_col"].startswith("✓")
+                        else "color:#555"
+                    )
+                    _sp_tbl_body += (
+                        f'<tr title="{_r["_calib_tip"]}" style="cursor:help;border-bottom:1px solid #e0e0e0;{_row_bg}">'
+                        f'<td style="padding:5px 10px">{_r["Pass"]}</td>'
+                        f'<td style="padding:5px 10px;text-align:right">{_r["Trades"]}</td>'
+                        f'<td style="padding:5px 10px;text-align:right">{_r["Wins"]}</td>'
+                        f'<td style="padding:5px 10px;text-align:right">{_r["WR"]}</td>'
+                        f'<td style="padding:5px 10px;text-align:right">{_r["sp_mult"]}</td>'
+                        f'<td style="padding:5px 10px;{_calib_color}">{_r["_calib_col"]}</td>'
+                        f'</tr>'
+                    )
+                st.markdown(
+                    _sp_tbl_hdr + _sp_tbl_body + "</tbody></table>",
+                    unsafe_allow_html=True,
+                )
 
         # ── Screener Pass — 5-yr Backtest Breakdown (Gap vs Trend vs All) ────
         st.markdown("<br>", unsafe_allow_html=True)
