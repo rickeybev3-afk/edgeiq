@@ -626,8 +626,8 @@ _data_min = datetime.strptime(_all_sim_dates[0],  "%Y-%m-%d").date() if _all_sim
 _data_max = datetime.strptime(_all_sim_dates[-1], "%Y-%m-%d").date() if _all_sim_dates else datetime.today().date()
 
 # ── Auto-compute avg qualifying signals per trading day from current filter set ─
-# Use after_ib (TCS + IB) — exclude VWAP layer so weekends aren't the only issue
-# Only count weekdays (Mon–Fri) to exclude any weekend artefacts in sim_date
+# Use after_ib (TCS + IB), weekdays only, last 60 trading days only so the
+# default reflects the CURRENT scanner universe, not diluted multi-year history.
 _fs_day_counts: dict = {}
 for _r in after_ib:
     _d = (_r.get("sim_date") or "")[:10]
@@ -636,10 +636,13 @@ for _r in after_ib:
             _dow = datetime.strptime(_d, "%Y-%m-%d").weekday()  # 0=Mon … 6=Sun
         except Exception:
             continue
-        if _dow >= 5:  # skip Saturday (5) and Sunday (6)
+        if _dow >= 5:
             continue
         _fs_day_counts[_d] = _fs_day_counts.get(_d, 0) + 1
-_avg_tpd_auto = max(1, round(sum(_fs_day_counts.values()) / len(_fs_day_counts))) if _fs_day_counts else 20
+# Restrict to most recent 60 trading days so average reflects current watchlist
+_fs_recent_days = sorted(_fs_day_counts.keys())[-60:]
+_fs_recent_counts = [_fs_day_counts[_d] for _d in _fs_recent_days]
+_avg_tpd_auto = max(1, round(sum(_fs_recent_counts) / len(_fs_recent_counts))) if _fs_recent_counts else 20
 
 # value=_avg_tpd_auto is only used by Streamlit on truly fresh sessions
 # (when the key is absent from session_state). Existing user values are preserved.
