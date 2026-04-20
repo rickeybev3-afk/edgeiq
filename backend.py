@@ -12268,6 +12268,8 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["regime_tag"] = r["regime_tag"]
             if r.get("scan_type"):
                 row_record["scan_type"] = r["scan_type"]
+            if r.get("screener_pass"):
+                row_record["screener_pass"] = r["screener_pass"]
             # ib_range_pct: computed from existing fields — persisted for filter auditing
             _ib_h  = float(r.get("ib_high")  or 0)
             _ib_l  = float(r.get("ib_low")   or 0)

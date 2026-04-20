@@ -24,7 +24,7 @@ Required environment secrets:
 
 Optional env vars:
   PAPER_TRADE_USER_ID        — EdgeIQ user ID (defaults below)
-  PAPER_TRADE_MIN_TCS        — minimum TCS threshold (default: 50)
+  PAPER_TRADE_MIN_TCS        — minimum TCS threshold (default: 60)
   PAPER_TRADE_FEED           — sip or iex (default: sip)
   PAPER_TRADE_PRICE_MIN      — min price filter (default: 1.0)
   PAPER_TRADE_PRICE_MAX      — max price filter (default: 50.0)
@@ -4031,6 +4031,15 @@ def morning_scan():
         r["sim_date"]   = str(today)  # ensure sim_date present for dedup
         r["scan_type"]  = "morning"
 
+    # Tag each result with its screener_pass before logging so the DB row
+    # carries the pass from day-one (not just after order placement).
+    for _r in results:
+        if not _r.get("screener_pass"):
+            _t = _r.get("ticker", "")
+            _sp = _TICKER_SCREENER_PASS.get(_t) or _TICKER_SCREENER_PASS.get(_t.upper())
+            if _sp:
+                _r["screener_pass"] = _sp
+
     # Log ALL scan results to paper_trades with regime_tag attached.
     # min_tcs_filter records the effective threshold for this session;
     # analytics can use it to distinguish qualified vs below-threshold rows.
@@ -4153,6 +4162,14 @@ def intraday_scan():
         r["scan_type"]  = "intraday"
         r["regime_tag"] = regime_tag
         r["sim_date"]   = str(today)
+
+    # Tag each result with its screener_pass before logging.
+    for _r in results:
+        if not _r.get("screener_pass"):
+            _t = _r.get("ticker", "")
+            _sp = _TICKER_SCREENER_PASS.get(_t) or _TICKER_SCREENER_PASS.get(_t.upper())
+            if _sp:
+                _r["screener_pass"] = _sp
 
     # ── Log ALL intraday results to paper_trades (dedup by ticker+date+scan_type)
     logged = log_paper_trades(results, user_id=USER_ID, min_tcs=effective_min_tcs)

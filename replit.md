@@ -112,17 +112,46 @@ User has run: materialized view creation SQL ✅ (Apr 18, 2026)
 - **Telegram** — bot alerts (token in env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 - **Pandas / NumPy / PyTZ** — data processing and timezone handling
 
-## Known Open Items (as of Apr 18, 2026)
+## Verified Backtest Expectancy (TCS≥60 filter, 2021–2025, 33k trades)
+
+The bot filters to TCS≥60. The real per-tier expectancy on qualifying setups only:
+
+| Tier | Trades/yr | WR% | Expectancy | Ann. Sharpe |
+|------|-----------|-----|------------|-------------|
+| P3: Morning TCS≥70 | 36/yr | 96.6% | +1.620R | 16.50 |
+| P1: Intraday TCS≥70 | 325/yr | 90.6% | +1.355R | 9.39 |
+| P2: Intraday TCS 60-69 | 180/yr | 84.9% | +0.797R | 6.96 |
+| P4: Morning TCS 60-69 | 80/yr | 70.4% | +0.530R | 9.65 |
+| **ALL (TCS≥60)** | **622/yr** | **86.7%** | **+1.101R** | **8.68** |
+
+The overall +0.386R average cited previously was noise from 27k low-TCS trades the bot never trades.
+
+## Apr 20, 2026 — Day Zero Findings (first clean scan post-422 fix)
+
+**Today's 4 main setups and P-tiers:**
+- ERAS (TCS=70, intraday) → **P1** — predicted Bullish Break correctly, skip: `entry_already_triggered` (IB already broken by 2 PM scan)
+- SBS (TCS=70, intraday) → **P1** — predicted **Neutral** but actual was **Bullish Break** — model miss on tight IB (coiled setup). Closed at 35.04 vs IB high 34.79.
+- PBM (TCS=66.2, intraday) → **P2** — predicted Neutral, actual Bullish Break — debatable (IB was ~20% wide, genuine uncertainty)
+- PLUG (TCS=64.3, intraday) → **P2** — predicted Bullish Break correctly, skip: `entry_already_triggered`
+
+**Key issue to monitor:** SBS was a P1 quality setup that broke out while the model said Neutral. Track high-TCS Neutral predictions that resolve as Bullish/Bearish Break — this is the model's main source of edge leakage.
+
+**`entry_already_triggered` for ERAS/PLUG:** Correct behavior — don't chase. Intraday scan at 2 PM arrives after some setups have already broken. Not a bug.
+
+## Known Open Items (as of Apr 20, 2026)
 
 1. **Materialized views** `mv_tiered_pnl_summary` + `mv_paper_tiered_pnl_summary` — need one-time Supabase SQL paste. Without them the Ladder tab shows empty / nightly refresh logs a warning. (User may have created these Apr 18.)
-2. **`IS_PAPER_ALPACA=false`** flip — needs to be done in env vars when going live (Phase 2). Must also swap ALPACA_API_KEY/SECRET_KEY to live credentials.
+2. **`IS_PAPER_ALPACA=false`** flip — needs to be done in env vars when going live. Must also swap ALPACA_API_KEY/SECRET_KEY to live credentials.
 3. **Kill switch UI** — not yet tested end-to-end.
 4. **`app_config` table** — returns 404 on GET (bot logs a warning at startup). Non-blocking.
+5. **Model misses on high-TCS Neutral** — SBS (P1, TCS=70) predicted Neutral, broke out bullishly. Investigate whether tight-IB coiled setups are systematically mispredicted as Neutral.
 
 ## Recent Fix Log
 
+- **Apr 20, 2026** — `screener_pass` now written to `paper_trades` at initial row creation (not just at order placement). Previously all skipped trades had `screener_pass=null`. Both morning and intraday scan paths patched.
+- **Apr 20, 2026** — Stale env var comment fixed: `PAPER_TRADE_MIN_TCS` documented as "default: 50" but actual default is 60.
 - **Apr 18, 2026** — Catch-up logic: EOD/verify/recalibration now actually RUN on restart (not just silently marked done). Build notes now updated at 11:59 PM alongside PDFs.
-- **Apr 18, 2026** — 13 missing `backtest_sim_runs` columns added to auto-migration list (`sim_version`, `tiered_sim_version`, `scan_type`, `sim_outcome`, and 9 others). `paper_trades.pnl_r_sim` added.
-- **Apr 18, 2026** — `backfill_context_levels.py`: graceful fallback if `data_quality` column absent — retries upsert without it so rows still save.
-- **Apr 17, 2026** — Duplicate Telegram watchlist alerts fixed: per-slot daily lock files in `/tmp` keyed to ET date (`wl_morning_YYYY-MM-DD.lock`, `wl_midday_YYYY-MM-DD.lock`).
-- **Apr 17, 2026** — Trade-by-Trade Log date range filter (URL params `rp_log_from`/`rp_log_to`) + amber pulse highlight on hash-jumped rows (`#trade-{ticker}-{date}`).
+- **Apr 18, 2026** — 13 missing `backtest_sim_runs` columns added to auto-migration list.
+- **Apr 18, 2026** — `backfill_context_levels.py`: graceful fallback if `data_quality` column absent.
+- **Apr 17, 2026** — Duplicate Telegram watchlist alerts fixed: per-slot daily lock files in `/tmp`.
+- **Apr 17, 2026** — Trade-by-Trade Log date range filter + amber pulse highlight on hash-jumped rows.
