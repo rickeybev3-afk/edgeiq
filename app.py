@@ -18,7 +18,9 @@ from url_sync import (
     _url_push, _url_push_opt,
 )
 
-from log_utils import _rotate_log, _parse_int_env
+from log_utils import _rotate_log, _parse_int_env, validate_env_config
+
+validate_env_config()
 
 from backend import *
 from backend import (

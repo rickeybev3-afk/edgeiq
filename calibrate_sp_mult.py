@@ -50,7 +50,7 @@ except ImportError as exc:
     print(f"ERROR: could not import supabase from backend.py — {exc}", file=sys.stderr)
     sys.exit(1)
 
-from log_utils import _rotate_log, _parse_int_env
+from log_utils import _rotate_log, _parse_int_env, validate_env_config
 
 if not supabase:
     print("ERROR: Supabase client is not initialised. Check SUPABASE_URL / SUPABASE_KEY.", file=sys.stderr)
@@ -1946,6 +1946,8 @@ def main(pass_name: str, apply: bool = False) -> None:
 
 
 if __name__ == "__main__":
+    validate_env_config()
+
     parser = argparse.ArgumentParser(
         description="Calibrate _SP_MULT_TABLE for any screener pass.",
         add_help=True,
