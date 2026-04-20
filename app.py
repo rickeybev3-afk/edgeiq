@@ -31977,6 +31977,30 @@ function _bqCopyShareLink() {
                     f"**{_earliest_scan_date.strftime('%B %d, %Y')}**"
                 )
             _dsl = load_daily_scan_log(_dsl_picked_date)
+            if (
+                _dsl_picked_date == date.today()
+                and _dsl["total"] == 0
+                and not st.session_state.get("_scanner_funnel_auto_refreshed")
+            ):
+                _et_now = datetime.now(EASTERN)
+                if _et_now.hour == 9 and 35 <= _et_now.minute < 45:
+                    st.session_state["_scanner_funnel_auto_refreshed"] = True
+                    for _k in (
+                        "_daily_scan_log_ensured",
+                        "_daily_scan_log_ensured_day",
+                        "_earliest_scan_date",
+                        "_earliest_scan_date_fetched_day",
+                    ):
+                        st.session_state.pop(_k, None)
+                    st.rerun()
+            if (
+                _dsl_picked_date == date.today()
+                and _dsl["total"] == 0
+            ):
+                _et_now_p = datetime.now(EASTERN)
+                if _et_now_p.hour == 9 and 30 <= _et_now_p.minute < 45:
+                    time.sleep(20)
+                    st.rerun()
             if _dsl["total"] == 0:
                 if _dsl_picked_date == date.today():
                     st.info(
