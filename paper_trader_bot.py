@@ -271,6 +271,13 @@ MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", _default_po
 PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
 # Cooldown between repeated PDT floor warnings (seconds) — default 4 hours
 PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
+# Hard order-placement cutoffs (ET wall-clock minutes past midnight).
+# Orders placed after these times are based on stale IB structure data and
+# have historically poor fill rates, so we skip them on late restarts.
+# Morning scan: IB window closes at 10:30 AM; allow 2 hours → cutoff 12:30 PM.
+# Intraday scan: scan fires at 2:00 PM; allow 45 min → cutoff 2:45 PM.
+ORDER_CUTOFF_MORNING_MIN  = int(os.getenv("ORDER_CUTOFF_MORNING_MIN",  "750"))  # 12:30 PM = 750 min
+ORDER_CUTOFF_INTRADAY_MIN = int(os.getenv("ORDER_CUTOFF_INTRADAY_MIN", "885"))  # 2:45 PM = 885 min
 # Tracks the date a PDT-block Telegram alert was last sent — prevents N duplicate
 # alerts when N setups all hit the same block in one scan session.
 _PDT_BLOCK_ALERTED_DATE: "date | None" = None
@@ -974,6 +981,31 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"gap-up universe hist WR 40% (vs 71% Bullish). Re-enable with gap-down screener."
         )
         _patch_skip_reason(r, _ticker_raw, "bearish_break_filtered")
+        return
+
+    # ── Time cutoff guard ─────────────────────────────────────────────────────
+    # If the bot restarted late and is running a catch-up scan, the IB structure
+    # data may be hours stale.  Refuse to place orders after the cutoff so we
+    # don't fire entries into a mid-session market with a 10:30 AM price picture.
+    _scan_type_tg = (r.get("scan_type") or scan_label or "").lower()
+    _now_et_order = datetime.now(EASTERN)
+    _now_min      = _now_et_order.hour * 60 + _now_et_order.minute
+    if _scan_type_tg == "morning" and _now_min > ORDER_CUTOFF_MORNING_MIN:
+        _cutoff_str = f"{ORDER_CUTOFF_MORNING_MIN // 60}:{ORDER_CUTOFF_MORNING_MIN % 60:02d} PM"
+        log.warning(
+            f"  [{_ticker_raw}] ⏰ ORDER BLOCKED — past morning cutoff {_cutoff_str} ET "
+            f"(current {_now_et_order.strftime('%H:%M')} ET). "
+            f"IB data is stale; skipping to protect capital."
+        )
+        _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
+        return
+    if _scan_type_tg == "intraday" and _now_min > ORDER_CUTOFF_INTRADAY_MIN:
+        _cutoff_str = f"{ORDER_CUTOFF_INTRADAY_MIN // 60}:{ORDER_CUTOFF_INTRADAY_MIN % 60:02d} PM"
+        log.warning(
+            f"  [{_ticker_raw}] ⏰ ORDER BLOCKED — past intraday cutoff {_cutoff_str} ET "
+            f"(current {_now_et_order.strftime('%H:%M')} ET). Skipping."
+        )
+        _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
         return
 
     # ── Morning TCS floor ─────────────────────────────────────────────────────
