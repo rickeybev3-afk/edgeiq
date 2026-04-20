@@ -673,10 +673,14 @@ with _dr_c3:
              "highest TCS first. Adjust to model different concurrency.",
     )
 
+_fs_ib_total   = len(after_ib)
+_fs_ib_days    = len(_fs_day_counts)
+_fs_ib_avg_raw = round(_fs_ib_total / _fs_ib_days, 1) if _fs_ib_days else 0
 st.caption(
     f"ℹ️ The full dataset has **{s3['n']:,} qualifying signals** across all tickers — "
     f"but your live account takes at most **{pnl_max_per_day}/day** "
-    f"(highest TCS first). Adjust 'Max trades / day' to model different concurrency."
+    f"(highest TCS first). Adjust 'Max trades / day' to model different concurrency.  "
+    f"*Auto-default: {_fs_ib_total:,} TCS+IB signals ÷ {_fs_ib_days:,} trading days = {_fs_ib_avg_raw}/day avg.*"
 )
 
 if s3["n"] == 0:
