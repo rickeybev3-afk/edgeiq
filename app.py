@@ -31881,8 +31881,13 @@ function _bqCopyShareLink() {
             if not st.session_state.get("_daily_scan_log_ensured"):
                 ensure_daily_scan_log_table()
                 st.session_state["_daily_scan_log_ensured"] = True
-            if "_earliest_scan_date" not in st.session_state:
+            _today = date.today()
+            if (
+                "_earliest_scan_date" not in st.session_state
+                or st.session_state.get("_earliest_scan_date_fetched_day") != _today
+            ):
                 st.session_state["_earliest_scan_date"] = get_earliest_scan_date()
+                st.session_state["_earliest_scan_date_fetched_day"] = _today
             _earliest_scan_date = st.session_state["_earliest_scan_date"]
             _dsl_picked_date = st.date_input(
                 "Scan date",
