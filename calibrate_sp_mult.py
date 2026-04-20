@@ -348,6 +348,30 @@ def _self_test_apply() -> None:
         expect_citation_fragment="50 trades, 68.0% WR / +0.350R avg → 1.00×",
         expect_stale_absent="only 12 trades       → 0.85×",
     )
+    _run(
+        "other idempotent re-apply",
+        "other", 1.20, "60 trades, 80.0% WR / +0.500R → 1.20×",
+        expect_value=1.20, expect_comment_fragment="1.20×",
+        citation_line="#   'other' (2024-01-03 → 2024-12-31): 60 trades, 80.0% WR / +0.500R avg → 1.20×",
+        expect_citation_fragment="1.20×",
+    )
+    _run(
+        "other no citation_line — comment block untouched",
+        "other", 1.20, "60 trades, 80.0% WR / +0.500R → 1.20×",
+        expect_value=1.20, expect_comment_fragment="80.0% WR",
+    )
+    _run(
+        "trend idempotent re-apply",
+        "trend", 1.00, "50 trades, 68.0% WR / +0.350R → 1.00×",
+        expect_value=1.00, expect_comment_fragment="1.00×",
+        citation_line="#   'trend' (2024-01-03 → 2024-12-31): 50 trades, 68.0% WR / +0.350R avg → 1.00×",
+        expect_citation_fragment="1.00×",
+    )
+    _run(
+        "trend no citation_line — comment block untouched",
+        "trend", 1.00, "50 trades, 68.0% WR / +0.350R → 1.00×",
+        expect_value=1.00, expect_comment_fragment="68.0% WR",
+    )
 
     if all_ok:
         print("All _apply_to_bot self-tests passed.")
