@@ -986,34 +986,50 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             _patch_skip_reason(r, _ticker_raw, "bearish_break_not_gap_down")
             return
 
-    # ── Stale-entry guard (LIVE mode only) ───────────────────────────────────
-    # If the bot restarts mid-session and runs a catch-up scan, the entry price
-    # may have already been blown past — a buy stop at $21.65 would fill
-    # immediately at market (~$23) if price is already way above it.
-    # Guard: fetch current price and skip if it's already > entry * 1.5% (for
-    # Bullish Break) or < entry * 0.985 (for Bearish Break), i.e. entry already
-    # clearly triggered.  Paper mode skips this — simulated fills are fine.
-    if not IS_PAPER_ALPACA:
-        _entry_price_guard = float(r.get("entry_price_sim") or 0)
-        if _entry_price_guard > 0:
-            _cur_prices = _alpaca_get_5min_bar_close([_ticker_raw])
-            _cur_px     = _cur_prices.get(_ticker_raw.upper())
-            if _cur_px is not None:
-                _direction_guard = r.get("predicted", "")
+    # ── Pre-flight price guard (ALL modes) ───────────────────────────────────
+    # Alpaca rejects stop orders with HTTP 422 when:
+    #   • buy stop:  stop_price < current market price  (price already above entry)
+    #   • sell stop: stop_price > current market price  (price already below entry)
+    # This fires in PAPER too — PLUG 422 confirmed this 2026-04-20.
+    # Additionally, in LIVE mode, apply a 1.5% anti-chasing buffer on top to
+    # avoid placing orders that would fill immediately at a bad price on restart.
+    _pf_direction = r.get("predicted", "")
+    _pf_entry     = (float(r.get("ib_high") or 0) if _pf_direction == "Bullish Break"
+                     else float(r.get("ib_low") or 0))
+    if _pf_entry > 0:
+        _pf_prices = _alpaca_get_5min_bar_close([_ticker_raw])
+        _pf_px     = _pf_prices.get(_ticker_raw.upper())
+        if _pf_px is not None:
+            # Stop-price invalidity → would cause Alpaca 422 in any mode
+            _pf_crossed = (
+                (_pf_direction == "Bullish Break" and _pf_px >= _pf_entry) or
+                (_pf_direction == "Bearish Break" and _pf_px <= _pf_entry)
+            )
+            if _pf_crossed:
+                _pf_side_word = "at/above" if _pf_direction == "Bullish Break" else "at/below"
+                log.warning(
+                    f"  [{_ticker_raw}] ⛔ ORDER SKIPPED — current price ${_pf_px:.2f} "
+                    f"already {_pf_side_word} stop entry ${_pf_entry:.2f} "
+                    f"— Alpaca 422 prevention ({'PAPER' if IS_PAPER_ALPACA else 'LIVE'})"
+                )
+                _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
+                return
+            # Live-mode anti-chasing: skip if 1.5%+ past entry even before crossing stop
+            if not IS_PAPER_ALPACA:
                 _pct_thresh = ENTRY_ALREADY_TRIGGERED_PCT / 100.0
-                if _direction_guard == "Bullish Break" and _cur_px > _entry_price_guard * (1 + _pct_thresh):
+                if _pf_direction == "Bullish Break" and _pf_px > _pf_entry * (1 + _pct_thresh):
                     log.warning(
-                        f"  [{_ticker_raw}] ⛔ LIVE ORDER BLOCKED — price ${_cur_px:.2f} already "
-                        f"{(_cur_px/_entry_price_guard - 1)*100:.1f}% above entry ${_entry_price_guard:.2f}. "
-                        f"Setup already triggered; skipping to avoid chasing."
+                        f"  [{_ticker_raw}] ⛔ LIVE ORDER BLOCKED — price ${_pf_px:.2f} already "
+                        f"{(_pf_px/_pf_entry - 1)*100:.1f}% above entry ${_pf_entry:.2f} "
+                        f"(>{ENTRY_ALREADY_TRIGGERED_PCT}% chase threshold)"
                     )
                     _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
                     return
-                if _direction_guard == "Bearish Break" and _cur_px < _entry_price_guard * (1 - _pct_thresh):
+                if _pf_direction == "Bearish Break" and _pf_px < _pf_entry * (1 - _pct_thresh):
                     log.warning(
-                        f"  [{_ticker_raw}] ⛔ LIVE ORDER BLOCKED — price ${_cur_px:.2f} already "
-                        f"{(1 - _cur_px/_entry_price_guard)*100:.1f}% below entry ${_entry_price_guard:.2f}. "
-                        f"Setup already triggered; skipping."
+                        f"  [{_ticker_raw}] ⛔ LIVE ORDER BLOCKED — price ${_pf_px:.2f} already "
+                        f"{(1 - _pf_px/_pf_entry)*100:.1f}% below entry ${_pf_entry:.2f} "
+                        f"(>{ENTRY_ALREADY_TRIGGERED_PCT}% chase threshold)"
                     )
                     _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
                     return
