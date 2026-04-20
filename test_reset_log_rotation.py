@@ -192,5 +192,117 @@ class TestOSErrorHandledGracefully(unittest.TestCase):
                     self.fail("_rotate_reset_log must not propagate OSError from os.remove")
 
 
+class TestWriteThenRotateIntegration(unittest.TestCase):
+    """Integration tests: _write_reset_log drives rotation internally.
+
+    These tests verify the full write-then-rotate path: repeated calls to
+    _write_reset_log eventually push the log past _RESET_LOG_MAX_BYTES, at
+    which point rotation fires automatically and subsequent writes land in a
+    fresh log file.
+    """
+
+    def _seed_log(self, path: str, size: int) -> None:
+        """Pre-fill *path* with *size* bytes of filler so threshold is near."""
+        with open(path, "wb") as fh:
+            fh.write(b"x" * size)
+
+    def test_rotation_fires_during_write_session(self):
+        """Backup .1 must appear once cumulative writes cross the threshold."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "resets.log")
+            backup = log + ".1"
+
+            entry_estimate = 90
+            seed_size = csm._RESET_LOG_MAX_BYTES - entry_estimate * 3
+            self._seed_log(log, seed_size)
+
+            for _ in range(10):
+                csm._write_reset_log("trend", 0.85, False, log_path=log)
+                if os.path.exists(backup):
+                    break
+
+            self.assertTrue(
+                os.path.exists(backup),
+                "backup .1 must exist once writes push the log past the threshold",
+            )
+
+    def test_active_log_is_small_after_rotation(self):
+        """The active log must restart small (one entry only) after rotation."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "resets.log")
+
+            seed_size = csm._RESET_LOG_MAX_BYTES
+            self._seed_log(log, seed_size)
+
+            csm._write_reset_log("gap", 1.10, True, log_path=log)
+
+            active_size = os.path.getsize(log)
+            self.assertLess(
+                active_size,
+                csm._RESET_LOG_MAX_BYTES,
+                "active log must be well below the threshold right after rotation",
+            )
+
+    def test_new_entry_is_correctly_formatted_after_rotation(self):
+        """The entry written after rotation must follow the expected format."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "resets.log")
+
+            seed_size = csm._RESET_LOG_MAX_BYTES
+            self._seed_log(log, seed_size)
+
+            csm._write_reset_log("momentum", 0.75, False, log_path=log)
+
+            with open(log) as fh:
+                lines = [l for l in fh.readlines() if l.strip()]
+
+            self.assertEqual(len(lines), 1, "exactly one entry expected in the fresh log")
+            entry = lines[0]
+            self.assertIn("pass=momentum", entry)
+            self.assertIn("prev_mult=0.75", entry)
+            self.assertIn("mode=interactive", entry)
+            self.assertRegex(
+                entry,
+                r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",
+                "entry must start with an ISO timestamp",
+            )
+
+    def test_backup_holds_pre_rotation_content(self):
+        """The .1 backup must contain the filler written before rotation."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "resets.log")
+            backup = log + ".1"
+
+            seed_size = csm._RESET_LOG_MAX_BYTES
+            self._seed_log(log, seed_size)
+
+            csm._write_reset_log("trend", 0.50, True, log_path=log)
+
+            self.assertTrue(os.path.exists(backup), "backup .1 must exist")
+            backup_size = os.path.getsize(backup)
+            self.assertGreaterEqual(
+                backup_size,
+                csm._RESET_LOG_MAX_BYTES,
+                "backup must contain at least as many bytes as the rotation threshold",
+            )
+
+    def test_only_one_backup_after_multiple_rotation_cycles(self):
+        """At most one .1 backup must exist even after several rotation cycles."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "resets.log")
+            backup = log + ".1"
+
+            for _cycle in range(3):
+                seed_size = csm._RESET_LOG_MAX_BYTES
+                self._seed_log(log, seed_size)
+                csm._write_reset_log("trend", 1.0, False, log_path=log)
+
+            self.assertTrue(os.path.exists(backup), ".1 backup must exist")
+            self.assertFalse(
+                os.path.exists(log + ".2"),
+                "no .2 backup should ever be created; limit is one backup",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
