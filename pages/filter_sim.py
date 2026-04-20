@@ -641,15 +641,8 @@ for _r in after_ib:
         _fs_day_counts[_d] = _fs_day_counts.get(_d, 0) + 1
 _avg_tpd_auto = max(1, round(sum(_fs_day_counts.values()) / len(_fs_day_counts))) if _fs_day_counts else 20
 
-# Seed/reset to the computed default.
-# Use a one-time migration flag so legacy sessions (stuck at 20) get updated
-# on their first visit after this change.  After that, user overrides are kept.
-_tpd_init_key = "_fs_tpd_auto_v4"
-if not st.session_state.get(_tpd_init_key):
-    st.session_state["fs_pnl_max_per_day"] = _avg_tpd_auto
-    st.session_state[_tpd_init_key] = True
-elif "fs_pnl_max_per_day" not in st.session_state:
-    st.session_state["fs_pnl_max_per_day"] = _avg_tpd_auto
+# value=_avg_tpd_auto is only used by Streamlit on truly fresh sessions
+# (when the key is absent from session_state). Existing user values are preserved.
 
 _dr_c1, _dr_c2, _dr_c3 = st.columns([1, 1, 0.8])
 with _dr_c1:
