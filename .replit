@@ -129,3 +129,4 @@ packages = ["glibcLocales"]
 [userenv]
 
 [userenv.shared]
+PAPER_TRADE_MIN_TCS = "70"
