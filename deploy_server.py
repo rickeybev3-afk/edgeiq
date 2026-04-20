@@ -608,6 +608,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/config":
             self._config_get()
             return
+        if path == "/api/gap-down-calibration":
+            self._gap_down_calibration()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -2111,6 +2114,83 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
             self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _gap_down_calibration(self):
+        """Return settled Bearish Break (gap_down) trade count vs the 30-trade calibration threshold.
+
+        Queries paper_trades for rows where screener_pass='gap_down' AND
+        tiered_pnl_r IS NOT NULL AND predicted='Bearish Break', matching the
+        exact filter used by calibrate_gap_down_mult.py.
+
+        Response:
+          {"count": int, "threshold": 30, "ready": bool, "error": null|str}
+        """
+        THRESHOLD = 30
+        supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+        supabase_key = (
+            os.environ.get("SUPABASE_KEY") or
+            os.environ.get("SUPABASE_ANON_KEY") or
+            os.environ.get("VITE_SUPABASE_ANON_KEY") or
+            ""
+        ).strip()
+        if not supabase_url or not supabase_key:
+            body = json.dumps({"count": 0, "threshold": THRESHOLD, "ready": False, "error": "Supabase not configured"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        try:
+            import urllib.parse as _up
+            # Use select=id with Range/head to get exact count from Content-Range header.
+            # Requesting only id with a Range cap of 0-0 avoids loading row data; the
+            # Content-Range header "0-0/TOTAL" gives the authoritative count.
+            query_string = (
+                "screener_pass=eq.gap_down"
+                "&tiered_pnl_r=not.is.null"
+                "&predicted=eq." + _up.quote("Bearish Break")
+                + "&select=id"
+            )
+            req = urllib.request.Request(
+                f"{supabase_url}/rest/v1/paper_trades?{query_string}",
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Accept": "application/json",
+                    "Prefer": "count=exact",
+                    "Range": "0-0",
+                },
+            )
+            count = 0
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    content_range = resp.getheader("Content-Range", "")
+                    # Content-Range format: "0-0/TOTAL" or "*/TOTAL"
+                    if "/" in content_range:
+                        total_str = content_range.split("/", 1)[1]
+                        count = int(total_str) if total_str.isdigit() else 0
+            except urllib.error.HTTPError as http_exc:
+                # 206 Partial Content is the expected response for Range requests; also accept 200
+                content_range = http_exc.headers.get("Content-Range", "")
+                if "/" in content_range:
+                    total_str = content_range.split("/", 1)[1]
+                    count = int(total_str) if total_str.isdigit() else 0
+                elif http_exc.code not in (200, 206):
+                    raise
+            payload = {"count": count, "threshold": THRESHOLD, "ready": count >= THRESHOLD, "error": None}
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+        except Exception as exc:
+            logging.warning("gap-down calibration endpoint error: %s", exc)
+            body = json.dumps({"count": 0, "threshold": THRESHOLD, "ready": False, "error": "Could not load calibration data."}).encode()
+            self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
