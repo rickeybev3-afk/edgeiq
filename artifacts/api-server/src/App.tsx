@@ -834,6 +834,7 @@ interface ScreenerCalibItem {
   threshold: number;
   ready: boolean;
   script: string;
+  extra_args: string;
   last_alerted_utc: string | null;
   error: string | null;
 }
@@ -1403,7 +1404,7 @@ function Home({ health }: { health: HealthState }) {
                         <p style={{ fontSize: "12px", color: "#86efac", margin: 0, lineHeight: "1.5" }}>
                           Ready — run{" "}
                           <code style={{ fontFamily: "monospace", background: "rgba(0,0,0,0.3)", padding: "1px 5px", borderRadius: "3px", fontSize: "11px", color: "#a3e635" }}>
-                            {s.script}
+                            {`python ${s.script}${s.extra_args ? ` ${s.extra_args}` : ""} --apply`}
                           </code>{" "}
                           to update sizing.
                         </p>

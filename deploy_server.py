@@ -18,7 +18,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from typing import Optional
-from calib_threshold import resolve_calib_threshold as _resolve_calib_threshold
+from calib_threshold import resolve_calib_threshold as _resolve_calib_threshold, _DEFAULT_CALIB_THRESHOLD
 
 PROXY_PORT = int(os.environ.get("PORT", "8080"))
 STREAMLIT_PORT = 8501
