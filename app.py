@@ -6575,7 +6575,10 @@ if not st.session_state.get("auth_user"):
 
 _AUTH_USER_ID = st.session_state.get("auth_user_id", "")
 
-if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
+if _AUTH_USER_ID and (
+    not st.session_state.get("_prefs_loaded")
+    or st.session_state.get("_prefs_loaded_day") != date.today()
+):
     _prefs = _cached_load_user_prefs(user_id=_AUTH_USER_ID)
     if _prefs.get("alpaca_key"):
         st.session_state["_pref_alpaca_key"]    = _prefs["alpaca_key"]
@@ -6784,6 +6787,7 @@ if _AUTH_USER_ID and not st.session_state.get("_prefs_loaded"):
     st.session_state["_pref_div_discord_webhook"] = str(_prefs.get("div_alert_discord_webhook", ""))
     st.session_state["_cached_prefs"] = _prefs
     st.session_state["_prefs_loaded"] = True
+    st.session_state["_prefs_loaded_day"] = date.today()
 
 # Persist feed selection made via the ACTIVE FEED indicator (which triggers a page reload
 # with `_feed_default=sip/iex` in the URL) back to the user-prefs database.
@@ -9126,7 +9130,7 @@ with st.sidebar:
             auth_signout()
             for _k in ("auth_user", "auth_user_id", "auth_email",
                        "_watchlist_loaded", "_watchlist_tickers",
-                       "_prefs_loaded", "_restore_tried",
+                       "_prefs_loaded", "_prefs_loaded_day", "_restore_tried",
                        "watchlist_raw", "watchlist_textarea",
                        "_cached_prefs", "_pref_alpaca_key", "_pref_alpaca_secret",
                        "min_tcs_trades",
