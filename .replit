@@ -47,6 +47,10 @@ args = "Nightly Tiered P&L Refresh"
 task = "workflow.run"
 args = "60-Day Backtest Runner"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "python-tests"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -113,6 +117,17 @@ outputType = "console"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python3 run_60day_backtest.py --start 2026-01-26 --end 2026-04-17"
+
+[[workflows.workflow]]
+name = "python-tests"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -m unittest discover -p 'test_*.py' -v"
+
+[workflows.workflow.metadata]
+isValidation = true
 
 [agent]
 stack = "PNPM_WORKSPACE"
