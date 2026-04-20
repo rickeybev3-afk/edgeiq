@@ -14427,49 +14427,22 @@ def fetch_finviz_watchlist(
     avg_vol_min_k:  int   = 1000,
     extra_filters:  list  = None,
 ) -> list:
-    """Scrape Finviz screener for the daily watchlist.
+    """Screen for the daily watchlist using Yahoo Finance (Finviz migrated to
+    JS-only rendering, making HTML scraping impossible).
 
-    Default filters (gap-of-day mode):
-      % Change ≥ 3%  |  Float ≤ 100M  |  Avg Vol ≥ 1M
-      Relative Vol ≥ 1×  |  Price $1–$20  |  US only
-      Sorted by volume descending
+    Pulls from Yahoo Finance predefined screens (day_gainers, most_actives,
+    aggressive_small_caps) then applies the same price / change / volume
+    filters that the original Finviz function used.
 
-    Pass extra_filters (list of raw Finviz filter codes) to add additional
-    criteria, e.g. ['ta_sma20_pa', 'ta_sma50_pa'] for above-SMA filters.
-    avg_vol_min_k controls the minimum average volume in thousands (default 1000 = 1M).
-
-    Note: Finviz Elite uses Google OAuth — programmatic login is not possible.
-    The screener URL still returns data (Finviz redirects elite.finviz.com to
-    their new screener format and returns results). FINVIZ_EMAIL / FINVIZ_PASSWORD
-    are stored for future use if Finviz adds a token-based API.
+    extra_filters hint mapping (kept for call-site compatibility):
+      ['ta_sma20_pa', 'ta_sma50_pa'] → trend-continuation pass (most_actives)
+      ['sh_short_o15']               → squeeze pass (aggressive_small_caps)
+      None                           → gap-of-day pass (day_gainers)
 
     Returns a deduplicated list of uppercase ticker strings (up to max_tickers).
     Returns [] on any error so the bot falls back to its stored watchlist.
     """
-    import re as _re
     import requests as _req
-    from bs4 import BeautifulSoup
-
-    _change_map = {1: "u1", 2: "u2", 3: "u3", 5: "u5", 10: "u10", 15: "u15", 20: "u20"}
-    _c = min(_change_map.keys(), key=lambda k: abs(k - change_min_pct))
-    _change_filter = f"ta_change_{_change_map[_c]}"
-
-    _float_filter = f"sh_float_u{int(float_max_m)}"
-    _price_lo     = f"sh_price_o{int(price_min)}"
-    _price_hi     = f"sh_price_u{int(price_max)}"
-
-    _base_filters = [
-        "geo_usa",
-        _change_filter,
-        _float_filter,
-        f"sh_avgvol_o{int(avg_vol_min_k)}",
-        "sh_relvol_o1",
-        _price_lo,
-        _price_hi,
-    ]
-    if extra_filters:
-        _base_filters.extend(extra_filters)
-    _filters = ",".join(_base_filters)
 
     _sess = _req.Session()
     _sess.headers.update({
@@ -14478,49 +14451,80 @@ def fetch_finviz_watchlist(
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         ),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://finviz.com/",
+        "Accept": "application/json",
     })
 
-    tickers = []
-    # elite.finviz.com redirects to finviz.com/screener with the same params
-    # and returns real-time results regardless of auth status at the HTML level.
-    # Paginate: 20 per page; up to 5 pages = 100 tickers
-    _pages = [i * 20 + 1 for i in range((max_tickers // 20) + 1)]
-    for _start in _pages:
-        if len(tickers) >= max_tickers:
+    _YF_BASE = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+    _avg_vol_min = avg_vol_min_k * 1_000
+
+    # Determine which Yahoo screen to use based on caller hints
+    _extra = extra_filters or []
+    if any("sma" in f for f in _extra):
+        # Trend-continuation pass → most actives (already above moving averages)
+        _scr_ids = ["most_actives", "day_gainers"]
+    elif any("short" in f for f in _extra):
+        # Short-squeeze pass → aggressive small caps
+        _scr_ids = ["aggressive_small_caps", "day_gainers"]
+    else:
+        # Gap-of-day default pass
+        _scr_ids = ["day_gainers", "most_actives"]
+
+    _seen: set  = set()
+    _tickers: list = []
+
+    for _scr_id in _scr_ids:
+        if len(_tickers) >= max_tickers:
             break
-        _url = (
-            f"https://finviz.com/screener.ashx"
-            f"?v=111&f={_filters}&o=-volume&r={_start}"
-        )
         try:
-            _resp = _sess.get(_url, timeout=12, allow_redirects=True)
+            _resp = _sess.get(
+                _YF_BASE,
+                params={
+                    "formatted": "false",
+                    "lang": "en-US",
+                    "region": "US",
+                    "scrIds": _scr_id,
+                    "start": 0,
+                    "count": 200,
+                },
+                timeout=12,
+            )
             _resp.raise_for_status()
-            _soup = BeautifulSoup(_resp.text, "html.parser")
+            _data   = _resp.json()
+            _result = _data.get("finance", {}).get("result", [])
+            if not _result:
+                continue
+            _quotes = _result[0].get("quotes", [])
 
-            _links = _soup.find_all("a", href=_re.compile(r"quote\.ashx\?t="))
-            _page_tickers = list(dict.fromkeys([
-                lnk.text.strip().upper()
-                for lnk in _links
-                if lnk.text.strip().isalpha() and len(lnk.text.strip()) <= 5
-            ]))
-            _prev_len = len(tickers)
-            for t in _page_tickers:
-                if t not in tickers:
-                    tickers.append(t)
+            for _q in _quotes:
+                _sym  = (_q.get("symbol") or "").strip().upper()
+                _chg  = _q.get("regularMarketChangePercent") or 0.0
+                _price = _q.get("regularMarketPrice") or 0.0
+                _avol = _q.get("averageDailyVolume10Day") or _q.get("averageDailyVolume3Month") or 0
 
-            # Stop if page returned fewer than 20 unique tickers (last page)
-            if len(_page_tickers) < 20 or (len(tickers) - _prev_len) == 0:
-                break
-            time.sleep(0.4)
+                # Apply same filters as the original Finviz screener
+                if not _sym or not _sym.isalpha() or len(_sym) > 5:
+                    continue
+                if _price < price_min or _price > price_max:
+                    continue
+                if _chg < change_min_pct:
+                    continue
+                if _avol < _avg_vol_min:
+                    continue
+                if _sym in _seen:
+                    continue
+
+                _seen.add(_sym)
+                _tickers.append(_sym)
+                if len(_tickers) >= max_tickers:
+                    break
+
+            time.sleep(0.3)
 
         except Exception as _e:
-            logging.warning(f"Finviz watchlist fetch error (r={_start}): {_e}")
-            break
+            logging.warning(f"Yahoo Finance screener fetch error ({_scr_id}): {_e}")
 
-    logging.info(f"Finviz watchlist: fetched {len(tickers)} tickers")
-    return tickers[:max_tickers]
+    logging.info(f"Finviz watchlist: fetched {len(_tickers)} tickers")
+    return _tickers[:max_tickers]
 
 
 def fetch_premarket_gappers(
