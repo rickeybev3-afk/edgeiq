@@ -124,7 +124,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python -m unittest discover -p 'test_*.py' -v"
+args = "python -m pytest -v"
 
 [workflows.workflow.metadata]
 isValidation = true
