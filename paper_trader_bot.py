@@ -1491,10 +1491,11 @@ def _register_zone_watch(
             "target":            target,
             "qty":               qty,
         }
-    log.info(
-        f"[ZoneWatch] 👀 Watching {ticker} — "
-        f"cancel if price < ${invalidation_price:.2f} (IB low) before entry fills"
-    )
+    if direction == "Bearish Break":
+        _watch_desc = f"cancel if price > ${invalidation_price:.2f} (IB high) before entry fills"
+    else:
+        _watch_desc = f"cancel if price < ${invalidation_price:.2f} (IB low) before entry fills"
+    log.info(f"[ZoneWatch] 👀 Watching {ticker} — {_watch_desc}")
 
 
 def _restore_zone_watch_from_db() -> None:
@@ -1566,8 +1567,10 @@ def _monitor_zone_invalidation() -> None:
 
     Runs every ZONE_CHECK_INTERVAL seconds (5 min) during market hours.
     For Bullish Break setups: cancelled if the last completed 5-min bar closed
-    below the IB low (invalidation_price).  Uses candle-close (not tick) to
-    avoid noise from intraday wicks.
+    below the IB low (invalidation_price).
+    For Bearish Break setups: cancelled if the last completed 5-min bar closed
+    above the IB high (invalidation_price).
+    Uses candle-close (not tick) to avoid noise from intraday wicks.
 
     Before acting, verifies each order's Alpaca status:
     - filled/partially_filled → entry triggered; remove from watch silently
@@ -1678,9 +1681,9 @@ def _monitor_zone_invalidation() -> None:
         # Bullish Break: IB zone broken when 5-min candle closes below IB low
         if direction == "Bullish Break" and bar_c < inval_price:
             to_cancel.append((key, watch.copy(), bar_c))
-        # Bearish Break: zone broken when 5-min candle closes above IB high (stub)
-        # elif direction == "Bearish Break" and bar_c > inval_price:
-        #     to_cancel.append((key, watch.copy(), bar_c))
+        # Bearish Break: IB zone broken when 5-min candle closes above IB high
+        elif direction == "Bearish Break" and bar_c > inval_price:
+            to_cancel.append((key, watch.copy(), bar_c))
 
     for key, watch, bar_c in to_cancel:
         ticker      = key[0]
@@ -1688,9 +1691,15 @@ def _monitor_zone_invalidation() -> None:
         inval_price = watch["invalidation_price"]
         trade_date  = key[1]
 
+        direction   = watch["direction"]
+        if direction == "Bearish Break":
+            _inval_desc = f"${bar_c:.2f} > IB high ${inval_price:.2f}"
+        else:
+            _inval_desc = f"${bar_c:.2f} < IB low ${inval_price:.2f}"
+
         log.warning(
             f"[ZoneWatch] ⚠️ {ticker} zone BROKEN — "
-            f"5-min bar closed ${bar_c:.2f} < IB low ${inval_price:.2f} — "
+            f"5-min bar closed {_inval_desc} — "
             f"cancelling parent order {order_id[:8]}…"
         )
 
@@ -1717,7 +1726,7 @@ def _monitor_zone_invalidation() -> None:
             log.info(f"[ZoneWatch] ✅ {ticker}: parent order {order_id[:8]} cancelled")
             tg_send(
                 f"⚠️ <b>{ticker} Bracket Cancelled — Zone Broken</b>\n"
-                f"5-min bar closed <b>${bar_c:.2f}</b> below IB low <b>${inval_price:.2f}</b>\n"
+                f"5-min bar closed <b>{_inval_desc}</b>\n"
                 f"Entry order cancelled — structure invalidated before trigger.\n"
                 f"<i>Bot will re-evaluate at 2 PM scan if setup recovers.</i>"
             )
