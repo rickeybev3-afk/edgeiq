@@ -11533,6 +11533,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
             else:
                 with st.spinner("Loading historical trades…"):
                     try:
+                        # Parse ticker filter from the watchlist text area — same source the
+                        # backtest runner uses.  Empty list = no filter (show all tickers).
+                        _bt_raw = st.session_state.get("bt_tickers_input", "")
+                        _rp_ticker_filter = [
+                            t.strip().upper()
+                            for t in _bt_raw.replace("\n", ",").split(",")
+                            if t.strip()
+                        ]
+
                         # Paginate — Supabase caps at 1000 rows per request
                         _rp_rows: list = []
                         _rp_page_size = 1000
@@ -11546,6 +11555,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 .lte("sim_date", str(_rp_end))
                                 .range(_rp_offset, _rp_offset + _rp_page_size - 1)
                             )
+                            if _rp_ticker_filter:
+                                _rp_q = _rp_q.in_("ticker", _rp_ticker_filter)
                             if _rp_scan_type_val is not None:
                                 _rp_q = _rp_q.eq("scan_type", _rp_scan_type_val)
                             _rp_resp = _rp_q.execute()
