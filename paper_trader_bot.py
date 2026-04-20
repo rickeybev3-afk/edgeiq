@@ -1408,13 +1408,27 @@ _ZONE_LAST_CHECK_TS: float           = 0.0
 ZONE_CHECK_INTERVAL  = 300  # seconds between price checks (5 min)
 
 
-def _alpaca_get_latest_prices(tickers: list) -> dict:
-    """Fetch latest trade price for each ticker from Alpaca market-data API.
+def _alpaca_get_order_status(order_id: str) -> str:
+    """Return the Alpaca order status string for a given order ID.
 
-    Returns {TICKER: float_price}. Silently skips any ticker with no data.
-    Uses the SIP feed to match the rest of the bot.
+    Possible values: 'new', 'accepted', 'pending_new', 'partially_filled',
+    'filled', 'canceled', 'expired', 'replaced', or '' on error.
+    Only the PARENT entry order should be watched — once it is filled or
+    cancelled/expired the child legs (TP/SL) are handled by the bracket.
+    """
+    data = _alpaca_get(f"/v2/orders/{order_id}")
+    return data.get("status", "")
+
+
+def _alpaca_get_5min_bar_close(tickers: list) -> dict:
+    """Return the close price of the last COMPLETED 5-min bar for each ticker.
+
+    Uses a window ending 6+ minutes ago so the bar is fully closed.
+    Falls back to the 10-min window if bars API returns no data.
+    Returns {TICKER: float_close}.  Silently skips tickers with no data.
     """
     import requests as _req
+    from datetime import timedelta
     if not tickers or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
         return {}
     headers = {
@@ -1422,20 +1436,36 @@ def _alpaca_get_latest_prices(tickers: list) -> dict:
         "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
     }
     symbols = ",".join(t.upper() for t in tickers)
+    # end = 6 min ago guarantees the 5-min bar is fully closed
+    now_utc = datetime.utcnow()
+    end_dt  = now_utc - timedelta(minutes=6)
+    start_dt = now_utc - timedelta(minutes=20)  # wide window to ensure we get at least 1 bar
     try:
         resp = _req.get(
-            "https://data.alpaca.markets/v2/stocks/trades/latest",
+            "https://data.alpaca.markets/v2/stocks/bars",
             headers=headers,
-            params={"symbols": symbols, "feed": "sip"},
+            params={
+                "symbols":    symbols,
+                "timeframe":  "5Min",
+                "start":      start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end":        end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "limit":      3,
+                "feed":       "sip",
+                "adjustment": "raw",
+            },
             timeout=8,
         )
         if resp.status_code != 200:
-            log.warning(f"[ZoneWatch] Price fetch HTTP {resp.status_code}")
+            log.warning(f"[ZoneWatch] Bar fetch HTTP {resp.status_code}")
             return {}
-        trades = resp.json().get("trades", {})
-        return {sym.upper(): float(info["p"]) for sym, info in trades.items() if "p" in info}
+        bars_by_sym = resp.json().get("bars", {})
+        result = {}
+        for sym, bars in bars_by_sym.items():
+            if bars:
+                result[sym.upper()] = float(bars[-1]["c"])  # last completed bar close
+        return result
     except Exception as _e:
-        log.warning(f"[ZoneWatch] Price fetch error: {_e}")
+        log.warning(f"[ZoneWatch] Bar fetch error: {_e}")
         return {}
 
 
@@ -1470,7 +1500,9 @@ def _register_zone_watch(
 def _restore_zone_watch_from_db() -> None:
     """Re-populate _ZONE_WATCH from today's open paper_trades on startup.
 
-    Queries for rows with alpaca_order_id set and win_loss NULL (entry pending).
+    Queries rows with alpaca_order_id set and win_loss NULL, then verifies
+    each order's status against Alpaca before registering — skipping any that
+    are already filled/cancelled (i.e. the entry fired or was externally removed).
     Silently skips if LIVE_ORDERS_ENABLED is False (dev mode) or DB is unavailable.
     """
     if not LIVE_ORDERS_ENABLED or not _supabase_client:
@@ -1491,7 +1523,9 @@ def _restore_zone_watch_from_db() -> None:
             .is_("win_loss", "null")
             .execute()
         ).data or []
-        restored = 0
+        restored = skipped = 0
+        # Pre-fill states that mean the entry order is still waiting (not yet filled)
+        _OPEN_STATUSES = {"new", "accepted", "pending_new", "accepted_for_bidding"}
         for row in rows:
             ticker    = (row.get("ticker") or "").upper()
             direction = row.get("predicted") or ""
@@ -1499,8 +1533,16 @@ def _restore_zone_watch_from_db() -> None:
             order_id  = row.get("alpaca_order_id") or ""
             if not ticker or not direction or not order_id or ib_low <= 0:
                 continue
-            # Only Bullish Break for now (Bearish Break uses IB high as invalidation)
             if direction != "Bullish Break":
+                continue
+            # Verify the PARENT entry order is still truly open on Alpaca
+            status = _alpaca_get_order_status(order_id)
+            if status and status not in _OPEN_STATUSES:
+                log.info(
+                    f"[ZoneWatch] Skip restore {ticker} — "
+                    f"order {order_id[:8]} status='{status}' (filled/cancelled)"
+                )
+                skipped += 1
                 continue
             _register_zone_watch(
                 ticker, today_str, order_id, direction, ib_low,
@@ -1510,8 +1552,11 @@ def _restore_zone_watch_from_db() -> None:
                 int(row.get("alpaca_qty") or 0),
             )
             restored += 1
-        if restored:
-            log.info(f"[ZoneWatch] ♻️ Restored {restored} zone watch entry(s) from DB on restart")
+        if restored or skipped:
+            log.info(
+                f"[ZoneWatch] ♻️ Restored {restored} zone watch entry(s) from DB on restart "
+                f"({skipped} skipped — already filled/cancelled)"
+            )
     except Exception as _e:
         log.warning(f"[ZoneWatch] Startup restore failed (non-fatal): {_e}")
 
@@ -1520,10 +1565,19 @@ def _monitor_zone_invalidation() -> None:
     """Check open bracket orders — cancel if their IB zone has been broken.
 
     Runs every ZONE_CHECK_INTERVAL seconds (5 min) during market hours.
-    For Bullish Break setups: cancelled if latest price < IB low (invalidation_price).
+    For Bullish Break setups: cancelled if the last completed 5-min bar closed
+    below the IB low (invalidation_price).  Uses candle-close (not tick) to
+    avoid noise from intraday wicks.
 
-    Sends a Telegram alert on cancellation so the trader knows immediately.
-    The 2 PM intraday scan will re-evaluate and re-place if the setup recovers.
+    Before acting, verifies each order's Alpaca status:
+    - filled/partially_filled → entry triggered; remove from watch silently
+    - canceled/expired        → already gone; remove from watch silently
+    - new/accepted            → entry still pending; check bar close
+    Cancels ONLY the specific parent order_id, not all orders for the ticker,
+    preventing accidental cancellation of TP/SL legs on a filled position.
+
+    Sends a Telegram alert and patches skip_reason='zone_cancelled' in
+    paper_trades on cancellation.  The 2 PM intraday scan re-evaluates naturally.
     """
     global _ZONE_LAST_CHECK_TS
     if not LIVE_ORDERS_ENABLED:
@@ -1552,57 +1606,136 @@ def _monitor_zone_invalidation() -> None:
     if not keys_today:
         return
 
-    tickers = list({t for t, _ in keys_today})
-    prices  = _alpaca_get_latest_prices(tickers)
-    if not prices:
-        log.warning("[ZoneWatch] Could not fetch prices — skipping check")
+    # ── Step 1: Check order status for each entry; prune filled/cancelled ──────
+    # This MUST run before the bar-price check so we never act on an entry that
+    # has already filled — touching the ticker's orders after fill could cancel
+    # the live stop-loss or take-profit legs of the active bracket position.
+    _OPEN_STATUSES   = {"new", "accepted", "pending_new", "accepted_for_bidding"}
+    _FILLED_STATUSES = {"filled", "partially_filled"}
+    _DONE_STATUSES   = {"canceled", "expired", "replaced"}
+
+    still_pending = []      # (key, watch) — confirmed still open, safe to check price
+    to_remove     = []      # (key, reason) — clean up from watch, no price action needed
+
+    for key in list(keys_today):
+        with _ZONE_WATCH_LOCK:
+            watch = _ZONE_WATCH.get(key)
+        if watch is None:
+            continue
+        order_id = watch["order_id"]
+        status   = _alpaca_get_order_status(order_id)
+
+        if not status:
+            # API error — keep in watch, try again next cycle
+            still_pending.append((key, watch))
+            continue
+        if status in _OPEN_STATUSES:
+            still_pending.append((key, watch))
+        elif status in _FILLED_STATUSES:
+            to_remove.append((key, f"entry filled (status={status})"))
+        elif status in _DONE_STATUSES:
+            to_remove.append((key, f"order gone (status={status})"))
+        else:
+            # Unknown status — leave in watch, log for visibility
+            log.info(f"[ZoneWatch] {key[0]} unknown order status '{status}' — leaving in watch")
+            still_pending.append((key, watch))
+
+    for key, reason in to_remove:
+        log.info(f"[ZoneWatch] Removing {key[0]} from watch — {reason}")
+        with _ZONE_WATCH_LOCK:
+            _ZONE_WATCH.pop(key, None)
+
+    if not still_pending:
+        return
+
+    # ── Step 2: Fetch last completed 5-min bar close for pending tickers ───────
+    tickers   = list({t for t, _ in still_pending})
+    bar_close = _alpaca_get_5min_bar_close(tickers)
+
+    if not bar_close:
+        log.warning("[ZoneWatch] No 5-min bar data returned — skipping invalidation check")
         return
 
     log.info(
-        f"[ZoneWatch] Checking {len(keys_today)} setup(s): "
-        + ", ".join(f"{t}=${prices.get(t, '?')}" for t, _ in keys_today)
+        f"[ZoneWatch] 5-min bar close check — "
+        + ", ".join(
+            f"{t}=${bar_close.get(t, '?')}"
+            f"(inval=${dict(still_pending).get((t, today_str), {}).get('invalidation_price', '?') if (t, today_str) in dict(still_pending) else '?'})"
+            for t, _ in still_pending
+        )
     )
 
+    # ── Step 3: Cancel orders whose zone is confirmed broken on candle close ───
     to_cancel = []
-    with _ZONE_WATCH_LOCK:
-        for key in list(keys_today):
-            if key not in _ZONE_WATCH:
-                continue
-            watch     = _ZONE_WATCH[key]
-            ticker    = key[0]
-            price     = prices.get(ticker)
-            if price is None:
-                continue
-            direction   = watch["direction"]
-            inval_price = watch["invalidation_price"]
-            # Bullish: zone broken when price drops below IB low
-            if direction == "Bullish Break" and price < inval_price:
-                to_cancel.append((key, watch.copy(), price))
-
-    for key, watch, price in to_cancel:
+    for key, watch in still_pending:
         ticker      = key[0]
+        bar_c       = bar_close.get(ticker)
         inval_price = watch["invalidation_price"]
+        direction   = watch["direction"]
+        if bar_c is None:
+            log.info(f"[ZoneWatch] {ticker}: no bar data this cycle — skipping")
+            continue
+        # Bullish Break: IB zone broken when 5-min candle closes below IB low
+        if direction == "Bullish Break" and bar_c < inval_price:
+            to_cancel.append((key, watch.copy(), bar_c))
+        # Bearish Break: zone broken when 5-min candle closes above IB high (stub)
+        # elif direction == "Bearish Break" and bar_c > inval_price:
+        #     to_cancel.append((key, watch.copy(), bar_c))
+
+    for key, watch, bar_c in to_cancel:
+        ticker      = key[0]
         order_id    = watch["order_id"]
+        inval_price = watch["invalidation_price"]
+        trade_date  = key[1]
+
         log.warning(
             f"[ZoneWatch] ⚠️ {ticker} zone BROKEN — "
-            f"price ${price:.2f} < IB low ${inval_price:.2f} — "
-            f"cancelling order {order_id[:8]}…"
+            f"5-min bar closed ${bar_c:.2f} < IB low ${inval_price:.2f} — "
+            f"cancelling parent order {order_id[:8]}…"
         )
-        cancelled = _alpaca_cancel_orders_for_ticker(ticker)
-        if cancelled > 0:
-            log.info(f"[ZoneWatch] ✅ {ticker}: {cancelled} order(s) cancelled")
+
+        # Cancel ONLY the specific parent entry order (not all orders for the ticker)
+        # so that any other open orders (e.g. a separate position's legs) are safe.
+        _alpaca_base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+        _alp_headers = {
+            "APCA-API-KEY-ID":     ALPACA_API_KEY,
+            "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+        }
+        try:
+            import requests as _req
+            _del_resp = _req.delete(
+                f"{_alpaca_base}/v2/orders/{order_id}",
+                headers=_alp_headers, timeout=8,
+            )
+            _cancel_ok = _del_resp.status_code in (200, 204)
+        except Exception as _ce:
+            log.warning(f"[ZoneWatch] Cancel request error for {ticker}: {_ce}")
+            _cancel_ok = False
+
+        if _cancel_ok:
+            log.info(f"[ZoneWatch] ✅ {ticker}: parent order {order_id[:8]} cancelled")
             tg_send(
                 f"⚠️ <b>{ticker} Bracket Cancelled — Zone Broken</b>\n"
-                f"Price <b>${price:.2f}</b> broke below IB low <b>${inval_price:.2f}</b>\n"
-                f"Open entry order cancelled — setup structure invalidated.\n"
+                f"5-min bar closed <b>${bar_c:.2f}</b> below IB low <b>${inval_price:.2f}</b>\n"
+                f"Entry order cancelled — structure invalidated before trigger.\n"
                 f"<i>Bot will re-evaluate at 2 PM scan if setup recovers.</i>"
             )
+            # Patch paper_trades row so the dashboard can show why this setup was cleared
+            if _supabase_client:
+                try:
+                    _supabase_client.table("paper_trades").update({
+                        "skip_reason": "zone_cancelled",
+                    }).eq("user_id", USER_ID).eq("trade_date", trade_date).eq(
+                        "ticker", ticker
+                    ).eq("alpaca_order_id", order_id).execute()
+                except Exception as _pe:
+                    log.warning(f"[ZoneWatch] skip_reason patch failed (non-fatal): {_pe}")
         else:
-            # Order may have already been filled or cancelled externally
-            log.info(
-                f"[ZoneWatch] {ticker}: 0 orders cancelled "
-                f"(already filled or removed — removing from watch)"
+            log.warning(
+                f"[ZoneWatch] {ticker}: cancel returned status {getattr(_del_resp, 'status_code', '?')} "
+                f"— removing from watch anyway"
             )
+
         with _ZONE_WATCH_LOCK:
             _ZONE_WATCH.pop(key, None)
 
@@ -1801,6 +1934,13 @@ def _monitor_trailing_stops() -> None:
             if guard_key in _TRAILING_STOP_STOPOUT_ALERTED:
                 continue
             _TRAILING_STOP_STOPOUT_ALERTED.add(guard_key)
+            # Clear any lingering zone-watch entry for this ticker — entry has filled,
+            # so zone-invalidation monitoring is no longer relevant.
+            _zw_key = (ticker, today_str)
+            with _ZONE_WATCH_LOCK:
+                if _zw_key in _ZONE_WATCH:
+                    _ZONE_WATCH.pop(_zw_key)
+                    log.info(f"[ZoneWatch] Cleared {ticker} on trailing-stop fill detection")
             log.info(
                 f"[TrailingStop] {ticker} — position no longer in Alpaca: "
                 f"trailing stop filled intraday. Patching paper_trades now."
@@ -2088,6 +2228,12 @@ def _monitor_trailing_stops() -> None:
 
         if ts_result["ok"]:
             _TRAILING_STOP_ACTIVATED.add(guard_key)
+            # Entry confirmed filled (trailing stop now live) — remove from zone watch
+            _zw_key2 = (ticker, today_str)
+            with _ZONE_WATCH_LOCK:
+                if _zw_key2 in _ZONE_WATCH:
+                    _ZONE_WATCH.pop(_zw_key2)
+                    log.info(f"[ZoneWatch] Cleared {ticker} — trailing stop activated (entry filled)")
 
             # ── Persist trail context to paper_trades ─────────────────────────
             # Stored so the reason for tightening survives a bot restart and is
@@ -6160,6 +6306,12 @@ def main():
                 _force_close_all_positions()
             except Exception as _fce:
                 log.warning(f"[ForceClose] Force-close sweep failed (non-fatal): {_fce}")
+            # Clear zone watch — any remaining entries are stale (past entry window)
+            with _ZONE_WATCH_LOCK:
+                cleared = len(_ZONE_WATCH)
+                _ZONE_WATCH.clear()
+            if cleared:
+                log.info(f"[ZoneWatch] EOD clear — removed {cleared} stale watch entry(s)")
             _force_close_done = True
 
         # 4:20 PM — EOD update (only reachable if market extended session; normally
