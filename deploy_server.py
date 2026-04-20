@@ -2187,9 +2187,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             },
         ]
 
+        def _read_last_alerted(screener_key: str) -> str | None:
+            state_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                f".edgeiq_{screener_key}_calib_alert.json",
+            )
+            try:
+                with open(state_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                return data.get("last_alerted_utc") or None
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                return None
+
         results = []
         for s in SCREENERS:
             threshold = _resolve_threshold(s["key"])
+            last_alerted_utc = _read_last_alerted(s["key"])
             if not supabase_url or not supabase_key:
                 results.append({
                     "key": s["key"],
@@ -2198,6 +2211,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "threshold": threshold,
                     "ready": False,
                     "script": s["script"],
+                    "last_alerted_utc": last_alerted_utc,
                     "error": "Supabase not configured",
                 })
                 continue
@@ -2244,6 +2258,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "threshold": threshold,
                     "ready": count >= threshold,
                     "script": s["script"],
+                    "last_alerted_utc": last_alerted_utc,
                     "error": None,
                 })
             except Exception as exc:
@@ -2255,6 +2270,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "threshold": threshold,
                     "ready": False,
                     "script": s["script"],
+                    "last_alerted_utc": last_alerted_utc,
                     "error": "Could not load calibration data.",
                 })
 

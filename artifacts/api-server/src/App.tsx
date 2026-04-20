@@ -834,7 +834,22 @@ interface ScreenerCalibItem {
   threshold: number;
   ready: boolean;
   script: string;
+  last_alerted_utc: string | null;
   error: string | null;
+}
+
+function formatLastAlerted(utcIso: string): string {
+  const alertedAt = new Date(utcIso);
+  if (isNaN(alertedAt.getTime())) return "alerted recently";
+  const diffMs = Date.now() - alertedAt.getTime();
+  if (diffMs < 0) return "alerted just now";
+  const diffMins = Math.floor(diffMs / 60_000);
+  if (diffMins < 2) return "alerted just now";
+  if (diffMins < 60) return diffMins === 1 ? "alerted 1 minute ago" : `alerted ${diffMins} minutes ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return diffHours === 1 ? "alerted 1 hour ago" : `alerted ${diffHours} hours ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return diffDays === 1 ? "alerted 1 day ago" : `alerted ${diffDays} days ago`;
 }
 
 interface ScreenerCalibState {
@@ -1391,6 +1406,11 @@ function Home({ health }: { health: HealthState }) {
                             {s.script}
                           </code>{" "}
                           to update sizing.
+                        </p>
+                      )}
+                      {s.ready && s.last_alerted_utc && (
+                        <p style={{ fontSize: "11px", color: "#64748b", margin: 0 }}>
+                          {formatLastAlerted(s.last_alerted_utc)}
                         </p>
                       )}
                     </>
