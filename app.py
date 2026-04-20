@@ -32025,6 +32025,8 @@ function _bqCopyShareLink() {
                         "_daily_scan_log_ensured_day",
                         "_earliest_scan_date",
                         "_earliest_scan_date_fetched_day",
+                        "_earliest_gap_down_date",
+                        "_earliest_gap_down_date_fetched_day",
                     ):
                         st.session_state.pop(_k, None)
                     st.session_state["_scanner_funnel_refreshed_at"] = datetime.now()
@@ -32045,6 +32047,13 @@ function _bqCopyShareLink() {
                 st.session_state["_earliest_scan_date"] = get_earliest_scan_date()
                 st.session_state["_earliest_scan_date_fetched_day"] = _today
             _earliest_scan_date = st.session_state["_earliest_scan_date"]
+            if (
+                "_earliest_gap_down_date" not in st.session_state
+                or st.session_state.get("_earliest_gap_down_date_fetched_day") != _today
+            ):
+                st.session_state["_earliest_gap_down_date"] = get_earliest_gap_down_date()
+                st.session_state["_earliest_gap_down_date_fetched_day"] = _today
+            _earliest_gap_down_date = st.session_state["_earliest_gap_down_date"]
             _dsl_picked_date = st.date_input(
                 "Scan date",
                 value=date.today(),
@@ -32127,8 +32136,25 @@ function _bqCopyShareLink() {
                 with _dsl_col3:
                     st.metric("Trend / Squeeze", f"{len(_dsl['trend'])} / {len(_dsl['squeeze'])}")
                 with _dsl_col4:
-                    st.metric("Gap-down (Bearish)", len(_dsl.get("gap_down", [])),
-                              help="Pass 4 — Bearish Break universe: tickers down ≥3% at open")
+                    _gd_count = len(_dsl.get("gap_down", []))
+                    _gd_help = "Pass 4 — Bearish Break universe: tickers down ≥3% at open"
+                    if _earliest_gap_down_date:
+                        _gd_help += f" · Gap-down tracking live from {_earliest_gap_down_date.strftime('%b %d, %Y')} onward"
+                    _gd_before_feature = (
+                        _earliest_gap_down_date is not None
+                        and _dsl_picked_date < _earliest_gap_down_date
+                    )
+                    st.metric(
+                        "Gap-down (Bearish)",
+                        _gd_count if not _gd_before_feature else "n/a",
+                        help=_gd_help,
+                    )
+                    if _gd_before_feature:
+                        st.caption(
+                            f"Gap-down tracking started "
+                            f"{_earliest_gap_down_date.strftime('%b %d, %Y')} — "
+                            "no data for earlier dates"
+                        )
                 with _dsl_col5:
                     st.metric("Paper trades fired", _dsl_day_trades,
                               help="Paper trades logged on this day (all TCS levels, resolved + pending)")

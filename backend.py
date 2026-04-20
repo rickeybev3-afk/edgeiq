@@ -14885,6 +14885,38 @@ def get_earliest_scan_date():
         return None
 
 
+def get_earliest_gap_down_date():
+    """Return the earliest date in daily_scan_log that has a gap_down entry.
+
+    Historical rows written before the gap-down screener pass was added will
+    not have any gap_down screener_pass entries.  This function returns the
+    first date from which gap_down data is reliably present, so the dashboard
+    can warn traders that earlier dates may show zero simply because the data
+    was never collected.
+
+    Returns a datetime.date on success, or None if unavailable.
+    """
+    if not supabase:
+        return None
+    try:
+        import datetime as _dt
+        res = (supabase.table("daily_scan_log")
+               .select("scan_date")
+               .eq("screener_pass", "gap_down")
+               .order("scan_date", desc=False)
+               .limit(1)
+               .execute())
+        if res.data and res.data[0].get("scan_date"):
+            raw = res.data[0]["scan_date"]
+            if isinstance(raw, str):
+                return _dt.date.fromisoformat(raw[:10])
+            return raw
+        return None
+    except Exception as e:
+        logging.warning(f"get_earliest_gap_down_date error: {e}")
+        return None
+
+
 def load_daily_scan_log(scan_date=None) -> dict:
     """Load daily_scan_log rows for a given date.
 
