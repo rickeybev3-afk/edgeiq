@@ -32454,6 +32454,36 @@ function _bqCopyShareLink() {
                     f"Calibration column shows progress toward the {_SP_CALIB_MIN}-trade threshold. "
                     "Hover over a row for full calibration detail."
                 )
+                # ── Calibration threshold banners ─────────────────────────────
+                # Show a one-time dismissible banner for each live pass that has
+                # first reached or exceeded the 30-trade recalibration threshold.
+                _calib_ready_passes = []
+                for _r in _sp_live_rows:
+                    if _r["_calib_col"].startswith("✓"):
+                        _pass_key = {"Gap-Down": "gap_down", "Squeeze": "squeeze"}.get(_r["Pass"])
+                        if _pass_key:
+                            _calib_ready_passes.append((_pass_key, _r["Pass"], _r["Trades"]))
+                for _ck, _clabel, _ctrades in _calib_ready_passes:
+                    _dismiss_key = f"calib_thresh_dismissed_{_ck}"
+                    if not st.session_state.get(_dismiss_key, False):
+                        _bcol_msg, _bcol_btn = st.columns([10, 1])
+                        with _bcol_msg:
+                            st.markdown(
+                                '<div style="background:#0d1f0d; border:1px solid #2d7a2d; '
+                                'border-radius:6px; padding:12px 16px; margin:6px 0 8px; line-height:1.6;">'
+                                f'<span style="font-size:14px; font-weight:700; color:#4ade80;">'
+                                f'✓ {_clabel} has reached {_ctrades} settled trades</span><br>'
+                                f'<span style="font-size:13px; color:#86efac;">Run '
+                                f'<code style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:3px;">'
+                                f'calibrate_sp_mult.py --pass {_ck}</code> '
+                                f'to recalibrate the position-size multiplier.</span>'
+                                '</div>',
+                                unsafe_allow_html=True,
+                            )
+                        with _bcol_btn:
+                            if st.button("Dismiss", key=f"dismiss_calib_{_ck}"):
+                                st.session_state[_dismiss_key] = True
+                                st.rerun()
                 _sp_tbl_hdr = (
                     '<table style="border-collapse:collapse;width:100%;font-size:0.9em;margin-top:4px">'
                     '<thead><tr style="border-bottom:2px solid #555;background:rgba(0,0,0,0.05)">'
