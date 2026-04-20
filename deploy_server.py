@@ -2267,16 +2267,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _gap_down_calibration(self):
-        """Return settled Bearish Break (gap_down) trade count vs the 30-trade calibration threshold.
+        """Return settled Bearish Break (gap_down) trade count vs the calibration threshold.
 
         Queries paper_trades for rows where screener_pass='gap_down' AND
         tiered_pnl_r IS NOT NULL AND predicted='Bearish Break', matching the
         exact filter used by calibrate_gap_down_mult.py.
 
+        The threshold is resolved from CALIB_MIN_TRADES_GAP_DOWN env var,
+        falling back to 30 if not set or invalid.
+
         Response:
-          {"count": int, "threshold": 30, "ready": bool, "error": null|str}
+          {"count": int, "threshold": int, "ready": bool, "error": null|str}
         """
+        _raw_threshold = os.environ.get("CALIB_MIN_TRADES_GAP_DOWN", "").strip()
         THRESHOLD = 30
+        if _raw_threshold:
+            try:
+                _v = int(_raw_threshold)
+                if _v > 0:
+                    THRESHOLD = _v
+            except ValueError:
+                pass
         supabase_url = os.environ.get("SUPABASE_URL", "").strip()
         supabase_key = (
             os.environ.get("SUPABASE_KEY") or
