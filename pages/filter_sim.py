@@ -882,11 +882,11 @@ else:
         )
         st.plotly_chart(fig_dd, use_container_width=True)
 
-    sizing_label = (
-        f"${pnl_fixed_risk:,}/trade fixed risk"
-        if pnl_risk_mode == "Fixed $ per trade"
-        else f"{pnl_risk_pct}% of equity (compounding)"
-    )
+    if pnl_fixed_risk is not None:
+        _cmp_sfx = " (compounding)" if pnl_pos_compound else ""
+        sizing_label = f"${pnl_fixed_risk:,}/trade fixed risk{_cmp_sfx}"
+    else:
+        sizing_label = f"{pnl_risk_pct}% of equity (compounding)"
     st.caption(
         f"Simulation: {_sim_n:,} trades (capped {pnl_max_per_day}/day by TCS rank, {s3['n']:,} total signals) · {sizing_label} · "
         "sorted chronologically by sim_date. "
