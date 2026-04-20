@@ -848,20 +848,13 @@ def _check_all_uncalibrated_screeners() -> None:
         )
         return
 
-    _per_key_params: dict[str, tuple[str, int, float]] = {
-        "squeeze": (
-            "calibrate_sp_mult.py",
-            _get_squeeze_calib_min_trades(),
-            _get_calib_cooldown_hours("squeeze"),
-        ),
-        "gap_down": (
-            "calibrate_gap_down_mult.py",
-            resolve_calib_threshold("gap_down"),
-            _get_calib_cooldown_hours("gap_down"),
-        ),
+    _per_key_script: dict[str, str] = {
+        "squeeze": "calibrate_sp_mult.py",
+        "gap_down": "calibrate_sp_mult.py",
     }
     _per_key_extra_args: dict[str, str] = {
         "squeeze": "--pass squeeze",
+        "gap_down": "--pass gap_down",
     }
 
     _base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -871,7 +864,7 @@ def _check_all_uncalibrated_screeners() -> None:
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
-        script_name = _per_key_params.get(key, (f"calibrate_{key}_mult.py",))[0]
+        script_name = _per_key_script.get(key, f"calibrate_{key}_mult.py")
         script_path = os.path.join(_base_dir, script_name)
         if not os.path.isfile(script_path):
             _stub_content = f'''\
@@ -1012,14 +1005,12 @@ if __name__ == "__main__":
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
-        script, min_trades, cooldown = _per_key_params.get(
-            key,
-            (
-                f"calibrate_{key}_mult.py",
-                resolve_calib_threshold(key),
-                _get_calib_cooldown_hours(key),
-            ),
+        script = _per_key_script.get(key, f"calibrate_{key}_mult.py")
+        min_trades = (
+            _get_squeeze_calib_min_trades() if key == "squeeze"
+            else resolve_calib_threshold(key)
         )
+        cooldown = _get_calib_cooldown_hours(key)
         if key == "squeeze":
             log.info(
                 "Screener 'squeeze': calibration threshold = %d trades "

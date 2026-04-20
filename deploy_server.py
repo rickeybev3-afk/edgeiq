@@ -2160,7 +2160,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             {
                 "key": "gap_down",
                 "label": "Bearish Break",
-                "script": "calibrate_gap_down_mult.py",
+                "script": "calibrate_sp_mult.py",
+                "extra_args": "--pass gap_down",
                 "extra_filters": "&predicted=eq.Bearish%20Break",
             },
         ]
