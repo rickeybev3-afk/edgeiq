@@ -687,9 +687,41 @@ def _check_screener_calibration_due(
         )
 
 
+# ── Per-screener cooldown helper ──────────────────────────────────────────────
+
+_DEFAULT_CALIB_COOLDOWN_HOURS = 23
+
+
+def _get_calib_cooldown_hours(screener_key: str) -> int:
+    """Return the calibration cooldown (hours) for *screener_key*.
+
+    Resolution order:
+      1. ``CALIB_COOLDOWN_HOURS_<SCREENER_KEY>`` env var (upper-cased key)
+      2. ``_DEFAULT_CALIB_COOLDOWN_HOURS`` (23)
+
+    Invalid (non-positive-integer) values are skipped with a warning and the
+    default is used.
+    """
+    env_key = f"CALIB_COOLDOWN_HOURS_{screener_key.upper().replace('-', '_')}"
+    raw = os.getenv(env_key, "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+        log.warning(
+            "%s='%s' is not a valid positive integer; using default %d h.",
+            env_key,
+            raw,
+            _DEFAULT_CALIB_COOLDOWN_HOURS,
+        )
+    return _DEFAULT_CALIB_COOLDOWN_HOURS
+
+
 # ── Squeeze calibration check ─────────────────────────────────────────────────
 
-_SQUEEZE_CALIB_COOLDOWN_HOURS = 23
 _DEFAULT_SQUEEZE_CALIB_MIN_TRADES = 30
 
 
@@ -746,13 +778,11 @@ def _check_squeeze_calibration_due() -> None:
         "squeeze",
         "calibrate_squeeze_mult.py",
         _get_squeeze_calib_min_trades(),
-        _SQUEEZE_CALIB_COOLDOWN_HOURS,
+        _get_calib_cooldown_hours("squeeze"),
     )
 
 
 # ── Gap-down calibration check ────────────────────────────────────────────────
-
-_GAP_DOWN_CALIB_COOLDOWN_HOURS = 23
 
 
 def _check_gap_down_calibration_due() -> None:
@@ -766,7 +796,7 @@ def _check_gap_down_calibration_due() -> None:
     _check_screener_calibration_due(
         "gap_down",
         "calibrate_gap_down_mult.py",
-        cooldown_hours=_GAP_DOWN_CALIB_COOLDOWN_HOURS,
+        cooldown_hours=_get_calib_cooldown_hours("gap_down"),
     )
 
 
@@ -780,13 +810,16 @@ def _check_all_uncalibrated_screeners() -> None:
     required in this file.
 
     Per-screener parameter precedence:
-      • squeeze  — honours SQUEEZE_CALIB_MIN_TRADES env var via
-                   _get_squeeze_calib_min_trades() and uses the dedicated
-                   _SQUEEZE_CALIB_COOLDOWN_HOURS constant.
-      • gap_down — uses _GAP_DOWN_CALIB_MIN_TRADES / _GAP_DOWN_CALIB_COOLDOWN_HOURS.
-      • any other key at 1.00× — falls back to _CALIB_MIN_TRADES /
-                   _DEFAULT_COOLDOWN_HOURS with a derived script name of
-                   calibrate_{key}_mult.py.
+      • squeeze  — honours CALIB_MIN_TRADES_SQUEEZE / SQUEEZE_CALIB_MIN_TRADES env
+                   vars via _get_squeeze_calib_min_trades(); cooldown read from
+                   CALIB_COOLDOWN_HOURS_SQUEEZE (default 23 h).
+      • gap_down — threshold via CALIB_MIN_TRADES_GAP_DOWN env var
+                   (_get_calib_min_trades("gap_down")); cooldown from
+                   CALIB_COOLDOWN_HOURS_GAP_DOWN (default 23 h).
+      • any other key at 1.00× — threshold via CALIB_MIN_TRADES_<KEY> env var
+                   (_get_calib_min_trades(key)); cooldown from
+                   CALIB_COOLDOWN_HOURS_<KEY> (default 23 h); script name
+                   derived as calibrate_{key}_mult.py.
     """
     try:
         import paper_trader_bot as _ptb
@@ -803,12 +836,12 @@ def _check_all_uncalibrated_screeners() -> None:
         "squeeze": (
             "calibrate_squeeze_mult.py",
             _get_squeeze_calib_min_trades(),
-            _SQUEEZE_CALIB_COOLDOWN_HOURS,
+            _get_calib_cooldown_hours("squeeze"),
         ),
         "gap_down": (
             "calibrate_gap_down_mult.py",
-            _GAP_DOWN_CALIB_MIN_TRADES,
-            _GAP_DOWN_CALIB_COOLDOWN_HOURS,
+            _get_calib_min_trades("gap_down"),
+            _get_calib_cooldown_hours("gap_down"),
         ),
     }
 
@@ -836,8 +869,8 @@ def _check_all_uncalibrated_screeners() -> None:
             key,
             (
                 f"calibrate_{key}_mult.py",
-                _CALIB_MIN_TRADES,
-                _DEFAULT_COOLDOWN_HOURS,
+                _get_calib_min_trades(key),
+                _get_calib_cooldown_hours(key),
             ),
         )
         _check_screener_calibration_due(key, script, min_trades, cooldown)
@@ -1552,7 +1585,7 @@ def main():
     _squeeze_min = _get_squeeze_calib_min_trades()
     log.info(
         "Squeeze calibration threshold: %d settled trades "
-        "(set SQUEEZE_CALIB_MIN_TRADES to override).",
+        "(set CALIB_MIN_TRADES_SQUEEZE or legacy SQUEEZE_CALIB_MIN_TRADES to override).",
         _squeeze_min,
     )
 
