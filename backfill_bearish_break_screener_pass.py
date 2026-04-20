@@ -3,21 +3,23 @@ backfill_bearish_break_screener_pass.py
 ───────────────────────────────────────
 Backfills screener_pass = 'gap_down' on paper_trades rows where:
   - predicted = 'Bearish Break'
-  - screener_pass IS NULL  OR  screener_pass = 'bearish_break_filtered'
+  - screener_pass IS NULL  OR  screener_pass != 'gap_down'
+    (i.e. any row not already correctly tagged, including 'other', 'trend',
+    'gap', 'bearish_break_filtered', or NULL)
 
 Why 'gap_down'?
-  Bearish Break orders were disabled (never placed) before the screener was
-  introduced, so these rows never received a live screener_pass tag. Stamping
-  them 'gap_down' is accurate for the pre-screener era because every Bearish
-  Break candidate was a downward-gap stock by construction. This makes the rows
-  visible to per-pass win-rate analytics and multiplier-calibration queries that
-  filter out NULL / 'bearish_break_filtered' rows.
+  Bearish Break orders were historically logged before the gap_down screener
+  pass was introduced, so those rows were stamped with whatever pass was active
+  at the time ('other', 'trend', 'gap', etc.). Stamping them 'gap_down' is
+  accurate because every Bearish Break candidate was a downward-gap stock by
+  construction. This makes the rows visible to per-pass win-rate analytics and
+  multiplier-calibration queries that filter on screener_pass='gap_down'.
 
-The script only touches rows whose outcome is already settled (result IS NOT
-NULL) so in-flight paper trades are never accidentally modified.
+The script only touches rows whose outcome is already settled (tiered_pnl_r IS
+NOT NULL) so in-flight paper trades are never accidentally modified.
 
 Usage:
-  python backfill_bearish_break_screener_pass.py             # stamp NULLs + filtered
+  python backfill_bearish_break_screener_pass.py             # stamp all non-gap_down
   python backfill_bearish_break_screener_pass.py --dry-run   # print plan, no writes
   python backfill_bearish_break_screener_pass.py --include-unsettled
                                                              # also stamp open rows
@@ -69,18 +71,18 @@ def fetch_rows(include_unsettled: bool, start_date=None, end_date=None) -> list[
 
     rows   = []
     offset = 0
-    print(f"  Fetching Bearish Break rows with NULL/'bearish_break_filtered' screener_pass…",
+    print(f"  Fetching settled Bearish Break rows not yet tagged 'gap_down'…",
           end="", flush=True)
 
     while True:
         q = (
             backend.supabase.table(TABLE)
-            .select(f"id,ticker,{DATE_FIELD},predicted,screener_pass,result")
+            .select(f"id,ticker,{DATE_FIELD},predicted,screener_pass,tiered_pnl_r")
             .eq("predicted", "Bearish Break")
-            .or_("screener_pass.is.null,screener_pass.eq.bearish_break_filtered")
+            .or_("screener_pass.is.null,screener_pass.neq.gap_down")
         )
         if not include_unsettled:
-            q = q.not_.is_("result", "null")
+            q = q.not_.is_("tiered_pnl_r", "null")
         if start_date:
             q = q.gte(DATE_FIELD, start_date)
         if end_date:
@@ -152,7 +154,7 @@ def _sample_rows(rows: list[dict], n: int = 5) -> None:
         print(f"    id={r['id']}  ticker={r['ticker']}  "
               f"date={str(r.get(DATE_FIELD, ''))[:10]}  "
               f"screener_pass={r.get('screener_pass')!r}  "
-              f"result={r.get('result')!r}")
+              f"tiered_pnl_r={r.get('tiered_pnl_r')!r}")
     if len(rows) > n:
         print(f"    … and {len(rows) - n} more")
 
@@ -167,9 +169,9 @@ def main():
     print(f"  Target value : screener_pass = '{TARGET_PASS}'")
     print(f"  Filter       : predicted='Bearish Break'")
     print(f"                 AND (screener_pass IS NULL")
-    print(f"                      OR screener_pass='bearish_break_filtered')")
+    print(f"                      OR screener_pass != 'gap_down')")
     if not args.include_unsettled:
-        print(f"                 AND result IS NOT NULL  (settled trades only)")
+        print(f"                 AND tiered_pnl_r IS NOT NULL  (settled trades only)")
     if args.dry_run:
         print("  *** DRY RUN — no writes ***")
     print("=" * 64)
@@ -185,14 +187,15 @@ def main():
         print("=" * 64)
         return
 
-    n_null     = sum(1 for r in rows if r.get("screener_pass") is None)
-    n_filtered = sum(1 for r in rows if r.get("screener_pass") == "bearish_break_filtered")
-    tickers    = sorted({r["ticker"] for r in rows})
-    dates      = sorted({str(r.get(DATE_FIELD, ""))[:10] for r in rows if r.get(DATE_FIELD)})
+    from collections import Counter
+    pass_counts = Counter(r.get("screener_pass") for r in rows)
+    tickers     = sorted({r["ticker"] for r in rows})
+    dates       = sorted({str(r.get(DATE_FIELD, ""))[:10] for r in rows if r.get(DATE_FIELD)})
 
     print(f"\n  Rows to update : {len(rows):,}")
-    print(f"    screener_pass IS NULL          : {n_null:,}")
-    print(f"    screener_pass='bearish_break_filtered' : {n_filtered:,}")
+    print(f"  Current screener_pass breakdown:")
+    for pass_val, count in sorted(pass_counts.items(), key=lambda x: -(x[1])):
+        print(f"    {pass_val!r:<30}: {count:,}")
     print(f"  Unique tickers : {len(tickers)}")
     print(f"  Date range     : {dates[0] if dates else 'N/A'} → {dates[-1] if dates else 'N/A'}")
     print(f"\n  Sample rows:")
@@ -217,8 +220,7 @@ def main():
             script="backfill_bearish_break_screener_pass",
             health={
                 "rows_written":            written,
-                "rows_null_before":        n_null,
-                "rows_filtered_before":    n_filtered,
+                "pass_counts_before":      dict(pass_counts),
                 "target_screener_pass":    TARGET_PASS,
                 "unique_tickers":          len(tickers),
                 "date_range_start":        dates[0]  if dates else None,
