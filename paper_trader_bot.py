@@ -4031,14 +4031,19 @@ def morning_scan():
         r["sim_date"]   = str(today)  # ensure sim_date present for dedup
         r["scan_type"]  = "morning"
 
-    # Tag each result with its screener_pass before logging so the DB row
-    # carries the pass from day-one (not just after order placement).
+    # Load TCS thresholds early so we can tag tcs_floor on every row before logging.
+    _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
+
+    # Tag each result with screener_pass and tcs_floor before logging so the
+    # initial DB row carries both fields (previously only written at order placement).
     for _r in results:
         if not _r.get("screener_pass"):
             _t = _r.get("ticker", "")
             _sp = _TICKER_SCREENER_PASS.get(_t) or _TICKER_SCREENER_PASS.get(_t.upper())
             if _sp:
                 _r["screener_pass"] = _sp
+        if _r.get("_struct_tcs_floor") is None:
+            _r["_struct_tcs_floor"] = _struct_tcs_floor(_r, _tcs_thresholds, effective_min_tcs)
 
     # Log ALL scan results to paper_trades with regime_tag attached.
     # min_tcs_filter records the effective threshold for this session;
@@ -4055,8 +4060,6 @@ def morning_scan():
     except Exception as _ctx_err:
         log.warning(f"Context level logging failed (non-critical): {_ctx_err}")
 
-    # Load per-structure calibrated TCS thresholds (from nightly recalibration)
-    _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
     qualified = [
         r for r in results
         if float(r.get("tcs", 0)) >= _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
@@ -4163,13 +4166,18 @@ def intraday_scan():
         r["regime_tag"] = regime_tag
         r["sim_date"]   = str(today)
 
-    # Tag each result with its screener_pass before logging.
+    # Load TCS thresholds early so tcs_floor is tagged on every row before logging.
+    _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
+
+    # Tag screener_pass and tcs_floor before logging.
     for _r in results:
         if not _r.get("screener_pass"):
             _t = _r.get("ticker", "")
             _sp = _TICKER_SCREENER_PASS.get(_t) or _TICKER_SCREENER_PASS.get(_t.upper())
             if _sp:
                 _r["screener_pass"] = _sp
+        if _r.get("_struct_tcs_floor") is None:
+            _r["_struct_tcs_floor"] = _struct_tcs_floor(_r, _tcs_thresholds, effective_min_tcs)
 
     # ── Log ALL intraday results to paper_trades (dedup by ticker+date+scan_type)
     logged = log_paper_trades(results, user_id=USER_ID, min_tcs=effective_min_tcs)
@@ -4181,7 +4189,6 @@ def intraday_scan():
     except Exception as _ctx_err:
         log.warning(f"Context level logging failed (non-critical): {_ctx_err}")
 
-    _tcs_thresholds = load_tcs_thresholds(default=MIN_TCS)
     qualified = [
         r for r in results
         if float(r.get("tcs", 0)) >= _struct_tcs_floor(r, _tcs_thresholds, effective_min_tcs)
