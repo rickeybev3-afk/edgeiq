@@ -1056,6 +1056,183 @@ def _self_test_reset_confirm() -> None:
         except OSError:
             pass
 
+    # ── _read_calib_date: pass present in _SP_CALIB_DATES ────────────────────
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+        tmp_calib = tf.name
+        tf.write(_APPLY_FIXTURE)
+    try:
+        got_date = _read_calib_date("gap_down", tmp_calib)
+        ok_date_present = got_date == "2026-04-20"
+        print(
+            f"  {'OK  ' if ok_date_present else 'FAIL'} _read_calib_date calibrated pass: "
+            f"got {got_date!r} (expected '2026-04-20')"
+        )
+        if not ok_date_present:
+            all_ok = False
+
+        # _read_calib_date: pass absent from _SP_CALIB_DATES → None
+        got_date_absent = _read_calib_date("other", tmp_calib)
+        ok_date_absent = got_date_absent is None
+        print(
+            f"  {'OK  ' if ok_date_absent else 'FAIL'} _read_calib_date never-calibrated pass: "
+            f"got {got_date_absent!r} (expected None)"
+        )
+        if not ok_date_absent:
+            all_ok = False
+
+        # _read_inline_comment: pass with an inline comment returns it
+        got_comment = _read_inline_comment("gap_down", tmp_calib)
+        expected_comment = "Bearish Break — baseline; recalibrate once >=30 trades settle"
+        ok_comment_present = got_comment == expected_comment
+        print(
+            f"  {'OK  ' if ok_comment_present else 'FAIL'} _read_inline_comment calibrated pass: "
+            f"got {got_comment!r} (expected {expected_comment!r})"
+        )
+        if not ok_comment_present:
+            all_ok = False
+
+        # _read_inline_comment: pass without an inline comment returns None
+        got_comment_absent = _read_inline_comment("other", tmp_calib)
+        ok_comment_absent = got_comment_absent is None
+        print(
+            f"  {'OK  ' if ok_comment_absent else 'FAIL'} _read_inline_comment never-calibrated pass: "
+            f"got {got_comment_absent!r} (expected None)"
+        )
+        if not ok_comment_absent:
+            all_ok = False
+
+        # calib_str rendering — state 1: calib_date + inline_comment present
+        # (mirrors the logic in __main__ for --reset-pass without --yes)
+        calib_date = _read_calib_date("gap_down", tmp_calib)
+        inline_comment = _read_inline_comment("gap_down", tmp_calib)
+        if calib_date:
+            calib_str = f"calibrated on {calib_date}"
+            if inline_comment:
+                calib_str += f" — {inline_comment}"
+        else:
+            calib_str = "not yet calibrated (no calibration date on record)"
+        expected_calib_str = (
+            "calibrated on 2026-04-20 — "
+            "Bearish Break — baseline; recalibrate once >=30 trades settle"
+        )
+        ok_calib_str = calib_str == expected_calib_str
+        print(
+            f"  {'OK  ' if ok_calib_str else 'FAIL'} calib_str rendering (date + comment): "
+            f"got {calib_str!r}"
+        )
+        if not ok_calib_str:
+            all_ok = False
+
+        # Full warning line — state 1: the "  Calibration info: ..." line from __main__
+        warning_line = f"  Calibration info: {calib_str}"
+        expected_warning_line = (
+            "  Calibration info: calibrated on 2026-04-20 — "
+            "Bearish Break — baseline; recalibrate once >=30 trades settle"
+        )
+        ok_warning_line = warning_line == expected_warning_line
+        print(
+            f"  {'OK  ' if ok_warning_line else 'FAIL'} warning line (date + comment): "
+            f"got {warning_line!r}"
+        )
+        if not ok_warning_line:
+            all_ok = False
+
+        # calib_str rendering — state 3: never-calibrated pass (no calib_date)
+        calib_date_absent = _read_calib_date("other", tmp_calib)
+        inline_comment_absent = _read_inline_comment("other", tmp_calib)
+        if calib_date_absent:
+            calib_str_never = f"calibrated on {calib_date_absent}"
+            if inline_comment_absent:
+                calib_str_never += f" — {inline_comment_absent}"
+        else:
+            calib_str_never = "not yet calibrated (no calibration date on record)"
+        ok_calib_str_never = calib_str_never == "not yet calibrated (no calibration date on record)"
+        print(
+            f"  {'OK  ' if ok_calib_str_never else 'FAIL'} calib_str rendering (never-calibrated): "
+            f"got {calib_str_never!r}"
+        )
+        if not ok_calib_str_never:
+            all_ok = False
+
+        # Full warning line — state 3: never-calibrated
+        warning_line_never = f"  Calibration info: {calib_str_never}"
+        ok_warning_line_never = warning_line_never == (
+            "  Calibration info: not yet calibrated (no calibration date on record)"
+        )
+        print(
+            f"  {'OK  ' if ok_warning_line_never else 'FAIL'} warning line (never-calibrated): "
+            f"got {warning_line_never!r}"
+        )
+        if not ok_warning_line_never:
+            all_ok = False
+    finally:
+        try:
+            os.unlink(tmp_calib)
+        except OSError:
+            pass
+
+    # ── _read_calib_date / _read_inline_comment: baseline-reset state ─────────
+    # Uses _APPLY_FIXTURE_TREND_STALE where 'trend' was reset and has a calib date
+    # but its inline comment is the "baseline; recalibrate" text.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+        tmp_trend = tf.name
+        tf.write(_APPLY_FIXTURE_TREND_STALE)
+    try:
+        got_trend_date = _read_calib_date("trend", tmp_trend)
+        ok_trend_date = got_trend_date == "2026-04-20"
+        print(
+            f"  {'OK  ' if ok_trend_date else 'FAIL'} _read_calib_date baseline-reset pass: "
+            f"got {got_trend_date!r} (expected '2026-04-20')"
+        )
+        if not ok_trend_date:
+            all_ok = False
+
+        got_trend_comment = _read_inline_comment("trend", tmp_trend)
+        expected_trend_comment = "baseline; recalibrate once >=30 trades settle"
+        ok_trend_comment = got_trend_comment == expected_trend_comment
+        print(
+            f"  {'OK  ' if ok_trend_comment else 'FAIL'} _read_inline_comment baseline-reset pass: "
+            f"got {got_trend_comment!r} (expected {expected_trend_comment!r})"
+        )
+        if not ok_trend_comment:
+            all_ok = False
+
+        # calib_str rendering — state 2: baseline-reset (date present, comment is baseline text)
+        if got_trend_date:
+            calib_str_reset = f"calibrated on {got_trend_date}"
+            if got_trend_comment:
+                calib_str_reset += f" — {got_trend_comment}"
+        else:
+            calib_str_reset = "not yet calibrated (no calibration date on record)"
+        expected_reset_str = (
+            "calibrated on 2026-04-20 — baseline; recalibrate once >=30 trades settle"
+        )
+        ok_calib_str_reset = calib_str_reset == expected_reset_str
+        print(
+            f"  {'OK  ' if ok_calib_str_reset else 'FAIL'} calib_str rendering (baseline-reset pass): "
+            f"got {calib_str_reset!r}"
+        )
+        if not ok_calib_str_reset:
+            all_ok = False
+
+        # Full warning line — state 2: baseline-reset
+        warning_line_reset = f"  Calibration info: {calib_str_reset}"
+        ok_warning_line_reset = warning_line_reset == (
+            "  Calibration info: calibrated on 2026-04-20 — "
+            "baseline; recalibrate once >=30 trades settle"
+        )
+        print(
+            f"  {'OK  ' if ok_warning_line_reset else 'FAIL'} warning line (baseline-reset pass): "
+            f"got {warning_line_reset!r}"
+        )
+        if not ok_warning_line_reset:
+            all_ok = False
+    finally:
+        try:
+            os.unlink(tmp_trend)
+        except OSError:
+            pass
+
     if all_ok:
         print("All reset-confirm self-tests passed.")
     else:
