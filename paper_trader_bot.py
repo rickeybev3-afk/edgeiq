@@ -80,7 +80,8 @@ EASTERN = pytz.timezone("America/New_York")
 ALPACA_API_KEY    = os.getenv("ALPACA_API_KEY", "")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
 USER_ID           = os.getenv("PAPER_TRADE_USER_ID", "a5e1fcab-8369-42c4-8550-a8a19734510c")
-MIN_TCS           = int(os.getenv("PAPER_TRADE_MIN_TCS", "50"))
+_PAPER_MIN_TCS    = int(os.getenv("PAPER_TRADE_MIN_TCS", "60"))   # paper mode floor
+_LIVE_MIN_TCS     = int(os.getenv("LIVE_MIN_TCS",        "70"))   # live real-money floor
 FEED              = os.getenv("PAPER_TRADE_FEED", "sip")
 PRICE_MIN               = float(os.getenv("PAPER_TRADE_PRICE_MIN", "1.0"))
 PRICE_MAX               = float(os.getenv("PAPER_TRADE_PRICE_MAX", "50.0"))
@@ -252,6 +253,7 @@ def _get_effective_paper_lookback_days() -> int:
 # IS_PAPER_ALPACA=false → api.alpaca.markets        (real money — flip when ready)
 LIVE_ORDERS_ENABLED     = os.getenv("LIVE_ORDERS_ENABLED", "false").lower() == "true"
 IS_PAPER_ALPACA         = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
+MIN_TCS                 = _PAPER_MIN_TCS if IS_PAPER_ALPACA else _LIVE_MIN_TCS
 RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
 # PDT guard: block new orders when day-trade count >= this limit (FINRA: 3 in rolling 5 days)
 PDT_MAX_DAY_TRADES       = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
