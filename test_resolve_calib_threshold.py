@@ -192,6 +192,103 @@ class TestResolveCalibThreshold(unittest.TestCase):
             result = _resolve_calib_threshold("squeeze")
         self.assertEqual(result, 35)
 
+    # --- cross-key isolation: multiple screener vars set simultaneously ---
+
+    def test_momentum_var_does_not_influence_squeeze_resolution(self):
+        """CALIB_MIN_TRADES_MOMENTUM must not bleed into squeeze resolution."""
+        env = {
+            "CALIB_MIN_TRADES_MOMENTUM": "77",
+            "CALIB_MIN_TRADES_SQUEEZE": "42",
+        }
+        with patch.dict(os.environ, env):
+            squeeze_result = _resolve_calib_threshold("squeeze")
+            momentum_result = _resolve_calib_threshold("momentum")
+        self.assertEqual(squeeze_result, 42)
+        self.assertEqual(momentum_result, 77)
+
+    def test_squeeze_var_does_not_influence_momentum_resolution(self):
+        """CALIB_MIN_TRADES_SQUEEZE must not bleed into momentum resolution."""
+        env = {
+            "CALIB_MIN_TRADES_SQUEEZE": "55",
+            "CALIB_MIN_TRADES_MOMENTUM": "10",
+        }
+        with patch.dict(os.environ, env):
+            momentum_result = _resolve_calib_threshold("momentum")
+            squeeze_result = _resolve_calib_threshold("squeeze")
+        self.assertEqual(momentum_result, 10)
+        self.assertEqual(squeeze_result, 55)
+
+    def test_each_screener_key_returns_only_its_own_value(self):
+        """Three distinct keys set at once each resolve independently."""
+        env = {
+            "CALIB_MIN_TRADES_SQUEEZE": "11",
+            "CALIB_MIN_TRADES_MOMENTUM": "22",
+            "CALIB_MIN_TRADES_MY_SCREENER": "33",
+        }
+        with patch.dict(os.environ, env):
+            self.assertEqual(_resolve_calib_threshold("squeeze"), 11)
+            self.assertEqual(_resolve_calib_threshold("momentum"), 22)
+            self.assertEqual(_resolve_calib_threshold("my-screener"), 33)
+
+    def test_momentum_invalid_does_not_affect_squeeze(self):
+        """An invalid CALIB_MIN_TRADES_MOMENTUM must not change squeeze's result."""
+        env = {
+            "CALIB_MIN_TRADES_MOMENTUM": "bad",
+            "CALIB_MIN_TRADES_SQUEEZE": "60",
+        }
+        with patch.dict(os.environ, env):
+            self.assertEqual(_resolve_calib_threshold("squeeze"), 60)
+            self.assertEqual(_resolve_calib_threshold("momentum"), _DEFAULT)
+
+    def test_squeeze_invalid_does_not_affect_momentum(self):
+        """An invalid CALIB_MIN_TRADES_SQUEEZE must not change momentum's result."""
+        env = {
+            "CALIB_MIN_TRADES_SQUEEZE": "-5",
+            "CALIB_MIN_TRADES_MOMENTUM": "45",
+            _LEGACY_KEY: "",
+        }
+        with patch.dict(os.environ, env):
+            self.assertEqual(_resolve_calib_threshold("momentum"), 45)
+            self.assertEqual(_resolve_calib_threshold("squeeze"), _DEFAULT)
+
+    # --- edge case: both primary and legacy squeeze vars set simultaneously ---
+
+    def test_primary_squeeze_wins_when_legacy_also_set(self):
+        """CALIB_MIN_TRADES_SQUEEZE (primary) must win over SQUEEZE_CALIB_MIN_TRADES."""
+        env = {
+            "CALIB_MIN_TRADES_SQUEEZE": "88",
+            _LEGACY_KEY: "99",
+        }
+        with patch.dict(os.environ, env):
+            result = _resolve_calib_threshold("squeeze")
+        self.assertEqual(result, 88)
+
+    def test_primary_squeeze_wins_even_when_legacy_is_larger(self):
+        """Primary beats legacy regardless of which value is numerically larger."""
+        env = {
+            "CALIB_MIN_TRADES_SQUEEZE": "5",
+            _LEGACY_KEY: "200",
+        }
+        with patch.dict(os.environ, env):
+            result = _resolve_calib_threshold("squeeze")
+        self.assertEqual(result, 5)
+
+    def test_legacy_alias_only_used_for_squeeze_not_other_keys_even_when_many_set(self):
+        """Legacy alias must not bleed into any non-squeeze key when many vars are set."""
+        env = {
+            _LEGACY_KEY: "99",
+            "CALIB_MIN_TRADES_MOMENTUM": "",
+            "CALIB_MIN_TRADES_TREND": "",
+            "CALIB_MIN_TRADES_SQUEEZE": "",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            os.environ.pop("CALIB_MIN_TRADES_MOMENTUM", None)
+            os.environ.pop("CALIB_MIN_TRADES_TREND", None)
+            os.environ.pop("CALIB_MIN_TRADES_SQUEEZE", None)
+            self.assertEqual(_resolve_calib_threshold("momentum"), _DEFAULT)
+            self.assertEqual(_resolve_calib_threshold("trend"), _DEFAULT)
+            self.assertEqual(_resolve_calib_threshold("squeeze"), 99)
+
     # --- default constant sanity check ---
 
     def test_default_is_30(self):
