@@ -1,4 +1,4 @@
-"""Unit tests for _resolve_calib_threshold() in deploy_server.py.
+"""Unit tests for resolve_calib_threshold() in calib_threshold.py.
 
 Covers:
   - Returns the env-var value when CALIB_MIN_TRADES_<KEY> is set to a valid
@@ -14,31 +14,12 @@ Covers:
 
 Run with:  python test_resolve_calib_threshold.py
 """
-import importlib.util
 import os
-import sys
 import unittest
 from unittest.mock import patch
 
-
-# ---------------------------------------------------------------------------
-# Load deploy_server without triggering its __main__ block.
-# The module uses only stdlib, so no heavy stubs are needed.
-# ---------------------------------------------------------------------------
-
-def _load_module():
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "deploy_server.py")
-    spec = importlib.util.spec_from_file_location("deploy_server", path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("deploy_server", mod)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_server = _load_module()
-_resolve_calib_threshold = _server._resolve_calib_threshold
-_DEFAULT = _server._DEFAULT_CALIB_THRESHOLD  # 30
+from calib_threshold import resolve_calib_threshold as _resolve_calib_threshold
+from calib_threshold import _DEFAULT_CALIB_THRESHOLD as _DEFAULT
 
 
 # ---------------------------------------------------------------------------

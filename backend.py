@@ -12,6 +12,7 @@ import os
 import logging
 import requests
 from collections import deque
+from calib_threshold import resolve_calib_threshold
 try:
     import streamlit as st
     _ST_AVAILABLE = True
@@ -2972,9 +2973,9 @@ def resolve_squeeze_calib_min_trades_effective() -> int:
 
     Resolution order — identical to what nightly_tiered_pnl_refresh.py applies:
     1. DB / local-JSON (via ``load_squeeze_calib_min_trades_from_db()``).
-    2. ``CALIB_MIN_TRADES_SQUEEZE`` env var (new generic format).
-    3. ``SQUEEZE_CALIB_MIN_TRADES`` env var (legacy name, kept for backward compat).
-    4. Hardcoded default of 30.
+    2. Env-var / default via ``resolve_calib_threshold("squeeze")`` from
+       ``calib_threshold.py``, which checks ``CALIB_MIN_TRADES_SQUEEZE``,
+       then the ``SQUEEZE_CALIB_MIN_TRADES`` legacy alias, then defaults to 30.
 
     This is the value surfaced in the UI as "Active threshold" so that the badge
     always matches the runtime behaviour of the nightly service.
@@ -2983,23 +2984,7 @@ def resolve_squeeze_calib_min_trades_effective() -> int:
     if db_val is not None:
         return db_val
 
-    for env_key in ("CALIB_MIN_TRADES_SQUEEZE", "SQUEEZE_CALIB_MIN_TRADES"):
-        raw = os.getenv(env_key, "").strip()
-        if raw:
-            try:
-                v = int(raw)
-                if v > 0:
-                    return min(v, 10000)
-            except ValueError:
-                pass
-            logging.warning(
-                "[resolve_squeeze_calib_min_trades_effective] "
-                "%s='%s' is not a valid positive integer; trying next fallback.",
-                env_key,
-                raw,
-            )
-
-    return _SQUEEZE_CALIB_DEFAULT
+    return resolve_calib_threshold("squeeze")
 
 
 def save_squeeze_calib_min_trades(value: int) -> bool:
