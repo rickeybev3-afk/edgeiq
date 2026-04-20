@@ -851,10 +851,14 @@ def _check_all_uncalibrated_screeners() -> None:
     _per_key_script: dict[str, str] = {
         "squeeze": "calibrate_sp_mult.py",
         "gap_down": "calibrate_sp_mult.py",
+        "other": "calibrate_sp_mult.py",
+        "trend": "calibrate_sp_mult.py",
     }
     _per_key_extra_args: dict[str, str] = {
         "squeeze": "--pass squeeze",
         "gap_down": "--pass gap_down",
+        "other": "--pass other",
+        "trend": "--pass trend",
     }
 
     _base_dir = os.path.dirname(os.path.abspath(__file__))

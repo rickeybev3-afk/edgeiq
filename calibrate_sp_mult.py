@@ -84,6 +84,24 @@ PASS_CONFIG: dict[str, dict] = {
         "citation_inner": "",
         "next_step_comment_prefix": "",
     },
+    "other": {
+        "screener_pass": "other",
+        "predicted": None,
+        "title": "Other Pass (< 3% daily change) Position-Size Multiplier Calibration",
+        "count_label": "other",
+        "stat_label": "other",
+        "citation_inner": "",
+        "next_step_comment_prefix": "",
+    },
+    "trend": {
+        "screener_pass": "trend",
+        "predicted": None,
+        "title": "Trend Pass (1–3% daily change) Position-Size Multiplier Calibration",
+        "count_label": "trend",
+        "stat_label": "trend",
+        "citation_inner": "",
+        "next_step_comment_prefix": "",
+    },
 }
 
 

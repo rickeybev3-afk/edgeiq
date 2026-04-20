@@ -2127,10 +2127,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _screener_calibration(self):
         """Return settled trade count vs calibration threshold for each active screener.
 
-        Screeners returned: squeeze, gap_down.
+        Screeners returned: squeeze, gap_down, other, trend.
         For each screener the threshold is resolved from env vars before falling back to 30:
           - squeeze:   CALIB_MIN_TRADES_SQUEEZE, then SQUEEZE_CALIB_MIN_TRADES, then 30
           - gap_down:  CALIB_MIN_TRADES_GAP_DOWN, then 30
+          - other:     CALIB_MIN_TRADES_OTHER, then 30
+          - trend:     CALIB_MIN_TRADES_TREND, then 30
 
         Response:
           {
@@ -2163,6 +2165,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "script": "calibrate_sp_mult.py",
                 "extra_args": "--pass gap_down",
                 "extra_filters": "&predicted=eq.Bearish%20Break",
+            },
+            {
+                "key": "other",
+                "label": "Other (< 3% daily change)",
+                "script": "calibrate_sp_mult.py",
+                "extra_args": "--pass other",
+                "extra_filters": "",
+            },
+            {
+                "key": "trend",
+                "label": "Trend (1–3% daily change)",
+                "script": "calibrate_sp_mult.py",
+                "extra_args": "--pass trend",
+                "extra_filters": "",
             },
         ]
 
