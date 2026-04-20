@@ -575,8 +575,8 @@ _BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
 _BACKFILL_RUN_HISTORY     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backfill_run_history.log")
 _BACKFILL_RUN_HISTORY_MAX_BYTES  = _parse_int_env("BACKFILL_RUN_HISTORY_MAX_BYTES", 100 * 1024)   # rotate at 100 KB; override via env var
 _BACKFILL_RUN_HISTORY_BACKUP_COUNT = _parse_int_env("BACKFILL_RUN_HISTORY_BACKUP_COUNT", 1)        # keep one .1 backup; override via env var
-_BACKFILL_LOG_MAX_BYTES          = 500 * 1024  # rotate pipeline log at 500 KB
-_BACKFILL_LOG_BACKUP_COUNT       = 1           # keep one .1 backup
+_BACKFILL_LOG_MAX_BYTES          = _parse_int_env("BACKFILL_LOG_MAX_BYTES", 500 * 1024)   # rotate pipeline log at 500 KB; override via env var
+_BACKFILL_LOG_BACKUP_COUNT       = _parse_int_env("BACKFILL_LOG_BACKUP_COUNT", 1)          # keep one .1 backup; override via env var
 _NR_FINISH_FILE           = "/tmp/nightly_refresh.finish_time"
 _FILTER_PRESETS_FILE      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_log_filter_presets.json")
 # Sentinel written by _backfill_pipeline_thread on success so that the next
