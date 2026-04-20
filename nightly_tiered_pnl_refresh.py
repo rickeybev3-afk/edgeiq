@@ -435,10 +435,40 @@ def _check_backfill_heartbeat() -> None:
 _CALIB_MIN_TRADES = 30
 
 
+def _get_calib_min_trades(screener_key: str) -> int:
+    """Return the minimum settled trade count that triggers a calibration alert for *screener_key*.
+
+    Resolution order:
+      1. ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` env var
+         (e.g. CALIB_MIN_TRADES_SQUEEZE=20, CALIB_MIN_TRADES_GAP_DOWN=15)
+      2. ``_CALIB_MIN_TRADES`` module-level default (30)
+
+    The env-var name is derived by uppercasing *screener_key* and replacing
+    hyphens with underscores, so ``gap-down`` → ``CALIB_MIN_TRADES_GAP_DOWN``.
+    Invalid (non-positive-integer) values fall back to the default with a warning.
+    """
+    env_key = f"CALIB_MIN_TRADES_{screener_key.upper().replace('-', '_')}"
+    raw = os.getenv(env_key, "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+        log.warning(
+            "%s='%s' is not a valid positive integer; using default %d.",
+            env_key,
+            raw,
+            _CALIB_MIN_TRADES,
+        )
+    return _CALIB_MIN_TRADES
+
+
 def _check_screener_calibration_due(
     screener_key: str,
     script_name: str,
-    min_trades: int = _CALIB_MIN_TRADES,
+    min_trades: int | None = None,
     cooldown_hours: float = _DEFAULT_COOLDOWN_HOURS,
 ) -> None:
     """Alert when enough trades for *screener_key* have settled to warrant re-calibration.
@@ -455,8 +485,18 @@ def _check_screener_calibration_due(
 
     No automatic edits are made — human-in-the-loop is preserved for the
     actual multiplier update.
+
+    When *min_trades* is ``None`` (the default) the threshold is resolved via
+    ``_get_calib_min_trades(screener_key)``, which checks the
+    ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` env var before falling back to
+    ``_CALIB_MIN_TRADES``.  Pass an explicit integer only when you need to
+    hard-override the env-var mechanism (e.g. from a dedicated wrapper that
+    has its own backward-compatible env-var name).
     """
     import re as _re
+
+    if min_trades is None:
+        min_trades = _get_calib_min_trades(screener_key)
 
     log.info("Checking %s calibration status …", screener_key)
 
@@ -629,23 +669,28 @@ _DEFAULT_SQUEEZE_CALIB_MIN_TRADES = 30
 def _get_squeeze_calib_min_trades() -> int:
     """Return the minimum settled squeeze trade count that triggers a calibration alert.
 
-    Read from SQUEEZE_CALIB_MIN_TRADES env var (default 30).  Must be a
-    positive integer; invalid values fall back to the default with a warning.
+    Resolution order:
+      1. ``CALIB_MIN_TRADES_SQUEEZE`` env var (new generic format)
+      2. ``SQUEEZE_CALIB_MIN_TRADES`` env var (legacy name, kept for backward compat)
+      3. ``_DEFAULT_SQUEEZE_CALIB_MIN_TRADES`` (30)
+
+    Invalid (non-positive-integer) values are skipped with a warning and the
+    next fallback is tried.
     """
-    raw = os.getenv("SQUEEZE_CALIB_MIN_TRADES", "").strip()
-    if raw:
-        try:
-            v = int(raw)
-            if v > 0:
-                return v
-        except ValueError:
-            pass
-        log.warning(
-            "SQUEEZE_CALIB_MIN_TRADES='%s' is not a valid positive integer; "
-            "using default %d.",
-            raw,
-            _DEFAULT_SQUEEZE_CALIB_MIN_TRADES,
-        )
+    for env_key in ("CALIB_MIN_TRADES_SQUEEZE", "SQUEEZE_CALIB_MIN_TRADES"):
+        raw = os.getenv(env_key, "").strip()
+        if raw:
+            try:
+                v = int(raw)
+                if v > 0:
+                    return v
+            except ValueError:
+                pass
+            log.warning(
+                "%s='%s' is not a valid positive integer; trying next fallback.",
+                env_key,
+                raw,
+            )
     return _DEFAULT_SQUEEZE_CALIB_MIN_TRADES
 
 
@@ -666,7 +711,6 @@ def _check_squeeze_calibration_due() -> None:
 
 # ── Gap-down calibration check ────────────────────────────────────────────────
 
-_GAP_DOWN_CALIB_MIN_TRADES = 30
 _GAP_DOWN_CALIB_COOLDOWN_HOURS = 23
 
 
@@ -674,12 +718,14 @@ def _check_gap_down_calibration_due() -> None:
     """Alert when enough gap_down trades have settled to warrant re-calibration.
 
     Delegates to _check_screener_calibration_due with gap_down-specific parameters.
+    The threshold is resolved via ``_get_calib_min_trades("gap_down")``, which
+    checks ``CALIB_MIN_TRADES_GAP_DOWN`` before falling back to
+    ``_CALIB_MIN_TRADES`` (30).
     """
     _check_screener_calibration_due(
         "gap_down",
         "calibrate_gap_down_mult.py",
-        _GAP_DOWN_CALIB_MIN_TRADES,
-        _GAP_DOWN_CALIB_COOLDOWN_HOURS,
+        cooldown_hours=_GAP_DOWN_CALIB_COOLDOWN_HOURS,
     )
 
 
