@@ -31936,10 +31936,14 @@ function _bqCopyShareLink() {
         # ── Today's Scan Funnel ───────────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         with st.expander("📡 Today's Scanner Funnel", expanded=False):
-            if not st.session_state.get("_daily_scan_log_ensured"):
+            _today = date.today()
+            if (
+                not st.session_state.get("_daily_scan_log_ensured")
+                or st.session_state.get("_daily_scan_log_ensured_day") != _today
+            ):
                 ensure_daily_scan_log_table()
                 st.session_state["_daily_scan_log_ensured"] = True
-            _today = date.today()
+                st.session_state["_daily_scan_log_ensured_day"] = _today
             if (
                 "_earliest_scan_date" not in st.session_state
                 or st.session_state.get("_earliest_scan_date_fetched_day") != _today
