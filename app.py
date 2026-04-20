@@ -12163,13 +12163,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _pm4.metric(
                                     "Projected Trades",
                                     f"{_proj_trades:,}",
-                                    help=f"{_proj_scale:.1f}× scale vs the {_actual_tpd:.1f}/day in your data (PDT-constrained baseline)",
+                                    help=f"{_proj_scale:.1f}× scale vs the {_actual_tpd:.1f}/day measured in this dataset",
                                 )
                                 st.caption(
-                                    f"Scale factor **{_proj_scale:.1f}×** vs baseline "
-                                    f"({_actual_tpd:.1f} trades/day in this dataset — PDT-constrained). "
-                                    f"At **{_proj_tpd:.1f}/day** the same edge compounds across more reps. "
-                                    "Same filters, same quality bar, just more shots at it."
+                                    f"**{_proj_scale:.1f}×** scale vs the **{_actual_tpd:.1f} trades/day** measured in this dataset "
+                                    f"({_total_trades} trades over {_n_active_days} active days). "
+                                    f"At **{_proj_tpd:.1f}/day** the same win rate and R distribution compound across more reps — "
+                                    "same filters, same quality bar."
                                 )
 
                         # ── RVOL size bonus breakdown (only when data is present) ──────────
