@@ -196,6 +196,16 @@ def _self_test() -> None:
 _APPLY_FIXTURE = """\
 # preceding source
 
+# ── Screener-pass position-size multiplier ─────────────────────────────────
+# Derived from 5-year backtest:
+#   'other'  (< 3% daily change): 87% WR / +0.622R avg → 1.15×
+#   'gap'    (≥ 3% daily change): 65% WR / +0.327R avg → 1.00×
+#   'trend'  (1-3%):              only 12 trades       → 0.85×
+#   'squeeze':   0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               >=30 trades settle.
+#   'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades as of
+#              2026-04-20 — 1.00× baseline until >=30 trades settle.
+# Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
 _SP_MULT_TABLE: dict[str, float] = {
     "other":    1.15,
     "gap":      1.00,
@@ -215,14 +225,23 @@ def _self_test_apply() -> None:
 
     all_ok = True
 
-    def _run(label: str, pass_name: str, new_mult: float, comment: str,
-             expect_value: float, expect_comment_fragment: str) -> None:
+    def _run(
+        label: str,
+        pass_name: str,
+        new_mult: float,
+        comment: str,
+        expect_value: float,
+        expect_comment_fragment: str,
+        citation_line: str = "",
+        expect_citation_fragment: str = "",
+        expect_stale_absent: str = "",
+    ) -> None:
         nonlocal all_ok
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
             tmp = tf.name
             tf.write(_APPLY_FIXTURE)
         try:
-            _apply_to_bot(pass_name, new_mult, comment, bot_path=tmp)
+            _apply_to_bot(pass_name, new_mult, comment, citation_line=citation_line, bot_path=tmp)
             with open(tmp) as fh:
                 patched = fh.read()
             # Find the patched entry line
@@ -235,11 +254,15 @@ def _self_test_apply() -> None:
             got_value = float(m.group(1))
             value_ok = abs(got_value - expect_value) < 0.001
             comment_ok = expect_comment_fragment in patched
-            ok = value_ok and comment_ok
+            citation_ok = (not expect_citation_fragment) or (expect_citation_fragment in patched)
+            stale_ok = (not expect_stale_absent) or (expect_stale_absent not in patched)
+            ok = value_ok and comment_ok and citation_ok and stale_ok
             print(
                 f"  {'OK  ' if ok else 'FAIL'} {label}: "
                 f"value={got_value:.2f} (expected {expect_value:.2f}), "
-                f"comment_fragment={'found' if comment_ok else 'MISSING'}"
+                f"inline_comment={'found' if comment_ok else 'MISSING'}"
+                + (f", citation={'found' if citation_ok else 'MISSING'}" if expect_citation_fragment else "")
+                + (f", stale_absent={'yes' if stale_ok else 'NO'}" if expect_stale_absent else "")
             )
             if not ok:
                 all_ok = False
@@ -263,16 +286,29 @@ def _self_test_apply() -> None:
         "squeeze baseline→1.15",
         "squeeze", 1.15, "47 trades, 72.3% WR / +0.411R → 1.15×",
         expect_value=1.15, expect_comment_fragment="72.3% WR",
+        citation_line="#   'squeeze' (2024-01-03 → 2024-12-31): 47 trades, 72.3% WR / +0.411R avg → 1.15×",
+        expect_citation_fragment="47 trades, 72.3% WR / +0.411R avg → 1.15×",
+        expect_stale_absent="'squeeze':   0 settled trades as of 2026-04-20",
     )
     _run(
         "gap_down baseline→0.85",
         "gap_down", 0.85, "33 trades, 58.1% WR / +0.290R → 0.85×",
         expect_value=0.85, expect_comment_fragment="58.1% WR",
+        citation_line="#   'gap_down' (Bearish Break, 2024-01-03 → 2024-12-31): 33 trades, 58.1% WR / +0.290R avg → 0.85×",
+        expect_citation_fragment="33 trades, 58.1% WR / +0.290R avg → 0.85×",
+        expect_stale_absent="'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades",
     )
     _run(
         "squeeze idempotent re-apply",
         "squeeze", 1.15, "47 trades, 72.3% WR / +0.411R → 1.15×",
         expect_value=1.15, expect_comment_fragment="1.15×",
+        citation_line="#   'squeeze' (2024-01-03 → 2024-12-31): 47 trades, 72.3% WR / +0.411R avg → 1.15×",
+        expect_citation_fragment="1.15×",
+    )
+    _run(
+        "no citation_line — comment block untouched",
+        "squeeze", 1.15, "47 trades, 72.3% WR / +0.411R → 1.15×",
+        expect_value=1.15, expect_comment_fragment="72.3% WR",
     )
 
     if all_ok:
@@ -296,15 +332,23 @@ def _list_passes() -> None:
 _BOT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py")
 
 
-def _apply_to_bot(pass_name: str, rec_mult: float, inline_comment: str, bot_path: str = _BOT_FILE) -> None:
+def _apply_to_bot(
+    pass_name: str,
+    rec_mult: float,
+    inline_comment: str,
+    citation_line: str = "",
+    bot_path: str = _BOT_FILE,
+) -> None:
     """Patch _SP_MULT_TABLE[pass_name] in paper_trader_bot.py in place.
 
     Steps:
       1. Read the file and locate the _SP_MULT_TABLE block.
       2. Replace the numeric value and trailing comment for pass_name.
-      3. Write a .bak backup of the original.
-      4. Print a unified diff of the change.
-      5. Write the patched file.
+      3. If citation_line is provided, also replace the per-pass comment block
+         above _SP_MULT_TABLE with the fresh citation string.
+      4. Write a .bak backup of the original.
+      5. Print a unified diff of both changes combined.
+      6. Write the patched file.
 
     Exits with a non-zero status if the table or entry cannot be found.
     """
@@ -352,6 +396,25 @@ def _apply_to_bot(pass_name: str, rec_mult: float, inline_comment: str, bot_path
         sys.exit(1)
 
     new_content = original[:brace_open] + new_block + original[brace_close + 1 :]
+
+    if citation_line:
+        # Replace the per-pass comment block above _SP_MULT_TABLE.
+        # The block starts with "#   'pass_name'" and continues with indented
+        # comment continuation lines (lines starting with '#' + multiple spaces)
+        # until another "#   '<pass>'" entry or "# Applied" or the table itself.
+        comment_pat = re.compile(
+            r"(#   '" + re.escape(pass_name) + r"'[^\n]*)"
+            r"((?:\n#(?!   '[a-z_])(?! Applied)[^\n]*)*)",
+        )
+        m_comment = comment_pat.search(new_content)
+        if m_comment:
+            new_content = new_content[:m_comment.start()] + citation_line + new_content[m_comment.end():]
+        else:
+            print(
+                f"WARNING: could not find comment block for '{pass_name}' above _SP_MULT_TABLE"
+                " — data-citation comment not updated.",
+                file=sys.stderr,
+            )
 
     backup_path = bot_path + ".bak"
     try:
@@ -470,12 +533,16 @@ def main(pass_name: str, apply: bool = False) -> None:
     else:
         citation_parens = f"({date_range})" if date_range else ""
 
-    print(
-        f"\nData citation to paste above _SP_MULT_TABLE in paper_trader_bot.py:\n"
-        f"\n"
+    citation_line = (
         f"#   '{pass_name}' {citation_parens}: "
         f"{tgt['n']} trades, {wr_str} WR / {_fmt(tgt['avg_r'])}R avg → "
         f"{rec_mult:.2f}×"
+    )
+
+    print(
+        f"\nData citation to paste above _SP_MULT_TABLE in paper_trader_bot.py:\n"
+        f"\n"
+        f"{citation_line}"
     )
 
     if ga_exp is not None and ga_exp > 0 and tgt_exp is not None and tgt_exp > 0:
@@ -499,7 +566,7 @@ def main(pass_name: str, apply: bool = False) -> None:
         print("Applying change to paper_trader_bot.py  (--apply flag set)")
         print(f"{'='*60}")
         inline_comment = f"{wr_comment} → {rec_mult:.2f}×"
-        _apply_to_bot(pass_name, rec_mult, inline_comment)
+        _apply_to_bot(pass_name, rec_mult, inline_comment, citation_line=citation_line)
     else:
         print(
             f"\nNext step: manually update paper_trader_bot.py, or re-run with --apply to patch automatically:\n"
