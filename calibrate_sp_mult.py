@@ -273,6 +273,75 @@ def _sp_size_mult(screener_pass):
 """
 
 
+# Variant of the fixture where the trend entry carries a stale-warning comment,
+# simulating a reset to the "no data yet" state before the first calibration.
+_APPLY_FIXTURE_TREND_STALE = """\
+# preceding source
+
+# ── Screener-pass position-size multiplier ─────────────────────────────────
+# Derived from 5-year backtest:
+#   'other'  (< 3% daily change): 87% WR / +0.622R avg → 1.15×
+#   'gap'    (≥ 3% daily change): 65% WR / +0.327R avg → 1.00×
+#   'trend'  (1-3%):              0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               >=30 trades settle.
+#   'squeeze':   0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               >=30 trades settle.
+#   'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades as of
+#              2026-04-20 — 1.00× baseline until >=30 trades settle.
+# Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
+_SP_MULT_TABLE: dict[str, float] = {
+    "other":    1.15,
+    "gap":      1.00,
+    "trend":    1.00,   # baseline; recalibrate once >=30 trades settle
+    "squeeze":  1.00,   # baseline; recalibrate once >=30 trades settle
+    "gap_down": 1.00,   # Bearish Break — baseline; recalibrate once >=30 trades settle
+}
+
+_SP_CALIB_DATES: dict[str, str] = {
+    "gap_down": "2026-04-20",
+    "squeeze":  "2026-04-20",
+    "trend":    "2026-04-20",
+}
+
+def _sp_size_mult(screener_pass):
+    return _SP_MULT_TABLE.get(screener_pass, 1.00)
+"""
+
+# Variant of the fixture where the other entry carries a stale-warning comment,
+# simulating a reset to the "no data yet" state before the first calibration.
+_APPLY_FIXTURE_OTHER_STALE = """\
+# preceding source
+
+# ── Screener-pass position-size multiplier ─────────────────────────────────
+# Derived from 5-year backtest:
+#   'other'  (< 3% daily change): 0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               >=30 trades settle.
+#   'gap'    (≥ 3% daily change): 65% WR / +0.327R avg → 1.00×
+#   'trend'  (1-3%):              only 12 trades       → 0.85×
+#   'squeeze':   0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               >=30 trades settle.
+#   'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades as of
+#              2026-04-20 — 1.00× baseline until >=30 trades settle.
+# Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
+_SP_MULT_TABLE: dict[str, float] = {
+    "other":    1.00,   # baseline; recalibrate once >=30 trades settle
+    "gap":      1.00,
+    "trend":    0.85,
+    "squeeze":  1.00,   # baseline; recalibrate once >=30 trades settle
+    "gap_down": 1.00,   # Bearish Break — baseline; recalibrate once >=30 trades settle
+}
+
+_SP_CALIB_DATES: dict[str, str] = {
+    "gap_down": "2026-04-20",
+    "squeeze":  "2026-04-20",
+    "other":    "2026-04-20",
+}
+
+def _sp_size_mult(screener_pass):
+    return _SP_MULT_TABLE.get(screener_pass, 1.00)
+"""
+
+
 def _self_test_apply() -> None:
     """Deterministic unit tests for _apply_to_bot() using an in-memory fixture."""
     import tempfile
@@ -416,12 +485,30 @@ def _self_test_apply() -> None:
         expect_stale_absent="87% WR / +0.622R avg → 1.15×",
     )
     _run(
+        "other stale-warning→1.20",
+        "other", 1.20, "60 trades, 80.0% WR / +0.500R → 1.20×",
+        expect_value=1.20, expect_comment_fragment="80.0% WR",
+        citation_line="#   'other' (2024-01-03 → 2024-12-31): 60 trades, 80.0% WR / +0.500R avg → 1.20×",
+        expect_citation_fragment="60 trades, 80.0% WR / +0.500R avg → 1.20×",
+        expect_stale_absent="'other'  (< 3% daily change): 0 settled trades as of",
+        fixture=_APPLY_FIXTURE_OTHER_STALE,
+    )
+    _run(
         "trend baseline→1.00",
         "trend", 1.00, "50 trades, 68.0% WR / +0.350R → 1.00×",
         expect_value=1.00, expect_comment_fragment="68.0% WR",
         citation_line="#   'trend' (2024-01-03 → 2024-12-31): 50 trades, 68.0% WR / +0.350R avg → 1.00×",
         expect_citation_fragment="50 trades, 68.0% WR / +0.350R avg → 1.00×",
         expect_stale_absent="only 12 trades       → 0.85×",
+    )
+    _run(
+        "trend stale-warning→1.00",
+        "trend", 1.00, "50 trades, 68.0% WR / +0.350R → 1.00×",
+        expect_value=1.00, expect_comment_fragment="68.0% WR",
+        citation_line="#   'trend' (2024-01-03 → 2024-12-31): 50 trades, 68.0% WR / +0.350R avg → 1.00×",
+        expect_citation_fragment="50 trades, 68.0% WR / +0.350R avg → 1.00×",
+        expect_stale_absent="'trend'  (1-3%):              0 settled trades as of",
+        fixture=_APPLY_FIXTURE_TREND_STALE,
     )
     _run(
         "other idempotent re-apply",
