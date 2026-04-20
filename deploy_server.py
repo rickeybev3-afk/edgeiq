@@ -2143,7 +2143,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ]
           }
         """
-        supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+        _raw_url = os.environ.get("SUPABASE_URL", "").strip()
+        import re as _re
+        _m = _re.search(r"supabase\.com/dashboard/project/([a-z0-9]+)", _raw_url)
+        supabase_url = f"https://{_m.group(1)}.supabase.co" if _m else _raw_url
         supabase_key = (
             os.environ.get("SUPABASE_KEY") or
             os.environ.get("SUPABASE_ANON_KEY") or

@@ -167,6 +167,22 @@ def get_ask_price(ticker: str) -> float | None:
         return None
 
 
+def is_shortable(ticker: str) -> bool:
+    """Check Alpaca asset metadata — returns True only if shortable and easy_to_borrow."""
+    try:
+        r = requests.get(
+            f"{ALPACA_BASE}/v2/assets/{ticker}",
+            headers=ALPACA_HEADERS,
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return False
+        data = r.json()
+        return bool(data.get("shortable")) and bool(data.get("easy_to_borrow"))
+    except Exception:
+        return False
+
+
 def is_market_open() -> bool:
     """Check Alpaca clock — only short during market hours."""
     try:
@@ -241,6 +257,10 @@ def process_filing(filing: dict):
             f"Ticker: <b>{ticker}</b> | Form: {filing['form']}\n"
             f"Market closed — no order placed"
         )
+        return
+
+    if not is_shortable(ticker):
+        log.info(f"[Filing] {ticker} — not shortable / not easy-to-borrow on Alpaca, skipping")
         return
 
     price = get_ask_price(ticker)

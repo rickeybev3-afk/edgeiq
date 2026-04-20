@@ -2539,7 +2539,7 @@ def _force_close_all_positions() -> None:
         try:
             resp = _req.delete(
                 f"{base}/v2/positions/{ticker}",
-                params={"percentage": "1"},
+                params={"percentage": "100"},
                 headers=headers,
                 timeout=10,
             )
