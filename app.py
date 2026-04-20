@@ -24721,8 +24721,19 @@ def _load_tier_screener_pass_data(uid, start_date=None, end_date=None):
 
     Returns a list of row dicts with keys: screener_pass, tcs, scan_type, pnl_r_sim.
     Fetches the full history (not capped at 5,000 rows).
-    Only resolved outcomes are included, matching _load_screener_pass_grid for
-    consistent sample sizes between the top-level card and the per-tier table.
+    Only resolved outcomes are included (RESOLVED_OUTCOMES), matching
+    _load_screener_pass_grid for consistent sample sizes between the top-level
+    card and the per-tier table.
+
+    Screener passes covered:
+      - "gap"      : ≥3% close-to-close daily gap (positive, directional)
+      - "trend"    : ≥1% change + close above SMA20 & SMA50
+      - "gap_down" : Bearish Break universe, bot-tagged at order placement;
+                     actual_outcome = "Bearish Break" (in RESOLVED_OUTCOMES)
+      - "other"    : everything else
+
+    gap_down rows use the same scan_type ("morning" / "intraday") and TCS
+    fields as gap/trend rows, so they map naturally to the P1–P4 tier grid.
     """
     all_rows, offset, fetch_error = [], 0, None
     try:
@@ -26449,8 +26460,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
             st.rerun()
 
     _sp_tier_auto_timer()
-    with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Other (Backtest)", expanded=True):
-        st.caption("Gap = ≥3% close-to-close daily change (directional, positive only) · Trend = ≥1% change + close > SMA20 & SMA50 · Other = all else (incl. down days) · PF = Profit Factor · — = <30 trades (insufficient)")
+    with st.expander("📊 Screener Pass × Tier — Gap vs Trend vs Gap-Down vs Other (Backtest)", expanded=True):
+        st.caption("Gap = ≥3% close-to-close daily change (directional, positive only) · Trend = ≥1% change + close > SMA20 & SMA50 · Gap-Down = Bearish Break universe (bot-tagged at order placement) · Other = all else · PF = Profit Factor · — = <30 trades (insufficient)")
 
         _sp_grid_dr_start = st.session_state.get("grid_dr_start")
         _sp_grid_dr_end   = st.session_state.get("grid_dr_end")
@@ -26581,12 +26592,19 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 )
                 _sp_n_classified = int(_sp_bt_df["screener_pass"].notna().sum())
                 _sp_n_total_bt   = int(len(_sp_bt_df))
+                _sp_n_gap_down   = int((_sp_bt_df["screener_pass"] == "gap_down").sum())
                 _sp_date_note = ""
                 if _sp_grid_dr_start or _sp_grid_dr_end:
                     _sp_date_note = f" · date filter: {_sp_grid_dr_start or 'any'} → {_sp_grid_dr_end or 'any'}"
+                _sp_gd_note = (
+                    f" · Gap-Down: {_sp_n_gap_down:,} Bearish Break rows"
+                    if _sp_n_gap_down > 0
+                    else " · Gap-Down: no Bearish Break rows yet (bot-tagged at order time)"
+                )
                 st.caption(
                     f"★ = best Avg R among gap/trend for that tier · "
                     f"{_sp_n_classified:,} of {_sp_n_total_bt:,} sim rows classified"
+                    f"{_sp_gd_note}"
                     f"{_sp_date_note} · run `python backfill_screener_pass.py` to classify untagged rows"
                 )
             else:
