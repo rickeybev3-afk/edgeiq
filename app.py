@@ -7511,6 +7511,42 @@ with st.sidebar:
             st.error("Could not save — database and local file both failed.", icon="⚠️")
 
     st.markdown("---")
+    st.markdown("**Squeeze Calibration Min-Trades Threshold**")
+    st.caption(
+        "The nightly refresh alerts you to re-run `calibrate_squeeze_mult.py` once "
+        "this many settled squeeze trades have accumulated. "
+        "To change it, set the `SQUEEZE_CALIB_MIN_TRADES` secret and restart the "
+        "Nightly Tiered P&L Refresh service."
+    )
+    import os as _sq_os
+    _sq_raw = _sq_os.getenv("SQUEEZE_CALIB_MIN_TRADES", "").strip()
+    _sq_effective = 30
+    _sq_invalid = False
+    if _sq_raw:
+        try:
+            _sq_parsed = int(_sq_raw)
+            if _sq_parsed > 0:
+                _sq_effective = _sq_parsed
+            else:
+                _sq_invalid = True
+        except ValueError:
+            _sq_invalid = True
+    st.markdown(
+        f'<div style="background:#0d1b2a; border:1px solid #1e3a5f; border-radius:8px; '
+        f'padding:10px 14px; display:flex; align-items:center; justify-content:space-between;">'
+        f'<span style="font-size:12px; color:#8faec8;">Active threshold</span>'
+        f'<span style="font-size:18px; font-weight:700; color:#60a5fa;">{_sq_effective} trades</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    if _sq_invalid:
+        st.warning(
+            f"SQUEEZE_CALIB_MIN_TRADES='{_sq_raw}' is not a valid positive integer — "
+            f"defaulting to 30.",
+            icon="⚠️",
+        )
+
+    st.markdown("---")
     st.markdown("**Divergence Alert Recipients**")
     st.caption(
         "Enter your personal Telegram Chat ID and/or Discord Webhook URL. "

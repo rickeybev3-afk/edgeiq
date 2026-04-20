@@ -442,15 +442,39 @@ def _check_backfill_heartbeat() -> None:
 
 # ── Squeeze calibration check ─────────────────────────────────────────────────
 
-_SQUEEZE_CALIB_MIN_TRADES = 30
 _SQUEEZE_CALIB_COOLDOWN_HOURS = 23
+_DEFAULT_SQUEEZE_CALIB_MIN_TRADES = 30
+
+
+def _get_squeeze_calib_min_trades() -> int:
+    """Return the minimum settled squeeze trade count that triggers a calibration alert.
+
+    Read from SQUEEZE_CALIB_MIN_TRADES env var (default 30).  Must be a
+    positive integer; invalid values fall back to the default with a warning.
+    """
+    raw = os.getenv("SQUEEZE_CALIB_MIN_TRADES", "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+        log.warning(
+            "SQUEEZE_CALIB_MIN_TRADES='%s' is not a valid positive integer; "
+            "using default %d.",
+            raw,
+            _DEFAULT_SQUEEZE_CALIB_MIN_TRADES,
+        )
+    return _DEFAULT_SQUEEZE_CALIB_MIN_TRADES
 
 
 def _check_squeeze_calibration_due() -> None:
     """Alert when enough squeeze trades have settled to warrant re-calibration.
 
     Queries paper_trades for settled squeeze rows (screener_pass='squeeze' AND
-    tiered_pnl_r IS NOT NULL).  If the count reaches _SQUEEZE_CALIB_MIN_TRADES
+    tiered_pnl_r IS NOT NULL).  If the count reaches the threshold returned by
+    _get_squeeze_calib_min_trades() (default 30, overridden by SQUEEZE_CALIB_MIN_TRADES)
     AND _SP_MULT_TABLE['squeeze'] is still 1.00 in paper_trader_bot.py, a
     warning is logged and a Slack / Telegram alert is emitted prompting the
     trader to run calibrate_squeeze_mult.py.
@@ -464,6 +488,7 @@ def _check_squeeze_calibration_due() -> None:
     """
     import re as _re
 
+    min_trades = _get_squeeze_calib_min_trades()
     log.info("Checking squeeze calibration status …")
 
     # ── Step 1: count settled squeeze trades ──────────────────────────────────
@@ -487,17 +512,17 @@ def _check_squeeze_calibration_due() -> None:
         log.info(
             "Squeeze settled trade count: %d (threshold: %d).",
             squeeze_count,
-            _SQUEEZE_CALIB_MIN_TRADES,
+            min_trades,
         )
     except Exception as _exc:
         log.warning("Could not query squeeze settled trade count: %s", _exc)
         return
 
-    if squeeze_count < _SQUEEZE_CALIB_MIN_TRADES:
+    if squeeze_count < min_trades:
         log.info(
             "Squeeze calibration not yet due (%d / %d settled trades).",
             squeeze_count,
-            _SQUEEZE_CALIB_MIN_TRADES,
+            min_trades,
         )
         return
 
@@ -568,13 +593,13 @@ def _check_squeeze_calibration_due() -> None:
     # ── Step 4: emit alert ────────────────────────────────────────────────────
     plain_msg = (
         f"squeeze calibration due — {squeeze_count} settled squeeze trades found "
-        f"(threshold: {_SQUEEZE_CALIB_MIN_TRADES}). "
+        f"(threshold: {min_trades}). "
         f"Run: python calibrate_squeeze_mult.py"
     )
     html_msg = (
         f"\U0001f4ca <b>Squeeze calibration due</b>\n\n"
         f"{squeeze_count} settled squeeze trades found "
-        f"(threshold: {_SQUEEZE_CALIB_MIN_TRADES}).\n\n"
+        f"(threshold: {min_trades}).\n\n"
         f"Run <code>python calibrate_squeeze_mult.py</code> to compute the recommended "
         f"multiplier and paste it into <code>paper_trader_bot.py</code>.\n\n"
         f"<i>_SP_MULT_TABLE['squeeze'] is currently 1.00\u00d7 (baseline — "
@@ -585,7 +610,7 @@ def _check_squeeze_calibration_due() -> None:
         "(>= %d threshold, _SP_MULT_TABLE['squeeze'] still 1.00). "
         "Run: python calibrate_squeeze_mult.py",
         squeeze_count,
-        _SQUEEZE_CALIB_MIN_TRADES,
+        min_trades,
     )
     _send_slack(plain_msg)
     _send_telegram(html_msg)
@@ -1475,6 +1500,13 @@ def main():
             "Suppression-escalation alerts disabled "
             "(CACHE_SUPPRESSION_ALERT_NIGHTS=0)."
         )
+
+    _squeeze_min = _get_squeeze_calib_min_trades()
+    log.info(
+        "Squeeze calibration threshold: %d settled trades "
+        "(set SQUEEZE_CALIB_MIN_TRADES to override).",
+        _squeeze_min,
+    )
 
     # Run backfill immediately on startup to catch any rows written since last run.
     # Check heartbeat first so a missed run is flagged before fresh history is written.
