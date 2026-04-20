@@ -447,6 +447,27 @@ class TestThresholdRelationships(unittest.TestCase):
             self.assertFalse(os.path.exists(log))
             self.assertTrue(os.path.exists(log + ".1"))
 
+    def test_rotation_at_run_history_threshold_does_not_rotate_with_backfill_log_constants(self):
+        """A file at the backfill-run-history threshold (100 KB) must not rotate when backfill-log constants (500 KB) are used."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "crosscheck.log")
+            _write(log, _BACKFILL_RUN_HISTORY_MAX_BYTES)
+            _rotate_log(log, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
+            self.assertTrue(
+                os.path.exists(log),
+                "a file at the run-history threshold must not rotate when backfill-log constants are used",
+            )
+            self.assertFalse(os.path.exists(log + ".1"))
+
+    def test_rotation_at_backfill_log_threshold_does_rotate_with_run_history_constants(self):
+        """A file at the backfill-log threshold (500 KB) must rotate when backfill-run-history constants (100 KB) are used."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "crosscheck.log")
+            _write(log, _BACKFILL_LOG_MAX_BYTES)
+            _rotate_log(log, _BACKFILL_RUN_HISTORY_MAX_BYTES, _BACKFILL_RUN_HISTORY_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertTrue(os.path.exists(log + ".1"))
+
 
 if __name__ == "__main__":
     unittest.main()
