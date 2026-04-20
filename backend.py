@@ -1100,8 +1100,7 @@ WEIGHTS_FILE      = "brain_weights.json"            # ⛔ READ-ONLY — live per
 HIST_WEIGHTS_FILE    = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
 TCS_THRESHOLDS_FILE  = "tcs_thresholds.json"          # per-structure TCS cutoffs saved after nightly recalibration
 TCS_THRESHOLD_HISTORY_FILE = "tcs_threshold_history.jsonl"  # append-only history log (one JSON record per line)
-_TCS_HISTORY_MAX_BYTES  = _parse_int_env("TCS_HISTORY_MAX_BYTES", 500 * 1024)    # rotate at 500 KB; override via env var
-_TCS_HISTORY_BACKUP_COUNT = _parse_int_env("TCS_HISTORY_BACKUP_COUNT", 1)         # keep one .1 backup; override via env var
+from log_config import _TCS_HISTORY_MAX_BYTES, _TCS_HISTORY_BACKUP_COUNT  # noqa: E402
 
 
 

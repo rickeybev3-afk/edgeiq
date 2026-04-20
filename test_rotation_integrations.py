@@ -2,7 +2,7 @@
 
 Three layers of coverage:
 
-1. Constant correctness — the values extracted from each module are sane
+1. Constant correctness — the values imported from log_config are sane
    positive integers that match expected defaults (env not set in test runner).
 
 2. Call-site argument order — an AST walk of each module's source verifies
@@ -22,63 +22,15 @@ import tempfile
 import unittest
 
 # ---------------------------------------------------------------------------
-# Constant extraction (via _parse_int_env from log_utils)
+# Rotation constants — imported directly from the shared log_config module
 # ---------------------------------------------------------------------------
-# Both modules define their rotation constants through _parse_int_env, e.g.
-#   _TCS_HISTORY_MAX_BYTES = _parse_int_env("TCS_HISTORY_MAX_BYTES", 500 * 1024)
-# We resolve them by evaluating only those assignment lines inside a minimal
-# namespace that provides _parse_int_env (imported from log_utils) and os.
-# This avoids importing streamlit, Flask, supabase, and all other heavyweight
-# dependencies that the full modules pull in at import time.
-
 from log_utils import _parse_int_env, _rotate_log
-
-
-def _extract_constants(module_path: str, constant_names: list) -> dict:
-    """Return {name: resolved_value} for the requested module-level constants.
-
-    Only lines that look like simple assignments for the named constants are
-    evaluated.  The eval namespace contains _parse_int_env and os so that
-    both plain arithmetic and _parse_int_env(env_name, default) forms resolve
-    correctly.
-    """
-    _eval_ns = {"_parse_int_env": _parse_int_env, "os": os}
-    found = {}
-    with open(module_path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            stripped = line.strip()
-            for name in constant_names:
-                if stripped.startswith(name) and "=" in stripped:
-                    try:
-                        _, _, expr = stripped.partition("=")
-                        expr = expr.split("#")[0].strip()
-                        found[name] = eval(expr, _eval_ns)  # noqa: S307
-                    except Exception:
-                        pass
-            if len(found) == len(constant_names):
-                break
-    missing = set(constant_names) - set(found)
-    if missing:
-        raise RuntimeError(
-            f"Could not extract constants from {module_path}: {missing}"
-        )
-    return found
-
-
-_BACKEND_CONSTANTS = _extract_constants(
-    "backend.py",
-    ["_TCS_HISTORY_MAX_BYTES", "_TCS_HISTORY_BACKUP_COUNT"],
+from log_config import (
+    _TCS_HISTORY_MAX_BYTES,
+    _TCS_HISTORY_BACKUP_COUNT,
+    _BACKFILL_RUN_HISTORY_MAX_BYTES,
+    _BACKFILL_RUN_HISTORY_BACKUP_COUNT,
 )
-_APP_CONSTANTS = _extract_constants(
-    "app.py",
-    ["_BACKFILL_RUN_HISTORY_MAX_BYTES", "_BACKFILL_RUN_HISTORY_BACKUP_COUNT"],
-)
-
-_TCS_HISTORY_MAX_BYTES    = _BACKEND_CONSTANTS["_TCS_HISTORY_MAX_BYTES"]
-_TCS_HISTORY_BACKUP_COUNT = _BACKEND_CONSTANTS["_TCS_HISTORY_BACKUP_COUNT"]
-
-_BACKFILL_RUN_HISTORY_MAX_BYTES    = _APP_CONSTANTS["_BACKFILL_RUN_HISTORY_MAX_BYTES"]
-_BACKFILL_RUN_HISTORY_BACKUP_COUNT = _APP_CONSTANTS["_BACKFILL_RUN_HISTORY_BACKUP_COUNT"]
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +74,7 @@ def _write(path: str, size: int) -> None:
 # ===========================================================================
 
 class TestTCSHistoryConstantsArePresent(unittest.TestCase):
-    """_TCS_HISTORY_* constants extracted from backend.py are sane values."""
+    """_TCS_HISTORY_* constants imported from log_config are sane values."""
 
     def test_max_bytes_is_positive_int(self):
         self.assertIsInstance(_TCS_HISTORY_MAX_BYTES, int)
@@ -141,7 +93,7 @@ class TestTCSHistoryConstantsArePresent(unittest.TestCase):
 
 
 class TestBackfillRunHistoryConstantsArePresent(unittest.TestCase):
-    """_BACKFILL_RUN_HISTORY_* constants extracted from app.py are sane values."""
+    """_BACKFILL_RUN_HISTORY_* constants imported from log_config are sane values."""
 
     def test_max_bytes_is_positive_int(self):
         self.assertIsInstance(_BACKFILL_RUN_HISTORY_MAX_BYTES, int)
