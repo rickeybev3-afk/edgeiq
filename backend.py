@@ -9326,11 +9326,14 @@ _BACKTEST_SIM_COLS = (
 
 
 def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
-    """Load saved backtest runs from Supabase (most recent first, up to 5000 rows).
+    """Load saved backtest runs from Supabase using pagination (all rows).
 
     Only the columns consumed by the UI are fetched — this avoids transferring
     wide SELECT * payloads over the wire and is significantly faster with
     16 000+ rows in the table.
+
+    Supabase caps single responses at 1 000 rows regardless of .limit().
+    We paginate in 1 000-row pages until we have the full dataset.
 
     Rows whose tiered_pnl_r equals TIERED_PNL_SENTINEL (-9999) are permanently
     unfillable (no Alpaca bars available).  The sentinel is replaced with NaN so
@@ -9340,11 +9343,19 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
     if not supabase:
         return pd.DataFrame()
     try:
-        q = supabase.table("backtest_sim_runs").select(_BACKTEST_SIM_COLS)
-        if user_id:
-            q = q.eq("user_id", user_id)
-        data = q.order("sim_date", desc=True).limit(5000).execute().data
-        df = pd.DataFrame(data) if data else pd.DataFrame()
+        page_size = 1000
+        offset = 0
+        all_data: list = []
+        while True:
+            q = supabase.table("backtest_sim_runs").select(_BACKTEST_SIM_COLS)
+            if user_id:
+                q = q.eq("user_id", user_id)
+            page = q.order("sim_date", desc=True).range(offset, offset + page_size - 1).execute().data or []
+            all_data.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        df = pd.DataFrame(all_data) if all_data else pd.DataFrame()
         if not df.empty and "tiered_pnl_r" in df.columns:
             import numpy as _np
             df["tiered_pnl_r"] = pd.to_numeric(df["tiered_pnl_r"], errors="coerce")
@@ -9352,6 +9363,72 @@ def load_backtest_sim_history(user_id: str = "") -> "pd.DataFrame":
         return df
     except Exception as e:
         print(f"Backtest load error: {e}")
+        return pd.DataFrame()
+
+
+def load_backtest_saved_dates(user_id: str = "") -> list:
+    """Return a sorted list of distinct sim_date strings saved by this user.
+
+    Fetches only the sim_date column via pagination so this is fast even with
+    tens of thousands of rows.  Returns newest dates first.
+    """
+    if not supabase:
+        return []
+    try:
+        page_size = 1000
+        offset = 0
+        seen: set = set()
+        while True:
+            q = supabase.table("backtest_sim_runs").select("sim_date")
+            if user_id:
+                q = q.eq("user_id", user_id)
+            page = q.order("sim_date", desc=True).range(offset, offset + page_size - 1).execute().data or []
+            for row in page:
+                seen.add(str(row["sim_date"]))
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return sorted(seen, reverse=True)
+    except Exception as e:
+        print(f"load_backtest_saved_dates error: {e}")
+        return []
+
+
+def load_backtest_rows_for_dates(user_id: str, dates: list) -> "pd.DataFrame":
+    """Load full backtest rows for a specific list of sim_date values.
+
+    Uses .in_() filtering + pagination so only the requested dates are
+    transferred.  This is much faster than loading the full history and
+    filtering in memory.
+    """
+    if not supabase or not dates:
+        return pd.DataFrame()
+    try:
+        page_size = 1000
+        offset = 0
+        all_data: list = []
+        date_strs = [str(d) for d in dates]
+        while True:
+            q = (
+                supabase.table("backtest_sim_runs")
+                .select(_BACKTEST_SIM_COLS)
+                .in_("sim_date", date_strs)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            page = q.order("sim_date", desc=True).range(offset, offset + page_size - 1).execute().data or []
+            all_data.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        df = pd.DataFrame(all_data) if all_data else pd.DataFrame()
+        if not df.empty and "tiered_pnl_r" in df.columns:
+            import numpy as _np
+            df["tiered_pnl_r"] = pd.to_numeric(df["tiered_pnl_r"], errors="coerce")
+            df.loc[df["tiered_pnl_r"] == TIERED_PNL_SENTINEL, "tiered_pnl_r"] = _np.nan
+        return df
+    except Exception as e:
+        print(f"load_backtest_rows_for_dates error: {e}")
         return pd.DataFrame()
 
 

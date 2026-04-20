@@ -391,6 +391,15 @@ def _load_ls_bt_sim_history(uid):
     return load_backtest_sim_history(user_id=uid)
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _load_bt_saved_dates(uid):
+    return load_backtest_saved_dates(user_id=uid)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_bt_rows_for_dates(uid, dates_key: str):
+    dates = dates_key.split("|")
+    return load_backtest_rows_for_dates(user_id=uid, dates=dates)
+
+@st.cache_data(ttl=300, show_spinner=False)
 def _load_xref_bt_hist(uid):
     return load_backtest_sim_history(user_id=uid)
 
@@ -10445,15 +10454,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _ls_col1, _ls_col2 = st.columns([1, 1])
         with _ls_col1:
             if st.button("🔄 Fetch My Saved Dates", use_container_width=True, key="bt_ls_fetch"):
-                _load_ls_bt_sim_history.clear()
-                _ls_hist = _load_ls_bt_sim_history(uid=_AUTH_USER_ID)
-                if _ls_hist.empty or "sim_date" not in _ls_hist.columns:
-                    st.session_state["_bt_ls_dates"]   = []
-                    st.session_state["_bt_ls_hist_all"] = pd.DataFrame()
-                else:
-                    _ls_avail = sorted(_ls_hist["sim_date"].astype(str).unique(), reverse=True)
-                    st.session_state["_bt_ls_dates"]   = _ls_avail
-                    st.session_state["_bt_ls_hist_all"] = _ls_hist
+                _load_bt_saved_dates.clear()
+                _ls_avail = _load_bt_saved_dates(uid=_AUTH_USER_ID)
+                st.session_state["_bt_ls_dates"] = _ls_avail
 
         _ls_dates_avail = st.session_state.get("_bt_ls_dates", [])
         if _ls_dates_avail:
@@ -10471,8 +10474,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     disabled=not _ls_sel,
                 )
             if _ls_load_btn and _ls_sel:
-                _ls_all_df = st.session_state.get("_bt_ls_hist_all", pd.DataFrame())
-                _ls_rows_df = _ls_all_df[_ls_all_df["sim_date"].astype(str).isin([str(d) for d in _ls_sel])]
+                _dates_key = "|".join(sorted(str(d) for d in _ls_sel))
+                _load_bt_rows_for_dates.clear()
+                _ls_rows_df = _load_bt_rows_for_dates(uid=_AUTH_USER_ID, dates_key=_dates_key)
 
                 def _icon_for(outcome: str) -> str:
                     _lc = (outcome or "").lower()
