@@ -31976,7 +31976,9 @@ function _bqCopyShareLink() {
                         "_earliest_scan_date_fetched_day",
                     ):
                         st.session_state.pop(_k, None)
+                    st.session_state["_scanner_funnel_refreshed_at"] = datetime.now()
                     st.rerun()
+            _sf_ts_placeholder = st.empty()
             _today = date.today()
             if (
                 not st.session_state.get("_daily_scan_log_ensured")
@@ -32006,6 +32008,9 @@ function _bqCopyShareLink() {
                     f"**{_earliest_scan_date.strftime('%B %d, %Y')}**"
                 )
             _dsl = load_daily_scan_log(_dsl_picked_date)
+            _sf_now = datetime.now()
+            st.session_state["_scanner_funnel_refreshed_at"] = _sf_now
+            _sf_ts_placeholder.caption(f"Last refreshed at {_sf_now.strftime('%-I:%M %p')}")
             if (
                 _dsl_picked_date == date.today()
                 and _dsl["total"] == 0
