@@ -1565,6 +1565,42 @@ def _list_passes() -> None:
 
 _BOT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py")
 _RESET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_resets.log")
+_RESET_LOG_MAX_BYTES = 100 * 1024
+_RESET_LOG_BACKUP_COUNT = 1
+
+
+def _rotate_reset_log(path: str) -> None:
+    """Roll over *path* when it exceeds _RESET_LOG_MAX_BYTES.
+
+    Keeps _RESET_LOG_BACKUP_COUNT rotated files (e.g. calibration_resets.log.1).
+    Older backups beyond that count are deleted automatically.
+    """
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) < _RESET_LOG_MAX_BYTES:
+            return
+        for idx in range(_RESET_LOG_BACKUP_COUNT, 0, -1):
+            src = f"{path}.{idx}"
+            dst = f"{path}.{idx + 1}" if idx < _RESET_LOG_BACKUP_COUNT else None
+            if dst is not None and os.path.exists(src):
+                try:
+                    os.remove(dst)
+                except OSError:
+                    pass
+                os.rename(src, dst)
+            elif dst is None and os.path.exists(src):
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+        backup = f"{path}.1"
+        try:
+            if os.path.exists(backup):
+                os.remove(backup)
+            os.rename(path, backup)
+        except OSError as exc:
+            print(f"WARNING: could not rotate reset log {path} — {exc}", file=sys.stderr)
+    except OSError as exc:
+        print(f"WARNING: could not check reset log size {path} — {exc}", file=sys.stderr)
 
 
 def _write_reset_log(
@@ -1575,12 +1611,16 @@ def _write_reset_log(
 ) -> None:
     """Append one line to calibration_resets.log recording this reset event.
 
+    Rotates the file when it reaches _RESET_LOG_MAX_BYTES, keeping
+    _RESET_LOG_BACKUP_COUNT backup(s) (e.g. calibration_resets.log.1).
+
     Format (one entry per line, ISO timestamps):
         2026-04-20T14:32:01+00:00  pass=trend  prev_mult=0.85  mode=interactive
     """
     import datetime as _dt
 
     path = log_path if log_path is not None else _RESET_LOG_FILE
+    _rotate_reset_log(path)
     prev_str = f"{prev_mult:.2f}" if prev_mult is not None else "unknown"
     mode_str = "CI/--yes" if used_yes else "interactive"
     timestamp = _dt.datetime.now(tz=_dt.timezone.utc).isoformat(timespec="seconds")
