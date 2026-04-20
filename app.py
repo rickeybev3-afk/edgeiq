@@ -12188,13 +12188,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 )
                                 _proj_col1, _proj_col2 = st.columns([1, 3])
                                 with _proj_col1:
+                                    # Default to ticker box count so the projector
+                                    # auto-matches however many tickers the user entered.
+                                    _proj_bt_raw = st.session_state.get("bt_tickers_input", "")
+                                    _proj_ticker_count = len([
+                                        t.strip() for t in _proj_bt_raw.replace("\n", ",").split(",")
+                                        if t.strip() and t.strip().isalpha()
+                                    ])
+                                    _proj_tpd_default = max(1.0, float(_proj_ticker_count)) if _proj_ticker_count > 0 else 26.0
+                                    # Reset widget when ticker count changes so it tracks the box
+                                    if st.session_state.get("_rp_ticker_count_prev") != _proj_ticker_count:
+                                        st.session_state["_rp_ticker_count_prev"] = _proj_ticker_count
+                                        st.session_state.pop("rp_proj_tpd", None)
                                     _proj_tpd = st.number_input(
                                         "Target trades/day",
                                         min_value=0.1, max_value=500.0,
-                                        value=26.0,
+                                        value=_proj_tpd_default,
                                         step=1.0,
                                         key="rp_proj_tpd",
-                                        help="Full Finviz 3-pass universe post-PDT ≈ 26/day. Crypto adds ~6–15 more. Micro futures add 2–4 more.",
+                                        help="Auto-set from ticker box count. Adjust manually to explore different throughput levels. Crypto adds ~6–15 more, micro futures add 2–4 more.",
                                     )
                                 _proj_scale          = _proj_tpd / _actual_tpd
                                 _proj_total_pnl      = _total_pnl * _proj_scale
