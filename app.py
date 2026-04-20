@@ -32119,7 +32119,7 @@ function _bqCopyShareLink() {
                 )
                 _dsl_scanned_upper = {t.upper() for t in _dsl["all"]}
                 _dsl_scan_hits = len(_dsl_fired_tickers & _dsl_scanned_upper)
-                _dsl_col1, _dsl_col2, _dsl_col3, _dsl_col4, _dsl_col5 = st.columns(5)
+                _dsl_col1, _dsl_col2, _dsl_col3, _dsl_col4, _dsl_col5, _dsl_col6 = st.columns(6)
                 with _dsl_col1:
                     st.metric("Tickers scanned", _dsl["total"])
                 with _dsl_col2:
@@ -32127,26 +32127,39 @@ function _bqCopyShareLink() {
                 with _dsl_col3:
                     st.metric("Trend / Squeeze", f"{len(_dsl['trend'])} / {len(_dsl['squeeze'])}")
                 with _dsl_col4:
+                    st.metric("Gap-down (Bearish)", len(_dsl.get("gap_down", [])),
+                              help="Pass 4 — Bearish Break universe: tickers down ≥3% at open")
+                with _dsl_col5:
                     st.metric("Paper trades fired", _dsl_day_trades,
                               help="Paper trades logged on this day (all TCS levels, resolved + pending)")
-                with _dsl_col5:
+                with _dsl_col6:
                     st.metric(
                         "Scan hits that fired",
                         _dsl_scan_hits,
                         help="Scanned tickers that went on to generate a paper trade on this day",
                     )
                 if _dsl["all"]:
-                    _dsl_ticker_parts = []
-                    for _t in _dsl["all"]:
-                        if _t.upper() in _dsl_fired_tickers:
-                            _dsl_ticker_parts.append(f"**{_t}** 🟢")
-                        else:
-                            _dsl_ticker_parts.append(_t)
-                    st.markdown(
-                        "**Scanned tickers:** " + ", ".join(_dsl_ticker_parts)
-                        + "\n\n<small>🟢 = fired a paper trade that day</small>",
-                        unsafe_allow_html=True,
+                    _dsl_bullish = set(
+                        t.upper()
+                        for t in _dsl["gap"] + _dsl["trend"] + _dsl["squeeze"]
                     )
+                    _dsl_bearish = {t.upper() for t in _dsl.get("gap_down", [])}
+                    _dsl_bull_parts = []
+                    _dsl_bear_parts = []
+                    for _t in _dsl["all"]:
+                        _tu = _t.upper()
+                        _label = f"**{_t}** 🟢" if _tu in _dsl_fired_tickers else _t
+                        if _tu in _dsl_bearish:
+                            _dsl_bear_parts.append(_label)
+                        else:
+                            _dsl_bull_parts.append(_label)
+                    _dsl_display_md = ""
+                    if _dsl_bull_parts:
+                        _dsl_display_md += "**Bullish passes (Gap / Trend / Squeeze):** " + ", ".join(_dsl_bull_parts) + "\n\n"
+                    if _dsl_bear_parts:
+                        _dsl_display_md += "**Gap-down / Bearish Break (Pass 4):** " + ", ".join(_dsl_bear_parts) + "\n\n"
+                    _dsl_display_md += "<small>🟢 = fired a paper trade that day</small>"
+                    st.markdown(_dsl_display_md, unsafe_allow_html=True)
 
         # ── Live paper trade breakdown (small sample warning) ─────────────────
         st.markdown("<br>", unsafe_allow_html=True)

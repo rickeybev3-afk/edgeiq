@@ -14791,12 +14791,13 @@ def save_daily_scan_log(
     squeeze_tickers: list,
     scan_date=None,
     slot: str = "morning",
+    gap_down_tickers: list = None,
 ) -> bool:
     """Persist the morning/midday Finviz scan results to daily_scan_log.
 
-    Inserts one row per ticker tagged with its screener pass (gap/trend/squeeze).
-    Existing rows for the same (scan_date, slot) are deleted first so a re-run
-    doesn't double-insert.
+    Inserts one row per ticker tagged with its screener pass
+    (gap/trend/squeeze/gap_down).  Existing rows for the same
+    (scan_date, slot) are deleted first so a re-run doesn't double-insert.
 
     Returns True on success, False on any error.
     """
@@ -14826,6 +14827,11 @@ def save_daily_scan_log(
             t = t.strip().upper()
             if t and t not in seen:
                 rows.append({"scan_date": scan_date_str, "ticker": t, "screener_pass": "squeeze", "slot": slot})
+                seen.add(t)
+        for t in (gap_down_tickers or []):
+            t = t.strip().upper()
+            if t and t not in seen:
+                rows.append({"scan_date": scan_date_str, "ticker": t, "screener_pass": "gap_down", "slot": slot})
                 seen.add(t)
 
         if rows:
@@ -14864,15 +14870,16 @@ def load_daily_scan_log(scan_date=None) -> dict:
 
     Returns a dict:
       {
-        "gap":     [list of tickers],
-        "trend":   [list of tickers],
-        "squeeze": [list of tickers],
-        "all":     [all tickers deduped],
-        "total":   int,
+        "gap":      [list of tickers],
+        "trend":    [list of tickers],
+        "squeeze":  [list of tickers],
+        "gap_down": [list of tickers],
+        "all":      [all tickers deduped],
+        "total":    int,
       }
     Returns empty structure on error or no data.
     """
-    _empty = {"gap": [], "trend": [], "squeeze": [], "all": [], "total": 0}
+    _empty = {"gap": [], "trend": [], "squeeze": [], "gap_down": [], "all": [], "total": 0}
     if not supabase:
         return _empty
     try:
@@ -14888,7 +14895,7 @@ def load_daily_scan_log(scan_date=None) -> dict:
         if not res.data:
             return _empty
 
-        gap, trend, squeeze, seen = [], [], [], set()
+        gap, trend, squeeze, gap_down, seen = [], [], [], [], set()
         for row in res.data:
             t = row.get("ticker", "").strip().upper()
             p = row.get("screener_pass", "gap")
@@ -14899,11 +14906,20 @@ def load_daily_scan_log(scan_date=None) -> dict:
                 trend.append(t)
             elif p == "squeeze":
                 squeeze.append(t)
+            elif p == "gap_down":
+                gap_down.append(t)
             else:
                 gap.append(t)
 
-        all_tickers = gap + trend + squeeze
-        return {"gap": gap, "trend": trend, "squeeze": squeeze, "all": all_tickers, "total": len(all_tickers)}
+        all_tickers = gap + trend + squeeze + gap_down
+        return {
+            "gap": gap,
+            "trend": trend,
+            "squeeze": squeeze,
+            "gap_down": gap_down,
+            "all": all_tickers,
+            "total": len(all_tickers),
+        }
     except Exception as e:
         logging.warning(f"load_daily_scan_log error: {e}")
         return _empty

@@ -3826,6 +3826,7 @@ def watchlist_refresh(midday: bool = False):
                         squeeze_tickers=squeeze_tickers,
                         scan_date=_wl_et_date,
                         slot=_wl_slot,
+                        gap_down_tickers=gap_down_tickers,
                     )
                 except Exception as _sl_err:
                     log.warning(f"[watchlist_refresh] save_daily_scan_log failed (non-fatal): {_sl_err}")
