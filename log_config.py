@@ -12,11 +12,23 @@ from log_utils import _parse_int_env
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
+
+def _ensure_log_dir(path: str) -> None:
+    """Create the parent directory of *path* if it does not already exist.
+
+    This is a no-op when the parent directory is the project root (the common
+    case for default paths) because that directory always exists.
+    """
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+
+
 # ── Calibration-reset log (calibrate_sp_mult.py) ──────────────────────────────
 _RESET_LOG_PATH = os.environ.get(
     "RESET_LOG_PATH",
     os.path.join(_HERE, "calibration_resets.log"),
 )
+_ensure_log_dir(_RESET_LOG_PATH)
 _RESET_LOG_MAX_BYTES  = _parse_int_env("RESET_LOG_MAX_BYTES", 100 * 1024)   # rotate at 100 KB; override via env var
 _RESET_LOG_BACKUP_COUNT = _parse_int_env("RESET_LOG_BACKUP_COUNT", 1)        # keep one .1 backup; override via env var
 
@@ -25,6 +37,7 @@ _TCS_HISTORY_LOG_PATH = os.environ.get(
     "TCS_HISTORY_LOG_PATH",
     "tcs_threshold_history.jsonl",
 )
+_ensure_log_dir(_TCS_HISTORY_LOG_PATH)
 _TCS_HISTORY_MAX_BYTES  = _parse_int_env("TCS_HISTORY_MAX_BYTES", 500 * 1024)  # rotate at 500 KB; override via env var
 _TCS_HISTORY_BACKUP_COUNT = _parse_int_env("TCS_HISTORY_BACKUP_COUNT", 1)       # keep one .1 backup; override via env var
 
@@ -33,6 +46,7 @@ _BACKFILL_RUN_HISTORY_LOG_PATH = os.environ.get(
     "BACKFILL_RUN_HISTORY_LOG_PATH",
     os.path.join(_HERE, "backfill_run_history.log"),
 )
+_ensure_log_dir(_BACKFILL_RUN_HISTORY_LOG_PATH)
 _BACKFILL_RUN_HISTORY_MAX_BYTES    = _parse_int_env("BACKFILL_RUN_HISTORY_MAX_BYTES", 100 * 1024)  # rotate at 100 KB; override via env var
 _BACKFILL_RUN_HISTORY_BACKUP_COUNT = _parse_int_env("BACKFILL_RUN_HISTORY_BACKUP_COUNT", 1)         # keep one .1 backup; override via env var
 
