@@ -14531,6 +14531,105 @@ def fetch_finviz_watchlist(
     return _tickers[:max_tickers]
 
 
+def fetch_gap_down_watchlist(
+    change_max_pct: float = -3.0,
+    price_min:      float = 1.0,
+    price_max:      float = 50.0,
+    max_tickers:    int   = 40,
+    avg_vol_min_k:  int   = 500,
+) -> list:
+    """Screen for tickers gapping DOWN at open — the Bearish Break universe.
+
+    Uses Yahoo Finance day_losers and most_actives screens filtered for stocks
+    whose regular-market change is ≤ change_max_pct (default -3%).  This is
+    the mirror image of the gap-of-day pass in fetch_finviz_watchlist which
+    only surfaces gainers.
+
+    Filters applied:
+      - change % ≤ change_max_pct  (negative gapper)
+      - price within [price_min, price_max]
+      - average daily volume ≥ avg_vol_min_k * 1,000
+      - pure alpha ticker (no digits, length ≤ 5)
+
+    Returns a deduplicated list of uppercase ticker strings (up to max_tickers).
+    Returns [] on any error so the caller falls back gracefully.
+    """
+    import requests as _req
+
+    _sess = _req.Session()
+    _sess.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    })
+
+    _YF_BASE    = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+    _avg_vol_min = avg_vol_min_k * 1_000
+
+    # day_losers → primary gap-down source
+    # most_actives → catches high-vol losers that day_losers may miss
+    _scr_ids = ["day_losers", "most_actives"]
+
+    _seen:    set  = set()
+    _tickers: list = []
+
+    for _scr_id in _scr_ids:
+        if len(_tickers) >= max_tickers:
+            break
+        try:
+            _resp = _sess.get(
+                _YF_BASE,
+                params={
+                    "formatted": "false",
+                    "lang": "en-US",
+                    "region": "US",
+                    "scrIds": _scr_id,
+                    "start": 0,
+                    "count": 200,
+                },
+                timeout=12,
+            )
+            _resp.raise_for_status()
+            _data   = _resp.json()
+            _result = _data.get("finance", {}).get("result", [])
+            if not _result:
+                continue
+            _quotes = _result[0].get("quotes", [])
+
+            for _q in _quotes:
+                _sym   = (_q.get("symbol") or "").strip().upper()
+                _chg   = _q.get("regularMarketChangePercent") or 0.0
+                _price = _q.get("regularMarketPrice") or 0.0
+                _avol  = _q.get("averageDailyVolume10Day") or _q.get("averageDailyVolume3Month") or 0
+
+                if not _sym or not _sym.isalpha() or len(_sym) > 5:
+                    continue
+                if _price < price_min or _price > price_max:
+                    continue
+                if _chg > change_max_pct:
+                    continue
+                if _avol < _avg_vol_min:
+                    continue
+                if _sym in _seen:
+                    continue
+
+                _seen.add(_sym)
+                _tickers.append(_sym)
+                if len(_tickers) >= max_tickers:
+                    break
+
+            time.sleep(0.3)
+
+        except Exception as _e:
+            logging.warning(f"Yahoo Finance gap-down screener fetch error ({_scr_id}): {_e}")
+
+    logging.info(f"Gap-down watchlist: fetched {len(_tickers)} tickers")
+    return _tickers[:max_tickers]
+
+
 def fetch_premarket_gappers(
     api_key:      str,
     secret_key:   str,

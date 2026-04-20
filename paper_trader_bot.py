@@ -341,6 +341,7 @@ try:
         load_watchlist,
         save_watchlist,
         fetch_finviz_watchlist,
+        fetch_gap_down_watchlist,
         fetch_premarket_gappers,
         recalibrate_from_supabase,
         recalibrate_from_history,
@@ -520,10 +521,11 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
 #   'squeeze' / unclassified:                           no backtest data     → 1.00×
 # Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
 _SP_MULT_TABLE: dict[str, float] = {
-    "other":   1.15,
-    "gap":     1.00,
-    "trend":   0.85,
-    "squeeze": 1.00,
+    "other":    1.15,
+    "gap":      1.00,
+    "trend":    0.85,
+    "squeeze":  1.00,
+    "gap_down": 1.00,   # Bearish Break universe — baseline until backtest data accrues
 }
 
 def _sp_size_mult(screener_pass: str | None) -> float:
@@ -967,18 +969,22 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         return
 
     # ── Universe-alignment filter ─────────────────────────────────────────────
-    # Our screener is a gap-UP universe (Finviz gap ≥ 3%, trend continuation).
+    # Bearish Break setups require a gap-DOWN universe to have positive expectancy.
     # Backtest of 111 settled trades shows:
-    #   Bullish Break on gap-up stock → 71%+ WR (80.8% at TCS ≥ 50)
-    #   Bearish Break on gap-up stock →  40% WR  (below random, do not trade)
-    # Skip all Bearish Break signals until we build a dedicated gap-down universe.
+    #   Bullish Break on gap-up stock  → 71%+ WR (80.8% at TCS ≥ 50)
+    #   Bearish Break on gap-up stock  →  40% WR  (below random, do not trade)
+    #   Bearish Break on gap-down stock → expected positive edge (see gap_down pass)
+    # Only allow Bearish Break for tickers sourced from the gap-down screener pass.
     if direction == "Bearish Break":
-        log.info(
-            f"  [{_ticker_raw}] skip order — Bearish Break filtered: "
-            f"gap-up universe hist WR 40% (vs 71% Bullish). Re-enable with gap-down screener."
-        )
-        _patch_skip_reason(r, _ticker_raw, "bearish_break_filtered")
-        return
+        _bb_sp_tag = _TICKER_SCREENER_PASS.get(_ticker_raw) or _TICKER_SCREENER_PASS.get(_ticker_raw.upper())
+        if _bb_sp_tag != "gap_down":
+            log.info(
+                f"  [{_ticker_raw}] skip order — Bearish Break on non-gap-down ticker "
+                f"(screener_pass={_bb_sp_tag!r}); hist WR 40% on gap-up universe — "
+                f"only trading Bearish Break from gap-down screener pass."
+            )
+            _patch_skip_reason(r, _ticker_raw, "bearish_break_not_gap_down")
+            return
 
     # ── Stale-entry guard (LIVE mode only) ───────────────────────────────────
     # If the bot restarts mid-session and runs a catch-up scan, the entry price
@@ -1316,20 +1322,21 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             except Exception as _patch_err:
                 log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")
         # ── Register zone invalidation watch ──────────────────────────────────
-        # Use raw ib_low (not _effective_stop) as the invalidation level —
-        # if price drops below the IB low the structure is broken regardless
-        # of how wide the stop is widened for false-shakeout protection.
-        _zw_date = str(r.get("sim_date") or r.get("trade_date") or datetime.now(EASTERN).date())
+        # Bullish Break: cancel if price closes below IB low (structure broken).
+        # Bearish Break: cancel if price closes above IB high (structure broken).
+        # Use the raw IB level (not the widened stop) as the invalidation threshold.
+        _zw_inval = ib_high if direction == "Bearish Break" else ib_low
+        _zw_date  = str(r.get("sim_date") or r.get("trade_date") or datetime.now(EASTERN).date())
         _register_zone_watch(
-            ticker      = ticker,
-            trade_date  = _zw_date,
-            order_id    = order_id,
-            direction   = direction,
-            invalidation_price = ib_low,   # IB low = structure invalidation level
-            entry       = result["entry"],
-            stop        = result["stop"],
-            target      = result["target"],
-            qty         = qty,
+            ticker             = ticker,
+            trade_date         = _zw_date,
+            order_id           = order_id,
+            direction          = direction,
+            invalidation_price = _zw_inval,
+            entry              = result["entry"],
+            stop               = result["stop"],
+            target             = result["target"],
+            qty                = qty,
         )
     else:
         log.warning(f"  ❌ [{ticker}] Order failed: {result.get('error')}")
@@ -1343,9 +1350,10 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
 _TRAILING_STOP_ACTIVATED: set = set()
 
 # ── Screener pass registry ─────────────────────────────────────────────────────
-# Maps ticker → pass name ('gap' | 'trend' | 'squeeze').  Populated by
-# watchlist_refresh() after each Finviz scan; queried by _place_order_for_setup()
-# so the paper_trades row records which screener produced the signal.
+# Maps ticker → pass name ('gap' | 'trend' | 'squeeze' | 'gap_down').  Populated
+# by watchlist_refresh() after each scan; queried by _place_order_for_setup() so
+# the paper_trades row records which screener produced the signal.
+# 'gap_down' tickers are eligible for Bearish Break bracket orders.
 _TICKER_SCREENER_PASS: dict[str, str] = {}
 _SCREENER_PASS_CACHE_FILE = ".ticker_screener_pass.json"
 
@@ -1567,11 +1575,16 @@ def _restore_zone_watch_from_db() -> None:
             ticker    = (row.get("ticker") or "").upper()
             direction = row.get("predicted") or ""
             ib_low    = float(row.get("ib_low") or 0)
+            ib_high   = float(row.get("ib_high") or 0)
             order_id  = row.get("alpaca_order_id") or ""
-            if not ticker or not direction or not order_id or ib_low <= 0:
+            if not ticker or not direction or not order_id:
                 continue
-            if direction != "Bullish Break":
+            if direction not in ("Bullish Break", "Bearish Break"):
                 continue
+            if ib_low <= 0 or ib_high <= 0:
+                continue
+            # Invalidation price: Bullish Break → IB low, Bearish Break → IB high
+            _inval = ib_high if direction == "Bearish Break" else ib_low
             # Verify the PARENT entry order is still truly open on Alpaca
             status = _alpaca_get_order_status(order_id)
             if status and status not in _OPEN_STATUSES:
@@ -1582,7 +1595,7 @@ def _restore_zone_watch_from_db() -> None:
                 skipped += 1
                 continue
             _register_zone_watch(
-                ticker, today_str, order_id, direction, ib_low,
+                ticker, today_str, order_id, direction, _inval,
                 float(row.get("entry_price_sim") or 0),
                 float(row.get("stop_price_sim")  or 0),
                 float(row.get("target_price_sim") or 0),
@@ -3646,7 +3659,7 @@ def premarket_scan():
 def watchlist_refresh(midday: bool = False):
     """9:35 AM ET (or 11:45 AM midday) — pull today's movers from Finviz, save to Supabase.
 
-    Runs THREE screener passes and merges them:
+    Runs FOUR screener passes and merges them:
       Pass 1 — Gap-of-day plays: ≥3% change · Float ≤100M · $1–$20
                Catches high-momentum small-float catalysts.
       Pass 2 — Trend continuation plays: ≥1% change · Float ≤500M · $5–$50
@@ -3657,9 +3670,12 @@ def watchlist_refresh(midday: bool = False):
       Pass 3 — Short squeeze candidates: Short float ≥15% · Float ≤50M · ≥1% chg
                High short interest + low float = covering pressure amplifies IB breaks.
                These are layered behind gap/trend fills; capped at 30 tickers.
+      Pass 4 — Gap-down plays: ≤-3% change · $1–$50 · avg vol ≥500K
+               Bearish Break universe — tickers gapping down with structure.
+               Only these tickers qualify for Bearish Break bracket orders.
 
-    Gap plays take priority (listed first), then trend, then squeeze.
-    Combined list is capped at 100 tickers.
+    Gap plays take priority (listed first), then trend, then squeeze, then gap-down.
+    Combined list is capped at 120 tickers.
 
     ``midday=True`` is the 11:45 AM pass.  Each pass has its own daily lock file
     in /tmp so bot restarts can't fire a duplicate Telegram notification.
@@ -3674,7 +3690,7 @@ def watchlist_refresh(midday: bool = False):
 
     global TICKERS
     log.info("=" * 60)
-    log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze passes)")
+    log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze + gap-down passes)")
     log.info("=" * 60)
     try:
         # ── Pass 1: gap-of-day (existing behaviour) ───────────────────────────
@@ -3717,7 +3733,21 @@ def watchlist_refresh(midday: bool = False):
         )
         log.info(f"Short-squeeze screener: {len(squeeze_tickers)} tickers")
 
-        # ── Merge: gap → trend → squeeze (deduped), cap at 100 ───────────────
+        # ── Pass 4: gap-down (Bearish Break universe) ─────────────────────────
+        # Stocks gapping down ≥3% with meaningful volume.  These are the ONLY
+        # tickers eligible for Bearish Break bracket orders — the gap-up screener
+        # universe produces 40% WR on Bearish Break (below random).  Gap-down
+        # stocks with IB structure breaking below IB low are the intended target.
+        gap_down_tickers = fetch_gap_down_watchlist(
+            change_max_pct=-3.0,
+            price_min=PRICE_MIN,
+            price_max=PRICE_MAX,
+            avg_vol_min_k=500,
+            max_tickers=40,
+        )
+        log.info(f"Gap-down screener (Bearish Break universe): {len(gap_down_tickers)} tickers")
+
+        # ── Merge: gap → trend → squeeze → gap-down (deduped), cap at 120 ────
         merged: list[str] = list(gap_tickers)
         for t in trend_tickers:
             if t not in merged:
@@ -3725,7 +3755,10 @@ def watchlist_refresh(midday: bool = False):
         for t in squeeze_tickers:
             if t not in merged:
                 merged.append(t)
-        merged = merged[:100]
+        for t in gap_down_tickers:
+            if t not in merged:
+                merged.append(t)
+        merged = merged[:120]
 
         # ── Tag each ticker with the pass that first claimed it ───────────────
         global _TICKER_SCREENER_PASS
@@ -3738,6 +3771,9 @@ def watchlist_refresh(midday: bool = False):
         for t in squeeze_tickers:
             if t not in _TICKER_SCREENER_PASS:
                 _TICKER_SCREENER_PASS[t] = "squeeze"
+        for t in gap_down_tickers:
+            if t not in _TICKER_SCREENER_PASS:
+                _TICKER_SCREENER_PASS[t] = "gap_down"
         _save_screener_pass_cache()  # persist to disk — survives bot restarts
 
         if merged:
@@ -3747,17 +3783,23 @@ def watchlist_refresh(midday: bool = False):
                 log.info(
                     f"Watchlist updated: {len(merged)} total tickers "
                     f"({len(gap_tickers)} gap · {len(trend_tickers)} trend · "
-                    f"{len(squeeze_tickers)} squeeze) → "
+                    f"{len(squeeze_tickers)} squeeze · {len(gap_down_tickers)} gap-down) → "
                     f"{', '.join(merged)}"
                 )
                 _scan_note = "Midday refresh complete." if midday else "Morning scan at 10:47 AM ET..."
+                _gd_line = (
+                    f"Gap-Down: ≤-3% chg · $1–${PRICE_MAX:.0f} · vol ≥500K ({len(gap_down_tickers)} tickers)\n"
+                    if gap_down_tickers else ""
+                )
                 tg_send(
                     f"📋 <b>Watchlist Refreshed — {date.today()}</b>\n"
                     f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
-                    f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze)\n"
+                    f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze · "
+                    f"{len(gap_down_tickers)} gap-down)\n"
                     f"Gap: ≥3% chg · Float ≤100M · $1–$20\n"
                     f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
                     f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
+                    f"{_gd_line}"
                     f"{_scan_note}"
                 )
                 # Persist scan results to daily_scan_log table for dashboard visibility
