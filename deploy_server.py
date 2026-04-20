@@ -2485,8 +2485,9 @@ if __name__ == "__main__":
                      stdout=open("/tmp/kalshi_bot.log", "a"), stderr=subprocess.STDOUT)
     subprocess.Popen([_PY, "nightly_tiered_pnl_refresh.py"], cwd=_BOT_DIR, env=_prod_env,
                      stdout=open("/tmp/nightly_refresh.log", "a"), stderr=subprocess.STDOUT)
-    subprocess.Popen([_PY, "offering_short_bot.py"], cwd=_BOT_DIR, env=_prod_env,
-                     stdout=open("/tmp/offering_short_bot.log", "a"), stderr=subprocess.STDOUT)
+    # offering_short_bot disabled — needs rework before going live
+    # subprocess.Popen([_PY, "offering_short_bot.py"], cwd=_BOT_DIR, env=_prod_env,
+    #                  stdout=open("/tmp/offering_short_bot.log", "a"), stderr=subprocess.STDOUT)
 
     threading.Thread(target=start_streamlit, daemon=True).start()
     threading.Thread(target=_refresh_db_cache, daemon=True, name="db-cache-refresher").start()
