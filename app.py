@@ -32372,7 +32372,11 @@ function _bqCopyShareLink() {
         if not _live_resolved.empty and "screener_pass" in _live_resolved.columns:
             _sp_live = _live_resolved.copy()
             _sp_live["screener_pass"] = _sp_live["screener_pass"].fillna("untagged").str.strip().str.lower()
-            _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00, "gap_down": 1.00}
+            try:
+                import paper_trader_bot as _ptb_mod
+                _SP_MULT_LIVE = dict(_ptb_mod._SP_MULT_TABLE)
+            except Exception:
+                _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00, "gap_down": 1.00}
             _sp_live_rows = []
             for _spass in ["gap", "trend", "gap_down", "other", "squeeze", "untagged"]:
                 _sg = _sp_live[_sp_live["screener_pass"] == _spass]
@@ -32392,7 +32396,19 @@ function _bqCopyShareLink() {
             if _sp_live_rows:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown("**Live Paper Trades — by Screener Pass**")
-                st.caption("sp_mult = position-size multiplier applied by the bot at order placement · gap/other/trend from 5-yr live backtest · gap_down 1.00× calibrated 2026-04-20 (6 settled trades, n<30 → baseline confirmed; recalibrate via calibrate_sp_mult.py --pass gap_down once ≥30 Bearish Break paper trades settle) · squeeze 1.00× calibrated 2026-04-20 (0 settled trades, n<30 → baseline confirmed; recalibrate via calibrate_sp_mult.py --pass squeeze once ≥30 squeeze paper trades settle)")
+                _gd_mult_live = _SP_MULT_LIVE.get("gap_down", 1.00)
+                _gd_caption_suffix = (
+                    f"gap_down {_gd_mult_live:.2f}× — calibrated via calibrate_sp_mult.py --pass gap_down"
+                    if abs(_gd_mult_live - 1.00) > 0.001
+                    else "gap_down 1.00× baseline (recalibrate via calibrate_sp_mult.py --pass gap_down once ≥30 Bearish Break paper trades settle)"
+                )
+                _sq_mult_live = _SP_MULT_LIVE.get("squeeze", 1.00)
+                _sq_caption_suffix = (
+                    f"squeeze {_sq_mult_live:.2f}× — calibrated via calibrate_sp_mult.py --pass squeeze"
+                    if abs(_sq_mult_live - 1.00) > 0.001
+                    else "squeeze 1.00× baseline (recalibrate via calibrate_sp_mult.py --pass squeeze once ≥30 squeeze paper trades settle)"
+                )
+                st.caption(f"sp_mult = position-size multiplier applied by the bot at order placement · gap/other/trend from 5-yr live backtest · {_gd_caption_suffix} · {_sq_caption_suffix}")
                 st.dataframe(pd.DataFrame(_sp_live_rows), use_container_width=True, hide_index=True)
 
         # ── Screener Pass — 5-yr Backtest Breakdown (Gap vs Trend vs All) ────
