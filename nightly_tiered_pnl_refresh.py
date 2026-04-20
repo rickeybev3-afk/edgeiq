@@ -729,6 +729,62 @@ def _check_gap_down_calibration_due() -> None:
     )
 
 
+# ── Auto-discover all uncalibrated screeners ──────────────────────────────────
+
+def _check_all_uncalibrated_screeners() -> None:
+    """Check calibration status for every screener whose multiplier is still 1.00×.
+
+    Reads _SP_MULT_TABLE from paper_trader_bot at runtime so that any new
+    screener added to that table is automatically covered — no manual wiring
+    required in this file.
+
+    Per-screener parameter precedence:
+      • squeeze  — honours SQUEEZE_CALIB_MIN_TRADES env var via
+                   _get_squeeze_calib_min_trades() and uses the dedicated
+                   _SQUEEZE_CALIB_COOLDOWN_HOURS constant.
+      • gap_down — uses _GAP_DOWN_CALIB_MIN_TRADES / _GAP_DOWN_CALIB_COOLDOWN_HOURS.
+      • any other key at 1.00× — falls back to _CALIB_MIN_TRADES /
+                   _DEFAULT_COOLDOWN_HOURS with a derived script name of
+                   calibrate_{key}_mult.py.
+    """
+    try:
+        import paper_trader_bot as _ptb
+        sp_table: dict[str, float] = _ptb._SP_MULT_TABLE
+    except Exception as _exc:
+        log.warning(
+            "Could not import _SP_MULT_TABLE from paper_trader_bot — "
+            "skipping auto calibration checks: %s",
+            _exc,
+        )
+        return
+
+    _per_key_params: dict[str, tuple[str, int, float]] = {
+        "squeeze": (
+            "calibrate_squeeze_mult.py",
+            _get_squeeze_calib_min_trades(),
+            _SQUEEZE_CALIB_COOLDOWN_HOURS,
+        ),
+        "gap_down": (
+            "calibrate_gap_down_mult.py",
+            _GAP_DOWN_CALIB_MIN_TRADES,
+            _GAP_DOWN_CALIB_COOLDOWN_HOURS,
+        ),
+    }
+
+    for key, mult in sp_table.items():
+        if abs(mult - 1.00) > 0.001:
+            continue
+        script, min_trades, cooldown = _per_key_params.get(
+            key,
+            (
+                f"calibrate_{key}_mult.py",
+                _CALIB_MIN_TRADES,
+                _DEFAULT_COOLDOWN_HOURS,
+            ),
+        )
+        _check_screener_calibration_due(key, script, min_trades, cooldown)
+
+
 # ── Email helper ─────────────────────────────────────────────────────────────
 
 
@@ -1447,8 +1503,7 @@ def main():
     log.info("─── Startup run ──────────────────────────────────────────────")
     _check_backfill_heartbeat()
     run_backfill(date_from=date_from, date_to=date_to)
-    _check_squeeze_calibration_due()
-    _check_gap_down_calibration_due()
+    _check_all_uncalibrated_screeners()
     refresh_summary_cache()
 
     run_number = 0
@@ -1489,8 +1544,7 @@ def main():
             run_backfill(date_from=date_from, date_to=date_to)
             if _shutdown.is_set():
                 break
-            _check_squeeze_calibration_due()
-            _check_gap_down_calibration_due()
+            _check_all_uncalibrated_screeners()
 
         refresh_summary_cache()
 
