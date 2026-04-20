@@ -31918,7 +31918,20 @@ function _bqCopyShareLink() {
                     if not _pt_df.empty and "trade_date" in _pt_df.columns
                     else 0
                 )
-                _dsl_col1, _dsl_col2, _dsl_col3, _dsl_col4 = st.columns(4)
+                _dsl_fired_tickers = (
+                    set(
+                        _pt_df[_pt_df["trade_date"] == _dsl_date_str]["ticker"]
+                        .dropna()
+                        .str.upper()
+                    )
+                    if not _pt_df.empty
+                    and "trade_date" in _pt_df.columns
+                    and "ticker" in _pt_df.columns
+                    else set()
+                )
+                _dsl_scanned_upper = {t.upper() for t in _dsl["all"]}
+                _dsl_scan_hits = len(_dsl_fired_tickers & _dsl_scanned_upper)
+                _dsl_col1, _dsl_col2, _dsl_col3, _dsl_col4, _dsl_col5 = st.columns(5)
                 with _dsl_col1:
                     st.metric("Tickers scanned", _dsl["total"])
                 with _dsl_col2:
@@ -31928,8 +31941,24 @@ function _bqCopyShareLink() {
                 with _dsl_col4:
                     st.metric("Paper trades fired", _dsl_day_trades,
                               help="Paper trades logged on this day (all TCS levels, resolved + pending)")
+                with _dsl_col5:
+                    st.metric(
+                        "Scan hits that fired",
+                        _dsl_scan_hits,
+                        help="Scanned tickers that went on to generate a paper trade on this day",
+                    )
                 if _dsl["all"]:
-                    st.caption(f"**Scanned tickers:** {', '.join(_dsl['all'])}")
+                    _dsl_ticker_parts = []
+                    for _t in _dsl["all"]:
+                        if _t.upper() in _dsl_fired_tickers:
+                            _dsl_ticker_parts.append(f"**{_t}** 🟢")
+                        else:
+                            _dsl_ticker_parts.append(_t)
+                    st.markdown(
+                        "**Scanned tickers:** " + ", ".join(_dsl_ticker_parts)
+                        + "\n\n<small>🟢 = fired a paper trade that day</small>",
+                        unsafe_allow_html=True,
+                    )
 
         # ── Live paper trade breakdown (small sample warning) ─────────────────
         st.markdown("<br>", unsafe_allow_html=True)
