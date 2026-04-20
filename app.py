@@ -10368,12 +10368,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
         '</div>',
         unsafe_allow_html=True,
     )
-    if "_bt_wl_default_initialized" not in st.session_state:
-        _wl_loaded = _cached_load_watchlist(user_id=_AUTH_USER_ID)
-        st.session_state["_bt_wl_default_initialized"] = (
-            ",".join(_wl_loaded) if _wl_loaded else _BT_DEFAULT_TICKERS
-        )
+    # Always reload watchlist from DB — override session state if it still has
+    # the stale startup default (GME/AMC/etc.) or if the text box hasn't been
+    # touched yet this session.
+    _wl_fresh = _cached_load_watchlist(user_id=_AUTH_USER_ID)
+    _wl_fresh_str = ",".join(_wl_fresh) if _wl_fresh else _BT_DEFAULT_TICKERS
+    _current_box = st.session_state.get("bt_tickers_input", "")
+    _stale_defaults = set(_BT_DEFAULT_TICKERS.replace(" ", "").upper().split(","))
+    _current_set = set(_current_box.replace(" ", "").upper().split(",")) if _current_box else set()
+    _is_stale = (not _current_box) or (_current_set == _stale_defaults)
+    if "_bt_wl_default_initialized" not in st.session_state or _is_stale:
+        st.session_state["_bt_wl_default_initialized"] = _wl_fresh_str
+        if _is_stale and "bt_tickers_input" in st.session_state:
+            del st.session_state["bt_tickers_input"]
     _bt_default_val = st.session_state["_bt_wl_default_initialized"]
+
     _bt_wl_col, _bt_wl_btn_col = st.columns([6, 1])
     with _bt_wl_col:
         _bt_tickers_raw = st.text_area(
@@ -10381,9 +10390,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
             height=68, key="bt_tickers_input", label_visibility="collapsed",
         )
     with _bt_wl_btn_col:
-        st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
-        if st.button("🔄 Load\nWatchlist", key="_bt_reload_wl", use_container_width=True,
-                     help="Reload today's Finviz watchlist (~100 tickers) into the ticker box"):
+        st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Reload\nWatchlist", key="_bt_reload_wl", use_container_width=True,
+                     help="Pull today's Finviz watchlist (~100 tickers) fresh from the database"):
             _cached_load_watchlist.clear()
             for _k in ("_bt_wl_default_initialized", "bt_tickers_input"):
                 st.session_state.pop(_k, None)
