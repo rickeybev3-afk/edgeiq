@@ -625,6 +625,24 @@ _all_sim_dates = [r["sim_date"] for r in _all_sorted if r.get("sim_date")]
 _data_min = datetime.strptime(_all_sim_dates[0],  "%Y-%m-%d").date() if _all_sim_dates else datetime(2021, 6, 1).date()
 _data_max = datetime.strptime(_all_sim_dates[-1], "%Y-%m-%d").date() if _all_sim_dates else datetime.today().date()
 
+# ── Auto-compute avg qualifying signals per trading day from current filter set ─
+_fs_day_counts: dict = {}
+for _r in final:
+    _d = (_r.get("sim_date") or "")[:10]
+    if _d:
+        _fs_day_counts[_d] = _fs_day_counts.get(_d, 0) + 1
+_avg_tpd_auto = max(1, round(sum(_fs_day_counts.values()) / len(_fs_day_counts))) if _fs_day_counts else 20
+
+# Seed/reset to the computed default.
+# Use a one-time migration flag so legacy sessions (stuck at 20) get updated
+# on their first visit after this change.  After that, user overrides are kept.
+_tpd_init_key = "_fs_tpd_auto_v2"
+if not st.session_state.get(_tpd_init_key):
+    st.session_state["fs_pnl_max_per_day"] = _avg_tpd_auto
+    st.session_state[_tpd_init_key] = True
+elif "fs_pnl_max_per_day" not in st.session_state:
+    st.session_state["fs_pnl_max_per_day"] = _avg_tpd_auto
+
 _dr_c1, _dr_c2, _dr_c3 = st.columns([1, 1, 0.8])
 with _dr_c1:
     pnl_date_start = st.date_input(
@@ -640,12 +658,11 @@ with _dr_c2:
     )
 with _dr_c3:
     pnl_max_per_day = st.number_input(
-        "Max trades / day", min_value=1, max_value=100, value=20, step=1,
+        "Max trades / day", min_value=1, max_value=100, value=_avg_tpd_auto, step=1,
         key="fs_pnl_max_per_day",
-        help="Caps how many trades are taken per calendar day — picks the highest-TCS "
-             "signals first. Set to 20 to match the live paper bot's concurrent cap. "
-             "5yr data: avg 5 signals/day, median 3/day. Busy days hit 10+. "
-             "Set to 20+ to model taking all realistic signals.",
+        help="Auto-set to the average qualifying signals per trading day from your "
+             "current filter settings. Caps how many trades are taken per day — "
+             "highest TCS first. Adjust to model different concurrency.",
     )
 
 st.caption(
