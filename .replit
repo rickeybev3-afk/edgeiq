@@ -112,7 +112,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 run_60day_backtest.py --start 2026-02-17 --end 2026-04-18"
+args = "python3 run_60day_backtest.py --start 2026-01-26 --end 2026-04-17"
 
 [agent]
 stack = "PNPM_WORKSPACE"

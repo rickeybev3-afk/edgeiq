@@ -17,6 +17,7 @@ from backend import (
     load_watchlist, save_backtest_sim_runs, run_backtest_range,
 )
 from datetime import date, timedelta
+import pandas as pd
 
 USER_ID = "a5e1fcab-8369-42c4-8550-a8a19734510c"
 
@@ -32,7 +33,12 @@ def main():
     args = parser.parse_args()
 
     end_date   = date.fromisoformat(args.end)   if args.end   else get_last_weekday(date.today() - timedelta(days=1))
-    start_date = date.fromisoformat(args.start) if args.start else get_last_weekday(end_date - timedelta(days=60))
+    if args.start:
+        start_date = date.fromisoformat(args.start)
+    else:
+        # 60 *trading* days back (excludes weekends and US market holidays)
+        bdays = pd.bdate_range(end=str(end_date), periods=60)
+        start_date = bdays[0].date()
 
     print("=" * 60)
     print("EdgeIQ — 60-Day Background Backtest")
