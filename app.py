@@ -31937,6 +31937,17 @@ function _bqCopyShareLink() {
         # ── Today's Scan Funnel ───────────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         with st.expander("📡 Today's Scanner Funnel", expanded=False):
+            _sf_rf_col, _ = st.columns([1, 9])
+            with _sf_rf_col:
+                if st.button("🔄 Refresh", key="scanner_funnel_refresh", help="Reload today's scan data from the database"):
+                    for _k in (
+                        "_daily_scan_log_ensured",
+                        "_daily_scan_log_ensured_day",
+                        "_earliest_scan_date",
+                        "_earliest_scan_date_fetched_day",
+                    ):
+                        st.session_state.pop(_k, None)
+                    st.rerun()
             _today = date.today()
             if (
                 not st.session_state.get("_daily_scan_log_ensured")
