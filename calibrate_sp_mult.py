@@ -321,6 +321,30 @@ def _self_test_apply() -> None:
         expect_stale_absent="'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades",
     )
     _run(
+        "gap idempotent re-apply",
+        "gap", 1.10, "55 trades, 67.3% WR / +0.350R → 1.10×",
+        expect_value=1.10, expect_comment_fragment="1.10×",
+        citation_line="#   'gap'    (2024-01-03 → 2024-12-31): 55 trades, 67.3% WR / +0.350R avg → 1.10×",
+        expect_citation_fragment="1.10×",
+    )
+    _run(
+        "gap no citation_line — comment block untouched",
+        "gap", 1.10, "55 trades, 67.3% WR / +0.350R → 1.10×",
+        expect_value=1.10, expect_comment_fragment="67.3% WR",
+    )
+    _run(
+        "gap_down idempotent re-apply",
+        "gap_down", 0.85, "33 trades, 58.1% WR / +0.290R → 0.85×",
+        expect_value=0.85, expect_comment_fragment="0.85×",
+        citation_line="#   'gap_down' (Bearish Break, 2024-01-03 → 2024-12-31): 33 trades, 58.1% WR / +0.290R avg → 0.85×",
+        expect_citation_fragment="0.85×",
+    )
+    _run(
+        "gap_down no citation_line — comment block untouched",
+        "gap_down", 0.85, "33 trades, 58.1% WR / +0.290R → 0.85×",
+        expect_value=0.85, expect_comment_fragment="58.1% WR",
+    )
+    _run(
         "squeeze idempotent re-apply",
         "squeeze", 1.15, "47 trades, 72.3% WR / +0.411R → 1.15×",
         expect_value=1.15, expect_comment_fragment="1.15×",
