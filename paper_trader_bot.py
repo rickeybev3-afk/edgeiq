@@ -3545,30 +3545,77 @@ def _alert_eod_summary(
     global_filtered: int = 0, struct_filtered: int = 0,
 ):
     """Send EOD outcome summary."""
+    import math as _math
+
     wins   = [r for r in results if r.get("win_loss") == "Win"]
     losses = [r for r in results if r.get("win_loss") == "Loss"]
     best   = max(results, key=lambda r: float(r.get("aft_move_pct", 0)), default=None)
     _ib_threshold = load_ib_range_pct_threshold()
 
+    # ── Today's R + dollar P&L ────────────────────────────────────────────────
+    _risk_per_trade = float(os.getenv("RISK_DOLLARS", "150"))
+    _today_r_vals = []
+    for _r in results:
+        _rv = _r.get("tiered_pnl_r") or _r.get("pnl_r_sim")
+        if _rv is not None:
+            try:
+                _today_r_vals.append(float(_rv))
+            except (TypeError, ValueError):
+                pass
+    _today_r_total  = sum(_today_r_vals)
+    _today_dollar   = _today_r_total * _risk_per_trade
+
+    # ── Running Sharpe (all-time settled trades) ──────────────────────────────
+    _sharpe_str = "n/a"
+    try:
+        if _supabase_client:
+            _all_r_rows = (
+                _supabase_client.table("paper_trades")
+                .select("tiered_pnl_r")
+                .eq("user_id", USER_ID)
+                .not_.is_("tiered_pnl_r", "null")
+                .execute()
+            ).data or []
+            _all_r = [float(x["tiered_pnl_r"]) for x in _all_r_rows if x.get("tiered_pnl_r") is not None]
+            if len(_all_r) >= 3:
+                _mean = sum(_all_r) / len(_all_r)
+                _std  = (_math.sqrt(sum((x - _mean) ** 2 for x in _all_r) / len(_all_r))) or 0
+                if _std > 0:
+                    _sharpe = (_mean / _std) * _math.sqrt(len(_all_r))
+                    _sharpe_str = f"{_sharpe:.2f}"
+                else:
+                    _sharpe_str = "∞ (no losses)"
+            else:
+                _sharpe_str = f"n/a (need ≥3, have {len(_all_r)})"
+    except Exception as _se:
+        log.warning(f"[EOD] Running Sharpe calc failed: {_se}")
+
     lines = [
         f"📈 <b>EdgeIQ EOD Summary — {trade_date}</b>",
         f"━━━━━━━━━━━━━━━━━━━━━",
         f"✅ Wins: {len(wins)}   ❌ Losses: {len(losses)}   📋 Updated: {updated}",
-        f"📐 IB filter: < {_ib_threshold:.1f}% of open price",
     ]
+    if wins or losses:
+        wr = round(100 * len(wins) / max(1, len(wins) + len(losses)), 1)
+        lines.append(f"📊 Win rate: <b>{wr}%</b>")
+    if _today_r_vals:
+        _r_sign = "+" if _today_r_total >= 0 else ""
+        _d_sign = "+" if _today_dollar >= 0 else ""
+        lines.append(
+            f"💰 Today: <b>{_r_sign}{_today_r_total:.2f}R</b> "
+            f"({_d_sign}${_today_dollar:,.0f} @ ${_risk_per_trade:.0f}/R)"
+        )
+    lines.append(f"📐 Running Sharpe: <b>{_sharpe_str}</b>")
     if best and best.get("aft_move_pct"):
         lines.append(
             f"🏆 Best mover: <b>{best['ticker']}</b> "
             f"{float(best['aft_move_pct']):+.1f}% ({best.get('win_loss','?')})"
         )
-    if wins or losses:
-        wr = round(100 * len(wins) / max(1, len(wins) + len(losses)), 1)
-        lines.append(f"📊 Today's structure win rate: <b>{wr}%</b>")
-    # Show per-structure vs global filter breakdown
+    lines.append(f"📐 IB filter: < {_ib_threshold:.1f}% of open price")
     if global_filtered or struct_filtered:
         filter_parts = []
         if struct_filtered:
-            filter_parts.append(f"{struct_filtered} filtered by structure threshold")
+            filter_parts.append(f"{struct_filtered} by structure floor")
         if global_filtered:
             filter_parts.append(f"{global_filtered} below global floor")
         lines.append(f"🚫 Filtered: " + " · ".join(filter_parts))
