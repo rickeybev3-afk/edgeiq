@@ -877,17 +877,24 @@ def _check_all_uncalibrated_screeners() -> None:
     screener added to that table is automatically covered — no manual wiring
     required in this file.
 
-    Per-screener parameter precedence:
-      • squeeze  — honours CALIB_MIN_TRADES_SQUEEZE / SQUEEZE_CALIB_MIN_TRADES env
-                   vars via _get_squeeze_calib_min_trades(); cooldown read from
-                   CALIB_COOLDOWN_HOURS_SQUEEZE (default 23 h).
-      • gap_down — threshold via CALIB_MIN_TRADES_GAP_DOWN env var
-                   (_get_calib_min_trades("gap_down")); cooldown from
-                   CALIB_COOLDOWN_HOURS_GAP_DOWN (default 23 h).
-      • any other key at 1.00× — threshold via CALIB_MIN_TRADES_<KEY> env var
-                   (_get_calib_min_trades(key)); cooldown from
-                   CALIB_COOLDOWN_HOURS_<KEY> (default 23 h); script name
-                   derived as calibrate_{key}_mult.py.
+    Per-screener min_trades resolution order:
+      • squeeze  — ``_get_squeeze_calib_min_trades()``, which checks DB
+                   preference, then ``CALIB_MIN_TRADES_SQUEEZE``, then
+                   ``SQUEEZE_CALIB_MIN_TRADES`` (backward-compatible).
+      • any other key at 1.00× — checks ``{KEY}_CALIB_MIN_TRADES`` env var
+                   (e.g. ``GAP_DOWN_CALIB_MIN_TRADES``, ``GAP_UP_CALIB_MIN_TRADES``)
+                   before falling back to ``_CALIB_MIN_TRADES``.
+
+    Per-screener cooldown resolution (all keys):
+      • ``_get_calib_cooldown_hours(key)`` — checks ``CALIB_COOLDOWN_HOURS_{KEY}``
+        env var before falling back to ``_DEFAULT_CALIB_COOLDOWN_HOURS`` (23 h).
+
+    A startup INFO line is emitted for every checked screener showing its
+    effective threshold and the env var name to use for overrides.
+
+    Missing calibration scripts are auto-generated as routing stubs so
+    operators are unblocked immediately; a Slack/Telegram alert is sent
+    (at most once per cooldown window) listing all newly stubbed screeners.
     """
     try:
         import paper_trader_bot as _ptb
@@ -900,26 +907,19 @@ def _check_all_uncalibrated_screeners() -> None:
         )
         return
 
-    _per_key_params: dict[str, tuple[str, int, float]] = {
-        "squeeze": (
-            "calibrate_squeeze_mult.py",
-            _get_squeeze_calib_min_trades(),
-            _get_calib_cooldown_hours("squeeze"),
-        ),
-        "gap_down": (
-            "calibrate_gap_down_mult.py",
-            _get_calib_min_trades("gap_down"),
-            _get_calib_cooldown_hours("gap_down"),
-        ),
+    _per_key_script: dict[str, str] = {
+        "squeeze": "calibrate_squeeze_mult.py",
+        "gap_down": "calibrate_gap_down_mult.py",
     }
 
     _base_dir = os.path.dirname(os.path.abspath(__file__))
 
     # ── Startup: auto-generate stubs for any 1.00× screener missing its calibration script ──
+    _missing_scripts: list[str] = []
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
-        script_name = _per_key_params.get(key, (f"calibrate_{key}_mult.py",))[0]
+        script_name = _per_key_script.get(key, f"calibrate_{key}_mult.py")
         script_path = os.path.join(_base_dir, script_name)
         if not os.path.isfile(script_path):
             _stub_content = f'''\
@@ -991,6 +991,7 @@ if __name__ == "__main__":
                     key,
                     script_path,
                 )
+                _missing_scripts.append(script_name)
             except OSError as _write_exc:
                 log.warning(
                     "Could not write calibration stub for screener '%s' to %s: %s. "
@@ -1000,8 +1001,10 @@ if __name__ == "__main__":
                     _write_exc,
                     key,
                 )
+                _missing_scripts.append(script_name)
 
-        # ── Send Slack + Telegram alert (at most once per day) ────────────────
+    # ── Send Slack + Telegram alert if any scripts were just auto-stubbed ────
+    if _missing_scripts:
         _missing_script_state_file = os.path.join(
             _base_dir,
             ".edgeiq_missing_calib_script_alert.json",
@@ -1017,12 +1020,12 @@ if __name__ == "__main__":
                 if _last_sent_dt.tzinfo is None:
                     _last_sent_dt = _last_sent_dt.replace(tzinfo=datetime.timezone.utc)
                 _hours_since = (_now_utc - _last_sent_dt).total_seconds() / 3600
-                if _hours_since < _DEFAULT_COOLDOWN_HOURS:
+                if _hours_since < _DEFAULT_CALIB_COOLDOWN_HOURS:
                     log.info(
                         "Missing-calibration-script alert suppressed — sent %.1f h ago "
                         "(cooldown: %.0f h).",
                         _hours_since,
-                        _DEFAULT_COOLDOWN_HOURS,
+                        _DEFAULT_CALIB_COOLDOWN_HOURS,
                     )
                     _send_missing_alert = False
         except FileNotFoundError:
@@ -1057,14 +1060,48 @@ if __name__ == "__main__":
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
-        script, min_trades, cooldown = _per_key_params.get(
-            key,
-            (
-                f"calibrate_{key}_mult.py",
-                _get_calib_min_trades(key),
-                _get_calib_cooldown_hours(key),
-            ),
-        )
+        script = _per_key_script.get(key, f"calibrate_{key}_mult.py")
+        cooldown = _get_calib_cooldown_hours(key)
+        if key == "squeeze":
+            min_trades = _get_squeeze_calib_min_trades()
+        else:
+            env_key = f"{key.upper().replace('-', '_')}_CALIB_MIN_TRADES"
+            raw = os.getenv(env_key, "").strip()
+            if raw:
+                try:
+                    v = int(raw)
+                    if v > 0:
+                        min_trades = v
+                    else:
+                        log.warning(
+                            "%s='%s' is not a valid positive integer; "
+                            "using default %d.",
+                            env_key, raw, _CALIB_MIN_TRADES,
+                        )
+                        min_trades = _CALIB_MIN_TRADES
+                except ValueError:
+                    log.warning(
+                        "%s='%s' is not a valid positive integer; "
+                        "using default %d.",
+                        env_key, raw, _CALIB_MIN_TRADES,
+                    )
+                    min_trades = _CALIB_MIN_TRADES
+            else:
+                min_trades = _CALIB_MIN_TRADES
+        if key == "squeeze":
+            log.info(
+                "Screener 'squeeze': calibration threshold = %d trades "
+                "(env override: CALIB_MIN_TRADES_SQUEEZE or SQUEEZE_CALIB_MIN_TRADES)",
+                min_trades,
+            )
+        else:
+            log.info(
+                "Screener '%s': calibration threshold = %d trades "
+                "(env override key: %s_CALIB_MIN_TRADES)",
+                key,
+                min_trades,
+                key.upper().replace("-", "_"),
+            )
         _check_screener_calibration_due(key, script, min_trades, cooldown)
 
 
