@@ -30,6 +30,8 @@ from log_config import (
     _TCS_HISTORY_BACKUP_COUNT,
     _BACKFILL_RUN_HISTORY_MAX_BYTES,
     _BACKFILL_RUN_HISTORY_BACKUP_COUNT,
+    _BACKFILL_LOG_MAX_BYTES,
+    _BACKFILL_LOG_BACKUP_COUNT,
 )
 
 
@@ -90,6 +92,25 @@ class TestTCSHistoryConstantsArePresent(unittest.TestCase):
 
     def test_backup_count_default_is_one(self):
         self.assertEqual(_TCS_HISTORY_BACKUP_COUNT, _parse_int_env("TCS_HISTORY_BACKUP_COUNT", 1))
+
+
+class TestBackfillLogConstantsArePresent(unittest.TestCase):
+    """_BACKFILL_LOG_* constants imported from log_config are sane values."""
+
+    def test_max_bytes_is_positive_int(self):
+        self.assertIsInstance(_BACKFILL_LOG_MAX_BYTES, int)
+        self.assertGreater(_BACKFILL_LOG_MAX_BYTES, 0)
+
+    def test_backup_count_is_positive_int(self):
+        self.assertIsInstance(_BACKFILL_LOG_BACKUP_COUNT, int)
+        self.assertGreater(_BACKFILL_LOG_BACKUP_COUNT, 0)
+
+    def test_max_bytes_default_is_500kb(self):
+        """Default must be 500 KB unless overridden by env var."""
+        self.assertEqual(_BACKFILL_LOG_MAX_BYTES, _parse_int_env("BACKFILL_LOG_MAX_BYTES", 500 * 1024))
+
+    def test_backup_count_default_is_one(self):
+        self.assertEqual(_BACKFILL_LOG_BACKUP_COUNT, _parse_int_env("BACKFILL_LOG_BACKUP_COUNT", 1))
 
 
 class TestBackfillRunHistoryConstantsArePresent(unittest.TestCase):
@@ -183,6 +204,37 @@ class TestAppCallSiteArgumentOrder(unittest.TestCase):
 
     def test_backfill_run_call_has_exactly_three_positional_args(self):
         self.assertEqual(len(self._backfill_run_call.args), 3)
+
+
+class TestAppBackfillLogCallSiteArgumentOrder(unittest.TestCase):
+    """The backfill-pipeline-log _rotate_log call in app.py must pass the correct constants."""
+
+    @classmethod
+    def setUpClass(cls):
+        calls = _find_rotate_log_calls("app.py")
+        cls._backfill_log_call = next(
+            (c for c in calls if _arg_name(c.args[1]) == "_BACKFILL_LOG_MAX_BYTES"),
+            None,
+        )
+
+    def test_backfill_log_call_site_exists(self):
+        self.assertIsNotNone(
+            self._backfill_log_call,
+            "app.py must contain a _rotate_log(…, _BACKFILL_LOG_MAX_BYTES, …) call",
+        )
+
+    def test_backfill_log_max_bytes_is_second_argument(self):
+        self.assertEqual(_arg_name(self._backfill_log_call.args[1]), "_BACKFILL_LOG_MAX_BYTES")
+
+    def test_backfill_log_backup_count_is_third_argument(self):
+        self.assertEqual(
+            _arg_name(self._backfill_log_call.args[2]),
+            "_BACKFILL_LOG_BACKUP_COUNT",
+            "Third argument must be _BACKFILL_LOG_BACKUP_COUNT, not the max-bytes constant",
+        )
+
+    def test_backfill_log_call_has_exactly_three_positional_args(self):
+        self.assertEqual(len(self._backfill_log_call.args), 3)
 
 
 # ===========================================================================
@@ -297,6 +349,62 @@ class TestBackfillRunHistoryRotationThreshold(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             log = os.path.join(td, "backfill_run_history.log")
             _rotate_log(log, _BACKFILL_RUN_HISTORY_MAX_BYTES, _BACKFILL_RUN_HISTORY_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertFalse(os.path.exists(log + ".1"))
+
+
+class TestBackfillLogRotationThreshold(unittest.TestCase):
+    """_rotate_log honours _BACKFILL_LOG_MAX_BYTES / _BACKFILL_LOG_BACKUP_COUNT."""
+
+    def test_no_rotation_one_byte_below_threshold(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "backfill_pipeline.log")
+            _write(log, _BACKFILL_LOG_MAX_BYTES - 1)
+            _rotate_log(log, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
+            self.assertTrue(os.path.exists(log))
+            self.assertFalse(os.path.exists(log + ".1"))
+
+    def test_rotation_fires_at_exact_threshold(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "backfill_pipeline.log")
+            _write(log, _BACKFILL_LOG_MAX_BYTES)
+            _rotate_log(log, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertTrue(os.path.exists(log + ".1"))
+
+    def test_rotation_fires_above_threshold(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "backfill_pipeline.log")
+            _write(log, _BACKFILL_LOG_MAX_BYTES + 1024)
+            _rotate_log(log, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertTrue(os.path.exists(log + ".1"))
+
+    def test_backup_count_limits_number_of_backups(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "backfill_pipeline.log")
+            _write(log + ".1", 10)
+            _write(log, _BACKFILL_LOG_MAX_BYTES)
+            _rotate_log(log, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertTrue(os.path.exists(log + ".1"))
+            self.assertFalse(os.path.exists(log + ".2"),
+                             "backup_count=1 must never create a .2 file")
+
+    def test_backup_preserves_original_content(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "backfill_pipeline.log")
+            payload = b"pipeline" * (_BACKFILL_LOG_MAX_BYTES // 8)
+            with open(log, "wb") as fh:
+                fh.write(payload)
+            _rotate_log(log, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
+            with open(log + ".1", "rb") as fh:
+                self.assertEqual(fh.read(), payload)
+
+    def test_missing_file_is_noop(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "backfill_pipeline.log")
+            _rotate_log(log, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
             self.assertFalse(os.path.exists(log))
             self.assertFalse(os.path.exists(log + ".1"))
 
