@@ -6583,11 +6583,17 @@ def place_alpaca_bracket_order(
     is_paper: bool = True,
     api_key: str = "",
     secret_key: str = "",
+    entry_type: str = "stop",
 ) -> dict:
     """Place an IB-breakout bracket order on Alpaca.
 
     Bullish Break → buy stop at IB high | stop-loss at IB low | take-profit at IB high + 2×range
     Bearish Break → sell stop at IB low | stop-loss at IB high | take-profit at IB low − 2×range
+
+    entry_type controls how the entry leg is submitted:
+      "stop"   — standard stop order (default).  Requires stop_price > market (buy) or < market (sell).
+      "market" — immediate market fill.  Used when price has already crossed the IB level by a
+                 small amount (slippage tolerance); fills at current market price with full bracket.
 
     Risk is fixed at risk_dollars regardless of price — qty is computed so that
     one full stop-out = exactly risk_dollars lost.
@@ -6628,17 +6634,31 @@ def place_alpaca_bracket_order(
         "APCA-API-SECRET-KEY": sk,
         "Content-Type":        "application/json",
     }
-    payload = {
-        "symbol":        ticker.upper(),
-        "qty":           str(qty),
-        "side":          side,
-        "type":          "stop",
-        "time_in_force": "day",
-        "stop_price":    str(entry),
-        "order_class":   "bracket",
-        "stop_loss":     {"stop_price": str(stop)},
-        "take_profit":   {"limit_price": str(target)},
-    }
+    if entry_type == "market":
+        # Price has already crossed the IB level (within slippage tolerance).
+        # Submit as market order — fills immediately at current price.
+        payload = {
+            "symbol":        ticker.upper(),
+            "qty":           str(qty),
+            "side":          side,
+            "type":          "market",
+            "time_in_force": "day",
+            "order_class":   "bracket",
+            "stop_loss":     {"stop_price": str(stop)},
+            "take_profit":   {"limit_price": str(target)},
+        }
+    else:
+        payload = {
+            "symbol":        ticker.upper(),
+            "qty":           str(qty),
+            "side":          side,
+            "type":          "stop",
+            "time_in_force": "day",
+            "stop_price":    str(entry),
+            "order_class":   "bracket",
+            "stop_loss":     {"stop_price": str(stop)},
+            "take_profit":   {"limit_price": str(target)},
+        }
 
     try:
         resp = requests.post(

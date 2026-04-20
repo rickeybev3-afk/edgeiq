@@ -271,9 +271,14 @@ MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", _default_po
 PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
 # Cooldown between repeated PDT floor warnings (seconds) — default 4 hours
 PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
-# Stale-entry guard threshold (live mode only): if the current 5-min bar close
-# is already this many % past the entry price, skip placing the bracket because
-# the setup has likely already triggered and we'd be chasing.
+# Slippage tolerance: if price has just crossed the IB level by ≤ this many %,
+# switch to a market-order entry instead of skipping.  This handles the "price
+# is $0.01 above IB high" case — the breakout just happened, fill at market.
+# Set to 0 to disable (always skip if price already crossed).
+SLIPPAGE_TOLERANCE_PCT = float(os.getenv("SLIPPAGE_TOLERANCE_PCT", "0.5"))
+# Anti-chasing threshold (live mode only): if the current 5-min bar close
+# is already this many % past the entry price (and beyond the slippage tolerance),
+# skip placing the bracket because the setup has already run away.
 ENTRY_ALREADY_TRIGGERED_PCT = float(os.getenv("ENTRY_ALREADY_TRIGGERED_PCT", "1.5"))
 # Tracks the date a PDT-block Telegram alert was last sent — prevents N duplicate
 # alerts when N setups all hit the same block in one scan session.
@@ -994,35 +999,57 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             return
 
     # ── Pre-flight price guard (ALL modes) ───────────────────────────────────
-    # Alpaca rejects stop orders with HTTP 422 when:
-    #   • buy stop:  stop_price < current market price  (price already above entry)
-    #   • sell stop: stop_price > current market price  (price already below entry)
-    # This fires in PAPER too — PLUG 422 confirmed this 2026-04-20.
-    # Additionally, in LIVE mode, apply a 1.5% anti-chasing buffer on top to
-    # avoid placing orders that would fill immediately at a bad price on restart.
-    _pf_direction = r.get("predicted", "")
-    _pf_entry     = (float(r.get("ib_high") or 0) if _pf_direction == "Bullish Break"
-                     else float(r.get("ib_low") or 0))
+    # Alpaca 422 if stop_price < market price (buy stop) or > market price (sell stop).
+    # Three-tier response based on how far past the IB level price has moved:
+    #
+    #   ① Within SLIPPAGE_TOLERANCE_PCT (default 0.5%):
+    #      Breakout just happened — switch to market order and enter now.
+    #      PLUG $2.84 IB high, price $2.85 → $0.01 slip → market fill.
+    #
+    #   ② Beyond tolerance, within ENTRY_ALREADY_TRIGGERED_PCT (1.5%, live only):
+    #      Meaningful but not ridiculous slippage — skip to protect entry price.
+    #
+    #   ③ Beyond ENTRY_ALREADY_TRIGGERED_PCT (live only):
+    #      Setup has run away — hard skip.
+    _pf_direction    = r.get("predicted", "")
+    _pf_entry        = (float(r.get("ib_high") or 0) if _pf_direction == "Bullish Break"
+                        else float(r.get("ib_low") or 0))
+    _use_market_entry = False   # set True below if slippage is within tolerance
     if _pf_entry > 0:
         _pf_prices = _alpaca_get_5min_bar_close([_ticker_raw])
         _pf_px     = _pf_prices.get(_ticker_raw.upper())
         if _pf_px is not None:
-            # Stop-price invalidity → would cause Alpaca 422 in any mode
             _pf_crossed = (
                 (_pf_direction == "Bullish Break" and _pf_px >= _pf_entry) or
                 (_pf_direction == "Bearish Break" and _pf_px <= _pf_entry)
             )
             if _pf_crossed:
-                _pf_side_word = "at/above" if _pf_direction == "Bullish Break" else "at/below"
-                log.warning(
-                    f"  [{_ticker_raw}] ⛔ ORDER SKIPPED — current price ${_pf_px:.2f} "
-                    f"already {_pf_side_word} stop entry ${_pf_entry:.2f} "
-                    f"— Alpaca 422 prevention ({'PAPER' if IS_PAPER_ALPACA else 'LIVE'})"
+                # How many % past the IB level is price?
+                _slip_pct = (
+                    (_pf_px - _pf_entry) / _pf_entry * 100 if _pf_direction == "Bullish Break"
+                    else (_pf_entry - _pf_px) / _pf_entry * 100
                 )
-                _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
-                return
-            # Live-mode anti-chasing: skip if 1.5%+ past entry even before crossing stop
-            if not IS_PAPER_ALPACA:
+                if SLIPPAGE_TOLERANCE_PCT > 0 and _slip_pct <= SLIPPAGE_TOLERANCE_PCT:
+                    # ① Tiny slippage — the breakout literally just happened.
+                    #    Switch to a market-order entry so we still get the fill.
+                    _use_market_entry = True
+                    log.info(
+                        f"  [{_ticker_raw}] ⚡ Slippage {_slip_pct:.2f}% ≤ {SLIPPAGE_TOLERANCE_PCT}% tolerance "
+                        f"(price ${_pf_px:.2f} vs entry ${_pf_entry:.2f}) — entering via MARKET order"
+                    )
+                else:
+                    # ② / ③ Price has already run — skip entirely.
+                    _pf_side_word = "above" if _pf_direction == "Bullish Break" else "below"
+                    log.warning(
+                        f"  [{_ticker_raw}] ⛔ ORDER SKIPPED — price ${_pf_px:.2f} already "
+                        f"{_slip_pct:.2f}% {_pf_side_word} entry ${_pf_entry:.2f} "
+                        f"(> {SLIPPAGE_TOLERANCE_PCT}% tolerance)"
+                    )
+                    _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
+                    return
+            # Live-mode anti-chasing: price approaching IB level but 1.5%+ below (Bullish)
+            # or above (Bearish) — stop order would still be valid but setup is stale.
+            if not _pf_crossed and not IS_PAPER_ALPACA:
                 _pct_thresh = ENTRY_ALREADY_TRIGGERED_PCT / 100.0
                 if _pf_direction == "Bullish Break" and _pf_px > _pf_entry * (1 + _pct_thresh):
                     log.warning(
@@ -1297,6 +1324,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         is_paper     = IS_PAPER_ALPACA,
         api_key      = ALPACA_API_KEY,
         secret_key   = ALPACA_SECRET_KEY,
+        entry_type   = "market" if _use_market_entry else "stop",
     )
 
     acct_type = "PAPER" if IS_PAPER_ALPACA else "LIVE"
