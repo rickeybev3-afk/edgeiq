@@ -146,6 +146,11 @@ _HEARTBEAT_ALERT_STATE_FILE = os.getenv(
     ),
 )
 
+_SQUEEZE_CALIB_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".edgeiq_squeeze_calib_alert.json",
+)
+
 _DEFAULT_COOLDOWN_HOURS = 23
 _DEFAULT_SUPPRESSION_ALERT_NIGHTS = 5
 
@@ -428,6 +433,171 @@ def _check_backfill_heartbeat() -> None:
             json.dump({"last_alerted_utc": now_utc.isoformat()}, _sf)
     except Exception as _e:
         log.warning("Could not write heartbeat alert state file: %s", _e)
+
+
+# ── Squeeze calibration check ─────────────────────────────────────────────────
+
+_SQUEEZE_CALIB_MIN_TRADES = 30
+_SQUEEZE_CALIB_COOLDOWN_HOURS = 23
+
+
+def _check_squeeze_calibration_due() -> None:
+    """Alert when enough squeeze trades have settled to warrant re-calibration.
+
+    Queries paper_trades for settled squeeze rows (screener_pass='squeeze' AND
+    tiered_pnl_r IS NOT NULL).  If the count reaches _SQUEEZE_CALIB_MIN_TRADES
+    AND _SP_MULT_TABLE['squeeze'] is still 1.00 in paper_trader_bot.py, a
+    warning is logged and a Slack / Telegram alert is emitted prompting the
+    trader to run calibrate_squeeze_mult.py.
+
+    A 23-hour cooldown (persisted to _SQUEEZE_CALIB_STATE_FILE) prevents the
+    same alert from firing on every nightly run.  The cooldown is cleared
+    automatically once the multiplier is updated away from 1.00.
+
+    No automatic edits are made — human-in-the-loop is preserved for the
+    actual multiplier update.
+    """
+    import re as _re
+
+    log.info("Checking squeeze calibration status …")
+
+    # ── Step 1: count settled squeeze trades ──────────────────────────────────
+    squeeze_count: int = 0
+    try:
+        import backend as _backend
+        if not getattr(_backend, "supabase", None):
+            log.warning(
+                "Supabase client not initialised — skipping squeeze calibration check."
+            )
+            return
+        resp = (
+            _backend.supabase
+            .table("paper_trades")
+            .select("id", count="exact")
+            .eq("screener_pass", "squeeze")
+            .not_.is_("tiered_pnl_r", "null")
+            .execute()
+        )
+        squeeze_count = resp.count if resp.count is not None else len(resp.data or [])
+        log.info(
+            "Squeeze settled trade count: %d (threshold: %d).",
+            squeeze_count,
+            _SQUEEZE_CALIB_MIN_TRADES,
+        )
+    except Exception as _exc:
+        log.warning("Could not query squeeze settled trade count: %s", _exc)
+        return
+
+    if squeeze_count < _SQUEEZE_CALIB_MIN_TRADES:
+        log.info(
+            "Squeeze calibration not yet due (%d / %d settled trades).",
+            squeeze_count,
+            _SQUEEZE_CALIB_MIN_TRADES,
+        )
+        return
+
+    # ── Step 2: read current _SP_MULT_TABLE['squeeze'] from paper_trader_bot.py
+    _bot_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py"
+    )
+    squeeze_mult: float | None = None
+    try:
+        with open(_bot_path) as _bf:
+            for _line in _bf:
+                _m = _re.search(r'"squeeze"\s*:\s*([\d.]+)', _line)
+                if _m:
+                    squeeze_mult = float(_m.group(1))
+                    break
+    except Exception as _exc:
+        log.warning(
+            "Could not read _SP_MULT_TABLE from paper_trader_bot.py: %s", _exc
+        )
+        return
+
+    if squeeze_mult is None:
+        log.warning(
+            "Could not find 'squeeze' entry in _SP_MULT_TABLE — skipping calibration check."
+        )
+        return
+
+    log.info("Current _SP_MULT_TABLE['squeeze'] = %.2f.", squeeze_mult)
+
+    if abs(squeeze_mult - 1.00) > 0.001:
+        # Already calibrated away from baseline — clear any stale cooldown state.
+        log.info(
+            "_SP_MULT_TABLE['squeeze'] = %.2f (not 1.00) — calibration already applied.",
+            squeeze_mult,
+        )
+        try:
+            os.remove(_SQUEEZE_CALIB_STATE_FILE)
+        except FileNotFoundError:
+            pass
+        except Exception as _exc:
+            log.warning("Could not remove squeeze calib state file: %s", _exc)
+        return
+
+    # ── Step 3: enforce cooldown to avoid repeated nightly alerts ─────────────
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        with open(_SQUEEZE_CALIB_STATE_FILE) as _sf:
+            _state = json.load(_sf)
+        _last_str = _state.get("last_alerted_utc", "")
+        if _last_str:
+            _last = datetime.datetime.fromisoformat(_last_str)
+            if _last.tzinfo is None:
+                _last = _last.replace(tzinfo=datetime.timezone.utc)
+            _hours_since = (now_utc - _last).total_seconds() / 3600
+            if _hours_since < _SQUEEZE_CALIB_COOLDOWN_HOURS:
+                log.info(
+                    "Squeeze calibration alert already sent %.1f h ago — "
+                    "suppressing duplicate (cooldown: %.0f h).",
+                    _hours_since,
+                    _SQUEEZE_CALIB_COOLDOWN_HOURS,
+                )
+                return
+    except FileNotFoundError:
+        pass  # First alert for this run — proceed.
+    except Exception as _exc:
+        log.warning("Could not read squeeze calibration alert state: %s", _exc)
+
+    # ── Step 4: emit alert ────────────────────────────────────────────────────
+    plain_msg = (
+        f"squeeze calibration due — {squeeze_count} settled squeeze trades found "
+        f"(threshold: {_SQUEEZE_CALIB_MIN_TRADES}). "
+        f"Run: python calibrate_squeeze_mult.py"
+    )
+    html_msg = (
+        f"\U0001f4ca <b>Squeeze calibration due</b>\n\n"
+        f"{squeeze_count} settled squeeze trades found "
+        f"(threshold: {_SQUEEZE_CALIB_MIN_TRADES}).\n\n"
+        f"Run <code>python calibrate_squeeze_mult.py</code> to compute the recommended "
+        f"multiplier and paste it into <code>paper_trader_bot.py</code>.\n\n"
+        f"<i>_SP_MULT_TABLE['squeeze'] is currently 1.00\u00d7 (baseline — "
+        f"no automatic edits are made).</i>"
+    )
+    log.warning(
+        "SQUEEZE CALIBRATION DUE — %d settled squeeze trades found "
+        "(>= %d threshold, _SP_MULT_TABLE['squeeze'] still 1.00). "
+        "Run: python calibrate_squeeze_mult.py",
+        squeeze_count,
+        _SQUEEZE_CALIB_MIN_TRADES,
+    )
+    _send_slack(plain_msg)
+    _send_telegram(html_msg)
+
+    # Persist alert timestamp so subsequent runs within the cooldown window are
+    # suppressed.
+    try:
+        with open(_SQUEEZE_CALIB_STATE_FILE, "w") as _sf:
+            json.dump(
+                {
+                    "last_alerted_utc": now_utc.isoformat(),
+                    "trade_count": squeeze_count,
+                },
+                _sf,
+            )
+    except Exception as _exc:
+        log.warning("Could not write squeeze calibration alert state: %s", _exc)
 
 
 # ── Email helper ─────────────────────────────────────────────────────────────
@@ -1141,6 +1311,7 @@ def main():
     log.info("─── Startup run ──────────────────────────────────────────────")
     _check_backfill_heartbeat()
     run_backfill(date_from=date_from, date_to=date_to)
+    _check_squeeze_calibration_due()
     refresh_summary_cache()
 
     run_number = 0
@@ -1181,6 +1352,7 @@ def main():
             run_backfill(date_from=date_from, date_to=date_to)
             if _shutdown.is_set():
                 break
+            _check_squeeze_calibration_due()
 
         refresh_summary_cache()
 
