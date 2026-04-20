@@ -321,6 +321,14 @@ def _self_test_apply() -> None:
         expect_stale_absent="'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades",
     )
     _run(
+        "gap baseline→1.10",
+        "gap", 1.10, "55 trades, 67.3% WR / +0.350R → 1.10×",
+        expect_value=1.10, expect_comment_fragment="67.3% WR",
+        citation_line="#   'gap'    (2024-01-03 → 2024-12-31): 55 trades, 67.3% WR / +0.350R avg → 1.10×",
+        expect_citation_fragment="55 trades, 67.3% WR / +0.350R avg → 1.10×",
+        # gap fixture entry already has real trade data, no stale warning to guard
+    )
+    _run(
         "gap idempotent re-apply",
         "gap", 1.10, "55 trades, 67.3% WR / +0.350R → 1.10×",
         expect_value=1.10, expect_comment_fragment="1.10×",
