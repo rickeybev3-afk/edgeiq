@@ -6860,13 +6860,17 @@ else:
         height=0,
     )
 
-if _AUTH_USER_ID and not st.session_state.get("_watchlist_loaded"):
+if _AUTH_USER_ID and (
+    not st.session_state.get("_watchlist_loaded")
+    or st.session_state.get("_watchlist_loaded_day") != date.today()
+):
     _early_wl = _cached_load_watchlist(user_id=_AUTH_USER_ID)
     _joined = ", ".join(_early_wl) if _early_wl else _DEFAULT_WATCHLIST
     st.session_state["_watchlist_tickers"] = _joined
     st.session_state["watchlist_raw"]      = _joined
     st.session_state["watchlist_textarea"] = _joined
-    st.session_state["_watchlist_loaded"]  = True
+    st.session_state["_watchlist_loaded"]     = True
+    st.session_state["_watchlist_loaded_day"] = date.today()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -9129,7 +9133,7 @@ with st.sidebar:
         if st.button("🚪 Sign Out", use_container_width=True, key="signout_btn"):
             auth_signout()
             for _k in ("auth_user", "auth_user_id", "auth_email",
-                       "_watchlist_loaded", "_watchlist_tickers",
+                       "_watchlist_loaded", "_watchlist_loaded_day", "_watchlist_tickers",
                        "_prefs_loaded", "_prefs_loaded_day", "_restore_tried",
                        "watchlist_raw", "watchlist_textarea",
                        "_cached_prefs", "_pref_alpaca_key", "_pref_alpaca_secret",
