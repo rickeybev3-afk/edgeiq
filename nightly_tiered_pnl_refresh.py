@@ -620,30 +620,65 @@ def _check_screener_calibration_due(
     )
     _script_exists = os.path.isfile(_script_path)
 
+    # Detect auto-generated stubs that still need manual completion before --apply.
+    _is_stub = False
     if _script_exists:
-        plain_msg = (
-            f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
-            f"(threshold: {min_trades}). "
-            f"Run: python {script_name} --apply"
-        )
-        html_msg = (
-            f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
-            f"{trade_count} settled {screener_key} trades found "
-            f"(threshold: {min_trades}).\n\n"
-            f"Run <code>python {script_name} --apply</code> to apply the recommended "
-            f"multiplier automatically."
-        )
-        log.warning(
-            "%s CALIBRATION DUE — %d settled %s trades found "
-            "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
-            "Run: python %s --apply",
-            screener_key.upper(),
-            trade_count,
-            screener_key,
-            min_trades,
-            screener_key,
-            script_name,
-        )
+        try:
+            with open(_script_path, encoding="utf-8") as _sf:
+                _is_stub = "AUTO-GENERATED STUB" in _sf.read(512)
+        except OSError:
+            pass
+
+    if _script_exists:
+        if _is_stub:
+            plain_msg = (
+                f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
+                f"(threshold: {min_trades}). "
+                f"WARNING: {script_name} is an auto-generated stub — complete the TODO section before running --apply."
+            )
+            html_msg = (
+                f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
+                f"{trade_count} settled {screener_key} trades found "
+                f"(threshold: {min_trades}).\n\n"
+                f"\u26a0\ufe0f <b>{script_name} is an auto-generated stub.</b> "
+                f"Open it and complete the TODO section before running "
+                f"<code>python {script_name} --apply</code>."
+            )
+            log.warning(
+                "%s CALIBRATION DUE — %d settled %s trades found "
+                "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
+                "WARNING: %s is an auto-generated stub — complete its TODO section before running --apply.",
+                screener_key.upper(),
+                trade_count,
+                screener_key,
+                min_trades,
+                screener_key,
+                script_name,
+            )
+        else:
+            plain_msg = (
+                f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
+                f"(threshold: {min_trades}). "
+                f"Run: python {script_name} --apply"
+            )
+            html_msg = (
+                f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
+                f"{trade_count} settled {screener_key} trades found "
+                f"(threshold: {min_trades}).\n\n"
+                f"Run <code>python {script_name} --apply</code> to apply the recommended "
+                f"multiplier automatically."
+            )
+            log.warning(
+                "%s CALIBRATION DUE — %d settled %s trades found "
+                "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
+                "Run: python %s --apply",
+                screener_key.upper(),
+                trade_count,
+                screener_key,
+                min_trades,
+                screener_key,
+                script_name,
+            )
     else:
         plain_msg = (
             f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
@@ -847,20 +882,91 @@ def _check_all_uncalibrated_screeners() -> None:
 
     _base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # ── Startup warning: list any 1.00× screeners missing their calibration script ──
-    _missing_scripts: list[str] = []
+    # ── Startup: auto-generate stubs for any 1.00× screener missing its calibration script ──
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
         script_name = _per_key_params.get(key, (f"calibrate_{key}_mult.py",))[0]
-        if not os.path.isfile(os.path.join(_base_dir, script_name)):
-            _missing_scripts.append(f"{key} (expected: {script_name})")
-    if _missing_scripts:
-        log.warning(
-            "The following 1.00× screener(s) have no calibration script on disk: %s. "
-            "Create the corresponding calibrate_<key>_mult.py file(s) before running calibration.",
-            ", ".join(_missing_scripts),
-        )
+        script_path = os.path.join(_base_dir, script_name)
+        if not os.path.isfile(script_path):
+            _stub_content = f'''\
+"""
+{script_name}  —  AUTO-GENERATED STUB
+-----------------------------------------------------------------------
+This file was created automatically because screener '{key}' was found
+with a 1.00x multiplier but no calibration script existed on disk.
+
+TODO: Review and complete this stub before running calibration.
+  - If '{key}' should route through the unified calibrate_sp_mult.py
+    (like 'squeeze' and 'gap_down'), verify the --pass value below and
+    remove this notice.
+  - If '{key}' needs its own bespoke calibration logic, replace the
+    body of this script with that logic.
+-----------------------------------------------------------------------
+"""
+
+import os
+import sys
+import subprocess
+
+_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibrate_sp_mult.py")
+
+
+def _build_forwarded(argv: list) -> list:
+    """Return the command list that should be executed for the given argv."""
+    if len(argv) > 1 and argv[1] == "--self-test":
+        return [sys.executable, _script, "--self-test"]
+    return [sys.executable, _script, "--pass", "{key}"] + argv[1:]
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        print("Running {script_name} routing self-tests...")
+        all_ok = True
+
+        # Test 1: target script exists
+        target_ok = os.path.isfile(_script)
+        print(f"  {{\'OK  \' if target_ok else \'FAIL\'}} target script exists: {{_script}}")
+        if not target_ok:
+            all_ok = False
+
+        # Test 2: normal invocation injects --pass {key}
+        fwd = _build_forwarded(["{script_name}"])
+        expected = [sys.executable, _script, "--pass", "{key}"]
+        routing_ok = fwd == expected
+        print(f"  {{\'OK  \' if routing_ok else \'FAIL\'}} bare invocation routes to --pass {key}: {{fwd[2:]}}")
+        if not routing_ok:
+            all_ok = False
+
+        print()
+        print("  NOTE  This is an AUTO-GENERATED STUB — complete the TODO in the docstring before relying on results.")
+        if all_ok:
+            print("Routing self-tests passed (stub unreviewed).")
+        else:
+            print("SELF-TEST FAILURES — routing may be broken.")
+            sys.exit(1)
+        sys.exit(0)
+
+    sys.exit(subprocess.run(_build_forwarded(sys.argv)).returncode)
+'''
+            try:
+                with open(script_path, "w", encoding="utf-8") as _fh:
+                    _fh.write(_stub_content)
+                log.info(
+                    "Auto-generated calibration stub for new screener '%s': %s — "
+                    "open that file and complete the TODO section before running calibration.",
+                    key,
+                    script_path,
+                )
+            except OSError as _write_exc:
+                log.warning(
+                    "Could not write calibration stub for screener '%s' to %s: %s. "
+                    "Create calibrate_%s_mult.py manually before running calibration.",
+                    key,
+                    script_path,
+                    _write_exc,
+                    key,
+                )
 
         # ── Send Slack + Telegram alert (at most once per day) ────────────────
         _missing_script_state_file = os.path.join(
