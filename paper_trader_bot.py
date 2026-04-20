@@ -1423,9 +1423,9 @@ def _alpaca_get_order_status(order_id: str) -> str:
 def _alpaca_get_5min_bar_close(tickers: list) -> dict:
     """Return the close price of the last COMPLETED 5-min bar for each ticker.
 
-    Uses a window ending 6+ minutes ago so the bar is fully closed.
-    Falls back to the 10-min window if bars API returns no data.
-    Returns {TICKER: float_close}.  Silently skips tickers with no data.
+    Fetches a 20-minute look-back window ending 6 minutes ago so the most
+    recent bar is guaranteed to be fully closed (no partial candle noise).
+    Returns {TICKER: float_close}.  Silently skips tickers with no bar data.
     """
     import requests as _req
     from datetime import timedelta
@@ -1701,16 +1701,17 @@ def _monitor_zone_invalidation() -> None:
             "APCA-API-KEY-ID":     ALPACA_API_KEY,
             "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
         }
+        _del_resp  = None   # init before try so the else-branch is always safe
+        _cancel_ok = False
         try:
             import requests as _req
-            _del_resp = _req.delete(
+            _del_resp  = _req.delete(
                 f"{_alpaca_base}/v2/orders/{order_id}",
                 headers=_alp_headers, timeout=8,
             )
             _cancel_ok = _del_resp.status_code in (200, 204)
         except Exception as _ce:
             log.warning(f"[ZoneWatch] Cancel request error for {ticker}: {_ce}")
-            _cancel_ok = False
 
         if _cancel_ok:
             log.info(f"[ZoneWatch] ✅ {ticker}: parent order {order_id[:8]} cancelled")
@@ -1731,8 +1732,9 @@ def _monitor_zone_invalidation() -> None:
                 except Exception as _pe:
                     log.warning(f"[ZoneWatch] skip_reason patch failed (non-fatal): {_pe}")
         else:
+            _status_code = getattr(_del_resp, "status_code", "network-error")
             log.warning(
-                f"[ZoneWatch] {ticker}: cancel returned status {getattr(_del_resp, 'status_code', '?')} "
+                f"[ZoneWatch] {ticker}: cancel returned {_status_code} "
                 f"— removing from watch anyway"
             )
 
