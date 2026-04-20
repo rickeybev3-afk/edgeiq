@@ -151,6 +151,11 @@ _SQUEEZE_CALIB_STATE_FILE = os.path.join(
     ".edgeiq_squeeze_calib_alert.json",
 )
 
+_GAP_DOWN_CALIB_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".edgeiq_gap_down_calib_alert.json",
+)
+
 _DEFAULT_COOLDOWN_HOURS = 23
 _DEFAULT_SUPPRESSION_ALERT_NIGHTS = 5
 
@@ -598,6 +603,171 @@ def _check_squeeze_calibration_due() -> None:
             )
     except Exception as _exc:
         log.warning("Could not write squeeze calibration alert state: %s", _exc)
+
+
+# ── Gap-down calibration check ────────────────────────────────────────────────
+
+_GAP_DOWN_CALIB_MIN_TRADES = 30
+_GAP_DOWN_CALIB_COOLDOWN_HOURS = 23
+
+
+def _check_gap_down_calibration_due() -> None:
+    """Alert when enough gap_down trades have settled to warrant re-calibration.
+
+    Queries paper_trades for settled gap_down rows (screener_pass='gap_down' AND
+    tiered_pnl_r IS NOT NULL).  If the count reaches _GAP_DOWN_CALIB_MIN_TRADES
+    AND _SP_MULT_TABLE['gap_down'] is still 1.00 in paper_trader_bot.py, a
+    warning is logged and a Slack / Telegram alert is emitted prompting the
+    trader to run calibrate_gap_down_mult.py.
+
+    A 23-hour cooldown (persisted to _GAP_DOWN_CALIB_STATE_FILE) prevents the
+    same alert from firing on every nightly run.  The cooldown is cleared
+    automatically once the multiplier is updated away from 1.00.
+
+    No automatic edits are made — human-in-the-loop is preserved for the
+    actual multiplier update.
+    """
+    import re as _re
+
+    log.info("Checking gap_down calibration status …")
+
+    # ── Step 1: count settled gap_down trades ─────────────────────────────────
+    gap_down_count: int = 0
+    try:
+        import backend as _backend
+        if not getattr(_backend, "supabase", None):
+            log.warning(
+                "Supabase client not initialised — skipping gap_down calibration check."
+            )
+            return
+        resp = (
+            _backend.supabase
+            .table("paper_trades")
+            .select("id", count="exact")
+            .eq("screener_pass", "gap_down")
+            .not_.is_("tiered_pnl_r", "null")
+            .execute()
+        )
+        gap_down_count = resp.count if resp.count is not None else len(resp.data or [])
+        log.info(
+            "Gap-down settled trade count: %d (threshold: %d).",
+            gap_down_count,
+            _GAP_DOWN_CALIB_MIN_TRADES,
+        )
+    except Exception as _exc:
+        log.warning("Could not query gap_down settled trade count: %s", _exc)
+        return
+
+    if gap_down_count < _GAP_DOWN_CALIB_MIN_TRADES:
+        log.info(
+            "Gap-down calibration not yet due (%d / %d settled trades).",
+            gap_down_count,
+            _GAP_DOWN_CALIB_MIN_TRADES,
+        )
+        return
+
+    # ── Step 2: read current _SP_MULT_TABLE['gap_down'] from paper_trader_bot.py
+    _bot_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py"
+    )
+    gap_down_mult: float | None = None
+    try:
+        with open(_bot_path) as _bf:
+            for _line in _bf:
+                _m = _re.search(r'"gap_down"\s*:\s*([\d.]+)', _line)
+                if _m:
+                    gap_down_mult = float(_m.group(1))
+                    break
+    except Exception as _exc:
+        log.warning(
+            "Could not read _SP_MULT_TABLE from paper_trader_bot.py: %s", _exc
+        )
+        return
+
+    if gap_down_mult is None:
+        log.warning(
+            "Could not find 'gap_down' entry in _SP_MULT_TABLE — skipping calibration check."
+        )
+        return
+
+    log.info("Current _SP_MULT_TABLE['gap_down'] = %.2f.", gap_down_mult)
+
+    if abs(gap_down_mult - 1.00) > 0.001:
+        # Already calibrated away from baseline — clear any stale cooldown state.
+        log.info(
+            "_SP_MULT_TABLE['gap_down'] = %.2f (not 1.00) — calibration already applied.",
+            gap_down_mult,
+        )
+        try:
+            os.remove(_GAP_DOWN_CALIB_STATE_FILE)
+        except FileNotFoundError:
+            pass
+        except Exception as _exc:
+            log.warning("Could not remove gap_down calib state file: %s", _exc)
+        return
+
+    # ── Step 3: enforce cooldown to avoid repeated nightly alerts ─────────────
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        with open(_GAP_DOWN_CALIB_STATE_FILE) as _sf:
+            _state = json.load(_sf)
+        _last_str = _state.get("last_alerted_utc", "")
+        if _last_str:
+            _last = datetime.datetime.fromisoformat(_last_str)
+            if _last.tzinfo is None:
+                _last = _last.replace(tzinfo=datetime.timezone.utc)
+            _hours_since = (now_utc - _last).total_seconds() / 3600
+            if _hours_since < _GAP_DOWN_CALIB_COOLDOWN_HOURS:
+                log.info(
+                    "Gap-down calibration alert already sent %.1f h ago — "
+                    "suppressing duplicate (cooldown: %.0f h).",
+                    _hours_since,
+                    _GAP_DOWN_CALIB_COOLDOWN_HOURS,
+                )
+                return
+    except FileNotFoundError:
+        pass  # First alert for this run — proceed.
+    except Exception as _exc:
+        log.warning("Could not read gap_down calibration alert state: %s", _exc)
+
+    # ── Step 4: emit alert ────────────────────────────────────────────────────
+    plain_msg = (
+        f"gap_down calibration due — {gap_down_count} settled gap_down trades found "
+        f"(threshold: {_GAP_DOWN_CALIB_MIN_TRADES}). "
+        f"Run: python calibrate_gap_down_mult.py"
+    )
+    html_msg = (
+        f"\U0001f4ca <b>Gap-down calibration due</b>\n\n"
+        f"{gap_down_count} settled gap_down trades found "
+        f"(threshold: {_GAP_DOWN_CALIB_MIN_TRADES}).\n\n"
+        f"Run <code>python calibrate_gap_down_mult.py</code> to compute the recommended "
+        f"multiplier and paste it into <code>paper_trader_bot.py</code>.\n\n"
+        f"<i>_SP_MULT_TABLE['gap_down'] is currently 1.00\u00d7 (baseline — "
+        f"no automatic edits are made).</i>"
+    )
+    log.warning(
+        "GAP_DOWN CALIBRATION DUE — %d settled gap_down trades found "
+        "(>= %d threshold, _SP_MULT_TABLE['gap_down'] still 1.00). "
+        "Run: python calibrate_gap_down_mult.py",
+        gap_down_count,
+        _GAP_DOWN_CALIB_MIN_TRADES,
+    )
+    _send_slack(plain_msg)
+    _send_telegram(html_msg)
+
+    # Persist alert timestamp so subsequent runs within the cooldown window are
+    # suppressed.
+    try:
+        with open(_GAP_DOWN_CALIB_STATE_FILE, "w") as _sf:
+            json.dump(
+                {
+                    "last_alerted_utc": now_utc.isoformat(),
+                    "trade_count": gap_down_count,
+                },
+                _sf,
+            )
+    except Exception as _exc:
+        log.warning("Could not write gap_down calibration alert state: %s", _exc)
 
 
 # ── Email helper ─────────────────────────────────────────────────────────────
@@ -1312,6 +1482,7 @@ def main():
     _check_backfill_heartbeat()
     run_backfill(date_from=date_from, date_to=date_to)
     _check_squeeze_calibration_due()
+    _check_gap_down_calibration_due()
     refresh_summary_cache()
 
     run_number = 0
@@ -1353,6 +1524,7 @@ def main():
             if _shutdown.is_set():
                 break
             _check_squeeze_calibration_due()
+            _check_gap_down_calibration_due()
 
         refresh_summary_cache()
 
