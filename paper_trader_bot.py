@@ -2772,8 +2772,16 @@ def _force_close_all_positions() -> None:
 def tg_send(message: str) -> bool:
     """Send a Telegram message. Returns True on success, False on failure.
     Silently skips if credentials are not configured.
+    In the dev environment (REPLIT_DEPLOYMENT not set) notifications are
+    suppressed unless DEV_TG_ENABLED=1 is explicitly set, preventing
+    duplicate alerts when the Replit IDE is opened alongside a live deployment.
     """
     if not TG_TOKEN or not TG_CHAT_ID:
+        return False
+    _is_deployed = bool(os.environ.get("REPLIT_DEPLOYMENT"))
+    _dev_tg_ok   = os.environ.get("DEV_TG_ENABLED", "").strip() == "1"
+    if not _is_deployed and not _dev_tg_ok:
+        log.debug("[tg_send] DEV mode — suppressed (set DEV_TG_ENABLED=1 to enable locally)")
         return False
     try:
         import requests as _req

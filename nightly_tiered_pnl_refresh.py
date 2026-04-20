@@ -238,11 +238,19 @@ def _send_telegram(message: str) -> None:
     """Send a Telegram message using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
 
     Silently skips (log-only) if either credential is absent.
+    In dev (REPLIT_DEPLOYMENT not set) notifications are suppressed unless
+    DEV_TG_ENABLED=1 is explicitly set, preventing duplicate alerts when
+    the Replit IDE is opened alongside a live deployment.
     """
     token   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         log.info("Telegram credentials not set — skipping Telegram notification.")
+        return
+    _is_deployed = bool(os.environ.get("REPLIT_DEPLOYMENT"))
+    _dev_tg_ok   = os.environ.get("DEV_TG_ENABLED", "").strip() == "1"
+    if not _is_deployed and not _dev_tg_ok:
+        log.debug("[_send_telegram] DEV mode — suppressed (set DEV_TG_ENABLED=1 to enable locally)")
         return
     try:
         import urllib.request as _urllib_req
