@@ -441,11 +441,13 @@ def _get_calib_min_trades(screener_key: str) -> int:
     Resolution order:
       1. ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` env var
          (e.g. CALIB_MIN_TRADES_SQUEEZE=20, CALIB_MIN_TRADES_GAP_DOWN=15)
-      2. ``_CALIB_MIN_TRADES`` module-level default (30)
+      2. ``CALIB_MIN_TRADES`` global env var (applies to all screeners)
+      3. ``_CALIB_MIN_TRADES`` module-level default (30)
 
     The env-var name is derived by uppercasing *screener_key* and replacing
     hyphens with underscores, so ``gap-down`` → ``CALIB_MIN_TRADES_GAP_DOWN``.
-    Invalid (non-positive-integer) values fall back to the default with a warning.
+    Invalid (non-positive-integer) values are skipped with a warning and the
+    next level in the resolution order is tried.
     """
     env_key = f"CALIB_MIN_TRADES_{screener_key.upper().replace('-', '_')}"
     raw = os.getenv(env_key, "").strip()
@@ -457,11 +459,25 @@ def _get_calib_min_trades(screener_key: str) -> int:
         except ValueError:
             pass
         log.warning(
-            "%s='%s' is not a valid positive integer; using default %d.",
+            "%s='%s' is not a valid positive integer; falling back to global/default.",
             env_key,
             raw,
+        )
+
+    global_raw = os.getenv("CALIB_MIN_TRADES", "").strip()
+    if global_raw:
+        try:
+            v = int(global_raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+        log.warning(
+            "CALIB_MIN_TRADES='%s' is not a valid positive integer; using default %d.",
+            global_raw,
             _CALIB_MIN_TRADES,
         )
+
     return _CALIB_MIN_TRADES
 
 
@@ -488,10 +504,11 @@ def _check_screener_calibration_due(
 
     When *min_trades* is ``None`` (the default) the threshold is resolved via
     ``_get_calib_min_trades(screener_key)``, which checks the
-    ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` env var before falling back to
-    ``_CALIB_MIN_TRADES``.  Pass an explicit integer only when you need to
-    hard-override the env-var mechanism (e.g. from a dedicated wrapper that
-    has its own backward-compatible env-var name).
+    ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` per-screener env var first, then
+    the ``CALIB_MIN_TRADES`` global env var, and finally falls back to the
+    ``_CALIB_MIN_TRADES`` module default (30).  Pass an explicit integer only
+    when you need to hard-override the env-var mechanism (e.g. from a
+    dedicated wrapper that has its own backward-compatible env-var name).
     """
     import re as _re
 
