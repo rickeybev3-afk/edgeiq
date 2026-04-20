@@ -32,7 +32,7 @@ def main():
     args = parser.parse_args()
 
     end_date   = date.fromisoformat(args.end)   if args.end   else get_last_weekday(date.today() - timedelta(days=1))
-    start_date = date.fromisoformat(args.start) if args.start else get_last_weekday(end_date - timedelta(weeks=13))
+    start_date = date.fromisoformat(args.start) if args.start else get_last_weekday(end_date - timedelta(days=60))
 
     print("=" * 60)
     print("EdgeIQ — 60-Day Background Backtest")
