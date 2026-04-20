@@ -16,6 +16,7 @@ Three layers of coverage:
 """
 
 import ast
+import glob as _glob
 import os
 import sys
 import tempfile
@@ -33,6 +34,20 @@ from log_config import (
     _BACKFILL_LOG_MAX_BYTES,
     _BACKFILL_LOG_BACKUP_COUNT,
 )
+
+# ---------------------------------------------------------------------------
+# Rotation constants from calibrate_sp_mult (defined locally there, not in
+# log_config).  Imported via the module to avoid duplicating the _parse_int_env
+# calls and to keep the constants-correctness tests authoritative.
+# ---------------------------------------------------------------------------
+import calibrate_sp_mult as _csm
+
+# ---------------------------------------------------------------------------
+# Registry: every non-test Python file known to call _rotate_log.
+# The guard test (TestNoUncoveredCallSites) fails if a new file joins this
+# list without being added here, which keeps coverage complete automatically.
+# ---------------------------------------------------------------------------
+_COVERED_SOURCE_FILES = {"backend.py", "app.py", "calibrate_sp_mult.py"}
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +492,158 @@ class TestThresholdRelationships(unittest.TestCase):
             _rotate_log(log, _BACKFILL_RUN_HISTORY_MAX_BYTES, _BACKFILL_RUN_HISTORY_BACKUP_COUNT)
             self.assertFalse(os.path.exists(log))
             self.assertTrue(os.path.exists(log + ".1"))
+
+
+# ===========================================================================
+# 5. calibrate_sp_mult.py call site — three-layer coverage
+# ===========================================================================
+
+class TestResetLogConstantsArePresent(unittest.TestCase):
+    """_RESET_LOG_* constants in calibrate_sp_mult are sane values."""
+
+    def test_max_bytes_is_positive_int(self):
+        self.assertIsInstance(_csm._RESET_LOG_MAX_BYTES, int)
+        self.assertGreater(_csm._RESET_LOG_MAX_BYTES, 0)
+
+    def test_backup_count_is_positive_int(self):
+        self.assertIsInstance(_csm._RESET_LOG_BACKUP_COUNT, int)
+        self.assertGreater(_csm._RESET_LOG_BACKUP_COUNT, 0)
+
+    def test_max_bytes_default_is_100kb(self):
+        """Default must be 100 KB unless overridden by env var."""
+        self.assertEqual(
+            _csm._RESET_LOG_MAX_BYTES,
+            _parse_int_env("RESET_LOG_MAX_BYTES", 100 * 1024),
+        )
+
+    def test_backup_count_default_is_one(self):
+        self.assertEqual(
+            _csm._RESET_LOG_BACKUP_COUNT,
+            _parse_int_env("RESET_LOG_BACKUP_COUNT", 1),
+        )
+
+
+class TestCalibrateCallSiteArgumentOrder(unittest.TestCase):
+    """The _rotate_log call in calibrate_sp_mult.py must pass (path, MAX_BYTES, BACKUP_COUNT)."""
+
+    @classmethod
+    def setUpClass(cls):
+        calls = _find_rotate_log_calls("calibrate_sp_mult.py")
+        cls._reset_call = next(
+            (c for c in calls if _arg_name(c.args[1]) == "_RESET_LOG_MAX_BYTES"),
+            None,
+        )
+
+    def test_reset_log_call_site_exists(self):
+        self.assertIsNotNone(
+            self._reset_call,
+            "calibrate_sp_mult.py must contain a _rotate_log(…, _RESET_LOG_MAX_BYTES, …) call",
+        )
+
+    def test_reset_log_max_bytes_is_second_argument(self):
+        self.assertEqual(_arg_name(self._reset_call.args[1]), "_RESET_LOG_MAX_BYTES")
+
+    def test_reset_log_backup_count_is_third_argument(self):
+        self.assertEqual(
+            _arg_name(self._reset_call.args[2]),
+            "_RESET_LOG_BACKUP_COUNT",
+            "Third argument to _rotate_log must be _RESET_LOG_BACKUP_COUNT, not the max-bytes constant",
+        )
+
+    def test_reset_call_has_exactly_three_positional_args(self):
+        self.assertEqual(len(self._reset_call.args), 3)
+
+
+class TestResetLogRotationThreshold(unittest.TestCase):
+    """_rotate_log honours _RESET_LOG_MAX_BYTES / _RESET_LOG_BACKUP_COUNT."""
+
+    def test_no_rotation_one_byte_below_threshold(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "calibration_resets.log")
+            _write(log, _csm._RESET_LOG_MAX_BYTES - 1)
+            _rotate_log(log, _csm._RESET_LOG_MAX_BYTES, _csm._RESET_LOG_BACKUP_COUNT)
+            self.assertTrue(os.path.exists(log))
+            self.assertFalse(os.path.exists(log + ".1"))
+
+    def test_rotation_fires_at_exact_threshold(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "calibration_resets.log")
+            _write(log, _csm._RESET_LOG_MAX_BYTES)
+            _rotate_log(log, _csm._RESET_LOG_MAX_BYTES, _csm._RESET_LOG_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertTrue(os.path.exists(log + ".1"))
+
+    def test_rotation_fires_above_threshold(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "calibration_resets.log")
+            _write(log, _csm._RESET_LOG_MAX_BYTES + 512)
+            _rotate_log(log, _csm._RESET_LOG_MAX_BYTES, _csm._RESET_LOG_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertTrue(os.path.exists(log + ".1"))
+
+    def test_backup_count_limits_number_of_backups(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "calibration_resets.log")
+            _write(log + ".1", 10)
+            _write(log, _csm._RESET_LOG_MAX_BYTES)
+            _rotate_log(log, _csm._RESET_LOG_MAX_BYTES, _csm._RESET_LOG_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertTrue(os.path.exists(log + ".1"))
+            self.assertFalse(os.path.exists(log + ".2"),
+                             "backup_count=1 must never create a .2 file")
+
+    def test_backup_preserves_original_content(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "calibration_resets.log")
+            payload = b"reset" * (_csm._RESET_LOG_MAX_BYTES // 5)
+            with open(log, "wb") as fh:
+                fh.write(payload)
+            _rotate_log(log, _csm._RESET_LOG_MAX_BYTES, _csm._RESET_LOG_BACKUP_COUNT)
+            with open(log + ".1", "rb") as fh:
+                self.assertEqual(fh.read(), payload)
+
+    def test_missing_file_is_noop(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "calibration_resets.log")
+            _rotate_log(log, _csm._RESET_LOG_MAX_BYTES, _csm._RESET_LOG_BACKUP_COUNT)
+            self.assertFalse(os.path.exists(log))
+            self.assertFalse(os.path.exists(log + ".1"))
+
+
+# ===========================================================================
+# 6. Guard: no _rotate_log call site may be added without test coverage
+# ===========================================================================
+
+class TestNoUncoveredCallSites(unittest.TestCase):
+    """Fail if any non-test Python file calls _rotate_log but is not in _COVERED_SOURCE_FILES.
+
+    This test scans the repo automatically, so adding a new call site in a new
+    file without updating _COVERED_SOURCE_FILES (and writing the three-layer
+    tests above) will cause an immediate CI failure.
+    """
+
+    def test_all_call_sites_are_accounted_for(self):
+        root = os.path.dirname(os.path.abspath(__file__))
+        discovered = set()
+        for path in _glob.glob(os.path.join(root, "**", "*.py"), recursive=True):
+            name = os.path.basename(path)
+            if name.startswith("test_"):
+                continue
+            calls = _find_rotate_log_calls(path)
+            if calls:
+                rel = os.path.relpath(path, root)
+                discovered.add(rel)
+        covered_rel = {os.path.normpath(f) for f in _COVERED_SOURCE_FILES}
+        uncovered = discovered - covered_rel
+        self.assertEqual(
+            uncovered,
+            set(),
+            f"New _rotate_log call site(s) found with no coverage in "
+            f"test_rotation_integrations.py: {uncovered}. "
+            "Add the file to _COVERED_SOURCE_FILES (as a relative path from "
+            "the repo root) and add the three-layer tests (constants, AST "
+            "argument order, threshold behaviour).",
+        )
 
 
 if __name__ == "__main__":
