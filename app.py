@@ -1350,7 +1350,18 @@ if _spk_metric_from_url in _spk_metric_options:
     st.session_state["sparkline_metric_toggle"] = _spk_metric_from_url
 
 # ── Restore today's brain accuracy counters from Supabase on first load ────────
-if st.session_state.brain_session_total == 0:
+# Re-syncs whenever the calendar day rolls over so a session that crosses
+# midnight doesn't carry yesterday's counter values into the new trading day.
+_brain_today = date.today()
+if (
+    st.session_state.brain_session_total == 0
+    or st.session_state.get("_brain_counters_loaded_day") != _brain_today
+):
+    if st.session_state.get("_brain_counters_loaded_day") != _brain_today:
+        # Reset stale counters before loading fresh data for the new day.
+        st.session_state.brain_session_total   = 0
+        st.session_state.brain_session_correct = 0
+        st.session_state.brain_last_compared   = ""
     try:
         _restore_df = _cached_load_accuracy_tracker()
         if "timestamp" in _restore_df.columns and not _restore_df.empty:
@@ -1367,14 +1378,25 @@ if st.session_state.brain_session_total == 0:
                     _non_empty = _non_empty[_non_empty.astype(str).str.strip() != ""]
                     if not _non_empty.empty:
                         st.session_state.brain_last_compared = str(_non_empty.iloc[-1])
+        st.session_state["_brain_counters_loaded_day"] = _brain_today
     except Exception:
         pass  # safe fallback — counters stay at 0
 
 # ── Load macro breadth regime from Supabase on first load ─────────────────────
-if st.session_state.breadth_regime is None:
+# Refreshes at day boundaries so a long-running session always shows the
+# correct regime for the current trading day.
+_regime_today = date.today()
+if (
+    st.session_state.breadth_regime is None
+    or st.session_state.get("_breadth_regime_loaded_day") != _regime_today
+):
+    if st.session_state.get("_breadth_regime_loaded_day") != _regime_today:
+        # Clear stale value so UI shows loading state while the fresh fetch runs.
+        st.session_state.breadth_regime = None
     try:
         _uid_startup = st.session_state.get("auth_user_id", "")
         st.session_state.breadth_regime = get_breadth_regime(user_id=_uid_startup)
+        st.session_state["_breadth_regime_loaded_day"] = _regime_today
     except Exception:
         pass
 
@@ -2632,10 +2654,15 @@ def render_log_entry_ui():
 def render_journal_tab(api_key: str = "", secret_key: str = ""):
     """Render the 📖 My Journal tab."""
     _uid = st.session_state.get("auth_user_id", "")
-    if not st.session_state.get("_process_cols_ensured"):
+    _pce_today = date.today()
+    if (
+        not st.session_state.get("_process_cols_ensured")
+        or st.session_state.get("_process_cols_ensured_day") != _pce_today
+    ):
         _cols_ok = ensure_process_columns()
         if _cols_ok:
             st.session_state["_process_cols_ensured"] = True
+            st.session_state["_process_cols_ensured_day"] = _pce_today
         else:
             st.warning(
                 "⚠️ Could not verify process-grade columns in the database. "
@@ -9104,7 +9131,9 @@ with st.sidebar:
                        "_cached_prefs", "_pref_alpaca_key", "_pref_alpaca_secret",
                        "min_tcs_trades",
                        "_pref_div_tg_chat_id", "_pref_div_discord_webhook",
-                       "_sb_div_tg_chat_id", "_sb_div_discord_webhook"):
+                       "_sb_div_tg_chat_id", "_sb_div_discord_webhook",
+                       "_brain_counters_loaded_day", "_breadth_regime_loaded_day",
+                       "_process_cols_ensured", "_process_cols_ensured_day"):
                 st.session_state.pop(_k, None)
             st.rerun()
     else:
