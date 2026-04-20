@@ -983,30 +983,32 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         _patch_skip_reason(r, _ticker_raw, "bearish_break_filtered")
         return
 
-    # ── Time cutoff guard ─────────────────────────────────────────────────────
-    # If the bot restarted late and is running a catch-up scan, the IB structure
-    # data may be hours stale.  Refuse to place orders after the cutoff so we
-    # don't fire entries into a mid-session market with a 10:30 AM price picture.
-    _scan_type_tg = (r.get("scan_type") or scan_label or "").lower()
-    _now_et_order = datetime.now(EASTERN)
-    _now_min      = _now_et_order.hour * 60 + _now_et_order.minute
-    if _scan_type_tg == "morning" and _now_min > ORDER_CUTOFF_MORNING_MIN:
-        _cutoff_str = f"{ORDER_CUTOFF_MORNING_MIN // 60}:{ORDER_CUTOFF_MORNING_MIN % 60:02d} PM"
-        log.warning(
-            f"  [{_ticker_raw}] ⏰ ORDER BLOCKED — past morning cutoff {_cutoff_str} ET "
-            f"(current {_now_et_order.strftime('%H:%M')} ET). "
-            f"IB data is stale; skipping to protect capital."
-        )
-        _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
-        return
-    if _scan_type_tg == "intraday" and _now_min > ORDER_CUTOFF_INTRADAY_MIN:
-        _cutoff_str = f"{ORDER_CUTOFF_INTRADAY_MIN // 60}:{ORDER_CUTOFF_INTRADAY_MIN % 60:02d} PM"
-        log.warning(
-            f"  [{_ticker_raw}] ⏰ ORDER BLOCKED — past intraday cutoff {_cutoff_str} ET "
-            f"(current {_now_et_order.strftime('%H:%M')} ET). Skipping."
-        )
-        _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
-        return
+    # ── Time cutoff guard (LIVE mode only) ───────────────────────────────────
+    # Paper mode places all setups regardless of time — fills are simulated so
+    # stale IB data in a catch-up scan is harmless.
+    # Live mode: if the bot crashes and restarts mid-session, refuse to fire
+    # entries based on a stale 10:30 AM IB picture from hours ago.
+    if not IS_PAPER_ALPACA:
+        _scan_type_tg = (r.get("scan_type") or scan_label or "").lower()
+        _now_et_order = datetime.now(EASTERN)
+        _now_min      = _now_et_order.hour * 60 + _now_et_order.minute
+        if _scan_type_tg == "morning" and _now_min > ORDER_CUTOFF_MORNING_MIN:
+            _cutoff_str = f"{ORDER_CUTOFF_MORNING_MIN // 60}:{ORDER_CUTOFF_MORNING_MIN % 60:02d}"
+            log.warning(
+                f"  [{_ticker_raw}] ⏰ LIVE ORDER BLOCKED — past morning cutoff {_cutoff_str} ET "
+                f"(now {_now_et_order.strftime('%H:%M')} ET). "
+                f"IB data stale from catch-up restart; skipping to protect real capital."
+            )
+            _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
+            return
+        if _scan_type_tg == "intraday" and _now_min > ORDER_CUTOFF_INTRADAY_MIN:
+            _cutoff_str = f"{ORDER_CUTOFF_INTRADAY_MIN // 60}:{ORDER_CUTOFF_INTRADAY_MIN % 60:02d}"
+            log.warning(
+                f"  [{_ticker_raw}] ⏰ LIVE ORDER BLOCKED — past intraday cutoff {_cutoff_str} ET "
+                f"(now {_now_et_order.strftime('%H:%M')} ET). Skipping."
+            )
+            _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
+            return
 
     # ── Morning TCS floor ─────────────────────────────────────────────────────
     # 5-yr data: Morning TCS<60 → net negative expectancy across all structures.
