@@ -33,6 +33,7 @@ Flags passed through to run_tiered_pnl_backfill
 """
 
 import sys, os, time, datetime, subprocess, logging, signal, threading, json, html, argparse
+from calib_threshold import resolve_calib_threshold
 
 # ── Shutdown flag — set by signal handler ─────────────────────────────────────
 
@@ -432,54 +433,6 @@ def _check_backfill_heartbeat() -> None:
 
 # ── Generic screener calibration check ───────────────────────────────────────
 
-_CALIB_MIN_TRADES = 30
-
-
-def _get_calib_min_trades(screener_key: str) -> int:
-    """Return the minimum settled trade count that triggers a calibration alert for *screener_key*.
-
-    Resolution order:
-      1. ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` env var
-         (e.g. CALIB_MIN_TRADES_SQUEEZE=20, CALIB_MIN_TRADES_GAP_DOWN=15)
-      2. ``CALIB_MIN_TRADES`` global env var (applies to all screeners)
-      3. ``_CALIB_MIN_TRADES`` module-level default (30)
-
-    The env-var name is derived by uppercasing *screener_key* and replacing
-    hyphens with underscores, so ``gap-down`` → ``CALIB_MIN_TRADES_GAP_DOWN``.
-    Invalid (non-positive-integer) values are skipped with a warning and the
-    next level in the resolution order is tried.
-    """
-    env_key = f"CALIB_MIN_TRADES_{screener_key.upper().replace('-', '_')}"
-    raw = os.getenv(env_key, "").strip()
-    if raw:
-        try:
-            v = int(raw)
-            if v > 0:
-                return v
-        except ValueError:
-            pass
-        log.warning(
-            "%s='%s' is not a valid positive integer; falling back to global/default.",
-            env_key,
-            raw,
-        )
-
-    global_raw = os.getenv("CALIB_MIN_TRADES", "").strip()
-    if global_raw:
-        try:
-            v = int(global_raw)
-            if v > 0:
-                return v
-        except ValueError:
-            pass
-        log.warning(
-            "CALIB_MIN_TRADES='%s' is not a valid positive integer; using default %d.",
-            global_raw,
-            _CALIB_MIN_TRADES,
-        )
-
-    return _CALIB_MIN_TRADES
-
 
 def _check_screener_calibration_due(
     screener_key: str,
@@ -504,17 +457,17 @@ def _check_screener_calibration_due(
     actual multiplier update.
 
     When *min_trades* is ``None`` (the default) the threshold is resolved via
-    ``_get_calib_min_trades(screener_key)``, which checks the
-    ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` per-screener env var first, then
-    the ``CALIB_MIN_TRADES`` global env var, and finally falls back to the
-    ``_CALIB_MIN_TRADES`` module default (30).  Pass an explicit integer only
-    when you need to hard-override the env-var mechanism (e.g. from a
+    ``resolve_calib_threshold(screener_key)`` from ``calib_threshold.py``,
+    which checks ``CALIB_MIN_TRADES_<SCREENER_KEY_UPPER>`` first, then the
+    ``SQUEEZE_CALIB_MIN_TRADES`` legacy alias for the squeeze screener, and
+    finally falls back to the module default (30).  Pass an explicit integer
+    only when you need to hard-override the env-var mechanism (e.g. from a
     dedicated wrapper that has its own backward-compatible env-var name).
     """
     import re as _re
 
     if min_trades is None:
-        min_trades = _get_calib_min_trades(screener_key)
+        min_trades = resolve_calib_threshold(screener_key)
 
     log.info("Checking %s calibration status …", screener_key)
 
@@ -796,21 +749,15 @@ def _get_calib_cooldown_hours(screener_key: str) -> int:
 
 # ── Squeeze calibration check ─────────────────────────────────────────────────
 
-_DEFAULT_SQUEEZE_CALIB_MIN_TRADES = 30
-
-
 def _get_squeeze_calib_min_trades() -> int:
     """Return the minimum settled squeeze trade count that triggers a calibration alert.
 
     Resolution order:
       1. DB preference (Supabase app_config table, via
          backend.resolve_squeeze_calib_min_trades_effective).
-      2. ``CALIB_MIN_TRADES_SQUEEZE`` env var (new generic format).
-      3. ``SQUEEZE_CALIB_MIN_TRADES`` env var (legacy name, kept for backward compat).
-      4. ``_DEFAULT_SQUEEZE_CALIB_MIN_TRADES`` (30).
-
-    Invalid (non-positive-integer) env-var values are skipped with a warning and the
-    next fallback is tried.
+      2. Env-var / default via ``resolve_calib_threshold("squeeze")`` from
+         ``calib_threshold.py``, which checks ``CALIB_MIN_TRADES_SQUEEZE``
+         then the ``SQUEEZE_CALIB_MIN_TRADES`` legacy alias, then defaults to 30.
     """
     try:
         import backend as _backend
@@ -824,21 +771,7 @@ def _get_squeeze_calib_min_trades() -> int:
             _exc,
         )
 
-    for env_key in ("CALIB_MIN_TRADES_SQUEEZE", "SQUEEZE_CALIB_MIN_TRADES"):
-        raw = os.getenv(env_key, "").strip()
-        if raw:
-            try:
-                v = int(raw)
-                if v > 0:
-                    return v
-            except ValueError:
-                pass
-            log.warning(
-                "%s='%s' is not a valid positive integer; trying next fallback.",
-                env_key,
-                raw,
-            )
-    return _DEFAULT_SQUEEZE_CALIB_MIN_TRADES
+    return resolve_calib_threshold("squeeze")
 
 
 def _check_squeeze_calibration_due() -> None:
@@ -864,9 +797,9 @@ def _check_gap_down_calibration_due() -> None:
     """Alert when enough gap_down trades have settled to warrant re-calibration.
 
     Delegates to _check_screener_calibration_due with gap_down-specific parameters.
-    The threshold is resolved via ``_get_calib_min_trades("gap_down")``, which
-    checks ``CALIB_MIN_TRADES_GAP_DOWN`` before falling back to
-    ``_CALIB_MIN_TRADES`` (30).
+    The threshold is resolved via ``resolve_calib_threshold("gap_down")`` from
+    ``calib_threshold.py``, which checks ``CALIB_MIN_TRADES_GAP_DOWN`` before
+    falling back to the default of 30.
     """
     _check_screener_calibration_due(
         "gap_down",
@@ -887,10 +820,11 @@ def _check_all_uncalibrated_screeners() -> None:
     Per-screener min_trades resolution order:
       • squeeze  — ``_get_squeeze_calib_min_trades()``, which checks DB
                    preference, then ``CALIB_MIN_TRADES_SQUEEZE``, then
-                   ``SQUEEZE_CALIB_MIN_TRADES`` (backward-compatible).
-      • any other key at 1.00× — checks ``{KEY}_CALIB_MIN_TRADES`` env var
-                   (e.g. ``GAP_DOWN_CALIB_MIN_TRADES``, ``GAP_UP_CALIB_MIN_TRADES``)
-                   before falling back to ``_CALIB_MIN_TRADES``.
+                   ``SQUEEZE_CALIB_MIN_TRADES`` (backward-compatible), via
+                   ``resolve_calib_threshold`` from calib_threshold.py.
+      • any other key at 1.00× — ``resolve_calib_threshold(key)`` from
+                   calib_threshold.py checks ``CALIB_MIN_TRADES_{KEY}``
+                   (e.g. ``CALIB_MIN_TRADES_GAP_DOWN``) before the default of 30.
 
     Per-screener cooldown resolution (all keys):
       • ``_get_calib_cooldown_hours(key)`` — checks ``CALIB_COOLDOWN_HOURS_{KEY}``
@@ -914,9 +848,17 @@ def _check_all_uncalibrated_screeners() -> None:
         )
         return
 
-    _per_key_script: dict[str, str] = {
-        "squeeze": "calibrate_sp_mult.py",
-        "gap_down": "calibrate_gap_down_mult.py",
+    _per_key_params: dict[str, tuple[str, int, float]] = {
+        "squeeze": (
+            "calibrate_sp_mult.py",
+            _get_squeeze_calib_min_trades(),
+            _get_calib_cooldown_hours("squeeze"),
+        ),
+        "gap_down": (
+            "calibrate_gap_down_mult.py",
+            resolve_calib_threshold("gap_down"),
+            _get_calib_cooldown_hours("gap_down"),
+        ),
     }
     _per_key_extra_args: dict[str, str] = {
         "squeeze": "--pass squeeze",
@@ -929,7 +871,7 @@ def _check_all_uncalibrated_screeners() -> None:
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
-        script_name = _per_key_script.get(key, f"calibrate_{key}_mult.py")
+        script_name = _per_key_params.get(key, (f"calibrate_{key}_mult.py",))[0]
         script_path = os.path.join(_base_dir, script_name)
         if not os.path.isfile(script_path):
             _stub_content = f'''\
@@ -1070,34 +1012,14 @@ if __name__ == "__main__":
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
-        script = _per_key_script.get(key, f"calibrate_{key}_mult.py")
-        cooldown = _get_calib_cooldown_hours(key)
-        if key == "squeeze":
-            min_trades = _get_squeeze_calib_min_trades()
-        else:
-            env_key = f"{key.upper().replace('-', '_')}_CALIB_MIN_TRADES"
-            raw = os.getenv(env_key, "").strip()
-            if raw:
-                try:
-                    v = int(raw)
-                    if v > 0:
-                        min_trades = v
-                    else:
-                        log.warning(
-                            "%s='%s' is not a valid positive integer; "
-                            "using default %d.",
-                            env_key, raw, _CALIB_MIN_TRADES,
-                        )
-                        min_trades = _CALIB_MIN_TRADES
-                except ValueError:
-                    log.warning(
-                        "%s='%s' is not a valid positive integer; "
-                        "using default %d.",
-                        env_key, raw, _CALIB_MIN_TRADES,
-                    )
-                    min_trades = _CALIB_MIN_TRADES
-            else:
-                min_trades = _CALIB_MIN_TRADES
+        script, min_trades, cooldown = _per_key_params.get(
+            key,
+            (
+                f"calibrate_{key}_mult.py",
+                resolve_calib_threshold(key),
+                _get_calib_cooldown_hours(key),
+            ),
+        )
         if key == "squeeze":
             log.info(
                 "Screener 'squeeze': calibration threshold = %d trades "
@@ -1107,7 +1029,7 @@ if __name__ == "__main__":
         else:
             log.info(
                 "Screener '%s': calibration threshold = %d trades "
-                "(env override key: %s_CALIB_MIN_TRADES)",
+                "(env override key: CALIB_MIN_TRADES_%s)",
                 key,
                 min_trades,
                 key.upper().replace("-", "_"),

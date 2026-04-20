@@ -18,6 +18,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from typing import Optional
+from calib_threshold import resolve_calib_threshold as _resolve_calib_threshold
 
 PROXY_PORT = int(os.environ.get("PORT", "8080"))
 STREAMLIT_PORT = 8501
@@ -557,39 +558,6 @@ def _check_db_reachable() -> bool:
         return exc.code in (200, 404)
     except Exception:
         return False
-
-_DEFAULT_CALIB_THRESHOLD = 30
-
-
-def _resolve_calib_threshold(screener_key: str) -> int:
-    """Return the minimum-trades calibration threshold for *screener_key*.
-
-    Resolution order:
-      1. ``CALIB_MIN_TRADES_<SCREENER_KEY>`` env var (positive int required).
-      2. ``SQUEEZE_CALIB_MIN_TRADES`` env var for the *squeeze* screener only
-         (legacy alias kept for backward-compatibility).
-      3. The module-level default of 30.
-    """
-    upper = screener_key.upper().replace("-", "_")
-    env_key = f"CALIB_MIN_TRADES_{upper}"
-    raw = os.environ.get(env_key, "").strip()
-    if raw:
-        try:
-            v = int(raw)
-            if v > 0:
-                return v
-        except ValueError:
-            pass
-    if screener_key == "squeeze":
-        legacy = os.environ.get("SQUEEZE_CALIB_MIN_TRADES", "").strip()
-        if legacy:
-            try:
-                v = int(legacy)
-                if v > 0:
-                    return v
-            except ValueError:
-                pass
-    return _DEFAULT_CALIB_THRESHOLD
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
