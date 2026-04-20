@@ -2231,11 +2231,13 @@ if __name__ == "__main__":
     _BOT_DIR = os.path.dirname(os.path.abspath(__file__))
     _PY = sys.executable  # same interpreter + packages as this process
 
-    subprocess.Popen([_PY, "paper_trader_bot.py"], cwd=_BOT_DIR,
+    _prod_env = {**os.environ, "EDGEIQ_PRODUCTION": "1"}
+
+    subprocess.Popen([_PY, "paper_trader_bot.py"], cwd=_BOT_DIR, env=_prod_env,
                      stdout=open("/tmp/paper_trader_bot.log", "a"), stderr=subprocess.STDOUT)
-    subprocess.Popen([_PY, "kalshi_bot.py"], cwd=_BOT_DIR,
+    subprocess.Popen([_PY, "kalshi_bot.py"], cwd=_BOT_DIR, env=_prod_env,
                      stdout=open("/tmp/kalshi_bot.log", "a"), stderr=subprocess.STDOUT)
-    subprocess.Popen([_PY, "nightly_tiered_pnl_refresh.py"], cwd=_BOT_DIR,
+    subprocess.Popen([_PY, "nightly_tiered_pnl_refresh.py"], cwd=_BOT_DIR, env=_prod_env,
                      stdout=open("/tmp/nightly_refresh.log", "a"), stderr=subprocess.STDOUT)
 
     threading.Thread(target=start_streamlit, daemon=True).start()

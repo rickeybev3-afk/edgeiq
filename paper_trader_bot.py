@@ -274,6 +274,14 @@ _PDT_BLOCK_ALERTED_DATE: "date | None" = None
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
+# Suppress Telegram in dev — only fire from the deployed production server.
+# EDGEIQ_PRODUCTION=1 is injected by deploy_server.py when it spawns this bot,
+# so it is ONLY set when running in the production deployment, never in dev.
+_IS_PRODUCTION = os.getenv("EDGEIQ_PRODUCTION", "").strip() == "1"
+if not _IS_PRODUCTION:
+    TG_TOKEN   = ""
+    TG_CHAT_ID = ""
+
 _DEFAULT_TICKERS = (
     "SATL,UGRO,ANNA,VCX,CODX,ARTL,SWMR,FEED,RBNE,PAVS,LNKS,BIAF,ACXP,GOAI"
 )
