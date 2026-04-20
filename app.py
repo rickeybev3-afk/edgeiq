@@ -12113,6 +12113,64 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _sm10.metric("Max Drawdown (R)", f"{abs(_max_dd_r)}R",
                                          help="Largest peak-to-trough loss in cumulative R — worst losing run in the sim (shown as a positive magnitude)")
 
+                        # ── Throughput Projector ──────────────────────────────────────────
+                        # Projects equity / CAGR at a user-defined trades/day target while
+                        # keeping the same win rate and R distribution from actual data.
+                        if _total_trades and _rp_dates_seen:
+                            _n_active_days  = max(1, len(_rp_dates_seen))
+                            _actual_tpd     = _total_trades / _n_active_days
+                            _n_bdays        = max(1, len(pd.bdate_range(str(_rp_start), str(_rp_end))))
+                            with st.expander(f"📐 Throughput Projector  ·  actual avg **{_actual_tpd:.1f}** trades / day"):
+                                st.caption(
+                                    "Set a target trades/day to project equity and CAGR if you could scale "
+                                    "throughput while keeping the same win rate and R distribution."
+                                )
+                                _proj_col1, _proj_col2 = st.columns([1, 3])
+                                with _proj_col1:
+                                    _proj_tpd = st.number_input(
+                                        "Target trades/day",
+                                        min_value=0.1, max_value=500.0,
+                                        value=float(max(1, round(_actual_tpd))),
+                                        step=1.0,
+                                        key="rp_proj_tpd",
+                                        help="How many qualifying setups per day would you have access to? (e.g. 26 = no PDT cap, full Finviz universe)",
+                                    )
+                                _proj_scale          = _proj_tpd / _actual_tpd
+                                _proj_total_pnl      = _total_pnl * _proj_scale
+                                _proj_final_equity   = float(_rp_equity) + _proj_total_pnl
+                                _proj_net_return_pct = round(_proj_total_pnl / float(_rp_equity) * 100, 1)
+                                _proj_cagr           = round(
+                                    ((max(0.001, _proj_final_equity) / float(_rp_equity)) ** (252.0 / _n_bdays) - 1) * 100,
+                                    1,
+                                )
+                                _proj_trades         = round(_proj_tpd * _n_active_days)
+                                _pm1, _pm2, _pm3, _pm4 = st.columns(4)
+                                _pm1.metric(
+                                    "Projected Final Equity",
+                                    f"${_proj_final_equity:,.0f}",
+                                    f"{_proj_net_return_pct:+.1f}%",
+                                )
+                                _pm2.metric(
+                                    "Projected CAGR",
+                                    f"{_proj_cagr:+.1f}%",
+                                    help=f"Annualised return over {_n_bdays} trading days at {_proj_tpd:.1f} trades/day",
+                                )
+                                _pm3.metric(
+                                    "Projected Total P&L",
+                                    f"${_proj_total_pnl:,.0f}",
+                                )
+                                _pm4.metric(
+                                    "Projected Trades",
+                                    f"{_proj_trades:,}",
+                                    help=f"Scale factor {_proj_scale:.2f}× vs actual avg {_actual_tpd:.1f}/day",
+                                )
+                                st.caption(
+                                    f"📌 **How this works**: your actual data shows **{_actual_tpd:.1f} trades/day** "
+                                    f"over {_n_active_days} active days in this date range. "
+                                    f"At **{_proj_tpd:.1f} trades/day** ({_proj_scale:.2f}× scale), every dollar of P&L "
+                                    "scales by that factor. Win rate and R distribution are held constant — only throughput changes."
+                                )
+
                         # ── RVOL size bonus breakdown (only when data is present) ──────────
                         _has_rvol_mult = "RVOL Mult" in _rp_df.columns and _rp_df["RVOL Mult"].notna().any()
                         if _has_rvol_mult:
