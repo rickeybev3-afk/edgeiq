@@ -529,19 +529,18 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
 #              deviation (min 30); 1.00× is the data-confirmed baseline.
 #              Re-run the script once ≥30 gap_down rows have tiered_pnl_r
 #              populated; it will print the exact line to paste here.
-#   'squeeze':   0 settled trades as of 2026-04-20 — 1.00× baseline until
-#               ≥30 trades settle. To calibrate: run
-#               `python calibrate_squeeze_mult.py` once 30+ squeeze rows have
-#               tiered_pnl_r populated in paper_trades. The script computes
-#               WR / avg-R, applies a sqrt-dampened ratio vs the 'gap' anchor,
-#               and prints the exact line to paste here with a data citation.
+#   'squeeze':   calibrated 2026-04-20 via `python calibrate_sp_mult.py --pass squeeze`;
+#               0 settled squeeze trades in paper_trades — insufficient for
+#               deviation (min 30); 1.00× is the data-confirmed baseline.
+#               Re-run the script once ≥30 squeeze rows have tiered_pnl_r
+#               populated; it will print the exact line to paste here.
 # Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
 _SP_MULT_TABLE: dict[str, float] = {
     "other":    1.15,
     "gap":      1.00,
     "trend":    0.85,
     "gap_down": 1.00,   # Bearish Break universe — calibrated 2026-04-20 (6 settled trades, n<30 → baseline confirmed); re-run calibrate_sp_mult.py --pass gap_down once ≥30 settle
-    "squeeze":  1.00,   # baseline; recalibrate with calibrate_squeeze_mult.py once ≥30 trades settle
+    "squeeze":  1.00,   # calibrated 2026-04-20 (0 settled trades, n<30 → baseline confirmed); re-run calibrate_sp_mult.py --pass squeeze once ≥30 settle
 }
 
 def _sp_size_mult(screener_pass: str | None) -> float:

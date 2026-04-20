@@ -7524,7 +7524,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Squeeze Calibration Min-Trades Threshold**")
     st.caption(
-        "The nightly refresh alerts you to re-run `calibrate_squeeze_mult.py` once "
+        "The nightly refresh alerts you to re-run `calibrate_sp_mult.py --pass squeeze` once "
         "this many settled squeeze trades have accumulated. "
         "Saved here and read by the Nightly Tiered P&L Refresh service "
         "(falls back to the `SQUEEZE_CALIB_MIN_TRADES` secret, then 30)."
@@ -32392,7 +32392,7 @@ function _bqCopyShareLink() {
             if _sp_live_rows:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown("**Live Paper Trades — by Screener Pass**")
-                st.caption("sp_mult = position-size multiplier applied by the bot at order placement · gap/other/trend from 5-yr live backtest · gap_down 1.00× calibrated 2026-04-20 (6 settled trades, n<30 → baseline confirmed; recalibrate via calibrate_sp_mult.py --pass gap_down once ≥30 Bearish Break paper trades settle)")
+                st.caption("sp_mult = position-size multiplier applied by the bot at order placement · gap/other/trend from 5-yr live backtest · gap_down 1.00× calibrated 2026-04-20 (6 settled trades, n<30 → baseline confirmed; recalibrate via calibrate_sp_mult.py --pass gap_down once ≥30 Bearish Break paper trades settle) · squeeze 1.00× calibrated 2026-04-20 (0 settled trades, n<30 → baseline confirmed; recalibrate via calibrate_sp_mult.py --pass squeeze once ≥30 squeeze paper trades settle)")
                 st.dataframe(pd.DataFrame(_sp_live_rows), use_container_width=True, hide_index=True)
 
         # ── Screener Pass — 5-yr Backtest Breakdown (Gap vs Trend vs All) ────
