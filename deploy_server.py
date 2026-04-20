@@ -2209,7 +2209,7 @@ def start_streamlit():
          "--server.address", "127.0.0.1",
          "--server.enableCORS", "false",
          "--server.enableXsrfProtection", "false"],
-        cwd="/home/runner/workspace"
+        cwd=os.path.dirname(os.path.abspath(__file__))
     )
     for _ in range(120):
         try:
@@ -2228,11 +2228,14 @@ def start_streamlit():
 
 
 if __name__ == "__main__":
-    subprocess.Popen(["python3", "paper_trader_bot.py"], cwd="/home/runner/workspace",
+    _BOT_DIR = os.path.dirname(os.path.abspath(__file__))
+    _PY = sys.executable  # same interpreter + packages as this process
+
+    subprocess.Popen([_PY, "paper_trader_bot.py"], cwd=_BOT_DIR,
                      stdout=open("/tmp/paper_trader_bot.log", "a"), stderr=subprocess.STDOUT)
-    subprocess.Popen(["python3", "kalshi_bot.py"], cwd="/home/runner/workspace",
+    subprocess.Popen([_PY, "kalshi_bot.py"], cwd=_BOT_DIR,
                      stdout=open("/tmp/kalshi_bot.log", "a"), stderr=subprocess.STDOUT)
-    subprocess.Popen(["python3", "nightly_tiered_pnl_refresh.py"], cwd="/home/runner/workspace",
+    subprocess.Popen([_PY, "nightly_tiered_pnl_refresh.py"], cwd=_BOT_DIR,
                      stdout=open("/tmp/nightly_refresh.log", "a"), stderr=subprocess.STDOUT)
 
     threading.Thread(target=start_streamlit, daemon=True).start()
