@@ -37,5 +37,9 @@ _BACKFILL_RUN_HISTORY_MAX_BYTES    = _parse_int_env("BACKFILL_RUN_HISTORY_MAX_BY
 _BACKFILL_RUN_HISTORY_BACKUP_COUNT = _parse_int_env("BACKFILL_RUN_HISTORY_BACKUP_COUNT", 1)         # keep one .1 backup; override via env var
 
 # ── Backfill pipeline log (app.py) ────────────────────────────────────────────
+_BACKFILL_LOG_PATH = os.environ.get(
+    "BACKFILL_LOG_PATH",
+    "/tmp/backfill_pipeline.log",
+)
 _BACKFILL_LOG_MAX_BYTES    = _parse_int_env("BACKFILL_LOG_MAX_BYTES", 500 * 1024)  # rotate pipeline log at 500 KB; override via env var
 _BACKFILL_LOG_BACKUP_COUNT = _parse_int_env("BACKFILL_LOG_BACKUP_COUNT", 1)         # keep one .1 backup; override via env var
