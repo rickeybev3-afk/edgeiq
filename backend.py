@@ -9004,7 +9004,7 @@ def _backtest_single(api_key: str, secret_key: str, sym: str,
                     else:
                         _exit_trigger_val = "time_based"
 
-        _bt_grade, _bt_grade_reason = compute_trade_grade(
+        _bt_grade, _bt_grade_reason, _ = compute_trade_grade(
             _rvol_val, tcs, pm_close, ib_high, ib_low, predicted_struct,
             voice_signals=None,
         )
