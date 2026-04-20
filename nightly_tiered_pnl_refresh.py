@@ -615,29 +615,58 @@ def _check_screener_calibration_due(
         )
 
     # ── Step 4: emit alert ────────────────────────────────────────────────────
-    plain_msg = (
-        f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
-        f"(threshold: {min_trades}). "
-        f"Run: python {script_name} --apply"
+    _script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), script_name
     )
-    html_msg = (
-        f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
-        f"{trade_count} settled {screener_key} trades found "
-        f"(threshold: {min_trades}).\n\n"
-        f"Run <code>python {script_name} --apply</code> to apply the recommended "
-        f"multiplier automatically."
-    )
-    log.warning(
-        "%s CALIBRATION DUE — %d settled %s trades found "
-        "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
-        "Run: python %s --apply",
-        screener_key.upper(),
-        trade_count,
-        screener_key,
-        min_trades,
-        screener_key,
-        script_name,
-    )
+    _script_exists = os.path.isfile(_script_path)
+
+    if _script_exists:
+        plain_msg = (
+            f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
+            f"(threshold: {min_trades}). "
+            f"Run: python {script_name} --apply"
+        )
+        html_msg = (
+            f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
+            f"{trade_count} settled {screener_key} trades found "
+            f"(threshold: {min_trades}).\n\n"
+            f"Run <code>python {script_name} --apply</code> to apply the recommended "
+            f"multiplier automatically."
+        )
+        log.warning(
+            "%s CALIBRATION DUE — %d settled %s trades found "
+            "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
+            "Run: python %s --apply",
+            screener_key.upper(),
+            trade_count,
+            screener_key,
+            min_trades,
+            screener_key,
+            script_name,
+        )
+    else:
+        plain_msg = (
+            f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
+            f"(threshold: {min_trades}). "
+            f"No calibration script found yet — create {script_name} to proceed"
+        )
+        html_msg = (
+            f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
+            f"{trade_count} settled {screener_key} trades found "
+            f"(threshold: {min_trades}).\n\n"
+            f"No calibration script found yet — create <code>{script_name}</code> to proceed."
+        )
+        log.warning(
+            "%s CALIBRATION DUE — %d settled %s trades found "
+            "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
+            "No calibration script found yet — create %s to proceed.",
+            screener_key.upper(),
+            trade_count,
+            screener_key,
+            min_trades,
+            screener_key,
+            script_name,
+        )
     _send_slack(plain_msg)
     _send_telegram(html_msg)
 
@@ -768,6 +797,23 @@ def _check_all_uncalibrated_screeners() -> None:
             _GAP_DOWN_CALIB_COOLDOWN_HOURS,
         ),
     }
+
+    _base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # ── Startup warning: list any 1.00× screeners missing their calibration script ──
+    _missing_scripts: list[str] = []
+    for key, mult in sp_table.items():
+        if abs(mult - 1.00) > 0.001:
+            continue
+        script_name = _per_key_params.get(key, (f"calibrate_{key}_mult.py",))[0]
+        if not os.path.isfile(os.path.join(_base_dir, script_name)):
+            _missing_scripts.append(f"{key} (expected: {script_name})")
+    if _missing_scripts:
+        log.warning(
+            "The following 1.00× screener(s) have no calibration script on disk: %s. "
+            "Create the corresponding calibrate_<key>_mult.py file(s) before running calibration.",
+            ", ".join(_missing_scripts),
+        )
 
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
