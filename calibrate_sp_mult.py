@@ -1050,6 +1050,7 @@ def _reset_pass_to_baseline(pass_name: str, bot_path: str | None = None) -> None
     print(f"Resetting '{pass_name}' to 1.00\u00d7 baseline in {resolved_path} \u2026")
     _apply_to_bot(pass_name, 1.00, inline_comment, citation_line=citation_line, bot_path=resolved_path)
     print(f"\nReset complete: '{pass_name}' is now at 1.00\u00d7 (0 settled trades baseline).")
+    print(f"  To undo this reset, run: python calibrate_sp_mult.py --restore-bak {pass_name}")
 
 
 def _read_current_mult(pass_name: str, bot_path: str | None = None) -> float | None:
@@ -1395,6 +1396,7 @@ def main(pass_name: str, apply: bool = False) -> None:
         print(f"{'='*60}")
         inline_comment = f"{wr_comment} → {rec_mult:.2f}×"
         _apply_to_bot(pass_name, rec_mult, inline_comment, citation_line=citation_line)
+        print(f"  To undo this apply, run: python calibrate_sp_mult.py --restore-bak {pass_name}")
     else:
         print(
             f"\nNext step: manually update paper_trader_bot.py, or re-run with --apply to patch automatically:\n"
