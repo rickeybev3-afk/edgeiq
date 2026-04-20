@@ -7546,6 +7546,67 @@ with st.sidebar:
             icon="⚠️",
         )
 
+    # ── Calibration alert history ─────────────────────────────────────────────
+    st.markdown("**Calibration Alert History**")
+    import json as _sq_json
+    import datetime as _sq_dt
+    # Path mirrors _SQUEEZE_CALIB_STATE_FILE in nightly_tiered_pnl_refresh.py.
+    # Keep both in sync if the filename ever changes.
+    _sq_state_path = _sq_os.path.join(
+        _sq_os.path.dirname(_sq_os.path.abspath(__file__)),
+        ".edgeiq_squeeze_calib_alert.json",
+    )
+    _sq_state = None
+    try:
+        with open(_sq_state_path) as _sq_f:
+            _sq_state = _sq_json.load(_sq_f)
+    except FileNotFoundError:
+        pass
+    except Exception as _sq_exc:
+        st.caption(f"Could not read alert history: {_sq_exc}")
+
+    if _sq_state is None:
+        st.markdown(
+            '<div style="background:#0d1b2a; border:1px solid #1e3a5f; border-radius:8px; '
+            'padding:10px 14px; color:#8faec8; font-size:12px;">No alert sent yet</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        _sq_last_str = _sq_state.get("last_alerted_utc", "")
+        _sq_trade_count = _sq_state.get("trade_count", "—")
+        _sq_cooldown_active = False
+        _sq_last_display = "—"
+        _sq_hours_since = None
+        if _sq_last_str:
+            try:
+                _sq_last_dt = _sq_dt.datetime.fromisoformat(_sq_last_str)
+                if _sq_last_dt.tzinfo is None:
+                    _sq_last_dt = _sq_last_dt.replace(tzinfo=_sq_dt.timezone.utc)
+                _sq_last_display = _sq_last_dt.strftime("%Y-%m-%d %H:%M UTC")
+                _sq_now = _sq_dt.datetime.now(_sq_dt.timezone.utc)
+                _sq_hours_since = (_sq_now - _sq_last_dt).total_seconds() / 3600
+                _sq_cooldown_active = _sq_hours_since < 23
+            except Exception:
+                _sq_last_display = _sq_last_str
+        _sq_cooldown_color = "#f59e0b" if _sq_cooldown_active else "#22c55e"
+        _sq_cooldown_label = "Cooldown active" if _sq_cooldown_active else "Cooldown expired"
+        if _sq_hours_since is not None:
+            _sq_hours_int = int(_sq_hours_since)
+            _sq_cooldown_label += f" ({_sq_hours_int}h ago)"
+        st.markdown(
+            f'<div style="background:#0d1b2a; border:1px solid #1e3a5f; border-radius:8px; '
+            f'padding:10px 14px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">'
+            f'<div><div style="font-size:11px; color:#8faec8; margin-bottom:2px;">Last alert fired</div>'
+            f'<div style="font-size:13px; font-weight:600; color:#e2e8f0;">{_sq_last_display}</div></div>'
+            f'<div><div style="font-size:11px; color:#8faec8; margin-bottom:2px;">Trade count at alert</div>'
+            f'<div style="font-size:13px; font-weight:600; color:#60a5fa;">{_sq_trade_count}</div></div>'
+            f'<div style="grid-column:1/-1; margin-top:4px;">'
+            f'<span style="font-size:11px; font-weight:600; color:{_sq_cooldown_color};">⬤ {_sq_cooldown_label}</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
     st.markdown("---")
     st.markdown("**Divergence Alert Recipients**")
     st.caption(
