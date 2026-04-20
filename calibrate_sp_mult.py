@@ -1070,6 +1070,50 @@ def _read_current_mult(pass_name: str, bot_path: str | None = None) -> float | N
     return None
 
 
+def _read_calib_date(pass_name: str, bot_path: str | None = None) -> str | None:
+    """Return the calibration date for pass_name from _SP_CALIB_DATES, or None if absent."""
+    path = bot_path if bot_path is not None else _BOT_FILE
+    try:
+        with open(path) as fh:
+            content = fh.read()
+    except OSError:
+        return None
+    calib_start = content.find("_SP_CALIB_DATES")
+    if calib_start == -1:
+        return None
+    cb_open = content.find("{", calib_start)
+    cb_close = content.find("}", cb_open)
+    if cb_open == -1 or cb_close == -1:
+        return None
+    calib_block = content[cb_open : cb_close + 1]
+    pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*"([^"]+)"')
+    m = pat.search(calib_block)
+    return m.group(1) if m else None
+
+
+def _read_inline_comment(pass_name: str, bot_path: str | None = None) -> str | None:
+    """Return the trailing inline comment for pass_name inside _SP_MULT_TABLE, or None."""
+    path = bot_path if bot_path is not None else _BOT_FILE
+    try:
+        with open(path) as fh:
+            content = fh.read()
+    except OSError:
+        return None
+    table_start = content.find("_SP_MULT_TABLE")
+    if table_start == -1:
+        return None
+    brace_open = content.find("{", table_start)
+    brace_close = content.find("}", brace_open)
+    if brace_open == -1 or brace_close == -1:
+        return None
+    block = content[brace_open : brace_close + 1]
+    pat = re.compile(
+        r'"' + re.escape(pass_name) + r'"\s*:\s*[\d.]+,\s*#\s*([^\n]+)'
+    )
+    m = pat.search(block)
+    return m.group(1).strip() if m else None
+
+
 def _list_passes() -> None:
     """Print available pass names and exit."""
     print("Available screener passes for calibration:")
@@ -1434,9 +1478,18 @@ if __name__ == "__main__":
         if not args.yes:
             current_val = _read_current_mult(args.reset_pass)
             val_str = f"{current_val:.2f}\u00d7" if current_val is not None else "unknown"
+            calib_date = _read_calib_date(args.reset_pass)
+            inline_comment = _read_inline_comment(args.reset_pass)
+            if calib_date:
+                calib_str = f"calibrated on {calib_date}"
+                if inline_comment:
+                    calib_str += f" — {inline_comment}"
+            else:
+                calib_str = "not yet calibrated (no calibration date on record)"
             print(
                 f"\nWARNING: You are about to reset '{args.reset_pass}' to 1.00\u00d7 baseline "
                 f"(current value: {val_str}).\n"
+                f"  Calibration info: {calib_str}\n"
                 f"This will overwrite calibration data in paper_trader_bot.py for this pass.\n"
                 f"The only recovery path is the .bak backup file.\n"
             )
