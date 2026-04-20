@@ -2232,6 +2232,8 @@ if __name__ == "__main__":
                      stdout=open("/tmp/paper_trader_bot.log", "a"), stderr=subprocess.STDOUT)
     subprocess.Popen(["python3", "kalshi_bot.py"], cwd="/home/runner/workspace",
                      stdout=open("/tmp/kalshi_bot.log", "a"), stderr=subprocess.STDOUT)
+    subprocess.Popen(["python3", "nightly_tiered_pnl_refresh.py"], cwd="/home/runner/workspace",
+                     stdout=open("/tmp/nightly_refresh.log", "a"), stderr=subprocess.STDOUT)
 
     threading.Thread(target=start_streamlit, daemon=True).start()
     threading.Thread(target=_refresh_db_cache, daemon=True, name="db-cache-refresher").start()
