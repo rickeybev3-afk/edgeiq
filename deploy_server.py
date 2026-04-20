@@ -2185,7 +2185,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             {
                 "key": "squeeze",
                 "label": "Squeeze",
-                "script": "calibrate_squeeze_mult.py",
+                "script": "calibrate_sp_mult.py",
+                "extra_args": "--pass squeeze",
                 "extra_filters": "",
             },
             {
@@ -2220,6 +2221,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "threshold": threshold,
                     "ready": False,
                     "script": s["script"],
+                    "extra_args": s.get("extra_args", ""),
                     "last_alerted_utc": last_alerted_utc,
                     "error": "Supabase not configured",
                 })
@@ -2267,6 +2269,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "threshold": threshold,
                     "ready": count >= threshold,
                     "script": s["script"],
+                    "extra_args": s.get("extra_args", ""),
                     "last_alerted_utc": last_alerted_utc,
                     "error": None,
                 })
@@ -2279,6 +2282,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "threshold": threshold,
                     "ready": False,
                     "script": s["script"],
+                    "extra_args": s.get("extra_args", ""),
                     "last_alerted_utc": last_alerted_utc,
                     "error": "Could not load calibration data.",
                 })

@@ -486,6 +486,7 @@ def _check_screener_calibration_due(
     script_name: str,
     min_trades: int | None = None,
     cooldown_hours: float = _DEFAULT_COOLDOWN_HOURS,
+    extra_args: str = "",
 ) -> None:
     """Alert when enough trades for *screener_key* have settled to warrant re-calibration.
 
@@ -637,6 +638,11 @@ def _check_screener_calibration_due(
     )
     _script_exists = os.path.isfile(_script_path)
 
+    # Build the full run command, including any extra args (e.g. --pass squeeze).
+    _run_cmd = " ".join(
+        p for p in ["python", script_name, extra_args.strip(), "--apply"] if p
+    )
+
     # Detect auto-generated stubs that still need manual completion before --apply.
     _is_stub = False
     if _script_exists:
@@ -659,7 +665,7 @@ def _check_screener_calibration_due(
                 f"(threshold: {min_trades}).\n\n"
                 f"\u26a0\ufe0f <b>{script_name} is an auto-generated stub.</b> "
                 f"Open it and complete the TODO section before running "
-                f"<code>python {script_name} --apply</code>."
+                f"<code>{_run_cmd}</code>."
             )
             log.warning(
                 "%s CALIBRATION DUE — %d settled %s trades found "
@@ -676,25 +682,25 @@ def _check_screener_calibration_due(
             plain_msg = (
                 f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
                 f"(threshold: {min_trades}). "
-                f"Run: python {script_name} --apply"
+                f"Run: {_run_cmd}"
             )
             html_msg = (
                 f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
                 f"{trade_count} settled {screener_key} trades found "
                 f"(threshold: {min_trades}).\n\n"
-                f"Run <code>python {script_name} --apply</code> to apply the recommended "
+                f"Run <code>{_run_cmd}</code> to apply the recommended "
                 f"multiplier automatically."
             )
             log.warning(
                 "%s CALIBRATION DUE — %d settled %s trades found "
                 "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
-                "Run: python %s --apply",
+                "Run: %s",
                 screener_key.upper(),
                 trade_count,
                 screener_key,
                 min_trades,
                 screener_key,
-                script_name,
+                _run_cmd,
             )
     else:
         plain_msg = (
@@ -844,9 +850,10 @@ def _check_squeeze_calibration_due() -> None:
     """
     _check_screener_calibration_due(
         "squeeze",
-        "calibrate_squeeze_mult.py",
+        "calibrate_sp_mult.py",
         _get_squeeze_calib_min_trades(),
         _get_calib_cooldown_hours("squeeze"),
+        extra_args="--pass squeeze",
     )
 
 
@@ -908,8 +915,11 @@ def _check_all_uncalibrated_screeners() -> None:
         return
 
     _per_key_script: dict[str, str] = {
-        "squeeze": "calibrate_squeeze_mult.py",
+        "squeeze": "calibrate_sp_mult.py",
         "gap_down": "calibrate_gap_down_mult.py",
+    }
+    _per_key_extra_args: dict[str, str] = {
+        "squeeze": "--pass squeeze",
     }
 
     _base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1102,7 +1112,10 @@ if __name__ == "__main__":
                 min_trades,
                 key.upper().replace("-", "_"),
             )
-        _check_screener_calibration_due(key, script, min_trades, cooldown)
+        _check_screener_calibration_due(
+            key, script, min_trades, cooldown,
+            extra_args=_per_key_extra_args.get(key, ""),
+        )
 
 
 # ── Email helper ─────────────────────────────────────────────────────────────
