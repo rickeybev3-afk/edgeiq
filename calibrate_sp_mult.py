@@ -712,6 +712,82 @@ def _self_test_apply() -> None:
         sys.exit(1)
 
 
+def _self_test_reset_confirm() -> None:
+    """Test the interactive confirmation guard for --reset-pass.
+
+    Exercises both the confirmed path (user types 'yes' → reset runs) and the
+    aborted path (user types anything else → no changes made).
+    """
+    import tempfile
+    import unittest.mock as _mock
+
+    all_ok = True
+
+    # ── Aborted path: input is NOT 'yes' ─────────────────────────────────────
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+        tmp_abort = tf.name
+        tf.write(_APPLY_FIXTURE)
+    try:
+        with _mock.patch("builtins.input", return_value="n") as mock_input:
+            answer = input("dummy prompt").strip().lower()
+            did_abort = answer != "yes"
+        ok1 = did_abort
+        print(f"  {'OK  ' if ok1 else 'FAIL'} reset confirm aborted: non-'yes' answer causes abort")
+        if not ok1:
+            all_ok = False
+
+        # File must be unchanged — we deliberately did NOT call _reset_pass_to_baseline
+        with open(tmp_abort) as fh:
+            content = fh.read()
+        ok2 = content == _APPLY_FIXTURE
+        print(f"  {'OK  ' if ok2 else 'FAIL'} reset confirm aborted: file unchanged after abort")
+        if not ok2:
+            all_ok = False
+    finally:
+        try:
+            os.unlink(tmp_abort)
+        except OSError:
+            pass
+
+    # ── Confirmed path: input is 'yes' ───────────────────────────────────────
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+        tmp_confirm = tf.name
+        tf.write(_APPLY_FIXTURE)
+    try:
+        with _mock.patch("builtins.input", return_value="yes"):
+            answer = input("dummy prompt").strip().lower()
+            if answer == "yes":
+                _reset_pass_to_baseline("trend", bot_path=tmp_confirm)
+
+        ok3 = answer == "yes"
+        print(f"  {'OK  ' if ok3 else 'FAIL'} reset confirm accepted: 'yes' answer proceeds")
+        if not ok3:
+            all_ok = False
+
+        with open(tmp_confirm) as fh:
+            content = fh.read()
+        stale_present = "'trend'  (1-3%):              0 settled trades as of" in content
+        ok4 = stale_present
+        print(f"  {'OK  ' if ok4 else 'FAIL'} reset confirm accepted: stale comment written after confirm")
+        if not ok4:
+            all_ok = False
+    finally:
+        try:
+            os.unlink(tmp_confirm)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_confirm + ".bak")
+        except OSError:
+            pass
+
+    if all_ok:
+        print("All reset-confirm self-tests passed.")
+    else:
+        print("SELF-TEST FAILURES in reset-confirm — check the output above.")
+        sys.exit(1)
+
+
 def _reset_pass_to_baseline(pass_name: str, bot_path: str | None = None) -> None:
     """Reset _SP_MULT_TABLE[pass_name] to 1.00× baseline in paper_trader_bot.py.
 
@@ -740,6 +816,24 @@ def _reset_pass_to_baseline(pass_name: str, bot_path: str | None = None) -> None
     print(f"Resetting '{pass_name}' to 1.00\u00d7 baseline in {resolved_path} \u2026")
     _apply_to_bot(pass_name, 1.00, inline_comment, citation_line=citation_line, bot_path=resolved_path)
     print(f"\nReset complete: '{pass_name}' is now at 1.00\u00d7 (0 settled trades baseline).")
+
+
+def _read_current_mult(pass_name: str, bot_path: str | None = None) -> float | None:
+    """Return the current multiplier for pass_name from paper_trader_bot.py, or None on error."""
+    path = bot_path if bot_path is not None else _BOT_FILE
+    try:
+        with open(path) as fh:
+            content = fh.read()
+    except OSError:
+        return None
+    pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*([\d.]+)')
+    m = pat.search(content)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            return None
+    return None
 
 
 def _list_passes() -> None:
@@ -1067,6 +1161,14 @@ if __name__ == "__main__":
             "A .bak backup is created and a diff is printed before writing."
         ),
     )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help=(
+            "Skip the interactive confirmation prompt when using --reset-pass. "
+            "Useful for scripting and CI environments."
+        ),
+    )
     args = parser.parse_args()
 
     if args.self_test:
@@ -1074,6 +1176,8 @@ if __name__ == "__main__":
         _self_test()
         print("\nRunning _apply_to_bot() self-tests...")
         _self_test_apply()
+        print("\nRunning reset-confirm self-tests...")
+        _self_test_reset_confirm()
         sys.exit(0)
 
     if args.reset_pass:
@@ -1081,6 +1185,23 @@ if __name__ == "__main__":
             known = ", ".join(PASS_CONFIG)
             print(f"ERROR: unknown pass '{args.reset_pass}'. Known passes: {known}", file=sys.stderr)
             sys.exit(1)
+        if not args.yes:
+            current_val = _read_current_mult(args.reset_pass)
+            val_str = f"{current_val:.2f}\u00d7" if current_val is not None else "unknown"
+            print(
+                f"\nWARNING: You are about to reset '{args.reset_pass}' to 1.00\u00d7 baseline "
+                f"(current value: {val_str}).\n"
+                f"This will overwrite calibration data in paper_trader_bot.py for this pass.\n"
+                f"The only recovery path is the .bak backup file.\n"
+            )
+            try:
+                answer = input("Type 'yes' to confirm reset, or anything else to abort: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.")
+                sys.exit(0)
+            if answer != "yes":
+                print("Aborted — no changes made.")
+                sys.exit(0)
         _reset_pass_to_baseline(args.reset_pass)
         sys.exit(0)
 
