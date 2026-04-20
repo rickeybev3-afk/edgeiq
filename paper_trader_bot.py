@@ -523,7 +523,12 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
 #   'other'  (< 3% daily change, same screener pool): 87% WR / +0.622R avg → 1.15×
 #   'gap'    (≥ 3% daily change):                      65% WR / +0.327R avg → 1.00×
 #   'trend'  (1-3% + above SMA20/50):                  only 12 trades       → 0.85×
-#   'squeeze' / unclassified:                           no backtest data     → 1.00×
+#   'squeeze':   0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               ≥30 trades settle. To calibrate: run
+#               `python calibrate_squeeze_mult.py` once 30+ squeeze rows have
+#               tiered_pnl_r populated in paper_trades. The script computes
+#               WR / avg-R, applies a sqrt-dampened ratio vs the 'gap' anchor,
+#               and prints the exact line to paste here with a data citation.
 #   'gap_down' (Bearish Break, ≥3% gap-down universe):  0 settled trades as of
 #              2026-04-20 — 1.00× baseline until ≥30 trades settle.
 #              To calibrate: run `python calibrate_gap_down_mult.py` once 30+
@@ -536,7 +541,7 @@ _SP_MULT_TABLE: dict[str, float] = {
     "other":    1.15,
     "gap":      1.00,
     "trend":    0.85,
-    "squeeze":  1.00,
+    "squeeze":  1.00,   # baseline; recalibrate with calibrate_squeeze_mult.py once ≥30 trades settle
     "gap_down": 1.00,   # Bearish Break universe — baseline; recalibrate with calibrate_gap_down_mult.py once ≥30 trades settle
 }
 
