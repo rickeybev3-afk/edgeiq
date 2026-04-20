@@ -3,8 +3,6 @@ calibrate_sp_mult.py
 --------------------
 Unified position-size multiplier calibration for any screener pass.
 
-Replaces per-pass calibration shims such as calibrate_squeeze_mult.py.
-
 Usage:
   python calibrate_sp_mult.py                      # list available passes
   python calibrate_sp_mult.py --pass squeeze        # calibrate the squeeze pass
