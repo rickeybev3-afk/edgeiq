@@ -10,6 +10,8 @@ Usage:
   python calibrate_sp_mult.py --pass squeeze --apply  # calibrate AND patch paper_trader_bot.py
   python calibrate_sp_mult.py --reset-pass trend    # reset trend back to 1.00x baseline
   python calibrate_sp_mult.py --restore-bak trend  # undo a reset by restoring the .bak backup
+  python calibrate_sp_mult.py --show-reset-log      # print a formatted table of all past resets
+  python calibrate_sp_mult.py --show-reset-log --pass trend  # filter reset history to one pass
   python calibrate_sp_mult.py --self-test           # run deterministic unit tests
 
 Methodology (mirrors the 5-year backtest used across passes):
@@ -1298,6 +1300,75 @@ def _write_reset_log(
         print(f"WARNING: could not write reset log {path} — {exc}", file=sys.stderr)
 
 
+def _show_reset_log(pass_filter: str | None = None) -> None:
+    """Print a formatted table of all past resets from calibration_resets.log.
+
+    Optionally filters to a specific pass when pass_filter is provided.
+    Handles a missing log file gracefully (no resets recorded yet).
+    """
+    if not os.path.exists(_RESET_LOG_FILE):
+        print("No reset history found (calibration_resets.log does not exist yet).")
+        return
+
+    with open(_RESET_LOG_FILE) as fh:
+        raw_lines = [ln.rstrip("\n") for ln in fh if ln.strip()]
+
+    rows: list[dict] = []
+    for ln in raw_lines:
+        parts = ln.split()
+        if not parts:
+            continue
+        timestamp = parts[0] if parts else ""
+        fields: dict[str, str] = {}
+        for token in parts[1:]:
+            if "=" in token:
+                k, _, v = token.partition("=")
+                fields[k] = v
+        rows.append({
+            "timestamp": timestamp,
+            "pass": fields.get("pass", ""),
+            "prev_mult": fields.get("prev_mult", ""),
+            "mode": fields.get("mode", ""),
+        })
+
+    if pass_filter:
+        rows = [r for r in rows if r["pass"] == pass_filter]
+
+    if not rows:
+        if pass_filter:
+            print(f"No resets recorded for pass '{pass_filter}'.")
+        else:
+            print("No resets recorded yet.")
+        return
+
+    col_ts = max(len("Timestamp"), max(len(r["timestamp"]) for r in rows))
+    col_pass = max(len("Pass"), max(len(r["pass"]) for r in rows))
+    col_prev = max(len("Prev Mult"), max(len(r["prev_mult"]) for r in rows))
+    col_mode = max(len("Mode"), max(len(r["mode"]) for r in rows))
+
+    sep = f"+-{'-'*col_ts}-+-{'-'*col_pass}-+-{'-'*col_prev}-+-{'-'*col_mode}-+"
+    header = (
+        f"| {'Timestamp':<{col_ts}} "
+        f"| {'Pass':<{col_pass}} "
+        f"| {'Prev Mult':<{col_prev}} "
+        f"| {'Mode':<{col_mode}} |"
+    )
+
+    label = f" (pass={pass_filter})" if pass_filter else ""
+    print(f"\nReset history{label}  [{len(rows)} entr{'y' if len(rows) == 1 else 'ies'}]\n")
+    print(sep)
+    print(header)
+    print(sep)
+    for r in rows:
+        print(
+            f"| {r['timestamp']:<{col_ts}} "
+            f"| {r['pass']:<{col_pass}} "
+            f"| {r['prev_mult']:<{col_prev}} "
+            f"| {r['mode']:<{col_mode}} |"
+        )
+    print(sep)
+
+
 def _apply_to_bot(
     pass_name: str,
     rec_mult: float,
@@ -1621,6 +1692,16 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--show-reset-log",
+        dest="show_reset_log",
+        action="store_true",
+        help=(
+            "Print a formatted table of all past resets from calibration_resets.log. "
+            "Combine with --pass to filter to a specific screener pass. "
+            "Exits after printing; does not run calibration."
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run deterministic unit tests on _recommend_mult() and exit.",
@@ -1642,6 +1723,15 @@ if __name__ == "__main__":
         ),
     )
     args = parser.parse_args()
+
+    if args.show_reset_log:
+        pass_filter = args.pass_name if args.pass_name else None
+        if pass_filter and pass_filter not in PASS_CONFIG:
+            known = ", ".join(PASS_CONFIG)
+            print(f"ERROR: unknown pass '{pass_filter}'. Known passes: {known}", file=sys.stderr)
+            sys.exit(1)
+        _show_reset_log(pass_filter=pass_filter)
+        sys.exit(0)
 
     if args.self_test:
         print("Running _recommend_mult() self-tests...")
