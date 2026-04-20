@@ -558,6 +558,39 @@ def _check_db_reachable() -> bool:
     except Exception:
         return False
 
+_DEFAULT_CALIB_THRESHOLD = 30
+
+
+def _resolve_calib_threshold(screener_key: str) -> int:
+    """Return the minimum-trades calibration threshold for *screener_key*.
+
+    Resolution order:
+      1. ``CALIB_MIN_TRADES_<SCREENER_KEY>`` env var (positive int required).
+      2. ``SQUEEZE_CALIB_MIN_TRADES`` env var for the *squeeze* screener only
+         (legacy alias kept for backward-compatibility).
+      3. The module-level default of 30.
+    """
+    upper = screener_key.upper().replace("-", "_")
+    env_key = f"CALIB_MIN_TRADES_{upper}"
+    raw = os.environ.get(env_key, "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    if screener_key == "squeeze":
+        legacy = os.environ.get("SQUEEZE_CALIB_MIN_TRADES", "").strip()
+        if legacy:
+            try:
+                v = int(legacy)
+                if v > 0:
+                    return v
+            except ValueError:
+                pass
+    return _DEFAULT_CALIB_THRESHOLD
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -2140,30 +2173,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ]
           }
         """
-        _DEFAULT_THRESHOLD = 30
-
-        def _resolve_threshold(screener_key: str) -> int:
-            upper = screener_key.upper().replace("-", "_")
-            env_key = f"CALIB_MIN_TRADES_{upper}"
-            raw = os.environ.get(env_key, "").strip()
-            if raw:
-                try:
-                    v = int(raw)
-                    if v > 0:
-                        return v
-                except ValueError:
-                    pass
-            if screener_key == "squeeze":
-                legacy = os.environ.get("SQUEEZE_CALIB_MIN_TRADES", "").strip()
-                if legacy:
-                    try:
-                        v = int(legacy)
-                        if v > 0:
-                            return v
-                    except ValueError:
-                        pass
-            return _DEFAULT_THRESHOLD
-
         supabase_url = os.environ.get("SUPABASE_URL", "").strip()
         supabase_key = (
             os.environ.get("SUPABASE_KEY") or
@@ -2201,7 +2210,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         results = []
         for s in SCREENERS:
-            threshold = _resolve_threshold(s["key"])
+            threshold = _resolve_calib_threshold(s["key"])
             last_alerted_utc = _read_last_alerted(s["key"])
             if not supabase_url or not supabase_key:
                 results.append({
@@ -2295,15 +2304,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         Response:
           {"count": int, "threshold": int, "ready": bool, "error": null|str}
         """
-        _raw_threshold = os.environ.get("CALIB_MIN_TRADES_GAP_DOWN", "").strip()
-        THRESHOLD = 30
-        if _raw_threshold:
-            try:
-                _v = int(_raw_threshold)
-                if _v > 0:
-                    THRESHOLD = _v
-            except ValueError:
-                pass
+        THRESHOLD = _resolve_calib_threshold("gap_down")
         supabase_url = os.environ.get("SUPABASE_URL", "").strip()
         supabase_key = (
             os.environ.get("SUPABASE_KEY") or
