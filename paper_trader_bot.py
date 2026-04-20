@@ -271,13 +271,10 @@ MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", _default_po
 PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
 # Cooldown between repeated PDT floor warnings (seconds) — default 4 hours
 PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
-# Hard order-placement cutoffs (ET wall-clock minutes past midnight).
-# Orders placed after these times are based on stale IB structure data and
-# have historically poor fill rates, so we skip them on late restarts.
-# Morning scan: IB window closes at 10:30 AM; allow 2 hours → cutoff 12:30 PM.
-# Intraday scan: scan fires at 2:00 PM; allow 45 min → cutoff 2:45 PM.
-ORDER_CUTOFF_MORNING_MIN  = int(os.getenv("ORDER_CUTOFF_MORNING_MIN",  "750"))  # 12:30 PM = 750 min
-ORDER_CUTOFF_INTRADAY_MIN = int(os.getenv("ORDER_CUTOFF_INTRADAY_MIN", "885"))  # 2:45 PM = 885 min
+# Stale-entry guard threshold (live mode only): if the current 5-min bar close
+# is already this many % past the entry price, skip placing the bracket because
+# the setup has likely already triggered and we'd be chasing.
+ENTRY_ALREADY_TRIGGERED_PCT = float(os.getenv("ENTRY_ALREADY_TRIGGERED_PCT", "1.5"))
 # Tracks the date a PDT-block Telegram alert was last sent — prevents N duplicate
 # alerts when N setups all hit the same block in one scan session.
 _PDT_BLOCK_ALERTED_DATE: "date | None" = None
@@ -983,32 +980,37 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         _patch_skip_reason(r, _ticker_raw, "bearish_break_filtered")
         return
 
-    # ── Time cutoff guard (LIVE mode only) ───────────────────────────────────
-    # Paper mode places all setups regardless of time — fills are simulated so
-    # stale IB data in a catch-up scan is harmless.
-    # Live mode: if the bot crashes and restarts mid-session, refuse to fire
-    # entries based on a stale 10:30 AM IB picture from hours ago.
+    # ── Stale-entry guard (LIVE mode only) ───────────────────────────────────
+    # If the bot restarts mid-session and runs a catch-up scan, the entry price
+    # may have already been blown past — a buy stop at $21.65 would fill
+    # immediately at market (~$23) if price is already way above it.
+    # Guard: fetch current price and skip if it's already > entry * 1.5% (for
+    # Bullish Break) or < entry * 0.985 (for Bearish Break), i.e. entry already
+    # clearly triggered.  Paper mode skips this — simulated fills are fine.
     if not IS_PAPER_ALPACA:
-        _scan_type_tg = (r.get("scan_type") or scan_label or "").lower()
-        _now_et_order = datetime.now(EASTERN)
-        _now_min      = _now_et_order.hour * 60 + _now_et_order.minute
-        if _scan_type_tg == "morning" and _now_min > ORDER_CUTOFF_MORNING_MIN:
-            _cutoff_str = f"{ORDER_CUTOFF_MORNING_MIN // 60}:{ORDER_CUTOFF_MORNING_MIN % 60:02d}"
-            log.warning(
-                f"  [{_ticker_raw}] ⏰ LIVE ORDER BLOCKED — past morning cutoff {_cutoff_str} ET "
-                f"(now {_now_et_order.strftime('%H:%M')} ET). "
-                f"IB data stale from catch-up restart; skipping to protect real capital."
-            )
-            _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
-            return
-        if _scan_type_tg == "intraday" and _now_min > ORDER_CUTOFF_INTRADAY_MIN:
-            _cutoff_str = f"{ORDER_CUTOFF_INTRADAY_MIN // 60}:{ORDER_CUTOFF_INTRADAY_MIN % 60:02d}"
-            log.warning(
-                f"  [{_ticker_raw}] ⏰ LIVE ORDER BLOCKED — past intraday cutoff {_cutoff_str} ET "
-                f"(now {_now_et_order.strftime('%H:%M')} ET). Skipping."
-            )
-            _patch_skip_reason(r, _ticker_raw, "past_order_cutoff")
-            return
+        _entry_price_guard = float(r.get("entry_price_sim") or 0)
+        if _entry_price_guard > 0:
+            _cur_prices = _alpaca_get_5min_bar_close([_ticker_raw])
+            _cur_px     = _cur_prices.get(_ticker_raw.upper())
+            if _cur_px is not None:
+                _direction_guard = r.get("predicted", "")
+                _pct_thresh = ENTRY_ALREADY_TRIGGERED_PCT / 100.0
+                if _direction_guard == "Bullish Break" and _cur_px > _entry_price_guard * (1 + _pct_thresh):
+                    log.warning(
+                        f"  [{_ticker_raw}] ⛔ LIVE ORDER BLOCKED — price ${_cur_px:.2f} already "
+                        f"{(_cur_px/_entry_price_guard - 1)*100:.1f}% above entry ${_entry_price_guard:.2f}. "
+                        f"Setup already triggered; skipping to avoid chasing."
+                    )
+                    _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
+                    return
+                if _direction_guard == "Bearish Break" and _cur_px < _entry_price_guard * (1 - _pct_thresh):
+                    log.warning(
+                        f"  [{_ticker_raw}] ⛔ LIVE ORDER BLOCKED — price ${_cur_px:.2f} already "
+                        f"{(1 - _cur_px/_entry_price_guard)*100:.1f}% below entry ${_entry_price_guard:.2f}. "
+                        f"Setup already triggered; skipping."
+                    )
+                    _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
+                    return
 
     # ── Morning TCS floor ─────────────────────────────────────────────────────
     # 5-yr data: Morning TCS<60 → net negative expectancy across all structures.
