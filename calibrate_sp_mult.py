@@ -924,6 +924,67 @@ def _self_test_apply() -> None:
         sys.exit(1)
 
 
+def _self_test_reset_log() -> None:
+    """Verify that _write_reset_log() appends a correctly formatted entry."""
+    import tempfile
+
+    all_ok = True
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as tf:
+        tmp = tf.name
+
+    try:
+        _write_reset_log("trend", 0.85, False, log_path=tmp)
+        with open(tmp) as fh:
+            lines = fh.readlines()
+
+        ok_count = len(lines) == 1
+        print(f"  {'OK  ' if ok_count else 'FAIL'} reset log: exactly one line written (got {len(lines)})")
+        if not ok_count:
+            all_ok = False
+
+        if lines:
+            entry = lines[0]
+            ok_pass = "pass=trend" in entry
+            ok_prev = "prev_mult=0.85" in entry
+            ok_mode = "mode=interactive" in entry
+            import re as _re
+            ok_ts = bool(_re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", entry))
+            print(f"  {'OK  ' if ok_pass else 'FAIL'} reset log: pass name present")
+            print(f"  {'OK  ' if ok_prev else 'FAIL'} reset log: prev_mult present")
+            print(f"  {'OK  ' if ok_mode else 'FAIL'} reset log: mode=interactive for used_yes=False")
+            print(f"  {'OK  ' if ok_ts else 'FAIL'} reset log: ISO timestamp present")
+            if not (ok_pass and ok_prev and ok_mode and ok_ts):
+                all_ok = False
+
+        _write_reset_log("gap", 1.10, True, log_path=tmp)
+        with open(tmp) as fh:
+            lines2 = fh.readlines()
+
+        ok_append = len(lines2) == 2
+        print(f"  {'OK  ' if ok_append else 'FAIL'} reset log: second entry appended (total lines={len(lines2)})")
+        if not ok_append:
+            all_ok = False
+        if len(lines2) >= 2:
+            ok_ci = "mode=CI/--yes" in lines2[1]
+            ok_gap = "pass=gap" in lines2[1]
+            print(f"  {'OK  ' if ok_gap else 'FAIL'} reset log: second entry has correct pass name")
+            print(f"  {'OK  ' if ok_ci else 'FAIL'} reset log: mode=CI/--yes for used_yes=True")
+            if not (ok_gap and ok_ci):
+                all_ok = False
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+    if all_ok:
+        print("All reset-log self-tests passed.")
+    else:
+        print("SELF-TEST FAILURES in reset-log — check the output above.")
+        sys.exit(1)
+
+
 def _self_test_reset_confirm() -> None:
     """Test the interactive confirmation guard for --reset-pass.
 
@@ -1208,6 +1269,33 @@ def _list_passes() -> None:
 
 
 _BOT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py")
+_RESET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_resets.log")
+
+
+def _write_reset_log(
+    pass_name: str,
+    prev_mult: float | None,
+    used_yes: bool,
+    log_path: str | None = None,
+) -> None:
+    """Append one line to calibration_resets.log recording this reset event.
+
+    Format (one entry per line, ISO timestamps):
+        2026-04-20T14:32:01+00:00  pass=trend  prev_mult=0.85  mode=interactive
+    """
+    import datetime as _dt
+
+    path = log_path if log_path is not None else _RESET_LOG_FILE
+    prev_str = f"{prev_mult:.2f}" if prev_mult is not None else "unknown"
+    mode_str = "CI/--yes" if used_yes else "interactive"
+    timestamp = _dt.datetime.now(tz=_dt.timezone.utc).isoformat(timespec="seconds")
+    line = f"{timestamp}  pass={pass_name}  prev_mult={prev_str}  mode={mode_str}\n"
+    try:
+        with open(path, "a") as fh:
+            fh.write(line)
+        print(f"Reset logged → {path}")
+    except OSError as exc:
+        print(f"WARNING: could not write reset log {path} — {exc}", file=sys.stderr)
 
 
 def _apply_to_bot(
@@ -1560,6 +1648,8 @@ if __name__ == "__main__":
         _self_test()
         print("\nRunning _apply_to_bot() self-tests...")
         _self_test_apply()
+        print("\nRunning reset-log self-tests...")
+        _self_test_reset_log()
         print("\nRunning reset-confirm self-tests...")
         _self_test_reset_confirm()
         sys.exit(0)
@@ -1569,9 +1659,9 @@ if __name__ == "__main__":
             known = ", ".join(PASS_CONFIG)
             print(f"ERROR: unknown pass '{args.reset_pass}'. Known passes: {known}", file=sys.stderr)
             sys.exit(1)
+        prev_mult = _read_current_mult(args.reset_pass)
         if not args.yes:
-            current_val = _read_current_mult(args.reset_pass)
-            val_str = f"{current_val:.2f}\u00d7" if current_val is not None else "unknown"
+            val_str = f"{prev_mult:.2f}\u00d7" if prev_mult is not None else "unknown"
             calib_date = _read_calib_date(args.reset_pass)
             inline_comment = _read_inline_comment(args.reset_pass)
             if calib_date:
@@ -1596,6 +1686,7 @@ if __name__ == "__main__":
                 print("Aborted — no changes made.")
                 sys.exit(0)
         _reset_pass_to_baseline(args.reset_pass)
+        _write_reset_log(args.reset_pass, prev_mult, args.yes)
         sys.exit(0)
 
     if args.preview_bak:
