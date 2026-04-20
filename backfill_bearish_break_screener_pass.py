@@ -1,6 +1,17 @@
 """
 backfill_bearish_break_screener_pass.py
 ───────────────────────────────────────
+ONE-TIME HISTORICAL MIGRATION — no longer needed for new trades.
+
+As of 2026-04-20, paper_trader_bot.py automatically stamps
+screener_pass = 'gap_down' on every new Bearish Break order at placement
+time, so future settled trades are immediately visible to
+calibrate_sp_mult.py --pass gap_down without any backfill.
+
+This script exists solely to retroactively tag pre-migration rows (those
+placed before the auto-tagging was added).  Run it once to bring historical
+data in line, then it can be archived.
+
 Backfills screener_pass = 'gap_down' on paper_trades rows where:
   - predicted = 'Bearish Break'
   - screener_pass IS NULL  OR  screener_pass != 'gap_down'

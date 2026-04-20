@@ -1364,6 +1364,13 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         if _supabase_client:
             try:
                 _sp = _TICKER_SCREENER_PASS.get(ticker) or _TICKER_SCREENER_PASS.get(ticker.upper())
+                # Bearish Break orders are gated exclusively to the gap_down screener
+                # universe (enforced earlier in _place_order_for_setup).  Stamp
+                # 'gap_down' unconditionally so settled BB trades are immediately
+                # visible to calibrate_sp_mult.py --pass gap_down without requiring
+                # a manual backfill run.
+                if direction == "Bearish Break":
+                    _sp = "gap_down"
                 _order_patch = {
                     "alpaca_order_id":  order_id,
                     "alpaca_qty":       qty,
