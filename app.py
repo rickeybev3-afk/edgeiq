@@ -571,6 +571,10 @@ _BACKFILL_START_TIME      = "/tmp/backfill_pipeline.start_time"
 _BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
 _BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
 _BACKFILL_RUN_HISTORY     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backfill_run_history.log")
+_BACKFILL_RUN_HISTORY_MAX_BYTES  = 100 * 1024  # rotate at 100 KB
+_BACKFILL_RUN_HISTORY_BACKUP_COUNT = 1          # keep one .1 backup
+_BACKFILL_LOG_MAX_BYTES          = 500 * 1024  # rotate pipeline log at 500 KB
+_BACKFILL_LOG_BACKUP_COUNT       = 1           # keep one .1 backup
 _NR_FINISH_FILE           = "/tmp/nightly_refresh.finish_time"
 _FILTER_PRESETS_FILE      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_log_filter_presets.json")
 # Sentinel written by _backfill_pipeline_thread on success so that the next
@@ -585,6 +589,44 @@ _BACKFILL_LOCK: threading.Lock = threading.Lock()
 # Cancel flag: set this event to request a graceful stop after the current
 # subprocess finishes its current batch iteration.
 _BACKFILL_CANCEL: threading.Event = threading.Event()
+
+
+def _rotate_log(path: str, max_bytes: int, backup_count: int = 1) -> None:
+    """Roll over *path* when it exceeds *max_bytes*.
+
+    Keeps *backup_count* rotated files (e.g. foo.log.1, foo.log.2 …).
+    Older backups beyond that count are deleted automatically.
+    A warning is printed to stderr if the rename fails so no data is
+    silently lost.
+    """
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) < max_bytes:
+            return
+        for idx in range(backup_count, 0, -1):
+            src = f"{path}.{idx}"
+            dst = f"{path}.{idx + 1}" if idx < backup_count else None
+            if dst is not None and os.path.exists(src):
+                try:
+                    os.remove(dst)
+                except OSError:
+                    pass
+                os.rename(src, dst)
+            elif dst is None and os.path.exists(src):
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+        backup = f"{path}.1"
+        try:
+            if os.path.exists(backup):
+                os.remove(backup)
+            os.rename(path, backup)
+        except OSError as exc:
+            import sys as _sys
+            print(f"WARNING: could not rotate log {path} — {exc}", file=_sys.stderr)
+    except OSError as exc:
+        import sys as _sys
+        print(f"WARNING: could not check log size {path} — {exc}", file=_sys.stderr)
 
 
 def _load_filter_presets() -> dict:
@@ -729,6 +771,7 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
                     _hist_elapsed = max(0.0, _now_ts - float(_hst_f.read().strip()))
             if _hist_elapsed is not None:
                 _hist_iso = _datetime_mod.datetime.utcfromtimestamp(_now_ts).strftime("%Y-%m-%dT%H:%M:%SZ")
+                _rotate_log(_BACKFILL_RUN_HISTORY, _BACKFILL_RUN_HISTORY_MAX_BYTES, _BACKFILL_RUN_HISTORY_BACKUP_COUNT)
                 with open(_BACKFILL_RUN_HISTORY, "a") as _hf:
                     _hf.write(f"{_hist_iso}\t{int(_hist_elapsed)}\n")
         except Exception:
@@ -744,6 +787,7 @@ def _backfill_pipeline_thread(start_date: str | None = None, end_date: str | Non
             pass
     except Exception as _exc:
         try:
+            _rotate_log(_BACKFILL_LOG, _BACKFILL_LOG_MAX_BYTES, _BACKFILL_LOG_BACKUP_COUNT)
             with open(_BACKFILL_LOG, "a") as lf:
                 lf.write(f"\n[FATAL ERROR: {_exc}]\n")
         except Exception:
