@@ -13,7 +13,7 @@ import logging
 import requests
 from collections import deque
 from calib_threshold import resolve_calib_threshold
-from log_utils import _rotate_log
+from log_utils import _rotate_log, _parse_int_env
 try:
     import streamlit as st
     _ST_AVAILABLE = True
@@ -1100,8 +1100,8 @@ WEIGHTS_FILE      = "brain_weights.json"            # ⛔ READ-ONLY — live per
 HIST_WEIGHTS_FILE    = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
 TCS_THRESHOLDS_FILE  = "tcs_thresholds.json"          # per-structure TCS cutoffs saved after nightly recalibration
 TCS_THRESHOLD_HISTORY_FILE = "tcs_threshold_history.jsonl"  # append-only history log (one JSON record per line)
-_TCS_HISTORY_MAX_BYTES  = 500 * 1024   # rotate at 500 KB
-_TCS_HISTORY_BACKUP_COUNT = 1           # keep one .1 backup
+_TCS_HISTORY_MAX_BYTES  = _parse_int_env("TCS_HISTORY_MAX_BYTES", 500 * 1024)    # rotate at 500 KB; override via env var
+_TCS_HISTORY_BACKUP_COUNT = _parse_int_env("TCS_HISTORY_BACKUP_COUNT", 1)         # keep one .1 backup; override via env var
 
 
 

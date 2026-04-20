@@ -50,7 +50,7 @@ except ImportError as exc:
     print(f"ERROR: could not import supabase from backend.py — {exc}", file=sys.stderr)
     sys.exit(1)
 
-from log_utils import _rotate_log
+from log_utils import _rotate_log, _parse_int_env
 
 if not supabase:
     print("ERROR: Supabase client is not initialised. Check SUPABASE_URL / SUPABASE_KEY.", file=sys.stderr)
@@ -1567,8 +1567,8 @@ def _list_passes() -> None:
 
 _BOT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py")
 _RESET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_resets.log")
-_RESET_LOG_MAX_BYTES = 100 * 1024
-_RESET_LOG_BACKUP_COUNT = 1
+_RESET_LOG_MAX_BYTES = _parse_int_env("RESET_LOG_MAX_BYTES", 100 * 1024)
+_RESET_LOG_BACKUP_COUNT = _parse_int_env("RESET_LOG_BACKUP_COUNT", 1)
 
 
 

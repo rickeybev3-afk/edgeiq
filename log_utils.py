@@ -8,6 +8,19 @@ import os
 import sys
 
 
+def _parse_int_env(name: str, default: int) -> int:
+    """Read *name* from the environment as a positive integer.
+
+    Returns *default* when the variable is absent, empty, non-numeric, or <= 0,
+    so a misconfigured env var can never crash the process at import time.
+    """
+    try:
+        val = int(os.environ.get(name, default))
+        return val if val > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
 def _rotate_log(path: str, max_bytes: int, backup_count: int = 1) -> None:
     """Roll over *path* when it exceeds *max_bytes*.
 
