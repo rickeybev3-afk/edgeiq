@@ -32376,7 +32376,38 @@ function _bqCopyShareLink() {
                 import paper_trader_bot as _ptb_mod
                 _SP_MULT_LIVE = dict(_ptb_mod._SP_MULT_TABLE)
             except Exception:
+                _ptb_mod = None  # type: ignore[assignment]
                 _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00, "gap_down": 1.00}
+
+            def _read_sp_calib_date(_pass: str) -> "str | None":
+                """Extract last calibration date from the _SP_MULT_TABLE inline comment.
+
+                Handles two comment formats written by calibrate_sp_mult.py:
+                  • Baseline / manual:  calibrated YYYY-MM-DD
+                  • Post---apply:       N trades YYYY-MM-DD → YYYY-MM-DD, WR% WR / ...
+                    (the trailing date is the most-recent trade date, used as the run date)
+                """
+                try:
+                    import re as _re2, inspect as _insp2
+                    _src = _insp2.getsource(_ptb_mod)
+                    # Find the table entry line for this pass
+                    _line_m = _re2.search(
+                        r'"' + _re2.escape(_pass) + r'"[^#\n]+#([^\n]+)',
+                        _src,
+                    )
+                    if not _line_m:
+                        return None
+                    _comment = _line_m.group(1)
+                    # Format 1: "... calibrated YYYY-MM-DD ..."
+                    _m1 = _re2.search(r'calibrated\s+(\d{4}-\d{2}-\d{2})', _comment)
+                    if _m1:
+                        return _m1.group(1)
+                    # Format 2: "... N trades DATE → DATE, WR% WR ..." — take last date
+                    _dates = _re2.findall(r'(\d{4}-\d{2}-\d{2})', _comment)
+                    return _dates[-1] if _dates else None
+                except Exception:
+                    return None
+
             # Calibration metadata: "backtest" passes are calibrated from 5-yr historical data;
             # "live" passes need MIN_TRADES settled paper trades before proper calibration.
             _SP_CALIB_MIN = 30
@@ -32395,19 +32426,19 @@ function _bqCopyShareLink() {
                     "type": "live",
                     "label": None,
                     "detail": "Trend pass (1–3% change, above SMA20 & SMA50) · conservative 0.85× baseline from small backtest sample (n=12) · recalibrate once ≥30 live trades settle",
-                    "last_check": None,
+                    "last_check": _read_sp_calib_date("trend"),
                 },
                 "gap_down": {
                     "type": "live",
                     "label": None,  # filled in dynamically with progress
                     "detail": "Bearish Break (≥3% gap-down) · baseline 1.00× until ≥30 live trades settle",
-                    "last_check": "2026-04-20",
+                    "last_check": _read_sp_calib_date("gap_down"),
                 },
                 "squeeze":  {
                     "type": "live",
                     "label": None,
                     "detail": "Squeeze pass · baseline 1.00× until ≥30 live trades settle",
-                    "last_check": None,
+                    "last_check": _read_sp_calib_date("squeeze"),
                 },
             }
             _sp_live_rows = []
