@@ -426,6 +426,16 @@ class TestThresholdRelationships(unittest.TestCase):
     def test_thresholds_are_not_equal(self):
         self.assertNotEqual(_TCS_HISTORY_MAX_BYTES, _BACKFILL_RUN_HISTORY_MAX_BYTES)
 
+    def test_backfill_log_threshold_is_larger_than_run_history_threshold(self):
+        self.assertGreater(
+            _BACKFILL_LOG_MAX_BYTES,
+            _BACKFILL_RUN_HISTORY_MAX_BYTES,
+            "backfill log (500 KB) must be a larger threshold than backfill run history (100 KB)",
+        )
+
+    def test_backfill_log_and_run_history_thresholds_are_not_equal(self):
+        self.assertNotEqual(_BACKFILL_LOG_MAX_BYTES, _BACKFILL_RUN_HISTORY_MAX_BYTES)
+
     def test_rotation_at_backfill_threshold_does_not_rotate_tcs_size(self):
         """A file exactly at the backfill threshold must not rotate if TCS threshold is used."""
         with tempfile.TemporaryDirectory() as td:
