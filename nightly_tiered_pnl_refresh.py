@@ -618,21 +618,19 @@ def _check_screener_calibration_due(
     plain_msg = (
         f"{screener_key} calibration due — {trade_count} settled {screener_key} trades found "
         f"(threshold: {min_trades}). "
-        f"Run: python {script_name}"
+        f"Run: python {script_name} --apply"
     )
     html_msg = (
         f"\U0001f4ca <b>{screener_key} calibration due</b>\n\n"
         f"{trade_count} settled {screener_key} trades found "
         f"(threshold: {min_trades}).\n\n"
-        f"Run <code>python {script_name}</code> to compute the recommended "
-        f"multiplier and paste it into <code>paper_trader_bot.py</code>.\n\n"
-        f"<i>_SP_MULT_TABLE['{screener_key}'] is currently 1.00\u00d7 (baseline — "
-        f"no automatic edits are made).</i>"
+        f"Run <code>python {script_name} --apply</code> to apply the recommended "
+        f"multiplier automatically."
     )
     log.warning(
         "%s CALIBRATION DUE — %d settled %s trades found "
         "(>= %d threshold, _SP_MULT_TABLE['%s'] still 1.00). "
-        "Run: python %s",
+        "Run: python %s --apply",
         screener_key.upper(),
         trade_count,
         screener_key,
