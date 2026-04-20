@@ -862,6 +862,59 @@ def _check_all_uncalibrated_screeners() -> None:
             ", ".join(_missing_scripts),
         )
 
+        # ── Send Slack + Telegram alert (at most once per day) ────────────────
+        _missing_script_state_file = os.path.join(
+            _base_dir,
+            ".edgeiq_missing_calib_script_alert.json",
+        )
+        _now_utc = datetime.datetime.now(datetime.timezone.utc)
+        _send_missing_alert = True
+        try:
+            with open(_missing_script_state_file) as _msf:
+                _ms_state = json.load(_msf)
+            _last_sent_iso = _ms_state.get("last_sent_utc", "")
+            if _last_sent_iso:
+                _last_sent_dt = datetime.datetime.fromisoformat(_last_sent_iso)
+                if _last_sent_dt.tzinfo is None:
+                    _last_sent_dt = _last_sent_dt.replace(tzinfo=datetime.timezone.utc)
+                _hours_since = (_now_utc - _last_sent_dt).total_seconds() / 3600
+                if _hours_since < _DEFAULT_COOLDOWN_HOURS:
+                    log.info(
+                        "Missing-calibration-script alert suppressed — sent %.1f h ago "
+                        "(cooldown: %.0f h).",
+                        _hours_since,
+                        _DEFAULT_COOLDOWN_HOURS,
+                    )
+                    _send_missing_alert = False
+        except FileNotFoundError:
+            pass
+        except Exception as _ms_err:
+            log.warning("Could not read missing-script alert state file: %s", _ms_err)
+
+        if _send_missing_alert:
+            _bullet_list = "\n".join(f"  • {s}" for s in _missing_scripts)
+            _plain_msg = (
+                "⚠️ Missing calibration script(s) detected.\n"
+                "The following 1.00× screener(s) have no calibration script on disk:\n"
+                f"{_bullet_list}\n"
+                "Create the corresponding calibrate_<key>_mult.py file(s) before running calibration."
+            )
+            import html as _html_mod
+            _html_msg = (
+                "⚠️ <b>Missing calibration script(s) detected.</b>\n"
+                "The following 1.00× screener(s) have no calibration script on disk:\n"
+                + "\n".join(f"  • <code>{_html_mod.escape(s)}</code>" for s in _missing_scripts)
+                + "\nCreate the corresponding <code>calibrate_&lt;key&gt;_mult.py</code> "
+                "file(s) before running calibration."
+            )
+            _send_slack(_plain_msg)
+            _send_telegram(_html_msg)
+            try:
+                with open(_missing_script_state_file, "w") as _msf:
+                    json.dump({"last_sent_utc": _now_utc.isoformat()}, _msf)
+            except Exception as _ms_err:
+                log.warning("Could not write missing-script alert state file: %s", _ms_err)
+
     for key, mult in sp_table.items():
         if abs(mult - 1.00) > 0.001:
             continue
