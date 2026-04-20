@@ -731,11 +731,13 @@ def _get_calib_cooldown_hours(screener_key: str) -> int:
     """Return the calibration cooldown (hours) for *screener_key*.
 
     Resolution order:
-      1. ``CALIB_COOLDOWN_HOURS_<SCREENER_KEY>`` env var (upper-cased key)
-      2. ``_DEFAULT_CALIB_COOLDOWN_HOURS`` (23)
+      1. ``CALIB_COOLDOWN_HOURS_<SCREENER_KEY>`` env var (upper-cased key,
+         e.g. ``CALIB_COOLDOWN_HOURS_SQUEEZE``)
+      2. ``CALIB_COOLDOWN_HOURS`` global env var (applies to all screeners)
+      3. ``_DEFAULT_CALIB_COOLDOWN_HOURS`` (23)
 
     Invalid (non-positive-integer) values are skipped with a warning and the
-    default is used.
+    next level in the resolution order is tried.
     """
     env_key = f"CALIB_COOLDOWN_HOURS_{screener_key.upper().replace('-', '_')}"
     raw = os.getenv(env_key, "").strip()
@@ -747,11 +749,25 @@ def _get_calib_cooldown_hours(screener_key: str) -> int:
         except ValueError:
             pass
         log.warning(
-            "%s='%s' is not a valid positive integer; using default %d h.",
+            "%s='%s' is not a valid positive integer; falling back to global/default.",
             env_key,
             raw,
+        )
+
+    global_raw = os.getenv("CALIB_COOLDOWN_HOURS", "").strip()
+    if global_raw:
+        try:
+            v = int(global_raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+        log.warning(
+            "CALIB_COOLDOWN_HOURS='%s' is not a valid positive integer; using default %d h.",
+            global_raw,
             _DEFAULT_CALIB_COOLDOWN_HOURS,
         )
+
     return _DEFAULT_CALIB_COOLDOWN_HOURS
 
 
