@@ -140,7 +140,6 @@ class TestInvalidValues:
 # threshold field for each screener key reflects the env-var override.
 # ---------------------------------------------------------------------------
 
-import io
 import json
 import types as _types
 import deploy_server as _deploy_server
@@ -268,6 +267,14 @@ class TestDeployServerCallSite:
             monkeypatch, {"CALIB_MIN_TRADES_SQUEEZE": "not-a-number"}
         )
         assert _thresholds_by_key(resp)["squeeze"] == 30
+
+    def test_squeeze_threshold_42_propagates_to_json(self, monkeypatch):
+        """Canonical spec case: CALIB_MIN_TRADES_SQUEEZE=42 → threshold field equals 42."""
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+        resp = _call_screener_calibration(
+            monkeypatch, {"CALIB_MIN_TRADES_SQUEEZE": "42"}
+        )
+        assert _thresholds_by_key(resp)["squeeze"] == 42
 
 
 # ---------------------------------------------------------------------------
