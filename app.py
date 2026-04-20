@@ -10374,10 +10374,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
             ",".join(_wl_loaded) if _wl_loaded else _BT_DEFAULT_TICKERS
         )
     _bt_default_val = st.session_state["_bt_wl_default_initialized"]
-    _bt_tickers_raw = st.text_area(
-        "Simulation Tickers", value=_bt_default_val,
-        height=68, key="bt_tickers_input", label_visibility="collapsed",
-    )
+    _bt_wl_col, _bt_wl_btn_col = st.columns([6, 1])
+    with _bt_wl_col:
+        _bt_tickers_raw = st.text_area(
+            "Simulation Tickers", value=_bt_default_val,
+            height=68, key="bt_tickers_input", label_visibility="collapsed",
+        )
+    with _bt_wl_btn_col:
+        st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Load\nWatchlist", key="_bt_reload_wl", use_container_width=True,
+                     help="Reload today's Finviz watchlist (~100 tickers) into the ticker box"):
+            _cached_load_watchlist.clear()
+            for _k in ("_bt_wl_default_initialized", "bt_tickers_input"):
+                st.session_state.pop(_k, None)
+            st.rerun()
 
     _bt_adv_cols = st.columns([2, 2, 1])
     with _bt_adv_cols[0]:
