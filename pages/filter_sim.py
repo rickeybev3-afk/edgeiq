@@ -626,17 +626,24 @@ _data_min = datetime.strptime(_all_sim_dates[0],  "%Y-%m-%d").date() if _all_sim
 _data_max = datetime.strptime(_all_sim_dates[-1], "%Y-%m-%d").date() if _all_sim_dates else datetime.today().date()
 
 # ── Auto-compute avg qualifying signals per trading day from current filter set ─
+# Only count weekdays (Mon–Fri) to exclude any weekend artefacts in sim_date
 _fs_day_counts: dict = {}
 for _r in final:
     _d = (_r.get("sim_date") or "")[:10]
     if _d:
+        try:
+            _dow = datetime.strptime(_d, "%Y-%m-%d").weekday()  # 0=Mon … 6=Sun
+        except Exception:
+            continue
+        if _dow >= 5:  # skip Saturday (5) and Sunday (6)
+            continue
         _fs_day_counts[_d] = _fs_day_counts.get(_d, 0) + 1
 _avg_tpd_auto = max(1, round(sum(_fs_day_counts.values()) / len(_fs_day_counts))) if _fs_day_counts else 20
 
 # Seed/reset to the computed default.
 # Use a one-time migration flag so legacy sessions (stuck at 20) get updated
 # on their first visit after this change.  After that, user overrides are kept.
-_tpd_init_key = "_fs_tpd_auto_v2"
+_tpd_init_key = "_fs_tpd_auto_v3"
 if not st.session_state.get(_tpd_init_key):
     st.session_state["fs_pnl_max_per_day"] = _avg_tpd_auto
     st.session_state[_tpd_init_key] = True
