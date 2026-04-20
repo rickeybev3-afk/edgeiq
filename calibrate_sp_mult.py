@@ -1566,9 +1566,7 @@ def _list_passes() -> None:
 
 
 _BOT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py")
-_RESET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_resets.log")
-_RESET_LOG_MAX_BYTES = _parse_int_env("RESET_LOG_MAX_BYTES", 100 * 1024)
-_RESET_LOG_BACKUP_COUNT = _parse_int_env("RESET_LOG_BACKUP_COUNT", 1)
+from log_config import _RESET_LOG_PATH as _RESET_LOG_FILE, _RESET_LOG_MAX_BYTES, _RESET_LOG_BACKUP_COUNT  # noqa: E402
 
 
 

@@ -572,13 +572,14 @@ _BACKFILL_STATUS          = "/tmp/backfill_pipeline.status"
 _BACKFILL_START_TIME      = "/tmp/backfill_pipeline.start_time"
 _BACKFILL_STEP2_START_TIME = "/tmp/backfill_pipeline.step2_start_time"
 _BACKFILL_FINISH_TIME     = "/tmp/backfill_pipeline.finish_time"
-_BACKFILL_RUN_HISTORY     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backfill_run_history.log")
 from log_config import (  # noqa: E402
+    _BACKFILL_RUN_HISTORY_LOG_PATH,
     _BACKFILL_RUN_HISTORY_MAX_BYTES,
     _BACKFILL_RUN_HISTORY_BACKUP_COUNT,
     _BACKFILL_LOG_MAX_BYTES,
     _BACKFILL_LOG_BACKUP_COUNT,
 )
+_BACKFILL_RUN_HISTORY     = _BACKFILL_RUN_HISTORY_LOG_PATH  # path overrideable via BACKFILL_RUN_HISTORY_LOG_PATH env var
 _NR_FINISH_FILE           = "/tmp/nightly_refresh.finish_time"
 _FILTER_PRESETS_FILE      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_log_filter_presets.json")
 # Sentinel written by _backfill_pipeline_thread on success so that the next

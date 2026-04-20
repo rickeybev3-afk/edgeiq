@@ -1099,8 +1099,8 @@ TRACKER_FILE = "accuracy_tracker.csv"
 WEIGHTS_FILE      = "brain_weights.json"            # ⛔ READ-ONLY — live personal brain (paper trades + journal)
 HIST_WEIGHTS_FILE    = "brain_weights_historical.json" # historical brain — calibrated from backtest_sim_runs
 TCS_THRESHOLDS_FILE  = "tcs_thresholds.json"          # per-structure TCS cutoffs saved after nightly recalibration
-TCS_THRESHOLD_HISTORY_FILE = "tcs_threshold_history.jsonl"  # append-only history log (one JSON record per line)
-from log_config import _TCS_HISTORY_MAX_BYTES, _TCS_HISTORY_BACKUP_COUNT  # noqa: E402
+from log_config import _TCS_HISTORY_LOG_PATH, _TCS_HISTORY_MAX_BYTES, _TCS_HISTORY_BACKUP_COUNT  # noqa: E402
+TCS_THRESHOLD_HISTORY_FILE = _TCS_HISTORY_LOG_PATH  # append-only history log (one JSON record per line); path overrideable via TCS_HISTORY_LOG_PATH env var
 
 
 
