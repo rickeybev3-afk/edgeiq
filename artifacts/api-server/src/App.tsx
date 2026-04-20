@@ -827,11 +827,19 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
-interface GapDownCalibration {
-  loading: boolean;
+interface ScreenerCalibItem {
+  key: string;
+  label: string;
   count: number;
   threshold: number;
   ready: boolean;
+  script: string;
+  error: string | null;
+}
+
+interface ScreenerCalibState {
+  loading: boolean;
+  screeners: ScreenerCalibItem[];
   error: string | null;
 }
 
@@ -842,7 +850,7 @@ function Home({ health }: { health: HealthState }) {
   const [eodSweep, setEodSweep] = useState<EodSweepData>({ available: false, loading: true });
   const [eodHistoryOpen, setEodHistoryOpen] = useState(false);
   const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
-  const [gapDownCalib, setGapDownCalib] = useState<GapDownCalibration>({ loading: true, count: 0, threshold: 30, ready: false, error: null });
+  const [screenerCalib, setScreenerCalib] = useState<ScreenerCalibState>({ loading: true, screeners: [], error: null });
   useSecondTick(health.db_checked_at);
 
   useEffect(() => {
@@ -930,18 +938,18 @@ function Home({ health }: { health: HealthState }) {
 
   useEffect(() => {
     let cancelled = false;
-    const fetchGapDown = () => {
-      fetch("/api/gap-down-calibration")
+    const fetchScreenerCalib = () => {
+      fetch("/api/screener-calibration")
         .then((r) => r.json())
         .then((data) => {
-          if (!cancelled) setGapDownCalib({ loading: false, count: data.count ?? 0, threshold: data.threshold ?? 30, ready: !!data.ready, error: data.error ?? null });
+          if (!cancelled) setScreenerCalib({ loading: false, screeners: data.screeners ?? [], error: null });
         })
         .catch(() => {
-          if (!cancelled) setGapDownCalib({ loading: false, count: 0, threshold: 30, ready: false, error: "Could not load calibration data." });
+          if (!cancelled) setScreenerCalib({ loading: false, screeners: [], error: "Could not load calibration data." });
         });
     };
-    fetchGapDown();
-    const interval = setInterval(fetchGapDown, 300_000);
+    fetchScreenerCalib();
+    const interval = setInterval(fetchScreenerCalib, 300_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
@@ -1302,92 +1310,93 @@ function Home({ health }: { health: HealthState }) {
 
         <div
           style={{
-            background: gapDownCalib.ready
-              ? "rgba(20,83,45,0.35)"
-              : "#1e2435",
-            border: gapDownCalib.ready
-              ? "1px solid #166534"
-              : "1px solid #2d3748",
+            background: "#1e2435",
+            border: "1px solid #2d3748",
             borderRadius: "10px",
             padding: "20px 24px",
           }}
         >
-          <h2 style={{ fontSize: "13px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "12px", marginTop: 0 }}>
-            Bearish Break Calibration
+          <h2 style={{ fontSize: "13px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "16px", marginTop: 0 }}>
+            Screener Calibration
           </h2>
-          {gapDownCalib.loading ? (
+          {screenerCalib.loading ? (
             <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>Loading…</p>
-          ) : gapDownCalib.error && gapDownCalib.count === 0 ? (
-            <p style={{ fontSize: "13px", color: "#f87171", margin: 0 }}>⚠ {gapDownCalib.error}</p>
+          ) : screenerCalib.error && screenerCalib.screeners.length === 0 ? (
+            <p style={{ fontSize: "13px", color: "#f87171", margin: 0 }}>⚠ {screenerCalib.error}</p>
+          ) : screenerCalib.screeners.length === 0 ? (
+            <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>No screener data available.</p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {screenerCalib.screeners.map((s) => (
                 <div
+                  key={s.key}
                   style={{
-                    flex: 1,
-                    height: "6px",
-                    background: "#0e1117",
-                    borderRadius: "3px",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      height: "100%",
-                      width: `${Math.min(100, Math.round((gapDownCalib.count / gapDownCalib.threshold) * 100))}%`,
-                      background: gapDownCalib.ready ? "#22c55e" : "#3b82f6",
-                      borderRadius: "3px",
-                      transition: "width 0.4s ease",
-                    }}
-                  />
-                </div>
-                <span
-                  style={{
-                    fontSize: "13px",
-                    fontWeight: 700,
-                    color: gapDownCalib.ready ? "#86efac" : "#94a3b8",
-                    fontFamily: "monospace",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {gapDownCalib.count} / {gapDownCalib.threshold}
-                </span>
-              </div>
-              {gapDownCalib.ready ? (
-                <div
-                  style={{
-                    padding: "12px 16px",
-                    background: "rgba(34,197,94,0.08)",
-                    border: "1px solid #166534",
+                    background: s.ready ? "rgba(20,83,45,0.35)" : "rgba(255,255,255,0.03)",
+                    border: s.ready ? "1px solid #166534" : "1px solid #2d3748",
                     borderRadius: "8px",
-                    fontSize: "13px",
-                    color: "#86efac",
-                    lineHeight: "1.6",
+                    padding: "12px 16px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
                   }}
                 >
-                  <strong style={{ color: "#4ade80" }}>
-                    {gapDownCalib.count}+ trades settled
-                  </strong>{" "}
-                  — run{" "}
-                  <code
-                    style={{
-                      fontFamily: "monospace",
-                      background: "rgba(0,0,0,0.3)",
-                      padding: "1px 5px",
-                      borderRadius: "3px",
-                      fontSize: "12px",
-                      color: "#a3e635",
-                    }}
-                  >
-                    calibrate_gap_down_mult.py
-                  </code>{" "}
-                  to tune gap-down position sizing.
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+                    <span style={{ fontSize: "13px", fontWeight: 600, color: s.ready ? "#4ade80" : "#cbd5e1" }}>
+                      {s.label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        color: s.ready ? "#86efac" : "#94a3b8",
+                        fontFamily: "monospace",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {s.error && s.count === 0 ? "—" : `${s.count} / ${s.threshold}`}
+                    </span>
+                  </div>
+                  {s.error && s.count === 0 ? (
+                    <p style={{ fontSize: "12px", color: "#f87171", margin: 0 }}>⚠ {s.error}</p>
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <div
+                          style={{
+                            flex: 1,
+                            height: "5px",
+                            background: "#0e1117",
+                            borderRadius: "3px",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: "100%",
+                              width: `${Math.min(100, Math.round((s.count / s.threshold) * 100))}%`,
+                              background: s.ready ? "#22c55e" : "#3b82f6",
+                              borderRadius: "3px",
+                              transition: "width 0.4s ease",
+                            }}
+                          />
+                        </div>
+                        <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap" }}>
+                          {s.threshold} trades needed
+                        </span>
+                      </div>
+                      {s.ready && (
+                        <p style={{ fontSize: "12px", color: "#86efac", margin: 0, lineHeight: "1.5" }}>
+                          Ready — run{" "}
+                          <code style={{ fontFamily: "monospace", background: "rgba(0,0,0,0.3)", padding: "1px 5px", borderRadius: "3px", fontSize: "11px", color: "#a3e635" }}>
+                            {s.script}
+                          </code>{" "}
+                          to update sizing.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
-              ) : (
-                <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0, lineHeight: "1.6" }}>
-                  {gapDownCalib.count} / {gapDownCalib.threshold} Bearish Break trades settled — sizing baseline active.
-                </p>
-              )}
+              ))}
             </div>
           )}
         </div>

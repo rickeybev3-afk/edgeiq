@@ -611,6 +611,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/gap-down-calibration":
             self._gap_down_calibration()
             return
+        if path == "/api/screener-calibration":
+            self._screener_calibration()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -2114,6 +2117,149 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
             self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _screener_calibration(self):
+        """Return settled trade count vs calibration threshold for each active screener.
+
+        Screeners returned: squeeze, gap_down.
+        For each screener the threshold is resolved from env vars before falling back to 30:
+          - squeeze:   CALIB_MIN_TRADES_SQUEEZE, then SQUEEZE_CALIB_MIN_TRADES, then 30
+          - gap_down:  CALIB_MIN_TRADES_GAP_DOWN, then 30
+
+        Response:
+          {
+            "screeners": [
+              {"key": str, "label": str, "count": int, "threshold": int,
+               "ready": bool, "script": str, "error": null|str},
+              ...
+            ]
+          }
+        """
+        _DEFAULT_THRESHOLD = 30
+
+        def _resolve_threshold(screener_key: str) -> int:
+            upper = screener_key.upper().replace("-", "_")
+            env_key = f"CALIB_MIN_TRADES_{upper}"
+            raw = os.environ.get(env_key, "").strip()
+            if raw:
+                try:
+                    v = int(raw)
+                    if v > 0:
+                        return v
+                except ValueError:
+                    pass
+            if screener_key == "squeeze":
+                legacy = os.environ.get("SQUEEZE_CALIB_MIN_TRADES", "").strip()
+                if legacy:
+                    try:
+                        v = int(legacy)
+                        if v > 0:
+                            return v
+                    except ValueError:
+                        pass
+            return _DEFAULT_THRESHOLD
+
+        supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+        supabase_key = (
+            os.environ.get("SUPABASE_KEY") or
+            os.environ.get("SUPABASE_ANON_KEY") or
+            os.environ.get("VITE_SUPABASE_ANON_KEY") or
+            ""
+        ).strip()
+
+        SCREENERS = [
+            {
+                "key": "squeeze",
+                "label": "Squeeze",
+                "script": "calibrate_squeeze_mult.py",
+                "extra_filters": "",
+            },
+            {
+                "key": "gap_down",
+                "label": "Bearish Break",
+                "script": "calibrate_gap_down_mult.py",
+                "extra_filters": "&predicted=eq.Bearish%20Break",
+            },
+        ]
+
+        results = []
+        for s in SCREENERS:
+            threshold = _resolve_threshold(s["key"])
+            if not supabase_url or not supabase_key:
+                results.append({
+                    "key": s["key"],
+                    "label": s["label"],
+                    "count": 0,
+                    "threshold": threshold,
+                    "ready": False,
+                    "script": s["script"],
+                    "error": "Supabase not configured",
+                })
+                continue
+            try:
+                import urllib.request as _ur
+                query_string = (
+                    f"screener_pass=eq.{s['key']}"
+                    "&tiered_pnl_r=not.is.null"
+                    + s["extra_filters"]
+                    + "&select=id"
+                )
+                req = _ur.Request(
+                    f"{supabase_url}/rest/v1/paper_trades?{query_string}",
+                    headers={
+                        "apikey": supabase_key,
+                        "Authorization": f"Bearer {supabase_key}",
+                        "Accept": "application/json",
+                        "Prefer": "count=exact",
+                        "Range": "0-0",
+                    },
+                )
+                count = 0
+                try:
+                    with _ur.urlopen(req, timeout=10) as resp:
+                        content_range = resp.getheader("Content-Range", "")
+                        if "/" in content_range:
+                            total_str = content_range.split("/", 1)[1]
+                            count = int(total_str) if total_str.isdigit() else 0
+                except Exception as _inner:
+                    import urllib.error as _ue
+                    if isinstance(_inner, _ue.HTTPError):
+                        content_range = _inner.headers.get("Content-Range", "")
+                        if "/" in content_range:
+                            total_str = content_range.split("/", 1)[1]
+                            count = int(total_str) if total_str.isdigit() else 0
+                        elif _inner.code not in (200, 206):
+                            raise
+                    else:
+                        raise
+                results.append({
+                    "key": s["key"],
+                    "label": s["label"],
+                    "count": count,
+                    "threshold": threshold,
+                    "ready": count >= threshold,
+                    "script": s["script"],
+                    "error": None,
+                })
+            except Exception as exc:
+                logging.warning("screener-calibration endpoint error (%s): %s", s["key"], exc)
+                results.append({
+                    "key": s["key"],
+                    "label": s["label"],
+                    "count": 0,
+                    "threshold": threshold,
+                    "ready": False,
+                    "script": s["script"],
+                    "error": "Could not load calibration data.",
+                })
+
+        body = json.dumps({"screeners": results}).encode()
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
