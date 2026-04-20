@@ -14460,14 +14460,14 @@ def fetch_finviz_watchlist(
     # Determine which Yahoo screen to use based on caller hints
     _extra = extra_filters or []
     if any("sma" in f for f in _extra):
-        # Trend-continuation pass → most actives (already above moving averages)
-        _scr_ids = ["most_actives", "day_gainers"]
+        # Trend-continuation pass → most actives (above moving averages)
+        _scr_ids = ["most_actives", "day_gainers", "small_cap_gainers"]
     elif any("short" in f for f in _extra):
-        # Short-squeeze pass → aggressive small caps
-        _scr_ids = ["aggressive_small_caps", "day_gainers"]
+        # Short-squeeze pass → aggressive small caps + small cap gainers
+        _scr_ids = ["aggressive_small_caps", "small_cap_gainers", "day_gainers"]
     else:
         # Gap-of-day default pass
-        _scr_ids = ["day_gainers", "most_actives"]
+        _scr_ids = ["day_gainers", "small_cap_gainers", "most_actives"]
 
     _seen: set  = set()
     _tickers: list = []
