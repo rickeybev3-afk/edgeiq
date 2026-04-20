@@ -239,6 +239,39 @@ def _sp_size_mult(screener_pass):
     return _SP_MULT_TABLE.get(screener_pass, 1.00)
 """
 
+# Variant of the fixture where the gap entry carries a stale-warning comment,
+# simulating a reset to the "no data yet" state before the first calibration.
+_APPLY_FIXTURE_GAP_STALE = """\
+# preceding source
+
+# ── Screener-pass position-size multiplier ─────────────────────────────────
+# Derived from 5-year backtest:
+#   'other'  (< 3% daily change): 87% WR / +0.622R avg → 1.15×
+#   'gap'    (≥ 3% daily change): 0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               >=30 trades settle.
+#   'trend'  (1-3%):              only 12 trades       → 0.85×
+#   'squeeze':   0 settled trades as of 2026-04-20 — 1.00× baseline until
+#               >=30 trades settle.
+#   'gap_down' (Bearish Break, >=3% gap-down universe):  0 settled trades as of
+#              2026-04-20 — 1.00× baseline until >=30 trades settle.
+# Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
+_SP_MULT_TABLE: dict[str, float] = {
+    "other":    1.15,
+    "gap":      1.00,   # baseline; recalibrate once >=30 trades settle
+    "trend":    0.85,
+    "squeeze":  1.00,   # baseline; recalibrate once >=30 trades settle
+    "gap_down": 1.00,   # Bearish Break — baseline; recalibrate once >=30 trades settle
+}
+
+_SP_CALIB_DATES: dict[str, str] = {
+    "gap_down": "2026-04-20",
+    "squeeze":  "2026-04-20",
+}
+
+def _sp_size_mult(screener_pass):
+    return _SP_MULT_TABLE.get(screener_pass, 1.00)
+"""
+
 
 def _self_test_apply() -> None:
     """Deterministic unit tests for _apply_to_bot() using an in-memory fixture."""
@@ -256,11 +289,12 @@ def _self_test_apply() -> None:
         citation_line: str = "",
         expect_citation_fragment: str = "",
         expect_stale_absent: str = "",
+        fixture: str = _APPLY_FIXTURE,
     ) -> None:
         nonlocal all_ok
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
             tmp = tf.name
-            tf.write(_APPLY_FIXTURE)
+            tf.write(fixture)
         try:
             _apply_to_bot(pass_name, new_mult, comment, citation_line=citation_line, bot_path=tmp)
             with open(tmp) as fh:
@@ -327,6 +361,15 @@ def _self_test_apply() -> None:
         citation_line="#   'gap'    (2024-01-03 → 2024-12-31): 55 trades, 67.3% WR / +0.350R avg → 1.10×",
         expect_citation_fragment="55 trades, 67.3% WR / +0.350R avg → 1.10×",
         # gap fixture entry already has real trade data, no stale warning to guard
+    )
+    _run(
+        "gap stale-warning→1.10",
+        "gap", 1.10, "55 trades, 67.3% WR / +0.350R → 1.10×",
+        expect_value=1.10, expect_comment_fragment="67.3% WR",
+        citation_line="#   'gap'    (2024-01-03 → 2024-12-31): 55 trades, 67.3% WR / +0.350R avg → 1.10×",
+        expect_citation_fragment="55 trades, 67.3% WR / +0.350R avg → 1.10×",
+        expect_stale_absent="'gap'    (≥ 3% daily change): 0 settled trades as of",
+        fixture=_APPLY_FIXTURE_GAP_STALE,
     )
     _run(
         "gap idempotent re-apply",
