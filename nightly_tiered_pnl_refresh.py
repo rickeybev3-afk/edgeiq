@@ -762,8 +762,14 @@ def _get_squeeze_calib_min_trades() -> int:
     try:
         import backend as _backend
         val = _backend.resolve_squeeze_calib_min_trades_effective()
-        log.debug("Squeeze calib min-trades (effective): %d", val)
-        return val
+        if isinstance(val, int) and val > 0:
+            log.debug("Squeeze calib min-trades (effective): %d", val)
+            return val
+        log.warning(
+            "DB squeeze calib min-trades value %r is not a positive integer; "
+            "falling back to env var / default.",
+            val,
+        )
     except Exception as _exc:
         log.warning(
             "Could not resolve squeeze calib threshold via backend: %s — "

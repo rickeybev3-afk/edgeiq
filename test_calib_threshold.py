@@ -476,3 +476,132 @@ class TestNightlyRefreshCallSite:
             )
 
         assert resolved.get("gap_down") == 30
+
+
+# ---------------------------------------------------------------------------
+# DB-lookup path of _get_squeeze_calib_min_trades()
+# ---------------------------------------------------------------------------
+#
+# Three new scenarios the previous tests did not cover:
+#
+#   1. A valid positive DB value is returned — it must win over the env-var.
+#   2. DB returns zero or a negative int — must fall through to env-var/default.
+#   3. `import backend` itself raises ImportError — must fall through to env-var.
+#
+# All three scenarios patch backend at the module-attribute level so the real
+# Supabase stack is never touched.
+# ---------------------------------------------------------------------------
+
+import sys as _sys
+
+
+class TestGetSqueezeCalibMinTradesDBPath:
+    """Tests for the DB-lookup branch of _get_squeeze_calib_min_trades()."""
+
+    # ── Scenario 1: valid DB value wins over env-var ─────────────────────────
+
+    def test_db_value_wins_over_env_var(self, monkeypatch):
+        """When the DB returns a positive integer it must be used, ignoring env-var."""
+        monkeypatch.setenv("CALIB_MIN_TRADES_SQUEEZE", "42")
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+
+        import backend as _backend
+        with _patch.object(_backend, "resolve_squeeze_calib_min_trades_effective", return_value=99):
+            result = _nightly._get_squeeze_calib_min_trades()
+
+        assert result == 99, (
+            f"Expected DB value 99 to win over env-var 42, but got {result}. "
+            "The DB-lookup branch is not returning the DB value."
+        )
+
+    def test_db_value_1_is_accepted(self, monkeypatch):
+        """The minimum valid positive DB value (1) must be honoured, not treated as falsy."""
+        monkeypatch.setenv("CALIB_MIN_TRADES_SQUEEZE", "30")
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+
+        import backend as _backend
+        with _patch.object(_backend, "resolve_squeeze_calib_min_trades_effective", return_value=1):
+            result = _nightly._get_squeeze_calib_min_trades()
+
+        assert result == 1, (
+            f"DB value 1 should be accepted but got {result}. "
+            "Ensure the guard checks val > 0, not val >= 30 or similar."
+        )
+
+    # ── Scenario 2: bad DB values fall through to env-var ────────────────────
+
+    def test_zero_db_value_falls_through_to_env_var(self, monkeypatch):
+        """A DB return value of 0 is invalid; the env-var must be used instead."""
+        monkeypatch.setenv("CALIB_MIN_TRADES_SQUEEZE", "25")
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+
+        import backend as _backend
+        with _patch.object(_backend, "resolve_squeeze_calib_min_trades_effective", return_value=0):
+            result = _nightly._get_squeeze_calib_min_trades()
+
+        assert result == 25, (
+            f"DB value 0 should be rejected and env-var 25 used, but got {result}. "
+            "A stale zero in the DB could silence a deliberately low env-var threshold."
+        )
+
+    def test_negative_db_value_falls_through_to_env_var(self, monkeypatch):
+        """A DB return value of -1 is invalid; the env-var must be used instead."""
+        monkeypatch.setenv("CALIB_MIN_TRADES_SQUEEZE", "15")
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+
+        import backend as _backend
+        with _patch.object(_backend, "resolve_squeeze_calib_min_trades_effective", return_value=-1):
+            result = _nightly._get_squeeze_calib_min_trades()
+
+        assert result == 15, (
+            f"DB value -1 should be rejected and env-var 15 used, but got {result}."
+        )
+
+    def test_zero_db_value_falls_through_to_default_when_no_env_var(self, monkeypatch):
+        """Zero DB value with no env-var set must yield the default of 30."""
+        monkeypatch.delenv("CALIB_MIN_TRADES_SQUEEZE", raising=False)
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+
+        import backend as _backend
+        with _patch.object(_backend, "resolve_squeeze_calib_min_trades_effective", return_value=0):
+            result = _nightly._get_squeeze_calib_min_trades()
+
+        assert result == 30, (
+            f"Zero DB value with no env-var should yield default 30, got {result}."
+        )
+
+    # ── Scenario 3: import failure falls through to env-var ──────────────────
+
+    def test_import_error_falls_through_to_env_var(self, monkeypatch):
+        """When 'import backend' raises ImportError the env-var must be used."""
+        monkeypatch.setenv("CALIB_MIN_TRADES_SQUEEZE", "18")
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+
+        original_modules = _sys.modules.copy()
+        _sys.modules["backend"] = None  # causes ImportError on 'import backend'
+        try:
+            result = _nightly._get_squeeze_calib_min_trades()
+        finally:
+            _sys.modules.clear()
+            _sys.modules.update(original_modules)
+
+        assert result == 18, (
+            f"ImportError for 'backend' should fall back to env-var 18, got {result}."
+        )
+
+    def test_import_error_falls_through_to_default_when_no_env_var(self, monkeypatch):
+        """When 'import backend' raises ImportError and no env-var is set, default 30 is used."""
+        monkeypatch.delenv("CALIB_MIN_TRADES_SQUEEZE", raising=False)
+        monkeypatch.delenv("SQUEEZE_CALIB_MIN_TRADES", raising=False)
+
+        original_modules = _sys.modules.copy()
+        _sys.modules["backend"] = None
+        try:
+            result = _nightly._get_squeeze_calib_min_trades()
+        finally:
+            _sys.modules.clear()
+            _sys.modules.update(original_modules)
+
+        assert result == 30, (
+            f"ImportError with no env-var should yield default 30, got {result}."
+        )
