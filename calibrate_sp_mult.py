@@ -56,7 +56,7 @@ MIN_TRADES = 30
 
 ANCHOR_PASS = "gap"
 
-CONTEXT_PASSES = ["other", "trend"]
+CONTEXT_PASSES: list[str] = []
 
 PASS_CONFIG: dict[str, dict] = {
     "gap_down": {
@@ -486,6 +486,8 @@ def main(pass_name: str, apply: bool = False) -> None:
     gap_rows = _fetch_settled(ANCHOR_PASS)
     ctx_stats: list[tuple[str, dict]] = []
     for ctx_pass in CONTEXT_PASSES:
+        if ctx_pass == pass_name:
+            continue
         ctx_rows = _fetch_settled(ctx_pass)
         ctx_stats.append((ctx_pass, _stats(ctx_rows)))
 
