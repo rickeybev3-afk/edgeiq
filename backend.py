@@ -2895,6 +2895,169 @@ def save_ib_range_pct_threshold(value: float) -> bool:
     return db_ok or file_ok
 
 
+# ── Squeeze calibration min-trades threshold ──────────────────────────────────
+
+_SQUEEZE_CALIB_CONFIG_KEY = "squeeze_calib_min_trades_config"
+_SQUEEZE_CALIB_CFG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "squeeze_calib_min_trades_config.json"
+)
+_SQUEEZE_CALIB_DEFAULT = 30
+
+
+def _clamp_squeeze_calib_threshold(value) -> int | None:
+    """Return *value* clamped to [1, 10000] as an int, or None if invalid."""
+    try:
+        v = int(value)
+        if v >= 1:
+            return min(v, 10000)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def load_squeeze_calib_min_trades_from_db() -> int | None:
+    """Return the squeeze calibration threshold stored in the DB, or None if absent.
+
+    Only consults the Supabase ``app_config`` table and the local fallback
+    JSON file — does **not** apply any default.  Returns ``None`` when neither
+    source has a valid value.  This allows callers (e.g. the nightly script)
+    to implement their own fallback chain (DB → env var → hardcoded default).
+    """
+    import json as _json
+
+    if supabase is not None:
+        try:
+            resp = (
+                supabase.table(_APP_CONFIG_TABLE)
+                .select("value")
+                .eq("key", _SQUEEZE_CALIB_CONFIG_KEY)
+                .limit(1)
+                .execute()
+            )
+            if resp.data:
+                val = resp.data[0].get("value")
+                if isinstance(val, dict) and "threshold" in val:
+                    return _clamp_squeeze_calib_threshold(val["threshold"])
+        except Exception:
+            pass
+
+    if os.path.exists(_SQUEEZE_CALIB_CFG_PATH):
+        try:
+            with open(_SQUEEZE_CALIB_CFG_PATH) as _f:
+                cfg = _json.load(_f)
+            if isinstance(cfg, dict) and "threshold" in cfg:
+                return _clamp_squeeze_calib_threshold(cfg["threshold"])
+        except Exception:
+            pass
+
+    return None
+
+
+def load_squeeze_calib_min_trades() -> int:
+    """Return the squeeze calibration min-trades threshold (default 30).
+
+    Reads from the Supabase ``app_config`` table (key
+    ``squeeze_calib_min_trades_config``) first, then falls back to a local
+    JSON file.  Returns the compile-time default (30) when neither source has
+    data.
+
+    Values are clamped to [1, 10000] so a corrupted config cannot break the
+    dashboard input or the nightly check logic.
+    """
+    return load_squeeze_calib_min_trades_from_db() or _SQUEEZE_CALIB_DEFAULT
+
+
+def resolve_squeeze_calib_min_trades_effective() -> int:
+    """Return the effective squeeze calibration threshold the nightly script will use.
+
+    Resolution order — identical to what nightly_tiered_pnl_refresh.py applies:
+    1. DB / local-JSON (via ``load_squeeze_calib_min_trades_from_db()``).
+    2. ``CALIB_MIN_TRADES_SQUEEZE`` env var (new generic format).
+    3. ``SQUEEZE_CALIB_MIN_TRADES`` env var (legacy name, kept for backward compat).
+    4. Hardcoded default of 30.
+
+    This is the value surfaced in the UI as "Active threshold" so that the badge
+    always matches the runtime behaviour of the nightly service.
+    """
+    db_val = load_squeeze_calib_min_trades_from_db()
+    if db_val is not None:
+        return db_val
+
+    for env_key in ("CALIB_MIN_TRADES_SQUEEZE", "SQUEEZE_CALIB_MIN_TRADES"):
+        raw = os.getenv(env_key, "").strip()
+        if raw:
+            try:
+                v = int(raw)
+                if v > 0:
+                    return min(v, 10000)
+            except ValueError:
+                pass
+            logging.warning(
+                "[resolve_squeeze_calib_min_trades_effective] "
+                "%s='%s' is not a valid positive integer; trying next fallback.",
+                env_key,
+                raw,
+            )
+
+    return _SQUEEZE_CALIB_DEFAULT
+
+
+def save_squeeze_calib_min_trades(value: int) -> bool:
+    """Persist *value* as the squeeze calibration min-trades threshold.
+
+    Writes to Supabase (``app_config`` table) and falls back to a local JSON
+    file.  Returns ``True`` when at least one storage backend succeeds.
+    """
+    import json as _json
+    import datetime as _dt
+
+    clamped = _clamp_squeeze_calib_threshold(value)
+    if clamped is None:
+        logging.warning(
+            "[save_squeeze_calib_min_trades] Refusing to save invalid value: %s", value
+        )
+        return False
+
+    db_value = {"threshold": clamped}
+
+    db_ok = False
+    if supabase is not None:
+        try:
+            supabase.table(_APP_CONFIG_TABLE).upsert(
+                {
+                    "key": _SQUEEZE_CALIB_CONFIG_KEY,
+                    "value": db_value,
+                    "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                },
+                on_conflict="key",
+            ).execute()
+            db_ok = True
+        except Exception as _exc:
+            logging.warning(
+                "[save_squeeze_calib_min_trades] Supabase write failed: %s. "
+                "Will attempt local JSON fallback.",
+                _exc,
+            )
+
+    file_ok = False
+    try:
+        with open(_SQUEEZE_CALIB_CFG_PATH, "w") as _f:
+            _json.dump(db_value, _f, indent=2)
+        file_ok = True
+    except Exception as _exc:
+        logging.warning(
+            "[save_squeeze_calib_min_trades] Local JSON write failed: %s.", _exc
+        )
+
+    if not db_ok and not file_ok:
+        logging.error(
+            "[save_squeeze_calib_min_trades] Both Supabase and local file writes failed. "
+            "Squeeze calibration threshold was NOT persisted."
+        )
+
+    return db_ok or file_ok
+
+
 def _load_tcs_alert_thresholds() -> dict:
     """Return a map of structure_key → minimum delta required to fire an alert.
 

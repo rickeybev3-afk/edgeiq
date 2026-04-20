@@ -70,6 +70,9 @@ from backend import (
     get_tcs_alert_config_last_saved,
     load_ib_range_pct_threshold,
     save_ib_range_pct_threshold,
+    load_squeeze_calib_min_trades,
+    save_squeeze_calib_min_trades,
+    resolve_squeeze_calib_min_trades_effective,
     get_runtime_last_healthy_ts,
     get_runtime_first_check_done,
     get_db_last_checked_ts,
@@ -130,6 +133,14 @@ def _cached_load_tcs_alert_thresholds():
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_ib_range_pct_threshold():
     return load_ib_range_pct_threshold()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_load_squeeze_calib_min_trades():
+    return load_squeeze_calib_min_trades()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_resolve_squeeze_calib_effective():
+    return resolve_squeeze_calib_min_trades_effective()
 
 # IB-range position-sizing multiplier — mirrors paper_trader_bot._ib_size_mult.
 # 0-2%: 2.00× | 2-4%: 1.30× | 4-6%: 1.00× | 6-8%: 0.75× | 8-10%: 0.80×
@@ -7515,22 +7526,21 @@ with st.sidebar:
     st.caption(
         "The nightly refresh alerts you to re-run `calibrate_squeeze_mult.py` once "
         "this many settled squeeze trades have accumulated. "
-        "To change it, set the `SQUEEZE_CALIB_MIN_TRADES` secret and restart the "
-        "Nightly Tiered P&L Refresh service."
+        "Saved here and read by the Nightly Tiered P&L Refresh service "
+        "(falls back to the `SQUEEZE_CALIB_MIN_TRADES` secret, then 30)."
     )
-    import os as _sq_os
-    _sq_raw = _sq_os.getenv("SQUEEZE_CALIB_MIN_TRADES", "").strip()
-    _sq_effective = 30
-    _sq_invalid = False
-    if _sq_raw:
-        try:
-            _sq_parsed = int(_sq_raw)
-            if _sq_parsed > 0:
-                _sq_effective = _sq_parsed
-            else:
-                _sq_invalid = True
-        except ValueError:
-            _sq_invalid = True
+    _sq_db_val = _cached_load_squeeze_calib_min_trades()
+    _sq_effective = _cached_resolve_squeeze_calib_effective()
+    _sq_new_val = st.number_input(
+        "Min trades before calibration alert",
+        min_value=1,
+        max_value=10000,
+        value=int(_sq_db_val),
+        step=1,
+        format="%d",
+        key="squeeze_calib_min_trades_input",
+        help="Nightly refresh sends a calibration alert once this many settled squeeze trades exist.",
+    )
     st.markdown(
         f'<div style="background:#0d1b2a; border:1px solid #1e3a5f; border-radius:8px; '
         f'padding:10px 14px; display:flex; align-items:center; justify-content:space-between;">'
@@ -7539,12 +7549,14 @@ with st.sidebar:
         f'</div>',
         unsafe_allow_html=True,
     )
-    if _sq_invalid:
-        st.warning(
-            f"SQUEEZE_CALIB_MIN_TRADES='{_sq_raw}' is not a valid positive integer — "
-            f"defaulting to 30.",
-            icon="⚠️",
-        )
+    if st.button("💾 Save calibration threshold", key="squeeze_calib_save_btn", use_container_width=True):
+        _sq_ok = save_squeeze_calib_min_trades(int(_sq_new_val))
+        if _sq_ok:
+            _cached_load_squeeze_calib_min_trades.clear()
+            _cached_resolve_squeeze_calib_effective.clear()
+            st.success(f"Squeeze calibration threshold saved: {int(_sq_new_val)} trades", icon="✅")
+        else:
+            st.error("Could not save — database and local file both failed.", icon="⚠️")
 
     # ── Calibration alert history ─────────────────────────────────────────────
     st.markdown("**Calibration Alert History**")
@@ -7552,8 +7564,8 @@ with st.sidebar:
     import datetime as _sq_dt
     # Path mirrors _SQUEEZE_CALIB_STATE_FILE in nightly_tiered_pnl_refresh.py.
     # Keep both in sync if the filename ever changes.
-    _sq_state_path = _sq_os.path.join(
-        _sq_os.path.dirname(_sq_os.path.abspath(__file__)),
+    _sq_state_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
         ".edgeiq_squeeze_calib_alert.json",
     )
     _sq_state = None

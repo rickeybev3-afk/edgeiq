@@ -697,13 +697,27 @@ def _get_squeeze_calib_min_trades() -> int:
     """Return the minimum settled squeeze trade count that triggers a calibration alert.
 
     Resolution order:
-      1. ``CALIB_MIN_TRADES_SQUEEZE`` env var (new generic format)
-      2. ``SQUEEZE_CALIB_MIN_TRADES`` env var (legacy name, kept for backward compat)
-      3. ``_DEFAULT_SQUEEZE_CALIB_MIN_TRADES`` (30)
+      1. DB preference (Supabase app_config table, via
+         backend.resolve_squeeze_calib_min_trades_effective).
+      2. ``CALIB_MIN_TRADES_SQUEEZE`` env var (new generic format).
+      3. ``SQUEEZE_CALIB_MIN_TRADES`` env var (legacy name, kept for backward compat).
+      4. ``_DEFAULT_SQUEEZE_CALIB_MIN_TRADES`` (30).
 
-    Invalid (non-positive-integer) values are skipped with a warning and the
+    Invalid (non-positive-integer) env-var values are skipped with a warning and the
     next fallback is tried.
     """
+    try:
+        import backend as _backend
+        val = _backend.resolve_squeeze_calib_min_trades_effective()
+        log.debug("Squeeze calib min-trades (effective): %d", val)
+        return val
+    except Exception as _exc:
+        log.warning(
+            "Could not resolve squeeze calib threshold via backend: %s — "
+            "falling back to env var / default.",
+            _exc,
+        )
+
     for env_key in ("CALIB_MIN_TRADES_SQUEEZE", "SQUEEZE_CALIB_MIN_TRADES"):
         raw = os.getenv(env_key, "").strip()
         if raw:
