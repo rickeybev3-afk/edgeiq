@@ -275,7 +275,7 @@ PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
 # switch to a market-order entry instead of skipping.  This handles the "price
 # is $0.01 above IB high" case — the breakout just happened, fill at market.
 # Set to 0 to disable (always skip if price already crossed).
-SLIPPAGE_TOLERANCE_PCT = float(os.getenv("SLIPPAGE_TOLERANCE_PCT", "0.5"))
+SLIPPAGE_TOLERANCE_PCT = float(os.getenv("SLIPPAGE_TOLERANCE_PCT", "1.0"))
 # Anti-chasing threshold (live mode only): if the current 5-min bar close
 # is already this many % past the entry price (and beyond the slippage tolerance),
 # skip placing the bracket because the setup has already run away.
