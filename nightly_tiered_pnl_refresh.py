@@ -803,8 +803,9 @@ def _check_gap_down_calibration_due() -> None:
     """
     _check_screener_calibration_due(
         "gap_down",
-        "calibrate_gap_down_mult.py",
+        "calibrate_sp_mult.py",
         cooldown_hours=_get_calib_cooldown_hours("gap_down"),
+        extra_args="--pass gap_down",
     )
 
 

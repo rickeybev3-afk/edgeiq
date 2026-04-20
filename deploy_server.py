@@ -2285,7 +2285,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         Queries paper_trades for rows where screener_pass='gap_down' AND
         tiered_pnl_r IS NOT NULL AND predicted='Bearish Break', matching the
-        exact filter used by calibrate_gap_down_mult.py.
+        exact filter used by calibrate_sp_mult.py --pass gap_down.
 
         The threshold is resolved from CALIB_MIN_TRADES_GAP_DOWN env var,
         falling back to 30 if not set or invalid.
