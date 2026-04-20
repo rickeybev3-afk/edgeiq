@@ -740,7 +740,7 @@ def _self_test_apply() -> None:
 
             sys.exit = _fake_exit
             try:
-                _restore_from_bak(pass_name, bot_path=tmp)
+                _restore_from_bak(pass_name, bot_path=tmp, yes=True)
             except SystemExit:
                 pass
             finally:
@@ -1240,15 +1240,119 @@ def _self_test_reset_confirm() -> None:
         sys.exit(1)
 
 
-def _restore_from_bak(pass_name: str, bot_path: str | None = None, dry_run: bool = False) -> None:
+def _self_test_restore_confirm() -> None:
+    """Test the interactive confirmation guard for --restore-bak.
+
+    Exercises both the confirmed path (user types 'yes' → restore runs) and the
+    aborted path (user types anything else → no changes made).
+    """
+    import tempfile
+    import unittest.mock as _mock
+
+    all_ok = True
+
+    # ── Aborted path: input is NOT 'yes' ─────────────────────────────────────
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+        tmp_abort = tf.name
+        tf.write(_APPLY_FIXTURE_TREND_STALE)
+    bak_abort = tmp_abort + ".bak"
+    try:
+        with open(bak_abort, "w") as fh:
+            fh.write(_APPLY_FIXTURE)
+
+        with _mock.patch("builtins.input", return_value="n"):
+            exited = False
+            exit_code = 0
+            original_exit = sys.exit
+
+            def _fake_exit_a(code=0):
+                nonlocal exited, exit_code
+                exited = True
+                exit_code = int(code) if code else 0
+                raise SystemExit(code)
+
+            sys.exit = _fake_exit_a
+            try:
+                _restore_from_bak("trend", bot_path=tmp_abort, yes=False)
+            except SystemExit:
+                pass
+            finally:
+                sys.exit = original_exit
+
+        ok1 = exited and exit_code == 0
+        print(f"  {'OK  ' if ok1 else 'FAIL'} restore confirm aborted: non-'yes' answer exits cleanly")
+        if not ok1:
+            all_ok = False
+
+        with open(tmp_abort) as fh:
+            content = fh.read()
+        ok2 = content == _APPLY_FIXTURE_TREND_STALE
+        print(f"  {'OK  ' if ok2 else 'FAIL'} restore confirm aborted: file unchanged after abort")
+        if not ok2:
+            all_ok = False
+    finally:
+        try:
+            os.unlink(tmp_abort)
+        except OSError:
+            pass
+        try:
+            os.unlink(bak_abort)
+        except OSError:
+            pass
+
+    # ── Confirmed path: input is 'yes' ───────────────────────────────────────
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+        tmp_confirm = tf.name
+        tf.write(_APPLY_FIXTURE_TREND_STALE)
+    bak_confirm = tmp_confirm + ".bak"
+    try:
+        with open(bak_confirm, "w") as fh:
+            fh.write(_APPLY_FIXTURE)
+
+        with _mock.patch("builtins.input", return_value="yes"):
+            _restore_from_bak("trend", bot_path=tmp_confirm, yes=False)
+
+        with open(tmp_confirm) as fh:
+            content = fh.read()
+        pat = re.compile(r'"trend"\s*:\s*([\d.]+)')
+        m = pat.search(content)
+        restored_value = float(m.group(1)) if m else None
+        ok3 = restored_value is not None and abs(restored_value - 0.85) < 0.001
+        print(f"  {'OK  ' if ok3 else 'FAIL'} restore confirm accepted: file updated to backup value (0.85×)")
+        if not ok3:
+            all_ok = False
+    finally:
+        try:
+            os.unlink(tmp_confirm)
+        except OSError:
+            pass
+        try:
+            os.unlink(bak_confirm)
+        except OSError:
+            pass
+
+    if all_ok:
+        print("All restore-confirm self-tests passed.")
+    else:
+        print("SELF-TEST FAILURES in restore-confirm — check the output above.")
+        sys.exit(1)
+
+
+def _restore_from_bak(
+    pass_name: str,
+    bot_path: str | None = None,
+    dry_run: bool = False,
+    yes: bool = False,
+) -> None:
     """Restore paper_trader_bot.py from its .bak backup created by --reset-pass or --apply.
 
     Steps:
       1. Locate paper_trader_bot.py.bak (or <bot_path>.bak).
       2. Verify the backup contains a valid _SP_MULT_TABLE entry for pass_name.
       3. Print a unified diff from the current file to the backup.
-      4. If dry_run is False: overwrite the current file with the backup content.
-         If dry_run is True:  print a "Dry run" message and exit without writing.
+      4. If dry_run is True:  print a "Dry run" message and exit without writing.
+         If dry_run is False and yes is False: prompt for confirmation before writing.
+         If dry_run is False and yes is True:  overwrite the current file immediately.
     """
     resolved_path = bot_path if bot_path is not None else _BOT_FILE
     backup_path = resolved_path + ".bak"
@@ -1332,6 +1436,18 @@ def _restore_from_bak(pass_name: str, bot_path: str | None = None, dry_run: bool
     if dry_run:
         print("\nDry run — no changes written. Re-run with --restore-bak to apply.")
         return
+
+    if not yes:
+        try:
+            answer = input(
+                "Type 'yes' to confirm restore, or anything else to abort: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            sys.exit(0)
+        if answer != "yes":
+            print("Aborted — no changes made.")
+            sys.exit(0)
 
     try:
         with open(resolved_path, "w") as fh:
@@ -1895,7 +2011,7 @@ if __name__ == "__main__":
         "--yes",
         action="store_true",
         help=(
-            "Skip the interactive confirmation prompt when using --reset-pass. "
+            "Skip the interactive confirmation prompt when using --reset-pass or --restore-bak. "
             "Useful for scripting and CI environments."
         ),
     )
@@ -1919,6 +2035,8 @@ if __name__ == "__main__":
         _self_test_reset_log()
         print("\nRunning reset-confirm self-tests...")
         _self_test_reset_confirm()
+        print("\nRunning restore-confirm self-tests...")
+        _self_test_restore_confirm()
         sys.exit(0)
 
     if args.reset_pass:
@@ -1961,7 +2079,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.restore_bak:
-        _restore_from_bak(args.restore_bak)
+        _restore_from_bak(args.restore_bak, yes=args.yes)
         sys.exit(0)
 
     if not args.pass_name:
