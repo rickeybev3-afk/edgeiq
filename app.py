@@ -32380,7 +32380,7 @@ function _bqCopyShareLink() {
             if _sp_live_rows:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown("**Live Paper Trades — by Screener Pass**")
-                st.caption("sp_mult = position-size multiplier applied by the bot at order placement · derived from 5-yr backtest")
+                st.caption("sp_mult = position-size multiplier applied by the bot at order placement · gap/other/trend from 5-yr live backtest · gap_down 1.00× calibrated 2026-04-20 (data-confirmed baseline; recalibrate via calibrate_sp_mult.py --pass gap_down once ≥30 Bearish Break paper trades settle)")
                 st.dataframe(pd.DataFrame(_sp_live_rows), use_container_width=True, hide_index=True)
 
         # ── Screener Pass — 5-yr Backtest Breakdown (Gap vs Trend vs All) ────
