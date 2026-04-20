@@ -10352,7 +10352,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             value=yesterday,
             max_value=date.today() - timedelta(days=1),
             key="bt_end_date_picker",
-            help="Same as From Date = single day. Earlier From Date = multi-day range (max 10 weekdays). "
+            help="Same as From Date = single day. Earlier From Date = multi-day range (up to 65 trading days ≈ 3 months). "
                  "Use a full week to see market bias patterns.",
         )
     _bt_is_range = _bt_end_date > _bt_date
@@ -10434,7 +10434,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
     st.markdown(
         f'<div style="font-size:10px; color:#263238; margin-top:6px;">'
         f'IB fixed at 9:30–10:30 AM · Set From = To for single day · '
-        f'Set a date range (max 22 weekdays ≈ 1 month) for walk-forward analysis · '
+        f'Set a date range (up to 65 trading days ≈ 3 months) for walk-forward analysis · '
         f'Results auto-saved · Slippage {_bt_slippage:.1f}% each side applied'
         f'</div>',
         unsafe_allow_html=True,

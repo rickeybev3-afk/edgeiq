@@ -9142,7 +9142,7 @@ def run_backtest_range(
     price_max: float = 20.0,
     slippage_pct: float = 0.0,
 ) -> tuple:
-    """Run the backtest across a date range (max 22 weekdays ≈ 1 month).
+    """Run the backtest across a date range (max 65 weekdays ≈ 3 months).
 
     Returns (all_results, agg_summary, daily_list) where:
     - all_results   : flat list of every row with 'sim_date' and 'split' ('train'/'test') added
@@ -9193,10 +9193,10 @@ def run_backtest_range(
             "tiered_pnl_r_count": len(_t_v),
         }
 
-    # Collect weekdays in range, cap at 22 (~1 calendar month)
+    # Collect weekdays in range, cap at 65 (~3 calendar months)
     trading_days = []
     cur = start_date
-    while cur <= end_date and len(trading_days) < 22:
+    while cur <= end_date and len(trading_days) < 65:
         if cur.weekday() < 5:
             trading_days.append(cur)
         cur += timedelta(days=1)
