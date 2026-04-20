@@ -9,6 +9,7 @@ Usage:
   python calibrate_sp_mult.py --pass gap_down       # calibrate the gap_down pass
   python calibrate_sp_mult.py --pass squeeze --apply  # calibrate AND patch paper_trader_bot.py
   python calibrate_sp_mult.py --reset-pass trend    # reset trend back to 1.00x baseline
+  python calibrate_sp_mult.py --restore-bak trend  # undo a reset by restoring the .bak backup
   python calibrate_sp_mult.py --self-test           # run deterministic unit tests
 
 Methodology (mirrors the 5-year backtest used across passes):
@@ -705,6 +706,141 @@ def _self_test_apply() -> None:
         expect_citation_fragment="60 trades, 80.0% WR / +0.500R avg → 1.20×",
     )
 
+    # ── Restore-from-bak tests ────────────────────────────────────────────────
+    def _run_restore_bak(
+        label: str,
+        pass_name: str,
+        bak_fixture: str,
+        current_fixture: str,
+        expect_value: float,
+        expect_pass: bool = True,
+    ) -> None:
+        nonlocal all_ok
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+            tmp = tf.name
+            tf.write(current_fixture)
+        bak = tmp + ".bak"
+        try:
+            with open(bak, "w") as fh:
+                fh.write(bak_fixture)
+
+            exited = False
+            exit_code = 0
+            original_exit = sys.exit
+
+            def _fake_exit(code=0):
+                nonlocal exited, exit_code
+                exited = True
+                exit_code = int(code) if code else 0
+                raise SystemExit(code)
+
+            sys.exit = _fake_exit
+            try:
+                _restore_from_bak(pass_name, bot_path=tmp)
+            except SystemExit:
+                pass
+            finally:
+                sys.exit = original_exit
+
+            if expect_pass:
+                with open(tmp) as fh:
+                    restored = fh.read()
+                pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*([\d.]+)')
+                m = pat.search(restored)
+                if not m:
+                    print(f"  FAIL {label}: '{pass_name}' entry not found after restore")
+                    all_ok = False
+                    return
+                got = float(m.group(1))
+                value_ok = abs(got - expect_value) < 0.001
+                ok = value_ok and not exited
+                print(
+                    f"  {'OK  ' if ok else 'FAIL'} {label}: "
+                    f"value={got:.2f} (expected {expect_value:.2f}), "
+                    f"exited_unexpectedly={'yes' if exited else 'no'}"
+                )
+                if not ok:
+                    all_ok = False
+            else:
+                ok = exited and exit_code != 0
+                print(
+                    f"  {'OK  ' if ok else 'FAIL'} {label}: "
+                    f"expected failure exit, got exited={exited} code={exit_code}"
+                )
+                if not ok:
+                    all_ok = False
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            try:
+                os.unlink(bak)
+            except OSError:
+                pass
+
+    # Restoring 'trend' from a backup that had 0.85× back to the current reset state
+    _run_restore_bak(
+        "restore-bak trend: backup=0.85× → replaces current reset",
+        pass_name="trend",
+        bak_fixture=_APPLY_FIXTURE,          # has trend at 0.85
+        current_fixture=_APPLY_FIXTURE_TREND_STALE,  # current has trend at 1.00 (reset)
+        expect_value=0.85,
+        expect_pass=True,
+    )
+    # Restoring 'gap' from a backup that had a calibrated value
+    _run_restore_bak(
+        "restore-bak gap: backup=1.00× calibrated → replaces stale current",
+        pass_name="gap",
+        bak_fixture=_APPLY_FIXTURE,
+        current_fixture=_APPLY_FIXTURE_GAP_STALE,
+        expect_value=1.00,
+        expect_pass=True,
+    )
+    # Missing backup file → should fail
+    def _run_restore_bak_no_bak(label: str, pass_name: str) -> None:
+        nonlocal all_ok
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+            tmp = tf.name
+            tf.write(_APPLY_FIXTURE)
+        try:
+            exited = False
+            exit_code = 0
+            original_exit = sys.exit
+
+            def _fake_exit(code=0):
+                nonlocal exited, exit_code
+                exited = True
+                exit_code = int(code) if code else 0
+                raise SystemExit(code)
+
+            sys.exit = _fake_exit
+            try:
+                _restore_from_bak(pass_name, bot_path=tmp)
+            except SystemExit:
+                pass
+            finally:
+                sys.exit = original_exit
+
+            ok = exited and exit_code != 0
+            print(
+                f"  {'OK  ' if ok else 'FAIL'} {label}: "
+                f"expected failure exit when .bak missing, got exited={exited} code={exit_code}"
+            )
+            if not ok:
+                all_ok = False
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    _run_restore_bak_no_bak("restore-bak missing .bak file → error exit", "trend")
+
     if all_ok:
         print("All _apply_to_bot self-tests passed.")
     else:
@@ -786,6 +922,104 @@ def _self_test_reset_confirm() -> None:
     else:
         print("SELF-TEST FAILURES in reset-confirm — check the output above.")
         sys.exit(1)
+
+
+def _restore_from_bak(pass_name: str, bot_path: str | None = None) -> None:
+    """Restore paper_trader_bot.py from its .bak backup created by --reset-pass or --apply.
+
+    Steps:
+      1. Locate paper_trader_bot.py.bak (or <bot_path>.bak).
+      2. Verify the backup contains a valid _SP_MULT_TABLE entry for pass_name.
+      3. Print a unified diff from the current file to the backup.
+      4. Overwrite the current file with the backup content.
+    """
+    resolved_path = bot_path if bot_path is not None else _BOT_FILE
+    backup_path = resolved_path + ".bak"
+
+    if pass_name not in PASS_CONFIG:
+        known = ", ".join(PASS_CONFIG)
+        print(f"ERROR: unknown pass '{pass_name}'. Known passes: {known}", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.isfile(backup_path):
+        print(
+            f"ERROR: no backup file found at {backup_path}\n"
+            "       A backup is created automatically when you run --reset-pass or --apply.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        with open(backup_path) as fh:
+            backup_content = fh.read()
+    except OSError as exc:
+        print(f"ERROR: cannot read backup {backup_path} — {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if "_SP_MULT_TABLE" not in backup_content:
+        print(
+            f"ERROR: backup file {backup_path} does not contain a _SP_MULT_TABLE entry.\n"
+            "       This backup may be corrupt or from an incompatible version.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    entry_pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*[\d.]+')
+    table_start = backup_content.find("_SP_MULT_TABLE")
+    brace_open = backup_content.find("{", table_start)
+    brace_close = backup_content.find("}", brace_open)
+    if table_start == -1 or brace_open == -1 or brace_close == -1:
+        print(
+            f"ERROR: could not locate _SP_MULT_TABLE block in backup {backup_path}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    block = backup_content[brace_open : brace_close + 1]
+    if not entry_pat.search(block):
+        print(
+            f"ERROR: backup does not contain a valid '{pass_name}' entry in _SP_MULT_TABLE.\n"
+            f"       Cannot restore — backup may be for a different pass.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    m = entry_pat.search(block)
+    restored_value_str = re.search(r"[\d.]+$", m.group(0)).group(0) if m else "?"
+    print(
+        f"Restoring '{pass_name}' from backup {backup_path}\n"
+        f"  Backed-up value: _SP_MULT_TABLE['{pass_name}'] = {restored_value_str}"
+    )
+
+    try:
+        with open(resolved_path) as fh:
+            current_content = fh.read()
+    except OSError as exc:
+        print(f"ERROR: cannot read current file {resolved_path} — {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    diff_lines = list(
+        difflib.unified_diff(
+            current_content.splitlines(keepends=True),
+            backup_content.splitlines(keepends=True),
+            fromfile="paper_trader_bot.py (current)",
+            tofile="paper_trader_bot.py (restored from .bak)",
+            n=3,
+        )
+    )
+    if diff_lines:
+        print("\nDiff (current → restored):")
+        print("".join(diff_lines))
+    else:
+        print("\n(No change — current file already matches the backup.)")
+
+    try:
+        with open(resolved_path, "w") as fh:
+            fh.write(backup_content)
+    except OSError as exc:
+        print(f"ERROR: could not write restored file — {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\nRestore complete: {resolved_path} has been reverted to the backed-up state.")
 
 
 def _reset_pass_to_baseline(pass_name: str, bot_path: str | None = None) -> None:
@@ -1149,6 +1383,18 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--restore-bak",
+        dest="restore_bak",
+        metavar="PASS",
+        help=(
+            "Restore paper_trader_bot.py from the .bak backup that was created "
+            "automatically by the last --reset-pass or --apply run. "
+            "Verifies the backup contains a valid _SP_MULT_TABLE entry for the named pass, "
+            "prints a diff of what is being restored, then overwrites the current file. "
+            f"Available passes: {', '.join(PASS_CONFIG)}"
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run deterministic unit tests on _recommend_mult() and exit.",
@@ -1203,6 +1449,10 @@ if __name__ == "__main__":
                 print("Aborted — no changes made.")
                 sys.exit(0)
         _reset_pass_to_baseline(args.reset_pass)
+        sys.exit(0)
+
+    if args.restore_bak:
+        _restore_from_bak(args.restore_bak)
         sys.exit(0)
 
     if not args.pass_name:
