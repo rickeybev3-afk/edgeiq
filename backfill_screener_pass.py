@@ -4,10 +4,16 @@ backfill_screener_pass.py
 Backfills the `screener_pass` column on backtest_sim_runs and paper_trades.
 
 Classification rules (directional — positive daily change only):
-  - 'gap'     : close-to-close daily change ≥ 3.0%
-  - 'trend'   : close-to-close daily change ≥ 1.0% AND close > SMA20 AND close > SMA50
-  - 'squeeze' : falls back to 'other' (no short-interest data available historically)
-  - 'other'   : everything else (including down days)
+  - 'gap'      : close-to-close daily change ≥ 3.0%
+  - 'trend'    : close-to-close daily change ≥ 1.0% AND close > SMA20 AND close > SMA50
+  - 'gap_down' : already tagged by the paper-trader bot (Bearish Break universe); preserved as-is
+  - 'squeeze'  : falls back to 'other' (no short-interest data available historically)
+  - 'other'    : everything else (including down days)
+
+Note on gap_down: this pass is set by the bot at order placement for Bearish Break
+tickers and cannot be inferred from price-change data alone. Rows already tagged
+'gap_down' are therefore skipped during --force re-classification to preserve the
+live tag.
 
 Close-to-close change computation
 ──────────────────────────────────
@@ -312,6 +318,20 @@ def process_table(table: str, date_field: str, dry_run: bool, force: bool,
         print(f"  Nothing to classify — all rows already have screener_pass.")
         return 0, 0, 0
 
+    # ── Pass 0: preserve existing gap_down rows (bot-tagged, cannot be inferred) ─
+    # gap_down is set at order placement for Bearish Break tickers and cannot be
+    # recovered from price data alone. Skip these rows during --force runs.
+    preserved_gd = 0
+    rows_to_classify: list[dict] = []
+    for r in rows:
+        if (r.get("screener_pass") or "").strip().lower() == "gap_down":
+            preserved_gd += 1
+        else:
+            rows_to_classify.append(r)
+    if preserved_gd:
+        print(f"  Pass 0 (gap_down preserved): {preserved_gd:,} rows skipped (live bot tag)")
+    rows = rows_to_classify
+
     # ── Pass 1: classify using DB-stored close_price / open_price / gap_pct ──
     # Computes true close-to-close daily change (same data as Alpaca bars,
     # already stored by the batch backtest + backfill_close_prices pipeline).
@@ -415,6 +435,7 @@ def main():
     print("  EdgeIQ — Screener Pass Backfill")
     print("  Classification: directional close-to-close change from DB cols")
     print("  gap ≥ 3%  |  trend ≥ 1% + close > SMA20 & SMA50  |  other")
+    print("  gap_down rows (bot-tagged Bearish Break) are preserved as-is")
     if args.dry_run:
         print("  *** DRY RUN — no writes ***")
     print("=" * 64)

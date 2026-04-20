@@ -24539,7 +24539,7 @@ def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False)
         sp = (r.get("screener_pass") or "other").strip().lower()
         by_pass.setdefault(sp, []).append(r)
 
-    for spass in ["gap", "trend"]:
+    for spass in ["gap", "trend", "gap_down"]:
         s = _stats(by_pass.get(spass, []))
         if s:
             results.append({"screener_pass": spass, **s})
@@ -24605,7 +24605,7 @@ def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False)
     for yr in sorted(by_year_pass.keys()):
         yr_data = by_year_pass[yr]
         row = {"year": yr}
-        for spass in ["gap", "trend", "all"]:
+        for spass in ["gap", "trend", "gap_down", "all"]:
             s = _yr_stats(yr_data.get(spass, []))
             if s:
                 for k, v in s.items():
@@ -26390,7 +26390,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 ("P3", "🟡", "intraday", 50,  69),
                 ("P4", "🟢", "morning",  50,  69),
             ]
-            _sp_passes = ["gap", "trend", "other"]
+            _sp_passes = ["gap", "trend", "gap_down", "other"]
             _SP_MIN_TRADES = 30   # minimum trades for a cell to show stats
 
             # Build HTML table with all pass×tier cells (—  if <30 trades)
@@ -26426,7 +26426,8 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
 
             for _spass in _sp_passes:
                 _pass_df = _sp_bt_df[_sp_bt_df["screener_pass"] == _spass]
-                _pass_color = "#1565c0" if _spass == "gap" else ("#2e7d32" if _spass == "trend" else "#546e7a")
+                _pass_color = "#1565c0" if _spass == "gap" else ("#2e7d32" if _spass == "trend" else ("#7b1fa2" if _spass == "gap_down" else "#546e7a"))
+                _pass_label = "Gap-Down" if _spass == "gap_down" else _spass.capitalize()
                 for _si, (_stlabel, _stemoji, _stst, _stlo, _sthi) in enumerate(_sp_tier_defs):
                     _sub = _pass_df[
                         (_pass_df["scan_type"] == _stst) &
@@ -26439,7 +26440,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     if _n < _SP_MIN_TRADES:
                         _sp_body += (
                             f'<tr style="background:{_row_bg};">'
-                            f'<td style="padding:6px 10px;color:{_pass_color};font-weight:600;">{_spass.capitalize()}</td>'
+                            f'<td style="padding:6px 10px;color:{_pass_color};font-weight:600;">{_pass_label}</td>'
                             f'<td style="padding:6px 10px;color:#cfd8dc;">{_stemoji} {_stlabel}</td>'
                             f'<td style="padding:6px 10px;text-align:right;color:#455a64;">{_n}</td>'
                             f'<td style="padding:6px 10px;text-align:right;color:#455a64;">—</td>'
@@ -26463,7 +26464,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                     _best_badge = ' ★' if _is_best else ''
                     _sp_body += (
                         f'<tr style="background:{_row_bg};">'
-                        f'<td style="padding:6px 10px;color:{_pass_color};font-weight:600;">{_spass.capitalize()}{_best_badge}</td>'
+                        f'<td style="padding:6px 10px;color:{_pass_color};font-weight:600;">{_pass_label}{_best_badge}</td>'
                         f'<td style="padding:6px 10px;color:#cfd8dc;">{_stemoji} {_stlabel}</td>'
                         f'<td style="padding:6px 10px;text-align:right;color:#b0bec5;">{_n:,}</td>'
                         f'<td style="padding:6px 10px;text-align:right;"><span style="color:{_wr_col};font-weight:600;">{_wr:.1f}%</span></td>'
@@ -32244,9 +32245,9 @@ function _bqCopyShareLink() {
         if not _live_resolved.empty and "screener_pass" in _live_resolved.columns:
             _sp_live = _live_resolved.copy()
             _sp_live["screener_pass"] = _sp_live["screener_pass"].fillna("untagged").str.strip().str.lower()
-            _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00}
+            _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00, "gap_down": 1.00}
             _sp_live_rows = []
-            for _spass in ["gap", "trend", "other", "squeeze", "untagged"]:
+            for _spass in ["gap", "trend", "gap_down", "other", "squeeze", "untagged"]:
                 _sg = _sp_live[_sp_live["screener_pass"] == _spass]
                 if _sg.empty:
                     continue
@@ -32255,7 +32256,7 @@ function _bqCopyShareLink() {
                 _swr = _sw / _sn * 100 if _sn > 0 else 0
                 _smult = _SP_MULT_LIVE.get(_spass, 1.00)
                 _sp_live_rows.append({
-                    "Pass":     _spass.capitalize(),
+                    "Pass":     "Gap-Down" if _spass == "gap_down" else _spass.capitalize(),
                     "Trades":   _sn,
                     "Wins":     int(_sw),
                     "WR":       f"{_swr:.0f}%",
@@ -32274,9 +32275,10 @@ function _bqCopyShareLink() {
         _sp2_hdr_col, _sp2_auto_col, _sp2_refresh_col = st.columns([4.5, 2, 1.5])
         with _sp2_hdr_col:
             st.markdown(
-                "**Screener Pass — Gap vs Trend vs All (5-yr Backtest)**",
+                "**Screener Pass — Gap vs Trend vs Gap-Down vs All (5-yr Backtest)**",
                 help=(
                     "Gap = ≥3% daily gap classified rows · Trend = ≥1% change + above SMA20 & SMA50 · "
+                    "Gap-Down = Bearish Break universe (bot-tagged at order placement) · "
                     "All = every resolved backtest row regardless of screener_pass. "
                     "Run `python backfill_screener_pass.py` to classify historical rows if counts look low."
                 ),
@@ -32381,7 +32383,7 @@ function _bqCopyShareLink() {
                 "yet or no backtest rows are loaded. Run `python backfill_screener_pass.py`."
             )
         else:
-            _sp_pass_order = {"gap": 0, "trend": 1, "all": 2}
+            _sp_pass_order = {"gap": 0, "trend": 1, "gap_down": 2, "all": 3}
             _sp_grid_sorted = sorted(_sp_grid, key=lambda r: _sp_pass_order.get(r["screener_pass"], 9))
             _sp_hdr2 = (
                 '<tr style="background:#1e2d3d;color:#90a4ae;font-size:11px;">'
@@ -32394,8 +32396,8 @@ function _bqCopyShareLink() {
                 '</tr>'
             )
             _sp_body2 = ""
-            _pass_colors = {"gap": "#1565c0", "trend": "#2e7d32", "all": "#546e7a"}
-            _pass_labels = {"gap": "🔵 Gap", "trend": "🟢 Trend", "all": "⬜ All"}
+            _pass_colors = {"gap": "#1565c0", "trend": "#2e7d32", "gap_down": "#7b1fa2", "all": "#546e7a"}
+            _pass_labels = {"gap": "🔵 Gap", "trend": "🟢 Trend", "gap_down": "🔴 Gap-Down", "all": "⬜ All"}
             for _si2, _spr in enumerate(_sp_grid_sorted):
                 _spass2 = _spr["screener_pass"]
                 _row_bg2 = "#131f2e" if _si2 % 2 == 0 else "#0f1923"
@@ -32427,6 +32429,7 @@ function _bqCopyShareLink() {
             )
             st.caption(
                 "Gap = ≥3% close-to-close daily gap · Trend = ≥1% change + close above SMA20 & SMA50 · "
+                "Gap-Down = Bearish Break universe (bot-tagged at order placement) · "
                 "All = full backtest universe · Trades/yr estimated from earliest→latest sim_date span. "
                 "Run `python backfill_screener_pass.py` if Gap/Trend counts look too low."
             )
@@ -32435,20 +32438,23 @@ function _bqCopyShareLink() {
             if _sp_full_yrs < 2:
                 st.caption("📅 Year-by-year trend not available — fewer than 2 full years of data.")
             else:
-                with st.expander("📅 Year-by-year edge trend (Gap vs Trend vs All)", expanded=False):
+                with st.expander("📅 Year-by-year edge trend (Gap vs Trend vs Gap-Down vs All)", expanded=False):
                     # ── Sparkline charts ─────────────────────────────────────────────
                     _spark_years  = [_r.get("year")           for _r in _sp_by_year]
                     _spark_pt_symbols = ["circle-open" if yr in _sp_partial_yrs else "circle" for yr in _spark_years]
                     _spark_pt_opacity = [0.45 if yr in _sp_partial_yrs else 1.0 for yr in _spark_years]
                     _spark_pt_custom  = ["(partial year)" if yr in _sp_partial_yrs else "" for yr in _spark_years]
-                    _spark_gap_wr = [_r.get("gap_wr_pct")     for _r in _sp_by_year]
+                    _spark_gap_wr = [_r.get("gap_wr_pct")      for _r in _sp_by_year]
                     _spark_trd_wr = [_r.get("trend_wr_pct")   for _r in _sp_by_year]
+                    _spark_gd_wr  = [_r.get("gap_down_wr_pct") for _r in _sp_by_year]
                     _spark_all_wr = [_r.get("all_wr_pct")     for _r in _sp_by_year]
                     _spark_gap_ar = [_r.get("gap_avg_r")      for _r in _sp_by_year]
                     _spark_trd_ar = [_r.get("trend_avg_r")    for _r in _sp_by_year]
+                    _spark_gd_ar  = [_r.get("gap_down_avg_r") for _r in _sp_by_year]
                     _spark_all_ar = [_r.get("all_avg_r")      for _r in _sp_by_year]
-                    _spark_gap_te = [_r.get("gap_true_exp")   for _r in _sp_by_year]
-                    _spark_trd_te = [_r.get("trend_true_exp") for _r in _sp_by_year]
+                    _spark_gap_te = [_r.get("gap_true_exp")      for _r in _sp_by_year]
+                    _spark_trd_te = [_r.get("trend_true_exp")    for _r in _sp_by_year]
+                    _spark_gd_te  = [_r.get("gap_down_true_exp") for _r in _sp_by_year]
                     _spark_all_te = [_r.get("all_true_exp")   for _r in _sp_by_year]
                     def _on_sparkline_metric_change():
                         _chosen = st.session_state["sparkline_metric_toggle"]
@@ -32482,6 +32488,13 @@ function _bqCopyShareLink() {
                             hovertemplate="%{x}: %{y:.1f}% %{customdata}<extra>Trend</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gd_wr, mode="lines+markers",
+                            name="Gap-Down", line=dict(color="#ce93d8", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:.1f}% %{customdata}<extra>Gap-Down</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_wr, mode="lines+markers",
                             name="All", line=dict(color="#90a4ae", width=2, dash="dot"),
                             marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
@@ -32507,6 +32520,13 @@ function _bqCopyShareLink() {
                             marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
                             customdata=_spark_pt_custom,
                             hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Trend</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gd_ar, mode="lines+markers",
+                            name="Gap-Down", line=dict(color="#ce93d8", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Gap-Down</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_ar, mode="lines+markers",
@@ -32535,6 +32555,13 @@ function _bqCopyShareLink() {
                             marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
                             customdata=_spark_pt_custom,
                             hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Trend</extra>",
+                        ))
+                        _fig_spark.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gd_te, mode="lines+markers",
+                            name="Gap-Down", line=dict(color="#ce93d8", width=2),
+                            marker=dict(size=5, symbol=_spark_pt_symbols, opacity=_spark_pt_opacity),
+                            customdata=_spark_pt_custom,
+                            hovertemplate="%{x}: %{y:+.3f}R %{customdata}<extra>Gap-Down</extra>",
                         ))
                         _fig_spark.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_te, mode="lines+markers",
@@ -32578,9 +32605,14 @@ function _bqCopyShareLink() {
                         '<th style="padding:5px 10px;text-align:left;" rowspan="2">Year</th>'
                         '<th style="padding:5px 10px;text-align:center;color:#5c8ee6;border-left:1px solid #263545;" colspan="4">🔵 Gap</th>'
                         '<th style="padding:5px 10px;text-align:center;color:#66bb6a;border-left:1px solid #263545;" colspan="4">🟢 Trend</th>'
+                        '<th style="padding:5px 10px;text-align:center;color:#ce93d8;border-left:1px solid #263545;" colspan="4">🔴 Gap-Down</th>'
                         '<th style="padding:5px 10px;text-align:center;color:#90a4ae;border-left:1px solid #263545;" colspan="4">⬜ All</th>'
                         '</tr>'
                         '<tr style="background:#1a2737;color:#78909c;font-size:10px;">'
+                        '<th style="padding:4px 8px;text-align:right;border-left:1px solid #263545;">Trades</th>'
+                        '<th style="padding:4px 8px;text-align:right;">WR%</th>'
+                        '<th style="padding:4px 8px;text-align:right;">Avg R</th>'
+                        '<th style="padding:4px 8px;text-align:right;">True Exp</th>'
                         '<th style="padding:4px 8px;text-align:right;border-left:1px solid #263545;">Trades</th>'
                         '<th style="padding:4px 8px;text-align:right;">WR%</th>'
                         '<th style="padding:4px 8px;text-align:right;">Avg R</th>'
@@ -32605,7 +32637,7 @@ function _bqCopyShareLink() {
                         _yr_clr   = "#78909c" if _is_partial_yr else "#b0bec5"
                         _yr_title = ' title="Partial year — data does not cover both H1 and H2"' if _is_partial_yr else ""
                         _yr_body += f'<td style="padding:5px 10px;color:{_yr_clr};font-weight:700;font-style:{"italic" if _is_partial_yr else "normal"};"  {_yr_title}>{_yr_label}</td>'
-                        for _sp3 in ["gap", "trend", "all"]:
+                        for _sp3 in ["gap", "trend", "gap_down", "all"]:
                             _t3  = _yrow.get(f"{_sp3}_trades")
                             _wr3 = _yrow.get(f"{_sp3}_wr_pct")
                             _av3 = _yrow.get(f"{_sp3}_avg_r")
@@ -32642,13 +32674,15 @@ function _bqCopyShareLink() {
                         "On the sparklines, partial-year points appear as hollow (open) markers at reduced opacity."
                     )
                     # ── Trend charts ─────────────────────────────────────────────────
-                    _spark_years  = [_r.get("year")         for _r in _sp_by_year]
-                    _spark_gap_wr = [_r.get("gap_wr_pct")   for _r in _sp_by_year]
-                    _spark_trd_wr = [_r.get("trend_wr_pct") for _r in _sp_by_year]
-                    _spark_all_wr = [_r.get("all_wr_pct")   for _r in _sp_by_year]
-                    _spark_gap_ar = [_r.get("gap_avg_r")    for _r in _sp_by_year]
-                    _spark_trd_ar = [_r.get("trend_avg_r")  for _r in _sp_by_year]
-                    _spark_all_ar = [_r.get("all_avg_r")    for _r in _sp_by_year]
+                    _spark_years  = [_r.get("year")           for _r in _sp_by_year]
+                    _spark_gap_wr = [_r.get("gap_wr_pct")     for _r in _sp_by_year]
+                    _spark_trd_wr = [_r.get("trend_wr_pct")   for _r in _sp_by_year]
+                    _spark_gd_wr  = [_r.get("gap_down_wr_pct") for _r in _sp_by_year]
+                    _spark_all_wr = [_r.get("all_wr_pct")     for _r in _sp_by_year]
+                    _spark_gap_ar = [_r.get("gap_avg_r")      for _r in _sp_by_year]
+                    _spark_trd_ar = [_r.get("trend_avg_r")    for _r in _sp_by_year]
+                    _spark_gd_ar  = [_r.get("gap_down_avg_r") for _r in _sp_by_year]
+                    _spark_all_ar = [_r.get("all_avg_r")      for _r in _sp_by_year]
                     _ck_wr, _ck_ar = st.columns(2)
                     with _ck_wr:
                         _fig_spark_wr = go.Figure()
@@ -32661,6 +32695,11 @@ function _bqCopyShareLink() {
                             x=_spark_years, y=_spark_trd_wr, mode="lines+markers",
                             name="Trend", line=dict(color="#66bb6a", width=2), marker=dict(size=5),
                             hovertemplate="%{x}: %{y:.1f}%<extra>Trend</extra>",
+                        ))
+                        _fig_spark_wr.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gd_wr, mode="lines+markers",
+                            name="Gap-Down", line=dict(color="#ce93d8", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:.1f}%<extra>Gap-Down</extra>",
                         ))
                         _fig_spark_wr.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_wr, mode="lines+markers",
@@ -32694,6 +32733,11 @@ function _bqCopyShareLink() {
                             hovertemplate="%{x}: %{y:+.3f}R<extra>Trend</extra>",
                         ))
                         _fig_spark_ar.add_trace(go.Scatter(
+                            x=_spark_years, y=_spark_gd_ar, mode="lines+markers",
+                            name="Gap-Down", line=dict(color="#ce93d8", width=2), marker=dict(size=5),
+                            hovertemplate="%{x}: %{y:+.3f}R<extra>Gap-Down</extra>",
+                        ))
+                        _fig_spark_ar.add_trace(go.Scatter(
                             x=_spark_years, y=_spark_all_ar, mode="lines+markers",
                             name="All", line=dict(color="#90a4ae", width=2, dash="dot"), marker=dict(size=5),
                             hovertemplate="%{x}: %{y:+.3f}R<extra>All</extra>",
@@ -32718,6 +32762,7 @@ function _bqCopyShareLink() {
                     _yr_csv_header = (
                         "Year,Gap Trades,Gap WR%,Gap Avg R,Gap True Exp,"
                         "Trend Trades,Trend WR%,Trend Avg R,Trend True Exp,"
+                        "Gap-Down Trades,Gap-Down WR%,Gap-Down Avg R,Gap-Down True Exp,"
                         "All Trades,All WR%,All Avg R,All True Exp"
                     )
                     _yr_csv_rows = [_yr_csv_header]
@@ -32732,6 +32777,10 @@ function _bqCopyShareLink() {
                             f'{_yr_fmt(_yrow.get("trend_wr_pct"))},'
                             f'{_yr_fmt(_yrow.get("trend_avg_r"))},'
                             f'{_yr_fmt(_yrow.get("trend_true_exp"))},'
+                            f'{_yr_fmt(_yrow.get("gap_down_trades"), "{:.0f}")},'
+                            f'{_yr_fmt(_yrow.get("gap_down_wr_pct"))},'
+                            f'{_yr_fmt(_yrow.get("gap_down_avg_r"))},'
+                            f'{_yr_fmt(_yrow.get("gap_down_true_exp"))},'
                             f'{_yr_fmt(_yrow.get("all_trades"), "{:.0f}")},'
                             f'{_yr_fmt(_yrow.get("all_wr_pct"))},'
                             f'{_yr_fmt(_yrow.get("all_avg_r"))},'
@@ -32766,7 +32815,7 @@ function _bqCopyShareLink() {
             )
             _sp_df["is_win"] = _sp_df["win_loss"].isin(["W", "Win"])
             _sp_rows = []
-            for _pass in ["gap", "trend", "squeeze", "other"]:
+            for _pass in ["gap", "trend", "gap_down", "squeeze", "other"]:
                 _sub = _sp_df[_sp_df["screener_pass"] == _pass]
                 if _sub.empty:
                     continue
@@ -32775,7 +32824,7 @@ function _bqCopyShareLink() {
                 _wr  = _w / _n * 100
                 _avg_r = _sub["pnl_r"].mean() if not _sub["pnl_r"].isna().all() else None
                 _sp_rows.append({
-                    "Pass":     _pass.capitalize(),
+                    "Pass":     "Gap-Down" if _pass == "gap_down" else _pass.capitalize(),
                     "Trades":   _n,
                     "Wins":     _w,
                     "Losses":   _n - _w,
@@ -32784,7 +32833,7 @@ function _bqCopyShareLink() {
                 })
             if _sp_rows:
                 st.dataframe(pd.DataFrame(_sp_rows), use_container_width=True, hide_index=True)
-                st.caption("Gap = ≥3% daily gap · Trend = ≥1% + above SMA20 & SMA50 · Other = all else")
+                st.caption("Gap = ≥3% daily gap · Trend = ≥1% + above SMA20 & SMA50 · Gap-Down = Bearish Break universe · Other = all else")
             else:
                 st.info("No screener_pass data available yet — run backfill_screener_pass.py.")
 
