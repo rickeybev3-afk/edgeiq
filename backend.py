@@ -6603,15 +6603,19 @@ def place_alpaca_bracket_order(
     if ib_range <= 0:
         return {"ok": False, "error": f"Invalid IB range ({ib_range})"}
 
+    # Alpaca requires penny increments (2 dp) for stocks ≥ $1.
+    # Sub-penny prices cause HTTP 422 "minimum pricing criteria" errors.
+    _pr = lambda x: round(x, 2)
+
     if direction == "Bullish Break":
-        entry  = round(ib_high, 4)
-        stop   = round(ib_low,  4)
-        target = round(entry + target_r * ib_range, 4)
+        entry  = _pr(ib_high)
+        stop   = _pr(ib_low)
+        target = _pr(entry + target_r * ib_range)
         side   = "buy"
     elif direction == "Bearish Break":
-        entry  = round(ib_low,  4)
-        stop   = round(ib_high, 4)
-        target = round(entry - target_r * ib_range, 4)
+        entry  = _pr(ib_low)
+        stop   = _pr(ib_high)
+        target = _pr(entry - target_r * ib_range)
         side   = "sell"
     else:
         return {"ok": False, "error": f"Unsupported direction: {direction}"}
