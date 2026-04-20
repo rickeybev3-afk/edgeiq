@@ -10455,8 +10455,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
         with _ls_col1:
             if st.button("🔄 Fetch My Saved Dates", use_container_width=True, key="bt_ls_fetch"):
                 _load_bt_saved_dates.clear()
-                _ls_avail = _load_bt_saved_dates(uid=_AUTH_USER_ID)
+                with st.spinner("Fetching all saved dates… (~10 sec)"):
+                    _ls_avail = _load_bt_saved_dates(uid=_AUTH_USER_ID)
                 st.session_state["_bt_ls_dates"] = _ls_avail
+                # Clear previous selection so the multiselect resets to the newest date
+                st.session_state.pop("bt_ls_date_sel", None)
+                if _ls_avail:
+                    st.success(f"Found {len(_ls_avail)} dates ({_ls_avail[-1]} → {_ls_avail[0]})")
+                else:
+                    st.warning("No saved dates found.")
+                st.rerun()
 
         _ls_dates_avail = st.session_state.get("_bt_ls_dates", [])
         if _ls_dates_avail:
