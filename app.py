@@ -12120,20 +12120,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _n_active_days  = max(1, len(_rp_dates_seen))
                             _actual_tpd     = _total_trades / _n_active_days
                             _n_bdays        = max(1, len(pd.bdate_range(str(_rp_start), str(_rp_end))))
-                            with st.expander(f"📐 Throughput Projector  ·  actual avg **{_actual_tpd:.1f}** trades / day"):
+                            with st.expander("📐 Throughput Projector"):
                                 st.caption(
-                                    "Set a target trades/day to project equity and CAGR if you could scale "
-                                    "throughput while keeping the same win rate and R distribution."
+                                    "How does your edge scale with more setups per day? "
+                                    "Set a target and see projected equity and CAGR — "
+                                    "win rate and R distribution stay exactly as measured."
                                 )
                                 _proj_col1, _proj_col2 = st.columns([1, 3])
                                 with _proj_col1:
                                     _proj_tpd = st.number_input(
                                         "Target trades/day",
                                         min_value=0.1, max_value=500.0,
-                                        value=float(max(1, round(_actual_tpd))),
+                                        value=26.0,
                                         step=1.0,
                                         key="rp_proj_tpd",
-                                        help="How many qualifying setups per day would you have access to? (e.g. 26 = no PDT cap, full Finviz universe)",
+                                        help="Full Finviz 3-pass universe post-PDT ≈ 26/day. Crypto adds ~6–15 more. Micro futures add 2–4 more.",
                                     )
                                 _proj_scale          = _proj_tpd / _actual_tpd
                                 _proj_total_pnl      = _total_pnl * _proj_scale
@@ -12162,13 +12163,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _pm4.metric(
                                     "Projected Trades",
                                     f"{_proj_trades:,}",
-                                    help=f"Scale factor {_proj_scale:.2f}× vs actual avg {_actual_tpd:.1f}/day",
+                                    help=f"{_proj_scale:.1f}× scale vs the {_actual_tpd:.1f}/day in your data (PDT-constrained baseline)",
                                 )
                                 st.caption(
-                                    f"📌 **How this works**: your actual data shows **{_actual_tpd:.1f} trades/day** "
-                                    f"over {_n_active_days} active days in this date range. "
-                                    f"At **{_proj_tpd:.1f} trades/day** ({_proj_scale:.2f}× scale), every dollar of P&L "
-                                    "scales by that factor. Win rate and R distribution are held constant — only throughput changes."
+                                    f"Scale factor **{_proj_scale:.1f}×** vs baseline "
+                                    f"({_actual_tpd:.1f} trades/day in this dataset — PDT-constrained). "
+                                    f"At **{_proj_tpd:.1f}/day** the same edge compounds across more reps. "
+                                    "Same filters, same quality bar, just more shots at it."
                                 )
 
                         # ── RVOL size bonus breakdown (only when data is present) ──────────
