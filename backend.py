@@ -13,6 +13,7 @@ import logging
 import requests
 from collections import deque
 from calib_threshold import resolve_calib_threshold
+from log_utils import _rotate_log
 try:
     import streamlit as st
     _ST_AVAILABLE = True
@@ -1102,39 +1103,6 @@ TCS_THRESHOLD_HISTORY_FILE = "tcs_threshold_history.jsonl"  # append-only histor
 _TCS_HISTORY_MAX_BYTES  = 500 * 1024   # rotate at 500 KB
 _TCS_HISTORY_BACKUP_COUNT = 1           # keep one .1 backup
 
-
-def _rotate_tcs_history(path: str) -> None:
-    """Roll over *path* when it exceeds _TCS_HISTORY_MAX_BYTES.
-
-    Keeps _TCS_HISTORY_BACKUP_COUNT rotated files (e.g. tcs_threshold_history.jsonl.1).
-    Older backups beyond that count are deleted automatically.
-    """
-    try:
-        if not os.path.exists(path) or os.path.getsize(path) < _TCS_HISTORY_MAX_BYTES:
-            return
-        for idx in range(_TCS_HISTORY_BACKUP_COUNT, 0, -1):
-            src = f"{path}.{idx}"
-            dst = f"{path}.{idx + 1}" if idx < _TCS_HISTORY_BACKUP_COUNT else None
-            if dst is not None and os.path.exists(src):
-                try:
-                    os.remove(dst)
-                except OSError:
-                    pass
-                os.rename(src, dst)
-            elif dst is None and os.path.exists(src):
-                try:
-                    os.remove(src)
-                except OSError:
-                    pass
-        backup = f"{path}.1"
-        try:
-            if os.path.exists(backup):
-                os.remove(backup)
-            os.rename(path, backup)
-        except OSError as exc:
-            print(f"WARNING: could not rotate TCS history log {path} — {exc}", file=sys.stderr)
-    except OSError as exc:
-        print(f"WARNING: could not check TCS history log size {path} — {exc}", file=sys.stderr)
 
 
 def _parse_retention_days(env_val: str | None, default: int = 90) -> int:
@@ -2622,7 +2590,7 @@ def append_tcs_threshold_history(previous: dict, current: dict, min_delta: int =
             "thresholds": {k: int(v) for k, v in current.items()},
             "previous":   {k: int(v) for k, v in previous.items()},
         }
-        _rotate_tcs_history(TCS_THRESHOLD_HISTORY_FILE)
+        _rotate_log(TCS_THRESHOLD_HISTORY_FILE, _TCS_HISTORY_MAX_BYTES, _TCS_HISTORY_BACKUP_COUNT)
         with open(TCS_THRESHOLD_HISTORY_FILE, "a") as _hf:
             _hf.write(_json.dumps(record) + "\n")
 

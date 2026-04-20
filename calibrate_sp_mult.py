@@ -50,6 +50,8 @@ except ImportError as exc:
     print(f"ERROR: could not import supabase from backend.py — {exc}", file=sys.stderr)
     sys.exit(1)
 
+from log_utils import _rotate_log
+
 if not supabase:
     print("ERROR: Supabase client is not initialised. Check SUPABASE_URL / SUPABASE_KEY.", file=sys.stderr)
     sys.exit(1)
@@ -1569,39 +1571,6 @@ _RESET_LOG_MAX_BYTES = 100 * 1024
 _RESET_LOG_BACKUP_COUNT = 1
 
 
-def _rotate_reset_log(path: str) -> None:
-    """Roll over *path* when it exceeds _RESET_LOG_MAX_BYTES.
-
-    Keeps _RESET_LOG_BACKUP_COUNT rotated files (e.g. calibration_resets.log.1).
-    Older backups beyond that count are deleted automatically.
-    """
-    try:
-        if not os.path.exists(path) or os.path.getsize(path) < _RESET_LOG_MAX_BYTES:
-            return
-        for idx in range(_RESET_LOG_BACKUP_COUNT, 0, -1):
-            src = f"{path}.{idx}"
-            dst = f"{path}.{idx + 1}" if idx < _RESET_LOG_BACKUP_COUNT else None
-            if dst is not None and os.path.exists(src):
-                try:
-                    os.remove(dst)
-                except OSError:
-                    pass
-                os.rename(src, dst)
-            elif dst is None and os.path.exists(src):
-                try:
-                    os.remove(src)
-                except OSError:
-                    pass
-        backup = f"{path}.1"
-        try:
-            if os.path.exists(backup):
-                os.remove(backup)
-            os.rename(path, backup)
-        except OSError as exc:
-            print(f"WARNING: could not rotate reset log {path} — {exc}", file=sys.stderr)
-    except OSError as exc:
-        print(f"WARNING: could not check reset log size {path} — {exc}", file=sys.stderr)
-
 
 def _write_reset_log(
     pass_name: str,
@@ -1620,7 +1589,7 @@ def _write_reset_log(
     import datetime as _dt
 
     path = log_path if log_path is not None else _RESET_LOG_FILE
-    _rotate_reset_log(path)
+    _rotate_log(path, _RESET_LOG_MAX_BYTES, _RESET_LOG_BACKUP_COUNT)
     prev_str = f"{prev_mult:.2f}" if prev_mult is not None else "unknown"
     mode_str = "CI/--yes" if used_yes else "interactive"
     timestamp = _dt.datetime.now(tz=_dt.timezone.utc).isoformat(timespec="seconds")

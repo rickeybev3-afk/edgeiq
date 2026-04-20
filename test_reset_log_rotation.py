@@ -1,4 +1,4 @@
-"""Unit tests for _rotate_reset_log() in calibrate_sp_mult.py.
+"""Unit tests for _rotate_log() (log_utils.py) exercised via calibrate_sp_mult constants.
 
 Covers:
   - No rotation when the log file is below the size threshold
@@ -14,10 +14,11 @@ from unittest.mock import patch
 
 
 import calibrate_sp_mult as csm
+from log_utils import _rotate_log
 
 
 class TestNoRotationBelowThreshold(unittest.TestCase):
-    """_rotate_reset_log must leave the file untouched when it is small."""
+    """_rotate_log must leave the file untouched when it is small."""
 
     def test_small_file_is_not_rotated(self):
         with tempfile.TemporaryDirectory() as td:
@@ -26,7 +27,7 @@ class TestNoRotationBelowThreshold(unittest.TestCase):
             with open(log, "wb") as fh:
                 fh.write(content)
 
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             self.assertTrue(os.path.exists(log), "original log must still exist")
             self.assertFalse(
@@ -37,7 +38,7 @@ class TestNoRotationBelowThreshold(unittest.TestCase):
     def test_missing_file_is_a_noop(self):
         with tempfile.TemporaryDirectory() as td:
             log = os.path.join(td, "nonexistent.log")
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
             self.assertFalse(os.path.exists(log))
             self.assertFalse(os.path.exists(log + ".1"))
 
@@ -47,14 +48,14 @@ class TestNoRotationBelowThreshold(unittest.TestCase):
             with open(log, "wb") as fh:
                 fh.write(b"a" * (csm._RESET_LOG_MAX_BYTES - 1))
 
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             self.assertTrue(os.path.exists(log))
             self.assertFalse(os.path.exists(log + ".1"))
 
 
 class TestRotationAtThreshold(unittest.TestCase):
-    """_rotate_reset_log must rename the log to .1 when size >= threshold."""
+    """_rotate_log must rename the log to .1 when size >= threshold."""
 
     def test_rotation_triggered_at_exact_threshold(self):
         with tempfile.TemporaryDirectory() as td:
@@ -62,7 +63,7 @@ class TestRotationAtThreshold(unittest.TestCase):
             with open(log, "wb") as fh:
                 fh.write(b"x" * csm._RESET_LOG_MAX_BYTES)
 
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             self.assertFalse(os.path.exists(log), "original log must be gone after rotation")
             self.assertTrue(os.path.exists(log + ".1"), "backup .1 must exist after rotation")
@@ -73,7 +74,7 @@ class TestRotationAtThreshold(unittest.TestCase):
             with open(log, "wb") as fh:
                 fh.write(b"y" * (csm._RESET_LOG_MAX_BYTES + 512))
 
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             self.assertFalse(os.path.exists(log))
             self.assertTrue(os.path.exists(log + ".1"))
@@ -85,7 +86,7 @@ class TestRotationAtThreshold(unittest.TestCase):
             with open(log, "wb") as fh:
                 fh.write(payload)
 
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             with open(log + ".1", "rb") as fh:
                 backup_content = fh.read()
@@ -107,7 +108,7 @@ class TestOnlyOneBackupRetained(unittest.TestCase):
             with open(log, "wb") as fh:
                 fh.write(b"new content" * (csm._RESET_LOG_MAX_BYTES // 11 + 1))
 
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             self.assertFalse(os.path.exists(log), "original log must be gone")
             self.assertTrue(os.path.exists(old_backup), "a single .1 backup must still exist")
@@ -134,7 +135,7 @@ class TestOnlyOneBackupRetained(unittest.TestCase):
             with open(log, "wb") as fh:
                 fh.write(new_data)
 
-            csm._rotate_reset_log(log)
+            _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             with open(log + ".1", "rb") as fh:
                 kept = fh.read()
@@ -143,7 +144,7 @@ class TestOnlyOneBackupRetained(unittest.TestCase):
 
 
 class TestOSErrorHandledGracefully(unittest.TestCase):
-    """_rotate_reset_log must not raise on OS-level failures; it prints a warning."""
+    """_rotate_log must not raise on OS-level failures; it prints a warning."""
 
     def test_getsize_oserror_prints_warning_and_does_not_raise(self):
         with tempfile.TemporaryDirectory() as td:
@@ -153,7 +154,7 @@ class TestOSErrorHandledGracefully(unittest.TestCase):
 
             with patch("os.path.getsize", side_effect=OSError("permission denied")):
                 with patch("sys.stderr") as mock_stderr:
-                    csm._rotate_reset_log(log)
+                    _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             mock_stderr.write.assert_called()
             warning_text = "".join(
@@ -169,7 +170,7 @@ class TestOSErrorHandledGracefully(unittest.TestCase):
 
             with patch("os.rename", side_effect=OSError("rename failed")):
                 with patch("sys.stderr") as mock_stderr:
-                    csm._rotate_reset_log(log)
+                    _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
 
             mock_stderr.write.assert_called()
             warning_text = "".join(
@@ -187,9 +188,9 @@ class TestOSErrorHandledGracefully(unittest.TestCase):
 
             with patch("os.remove", side_effect=OSError("remove failed")):
                 try:
-                    csm._rotate_reset_log(log)
+                    _rotate_log(log, csm._RESET_LOG_MAX_BYTES, csm._RESET_LOG_BACKUP_COUNT)
                 except OSError:
-                    self.fail("_rotate_reset_log must not propagate OSError from os.remove")
+                    self.fail("_rotate_log must not propagate OSError from os.remove")
 
 
 class TestWriteThenRotateIntegration(unittest.TestCase):
