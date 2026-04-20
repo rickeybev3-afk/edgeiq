@@ -284,12 +284,13 @@ def _self_test_apply() -> None:
             )
             if not ok:
                 all_ok = False
-            # Verify other entries are untouched
-            other_pat = re.compile(r'"other"\s*:\s*([\d.]+)')
-            om = other_pat.search(patched)
-            if om and abs(float(om.group(1)) - 1.15) > 0.001:
-                print(f"  FAIL {label}: 'other' entry was corrupted (got {om.group(1)})")
-                all_ok = False
+            # Verify other entries are untouched — skip when 'other' is itself being patched
+            if pass_name != "other":
+                other_pat = re.compile(r'"other"\s*:\s*([\d.]+)')
+                om = other_pat.search(patched)
+                if om and abs(float(om.group(1)) - 1.15) > 0.001:
+                    print(f"  FAIL {label}: 'other' entry was corrupted (got {om.group(1)})")
+                    all_ok = False
         finally:
             try:
                 os.unlink(tmp)
@@ -327,6 +328,22 @@ def _self_test_apply() -> None:
         "no citation_line — comment block untouched",
         "squeeze", 1.15, "47 trades, 72.3% WR / +0.411R → 1.15×",
         expect_value=1.15, expect_comment_fragment="72.3% WR",
+    )
+    _run(
+        "other baseline→1.20",
+        "other", 1.20, "60 trades, 80.0% WR / +0.500R → 1.20×",
+        expect_value=1.20, expect_comment_fragment="80.0% WR",
+        citation_line="#   'other' (2024-01-03 → 2024-12-31): 60 trades, 80.0% WR / +0.500R avg → 1.20×",
+        expect_citation_fragment="60 trades, 80.0% WR / +0.500R avg → 1.20×",
+        expect_stale_absent="87% WR / +0.622R avg → 1.15×",
+    )
+    _run(
+        "trend baseline→1.00",
+        "trend", 1.00, "50 trades, 68.0% WR / +0.350R → 1.00×",
+        expect_value=1.00, expect_comment_fragment="68.0% WR",
+        citation_line="#   'trend' (2024-01-03 → 2024-12-31): 50 trades, 68.0% WR / +0.350R avg → 1.00×",
+        expect_citation_fragment="50 trades, 68.0% WR / +0.350R avg → 1.00×",
+        expect_stale_absent="only 12 trades       → 0.85×",
     )
 
     if all_ok:
