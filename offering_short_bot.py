@@ -59,7 +59,7 @@ RISK_DOLLARS    = 150    # $ risk per trade (1R)
 MIN_PRICE       = 1.00   # skip penny stocks
 MAX_PRICE       = 30.00  # skip high-priced stocks unlikely to be dilutive
 STOP_PCT        = 0.08   # stop loss: entry + 8%
-TARGET_PCT      = 0.20   # take profit: entry - 20%
+TARGET_PCT      = 0.15   # take profit: entry - 15%
 
 # SEC form types that signal a dilutive share offering
 OFFERING_FORMS = ["424B4", "424B3", "424B2", "424B1", "S-3/A"]

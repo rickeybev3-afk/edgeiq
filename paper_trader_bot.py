@@ -252,6 +252,10 @@ def _get_effective_paper_lookback_days() -> int:
 # IS_PAPER_ALPACA=true  → paper-api.alpaca.markets  (safe, simulated fills)
 # IS_PAPER_ALPACA=false → api.alpaca.markets        (real money — flip when ready)
 LIVE_ORDERS_ENABLED     = os.getenv("LIVE_ORDERS_ENABLED", "false").lower() == "true"
+# Never place real Alpaca orders from the dev environment — only production
+# (deploy_server.py injects EDGEIQ_PRODUCTION=1 when spawning bots in prod)
+if os.getenv("EDGEIQ_PRODUCTION", "").strip() != "1":
+    LIVE_ORDERS_ENABLED = False
 IS_PAPER_ALPACA         = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
 MIN_TCS                 = _PAPER_MIN_TCS if IS_PAPER_ALPACA else _LIVE_MIN_TCS
 RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
