@@ -1279,6 +1279,22 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 _supabase_client.table("paper_trades").update(_order_patch).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date") or r.get("trade_date") or "")).eq("ticker", ticker).execute()
             except Exception as _patch_err:
                 log.warning(f"  [{ticker}] Could not patch order_id to paper_trades: {_patch_err}")
+        # ── Register zone invalidation watch ──────────────────────────────────
+        # Use raw ib_low (not _effective_stop) as the invalidation level —
+        # if price drops below the IB low the structure is broken regardless
+        # of how wide the stop is widened for false-shakeout protection.
+        _zw_date = str(r.get("sim_date") or r.get("trade_date") or datetime.now(EASTERN).date())
+        _register_zone_watch(
+            ticker      = ticker,
+            trade_date  = _zw_date,
+            order_id    = order_id,
+            direction   = direction,
+            invalidation_price = ib_low,   # IB low = structure invalidation level
+            entry       = result["entry"],
+            stop        = result["stop"],
+            target      = result["target"],
+            qty         = qty,
+        )
     else:
         log.warning(f"  ❌ [{ticker}] Order failed: {result.get('error')}")
         tg_send(f"⚠️ <b>{acct_type} Order Failed — {ticker}</b>\n{result.get('error','unknown error')}")
@@ -1380,6 +1396,215 @@ def _restore_trailing_stop_guard() -> None:
 # Session-open equity: date_str → equity float captured at ~9:35 AM ET each day.
 # Used by _force_close_all_positions() to compute equity change vs session open.
 _SESSION_OPEN_EQUITY: dict = {}
+
+# ── Zone invalidation watch ───────────────────────────────────────────────────
+# Maps (ticker, trade_date) → {order_id, invalidation_price, direction,
+#                               entry, stop, target, qty}
+# Populated by _register_zone_watch(); cleared when order is cancelled or fills.
+import threading as _zone_threading
+_ZONE_WATCH:      dict               = {}
+_ZONE_WATCH_LOCK: _zone_threading.Lock = _zone_threading.Lock()
+_ZONE_LAST_CHECK_TS: float           = 0.0
+ZONE_CHECK_INTERVAL  = 300  # seconds between price checks (5 min)
+
+
+def _alpaca_get_latest_prices(tickers: list) -> dict:
+    """Fetch latest trade price for each ticker from Alpaca market-data API.
+
+    Returns {TICKER: float_price}. Silently skips any ticker with no data.
+    Uses the SIP feed to match the rest of the bot.
+    """
+    import requests as _req
+    if not tickers or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        return {}
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+    }
+    symbols = ",".join(t.upper() for t in tickers)
+    try:
+        resp = _req.get(
+            "https://data.alpaca.markets/v2/stocks/trades/latest",
+            headers=headers,
+            params={"symbols": symbols, "feed": "sip"},
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            log.warning(f"[ZoneWatch] Price fetch HTTP {resp.status_code}")
+            return {}
+        trades = resp.json().get("trades", {})
+        return {sym.upper(): float(info["p"]) for sym, info in trades.items() if "p" in info}
+    except Exception as _e:
+        log.warning(f"[ZoneWatch] Price fetch error: {_e}")
+        return {}
+
+
+def _register_zone_watch(
+    ticker: str,
+    trade_date: str,
+    order_id: str,
+    direction: str,
+    invalidation_price: float,
+    entry: float,
+    stop: float,
+    target: float,
+    qty: int,
+) -> None:
+    """Register a newly placed bracket order for zone-invalidation monitoring."""
+    with _ZONE_WATCH_LOCK:
+        _ZONE_WATCH[(ticker.upper(), trade_date)] = {
+            "order_id":          order_id,
+            "invalidation_price": invalidation_price,
+            "direction":         direction,
+            "entry":             entry,
+            "stop":              stop,
+            "target":            target,
+            "qty":               qty,
+        }
+    log.info(
+        f"[ZoneWatch] 👀 Watching {ticker} — "
+        f"cancel if price < ${invalidation_price:.2f} (IB low) before entry fills"
+    )
+
+
+def _restore_zone_watch_from_db() -> None:
+    """Re-populate _ZONE_WATCH from today's open paper_trades on startup.
+
+    Queries for rows with alpaca_order_id set and win_loss NULL (entry pending).
+    Silently skips if LIVE_ORDERS_ENABLED is False (dev mode) or DB is unavailable.
+    """
+    if not LIVE_ORDERS_ENABLED or not _supabase_client:
+        return
+    today_str = str(datetime.now(EASTERN).date())
+    try:
+        rows = (
+            _supabase_client
+            .table("paper_trades")
+            .select(
+                "ticker,predicted,ib_low,ib_high,"
+                "entry_price_sim,stop_price_sim,target_price_sim,"
+                "alpaca_order_id,alpaca_qty"
+            )
+            .eq("user_id", USER_ID)
+            .eq("trade_date", today_str)
+            .not_.is_("alpaca_order_id", "null")
+            .is_("win_loss", "null")
+            .execute()
+        ).data or []
+        restored = 0
+        for row in rows:
+            ticker    = (row.get("ticker") or "").upper()
+            direction = row.get("predicted") or ""
+            ib_low    = float(row.get("ib_low") or 0)
+            order_id  = row.get("alpaca_order_id") or ""
+            if not ticker or not direction or not order_id or ib_low <= 0:
+                continue
+            # Only Bullish Break for now (Bearish Break uses IB high as invalidation)
+            if direction != "Bullish Break":
+                continue
+            _register_zone_watch(
+                ticker, today_str, order_id, direction, ib_low,
+                float(row.get("entry_price_sim") or 0),
+                float(row.get("stop_price_sim")  or 0),
+                float(row.get("target_price_sim") or 0),
+                int(row.get("alpaca_qty") or 0),
+            )
+            restored += 1
+        if restored:
+            log.info(f"[ZoneWatch] ♻️ Restored {restored} zone watch entry(s) from DB on restart")
+    except Exception as _e:
+        log.warning(f"[ZoneWatch] Startup restore failed (non-fatal): {_e}")
+
+
+def _monitor_zone_invalidation() -> None:
+    """Check open bracket orders — cancel if their IB zone has been broken.
+
+    Runs every ZONE_CHECK_INTERVAL seconds (5 min) during market hours.
+    For Bullish Break setups: cancelled if latest price < IB low (invalidation_price).
+
+    Sends a Telegram alert on cancellation so the trader knows immediately.
+    The 2 PM intraday scan will re-evaluate and re-place if the setup recovers.
+    """
+    global _ZONE_LAST_CHECK_TS
+    if not LIVE_ORDERS_ENABLED:
+        return
+
+    with _ZONE_WATCH_LOCK:
+        if not _ZONE_WATCH:
+            return
+
+    # Only run during market hours 9:35 → 15:55
+    now_et  = datetime.now(EASTERN)
+    cur_min = now_et.hour * 60 + now_et.minute
+    if cur_min < 9 * 60 + 35 or cur_min > 15 * 60 + 55:
+        return
+
+    # Rate-limit to once every ZONE_CHECK_INTERVAL seconds
+    import time as _time
+    if _time.time() - _ZONE_LAST_CHECK_TS < ZONE_CHECK_INTERVAL:
+        return
+    _ZONE_LAST_CHECK_TS = _time.time()
+
+    today_str = str(now_et.date())
+
+    with _ZONE_WATCH_LOCK:
+        keys_today = [(t, d) for t, d in _ZONE_WATCH if d == today_str]
+    if not keys_today:
+        return
+
+    tickers = list({t for t, _ in keys_today})
+    prices  = _alpaca_get_latest_prices(tickers)
+    if not prices:
+        log.warning("[ZoneWatch] Could not fetch prices — skipping check")
+        return
+
+    log.info(
+        f"[ZoneWatch] Checking {len(keys_today)} setup(s): "
+        + ", ".join(f"{t}=${prices.get(t, '?')}" for t, _ in keys_today)
+    )
+
+    to_cancel = []
+    with _ZONE_WATCH_LOCK:
+        for key in list(keys_today):
+            if key not in _ZONE_WATCH:
+                continue
+            watch     = _ZONE_WATCH[key]
+            ticker    = key[0]
+            price     = prices.get(ticker)
+            if price is None:
+                continue
+            direction   = watch["direction"]
+            inval_price = watch["invalidation_price"]
+            # Bullish: zone broken when price drops below IB low
+            if direction == "Bullish Break" and price < inval_price:
+                to_cancel.append((key, watch.copy(), price))
+
+    for key, watch, price in to_cancel:
+        ticker      = key[0]
+        inval_price = watch["invalidation_price"]
+        order_id    = watch["order_id"]
+        log.warning(
+            f"[ZoneWatch] ⚠️ {ticker} zone BROKEN — "
+            f"price ${price:.2f} < IB low ${inval_price:.2f} — "
+            f"cancelling order {order_id[:8]}…"
+        )
+        cancelled = _alpaca_cancel_orders_for_ticker(ticker)
+        if cancelled > 0:
+            log.info(f"[ZoneWatch] ✅ {ticker}: {cancelled} order(s) cancelled")
+            tg_send(
+                f"⚠️ <b>{ticker} Bracket Cancelled — Zone Broken</b>\n"
+                f"Price <b>${price:.2f}</b> broke below IB low <b>${inval_price:.2f}</b>\n"
+                f"Open entry order cancelled — setup structure invalidated.\n"
+                f"<i>Bot will re-evaluate at 2 PM scan if setup recovers.</i>"
+            )
+        else:
+            # Order may have already been filled or cancelled externally
+            log.info(
+                f"[ZoneWatch] {ticker}: 0 orders cancelled "
+                f"(already filled or removed — removing from watch)"
+            )
+        with _ZONE_WATCH_LOCK:
+            _ZONE_WATCH.pop(key, None)
 
 
 def _alpaca_get_positions() -> list:
@@ -5642,6 +5867,10 @@ def main():
     # trailing stop before this restart are not re-triggered on the next loop.
     _restore_trailing_stop_guard()
 
+    # Restore zone-invalidation watch from today's open paper_trades so orders
+    # placed before this restart are still monitored for zone breaks.
+    _restore_zone_watch_from_db()
+
     # Start Telegram listener in background daemon thread
     import threading as _threading
     _tg_thread = _threading.Thread(target=telegram_listener, daemon=True, name="TelegramListener")
@@ -5962,6 +6191,12 @@ def main():
             _monitor_trailing_stops()
         except Exception as _tse:
             log.warning(f"[TrailingStop] monitor error (non-fatal): {_tse}")
+
+        # Every 5 minutes — cancel open entry orders whose IB zone has broken.
+        try:
+            _monitor_zone_invalidation()
+        except Exception as _zwe:
+            log.warning(f"[ZoneWatch] monitor error (non-fatal): {_zwe}")
 
         time.sleep(30)
 
