@@ -543,6 +543,11 @@ _SP_MULT_TABLE: dict[str, float] = {
     "squeeze":  1.00,   # calibrated 2026-04-20 (0 settled trades, n<30 → baseline confirmed); re-run calibrate_sp_mult.py --pass squeeze once ≥30 settle
 }
 
+_SP_CALIB_DATES: dict[str, str] = {
+    "gap_down": "2026-04-20",
+    "squeeze":  "2026-04-20",
+}
+
 def _sp_size_mult(screener_pass: str | None) -> float:
     """Return position-size multiplier for a given screener_pass label.
 

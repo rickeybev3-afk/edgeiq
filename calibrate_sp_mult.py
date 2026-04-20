@@ -232,6 +232,11 @@ _SP_MULT_TABLE: dict[str, float] = {
     "gap_down": 1.00,   # Bearish Break — baseline; recalibrate once >=30 trades settle
 }
 
+_SP_CALIB_DATES: dict[str, str] = {
+    "gap_down": "2026-04-20",
+    "squeeze":  "2026-04-20",
+}
+
 def _sp_size_mult(screener_pass):
     return _SP_MULT_TABLE.get(screener_pass, 1.00)
 """
@@ -431,6 +436,36 @@ def _apply_to_bot(
         sys.exit(1)
 
     new_content = original[:brace_open] + new_block + original[brace_close + 1 :]
+
+    # Also update _SP_CALIB_DATES[pass_name] with today's date.
+    import datetime as _dt
+    today_str = _dt.date.today().isoformat()
+    _calib_start = new_content.find("_SP_CALIB_DATES")
+    if _calib_start != -1:
+        _cb_open = new_content.find("{", _calib_start)
+        _cb_close = new_content.find("}", _cb_open)
+        if _cb_open != -1 and _cb_close != -1:
+            calib_block = new_content[_cb_open : _cb_close + 1]
+            calib_entry_pat = re.compile(
+                r'"' + re.escape(pass_name) + r'"(\s*:\s*)"[^"]*"'
+            )
+            if calib_entry_pat.search(calib_block):
+                new_calib_block = calib_entry_pat.sub(
+                    lambda m: f'"{pass_name}"{m.group(1)}"{today_str}"',
+                    calib_block,
+                    count=1,
+                )
+            else:
+                inner = calib_block[1:-1].rstrip()
+                sep = "," if inner.rstrip().endswith('"') else ""
+                new_calib_block = "{" + inner + sep + f'\n    "{pass_name}": "{today_str}",\n}}'
+            new_content = new_content[:_cb_open] + new_calib_block + new_content[_cb_close + 1 :]
+    else:
+        print(
+            "WARNING: _SP_CALIB_DATES not found in paper_trader_bot.py"
+            " — calibration date not updated.",
+            file=sys.stderr,
+        )
 
     if citation_line:
         # Replace the per-pass comment block above _SP_MULT_TABLE.
