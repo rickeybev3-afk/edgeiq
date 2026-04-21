@@ -902,9 +902,25 @@ def main():
                         help="1=original 6-dim search, 3=exhaustive 15-dim (default)")
     parser.add_argument("--full",   action="store_true",
                         help="Enable all 3+ options per new dimension (~600M combos, ~8h runtime)")
-    parser.add_argument("--archive-keep", type=int, default=26,
-                        help="Number of most-recent Phase 3 archive runs to retain (default: 26)")
+    parser.add_argument("--archive-keep", type=int, default=None,
+                        help="Number of most-recent Phase 3 archive runs to retain (default: 26, or dashboard config)")
     args = parser.parse_args()
+
+    if args.archive_keep is None:
+        _prefs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
+        _owner_uid = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
+        try:
+            if os.path.exists(_prefs_path):
+                with open(_prefs_path) as _pf:
+                    _all_prefs = json.load(_pf)
+                _owner_prefs = _all_prefs.get(_owner_uid, {})
+                _pref_val = _owner_prefs.get("archive_keep")
+                if _pref_val is not None:
+                    args.archive_keep = int(_pref_val)
+        except Exception:
+            pass
+        if args.archive_keep is None:
+            args.archive_keep = 26
 
     if args.archive_keep < 1:
         print("ERROR: --archive-keep must be at least 1.", file=sys.stderr)

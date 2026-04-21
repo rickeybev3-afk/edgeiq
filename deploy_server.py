@@ -31,6 +31,7 @@ _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
 _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_BACKTEST_LOOKBACK_DAYS = int(os.environ.get("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_MIN_TCS = int(os.environ.get("PAPER_TRADE_MIN_TCS", "50"))
+_DEFAULT_ARCHIVE_KEEP = 26
 _ADAPTIVE_EXITS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
 _TP_CALIB_HISTORY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tp_calib_history.json")
 _GRID_SEARCH_SUMMARY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_summary.json")
@@ -621,6 +622,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/config":
             self._config_get()
             return
+        if path == "/api/archive-keep":
+            self._archive_keep_get()
+            return
         if path == "/api/tp-calib-history":
             self._tp_calib_history_get()
             return
@@ -695,6 +699,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/paper-trade-min-tcs":
             self._paper_trade_min_tcs_post()
+            return
+        if path == "/api/archive-keep":
+            self._archive_keep_post()
             return
         if path == "/api/rvol-size-tiers":
             self._rvol_size_tiers_post()
@@ -2200,13 +2207,125 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 min_tcs = _DEFAULT_MIN_TCS
                 min_tcs_source = "env"
 
+            if "archive_keep" in prefs:
+                archive_keep = int(prefs["archive_keep"])
+                archive_keep_source = "override"
+            else:
+                archive_keep = _DEFAULT_ARCHIVE_KEEP
+                archive_keep_source = "env"
+
             payload = {
                 "paper_close_lookback_days": {"value": paper_days, "source": paper_source},
                 "backtest_close_lookback_days": {"value": backtest_days, "source": backtest_source},
                 "paper_trade_min_tcs": {"value": min_tcs, "source": min_tcs_source},
                 "backfill_heartbeat_hours": {"value": heartbeat_hours, "source": heartbeat_source},
+                "archive_keep": {"value": archive_keep, "source": archive_keep_source},
             }
             body = json.dumps(payload).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _archive_keep_get(self):
+        """Return the effective grid-search archive retention limit.
+
+        Reads archive_keep from owner prefs when set, otherwise returns the
+        hardcoded default of 26.
+        Response: {"runs": int, "source": "override"|"env"}
+        """
+        try:
+            prefs = _load_owner_prefs()
+            if "archive_keep" in prefs:
+                runs = int(prefs["archive_keep"])
+                source = "override"
+            else:
+                runs = _DEFAULT_ARCHIVE_KEEP
+                source = "env"
+            body = json.dumps({"runs": runs, "source": source}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _archive_keep_post(self):
+        """Accept {"runs": int|null} and persist archive_keep in owner's user prefs.
+
+        Accepts a positive integer between 1 and 500.  Passing null clears the
+        override and reverts to the default of 26.
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "runs" not in payload:
+                body = json.dumps({"error": "'runs' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            raw_runs = payload["runs"]
+            if raw_runs is None:
+                prefs = _load_owner_prefs()
+                prefs.pop("archive_keep", None)
+                _save_owner_prefs(prefs)
+                body = json.dumps({"runs": _DEFAULT_ARCHIVE_KEEP, "source": "env"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            try:
+                runs = int(raw_runs)
+            except (TypeError, ValueError):
+                body = json.dumps({"error": "'runs' must be an integer"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if runs < 1 or runs > 500:
+                body = json.dumps({"error": "'runs' must be between 1 and 500"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            prefs = _load_owner_prefs()
+            prefs["archive_keep"] = runs
+            _save_owner_prefs(prefs)
+            body = json.dumps({"runs": runs, "source": "override"}).encode()
             self.send_response(200)
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()

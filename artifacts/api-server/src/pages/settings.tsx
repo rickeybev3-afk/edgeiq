@@ -92,6 +92,16 @@ interface BackfillHeartbeatWindowState {
   saved: boolean;
 }
 
+interface ArchiveKeepState {
+  runs: number;
+  source: "env" | "override";
+  draft: string;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface BackfillHealth {
   available: boolean;
   loading: boolean;
@@ -211,6 +221,7 @@ interface ConfigSummary {
   backtest_close_lookback_days: ConfigParam;
   paper_trade_min_tcs: ConfigParam;
   backfill_heartbeat_hours: ConfigParam;
+  archive_keep: ConfigParam;
 }
 
 interface ConfigSummaryState {
@@ -355,6 +366,7 @@ export default function Settings() {
       "eod-recalc-health",
       "rvol-size-tiers",
       "grid-search",
+      "archive-keep",
     ];
     const visibleSections = new Set<string>();
     const observer = new IntersectionObserver(
@@ -539,6 +551,16 @@ export default function Settings() {
     saved: false,
   });
 
+  const [archiveKeep, setArchiveKeep] = useState<ArchiveKeepState>({
+    runs: 26,
+    source: "env",
+    draft: "26",
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/backfill-heartbeat-window")
@@ -588,6 +610,33 @@ export default function Settings() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : "Could not load look-back window.";
           setPaperLookback((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/archive-keep")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setArchiveKeep((s) => ({
+            ...s,
+            runs: data.runs,
+            source: data.source === "override" ? "override" : "env",
+            draft: String(data.runs),
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load archive retention limit.";
+          setArchiveKeep((s) => ({ ...s, loading: false, error: msg }));
         }
       });
     return () => { cancelled = true; };
@@ -1045,12 +1094,12 @@ export default function Settings() {
   }
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history", "#grid-search"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading, tpCalibHistory.loading]
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history", "#grid-search", "#archive-keep"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading, tpCalibHistory.loading, archiveKeep.loading]
   );
 
   useEffect(() => {
-    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history", "grid-search"];
+    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history", "grid-search", "archive-keep"];
     const visibleSections = new Set<string>();
 
     const observer = new IntersectionObserver(
@@ -1309,6 +1358,69 @@ export default function Settings() {
     }
   }
 
+  async function handleArchiveKeepSave() {
+    const parsed = parseInt(archiveKeep.draft, 10);
+    if (isNaN(parsed) || parsed < 1 || parsed > 500) {
+      setArchiveKeep((s) => ({ ...s, error: "Enter a whole number between 1 and 500." }));
+      return;
+    }
+    setArchiveKeep((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/archive-keep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runs: parsed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setArchiveKeep((s) => ({
+        ...s,
+        runs: data.runs,
+        source: data.source === "override" ? "override" : "env",
+        draft: String(data.runs),
+        saving: false,
+        saved: true,
+      }));
+      fetchConfig();
+      setTimeout(() => setArchiveKeep((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setArchiveKeep((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handleArchiveKeepReset() {
+    setArchiveKeep((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/archive-keep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runs: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setArchiveKeep((s) => ({
+        ...s,
+        runs: data.runs,
+        source: "env",
+        draft: String(data.runs),
+        saving: false,
+        saved: true,
+      }));
+      fetchConfig();
+      setTimeout(() => setArchiveKeep((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setArchiveKeep((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
   return (
     <div
       style={{
@@ -1413,6 +1525,12 @@ export default function Settings() {
                     unit: "hrs",
                     fmt: (v: number) => v % 1 === 0 ? String(v) : v.toFixed(1),
                   },
+                  {
+                    key: "archive_keep" as const,
+                    label: "Archive Retention",
+                    unit: "runs",
+                    fmt: (v: number) => String(v),
+                  },
                 ] as const
               ).map(({ key, label, unit, fmt }) => {
                 const param = configSummary.data![key];
@@ -1486,6 +1604,7 @@ export default function Settings() {
               { id: "rvol-size-tiers", label: "RVOL Tiers" },
               { id: "tp-calib-history", label: "TP Calibration" },
               { id: "grid-search", label: "Grid Search" },
+              { id: "archive-keep", label: "Archive Retention" },
             ] as const
           ).map(({ id, label }) => (
             <NavPill
@@ -3379,6 +3498,118 @@ export default function Settings() {
             <div style={{ marginTop: "20px", fontSize: "12px", color: "#475569" }}>
               No results yet — run a grid search to see the top filter combinations here.
             </div>
+          )}
+        </section>
+
+        <section
+          id="archive-keep"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "60px",
+            marginTop: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Grid Search Archive Retention
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            How many of the most-recent Phase 3 grid-search runs to keep on disk. Older runs beyond this limit are pruned automatically after each run. Corresponds to the <code style={{ fontFamily: "monospace", color: "#7dd3fc" }}>--archive-keep</code> argument of <code style={{ fontFamily: "monospace", color: "#7dd3fc" }}>filter_grid_search.py</code>.
+          </p>
+
+          {archiveKeep.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  marginBottom: "14px",
+                }}
+              >
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={archiveKeep.draft}
+                  disabled={archiveKeep.saving}
+                  onChange={(e) =>
+                    setArchiveKeep((s) => ({ ...s, draft: e.target.value, error: null }))
+                  }
+                  onKeyDown={(e) => e.key === "Enter" && handleArchiveKeepSave()}
+                  style={{
+                    width: "100px",
+                    padding: "8px 12px",
+                    background: "#0e1117",
+                    border: "1px solid #3d4f6b",
+                    borderRadius: "6px",
+                    color: "#f1f5f9",
+                    fontSize: "15px",
+                    fontFamily: "monospace",
+                    outline: "none",
+                  }}
+                />
+                <span style={{ fontSize: "13px", color: "#64748b" }}>runs</span>
+                <button
+                  onClick={handleArchiveKeepSave}
+                  disabled={archiveKeep.saving || archiveKeep.draft === String(archiveKeep.runs)}
+                  style={{
+                    padding: "8px 16px",
+                    background: "#2563eb",
+                    border: "none",
+                    borderRadius: "6px",
+                    color: "#fff",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: archiveKeep.saving || archiveKeep.draft === String(archiveKeep.runs) ? "not-allowed" : "pointer",
+                    opacity: archiveKeep.saving || archiveKeep.draft === String(archiveKeep.runs) ? 0.5 : 1,
+                  }}
+                >
+                  Save
+                </button>
+                {archiveKeep.source === "override" && (
+                  <button
+                    onClick={handleArchiveKeepReset}
+                    disabled={archiveKeep.saving}
+                    style={{
+                      padding: "8px 14px",
+                      background: "transparent",
+                      border: "1px solid #475569",
+                      borderRadius: "6px",
+                      color: "#94a3b8",
+                      fontSize: "13px",
+                      cursor: archiveKeep.saving ? "not-allowed" : "pointer",
+                      opacity: archiveKeep.saving ? 0.5 : 1,
+                    }}
+                  >
+                    Reset to default (26)
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: "12px", color: "#475569", margin: 0 }}>
+                {archiveKeep.source === "override"
+                  ? `Dashboard override active — using ${archiveKeep.runs} runs. The built-in default is 26.`
+                  : `Using the built-in default of ${archiveKeep.runs} runs. Save a new value to override.`}
+              </p>
+            </div>
+          )}
+
+          {archiveKeep.saving && (
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "14px" }}>Saving…</p>
+          )}
+          {archiveKeep.saved && (
+            <p style={{ fontSize: "13px", color: "#4ade80", marginTop: "14px" }}>
+              ✓ Archive retention limit updated.
+            </p>
+          )}
+          {archiveKeep.error && (
+            <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
+              ⚠ {archiveKeep.error}
+            </p>
           )}
         </section>
       </div>
