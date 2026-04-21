@@ -751,15 +751,18 @@ def _fetch_prev_ib(ticker: str, trade_date_str: str) -> tuple:
     return 0.0, 0.0
 
 
-def _fetch_premarket_range(ticker: str, trade_date_str: str, open_px: float) -> float:
-    """Return pre-market range (4:00–9:30 AM ET) as a % of open price.
+def _fetch_premarket_range(
+    ticker: str, trade_date_str: str, open_px: float
+) -> tuple:
+    """Return (pm_range_pct, pm_high, pm_low) for the 4:00–9:30 AM ET window.
 
-    Fetches 1-minute SIP bars from Alpaca for the pre-market window and
-    computes (high − low) / open_px × 100. Returns 0.0 when no data is
-    available or open_px is zero.
+    Fetches 1-minute SIP bars from Alpaca. pm_range_pct is (high−low)/open×100.
+    pm_high and pm_low are the absolute price extremes — used to check whether
+    pre-market accepted above/below the prior day's IB levels.
+    Returns (0.0, 0.0, 0.0) when no data is available or open_px is zero.
     """
     if open_px <= 0:
-        return 0.0
+        return (0.0, 0.0, 0.0)
     import requests as _req
     from datetime import datetime
     ET = pytz.timezone('America/New_York')
@@ -778,10 +781,11 @@ def _fetch_premarket_range(ticker: str, trade_date_str: str, open_px: float) -> 
             if _bars:
                 _pm_high = max(b['h'] for b in _bars)
                 _pm_low  = min(b['l'] for b in _bars)
-                return round((_pm_high - _pm_low) / open_px * 100, 4)
+                _pct     = round((_pm_high - _pm_low) / open_px * 100, 4)
+                return (_pct, _pm_high, _pm_low)
     except Exception as _e:
         log.debug(f"[IB Context] Pre-market range fetch failed for {ticker}: {_e}")
-    return 0.0
+    return (0.0, 0.0, 0.0)
 
 
 def _ib_context_score_delta(
@@ -789,17 +793,20 @@ def _ib_context_score_delta(
     prev_ib_range: float,
     pm_range_pct: float,
     direction: str,
-    today_ib_high: float,
-    today_ib_low: float,
+    pm_high: float,
+    pm_low: float,
     prev_ib_high: float,
     prev_ib_low: float,
 ) -> int:
     """Compute TCS adjustment (−5 to +5) from IB context. Returns 0 when disabled.
 
     Compression day (today IB < 70% of yesterday):
-      • pre-market accepted direction past prior IB  →  +5
-      • pre-market contained within prior IB range   →  +3
-      • no useful pre-market data                    →  +2
+      • pre-market accepted past prior IB in the trade direction  →  +5
+          Bullish: pm_high >= prev_ib_high  (market pushed above prior IB)
+          Bearish: pm_low  <= prev_ib_low   (market pushed below prior IB)
+      • pre-market contained entirely within prior IB range       →  +3
+          (pm_high < prev_ib_high AND pm_low > prev_ib_low)
+      • no useful pre-market data (pm_range_pct == 0)             →  +2
     Expansion already underway (today IB > 130% of yesterday):
       → −3  (high uncertainty; fade vs continuation unclear)
     Large pre-market range penalty (pm_range_pct ≥ 2 %):
@@ -815,23 +822,29 @@ def _ib_context_score_delta(
     delta = 0
 
     if ratio < 0.70:
-        # Compression — check whether pre-market confirmed direction
-        _pm_inside_prev = (
-            prev_ib_low <= today_ib_high <= prev_ib_high
-            and prev_ib_low <= today_ib_low <= prev_ib_high
-        )
-        _pm_directional = False
-        if direction == "Bullish Break" and pm_range_pct > 0:
-            _pm_directional = today_ib_high >= prev_ib_high * 0.99
-        elif direction == "Bearish Break" and pm_range_pct > 0:
-            _pm_directional = today_ib_low <= prev_ib_low * 1.01
+        # Compression — assess pre-market acceptance vs prior IB structure
+        _have_pm = pm_range_pct > 0 and pm_high > 0 and prev_ib_high > 0 and prev_ib_low > 0
 
-        if _pm_directional:
-            delta = 5
-        elif _pm_inside_prev:
-            delta = 3
-        else:
+        if not _have_pm:
+            # No pre-market data → base compression bonus
             delta = 2
+        else:
+            # Check directional acceptance past prior IB boundary
+            _pm_accepted_direction = False
+            if direction == "Bullish Break":
+                _pm_accepted_direction = pm_high >= prev_ib_high
+            elif direction == "Bearish Break":
+                _pm_accepted_direction = pm_low <= prev_ib_low
+
+            # Check containment: pre-market entirely inside prior IB
+            _pm_inside_prev = (pm_high < prev_ib_high) and (pm_low > prev_ib_low)
+
+            if _pm_accepted_direction:
+                delta = 5
+            elif _pm_inside_prev:
+                delta = 3
+            else:
+                delta = 2
 
     elif ratio > 1.30:
         delta = -3
@@ -869,11 +882,12 @@ def _enrich_with_ib_context(results: list, trade_date_str: str) -> None:
         try:
             prev_ib_high, prev_ib_low = _fetch_prev_ib(ticker, trade_date_str)
             time.sleep(0.15)
-            pm_range_pct = _fetch_premarket_range(ticker, trade_date_str, open_px)
+            pm_range_pct, pm_high, pm_low = _fetch_premarket_range(ticker, trade_date_str, open_px)
             time.sleep(0.15)
         except Exception as _e:
             log.warning(f"[IB Context] Enrichment error for {ticker}: {_e}")
-            prev_ib_high, prev_ib_low, pm_range_pct = 0.0, 0.0, 0.0
+            prev_ib_high, prev_ib_low = 0.0, 0.0
+            pm_range_pct, pm_high, pm_low = 0.0, 0.0, 0.0
 
         prev_ib_range     = prev_ib_high - prev_ib_low if prev_ib_high > prev_ib_low > 0 else 0.0
         ib_vs_prev_ib_pct = round(today_ib_range / prev_ib_range * 100, 2) if prev_ib_range > 0 else None
@@ -888,8 +902,8 @@ def _enrich_with_ib_context(results: list, trade_date_str: str) -> None:
             prev_ib_range=prev_ib_range,
             pm_range_pct=pm_range_pct or 0.0,
             direction=direction,
-            today_ib_high=ib_high,
-            today_ib_low=ib_low,
+            pm_high=pm_high,
+            pm_low=pm_low,
             prev_ib_high=prev_ib_high,
             prev_ib_low=prev_ib_low,
         )
@@ -3858,6 +3872,10 @@ def _alert_eod_summary(
                 )
     except Exception as _hce:
         log.warning(f"[screener_pass] EOD health check failed: {_hce}")
+
+    # IB context enrichment status
+    _ib_ctx_icon = "🧠" if IB_CONTEXT_ENABLED else "💤"
+    lines.append(f"{_ib_ctx_icon} IB context: <b>{'ACTIVE' if IB_CONTEXT_ENABLED else 'inactive'}</b>")
 
     tg_send("\n".join(lines))
 

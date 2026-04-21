@@ -23,21 +23,15 @@ for _mod in _STUB_MODULES:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
 
-# pytz must expose timezone() so the module-level EASTERN constant can be set
 import pytz as _pytz_mock
 _pytz_mock.timezone = MagicMock(return_value=MagicMock())
 
-# Provide os.getenv defaults so no real env is needed
 import os
 os.environ.setdefault("ALPACA_API_KEY", "test_key")
 os.environ.setdefault("ALPACA_SECRET_KEY", "test_secret")
 
-# Force IB_CONTEXT_ENABLED=1 for tests that exercise the active-path logic
 os.environ["IB_CONTEXT_ENABLED"] = "1"
 
-# Import only the functions under test via targeted attribute access
-# (avoids triggering the full main() / startup side-effects)
-import importlib
 import paper_trader_bot as _ptb
 
 
@@ -50,9 +44,9 @@ class TestIbContextScoreDelta(unittest.TestCase):
             prev_ib_range=1.0,
             pm_range_pct=0.5,
             direction="Bullish Break",
-            today_ib_high=11.0,
-            today_ib_low=10.0,
-            prev_ib_high=11.0,
+            pm_high=11.0,
+            pm_low=10.5,
+            prev_ib_high=12.0,
             prev_ib_low=10.0,
         )
         defaults.update(kw)
@@ -79,126 +73,149 @@ class TestIbContextScoreDelta(unittest.TestCase):
     # ── neutral ratio (0.70 ≤ ratio ≤ 1.30) ────────────────────────────────
 
     def test_neutral_ratio_no_pm_penalty(self):
-        delta = self._call(today_ib_range=1.0, prev_ib_range=1.0, pm_range_pct=0.5)
+        delta = self._call(
+            today_ib_range=1.0, prev_ib_range=1.0, pm_range_pct=0.5,
+            pm_high=11.0, pm_low=10.5, prev_ib_high=12.0, prev_ib_low=10.0,
+        )
         self.assertEqual(0, delta)
 
     def test_neutral_ratio_with_large_pm_penalty(self):
-        delta = self._call(today_ib_range=1.0, prev_ib_range=1.0, pm_range_pct=2.5)
+        delta = self._call(
+            today_ib_range=1.0, prev_ib_range=1.0, pm_range_pct=2.5,
+            pm_high=11.0, pm_low=10.5, prev_ib_high=12.0, prev_ib_low=10.0,
+        )
         self.assertEqual(-2, delta)
 
     # ── compression path ────────────────────────────────────────────────────
 
-    def test_compression_pm_directional_bullish_gives_plus5(self):
-        # today IB < 70% of yesterday IB (ratio ≈ 0.65)
-        # pre-market pushed above prior IB high → +5
+    def test_compression_pm_bullish_acceptance_gives_plus5(self):
+        # pm_high >= prev_ib_high → bullish acceptance past prior IB → +5
         delta = self._call(
             today_ib_range=0.65,
             prev_ib_range=1.0,
             pm_range_pct=0.8,
             direction="Bullish Break",
-            today_ib_high=11.0,
-            today_ib_low=10.35,
-            prev_ib_high=11.0,  # today_ib_high >= prev_ib_high * 0.99
+            pm_high=12.0,       # pm_high >= prev_ib_high (12.0)
+            pm_low=11.0,
+            prev_ib_high=12.0,
             prev_ib_low=10.0,
         )
         self.assertEqual(5, delta)
 
-    def test_compression_pm_directional_bearish_gives_plus5(self):
+    def test_compression_pm_bearish_acceptance_gives_plus5(self):
+        # pm_low <= prev_ib_low → bearish acceptance below prior IB → +5
         delta = self._call(
             today_ib_range=0.65,
             prev_ib_range=1.0,
             pm_range_pct=0.8,
             direction="Bearish Break",
-            today_ib_high=11.0,
-            today_ib_low=10.0,   # today_ib_low <= prev_ib_low * 1.01
-            prev_ib_high=11.5,
+            pm_high=11.0,
+            pm_low=10.0,        # pm_low <= prev_ib_low (10.0)
+            prev_ib_high=12.0,
             prev_ib_low=10.0,
         )
         self.assertEqual(5, delta)
 
     def test_compression_pm_inside_prev_gives_plus3(self):
-        # today IB is contained inside yesterday's IB range → +3
+        # pm_high < prev_ib_high AND pm_low > prev_ib_low → contained → +3
         delta = self._call(
             today_ib_range=0.5,
             prev_ib_range=1.0,
             pm_range_pct=0.5,
             direction="Bullish Break",
-            today_ib_high=10.5,   # inside [10.0, 11.0]
-            today_ib_low=10.0,
-            prev_ib_high=11.0,
-            prev_ib_low=9.5,
+            pm_high=11.5,       # < prev_ib_high (12.0)
+            pm_low=10.5,        # > prev_ib_low  (10.0)
+            prev_ib_high=12.0,
+            prev_ib_low=10.0,
         )
         self.assertEqual(3, delta)
 
     def test_compression_no_pm_gives_plus2(self):
-        # pm_range_pct=0 means no pre-market data → +2
+        # pm_range_pct == 0 → no pre-market data → base compression bonus +2
         delta = self._call(
             today_ib_range=0.5,
             prev_ib_range=1.0,
             pm_range_pct=0.0,
-            direction="Bullish Break",
-            today_ib_high=10.5,
-            today_ib_low=10.0,
-            prev_ib_high=10.3,   # today_ib_high exceeds prev — not inside
-            prev_ib_low=9.8,
+            pm_high=0.0,
+            pm_low=0.0,
+            prev_ib_high=12.0,
+            prev_ib_low=10.0,
         )
         self.assertEqual(2, delta)
 
-    def test_compression_directional_pm_penalty_net(self):
-        # +5 (compression + directional alignment: today_ib_high ≥ prev_ib_high * 0.99)
-        # − 2 (pm_range_pct ≥ 2%) = +3
+    def test_compression_pm_partial_gives_plus2(self):
+        # PM straddles prior IB low but not high (not accepted, not inside) → +2
         delta = self._call(
             today_ib_range=0.5,
             prev_ib_range=1.0,
+            pm_range_pct=0.8,
+            direction="Bullish Break",
+            pm_high=11.5,       # < prev_ib_high=12.0 → not bullish acceptance
+            pm_low=9.5,         # < prev_ib_low=10.0  → not inside (pm_low < prev_ib_low)
+            prev_ib_high=12.0,
+            prev_ib_low=10.0,
+        )
+        self.assertEqual(2, delta)
+
+    def test_compression_bullish_acceptance_plus_large_pm_penalty(self):
+        # +5 (accepted) − 2 (pm_range_pct ≥ 2%) = +3
+        delta = self._call(
+            today_ib_range=0.65,
+            prev_ib_range=1.0,
             pm_range_pct=3.0,
             direction="Bullish Break",
-            today_ib_high=10.5,   # 10.5 ≥ 10.3 * 0.99 = 10.197 → directional
-            today_ib_low=10.0,
-            prev_ib_high=10.3,
-            prev_ib_low=9.8,
+            pm_high=12.0,
+            pm_low=11.0,
+            prev_ib_high=12.0,
+            prev_ib_low=10.0,
         )
         self.assertEqual(3, delta)
 
-    def test_compression_inside_prev_pm_penalty_net(self):
-        # today IB inside prev IB → +3, pm_range_pct=3.0 → −2, net = +1
-        # today_ib_high=10.8 <= prev_ib_high=11.0 AND today_ib_low=9.5 >= prev_ib_low=9.0
+    def test_compression_inside_pm_large_penalty_net(self):
+        # +3 (inside prev) − 2 (large pm) = +1
         delta = self._call(
-            today_ib_range=1.3,   # 10.8 - 9.5
-            prev_ib_range=2.0,    # ratio ≈ 0.65 → compression
+            today_ib_range=0.65,
+            prev_ib_range=1.0,
             pm_range_pct=3.0,
             direction="Bullish Break",
-            today_ib_high=10.8,
-            today_ib_low=9.5,
-            prev_ib_high=11.0,    # today inside prev
-            prev_ib_low=9.0,
+            pm_high=11.5,       # inside: < prev_ib_high=12.0
+            pm_low=10.5,        # inside: > prev_ib_low=10.0
+            prev_ib_high=12.0,
+            prev_ib_low=10.0,
         )
         self.assertEqual(1, delta)
 
     # ── expansion path ──────────────────────────────────────────────────────
 
     def test_expansion_gives_minus3(self):
-        delta = self._call(today_ib_range=1.5, prev_ib_range=1.0, pm_range_pct=0.5)
+        delta = self._call(
+            today_ib_range=1.5, prev_ib_range=1.0, pm_range_pct=0.5,
+            pm_high=11.0, pm_low=10.5, prev_ib_high=12.0, prev_ib_low=10.0,
+        )
         self.assertEqual(-3, delta)
 
     def test_expansion_plus_large_pm_clamped_to_minus5(self):
-        delta = self._call(today_ib_range=1.5, prev_ib_range=1.0, pm_range_pct=3.0)
+        delta = self._call(
+            today_ib_range=1.5, prev_ib_range=1.0, pm_range_pct=3.0,
+            pm_high=11.0, pm_low=10.5, prev_ib_high=12.0, prev_ib_low=10.0,
+        )
         self.assertEqual(-5, delta)
 
     # ── clamp assertions ────────────────────────────────────────────────────
 
     def test_result_never_exceeds_plus5(self):
-        # Manually force a scenario that would overflow without clamping
-        # compression (+5) — already max; no overflow needed here
         delta = self._call(
             today_ib_range=0.65, prev_ib_range=1.0, pm_range_pct=0.8,
             direction="Bullish Break",
-            today_ib_high=11.0, today_ib_low=10.35,
-            prev_ib_high=11.0, prev_ib_low=10.0,
+            pm_high=12.0, pm_low=11.0, prev_ib_high=12.0, prev_ib_low=10.0,
         )
         self.assertLessEqual(delta, 5)
 
     def test_result_never_below_minus5(self):
-        delta = self._call(today_ib_range=2.0, prev_ib_range=1.0, pm_range_pct=5.0)
+        delta = self._call(
+            today_ib_range=2.0, prev_ib_range=1.0, pm_range_pct=5.0,
+            pm_high=11.0, pm_low=10.5, prev_ib_high=12.0, prev_ib_low=10.0,
+        )
         self.assertGreaterEqual(delta, -5)
 
 
@@ -230,7 +247,7 @@ class TestEnrichWithIbContext(unittest.TestCase):
     def test_fields_set_to_none_when_no_data(self):
         with (
             patch.object(_ptb, "_fetch_prev_ib", return_value=(0.0, 0.0)),
-            patch.object(_ptb, "_fetch_premarket_range", return_value=0.0),
+            patch.object(_ptb, "_fetch_premarket_range", return_value=(0.0, 0.0, 0.0)),
             patch("time.sleep"),
         ):
             r = self._make_result()
@@ -243,22 +260,22 @@ class TestEnrichWithIbContext(unittest.TestCase):
     def test_tcs_unchanged_when_no_prev_ib(self):
         with (
             patch.object(_ptb, "_fetch_prev_ib", return_value=(0.0, 0.0)),
-            patch.object(_ptb, "_fetch_premarket_range", return_value=0.0),
+            patch.object(_ptb, "_fetch_premarket_range", return_value=(0.0, 0.0, 0.0)),
             patch("time.sleep"),
         ):
             r = self._make_result(tcs=62.0)
             _ptb._enrich_with_ib_context([r], "2026-04-20")
         self.assertAlmostEqual(62.0, r["tcs"])
 
-    def test_tcs_adjusted_on_compression(self):
+    def test_tcs_adjusted_on_compression_with_acceptance(self):
+        # prev IB: 9.0–12.0 (range 3.0); today IB: 10.0–11.0 (range 1.0 → ratio=0.33 → compression)
+        # pm_high=12.0 >= prev_ib_high=12.0 → bullish acceptance → +5
         with (
-            patch.object(_ptb, "_fetch_prev_ib", return_value=(12.0, 10.5)),
-            patch.object(_ptb, "_fetch_premarket_range", return_value=0.5),
+            patch.object(_ptb, "_fetch_prev_ib", return_value=(12.0, 9.0)),
+            patch.object(_ptb, "_fetch_premarket_range", return_value=(0.8, 12.0, 10.5)),
             patch("time.sleep"),
         ):
-            r = self._make_result(
-                ib_high=10.65, ib_low=10.0, tcs=60.0, predicted="Bullish Break"
-            )
+            r = self._make_result(ib_high=11.0, ib_low=10.0, tcs=60.0, predicted="Bullish Break")
             _ptb._enrich_with_ib_context([r], "2026-04-20")
         self.assertGreater(r["tcs"], 60.0)
 
@@ -275,7 +292,7 @@ class TestEnrichWithIbContext(unittest.TestCase):
         # today IB = 1.0, prev IB = 2.0 → ratio = 50%
         with (
             patch.object(_ptb, "_fetch_prev_ib", return_value=(12.0, 10.0)),
-            patch.object(_ptb, "_fetch_premarket_range", return_value=0.5),
+            patch.object(_ptb, "_fetch_premarket_range", return_value=(0.5, 11.0, 10.5)),
             patch("time.sleep"),
         ):
             r = self._make_result(ib_high=11.0, ib_low=10.0)
@@ -297,19 +314,39 @@ class TestFetchHelpersGracefulFallback(unittest.TestCase):
             _ptb._supabase_client = original_client
         self.assertEqual((0.0, 0.0), result)
 
-    def test_fetch_premarket_range_returns_zero_on_error(self):
+    def test_fetch_premarket_range_returns_zeros_on_error(self):
         with patch("requests.get", side_effect=RuntimeError("net down")):
             result = _ptb._fetch_premarket_range("AAPL", "2026-04-20", 10.0)
-        self.assertEqual(0.0, result)
+        self.assertEqual((0.0, 0.0, 0.0), result)
 
-    def test_fetch_premarket_range_returns_zero_when_open_zero(self):
+    def test_fetch_premarket_range_returns_zeros_when_open_zero(self):
         result = _ptb._fetch_premarket_range("AAPL", "2026-04-20", 0.0)
-        self.assertEqual(0.0, result)
+        self.assertEqual((0.0, 0.0, 0.0), result)
+
+    def test_fetch_premarket_range_returns_tuple_on_success(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "bars": [{"h": 11.0, "l": 10.0}, {"h": 11.5, "l": 10.2}]
+        }
+        with patch("requests.get", return_value=mock_resp):
+            pct, pm_high, pm_low = _ptb._fetch_premarket_range("AAPL", "2026-04-20", 10.0)
+        self.assertAlmostEqual(11.5, pm_high)
+        self.assertAlmostEqual(10.0, pm_low)
+        self.assertGreater(pct, 0)
+
+    def test_fetch_premarket_range_returns_zeros_on_empty_bars(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"bars": []}
+        with patch("requests.get", return_value=mock_resp):
+            result = _ptb._fetch_premarket_range("AAPL", "2026-04-20", 10.0)
+        self.assertEqual((0.0, 0.0, 0.0), result)
 
     def test_fetch_prev_ib_returns_zeros_on_empty_alpaca_bars(self):
         original_client = _ptb._supabase_client
         try:
-            _ptb._supabase_client = None   # skip Supabase path
+            _ptb._supabase_client = None
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.json.return_value = {"bars": []}
