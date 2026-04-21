@@ -1050,6 +1050,7 @@ def try_restore_session() -> dict:
     """Attempt to restore a previous session from the cached refresh token.
 
     Returns {"user": <User>, "email": str} on success, {} on failure.
+    Times out after 6 seconds so a slow Supabase doesn't block the login page.
     """
     if not supabase:
         return {}
@@ -1057,25 +1058,35 @@ def try_restore_session() -> dict:
     token = cache.get("refresh_token", "")
     if not token:
         return {}
-    try:
-        resp = supabase.auth.refresh_session(token)
-        if resp and resp.user:
-            # Persist the new refresh token (it rotates on each use)
-            save_session_cache(
-                str(resp.user.id),
-                str(resp.user.email),
-                resp.session.refresh_token if resp.session else token,
-            )
-            return {
-                "user":          resp.user,
-                "email":         str(resp.user.email),
-                "access_token":  resp.session.access_token  if resp.session else "",
-                "refresh_token": resp.session.refresh_token if resp.session else "",
-            }
-    except Exception as _e:
-        print(f"Session restore failed: {_e}")
-        clear_session_cache()
-    return {}
+
+    import threading as _thr
+    _result: dict = {}
+
+    def _do_refresh():
+        try:
+            resp = supabase.auth.refresh_session(token)
+            if resp and resp.user:
+                save_session_cache(
+                    str(resp.user.id),
+                    str(resp.user.email),
+                    resp.session.refresh_token if resp.session else token,
+                )
+                _result.update({
+                    "user":          resp.user,
+                    "email":         str(resp.user.email),
+                    "access_token":  resp.session.access_token  if resp.session else "",
+                    "refresh_token": resp.session.refresh_token if resp.session else "",
+                })
+        except Exception as _e:
+            print(f"Session restore failed: {_e}")
+            clear_session_cache()
+
+    t = _thr.Thread(target=_do_refresh, daemon=True)
+    t.start()
+    t.join(timeout=6)
+    if t.is_alive():
+        print("Session restore timed out — showing login page")
+    return _result
 
 
 def check_user_id_column_exists() -> bool:
