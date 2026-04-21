@@ -21084,6 +21084,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         import json as _fgs_json
         import os as _fgs_os
         import datetime as _fgs_dt
+        import re as _fgs_re
 
         _FGS_SUM  = "filter_grid_summary.json"
         _FGS_TOP  = "filter_grid_top20.json"
@@ -21125,18 +21126,25 @@ Measures how accurately the 7-structure framework classified those days in hinds
             st.info("No grid search results yet — run the optimizer below to generate them.")
 
         # ── Run controls ─────────────────────────────────────────────────────
+        # Normalize "all"/"latest" sentinel values to blank — they are not valid CLI dates
+        _fgs_date_re = _fgs_re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        _fgs_dr_raw_start = _fgs_summary.get("date_range", {}).get("start", "")
+        _fgs_dr_raw_end   = _fgs_summary.get("date_range", {}).get("end", "")
+        _fgs_start_default = _fgs_dr_raw_start if _fgs_date_re.match(_fgs_dr_raw_start or "") else ""
+        _fgs_end_default   = _fgs_dr_raw_end   if _fgs_date_re.match(_fgs_dr_raw_end   or "") else ""
+
         _fgs_c1, _fgs_c2, _fgs_c3, _fgs_c4 = st.columns([2, 2, 1, 1])
         with _fgs_c1:
             _fgs_start = st.text_input(
                 "Start date (YYYY-MM-DD)",
-                value=_fgs_summary.get("date_range", {}).get("start", ""),
+                value=_fgs_start_default,
                 placeholder="leave blank = all history",
                 key="fgs_start_date",
             )
         with _fgs_c2:
             _fgs_end = st.text_input(
                 "End date (YYYY-MM-DD)",
-                value=_fgs_summary.get("date_range", {}).get("end", ""),
+                value=_fgs_end_default,
                 placeholder="leave blank = latest",
                 key="fgs_end_date",
             )
@@ -21161,27 +21169,35 @@ Measures how accurately the 7-structure framework classified those days in hinds
         )
 
         if _fgs_run_btn:
-            _fgs_cmd = ["python3", "filter_grid_search.py",
-                        "--min-n", str(int(_fgs_minn_inp)),
-                        "--top", str(int(_fgs_top_inp))]
-            if _fgs_start and _fgs_start.strip():
-                _fgs_cmd += ["--start", _fgs_start.strip()]
-            if _fgs_end and _fgs_end.strip():
-                _fgs_cmd += ["--end", _fgs_end.strip()]
-            with st.spinner("Running grid search — fetching rows and evaluating combinations..."):
-                try:
-                    _fgs_proc = _fgs_sub.run(
-                        _fgs_cmd, capture_output=True, text=True, timeout=600
-                    )
-                    if _fgs_proc.returncode == 0:
-                        st.success("Grid search complete! Results updated below.")
-                        st.rerun()
-                    else:
-                        st.error(f"Grid search failed:\n{_fgs_proc.stderr[-800:]}")
-                except _fgs_sub.TimeoutExpired:
-                    st.error("Grid search timed out (>10 min). Try a narrower date range or increase min N.")
-                except Exception as _fgs_ex:
-                    st.error(f"Grid search error: {_fgs_ex}")
+            _fgs_date_err = None
+            if _fgs_start.strip() and not _fgs_date_re.match(_fgs_start.strip()):
+                _fgs_date_err = f"Start date '{_fgs_start.strip()}' is not in YYYY-MM-DD format."
+            elif _fgs_end.strip() and not _fgs_date_re.match(_fgs_end.strip()):
+                _fgs_date_err = f"End date '{_fgs_end.strip()}' is not in YYYY-MM-DD format."
+            if _fgs_date_err:
+                st.error(_fgs_date_err)
+            else:
+                _fgs_cmd = ["python3", "filter_grid_search.py",
+                            "--min-n", str(int(_fgs_minn_inp)),
+                            "--top", str(int(_fgs_top_inp))]
+                if _fgs_start.strip():
+                    _fgs_cmd += ["--start", _fgs_start.strip()]
+                if _fgs_end.strip():
+                    _fgs_cmd += ["--end", _fgs_end.strip()]
+                with st.spinner("Running grid search — fetching rows and evaluating combinations..."):
+                    try:
+                        _fgs_proc = _fgs_sub.run(
+                            _fgs_cmd, capture_output=True, text=True, timeout=600
+                        )
+                        if _fgs_proc.returncode == 0:
+                            st.success("Grid search complete! Results updated below.")
+                            st.rerun()
+                        else:
+                            st.error(f"Grid search failed:\n{_fgs_proc.stderr[-800:]}")
+                    except _fgs_sub.TimeoutExpired:
+                        st.error("Grid search timed out (>10 min). Try a narrower date range or increase min N.")
+                    except Exception as _fgs_ex:
+                        st.error(f"Grid search error: {_fgs_ex}")
 
         # ── Load and display top combos ───────────────────────────────────────
         _fgs_top_data = []
