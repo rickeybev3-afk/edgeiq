@@ -1620,6 +1620,9 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     "skip_reason":      "order_placed",
                     "rvol_mult":        _rvol_mult,
                     "sp_mult":          _sp_mult,
+                    # Stamp eligibility so _pre_open_position_review() can
+                    # identify trades opened while the adaptive toggle was ON.
+                    "mgmt_mode":        "adaptive_eligible" if ADAPTIVE_POSITION_MGMT else "fixed",
                 }
                 if _sp:
                     _order_patch["screener_pass"] = _sp
@@ -6591,6 +6594,7 @@ def _pre_open_position_review() -> None:
                 )
                 .eq("user_id", USER_ID)
                 .eq("ticker", ticker)
+                .eq("mgmt_mode", "adaptive_eligible")
                 .is_("eod_pnl_r", "null")
                 .order("trade_date", desc=True)
                 .limit(1)

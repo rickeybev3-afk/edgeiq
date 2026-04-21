@@ -294,7 +294,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
         resp_mock = MagicMock()
         resp_mock.data = []
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
@@ -316,7 +316,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "target_price_sim": 0, "predicted": "",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
@@ -340,7 +340,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
@@ -366,7 +366,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         old_ids = ["old-stop-1", "old-tp-1"]
@@ -408,7 +408,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "predicted": "Bearish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         old_ids = ["old-stop-spy-1", "old-limit-spy-1"]
@@ -451,7 +451,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         # OCO call 1 = adaptive fails; OCO call 2 = rollback succeeds
@@ -501,7 +501,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         # Both OCO calls fail
@@ -551,7 +551,7 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
