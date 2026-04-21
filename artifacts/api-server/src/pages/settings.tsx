@@ -735,7 +735,21 @@ export default function Settings() {
     fetchArchiveRuns();
   }, []);
 
+  const archivePruneDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (archivePruneDismissTimer.current !== null) {
+        clearTimeout(archivePruneDismissTimer.current);
+      }
+    };
+  }, []);
+
   const handleArchivePrune = () => {
+    if (archivePruneDismissTimer.current !== null) {
+      clearTimeout(archivePruneDismissTimer.current);
+      archivePruneDismissTimer.current = null;
+    }
     setArchivePrune({ pruning: true, error: null, pruned: false, deleted: null, freedBytes: null });
     fetch("/api/archive-prune", { method: "POST", headers: getWriteHeaders() })
       .then((r) => {
@@ -751,6 +765,10 @@ export default function Settings() {
           freedBytes: typeof data.freed_bytes === "number" ? data.freed_bytes : null,
         });
         fetchArchiveRuns();
+        archivePruneDismissTimer.current = setTimeout(() => {
+          setArchivePrune((s) => ({ ...s, pruned: false }));
+          archivePruneDismissTimer.current = null;
+        }, 9000);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Pruning failed.";
