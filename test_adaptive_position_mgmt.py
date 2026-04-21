@@ -294,8 +294,8 @@ class TestPreOpenPositionReview(unittest.TestCase):
         resp_mock = MagicMock()
         resp_mock.data = []
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
             with patch.object(_ptb, "_supabase_client", mock_sb):
@@ -313,11 +313,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
         resp_mock.data = [{
             "id": "1", "ib_high": None, "ib_low": None,
             "entry_price_sim": 0, "stop_price_sim": 0,
-            "target_price_sim": 0, "actual_outcome": "",
+            "target_price_sim": 0, "predicted": "",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
             with patch.object(_ptb, "_supabase_client", mock_sb):
@@ -337,11 +337,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "ib_high": 101.0, "ib_low": 99.0,
             "entry_price_sim": 100.0, "stop_price_sim": 98.0,
             "target_price_sim": 104.0,
-            "actual_outcome": "Bullish Break",
+            "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
             with patch.object(_ptb, "_supabase_client", mock_sb):
@@ -363,11 +363,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "ib_high": 101.0, "ib_low": 99.0,
             "entry_price_sim": 100.0, "stop_price_sim": 98.0,
             "target_price_sim": 104.0,
-            "actual_outcome": "Bullish Break",
+            "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         old_ids = ["old-stop-1", "old-tp-1"]
 
@@ -405,11 +405,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "ib_high": 101.0, "ib_low": 99.0,
             "entry_price_sim": 100.0, "stop_price_sim": 102.0,
             "target_price_sim": 96.0,
-            "actual_outcome": "Bearish Break",
+            "predicted": "Bearish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         old_ids = ["old-stop-spy-1", "old-limit-spy-1"]
 
@@ -448,11 +448,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "ib_high": 101.0, "ib_low": 99.0,
             "entry_price_sim": 100.0, "stop_price_sim": 98.0,
             "target_price_sim": 104.0,
-            "actual_outcome": "Bullish Break",
+            "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         # OCO call 1 = adaptive fails; OCO call 2 = rollback succeeds
         oco_side_effects = [
@@ -498,11 +498,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "ib_high": 101.0, "ib_low": 99.0,
             "entry_price_sim": 100.0, "stop_price_sim": 98.0,
             "target_price_sim": 104.0,
-            "actual_outcome": "Bullish Break",
+            "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         # Both OCO calls fail
         oco_side_effects = [
@@ -548,11 +548,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
             "ib_high": 101.0, "ib_low": 99.0,
             "entry_price_sim": 100.0, "stop_price_sim": 98.0,
             "target_price_sim": 104.0,
-            "actual_outcome": "Bullish Break",
+            "predicted": "Bullish Break",
         }]
         mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value \
-            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+            .eq.return_value.eq.return_value \
+            .is_.return_value.order.return_value.limit.return_value.execute.return_value = resp_mock
 
         with self._dt_ctx():
             with patch.object(_ptb, "_supabase_client", mock_sb):

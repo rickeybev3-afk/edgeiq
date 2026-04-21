@@ -6564,8 +6564,7 @@ def _pre_open_position_review() -> None:
         log.info("[AdaptiveMgmt] No open positions — nothing to review")
         return
 
-    today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
-    adjusted  = 0
+    adjusted = 0
 
     for pos in positions:
         ticker = (pos.get("symbol") or "").upper()
@@ -6577,20 +6576,23 @@ def _pre_open_position_review() -> None:
         if qty <= 0:
             continue
 
-        # ── Look up today's open paper_trade for this ticker ─────────────────
+        # ── Look up the most-recent open paper_trade for this ticker ─────────
+        # We query by ticker + open status (eod_pnl_r IS NULL), ordered by
+        # trade_date DESC so we get the most recent carryover position even
+        # if it was entered on a prior session day.
         if not _supabase_client:
             continue
         try:
             _pt_resp = (
                 _supabase_client.table("paper_trades")
                 .select(
-                    "id, ib_high, ib_low, actual_outcome, "
+                    "id, ib_high, ib_low, predicted, "
                     "entry_price_sim, stop_price_sim, target_price_sim"
                 )
                 .eq("user_id", USER_ID)
                 .eq("ticker", ticker)
-                .eq("trade_date", today_str)
                 .is_("eod_pnl_r", "null")
+                .order("trade_date", desc=True)
                 .limit(1)
                 .execute()
             )
@@ -6600,7 +6602,7 @@ def _pre_open_position_review() -> None:
             continue
 
         if not pt_rows:
-            log.debug(f"[AdaptiveMgmt] {ticker} — no open paper_trade row today; skipping")
+            log.debug(f"[AdaptiveMgmt] {ticker} — no open paper_trade row; skipping")
             continue
 
         row       = pt_rows[0]
@@ -6610,7 +6612,7 @@ def _pre_open_position_review() -> None:
         entry     = float(row.get("entry_price_sim")   or 0)
         stop      = float(row.get("stop_price_sim")    or 0)
         target    = float(row.get("target_price_sim")  or 0)
-        direction = row.get("actual_outcome") or ""
+        direction = row.get("predicted") or ""
 
         if not all([ib_high, ib_low, entry, stop, target, direction]):
             log.info(f"[AdaptiveMgmt] {ticker} — incomplete data (ib/entry/stop/target/direction); skipping")
