@@ -22700,6 +22700,41 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 use_container_width=True,
             )
 
+            # ── Copy Summary button ───────────────────────────────────────────
+            _s4c_clip_lines = ["4-System Comparison Summary", "=" * 44]
+            for _row in _s4c_tbl:
+                _s4c_clip_lines.append(
+                    f"{_row['System']} ({_row['Lens']})\n"
+                    f"  Trades/Day : {_row['Trades/Day']}  |  Win %: {_row['Win %']}  |  Avg R: {_row['Avg R']}\n"
+                    f"  Y1: {_row['Y1']}  |  Y3: {_row['Y3']}  |  Y5: {_row['Y5']}"
+                )
+            _s4c_clip_text = "\n\n".join(_s4c_clip_lines)
+            _s4c_clip_js   = (
+                _s4c_clip_text
+                .replace("\\", "\\\\")
+                .replace("`", "\\`")
+                .replace("$", "\\$")
+            )
+            import streamlit.components.v1 as _s4c_comp_v1
+            if st.button("📋 Copy Summary", key="_s4c_copy_btn"):
+                try:
+                    st.toast("Summary copied to clipboard!", icon="📋")
+                except AttributeError:
+                    st.success("✅ Summary copied to clipboard!")
+                _s4c_comp_v1.html(
+                    f"""
+                    <script>
+                    (function() {{
+                        if (navigator && navigator.clipboard) {{
+                            navigator.clipboard.writeText(`{_s4c_clip_js}`)
+                                .catch(function() {{ console.warn('Clipboard write failed.'); }});
+                        }}
+                    }})();
+                    </script>
+                    """,
+                    height=0,
+                )
+
         st.caption(
             "**Tiered** uses calibrated P1–P4 targets (~0.6R avg, most conservative). "
             "**EOD** holds every trade until market close (~1.8R avg, higher variance). "
