@@ -233,6 +233,7 @@ interface GridSearchState {
   triggering: boolean;
   error: string | null;
   toast: { kind: "success" | "error"; message: string } | null;
+  logLines: string[];
 }
 
 interface EodRecalcRun {
@@ -800,9 +801,11 @@ export default function Settings() {
     triggering: false,
     error: null,
     toast: null,
+    logLines: [],
   });
 
   const gridSearchPrevRunning = useRef<boolean>(false);
+  const gridSearchLogRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -846,6 +849,36 @@ export default function Settings() {
       if (intervalId !== null) clearInterval(intervalId);
     };
   }, []);
+
+  const isGridSearchRunning = gridSearch.status?.running ?? false;
+
+  useEffect(() => {
+    if (!isGridSearchRunning) return;
+    let cancelled = false;
+
+    const fetchLog = () => {
+      fetch("/api/grid-search-log?lines=150")
+        .then((r) => r.json())
+        .then((data: { lines: string[] }) => {
+          if (!cancelled) setGridSearch((s) => ({ ...s, logLines: data.lines ?? [] }));
+        })
+        .catch(() => {});
+    };
+
+    fetchLog();
+    const id = setInterval(fetchLog, 3_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isGridSearchRunning]);
+
+  useEffect(() => {
+    const el = gridSearchLogRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [gridSearch.logLines]);
 
   const handleGridSearchRun = async () => {
     setGridSearch((s) => ({ ...s, triggering: true, error: null, toast: null }));
@@ -3081,6 +3114,37 @@ export default function Settings() {
           {gridSearch.error && (
             <div style={{ marginTop: "14px", padding: "12px 14px", background: "rgba(248,113,113,0.1)", border: "1px solid #f87171", borderRadius: "7px", color: "#f87171", fontSize: "13px" }}>
               ⚠ {gridSearch.error}
+            </div>
+          )}
+
+          {gridSearch.logLines.length > 0 && (
+            <div style={{ marginTop: "16px" }}>
+              <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Live output
+                {gridSearch.status?.running && (
+                  <span style={{ marginLeft: "8px", color: "#4ade80" }}>● live</span>
+                )}
+              </div>
+              <pre
+                ref={gridSearchLogRef}
+                style={{
+                  margin: 0,
+                  padding: "12px 14px",
+                  background: "#0f1623",
+                  border: "1px solid #2d3748",
+                  borderRadius: "7px",
+                  fontSize: "11.5px",
+                  fontFamily: "monospace",
+                  color: "#94a3b8",
+                  lineHeight: "1.55",
+                  maxHeight: "260px",
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                }}
+              >
+                {gridSearch.logLines.join("\n")}
+              </pre>
             </div>
           )}
 

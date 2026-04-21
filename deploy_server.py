@@ -636,6 +636,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/grid-search-summary":
             self._grid_search_summary()
             return
+        if path == "/api/grid-search-log":
+            self._grid_search_log_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -2606,6 +2609,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "last_run_at": last_run_at,
         }
         body = json.dumps(data).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _grid_search_log_get(self):
+        """Return the last N lines of filter_grid_search.log as a JSON array.
+
+        Query param: lines (default 100, max 500).
+        Returns {"lines": [...]} where each element is a log line string.
+        If the log file does not exist yet, returns an empty array.
+        """
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        try:
+            n = min(int(qs.get("lines", ["100"])[0]), 500)
+        except (ValueError, IndexError):
+            n = 100
+
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_search.log")
+        lines: list[str] = []
+        try:
+            with open(log_path, "r", errors="replace") as fh:
+                lines = fh.readlines()
+            lines = [l.rstrip("\n") for l in lines[-n:]]
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+        body = json.dumps({"lines": lines}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
