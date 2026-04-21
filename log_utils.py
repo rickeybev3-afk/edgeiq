@@ -21,7 +21,9 @@ _STRING_ENV_REGISTRY: dict[str, tuple[bool, str]] = {
     "ALPACA_SECRET_KEY":      (True,  "Alpaca brokerage secret key"),
     # Optional — application-level secrets / integrations
     "DASHBOARD_WRITE_SECRET": (False, "shared secret for trade-log write requests"),
-    "ALERT_WEBHOOK_URL":      (False, "webhook URL for alert notifications"),
+    "ALERT_WEBHOOK_URL":      (False, "webhook URL for Slack/webhook alert notifications"),
+    "TELEGRAM_BOT_TOKEN":     (False, "Telegram bot token for alert notifications"),
+    "TELEGRAM_CHAT_ID":       (False, "Telegram chat ID to receive alert notifications"),
 }
 
 # Groups where at least one member must be non-empty (acts as a single required

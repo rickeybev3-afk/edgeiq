@@ -14,6 +14,15 @@ Startup behaviour
   old (or no prior run exists), the grid search fires immediately on startup to
   catch up for any missed weeks, then resumes the Sunday 02:00 UTC schedule.
 • Otherwise it waits for the next scheduled Sunday 02:00 UTC trigger.
+
+Notifications
+─────────────
+After every run (success or failure) a short alert is sent to one or both of:
+  • Slack / generic webhook — set ALERT_WEBHOOK_URL to a Slack incoming-webhook or
+    any endpoint that accepts {"text": "..."} JSON POST requests.
+  • Telegram — set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+
+If neither destination is configured the notification step is silently skipped.
 """
 
 from __future__ import annotations
@@ -22,6 +31,8 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -30,6 +41,110 @@ from apscheduler.triggers.cron import CronTrigger
 SUMMARY_FILE = "filter_grid_summary.json"
 CATCH_UP_THRESHOLD_DAYS = 7
 
+SCHEDULE_HOUR   = 2
+SCHEDULE_MINUTE = 0
+
+
+# ── Notification helpers ───────────────────────────────────────────────────────
+
+def _notify_webhook(message: str) -> None:
+    """POST *message* to ALERT_WEBHOOK_URL as {"text": message}. Silently skipped if not set."""
+    webhook_url = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return
+    try:
+        payload = json.dumps({"text": message}).encode()
+        req = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+        print("[grid-search-scheduler] Webhook notification sent.", flush=True)
+    except Exception as exc:
+        print(f"[grid-search-scheduler] WARNING: webhook notification failed — {exc}", flush=True)
+
+
+def _notify_telegram(message: str) -> None:
+    """Send *message* via Telegram bot. Silently skipped if token/chat-id not set."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return
+    try:
+        payload = json.dumps({"chat_id": chat_id, "text": message}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+        print("[grid-search-scheduler] Telegram notification sent.", flush=True)
+    except Exception as exc:
+        print(f"[grid-search-scheduler] WARNING: Telegram notification failed — {exc}", flush=True)
+
+
+def _send_notification(message: str) -> None:
+    """Dispatch *message* to every configured notification destination."""
+    _notify_webhook(message)
+    _notify_telegram(message)
+
+
+def _build_success_message(start_time: datetime, finish_time: datetime) -> str:
+    """Build a human-readable success summary from the run metadata."""
+    duration_secs = int((finish_time - start_time).total_seconds())
+    duration_str = f"{duration_secs // 60}m {duration_secs % 60}s"
+
+    lines = [
+        ":white_check_mark: EdgeIQ grid search completed successfully",
+        f"Duration: {duration_str}",
+    ]
+
+    if os.path.exists(SUMMARY_FILE):
+        try:
+            with open(SUMMARY_FILE) as f:
+                data = json.load(f)
+            best = data.get("best_combo") or data.get("best") or {}
+            combos = data.get("combos_tested")
+            total_rows = data.get("total_rows")
+
+            if combos is not None:
+                lines.append(f"Combos tested: {combos:,}")
+            if total_rows is not None:
+                lines.append(f"Rows evaluated: {total_rows:,}")
+            if best:
+                sharpe = best.get("sharpe")
+                n = (
+                    best.get("n_trades")
+                    or best.get("n")
+                    or best.get("trades")
+                    or best.get("total_trades")
+                )
+                if sharpe is not None:
+                    lines.append(f"Top Sharpe: {sharpe:.3f}")
+                if n is not None:
+                    lines.append(f"N (trades): {n}")
+        except Exception as exc:
+            lines.append(f"(could not read summary: {exc})")
+
+    return "\n".join(lines)
+
+
+def _build_failure_message(exit_code: int, start_time: datetime, finish_time: datetime) -> str:
+    """Build a human-readable failure alert."""
+    duration_secs = int((finish_time - start_time).total_seconds())
+    duration_str = f"{duration_secs // 60}m {duration_secs % 60}s"
+    finish_str = finish_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+    return (
+        f":red_circle: EdgeIQ grid search FAILED (exit code {exit_code})\n"
+        f"Failed at: {finish_str}\n"
+        f"Duration before failure: {duration_str}"
+    )
+
+
+# ── Core run logic ─────────────────────────────────────────────────────────────
 
 def _last_run_utc() -> datetime | None:
     """Return the timestamp of the last completed run from the summary file, or None."""
@@ -51,7 +166,8 @@ def _last_run_utc() -> datetime | None:
 
 def run_grid_search() -> None:
     """Execute Phase 3 grid search as a subprocess. Streams output to stdout."""
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    start_time = datetime.now(timezone.utc)
+    now_str = start_time.strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"\n{'='*60}", flush=True)
     print(f"[grid-search-scheduler] Run started at {now_str}", flush=True)
     print(f"{'='*60}", flush=True)
@@ -59,21 +175,46 @@ def run_grid_search() -> None:
     cmd = [sys.executable, "filter_grid_search.py", "--phase", "3"]
     result = subprocess.run(cmd)
 
-    finish_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    finish_time = datetime.now(timezone.utc)
+    finish_str = finish_time.strftime("%Y-%m-%d %H:%M:%S UTC")
     if result.returncode == 0:
         print(f"\n[grid-search-scheduler] Run completed successfully at {finish_str}.", flush=True)
         print("[grid-search-scheduler] Output JSON files refreshed.", flush=True)
+        _send_notification(_build_success_message(start_time, finish_time))
     else:
         print(
             f"\n[grid-search-scheduler] Run FAILED (exit code {result.returncode}) at {finish_str}.",
             flush=True,
         )
+        _send_notification(_build_failure_message(result.returncode, start_time, finish_time))
     print(f"{'='*60}\n", flush=True)
 
 
 def main() -> None:
     print("[grid-search-scheduler] Phase 3 grid search weekly scheduler starting.", flush=True)
     print("[grid-search-scheduler] Cron schedule: Sunday 02:00 UTC (day_of_week=sun, hour=2, minute=0)", flush=True)
+
+    webhook_configured = bool(os.environ.get("ALERT_WEBHOOK_URL", "").strip())
+    telegram_configured = bool(
+        os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        and os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    )
+    if webhook_configured or telegram_configured:
+        destinations = []
+        if webhook_configured:
+            destinations.append("webhook (ALERT_WEBHOOK_URL)")
+        if telegram_configured:
+            destinations.append("Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)")
+        print(
+            f"[grid-search-scheduler] Notifications enabled via: {', '.join(destinations)}",
+            flush=True,
+        )
+    else:
+        print(
+            "[grid-search-scheduler] No notification destination configured "
+            "(set ALERT_WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID to enable alerts).",
+            flush=True,
+        )
 
     scheduler = BlockingScheduler(timezone="UTC")
     trigger = CronTrigger(day_of_week="sun", hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE, timezone="UTC")
@@ -105,10 +246,6 @@ def main() -> None:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         print("[grid-search-scheduler] Scheduler stopped.", flush=True)
-
-
-SCHEDULE_HOUR   = 2
-SCHEDULE_MINUTE = 0
 
 
 if __name__ == "__main__":
