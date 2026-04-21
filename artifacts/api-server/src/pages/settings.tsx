@@ -100,6 +100,7 @@ interface ArchiveKeepState {
   saving: boolean;
   error: string | null;
   saved: boolean;
+  archiveCount: number | null;
 }
 
 interface ArchiveRun {
@@ -594,6 +595,7 @@ export default function Settings() {
     saving: false,
     error: null,
     saved: false,
+    archiveCount: null,
   });
 
   const [archiveRuns, setArchiveRuns] = useState<ArchiveRunsState>({
@@ -672,6 +674,7 @@ export default function Settings() {
             source: data.source === "override" ? "override" : "env",
             draft: String(data.runs),
             loading: false,
+            archiveCount: typeof data.archive_count === "number" ? data.archive_count : null,
           }));
         }
       })
@@ -3748,6 +3751,34 @@ export default function Settings() {
                   ? `Dashboard override active — using ${archiveKeep.runs} runs. The built-in default is 26.`
                   : `Using the built-in default of ${archiveKeep.runs} runs. Save a new value to override.`}
               </p>
+              {(() => {
+                const draftNum = parseInt(archiveKeep.draft, 10);
+                const count = archiveKeep.archiveCount;
+                if (
+                  !isNaN(draftNum) &&
+                  count !== null &&
+                  draftNum < count
+                ) {
+                  const pruned = count - draftNum;
+                  return (
+                    <div
+                      style={{
+                        marginTop: "14px",
+                        padding: "10px 14px",
+                        background: "#431407",
+                        border: "1px solid #c2410c",
+                        borderRadius: "6px",
+                        color: "#fb923c",
+                        fontSize: "13px",
+                        lineHeight: "1.5",
+                      }}
+                    >
+                      ⚠ Saving will delete {pruned} run{pruned === 1 ? "" : "s"} on the next grid-search ({count} stored, limit would be {draftNum}).
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
           )}
 

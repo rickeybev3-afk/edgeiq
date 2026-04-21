@@ -2393,7 +2393,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         Reads archive_keep from owner prefs when set, otherwise returns the
         hardcoded default of 26.
-        Response: {"runs": int, "source": "override"|"env"}
+        Response: {"runs": int, "source": "override"|"env", "archive_count": int}
         """
         try:
             prefs = _load_owner_prefs()
@@ -2403,7 +2403,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 runs = _DEFAULT_ARCHIVE_KEEP
                 source = "env"
-            body = json.dumps({"runs": runs, "source": source}).encode()
+            archive_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "grid_search_archive")
+            try:
+                archive_count = len([
+                    d for d in os.listdir(archive_root)
+                    if os.path.isdir(os.path.join(archive_root, d))
+                ]) if os.path.isdir(archive_root) else 0
+            except Exception:
+                archive_count = 0
+            body = json.dumps({"runs": runs, "source": source, "archive_count": archive_count}).encode()
             self.send_response(200)
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
