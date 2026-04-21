@@ -639,6 +639,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/grid-search-log":
             self._grid_search_log_get()
             return
+        if path == "/api/grid-search-results":
+            self._grid_search_results_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -2645,6 +2648,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
         body = json.dumps({"lines": lines}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _grid_search_results_get(self):
+        """Return the top 10 filter combinations from filter_grid_top100.json.
+
+        Response:
+          results  — list of up to 10 combo objects (empty list if file missing)
+          file_exists — bool
+        """
+        top100_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_top100.json")
+        results = []
+        file_exists = False
+        try:
+            with open(top100_path) as _f:
+                all_results = json.load(_f)
+            file_exists = True
+            results = all_results[:10] if isinstance(all_results, list) else []
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+        data = {"results": results, "file_exists": file_exists}
+        body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

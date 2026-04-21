@@ -237,6 +237,28 @@ interface GridSearchState {
   logLines: string[];
 }
 
+interface GridSearchCombo {
+  tcs_offset?: number;
+  tcs_label?: string;
+  rvol_min?: number;
+  gap_min?: number;
+  follow_min?: number;
+  follow_label?: string;
+  struct_filter?: string;
+  struct_label?: string;
+  excl_false_break?: boolean;
+  n_trades?: number;
+  win_rate?: number;
+  avg_r?: number;
+  sharpe?: number;
+}
+
+interface GridSearchResultsState {
+  results: GridSearchCombo[];
+  file_exists: boolean;
+  loading: boolean;
+}
+
 interface EodRecalcRun {
   completed_at: string;
   path: string;
@@ -806,6 +828,24 @@ export default function Settings() {
     logLines: [],
   });
 
+  const [gridSearchResults, setGridSearchResults] = useState<GridSearchResultsState>({
+    results: [],
+    file_exists: false,
+    loading: false,
+  });
+
+  const fetchGridSearchResults = () => {
+    setGridSearchResults((s) => ({ ...s, loading: true }));
+    fetch("/api/grid-search-results")
+      .then((r) => r.json())
+      .then((data) => {
+        setGridSearchResults({ results: data.results ?? [], file_exists: data.file_exists ?? false, loading: false });
+      })
+      .catch(() => {
+        setGridSearchResults((s) => ({ ...s, loading: false }));
+      });
+  };
+
   const gridSearchPrevRunning = useRef<boolean>(false);
   const gridSearchLogRef = useRef<HTMLPreElement>(null);
 
@@ -833,6 +873,10 @@ export default function Settings() {
             }
             return { ...s, status: data, error: null, toast };
           });
+
+          if (wasRunning && !isRunning) {
+            fetchGridSearchResults();
+          }
 
           if (intervalId !== null) clearInterval(intervalId);
           intervalId = setInterval(poll, isRunning ? 5_000 : 60_000);
@@ -881,6 +925,10 @@ export default function Settings() {
       el.scrollTop = el.scrollHeight;
     }
   }, [gridSearch.logLines]);
+
+  useEffect(() => {
+    fetchGridSearchResults();
+  }, []);
 
   const handleGridSearchRun = async () => {
     setGridSearch((s) => ({ ...s, triggering: true, error: null, toast: null }));
@@ -3233,6 +3281,103 @@ export default function Settings() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {(gridSearchResults.file_exists || gridSearchResults.results.length > 0) && (
+            <div style={{ marginTop: "28px" }}>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: "#94a3b8", marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Top Filter Combinations
+              </div>
+              <div style={{ overflowX: "auto", borderRadius: "8px", border: "1px solid #2d3748" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontFamily: "monospace" }}>
+                  <thead>
+                    <tr style={{ background: "rgba(45,55,72,0.6)" }}>
+                      {["#", "Filters", "Trades", "Win %", "Avg R", "Sharpe"].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: "9px 12px",
+                            textAlign: h === "#" || h === "Trades" || h === "Win %" || h === "Avg R" || h === "Sharpe" ? "right" : "left",
+                            color: "#64748b",
+                            fontWeight: 600,
+                            fontSize: "11px",
+                            letterSpacing: "0.05em",
+                            textTransform: "uppercase",
+                            whiteSpace: "nowrap",
+                            borderBottom: "1px solid #2d3748",
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gridSearchResults.results.map((combo, i) => {
+                      const filters: string[] = [];
+                      if (combo.tcs_label) filters.push(combo.tcs_label);
+                      if (combo.struct_label) filters.push(combo.struct_label);
+                      if (combo.follow_label) filters.push(`Follow ${combo.follow_label}`);
+                      if (combo.rvol_min != null && combo.rvol_min > 0) filters.push(`RVOL ≥${combo.rvol_min}`);
+                      if (combo.gap_min != null && combo.gap_min > 0) filters.push(`Gap ≥${combo.gap_min}%`);
+                      if (combo.excl_false_break) filters.push("No false breaks");
+                      return (
+                        <tr
+                          key={i}
+                          style={{
+                            background: i % 2 === 0 ? "transparent" : "rgba(45,55,72,0.25)",
+                            borderBottom: i < gridSearchResults.results.length - 1 ? "1px solid rgba(45,55,72,0.5)" : "none",
+                          }}
+                        >
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: "#475569", fontWeight: 600 }}>{i + 1}</td>
+                          <td style={{ padding: "9px 12px", color: "#cbd5e1", maxWidth: "320px" }}>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                              {filters.map((f) => (
+                                <span
+                                  key={f}
+                                  style={{
+                                    padding: "2px 7px",
+                                    background: "rgba(100,116,139,0.15)",
+                                    border: "1px solid rgba(100,116,139,0.3)",
+                                    borderRadius: "4px",
+                                    fontSize: "11px",
+                                    color: "#94a3b8",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {f}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: "#94a3b8" }}>
+                            {combo.n_trades ?? "—"}
+                          </td>
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: combo.win_rate != null && combo.win_rate >= 60 ? "#4ade80" : "#94a3b8" }}>
+                            {combo.win_rate != null ? `${combo.win_rate.toFixed(1)}%` : "—"}
+                          </td>
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: combo.avg_r != null && combo.avg_r > 0 ? "#4ade80" : combo.avg_r != null && combo.avg_r < 0 ? "#f87171" : "#94a3b8" }}>
+                            {combo.avg_r != null ? combo.avg_r.toFixed(3) : "—"}
+                          </td>
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: "#94a3b8" }}>
+                            {combo.sharpe != null ? combo.sharpe.toFixed(2) : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {gridSearchResults.loading && (
+                <div style={{ fontSize: "12px", color: "#475569", marginTop: "8px" }}>Refreshing…</div>
+              )}
+            </div>
+          )}
+
+          {!gridSearchResults.file_exists && !gridSearchResults.loading && (
+            <div style={{ marginTop: "20px", fontSize: "12px", color: "#475569" }}>
+              No results yet — run a grid search to see the top filter combinations here.
             </div>
           )}
         </section>
