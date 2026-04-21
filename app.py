@@ -2108,7 +2108,7 @@ def render_grid_search_public():
         ("RVOL cap",        str(_best.get("rvol_cap", "none"))),
         ("Day of week",     str(_best.get("day_of_week", "any"))),
         ("Trades/week",     f"{_best.get('trades_per_week', 0):.2f}"),
-        ("MaxDD R",         f"{_best.get('max_drawdown_r', 0):.2f}R = ${abs(_best.get('max_drawdown_r',0))*150:,.0f}"),
+        ("MaxDD R",         f"{_best.get('max_drawdown_r', 0):.2f}R = ${abs(_best.get('max_drawdown_r',0))*st.session_state.get('_wkr_dollar_per_r', 150.0):,.0f}"),
     ]
     _dim_rows_str = [(d, str(v)) for d, v in _dim_rows]
     st.dataframe(
@@ -22200,12 +22200,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     label=label, n=n, wr=wr, avg_r=avg,
                     aw=float(wins.mean()) if len(wins) else 0.0,
                     al=float(losses.mean()) if len(losses) else 0.0,
-                    sharpe=shp, pf=pf, maxdd_r=maxdd, maxdd_usd=maxdd * 150,
-                    tpw=tpw, wkly_r=wkly, flat_usd_yr=wkly * 150 * 52,
+                    sharpe=shp, pf=pf, maxdd_r=maxdd, maxdd_usd=maxdd * st.session_state.get('_wkr_dollar_per_r', 150.0),
+                    tpw=tpw, wkly_r=wkly, flat_usd_yr=wkly * st.session_state.get('_wkr_dollar_per_r', 150.0) * 52,
                 )
 
             # ── Compounding simulation ────────────────────────────────────────
-            def _rfc_compound(rows, r_col: str = "tiered_pnl_r", start_eq=7000.0, base_1r=150.0, cap_x=20.0):
+            def _rfc_compound(rows, r_col: str = "tiered_pnl_r", start_eq=7000.0, base_1r=None, cap_x=20.0):
+                if base_1r is None:
+                    base_1r = st.session_state.get('_wkr_dollar_per_r', 150.0)
                 if not rows:
                     return {}
                 sorted_rows = sorted(rows, key=lambda r: r.get("sim_date") or "")
@@ -22358,7 +22360,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.caption(
                     f"Dataset: **{len(_rfc_filtered):,} unique trades** · {_rfc_trading_days} trading days "
                     f"({_rfc_weeks:.0f} wks) · window: {_rfc_date_mode} · "
-                    f"1R = $150 · Compounding: $7k start, 20× cap ($3k max 1R)"
+                    f"1R = ${st.session_state.get('_wkr_dollar_per_r', 150.0):,.0f} · Compounding: $7k start, 20× cap (${st.session_state.get('_wkr_dollar_per_r', 150.0) * 20:,.0f} max 1R)"
                 )
                 st.dataframe(_rfc_df.set_index("Filter Variant"), use_container_width=True)
 
@@ -22386,7 +22388,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.markdown("##### Compounding Projections — Equity at Each Year")
                 st.caption(
                     "Each row runs through trades chronologically, growing position size with equity. "
-                    "Position size capped at 20× starting risk ($3,000 max 1R). "
+                    f"Position size capped at 20× starting risk (${st.session_state.get('_wkr_dollar_per_r', 150.0) * 20:,.0f} max 1R). "
                     "Y-columns show equity at approximately 1/2/3/5 years from start of dataset. "
                     "⚠️ These numbers assume *every qualifying signal is taken* with no PDT limit, "
                     "no missed days, and no slippage beyond the simulated bar-by-bar stops."
@@ -22584,9 +22586,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     use_container_width=True,
                 )
 
+                _rfc_1r = st.session_state.get('_wkr_dollar_per_r', 150.0)
                 st.info(
-                    "**Key insight:** The 20× compounding cap means your 1R grows from $150 → $3,000 "
-                    "once equity reaches $140k ($7k × 20). After that, each trade risks a fixed $3k. "
+                    f"**Key insight:** The 20× compounding cap means your 1R grows from ${_rfc_1r:,.0f} → ${_rfc_1r * 20:,.0f} "
+                    "once equity reaches $140k ($7k × 20). After that, each trade risks a fixed "
+                    f"${_rfc_1r * 20:,.0f}. "
                     "The CAGR percentages are real but front-loaded — the account compounds fastest "
                     "in the early years when 85%+ WR applies to a small base. "
                     "PDT restrictions, execution gaps, and multi-ticker concurrency limits will all "
