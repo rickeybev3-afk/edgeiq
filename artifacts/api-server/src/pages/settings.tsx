@@ -102,6 +102,18 @@ interface ArchiveKeepState {
   saved: boolean;
 }
 
+interface ArchiveRun {
+  name: string;
+  size_bytes: number;
+}
+
+interface ArchiveRunsState {
+  runs: ArchiveRun[];
+  total: number;
+  loading: boolean;
+  error: string | null;
+}
+
 interface BackfillHealth {
   available: boolean;
   loading: boolean;
@@ -311,6 +323,13 @@ function getWriteHeaders(extra: Record<string, string> = {}): HeadersInit {
     ...(secret ? { "X-Dashboard-Secret": secret } : {}),
     ...extra,
   };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 function formatRelativeTime(isoTimestamp: string): string {
@@ -577,6 +596,13 @@ export default function Settings() {
     saved: false,
   });
 
+  const [archiveRuns, setArchiveRuns] = useState<ArchiveRunsState>({
+    runs: [],
+    total: 0,
+    loading: true,
+    error: null,
+  });
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/backfill-heartbeat-window")
@@ -653,6 +679,32 @@ export default function Settings() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : "Could not load archive retention limit.";
           setArchiveKeep((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/archive-runs")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setArchiveRuns({
+            runs: Array.isArray(data.runs) ? data.runs : [],
+            total: typeof data.total === "number" ? data.total : 0,
+            loading: false,
+            error: null,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load archive runs.";
+          setArchiveRuns((s) => ({ ...s, loading: false, error: msg }));
         }
       });
     return () => { cancelled = true; };
@@ -3712,6 +3764,45 @@ export default function Settings() {
               ⚠ {archiveKeep.error}
             </p>
           )}
+
+          <div style={{ marginTop: "24px" }}>
+            <p style={{ fontSize: "13px", fontWeight: 600, color: "#94a3b8", marginBottom: "10px" }}>
+              {archiveRuns.loading
+                ? "Loading stored runs…"
+                : archiveRuns.error
+                  ? `⚠ Could not load run list: ${archiveRuns.error}`
+                  : archiveRuns.total === 0
+                    ? "No archive runs stored yet."
+                    : `Stored runs: ${archiveRuns.total} of ${archiveKeep.runs} limit${archiveRuns.total > archiveKeep.runs ? ` — ${archiveRuns.total - archiveKeep.runs} would be pruned` : ""}`}
+            </p>
+            {!archiveRuns.loading && !archiveRuns.error && archiveRuns.runs.length > 0 && (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", color: "#64748b", fontWeight: 600, padding: "4px 8px", borderBottom: "1px solid #2d3748" }}>Run date</th>
+                    <th style={{ textAlign: "right", color: "#64748b", fontWeight: 600, padding: "4px 8px", borderBottom: "1px solid #2d3748" }}>Size</th>
+                    <th style={{ textAlign: "right", color: "#64748b", fontWeight: 600, padding: "4px 8px", borderBottom: "1px solid #2d3748" }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {archiveRuns.runs.map((run, idx) => {
+                    const wouldBePruned = !archiveKeep.loading && idx >= archiveKeep.runs;
+                    return (
+                      <tr key={run.name} style={{ background: wouldBePruned ? "rgba(239,68,68,0.06)" : idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
+                        <td style={{ padding: "5px 8px", color: wouldBePruned ? "#f87171" : "#cbd5e1", fontFamily: "monospace" }}>{run.name}</td>
+                        <td style={{ padding: "5px 8px", color: "#64748b", textAlign: "right", fontFamily: "monospace" }}>{formatBytes(run.size_bytes)}</td>
+                        <td style={{ padding: "5px 8px", textAlign: "right" }}>
+                          {wouldBePruned
+                            ? <span style={{ color: "#f87171", fontSize: "11px" }}>would be pruned</span>
+                            : <span style={{ color: "#4ade80", fontSize: "11px" }}>kept</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </section>
 
         <section

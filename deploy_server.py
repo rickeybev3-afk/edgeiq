@@ -656,6 +656,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/archive-keep":
             self._archive_keep_get()
             return
+        if path == "/api/archive-runs":
+            self._archive_runs_get()
+            return
         if path == "/api/tp-calib-history":
             self._tp_calib_history_get()
             return
@@ -2401,6 +2404,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 runs = _DEFAULT_ARCHIVE_KEEP
                 source = "env"
             body = json.dumps({"runs": runs, "source": source}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _archive_runs_get(self):
+        """Return the list of grid-search archive runs currently stored on disk.
+
+        Scans grid_search_archive/ and returns each subdirectory as a run entry
+        with its name (date string) and total size in bytes, sorted newest-first.
+        Response: {"runs": [{"name": str, "size_bytes": int}, ...], "total": int}
+        """
+        try:
+            archive_root = "grid_search_archive"
+            runs = []
+            if os.path.isdir(archive_root):
+                for entry in sorted(os.listdir(archive_root), reverse=True):
+                    entry_path = os.path.join(archive_root, entry)
+                    if not os.path.isdir(entry_path):
+                        continue
+                    total_size = 0
+                    for dirpath, _dirnames, filenames in os.walk(entry_path):
+                        for fname in filenames:
+                            try:
+                                total_size += os.path.getsize(os.path.join(dirpath, fname))
+                            except OSError:
+                                pass
+                    runs.append({"name": entry, "size_bytes": total_size})
+            body = json.dumps({"runs": runs, "total": len(runs)}).encode()
             self.send_response(200)
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
