@@ -22124,6 +22124,42 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Runs are listed newest-first. Archive folders live in grid_search_archive/."
                 )
 
+                # ── Per-row CSV download buttons ──────────────────────────────────
+                st.markdown("**⬇ Download archived top-100 CSV by run:**")
+                _p3_dl_per_row = 4
+                for _p3_row_start in range(0, len(_p3_hist_runs), _p3_dl_per_row):
+                    _p3_row_slice = _p3_hist_runs[_p3_row_start:_p3_row_start + _p3_dl_per_row]
+                    _p3_row_cols  = st.columns(len(_p3_row_slice))
+                    for _p3_dli, _p3_dhr in enumerate(_p3_row_slice):
+                        _p3_topf_dl = _p3_os.path.join(_p3_dhr["path"], "filter_grid_top100.json")
+                        with _p3_row_cols[_p3_dli]:
+                            if _p3_os.path.exists(_p3_topf_dl):
+                                try:
+                                    with open(_p3_topf_dl) as _f:
+                                        _p3_top_data = _p3_json.load(_f)
+                                    _p3_csv_bytes = _p3_pd.DataFrame(_p3_top_data).to_csv(index=False).encode()
+                                    st.download_button(
+                                        label=f"⬇ CSV  {_p3_dhr['folder']}",
+                                        data=_p3_csv_bytes,
+                                        file_name=f"top100_{_p3_dhr['folder']}.csv",
+                                        mime="text/csv",
+                                        key=f"p3_dl_top100_{_p3_dhr['folder']}",
+                                    )
+                                except Exception:
+                                    st.button(
+                                        f"⬇ CSV  {_p3_dhr['folder']}",
+                                        disabled=True,
+                                        help="Could not read the top-100 file for this run.",
+                                        key=f"p3_dl_top100_err_{_p3_dhr['folder']}",
+                                    )
+                            else:
+                                st.button(
+                                    f"⬇ CSV  {_p3_dhr['folder']}",
+                                    disabled=True,
+                                    help="No top-100 file found for this run (filter_grid_top100.json is missing).",
+                                    key=f"p3_dl_top100_miss_{_p3_dhr['folder']}",
+                                )
+
                 # Per-run detail expanders with top-5 comparison
                 if len(_p3_hist_runs) >= 2:
                     st.markdown("##### Top-5 Sharpe comparison — latest vs. previous run")
