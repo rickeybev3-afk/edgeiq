@@ -231,6 +231,7 @@ interface GridSearchStatus {
 interface GridSearchState {
   status: GridSearchStatus | null;
   triggering: boolean;
+  cancelling: boolean;
   error: string | null;
   toast: { kind: "success" | "error"; message: string } | null;
   logLines: string[];
@@ -799,6 +800,7 @@ export default function Settings() {
   const [gridSearch, setGridSearch] = useState<GridSearchState>({
     status: null,
     triggering: false,
+    cancelling: false,
     error: null,
     toast: null,
     logLines: [],
@@ -901,6 +903,31 @@ export default function Settings() {
       }
     } catch {
       setGridSearch((s) => ({ ...s, triggering: false, error: "Could not reach server." }));
+    }
+  };
+
+  const handleGridSearchCancel = async () => {
+    setGridSearch((s) => ({ ...s, cancelling: true, error: null }));
+    try {
+      const res = await fetch("/api/grid-search-cancel", { method: "POST", headers: getWriteHeaders() });
+      if (res.ok) {
+        gridSearchPrevRunning.current = false;
+        setGridSearch((s) => ({
+          ...s,
+          cancelling: false,
+          status: s.status ? { ...s.status, running: false } : null,
+          toast: { kind: "success", message: "Grid search was stopped." },
+        }));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setGridSearch((s) => ({
+          ...s,
+          cancelling: false,
+          error: (data as { error?: string }).error ?? `Cancel failed (${res.status})`,
+        }));
+      }
+    } catch {
+      setGridSearch((s) => ({ ...s, cancelling: false, error: "Could not reach server." }));
     }
   };
 
@@ -3067,32 +3094,59 @@ export default function Settings() {
             </div>
           )}
 
-          <button
-            onClick={handleGridSearchRun}
-            disabled={gridSearch.triggering || gridSearch.status?.running === true}
-            style={{
-              padding: "9px 18px",
-              background: (gridSearch.triggering || gridSearch.status?.running) ? "#14532d" : "#166534",
-              border: "1px solid #4ade80",
-              borderRadius: "7px",
-              color: "#dcfce7",
-              fontSize: "13px",
-              fontWeight: 600,
-              cursor: (gridSearch.triggering || gridSearch.status?.running) ? "not-allowed" : "pointer",
-              opacity: (gridSearch.triggering || gridSearch.status?.running) ? 0.7 : 1,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "7px",
-              transition: "opacity 0.15s",
-            }}
-          >
-            <span style={{ fontSize: "15px" }}>▶</span>
-            {gridSearch.status?.running
-              ? "Running…"
-              : gridSearch.triggering
-              ? "Starting…"
-              : "Run Now"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <button
+              onClick={handleGridSearchRun}
+              disabled={gridSearch.triggering || gridSearch.status?.running === true}
+              style={{
+                padding: "9px 18px",
+                background: (gridSearch.triggering || gridSearch.status?.running) ? "#14532d" : "#166534",
+                border: "1px solid #4ade80",
+                borderRadius: "7px",
+                color: "#dcfce7",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: (gridSearch.triggering || gridSearch.status?.running) ? "not-allowed" : "pointer",
+                opacity: (gridSearch.triggering || gridSearch.status?.running) ? 0.7 : 1,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "7px",
+                transition: "opacity 0.15s",
+              }}
+            >
+              <span style={{ fontSize: "15px" }}>▶</span>
+              {gridSearch.status?.running
+                ? "Running…"
+                : gridSearch.triggering
+                ? "Starting…"
+                : "Run Now"}
+            </button>
+
+            {gridSearch.status?.running && (
+              <button
+                onClick={handleGridSearchCancel}
+                disabled={gridSearch.cancelling}
+                style={{
+                  padding: "9px 18px",
+                  background: gridSearch.cancelling ? "#450a0a" : "#7f1d1d",
+                  border: "1px solid #f87171",
+                  borderRadius: "7px",
+                  color: "#fecaca",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: gridSearch.cancelling ? "not-allowed" : "pointer",
+                  opacity: gridSearch.cancelling ? 0.7 : 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "7px",
+                  transition: "opacity 0.15s",
+                }}
+              >
+                <span style={{ fontSize: "14px" }}>✕</span>
+                {gridSearch.cancelling ? "Stopping…" : "Cancel"}
+              </button>
+            )}
+          </div>
 
           {gridSearch.status?.running && (
             <div style={{ marginTop: "14px", display: "flex", alignItems: "center", gap: "10px" }}>

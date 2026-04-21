@@ -705,6 +705,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/grid-search-run":
             self._grid_search_run_post()
             return
+        if path == "/api/grid-search-cancel":
+            self._grid_search_cancel_post()
+            return
         self._proxy() if streamlit_ready else self._loading()
 
     def do_PUT(self):
@@ -2723,6 +2726,72 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
 
         body = json.dumps({"status": "started", "started_at": _grid_search_started_at}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _grid_search_cancel_post(self):
+        """Send SIGTERM (then SIGKILL after 5 s) to the running grid search process.
+
+        Returns 200 {"status": "cancelled"} if a process was running and was
+        signalled, 404 if there is nothing to cancel, and 401 on auth failure.
+        """
+        import threading as _threading
+
+        global _grid_search_proc, _grid_search_last_exit_code, _grid_search_last_finished_at
+
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        with _grid_search_lock:
+            proc = _grid_search_proc
+            if proc is None or proc.poll() is not None:
+                body = json.dumps({"error": "No grid search is currently running"}).encode()
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            try:
+                proc.terminate()  # SIGTERM
+            except Exception:
+                pass
+
+            def _force_kill():
+                import time as _time
+                _time.sleep(5)
+                try:
+                    if proc.poll() is None:
+                        proc.kill()  # SIGKILL
+                except Exception:
+                    pass
+                with _grid_search_lock:
+                    global _grid_search_proc, _grid_search_last_exit_code, _grid_search_last_finished_at
+                    if _grid_search_proc is proc:
+                        rc = proc.poll()
+                        _grid_search_last_exit_code = rc if rc is not None else -15
+                        _grid_search_last_finished_at = datetime.now(timezone.utc).isoformat()
+                        _grid_search_proc = None
+
+            t = _threading.Thread(target=_force_kill, daemon=True)
+            t.start()
+
+        body = json.dumps({"status": "cancelled"}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
