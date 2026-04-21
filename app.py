@@ -21805,14 +21805,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
             _p3_sort_col = st.selectbox(
                 "Sort by",
-                ["Sharpe", "Win Rate %", "Profit Factor", "Total R"],
+                ["Weekly Expectancy", "Trades/Week", "Sharpe", "Win Rate %", "Profit Factor", "Total R"],
                 key="p3_sort_col",
             )
             _p3_sort_map = {
-                "Sharpe":         "sharpe",
-                "Win Rate %":     "win_rate",
-                "Profit Factor":  "profit_factor",
-                "Total R":        "total_r",
+                "Weekly Expectancy": "weekly_expectancy_r",
+                "Trades/Week":       "trades_per_week",
+                "Sharpe":            "sharpe",
+                "Win Rate %":        "win_rate",
+                "Profit Factor":     "profit_factor",
+                "Total R":           "total_r",
             }
             _p3_sk = _p3_sort_map[_p3_sort_col]
 
@@ -21846,12 +21848,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Total R":        _c.get("total_r", 0),
                     "/wk":            _c.get("trades_per_week", 0),
                     "$/wk":           _c.get("proj_weekly_usd", 0),
+                    "WklyR":          _c.get("weekly_expectancy_r", 0),
                     "⚠":             "low N" if _c.get("low_sample") else "",
                 })
 
             _p3_df = _p3_pd.DataFrame(_p3_rows_disp)
-            _p3_sk_col = {"Sharpe": "Sharpe", "Win Rate %": "WR%",
-                          "Profit Factor": "PF", "Total R": "Total R"}.get(_p3_sort_col, "Sharpe")
+            _p3_sk_col = {
+                "Weekly Expectancy": "WklyR",
+                "Trades/Week":       "/wk",
+                "Sharpe":            "Sharpe",
+                "Win Rate %":        "WR%",
+                "Profit Factor":     "PF",
+                "Total R":           "Total R",
+            }.get(_p3_sort_col, "WklyR")
 
             def _p3_color(row):
                 try:
@@ -21896,13 +21905,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 key="p3_top100_csv_dl",
             )
 
-            # ── Best combo from Phase 3 ───────────────────────────────────────
-            _p3_best = _p3_top_data[0]
+            # ── Combo selector + Best combo from Phase 3 ─────────────────────────
             st.markdown("---")
-            st.markdown("### 🏆 Suggested Filter Config — Phase 3 Best Combo")
+            _p3_sel_rank = st.number_input(
+                f"Select combo to preview / apply (1 – {len(_p3_top_data)})",
+                min_value=1, max_value=len(_p3_top_data), value=1, step=1,
+                key="p3_sel_rank",
+                help="Pick any combo from the sorted list above. 1 = top-ranked combo.",
+            )
+            _p3_best = _p3_top_data[max(0, int(_p3_sel_rank) - 1)]
+            st.markdown(f"### 🏆 Combo #{_p3_sel_rank} Filter Config")
             st.caption(
                 f"Derived from {_p3_best.get('n_trades','?')} trades · "
                 f"Sharpe {_p3_best.get('sharpe','?')} · "
+                f"WklyR {_p3_best.get('weekly_expectancy_r','?')} · "
                 f"Phase 3 run over {_p3_summary.get('date_range',{}).get('start','?')} → "
                 f"{_p3_summary.get('date_range',{}).get('end','?')}"
             )
@@ -21936,7 +21952,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
             _p3_apply_col, _p3_info_col = st.columns([1, 3])
             with _p3_apply_col:
-                _p3_apply = st.button("✅ Apply Phase 3 Best Filter", key="p3_apply_btn", type="primary")
+                _p3_apply = st.button(f"✅ Apply Combo #{_p3_sel_rank}", key="p3_apply_btn", type="primary")
             with _p3_info_col:
                 _p3_cur = {}
                 if _p3_os.path.exists(_P3_CFG):
@@ -21970,8 +21986,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "applied_at":       _p3_dt.datetime.utcnow().isoformat() + "Z",
                     "applied_from":     _P3_TOP,
                     "source_phase":     3,
-                    "source_combo_rank": 1,
+                    "source_combo_rank": int(_p3_sel_rank),
                     "source_sharpe":    _p3_best.get("sharpe"),
+                    "source_weekly_expectancy_r": _p3_best.get("weekly_expectancy_r"),
                     "source_n_trades":  _p3_best.get("n_trades"),
                 }
                 try:
