@@ -1,12 +1,12 @@
 {
-  "run_at": "2026-04-21T08:58:07.144574Z",
+  "run_at": "2026-04-21T19:22:27.660397Z",
   "phase": 3,
   "date_range": {
     "start": "all",
     "end": "latest"
   },
   "total_rows": 152519,
-  "traded_rows": 97580,
+  "traded_rows": 97066,
   "min_n": 100,
   "top_n": 100,
   "combos_tested": 14045184,
@@ -23,18 +23,19 @@
       "bearish_accepted"
     ]
   },
-  "combos_with_any_trade": 7928736,
-  "combos_qualifying": 1522750,
-  "elapsed_seconds": 1029.4,
+  "combos_with_any_trade": 7970400,
+  "combos_qualifying": 1532816,
+  "elapsed_seconds": 1064.4,
   "best_combo": {
     "phase": 3,
-    "struct_label": "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Double Distribution",
+    "struct_label": "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Double Distribution + Non-Trend",
     "struct_tokens": [
       "bullish break",
       "bearish break",
       "ntrl extreme",
       "neutral",
-      "dbl dist"
+      "dbl dist",
+      "non_trend"
     ],
     "tcs_offset": 0,
     "tcs_label": "Baseline",
@@ -56,20 +57,20 @@
     "pm_ib_dir": "any",
     "pm_ib_dir_label": "any PM dir",
     "qualifies": true,
-    "n_trades": 5477,
-    "n_scanned": 5477,
+    "n_trades": 5492,
+    "n_scanned": 5492,
     "scan_to_trade_pct": 100.0,
     "win_rate": 84.2,
-    "avg_r": 0.9064,
-    "total_r": 4964.599,
-    "profit_factor": 14.723,
-    "sharpe": 9.764,
-    "max_drawdown_r": 18.174,
-    "avg_win_r": 1.155,
-    "avg_loss_r": -0.417,
-    "trades_per_week": 22.32,
-    "proj_weekly_usd": 3034.6,
-    "weekly_expectancy_r": 20.2306,
+    "avg_r": 0.9088,
+    "total_r": 4991.36,
+    "profit_factor": 14.906,
+    "sharpe": 9.799,
+    "max_drawdown_r": 13.149,
+    "avg_win_r": 1.157,
+    "avg_loss_r": -0.414,
+    "trades_per_week": 22.38,
+    "proj_weekly_usd": 3050.95,
+    "weekly_expectancy_r": 20.3397,
     "low_sample": false
   },
   "archive_path": "grid_search_archive/2026-04-21"

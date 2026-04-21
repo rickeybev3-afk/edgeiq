@@ -3,67 +3,67 @@
     "label": "Structure subset",
     "values": {
       "Bearish Break + Neutral Extreme + Neutral + Double Distribution": {
-        "in_top_20": 1,
+        "in_top_20": 2,
         "in_top_100": 6
       },
       "Bearish Break + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
-        "in_top_20": 1,
+        "in_top_20": 2,
         "in_top_100": 8
       },
       "Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution": {
-        "in_top_20": 1,
+        "in_top_20": 2,
         "in_top_100": 6
       },
       "Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
-        "in_top_20": 1,
+        "in_top_20": 2,
         "in_top_100": 6
       },
       "Bullish Break + Bearish Break + Neutral Extreme + Neutral": {
         "in_top_20": 0,
-        "in_top_100": 2
+        "in_top_100": 1
       },
       "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Double Distribution": {
         "in_top_20": 2,
-        "in_top_100": 6
+        "in_top_100": 7
       },
       "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
         "in_top_20": 2,
-        "in_top_100": 8
+        "in_top_100": 9
       },
       "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Non-Trend": {
         "in_top_20": 0,
-        "in_top_100": 2
+        "in_top_100": 1
       },
       "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral": {
         "in_top_20": 0,
-        "in_top_100": 2
+        "in_top_100": 1
       },
       "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution": {
         "in_top_20": 2,
-        "in_top_100": 6
+        "in_top_100": 7
       },
       "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
         "in_top_20": 2,
-        "in_top_100": 6
+        "in_top_100": 7
       },
       "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral + Non-Trend": {
         "in_top_20": 0,
-        "in_top_100": 2
+        "in_top_100": 1
       },
       "Bullish Break + Neutral Extreme + Neutral + Double Distribution": {
-        "in_top_20": 2,
+        "in_top_20": 1,
         "in_top_100": 6
       },
       "Bullish Break + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
-        "in_top_20": 2,
+        "in_top_20": 1,
         "in_top_100": 6
       },
       "Bullish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution": {
-        "in_top_20": 2,
+        "in_top_20": 1,
         "in_top_100": 6
       },
       "Bullish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
-        "in_top_20": 2,
+        "in_top_20": 1,
         "in_top_100": 6
       },
       "Neutral Extreme + Neutral + Double Distribution": {
@@ -129,11 +129,11 @@
     "values": {
       "False": {
         "in_top_20": 20,
-        "in_top_100": 76
+        "in_top_100": 72
       },
       "True": {
         "in_top_20": 0,
-        "in_top_100": 24
+        "in_top_100": 28
       }
     }
   },
@@ -151,11 +151,11 @@
     "values": {
       "any": {
         "in_top_20": 20,
-        "in_top_100": 66
+        "in_top_100": 62
       },
       "up": {
         "in_top_20": 0,
-        "in_top_100": 34
+        "in_top_100": 38
       }
     }
   },

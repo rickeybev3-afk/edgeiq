@@ -2115,6 +2115,85 @@ def render_grid_search_public():
         use_container_width=True, hide_index=True,
     )
 
+    # ── Phase 4 section (shown if filter_grid_p4_results.json exists) ────────
+    _GS_P4 = "filter_grid_p4_results.json"
+    if _gs_os.path.exists(_GS_P4):
+        st.divider()
+        st.markdown("## \U0001f3af Phase 4 \u2014 Per-Structure Leaderboard")
+        st.caption(
+            "Each structure is optimized **independently**. No OR-logic. "
+            "Finds the best gap/RVOL/TCS/scan combo for each of the 7 IB structures separately."
+        )
+        try:
+            with open(_GS_P4) as _p4f:
+                _p4_pub = _gs_json.load(_p4f)
+        except Exception:
+            _p4_pub = {}
+
+        if _p4_pub:
+            _p4_ran_pub = (_p4_pub.get("run_at") or "")[:16].replace("T", " ")
+            _p4_dr_pub  = _p4_pub.get("date_range", {})
+            st.caption(
+                f"Last run: **{_p4_ran_pub} UTC** · "
+                f"{_p4_dr_pub.get('start','?')} \u2192 {_p4_dr_pub.get('end','?')} · "
+                f"{_p4_pub.get('trading_days', 0):,} trading days"
+            )
+
+        _p4_best_pub = (_p4_pub.get("per_structure_best") or []) if _p4_pub else []
+        if _p4_best_pub:
+            _p4_pub_rows = []
+            for _pc in _p4_best_pub:
+                _q = _pc.get("qualifies", False)
+                _pf_p = _pc.get("profit_factor", 0)
+                _pf_ps = "\u221e" if _pf_p == float("inf") else (f"{_pf_p:.2f}" if isinstance(_pf_p, (int, float)) else "\u2014")
+                _p4_pub_rows.append({
+                    "Structure":  _pc.get("structure", "?"),
+                    "N":          _pc.get("n_trades", 0) if _q else "\u2014",
+                    "WR%":        round(_pc.get("win_rate", 0), 1) if _q else "\u2014",
+                    "Avg R":      round(_pc.get("avg_r", 0), 3) if _q else "\u2014",
+                    "PF":         _pf_ps if _q else "\u2014",
+                    "Sharpe":     round(_pc.get("sharpe", 0), 3) if _q else "\u2014",
+                    "MaxDD":      round(_pc.get("max_drawdown_r", 0), 1) if _q else "\u2014",
+                    "/wk":        round(_pc.get("trades_per_week", 0), 1) if _q else "\u2014",
+                    "$/wk":       round(_pc.get("proj_weekly_usd", 0), 0) if _q else "\u2014",
+                    "WklyR":      round(_pc.get("weekly_expectancy_r", 0), 3) if _q else "\u2014",
+                    "Best Gap%":  _pc.get("gap_min", "\u2014") if _q else "\u2014",
+                    "Best RVOL":  _pc.get("rvol_min", "\u2014") if _q else "\u2014",
+                    "TCS+":       _pc.get("tcs_offset", "\u2014") if _q else "\u2014",
+                    "Scan":       _pc.get("scan_type", "\u2014") if _q else "\u2014",
+                })
+
+            def _p4_pub_color(row):
+                if row.get("N") == "\u2014":
+                    return ["background-color:#f5f5f5; color:#9e9e9e"] * len(row)
+                try:
+                    s = float(row.get("Sharpe", 0))
+                except (ValueError, TypeError):
+                    s = 0.0
+                if s >= 5:
+                    return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                if s >= 2:
+                    return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+                return ["background-color:#fff3e0; color:#e65100"] * len(row)
+
+            _p4_pub_df = _gs_pd.DataFrame(_p4_pub_rows)
+            st.dataframe(
+                _p4_pub_df.style.apply(_p4_pub_color, axis=1),
+                use_container_width=True, hide_index=True,
+            )
+
+            _p4_cp_pub = (_p4_pub.get("combined_portfolio") or {}) if _p4_pub else {}
+            if _p4_cp_pub.get("qualifies"):
+                st.markdown("##### \U0001f4bc Combined Portfolio")
+                _cp_pub_cols = st.columns(5)
+                _cp_pub_cols[0].metric("N",       _p4_cp_pub.get("n_trades", 0))
+                _cp_pub_cols[1].metric("WR%",     f"{_p4_cp_pub.get('win_rate', 0):.1f}%")
+                _cp_pub_cols[2].metric("Sharpe",  f"{_p4_cp_pub.get('sharpe', 0):.3f}")
+                _cp_pub_cols[3].metric("$/wk",    f"${_p4_cp_pub.get('proj_weekly_usd', 0):.0f}")
+                _cp_pub_cols[4].metric("WklyR",   f"{_p4_cp_pub.get('weekly_expectancy_r', 0):.3f}")
+        else:
+            st.info("Phase 4 file found but contains no structure results.")
+
 
 def render_build_notes():
     """Render build notes as a live hosted page. Accessible via /?notes=USER_ID."""
@@ -22799,6 +22878,224 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
             except Exception:
                 pass
+
+
+    with st.expander("\U0001f3af Phase 4 Grid Search \u2014 Per-Structure Individual Optimization", expanded=False):
+        import json as _p4_json
+        import os as _p4_os
+        import subprocess as _p4_sub
+        import re as _p4_re
+        import pandas as _p4_pd
+
+        _P4_FILE = "filter_grid_p4_results.json"
+
+        st.markdown(
+            "Phase 4 treats each IB structure **independently** \u2014 no more OR-logic across structure subsets. "
+            "It finds each structure's personal optimal filter combo (gap %, RVOL floor, TCS offset, scan type, "
+            "follow-through, false-break exclusion) and outputs a per-structure leaderboard plus a combined portfolio. "
+            "Runs ~4,500 combos in under a minute \u2014 far faster than Phase 3."
+        )
+
+        _p4_data = {}
+        if _p4_os.path.exists(_P4_FILE):
+            try:
+                with open(_P4_FILE) as _f:
+                    _p4_data = _p4_json.load(_f)
+            except Exception:
+                pass
+
+        if _p4_data:
+            _p4_ran = (_p4_data.get("run_at") or "")[:16].replace("T", " ")
+            _p4_dr  = _p4_data.get("date_range", {})
+            _p4_td  = _p4_data.get("trading_days", 0)
+            _p4_el  = _p4_data.get("elapsed_seconds", 0)
+            st.caption(
+                f"Last Phase 4 run: **{_p4_ran} UTC** \u00b7 "
+                f"{_p4_dr.get('start','?')} \u2192 {_p4_dr.get('end','?')} \u00b7 "
+                f"{_p4_td:,} trading days \u00b7 completed in {_p4_el:.0f}s"
+            )
+        else:
+            st.info("No Phase 4 results yet. Run the Phase 4 search below to generate them.")
+
+        _p4_date_re = _p4_re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        _p4_dr_raw  = _p4_data.get("date_range", {}) if _p4_data else {}
+        _p4_s_def   = _p4_dr_raw.get("start", "") if _p4_date_re.match(_p4_dr_raw.get("start", "") or "") else ""
+        _p4_e_def   = _p4_dr_raw.get("end",   "") if _p4_date_re.match(_p4_dr_raw.get("end",   "") or "") else ""
+
+        _p4_c1, _p4_c2, _p4_c3 = st.columns([2, 2, 1])
+        with _p4_c1:
+            _p4_start = st.text_input("Start date", value=_p4_s_def, placeholder="all history", key="p4_start")
+        with _p4_c2:
+            _p4_end   = st.text_input("End date",   value=_p4_e_def, placeholder="latest",      key="p4_end")
+        with _p4_c3:
+            _p4_minn_inp = st.number_input("Min N",
+                                            value=int(_p4_data.get("min_n", 30) if _p4_data else 30),
+                                            min_value=5, max_value=500, step=5, key="p4_min_n")
+
+        _p4_run_btn = st.button(
+            "\u25b6 Run Phase 4 Per-Structure Grid Search", key="p4_run_btn",
+            help="Runs ~4,500 vectorized combos (7 structures \xd7 648 filter combos). Takes <1 minute."
+        )
+        if _p4_run_btn:
+            _p4_err = None
+            if _p4_start.strip() and not _p4_date_re.match(_p4_start.strip()):
+                _p4_err = f"Invalid start date: {_p4_start.strip()}"
+            elif _p4_end.strip() and not _p4_date_re.match(_p4_end.strip()):
+                _p4_err = f"Invalid end date: {_p4_end.strip()}"
+            if _p4_err:
+                st.error(_p4_err)
+            else:
+                _p4_cmd = ["python3", "-u", "filter_grid_search.py", "--phase4-only",
+                           "--min-n", str(int(_p4_minn_inp))]
+                if _p4_start.strip():
+                    _p4_cmd += ["--start", _p4_start.strip()]
+                if _p4_end.strip():
+                    _p4_cmd += ["--end", _p4_end.strip()]
+                with st.spinner("Running Phase 4 grid search..."):
+                    try:
+                        _p4_proc = _p4_sub.run(_p4_cmd, capture_output=True, text=True, timeout=300)
+                        if _p4_proc.returncode == 0:
+                            st.success("Phase 4 complete \u2014 results updated below.")
+                            st.rerun()
+                        else:
+                            st.error(f"Phase 4 failed (exit {_p4_proc.returncode}):")
+                            st.code(_p4_proc.stderr[-2000:] if _p4_proc.stderr else "(no stderr)")
+                    except _p4_sub.TimeoutExpired:
+                        st.error("Phase 4 timed out after 5 minutes.")
+                    except Exception as _p4_exc:
+                        st.error(f"Error running Phase 4: {_p4_exc}")
+
+        if _p4_data and _p4_data.get("per_structure_best"):
+            st.markdown("---")
+            st.markdown("#### Per-Structure Leaderboard")
+
+            _p4_best     = _p4_data["per_structure_best"]
+            _p4_top3     = _p4_data.get("per_structure_top3", {})
+            _p4_combined = _p4_data.get("combined_portfolio", {})
+
+            _p4_rows = []
+            for _p4c in _p4_best:
+                _pf4  = _p4c.get("profit_factor", 0)
+                _pf4s = "\u221e" if _pf4 == float("inf") else (f"{_pf4:.2f}" if isinstance(_pf4, (int, float)) else "\u2014")
+                _q    = _p4c.get("qualifies", False)
+                _p4_rows.append({
+                    "Structure":  _p4c.get("structure", "?"),
+                    "N":          _p4c.get("n_trades", 0) if _q else "\u2014",
+                    "WR%":        round(_p4c.get("win_rate", 0), 1) if _q else "\u2014",
+                    "Avg R":      round(_p4c.get("avg_r", 0), 3) if _q else "\u2014",
+                    "PF":         _pf4s if _q else "\u2014",
+                    "Sharpe":     round(_p4c.get("sharpe", 0), 3) if _q else "\u2014",
+                    "MaxDD":      round(_p4c.get("max_drawdown_r", 0), 1) if _q else "\u2014",
+                    "/wk":        round(_p4c.get("trades_per_week", 0), 1) if _q else "\u2014",
+                    "$/wk":       round(_p4c.get("proj_weekly_usd", 0), 0) if _q else "\u2014",
+                    "WklyR":      round(_p4c.get("weekly_expectancy_r", 0), 3) if _q else "\u2014",
+                    "Best Gap%":  _p4c.get("gap_min", "\u2014") if _q else "\u2014",
+                    "Best RVOL":  _p4c.get("rvol_min", "\u2014") if _q else "\u2014",
+                    "TCS+":       _p4c.get("tcs_offset", "\u2014") if _q else "\u2014",
+                    "Scan":       _p4c.get("scan_type", "\u2014") if _q else "\u2014",
+                    "No-FB":      "\u2713" if _p4c.get("excl_false_break") else "",
+                    "Status":     "\u2713" if _q else (_p4c.get("error", "?") or "?"),
+                })
+
+            def _p4_color(row):
+                if row.get("Status") != "\u2713":
+                    return ["background-color:#f5f5f5; color:#9e9e9e"] * len(row)
+                try:
+                    s = float(row.get("Sharpe", 0))
+                except (ValueError, TypeError):
+                    s = 0.0
+                if s >= 5:
+                    return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                if s >= 2:
+                    return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+                return ["background-color:#fff3e0; color:#e65100"] * len(row)
+
+            _p4_df = _p4_pd.DataFrame(_p4_rows)
+            st.dataframe(
+                _p4_df.style.apply(_p4_color, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            if _p4_combined.get("qualifies"):
+                st.markdown("##### \U0001f4bc Combined Portfolio (union of per-structure best filters)")
+                _cp_cols = st.columns(6)
+                _cp_cols[0].metric("N",       _p4_combined.get("n_trades", 0))
+                _cp_cols[1].metric("Win Rate", f"{_p4_combined.get('win_rate', 0):.1f}%")
+                _cp_cols[2].metric("Avg R",    f"{_p4_combined.get('avg_r', 0):.3f}R")
+                _cp_cols[3].metric("Sharpe",   f"{_p4_combined.get('sharpe', 0):.3f}")
+                _cp_cols[4].metric("$/wk",     f"${_p4_combined.get('proj_weekly_usd', 0):.0f}")
+                _cp_cols[5].metric("WklyR",    f"{_p4_combined.get('weekly_expectancy_r', 0):.3f}")
+
+            st.markdown("---")
+            st.markdown("#### Plain-Language Interpretation")
+            for _p4c in _p4_best:
+                if not _p4c.get("qualifies"):
+                    st.markdown(f"- **{_p4c['structure']}**: insufficient data (N < min threshold).")
+                    continue
+                _wr  = _p4c.get("win_rate", 0)
+                _sh  = _p4c.get("sharpe", 0)
+                _n   = _p4c.get("n_trades", 0)
+                _gap = _p4c.get("gap_min", 0)
+                _rv  = _p4c.get("rvol_min", 0)
+                _sc  = _p4c.get("scan_type", "any")
+                _tcs = _p4c.get("tcs_offset", 0)
+                _fb  = _p4c.get("excl_false_break", False)
+                _twk = _p4c.get("trades_per_week", 0)
+                _wkr = _p4c.get("weekly_expectancy_r", 0)
+                _filters = []
+                if _gap > 0:       _filters.append(f"gap \u2265 {_gap}%")
+                if _rv > 0:        _filters.append(f"RVOL \u2265 {_rv}")
+                if _tcs > 0:       _filters.append(f"TCS +{_tcs}")
+                if _sc != "any":   _filters.append(f"{_sc} scan only")
+                if _fb:            _filters.append("exclude false-breaks")
+                _filt_str = ", ".join(_filters) if _filters else "no extra filters"
+                _edge = "strong" if _sh >= 3 else ("moderate" if _sh >= 1.5 else "weak")
+                st.markdown(
+                    f"- **{_p4c['structure']}** ({_n} trades, {_wr:.0f}% WR, "
+                    f"Sharpe {_sh:.2f} \u2014 {_edge} edge): "
+                    f"best with *{_filt_str}*. "
+                    f"Delivers {_twk:.1f} trades/week \u2192 {_wkr:.2f}R/week expectancy."
+                )
+
+            with st.expander("Show top-3 alternates per structure", expanded=False):
+                for _sn, _t3 in _p4_top3.items():
+                    if not _t3:
+                        continue
+                    st.markdown(f"**{_sn}**")
+                    _alt_rows = []
+                    for _ai, _ac in enumerate(_t3, 1):
+                        _alt_rows.append({
+                            "#":      _ai,
+                            "Gap%":   _ac.get("gap_min", 0),
+                            "RVOL":   _ac.get("rvol_min", 0),
+                            "TCS+":   _ac.get("tcs_offset", 0),
+                            "Scan":   _ac.get("scan_type", "any"),
+                            "No-FB":  "\u2713" if _ac.get("excl_false_break") else "",
+                            "N":      _ac.get("n_trades", 0),
+                            "WR%":    round(_ac.get("win_rate", 0), 1),
+                            "Sharpe": round(_ac.get("sharpe", 0), 3),
+                            "WklyR":  round(_ac.get("weekly_expectancy_r", 0), 3),
+                        })
+                    st.dataframe(
+                        _p4_pd.DataFrame(_alt_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=min(len(_alt_rows) * 37 + 38, 175),
+                    )
+
+            try:
+                with open(_P4_FILE, "rb") as _p4dld:
+                    st.download_button(
+                        label="\u2b07 Download Phase 4 results (JSON)",
+                        data=_p4dld.read(),
+                        file_name="filter_grid_p4_results.json",
+                        mime="application/json",
+                        key="p4_download_json",
+                    )
+            except Exception:
+                pass
+
 
     # ── Highlight jumped-to trade row (from drill-down ↓ Jump link) ──────────
     import streamlit.components.v1 as _cmp_trade_jump

@@ -222,7 +222,7 @@ def _last_run_utc() -> datetime | None:
 
 
 def run_grid_search() -> None:
-    """Execute Phase 3 grid search as a subprocess. Streams output to stdout."""
+    """Execute Phase 3 + Phase 4 grid search as subprocesses. Streams output to stdout."""
     start_time = datetime.now(timezone.utc)
     now_str = start_time.strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"\n{'='*60}", flush=True)
@@ -231,6 +231,15 @@ def run_grid_search() -> None:
 
     cmd = [sys.executable, "filter_grid_search.py", "--phase", "3"]
     result = subprocess.run(cmd)
+
+    # Always run Phase 4 after Phase 3 (even if Phase 3 fails — Phase 4 is independent)
+    print(f"\n[grid-search-scheduler] Running Phase 4 per-structure search...", flush=True)
+    _p4_cmd = [sys.executable, "filter_grid_search.py", "--phase4-only"]
+    _p4_result = subprocess.run(_p4_cmd)
+    if _p4_result.returncode == 0:
+        print("[grid-search-scheduler] Phase 4 complete — filter_grid_p4_results.json updated.", flush=True)
+    else:
+        print(f"[grid-search-scheduler] Phase 4 failed (exit {_p4_result.returncode}).", flush=True)
 
     finish_time = datetime.now(timezone.utc)
     finish_str = finish_time.strftime("%Y-%m-%d %H:%M:%S UTC")

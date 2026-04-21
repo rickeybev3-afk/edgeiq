@@ -960,6 +960,197 @@ def compute_dimension_summary(qualifying: list[dict]) -> dict:
     return summary
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 4 — per-structure individual optimization
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_grid_search_p4(
+    all_rows: list[dict],
+    min_n: int = DEFAULT_MIN_N,
+    top_n: int = 3,
+) -> dict:
+    """Phase 4: per-structure individual optimization.
+
+    Iterates over each of the 7 structures independently (not as OR-subsets),
+    finds the best filter combo (TCS offset, RVOL, gap, follow-through, false-
+    break exclusion, scan type) ranked by Sharpe then weekly expectancy.
+
+    Returns a dict with keys:
+      per_structure_best   – best combo dict per structure (7 entries)
+      per_structure_top3   – dict of structure → top-3 combos
+      combined_portfolio   – stats for the union of all per-structure best masks
+    """
+    import heapq as _hq
+
+    print("  [P4] Building DataFrame...")
+    df = pd.DataFrame(all_rows)
+    trading_days = df["sim_date"].dropna().nunique()
+
+    print("  [P4] Pre-computing filter masks...")
+    masks, r_arr = _build_masks_p3(df)
+
+    scan_opts = [
+        ("any",      "scan_any"),
+        ("morning",  "scan_morning"),
+        ("intraday", "scan_intraday"),
+    ]
+
+    n_combos_per = (
+        len(P3_TCS_OFFSETS) * len(P3_RVOL_MINS) * len(P3_GAP_MINS) *
+        len(P3_FOLLOW_MINS) * len(P3_FALSE_BREAK_EX) * len(scan_opts)
+    )
+    total_combos = n_combos_per * len(STRUCTURES_7)
+    print(
+        f"  [P4] {total_combos:,} total combos "
+        f"({len(STRUCTURES_7)} structures × {n_combos_per} combos each) "
+        f"across {trading_days:,} trading days..."
+    )
+
+    per_structure_best: list[dict] = []
+    per_structure_top3: dict[str, list[dict]] = {}
+    combined_mask = np.zeros(len(df), dtype=bool)
+
+    done = 0
+    for struct_label, struct_tok in STRUCTURES_7:
+        struct_key  = f"struct_{struct_label.replace(' ', '_').lower()}"
+        struct_mask = masks[struct_key]
+
+        if not struct_mask.any():
+            print(f"  [P4] {struct_label}: 0 rows — skipping")
+            per_structure_best.append({
+                "phase": 4, "structure": struct_label,
+                "struct_token": struct_tok, "qualifies": False,
+                "error": "no_rows", "n_trades": 0,
+            })
+            per_structure_top3[struct_label] = []
+            done += n_combos_per
+            continue
+
+        struct_total = int(struct_mask.sum())
+        print(f"  [P4] {struct_label}: {struct_total} rows → {n_combos_per} combos...", flush=True)
+
+        best_score:      tuple | None = None
+        best_combo:      dict | None  = None
+        best_final_mask: np.ndarray | None = None
+        struct_heap: list = []
+        _tb_s = 0
+
+        for tcs_off in P3_TCS_OFFSETS:
+            m_tcs = masks[f"tcs_off_{tcs_off}"] & struct_mask
+            if not m_tcs.any():
+                done += len(P3_RVOL_MINS) * len(P3_GAP_MINS) * len(P3_FOLLOW_MINS) * len(P3_FALSE_BREAK_EX) * len(scan_opts)
+                continue
+
+            for rvol_min in P3_RVOL_MINS:
+                m2 = m_tcs & masks[f"rvol_min_{rvol_min}"]
+                if not m2.any():
+                    done += len(P3_GAP_MINS) * len(P3_FOLLOW_MINS) * len(P3_FALSE_BREAK_EX) * len(scan_opts)
+                    continue
+
+                for gap_min in P3_GAP_MINS:
+                    m3 = m2 & masks[f"gap_min_{gap_min}"]
+                    if not m3.any():
+                        done += len(P3_FOLLOW_MINS) * len(P3_FALSE_BREAK_EX) * len(scan_opts)
+                        continue
+
+                    for ft_min in P3_FOLLOW_MINS:
+                        m4 = m3 & masks[f"follow_{ft_min}"]
+                        if not m4.any():
+                            done += len(P3_FALSE_BREAK_EX) * len(scan_opts)
+                            continue
+
+                        for excl_fb in P3_FALSE_BREAK_EX:
+                            m_fb = masks["fb_excl"] if excl_fb else masks["fb_any"]
+                            m5 = m4 & m_fb
+                            if not m5.any():
+                                done += len(scan_opts)
+                                continue
+
+                            for scan_lbl, scan_key in scan_opts:
+                                final_mask = m5 & masks[scan_key] & masks["r_valid"]
+                                done += 1
+
+                                r_sub = r_arr[final_mask]
+                                n_sub = len(r_sub)
+                                if n_sub < min_n:
+                                    continue
+
+                                stats = _compute_stats_np(r_sub, n_sub, trading_days)
+                                if not stats:
+                                    continue
+
+                                score = (stats.get("sharpe", 0.0), stats.get("weekly_expectancy_r", 0.0))
+                                combo = {
+                                    "phase":           4,
+                                    "structure":       struct_label,
+                                    "struct_token":    struct_tok,
+                                    "tcs_offset":      tcs_off,
+                                    "tcs_label":       f"+{tcs_off} above baseline" if tcs_off else "Baseline",
+                                    "rvol_min":        rvol_min,
+                                    "gap_min":         gap_min,
+                                    "follow_min":      ft_min,
+                                    "follow_label":    LABEL_FOLLOW.get(ft_min, f"≥{ft_min}%"),
+                                    "excl_false_break": excl_fb,
+                                    "scan_type":       scan_lbl,
+                                    "qualifies":       True,
+                                    **stats,
+                                }
+
+                                if best_score is None or score > best_score:
+                                    best_score      = score
+                                    best_combo      = combo
+                                    best_final_mask = final_mask.copy()
+
+                                _tb_s += 1
+                                if len(struct_heap) < top_n:
+                                    _hq.heappush(struct_heap, (score, _tb_s, combo))
+                                elif score > struct_heap[0][0]:
+                                    _hq.heapreplace(struct_heap, (score, _tb_s, combo))
+
+        if best_combo is None:
+            print(f"  [P4] {struct_label}: no qualifying combos (N < {min_n})")
+            per_structure_best.append({
+                "phase": 4, "structure": struct_label,
+                "struct_token": struct_tok, "qualifies": False,
+                "error": "no_qualifying_combos", "n_trades": 0,
+            })
+            per_structure_top3[struct_label] = []
+        else:
+            per_structure_best.append(best_combo)
+            combined_mask |= best_final_mask
+            top3 = sorted(
+                [e[2] for e in struct_heap],
+                key=lambda x: (x.get("sharpe", 0.0), x.get("weekly_expectancy_r", 0.0)),
+                reverse=True,
+            )
+            per_structure_top3[struct_label] = top3
+            print(
+                f"  [P4] {struct_label}: best Sharpe={best_combo.get('sharpe',0):.3f} "
+                f"N={best_combo.get('n_trades',0)} WR={best_combo.get('win_rate',0):.1f}% "
+                f"gap≥{best_combo.get('gap_min',0)}% RVOL≥{best_combo.get('rvol_min',0)} "
+                f"TCS+{best_combo.get('tcs_offset',0)} scan={best_combo.get('scan_type','any')}"
+            )
+
+    print(f"\n  [P4] {done:,} combos evaluated.")
+
+    combined_r      = r_arr[combined_mask & masks["r_valid"]]
+    combined_stats  = _compute_stats_np(combined_r, int(combined_mask.sum()), trading_days) if len(combined_r) >= min_n else {}
+    combined_portfolio = {
+        "phase":      4,
+        "structure":  "Combined Portfolio (union of per-structure best filters)",
+        "qualifies":  len(combined_r) >= min_n,
+        **combined_stats,
+    }
+
+    return {
+        "per_structure_best": per_structure_best,
+        "per_structure_top3": per_structure_top3,
+        "combined_portfolio": combined_portfolio,
+        "trading_days":       trading_days,
+        "total_rows":         len(df),
+    }
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -970,6 +1161,10 @@ def main():
     parser.add_argument("--top",    type=int, default=DEFAULT_TOP)
     parser.add_argument("--phase",  type=int, default=3, choices=[1, 3],
                         help="1=original 6-dim search, 3=exhaustive 15-dim (default)")
+    parser.add_argument("--phase4", action="store_true",
+                        help="Also run Phase 4 per-structure individual optimization after Phase 3 (~4k combos, <1 min)")
+    parser.add_argument("--phase4-only", action="store_true",
+                        help="Run Phase 4 only (skip Phase 3 / Phase 1)")
     parser.add_argument("--full",   action="store_true",
                         help="Enable all 3+ options per new dimension (~600M combos, ~8h runtime)")
     parser.add_argument("--archive-keep", type=int, default=None,
@@ -1000,7 +1195,13 @@ def main():
         print("ERROR: SUPABASE_URL and SUPABASE_KEY must be set.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\n=== EdgeIQ Filter Grid Search — Phase {args.phase} ===")
+    _run_p4_only = getattr(args, "phase4_only", False)
+    _run_p4_also = getattr(args, "phase4", False) or _run_p4_only
+
+    _phase_label = "4 only" if _run_p4_only else (
+        f"{args.phase} + 4" if _run_p4_also else str(args.phase)
+    )
+    print(f"\n=== EdgeIQ Filter Grid Search — Phase {_phase_label} ===")
     print(f"  Date range : {args.start or 'all history'} → {args.end or 'latest'}")
     print(f"  Min trades : {args.min_n}")
     print(f"  Top N      : {args.top}")
@@ -1009,7 +1210,7 @@ def main():
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
     print("Step 1: Fetching rows from Supabase...")
-    fields = FIELDS_P3 if args.phase == 3 else FIELDS_P1
+    fields = FIELDS_P3 if (args.phase == 3 or _run_p4_also) else FIELDS_P1
     all_rows = fetch_all_rows(sb, args.start, args.end, fields)
     if not all_rows:
         print("No rows returned — check credentials and date range.")
@@ -1019,24 +1220,33 @@ def main():
     print(f"  Total rows: {len(all_rows):,}  |  With P&L: {len(traded):,}")
     print()
 
-    print(f"Step 2: Running Phase {args.phase} grid search...")
-    if args.phase == 3 and args.full:
-        print("  ⚠ Full mode enabled — all 3+ options per new dimension (~600M combos). This will take ~8h.")
-    t_start = datetime.utcnow()
-    if args.phase == 3:
-        _p3_meta, top_results = run_grid_search_p3(
-            all_rows, min_n=args.min_n, top_n=args.top, full_mode=getattr(args, "full", False)
-        )
-        all_results      = top_results          # top-N only; full list no longer held in RAM
-        _n_with_trades   = _p3_meta["n_with_trades"]
-        _n_qualifying    = _p3_meta["n_qualifying"]
+    # ── Phase 1 / 3 (skipped when --phase4-only) ──────────────────────────────
+    if not _run_p4_only:
+        print(f"Step 2: Running Phase {args.phase} grid search...")
+        if args.phase == 3 and args.full:
+            print("  ⚠ Full mode enabled — all 3+ options per new dimension (~600M combos). This will take ~8h.")
+        t_start = datetime.utcnow()
+        if args.phase == 3:
+            _p3_meta, top_results = run_grid_search_p3(
+                all_rows, min_n=args.min_n, top_n=args.top, full_mode=getattr(args, "full", False)
+            )
+            all_results      = top_results          # top-N only; full list no longer held in RAM
+            _n_with_trades   = _p3_meta["n_with_trades"]
+            _n_qualifying    = _p3_meta["n_qualifying"]
+        else:
+            all_results, top_results = run_grid_search_p1(all_rows, min_n=args.min_n, top_n=args.top)
+            _n_with_trades   = len(all_results)
+            _n_qualifying    = sum(1 for c in all_results if c.get("qualifies"))
+        elapsed = (datetime.utcnow() - t_start).total_seconds()
+        print(f"  Grid search complete in {elapsed:.0f}s ({elapsed/60:.1f} min)")
+        print()
     else:
-        all_results, top_results = run_grid_search_p1(all_rows, min_n=args.min_n, top_n=args.top)
-        _n_with_trades   = len(all_results)
-        _n_qualifying    = sum(1 for c in all_results if c.get("qualifies"))
-    elapsed = (datetime.utcnow() - t_start).total_seconds()
-    print(f"  Grid search complete in {elapsed:.0f}s ({elapsed/60:.1f} min)")
-    print()
+        # Phase 4 only — create empty placeholders so the rest of main() still works
+        all_results   = []
+        top_results   = []
+        _n_with_trades = 0
+        _n_qualifying  = 0
+        elapsed        = 0.0
 
     qualifying = [c for c in all_results if c.get("qualifies")]
 
@@ -1058,12 +1268,78 @@ def main():
         print(f"  filter_grid_top100.json           (top {min(len(top_results),100)} combos)")
         print(f"  filter_grid_dimension_summary.json")
 
+    # ── Phase 4 — per-structure individual optimization ──────────────────────
+    _p4_result = None
+    if _run_p4_also:
+        _p4_step = "Step 2a" if not _run_p4_only else "Step 2"
+        print(f"\n{_p4_step}: Running Phase 4 per-structure grid search...")
+        _p4_t0 = datetime.utcnow()
+        _p4_result = run_grid_search_p4(all_rows, min_n=args.min_n, top_n=3)
+        _p4_elapsed = (datetime.utcnow() - _p4_t0).total_seconds()
+        print(f"  Phase 4 complete in {_p4_elapsed:.0f}s")
+        print()
+
+        # Enrich with metadata and write to disk
+        _p4_output = {
+            "run_at":        datetime.utcnow().isoformat() + "Z",
+            "phase":         4,
+            "date_range":    {"start": args.start or "all", "end": args.end or "latest"},
+            "total_rows":    _p4_result.get("total_rows", len(all_rows)),
+            "trading_days":  _p4_result.get("trading_days", 0),
+            "min_n":         args.min_n,
+            "elapsed_seconds": round(_p4_elapsed, 1),
+            "per_structure_best": _p4_result["per_structure_best"],
+            "per_structure_top3": _p4_result["per_structure_top3"],
+            "combined_portfolio": _p4_result["combined_portfolio"],
+        }
+        with open("filter_grid_p4_results.json", "w") as _p4f:
+            json.dump(_p4_output, _p4f, indent=2)
+        print(f"  filter_grid_p4_results.json  ({len(_p4_result['per_structure_best'])} structures)")
+        print()
+
+        print("=== PHASE 4 PER-STRUCTURE LEADERBOARD ===")
+        _p4_hdr = f"{'Structure':<22} {'N':>5} {'WR%':>6} {'AvgR':>6} {'Sharpe':>7} {'MaxDD':>6}  Best filters"
+        print(_p4_hdr); print("-" * len(_p4_hdr))
+        for _p4c in _p4_result["per_structure_best"]:
+            if not _p4c.get("qualifies"):
+                print(f"{_p4c['structure']:<22}  — no qualifying combos")
+                continue
+            _p4_filt = (
+                f"gap≥{_p4c.get('gap_min',0)}% | RVOL≥{_p4c.get('rvol_min',0)} | "
+                f"TCS+{_p4c.get('tcs_offset',0)} | scan={_p4c.get('scan_type','any')}"
+            )
+            print(
+                f"{_p4c['structure']:<22} "
+                f"{_p4c.get('n_trades',0):>5} "
+                f"{_p4c.get('win_rate',0):>6.1f} "
+                f"{_p4c.get('avg_r',0):>6.3f} "
+                f"{_p4c.get('sharpe',0):>7.3f} "
+                f"{_p4c.get('max_drawdown_r',0):>6.2f}  {_p4_filt}"
+            )
+        _cp = _p4_result["combined_portfolio"]
+        if _cp.get("qualifies"):
+            print("-" * len(_p4_hdr))
+            print(
+                f"{'COMBINED PORTFOLIO':<22} "
+                f"{_cp.get('n_trades',0):>5} "
+                f"{_cp.get('win_rate',0):>6.1f} "
+                f"{_cp.get('avg_r',0):>6.3f} "
+                f"{_cp.get('sharpe',0):>7.3f} "
+                f"{_cp.get('max_drawdown_r',0):>6.2f}  (union of per-structure best)"
+            )
+        print()
+
     # Legacy files (always written for Phase 1; written as Phase-3 slice for Phase 3)
-    top20 = top_results[:20]
-    with open("filter_grid_results.json", "w") as f:
-        json.dump(all_results, f, indent=2)
-    with open("filter_grid_top20.json", "w") as f:
-        json.dump(top20, f, indent=2)
+    if not _run_p4_only:
+        top20 = top_results[:20]
+        with open("filter_grid_results.json", "w") as f:
+            json.dump(all_results, f, indent=2)
+        with open("filter_grid_top20.json", "w") as f:
+            json.dump(top20, f, indent=2)
+
+    if _run_p4_only:
+        print("Done.")
+        return   # skip Phase 1/3 summary and console table
 
     n_struct_opts = len(_build_structure_subsets()) if args.phase == 3 else len(P1_STRUCT_FILTERS)
     if args.phase == 3:
