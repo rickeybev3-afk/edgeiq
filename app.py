@@ -22594,6 +22594,387 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
 
 
+
+    # ── This Week's Replay ─────────────────────────────────────────────────────
+    st.markdown("### 📅 This Week's Replay")
+    st.caption(
+        "Per-system trade journal — see exactly what each system earned over the "
+        "selected window using live scanner data from paper_trades. "
+        "Only settled rows (non-NULL R) are counted; pending trades are shown separately."
+    )
+
+    _wkr_cache_key = "_wkr_cache"
+    _WKR_SENTINEL  = -9999.0
+    _WKR_FLAT_1R   = 150.0
+
+    _wkr_ctrl1, _wkr_ctrl2, _wkr_ctrl3 = st.columns([2, 2, 3])
+    with _wkr_ctrl1:
+        _wkr_days = st.number_input(
+            "Calendar days to look back",
+            min_value=1, max_value=90, value=7, step=1,
+            key="_wkr_days",
+            help="Uses calendar days (not trading days). Weekends are included in the cutoff but will simply have no trades.",
+        )
+    with _wkr_ctrl2:
+        _wkr_lens = st.radio(
+            "Exit lens",
+            ["Tiered (P1-P4)", "EOD (hold to close)"],
+            key="_wkr_lens",
+            horizontal=True,
+        )
+    with _wkr_ctrl3:
+        _wkr_reload = st.button("🔄 Load / Refresh", key="_wkr_load_btn")
+
+    if _wkr_reload and _AUTH_USER_ID:
+        import datetime as _wkr_dt_load
+        _wkr_cutoff = (
+            _wkr_dt_load.date.today() - _wkr_dt_load.timedelta(days=int(_wkr_days))
+        ).isoformat()
+        with st.spinner("Loading paper_trades…"):
+            _wkr_raw, _wkr_off = [], 0
+            while True:
+                try:
+                    _wkr_batch = (
+                        supabase.table("paper_trades")
+                        .select(
+                            "ticker,trade_date,predicted,tcs,gap_pct,scan_type,"
+                            "win_loss,actual_outcome,entry_price_sim,stop_price_sim,"
+                            "target_price_sim,tiered_pnl_r,eod_pnl_r"
+                        )
+                        .eq("user_id", _AUTH_USER_ID)
+                        .gte("trade_date", _wkr_cutoff)
+                        .range(_wkr_off, _wkr_off + 999)
+                        .execute()
+                        .data or []
+                    )
+                except Exception as _wkr_ex:
+                    st.error(f"Supabase error: {_wkr_ex}")
+                    _wkr_batch = []
+                    break
+                _wkr_raw.extend(_wkr_batch)
+                if len(_wkr_batch) < 1000:
+                    break
+                _wkr_off += 1000
+            _wkr_cleaned = []
+            for _wkr_r in _wkr_raw:
+                for _wkr_col in ("tiered_pnl_r", "eod_pnl_r"):
+                    _wkr_cv = _wkr_r.get(_wkr_col)
+                    if _wkr_cv is not None:
+                        try:
+                            if float(_wkr_cv) == _WKR_SENTINEL:
+                                _wkr_r[_wkr_col] = None
+                        except Exception:
+                            pass
+                _wkr_cleaned.append(_wkr_r)
+            st.session_state[_wkr_cache_key] = _wkr_cleaned
+            st.success(f"Loaded {len(_wkr_cleaned):,} paper_trades rows.")
+
+    _wkr_all = st.session_state.get(_wkr_cache_key, [])
+
+    if not _wkr_all:
+        st.info(
+            "Click **Load / Refresh** above to pull live scanner trades for the selected window. "
+            "Data comes from paper_trades (the same rows that feed the KPI dashboard)."
+        )
+    else:
+        import pandas   as _wkr_pd
+        import datetime as _wkr_dt
+        import plotly.graph_objects as _wkr_go
+
+        _wkr_r_col = (
+            "tiered_pnl_r" if _wkr_lens == "Tiered (P1-P4)" else "eod_pnl_r"
+        )
+        _wkr_uniq_pending = sum(1 for r in _wkr_all if r.get(_wkr_r_col) is None)
+
+        # ── System predicates ──────────────────────────────────────────────────
+        def _wkr_sys1(r):
+            return (r.get("tcs") or 0) >= 60
+
+        def _wkr_sys2(r):
+            return (r.get("tcs") or 0) >= 50 and abs(r.get("gap_pct") or 0) >= 2.0
+
+        _wkr_s1 = [r for r in _wkr_all if _wkr_sys1(r)]
+        _wkr_s2 = [r for r in _wkr_all if _wkr_sys2(r)]
+        _wkr_s3_seen: set = set()
+        _wkr_s3: list = []
+        for _wkr_ur in _wkr_all:
+            if _wkr_sys1(_wkr_ur) or _wkr_sys2(_wkr_ur):
+                _wkr_uk = (
+                    _wkr_ur.get("ticker"),
+                    _wkr_ur.get("trade_date"),
+                    _wkr_ur.get("predicted") or "",
+                )
+                if _wkr_uk not in _wkr_s3_seen:
+                    _wkr_s3_seen.add(_wkr_uk)
+                    _wkr_s3.append(_wkr_ur)
+        _wkr_s4 = list(_wkr_s2)
+
+        _wkr_defs = [
+            ("System 1", "TCS \u2265 60",                     "#ef5350", _wkr_s1, _wkr_r_col),
+            ("System 2", "TCS \u2265 50 + |gap| \u2265 2%",  "#ffd54f", _wkr_s2, _wkr_r_col),
+            ("System 3", "Union S1+S2",                       "#66bb6a", _wkr_s3, _wkr_r_col),
+            ("System 4", "System 2 + EOD exits",              "#64b5f6", _wkr_s4, "eod_pnl_r"),
+        ]
+
+        # ── Stats helper ───────────────────────────────────────────────────────
+        def _wkr_stats(rows, r_col):
+            settled, pending = [], 0
+            for _wr in rows:
+                _wkr_v = _wr.get(r_col)
+                if _wkr_v is None:
+                    pending += 1
+                    continue
+                try:
+                    settled.append(float(_wkr_v))
+                except Exception:
+                    pass
+            n       = len(settled)
+            wins    = sum(1 for v in settled if v > 0)
+            total_r = sum(settled)
+            wr      = 100.0 * wins / n if n else 0.0
+            usd     = total_r * _WKR_FLAT_1R
+            return dict(n=n, wins=wins, total_r=total_r, wr=wr, usd=usd, pending=pending)
+
+        # ── Daily cumulative R series for chart ────────────────────────────────
+        def _wkr_daily_cum(rows, r_col):
+            by_date: dict = {}
+            for _wr in rows:
+                _wkr_v = _wr.get(r_col)
+                if _wkr_v is None:
+                    continue
+                try:
+                    by_date.setdefault(_wr.get("trade_date", ""), []).append(float(_wkr_v))
+                except Exception:
+                    pass
+            dates = sorted(by_date.keys())
+            cum, series = 0.0, []
+            for d in dates:
+                cum += sum(by_date[d])
+                series.append((d, cum))
+            return series
+
+        # ── Compute stats for all 4 systems ───────────────────────────────────
+        _wkr_sys_stats = []
+        _wkr_any_pending = False
+        for _wkr_lbl, _wkr_desc, _wkr_clr, _wkr_rows, _wkr_rc in _wkr_defs:
+            _wkr_st = _wkr_stats(_wkr_rows, _wkr_rc)
+            _wkr_sys_stats.append(
+                (_wkr_lbl, _wkr_desc, _wkr_clr, _wkr_rows, _wkr_rc, _wkr_st)
+            )
+            if _wkr_st["pending"] > 0:
+                _wkr_any_pending = True
+
+        if _wkr_uniq_pending > 0:
+            st.info(
+                f"\u23f3 {_wkr_uniq_pending} trade(s) pending settlement — "
+                "excluded from R/$ totals. Today's trades may be partially settled.",
+            )
+
+        # ── Summary bar ───────────────────────────────────────────────────────
+        _wkr_best_r = max(
+            (s["total_r"] for *_, s in _wkr_sys_stats if s["n"] > 0),
+            default=0.0,
+        )
+        _wkr_sum_cols = st.columns(4)
+        for _wkr_si, (_wkr_lbl, _wkr_desc, _wkr_clr, _x, _wkr_rc, _wkr_st) in enumerate(_wkr_sys_stats):
+            _wkr_is_best = (_wkr_st["total_r"] == _wkr_best_r and _wkr_st["n"] > 0)
+            _wkr_sign    = "+" if _wkr_st["total_r"] >= 0 else ""
+            _wkr_usign   = "+" if _wkr_st["usd"] >= 0 else ""
+            _wkr_border  = f"2px solid {_wkr_clr}" if _wkr_is_best else f"1px solid {_wkr_clr}55"
+            _wkr_bg      = f"{_wkr_clr}18" if _wkr_is_best else "transparent"
+            _wkr_star    = " \u2605" if _wkr_is_best else ""
+            _wkr_r_color = "#26a69a" if _wkr_st["total_r"] >= 0 else "#ef5350"
+            with _wkr_sum_cols[_wkr_si]:
+                st.markdown(
+                    f'<div style="border:{_wkr_border};border-radius:8px;padding:10px 12px;'
+                    f'background:{_wkr_bg};text-align:center;">'
+                    f'<div style="font-size:12px;color:{_wkr_clr};font-weight:700;">'
+                    f'{_wkr_lbl}{_wkr_star}</div>'
+                    f'<div style="font-size:11px;color:#90a4ae;margin-bottom:4px;">{_wkr_desc}</div>'
+                    f'<div style="font-size:20px;font-weight:800;color:{_wkr_r_color};">'
+                    f'{_wkr_sign}{_wkr_st["total_r"]:.1f}R</div>'
+                    f'<div style="font-size:13px;color:#b0bec5;">'
+                    f'{_wkr_usign}${abs(_wkr_st["usd"]):,.0f}</div>'
+                    f'<div style="font-size:11px;color:#78909c;margin-top:3px;">'
+                    f'{_wkr_st["n"]} trades \u00b7 {_wkr_st["wr"]:.0f}% WR</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("<div style='margin:6px 0'></div>", unsafe_allow_html=True)
+
+        # ── Mini cumulative-R chart ────────────────────────────────────────────
+        _wkr_fig = _wkr_go.Figure()
+        for _wkr_lbl, _wkr_desc, _wkr_clr, _wkr_rows, _wkr_rc, _wkr_st in _wkr_sys_stats:
+            _wkr_series = _wkr_daily_cum(_wkr_rows, _wkr_rc)
+            if _wkr_series:
+                _wkr_fig.add_trace(
+                    _wkr_go.Scatter(
+                        x=[s[0] for s in _wkr_series],
+                        y=[s[1] for s in _wkr_series],
+                        mode="lines+markers",
+                        name=_wkr_lbl,
+                        line=dict(color=_wkr_clr, width=2),
+                        marker=dict(size=5),
+                    )
+                )
+        _wkr_fig.update_layout(
+            height=200,
+            margin=dict(t=10, b=30, l=40, r=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#b0bec5", size=11),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            xaxis=dict(gridcolor="#2a3a4a", tickfont=dict(size=10)),
+            yaxis=dict(
+                gridcolor="#2a3a4a",
+                title="Cumulative R",
+                tickfont=dict(size=10),
+            ),
+        )
+        _wkr_fig.add_hline(y=0, line_color="#546e7a", line_dash="dot", line_width=1)
+        st.plotly_chart(
+            _wkr_fig, use_container_width=True, config=dict(displayModeBar=False)
+        )
+
+        # ── Per-system expanders ───────────────────────────────────────────────
+        for _wkr_lbl, _wkr_desc, _wkr_clr, _wkr_rows, _wkr_rc, _wkr_st in _wkr_sys_stats:
+            _wkr_tr_sign = "+" if _wkr_st["total_r"] >= 0 else ""
+            _wkr_exp_hdr = (
+                f"{_wkr_lbl} \u2014 {_wkr_tr_sign}{_wkr_st['total_r']:.1f}R "
+                f"| {_wkr_st['n']} trades | {_wkr_st['wr']:.0f}% WR"
+            )
+            with st.expander(_wkr_exp_hdr, expanded=False):
+                if not _wkr_rows:
+                    st.info("No trades match this system for the selected window.")
+                    continue
+
+                _wkr_by_date: dict = {}
+                for _wr in sorted(
+                    _wkr_rows,
+                    key=lambda r: (r.get("trade_date") or "", r.get("ticker") or ""),
+                ):
+                    _wkr_by_date.setdefault(
+                        _wr.get("trade_date") or "Unknown", []
+                    ).append(_wr)
+
+                _wkr_cum_r = 0.0
+                for _wkr_date, _wkr_day_rows in sorted(_wkr_by_date.items()):
+                    _wkr_day_vals  = []
+                    _wkr_day_pend  = 0
+                    _wkr_day_trows = []
+
+                    for _wr in _wkr_day_rows:
+                        _wkr_v      = _wr.get(_wkr_rc)
+                        _wkr_entr   = _wr.get("entry_price_sim")
+                        _wkr_stp    = _wr.get("stop_price_sim")
+                        _wkr_pred   = _wr.get("predicted") or "\u2014"
+                        _wkr_tk     = _wr.get("ticker") or "\u2014"
+                        _wkr_outc   = (
+                            _wr.get("actual_outcome")
+                            or _wr.get("win_loss")
+                            or "\u2014"
+                        )
+                        if _wkr_v is None:
+                            _wkr_day_pend += 1
+                            _wkr_day_trows.append({
+                                "Ticker":    _wkr_tk,
+                                "Direction": _wkr_pred,
+                                "Entry $":   f"${float(_wkr_entr):.2f}" if _wkr_entr else "\u2014",
+                                "Stop $":    f"${float(_wkr_stp):.2f}"  if _wkr_stp  else "\u2014",
+                                "Outcome":   _wkr_outc,
+                                "R":         "\u2014",
+                                "Status":    "\u23f3 Pending",
+                            })
+                        else:
+                            try:
+                                _wkr_vf = float(_wkr_v)
+                            except Exception:
+                                continue
+                            _wkr_day_vals.append(_wkr_vf)
+                            _wkr_status = "\u2705 Win" if _wkr_vf > 0 else "\u274c Loss"
+                            _wkr_r_str  = ("+" if _wkr_vf >= 0 else "") + f"{_wkr_vf:.2f}R"
+                            _wkr_day_trows.append({
+                                "Ticker":    _wkr_tk,
+                                "Direction": _wkr_pred,
+                                "Entry $":   f"${float(_wkr_entr):.2f}" if _wkr_entr else "\u2014",
+                                "Stop $":    f"${float(_wkr_stp):.2f}"  if _wkr_stp  else "\u2014",
+                                "Outcome":   _wkr_outc,
+                                "R":         _wkr_r_str,
+                                "Status":    _wkr_status,
+                            })
+
+                    _wkr_day_tot  = sum(_wkr_day_vals)
+                    _wkr_day_n    = len(_wkr_day_vals)
+                    _wkr_day_wr   = (
+                        100.0 * sum(1 for v in _wkr_day_vals if v > 0) / _wkr_day_n
+                        if _wkr_day_n else 0.0
+                    )
+                    _wkr_cum_r   += _wkr_day_tot
+                    _wkr_day_usd  = _wkr_day_tot * _WKR_FLAT_1R
+                    _wkr_cum_usd  = _wkr_cum_r   * _WKR_FLAT_1R
+                    _wkr_dsign    = "+" if _wkr_day_tot >= 0 else ""
+                    _wkr_csign    = "+" if _wkr_cum_r   >= 0 else ""
+                    _wkr_dusign   = "+" if _wkr_day_usd >= 0 else ""
+                    _wkr_cusign   = "+" if _wkr_cum_usd >= 0 else ""
+                    _wkr_dc       = "#26a69a" if _wkr_day_tot >= 0 else "#ef5350"
+                    _wkr_pend_str = (" \u00b7 " + str(_wkr_day_pend) + " pending") if _wkr_day_pend else ""
+
+                    st.markdown(
+                        f'<div style="margin-top:12px;padding:6px 10px;background:#1a2633;'
+                        f'border-left:3px solid {_wkr_clr};border-radius:4px;">'
+                        f'<span style="font-weight:700;color:#cfd8dc;">{_wkr_date}</span>'
+                        f'&nbsp;\u00b7&nbsp;'
+                        f'<span style="color:{_wkr_dc};font-weight:600;">'
+                        f'{_wkr_dsign}{_wkr_day_tot:.2f}R'
+                        f' ({_wkr_dusign}${abs(_wkr_day_usd):,.0f})'
+                        f' day</span>'
+                        f'&nbsp;\u00b7&nbsp;'
+                        f'<span style="color:#90a4ae;font-size:12px;">'
+                        f'{_wkr_day_n} settled \u00b7 {_wkr_day_wr:.0f}% WR{_wkr_pend_str}'
+                        f'</span>'
+                        f'<span style="float:right;color:#78909c;font-size:11px;">'
+                        f'Cumulative: {_wkr_csign}{_wkr_cum_r:.2f}R'
+                        f' ({_wkr_cusign}${abs(_wkr_cum_usd):,.0f})</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    if _wkr_day_trows:
+                        _wkr_df = _wkr_pd.DataFrame(_wkr_day_trows)
+
+                        def _wkr_style_row(row, _wkr_clr=_wkr_clr):
+                            styles = [""] * len(row)
+                            try:
+                                _wkr_ri = list(row.index).index("R")     if "R" in row.index     else -1
+                                _wkr_si = list(row.index).index("Status") if "Status" in row.index else -1
+                                _wkr_rs = str(row.get("R", ""))
+                                _wkr_ss = str(row.get("Status", ""))
+                                if "Pending" in _wkr_ss:
+                                    if _wkr_ri >= 0: styles[_wkr_ri] = "color:#78909c"
+                                    if _wkr_si >= 0: styles[_wkr_si] = "color:#78909c"
+                                elif "+" in _wkr_rs:
+                                    if _wkr_ri >= 0: styles[_wkr_ri] = "color:#26a69a;font-weight:600"
+                                    if _wkr_si >= 0: styles[_wkr_si] = "color:#26a69a"
+                                elif "-" in _wkr_rs:
+                                    if _wkr_ri >= 0: styles[_wkr_ri] = "color:#ef5350;font-weight:600"
+                                    if _wkr_si >= 0: styles[_wkr_si] = "color:#ef5350"
+                            except Exception:
+                                pass
+                            return styles
+
+                        st.dataframe(
+                            _wkr_df.style.apply(_wkr_style_row, axis=1),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+        st.caption(
+            "\u26a0 Trades with NULL R are shown as \u23f3 Pending and excluded from totals. "
+            "Today's trades may be partially settled. 1R = $150 flat (same as the 4-System Comparison)."
+        )
+
+
     # ── 4-System Comparison ───────────────────────────────────────────────────
     st.markdown("### 📊 4-System Comparison")
     st.caption(
