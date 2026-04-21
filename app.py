@@ -22345,6 +22345,256 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "slow real-world compounding vs. these theoretical maximums."
                 )
 
+
+    # ── 3-System Showdown ─────────────────────────────────────────────────────
+    with st.expander("🆚 3-System Showdown — P1–P4 vs Phase 3 Best vs Combined", expanded=False):
+        import os   as _ssd_os
+        import math as _ssd_math
+        import numpy as _ssd_np
+        import pandas as _ssd_pd
+
+        _SSD_CACHE = "_ssd_data_cache"
+
+        # ── Load & cache data from Supabase ──────────────────────────────────
+        if _SSD_CACHE not in st.session_state:
+            try:
+                _ssd_resp = supabase.table("paper_trades") \
+                    .select("ticker,predicted,scan_type,tcs,rvol,gap_pct,tiered_pnl_r,trade_date") \
+                    .eq("user_id", USER_ID) \
+                    .not_.is_("tiered_pnl_r", "null") \
+                    .execute()
+                _ssd_raw = [r for r in (_ssd_resp.data or [])
+                            if r.get("tiered_pnl_r") not in (None, -9999.0, -9999)]
+                st.session_state[_SSD_CACHE] = _ssd_raw
+            except Exception as _ssd_err:
+                st.error(f"Could not load trade data: {_ssd_err}")
+                st.stop()
+
+        _ssd_all = st.session_state.get(_SSD_CACHE, [])
+
+        if not _ssd_all:
+            st.warning("No trade data found. Run the simulation or backfill first.")
+        else:
+            # ── Filter definitions ────────────────────────────────────────────
+            # System 1: Old Bot — P1/P2/P3/P4 tiers combined
+            #   P1 = Intraday TCS 70+   P2 = Morning TCS 70+
+            #   P3 = Intraday TCS 50-69  P4 = Morning TCS 50-69
+            def _ssd_sys1(r):
+                return (r.get("tcs") or 0) >= 50
+
+            # System 2: Phase 3 Grid Search Best — gap ≥ 2%, no RVOL gate
+            def _ssd_sys2(r):
+                return abs(r.get("gap_pct") or 0) >= 2.0
+
+            # System 3: Combined — trade passes System 1 OR System 2 (union, deduped)
+            def _ssd_sys3(r):
+                return _ssd_sys1(r) or _ssd_sys2(r)
+
+            _ssd_s1 = sorted([r for r in _ssd_all if _ssd_sys1(r)], key=lambda x: x["trade_date"])
+            _ssd_s2 = sorted([r for r in _ssd_all if _ssd_sys2(r)], key=lambda x: x["trade_date"])
+            _ssd_s3 = sorted([r for r in _ssd_all if _ssd_sys3(r)], key=lambda x: x["trade_date"])
+
+            # ── Stats helper ──────────────────────────────────────────────────
+            def _ssd_stats(rows):
+                if not rows:
+                    return None
+                R = _ssd_np.array([r["tiered_pnl_r"] for r in rows], dtype=float)
+                n      = len(R)
+                wins   = R[R > 0]
+                losses = R[R < 0]
+                wr     = len(wins) / n * 100
+                avg_r  = float(R.mean())
+                total_r = float(R.sum())
+                aw     = float(wins.mean())  if len(wins)   else 0.0
+                al     = float(losses.mean()) if len(losses) else 0.0
+                pf     = abs(wins.sum() / losses.sum()) if losses.sum() != 0 else float("inf")
+                dates  = sorted(set(r["trade_date"][:10] for r in rows))
+                n_weeks = max(1, len(dates) / 5.0)
+                tpw    = n / n_weeks
+                wkly_r = avg_r * tpw
+                shp    = float(R.mean() / (R.std() + 1e-9) * _ssd_math.sqrt(52 * n / n_weeks))
+                # Max drawdown
+                peak = cum = maxdd = 0.0
+                for v in R:
+                    cum += v
+                    if cum > peak:
+                        peak = cum
+                    dd = peak - cum
+                    if dd > maxdd:
+                        maxdd = dd
+                # Cumulative equity curve
+                cum_r = list(_ssd_np.cumsum(R))
+                return dict(n=n, wr=wr, avg_r=avg_r, total_r=total_r,
+                            aw=aw, al=al, pf=pf, tpw=tpw, wkly_r=wkly_r,
+                            shp=shp, maxdd=maxdd, cum_r=cum_r,
+                            n_weeks=n_weeks, dates=dates)
+
+            _s1s = _ssd_stats(_ssd_s1)
+            _s2s = _ssd_stats(_ssd_s2)
+            _s3s = _ssd_stats(_ssd_s3)
+
+            _ssd_systems = [
+                ("🔴 System 1", "P1–P4 Old Bot\n(TCS ≥ 50, all scans)", "#ef5350", _s1s),
+                ("🟡 System 2", "Phase 3 Best\n(gap ≥ 2%, no RVOL gate)", "#ffd54f", _s2s),
+                ("🟢 System 3", "Combined\n(S1 OR S2, deduped)", "#66bb6a", _s3s),
+            ]
+
+            # ── Description ──────────────────────────────────────────────────
+            st.markdown(
+                "Compares your three systems head-to-head using the same live Supabase dataset. "
+                "**System 3** takes any trade that would have been taken by System 1 **or** System 2 — "
+                "deduped so each trade is counted once."
+            )
+            st.caption(
+                "System 1 = P1🔴 Intraday TCS 70+  ·  P2🟠 Morning TCS 70+  ·  "
+                "P3🟡 Intraday TCS 50–69  ·  P4🟢 Morning TCS 50–69  |  "
+                "System 2 = Phase 3 grid search best combo (gap ≥ 2%)  |  "
+                "System 3 = Union of both"
+            )
+            st.markdown("---")
+
+            # ── Metric cards ─────────────────────────────────────────────────
+            _ssd_cols = st.columns(3)
+            _ssd_metric_labels = ["Trades/wk", "Win Rate", "Avg R/trade", "Weekly R", "Total $", "Max DD"]
+
+            # find best value per metric for gold badge
+            def _ssd_best_idx(vals, higher_is_better=True):
+                valid = [(i, v) for i, v in enumerate(vals) if v is not None]
+                if not valid:
+                    return -1
+                return max(valid, key=lambda x: x[1] if higher_is_better else -x[1])[0]
+
+            _ssd_tpw_vals  = [s["tpw"]    if s else None for _, _, _, s in _ssd_systems]
+            _ssd_wr_vals   = [s["wr"]     if s else None for _, _, _, s in _ssd_systems]
+            _ssd_avgr_vals = [s["avg_r"]  if s else None for _, _, _, s in _ssd_systems]
+            _ssd_wkly_vals = [s["wkly_r"] if s else None for _, _, _, s in _ssd_systems]
+            _ssd_totd_vals = [s["total_r"] * 150 if s else None for _, _, _, s in _ssd_systems]
+            _ssd_maxdd_vals= [s["maxdd"]  if s else None for _, _, _, s in _ssd_systems]
+
+            _ssd_best_tpw  = _ssd_best_idx(_ssd_tpw_vals)
+            _ssd_best_wr   = _ssd_best_idx(_ssd_wr_vals)
+            _ssd_best_avgr = _ssd_best_idx(_ssd_avgr_vals)
+            _ssd_best_wkly = _ssd_best_idx(_ssd_wkly_vals)
+            _ssd_best_totd = _ssd_best_idx(_ssd_totd_vals)
+            _ssd_best_maxdd= _ssd_best_idx(_ssd_maxdd_vals, higher_is_better=False)
+
+            for _ssd_ci, (_ssd_title, _ssd_desc, _ssd_col, _ssd_s) in enumerate(_ssd_systems):
+                with _ssd_cols[_ssd_ci]:
+                    if not _ssd_s:
+                        st.markdown(
+                            f'<div style="background:#1e2a3a;border-radius:10px;padding:16px;'
+                            f'border:2px solid {_ssd_col};text-align:center;">'
+                            f'<div style="font-size:16px;font-weight:700;color:{_ssd_col};">{_ssd_title}</div>'
+                            f'<div style="font-size:11px;color:#90a4ae;margin-top:4px;">{_ssd_desc.replace(chr(10), "<br>")}</div>'
+                            f'<div style="font-size:12px;color:#546e7a;margin-top:10px;">No data</div>'
+                            f'</div>', unsafe_allow_html=True
+                        )
+                        continue
+
+                    _pf_str = "∞" if _ssd_math.isinf(_ssd_s["pf"]) else f"{_ssd_s['pf']:.1f}"
+
+                    def _badge(idx):
+                        return ' <span style="font-size:9px;background:#ffd54f;color:#000;border-radius:3px;padding:1px 4px;font-weight:700;">BEST</span>' if _ssd_ci == idx else ""
+
+                    _rows_html = "".join([
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Trades/wk</td>'
+                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_ssd_s["tpw"]:.1f}{_badge(_ssd_best_tpw)}</td></tr>',
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Win Rate</td>'
+                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_ssd_s["wr"]:.1f}%{_badge(_ssd_best_wr)}</td></tr>',
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Avg R/trade</td>'
+                        f'<td style="color:#{"66bb6a" if _ssd_s["avg_r"] > 0 else "ef5350"};font-weight:700;font-size:13px;">{_ssd_s["avg_r"]:+.3f}R{_badge(_ssd_best_avgr)}</td></tr>',
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Weekly R</td>'
+                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_ssd_s["wkly_r"]:+.1f}R/wk{_badge(_ssd_best_wkly)}</td></tr>',
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Total $</td>'
+                        f'<td style="color:#{"66bb6a" if _ssd_s["total_r"] > 0 else "ef5350"};font-weight:700;font-size:13px;">${_ssd_s["total_r"]*150:+,.0f}{_badge(_ssd_best_totd)}</td></tr>',
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Profit Factor</td>'
+                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_pf_str}</td></tr>',
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Max DD</td>'
+                        f'<td style="color:#{"ef5350"};font-size:13px;">{_ssd_s["maxdd"]:.1f}R  (${_ssd_s["maxdd"]*150:,.0f}){_badge(_ssd_best_maxdd)}</td></tr>',
+                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Sharpe</td>'
+                        f'<td style="color:#fff;font-size:13px;">{_ssd_s["shp"]:.2f}</td></tr>',
+                    ])
+
+                    st.markdown(
+                        f'<div style="background:#1a2535;border-radius:10px;padding:16px;'
+                        f'border:2px solid {_ssd_col};">'
+                        f'<div style="font-size:15px;font-weight:700;color:{_ssd_col};margin-bottom:2px;">{_ssd_title}</div>'
+                        f'<div style="font-size:11px;color:#90a4ae;margin-bottom:10px;">{_ssd_desc.replace(chr(10),"<br>")}</div>'
+                        f'<div style="font-size:11px;color:#78909c;margin-bottom:6px;">{_ssd_s["n"]} trades · {_ssd_s["n_weeks"]:.1f} wks of data</div>'
+                        f'<table style="width:100%;border-collapse:collapse;">{_rows_html}</table>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+
+            # ── Equity curve comparison ───────────────────────────────────────
+            st.markdown("---")
+            st.markdown("##### Cumulative R — Equity Curve")
+
+            try:
+                import plotly.graph_objects as _ssd_go
+
+                _ssd_fig = _ssd_go.Figure()
+
+                _ssd_curve_defs = [
+                    (_ssd_s1, _ssd_s1, "#ef5350", "System 1 (P1–P4)"),
+                    (_ssd_s2, _ssd_s2, "#ffd54f", "System 2 (Phase 3 Best)"),
+                    (_ssd_s3, _ssd_s3, "#66bb6a", "System 3 (Combined)"),
+                ]
+
+                for _ssd_rows, _, _ssd_lc, _ssd_ln in _ssd_curve_defs:
+                    if not _ssd_rows:
+                        continue
+                    _ssd_cum = list(_ssd_np.cumsum([r["tiered_pnl_r"] for r in _ssd_rows]))
+                    _ssd_xs  = list(range(len(_ssd_cum)))
+                    _ssd_fig.add_trace(_ssd_go.Scatter(
+                        x=_ssd_xs, y=_ssd_cum,
+                        mode="lines", name=_ssd_ln,
+                        line=dict(color=_ssd_lc, width=2),
+                    ))
+
+                _ssd_fig.update_layout(
+                    height=280,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(26,37,53,0.6)",
+                    font=dict(color="#cfd8dc", size=11),
+                    margin=dict(l=40, r=20, t=20, b=40),
+                    xaxis=dict(showgrid=False, title="Trade #"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title="Cumulative R"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    hovermode="x unified",
+                )
+                _ssd_fig.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                st.plotly_chart(_ssd_fig, use_container_width=True, config={"displayModeBar": False})
+
+            except Exception as _ssd_plot_err:
+                st.caption(f"Chart unavailable: {_ssd_plot_err}")
+
+            # ── Winner summary ────────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("##### Bottom Line")
+
+            _ssd_winner_lines = []
+            if _s1s and _s2s and _s3s:
+                # Best avg R
+                _best_avg = max([("System 1", _s1s["avg_r"]), ("System 2", _s2s["avg_r"]), ("System 3", _s3s["avg_r"])], key=lambda x: x[1])
+                # Best weekly R
+                _best_wkly = max([("System 1", _s1s["wkly_r"]), ("System 2", _s2s["wkly_r"]), ("System 3", _s3s["wkly_r"])], key=lambda x: x[1])
+                # Safest
+                _safest = min([("System 1", _s1s["maxdd"]), ("System 2", _s2s["maxdd"]), ("System 3", _s3s["maxdd"])], key=lambda x: x[1])
+
+                st.markdown(
+                    f"- **Highest quality per trade:** {_best_avg[0]} at **{_best_avg[1]:+.3f}R avg**\n"
+                    f"- **Most weekly income:** {_best_wkly[0]} at **{_best_wkly[1]:+.1f}R/wk**\n"
+                    f"- **Safest (lowest drawdown):** {_safest[0]} at **{_safest[1]:.1f}R max DD** (${_safest[1]*150:,.0f})"
+                )
+                # Explicit recommendation
+                _rec_system = _best_avg[0] if _best_avg[1] >= 0.5 else _best_wkly[0]
+                st.info(
+                    f"**Recommendation:** If you care most about R per trade quality → go with **{_best_avg[0]}**. "
+                    f"If you want the most weekly dollars → **{_best_wkly[0]}**. "
+                    f"System 3 (Combined) gives you the broadest coverage — "
+                    f"every trade from either system with no duplicates."
+                )
+
     # ── Exhaustive Grid Search — Phase 3 ─────────────────────────────────────
     with st.expander("🧬 Exhaustive Grid Search — Phase 3 (All IB Structure Combos + 9 New Dimensions)", expanded=False):
         import subprocess as _p3_sub
