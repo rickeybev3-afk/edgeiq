@@ -22306,6 +22306,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
             ]
 
             # ── Compute stats + compounding for each variant ──────────────────
+            _rfc_all_lens = {
+                "Tiered": "tiered_pnl_r",
+                "EOD":    "eod_pnl_r",
+                "Raw Sim": "pnl_r_sim",
+            }
             _rfc_table_rows = []
             _rfc_cmp_results = {}
             for _rfc_lbl, _rfc_vrows in _rfc_variants:
@@ -22315,8 +22320,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _c = _rfc_compound(_rfc_vrows, _rfc_r_col)
                 _rfc_cmp_results[_rfc_lbl] = _c
                 _pfs = "∞" if _rfc_math.isinf(_s["pf"]) else f"{_s['pf']:.1f}"
+                # ── Best exit: compute CAGR for all 3 lenses ─────────────────
+                _rfc_lens_cagrs: dict = {}
+                for _ln, _lc in _rfc_all_lens.items():
+                    _lc_rows = [r for r in _rfc_vrows if r.get(_lc) is not None]
+                    if len(_lc_rows) >= 10:
+                        _lcomp = _rfc_compound(_lc_rows, _lc)
+                        _rfc_lens_cagrs[_ln] = _lcomp.get("cagr", 0.0) if _lcomp else 0.0
+                _best_lens = max(_rfc_lens_cagrs, key=_rfc_lens_cagrs.get) if _rfc_lens_cagrs else "—"
+                _best_cagr = _rfc_lens_cagrs.get(_best_lens, 0.0)
+                _best_exit_str = f"{_best_lens} ({_best_cagr:.0f}% CAGR)" if _rfc_lens_cagrs else "—"
                 _rfc_table_rows.append({
                     "Filter Variant": _rfc_lbl,
+                    "Best Exit": _best_exit_str,
                     "N": _s["n"],
                     "WR %": round(_s["wr"], 1),
                     "Avg R": round(_s["avg_r"], 4),
@@ -22345,6 +22361,26 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f"1R = $150 · Compounding: $7k start, 20× cap ($3k max 1R)"
                 )
                 st.dataframe(_rfc_df.set_index("Filter Variant"), use_container_width=True)
+
+                # ── Overall best-exit summary ─────────────────────────────────
+                _rfc_best_counts: dict = {}
+                for _row in _rfc_table_rows:
+                    _be = _row.get("Best Exit", "—")
+                    if _be and _be != "—":
+                        _lens_name = _be.split(" (")[0]
+                        _rfc_best_counts[_lens_name] = _rfc_best_counts.get(_lens_name, 0) + 1
+                if _rfc_best_counts:
+                    _overall_winner = max(_rfc_best_counts, key=_rfc_best_counts.get)
+                    _winner_count = _rfc_best_counts[_overall_winner]
+                    _total_variants = len(_rfc_table_rows)
+                    _tie_note = (
+                        " (tied)" if list(_rfc_best_counts.values()).count(_winner_count) > 1 else ""
+                    )
+                    st.caption(
+                        f"**Best exit across all variants:** **{_overall_winner}** wins "
+                        f"{_winner_count} of {_total_variants} filter variants{_tie_note}. "
+                        f"See the **Best Exit** column for each row's winner."
+                    )
 
                 # ── Compounding equity checkpoints detail ─────────────────────
                 st.markdown("##### Compounding Projections — Equity at Each Year")
