@@ -37142,13 +37142,17 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_mode_options = ["All", "Fixed", "Adaptive"]
         _pt_mode_filter_col, _pt_sim_filter_col = st.columns([1, 2])
         with _pt_mode_filter_col:
+            _pt_mode_saved = st.query_params.get("pt_log_mode", "All")
+            _pt_mode_saved = _pt_mode_saved if _pt_mode_saved in _pt_mode_options else "All"
             _pt_mode_filter = st.selectbox(
                 "Mode",
                 options=_pt_mode_options,
-                index=0,
+                index=_pt_mode_options.index(_pt_mode_saved),
                 key="pt_log_mode_filter",
                 help="Filter the trade log to Fixed (static stop/target) or Adaptive (dynamic exits) trades only",
             ) if _pt_log_has_mgmt_mode else "All"
+            if _pt_log_has_mgmt_mode and st.query_params.get("pt_log_mode") != _pt_mode_filter:
+                st.query_params["pt_log_mode"] = _pt_mode_filter
 
         if _pt_log_has_mgmt_mode and _pt_mode_filter != "All":
             _pt_log_show = _pt_log_show[
