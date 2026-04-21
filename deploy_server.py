@@ -606,6 +606,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/rvol-size-tiers":
             self._rvol_size_tiers_get()
             return
+        if path == "/api/adaptive-config":
+            self._adaptive_config_get()
+            return
         if path == "/api/config":
             self._config_get()
             return
@@ -1964,6 +1967,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
             tiers = cfg.get("rvol_size_tiers", _RVOL_SIZE_TIERS_DEFAULT)
             tiers_sorted = sorted(tiers, key=lambda t: t["rvol_min"], reverse=True)
             payload = {"tiers": tiers_sorted, "defaults": _RVOL_SIZE_TIERS_DEFAULT}
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _adaptive_config_get(self):
+        """Return TP-raise multiplier and calibration metadata from adaptive_exits.json.
+
+        Response: {
+          "tp_raise_mult": float | null,
+          "tp_raise_mult_note": str | null,
+          "last_updated": str | null,
+          "data_sources": object | null
+        }
+        """
+        _DEFAULT_TP_MULT = 0.5
+        try:
+            with open(_ADAPTIVE_EXITS_JSON) as _f:
+                cfg = json.load(_f)
+            payload = {
+                "tp_raise_mult": cfg.get("tp_raise_mult", _DEFAULT_TP_MULT),
+                "tp_raise_mult_note": cfg.get("_tp_raise_mult_note"),
+                "last_updated": cfg.get("last_updated"),
+                "data_sources": cfg.get("data_sources"),
+            }
             body = json.dumps(payload).encode()
             self.send_response(200)
         except Exception as exc:

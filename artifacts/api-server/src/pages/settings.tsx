@@ -176,6 +176,15 @@ interface RvolSizeTiersState {
   saved: boolean;
 }
 
+interface AdaptiveConfigState {
+  tp_raise_mult: number | null;
+  tp_raise_mult_note: string | null;
+  last_updated: string | null;
+  data_sources: { backtest_qualified_rows?: number; live_paper_trades_mfe_rows?: number; date_range?: string } | null;
+  loading: boolean;
+  error: string | null;
+}
+
 interface ConfigParam {
   value: number;
   source: "env" | "override";
@@ -645,6 +654,43 @@ export default function Settings() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : "Could not load RVOL size tiers.";
           setRvolTiers((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const [adaptiveConfig, setAdaptiveConfig] = useState<AdaptiveConfigState>({
+    tp_raise_mult: null,
+    tp_raise_mult_note: null,
+    last_updated: null,
+    data_sources: null,
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/adaptive-config")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setAdaptiveConfig({
+            tp_raise_mult: typeof data.tp_raise_mult === "number" ? data.tp_raise_mult : null,
+            tp_raise_mult_note: data.tp_raise_mult_note ?? null,
+            last_updated: data.last_updated ?? null,
+            data_sources: data.data_sources ?? null,
+            loading: false,
+            error: null,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load adaptive config.";
+          setAdaptiveConfig((s) => ({ ...s, loading: false, error: msg }));
         }
       });
     return () => { cancelled = true; };
@@ -2465,9 +2511,82 @@ export default function Settings() {
               <span style={{ fontSize: "11px", color: "#4ade80", fontWeight: 600 }}>✓ Saved</span>
             )}
           </div>
-          <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "16px", lineHeight: "1.6" }}>
+          <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px", lineHeight: "1.6" }}>
             Position-size multipliers applied when RVOL exceeds a threshold. Tiers are evaluated from highest to lowest; first match wins. All changes take effect immediately without a server restart.
           </p>
+
+          {!adaptiveConfig.loading && !adaptiveConfig.error && adaptiveConfig.tp_raise_mult !== null && (() => {
+            const mult = adaptiveConfig.tp_raise_mult;
+            const sign = mult >= 0 ? "+" : "";
+            const label = `TP raise: ${sign}${mult.toFixed(2)}R`;
+            const calDate = adaptiveConfig.last_updated ?? "unknown";
+            const ds = adaptiveConfig.data_sources;
+            const tooltipLines: string[] = [];
+            if (adaptiveConfig.tp_raise_mult_note) {
+              tooltipLines.push(adaptiveConfig.tp_raise_mult_note);
+            } else {
+              tooltipLines.push("No calibration note — using default multiplier.");
+            }
+            if (ds) {
+              const bt = ds.backtest_qualified_rows != null ? `${ds.backtest_qualified_rows} backtest rows` : null;
+              const lp = ds.live_paper_trades_mfe_rows != null ? `${ds.live_paper_trades_mfe_rows} live paper trades` : null;
+              const dr = ds.date_range ?? null;
+              const parts = [bt, lp].filter(Boolean).join(", ");
+              if (parts) tooltipLines.push(`Derived from ${parts}.`);
+              if (dr) tooltipLines.push(`Date range: ${dr}.`);
+            }
+            const tooltipText = tooltipLines.join("\n");
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+                <span
+                  title={tooltipText}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "4px 10px",
+                    background: "rgba(99,102,241,0.12)",
+                    border: "1px solid rgba(99,102,241,0.35)",
+                    borderRadius: "20px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    color: "#a5b4fc",
+                    cursor: "help",
+                    fontFamily: "monospace",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  <span style={{ fontSize: "10px", opacity: 0.7 }}>⬆</span>
+                  {label}
+                </span>
+                <span
+                  title={tooltipText}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "4px 10px",
+                    background: "rgba(100,116,139,0.08)",
+                    border: "1px solid rgba(100,116,139,0.25)",
+                    borderRadius: "20px",
+                    fontSize: "12px",
+                    color: "#64748b",
+                    cursor: "help",
+                    fontFamily: "monospace",
+                  }}
+                >
+                  <span style={{ fontSize: "10px" }}>📅</span>
+                  Calibrated: {calDate}
+                </span>
+              </div>
+            );
+          })()}
+
+          {!adaptiveConfig.loading && adaptiveConfig.error && (
+            <p style={{ fontSize: "11px", color: "#f87171", marginBottom: "12px" }}>
+              Could not load calibration info.
+            </p>
+          )}
 
           {rvolTiers.loading ? (
             <p style={{ fontSize: "13px", color: "#475569" }}>Loading…</p>
