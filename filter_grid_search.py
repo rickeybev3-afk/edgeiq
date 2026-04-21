@@ -260,10 +260,33 @@ FIELDS_P3 = (
 PAGE_SIZE = 1000
 
 
+_FETCH_CHECKPOINT = "/tmp/grid_search_fetch_checkpoint.json"
+_CHECKPOINT_MAX_AGE_S = 7200  # 2 hours
+
 def fetch_all_rows(sb, start_date, end_date, fields: str) -> list[dict]:
     import time as _time
+    import json as _json
+
+    MAX_RETRIES = 8
+    BASE_WAIT   = 5  # seconds
+
+    # ── Resume from checkpoint if recent ──────────────────────────────────────
     rows, offset = [], 0
-    MAX_RETRIES = 5
+    if os.path.exists(_FETCH_CHECKPOINT):
+        try:
+            age = _time.time() - os.path.getmtime(_FETCH_CHECKPOINT)
+            if age < _CHECKPOINT_MAX_AGE_S:
+                with open(_FETCH_CHECKPOINT) as _f:
+                    ck = _json.load(_f)
+                rows  = ck.get("rows", [])
+                offset = ck.get("next_offset", 0)
+                print(f"  [fetch] Resuming from checkpoint: {len(rows):,} rows already fetched, offset={offset}")
+            else:
+                os.remove(_FETCH_CHECKPOINT)
+        except Exception:
+            rows, offset = [], 0
+
+    # ── Paginate ──────────────────────────────────────────────────────────────
     while True:
         for attempt in range(MAX_RETRIES):
             try:
@@ -278,23 +301,35 @@ def fetch_all_rows(sb, start_date, end_date, fields: str) -> list[dict]:
                     q = q.gte("sim_date", start_date)
                 if end_date:
                     q = q.lte("sim_date", end_date)
-                res = q.execute()
+                res   = q.execute()
                 batch = res.data or []
                 break
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
-                    wait = 2 ** attempt
-                    print(f"\n  [fetch] Page offset={offset} error (attempt {attempt+1}/{MAX_RETRIES}): {e}. Retrying in {wait}s...")
+                    wait = BASE_WAIT * (2 ** attempt)
+                    print(f"\n  [fetch] offset={offset} error (attempt {attempt+1}/{MAX_RETRIES}): {e}. Retrying in {wait}s...")
                     _time.sleep(wait)
                 else:
                     raise
         rows.extend(batch)
+        # Save checkpoint after every successful page
+        try:
+            with open(_FETCH_CHECKPOINT, "w") as _f:
+                _json.dump({"rows": rows, "next_offset": offset + PAGE_SIZE}, _f)
+        except Exception:
+            pass
         if len(batch) < PAGE_SIZE:
             break
         offset += PAGE_SIZE
-        pct = min(100, int(len(rows) / 132000 * 100))
+        pct = min(100, int(len(rows) / 152000 * 100))
         print(f"\r  Fetched {len(rows):,} rows... ({pct}%)", end="", flush=True)
+
     print(f"\r  Fetched {len(rows):,} rows total.            ")
+    # Clean up checkpoint on success
+    try:
+        os.remove(_FETCH_CHECKPOINT)
+    except Exception:
+        pass
     return rows
 
 
