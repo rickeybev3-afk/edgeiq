@@ -6405,6 +6405,29 @@ def _fetch_pm_last_price(ticker: str) -> float:
     return 0.0
 
 
+_ADAPTIVE_TP_RAISE_MULT_DEFAULT = 0.5
+
+
+def _load_tp_raise_mult() -> float:
+    """Load the calibrated TP-raise multiplier from adaptive_exits.json.
+
+    Returns the value of ``tp_raise_mult`` written by calibrate_adaptive_mgmt.py,
+    or the hard-coded default (0.5R) when the key is absent or the file cannot
+    be read.  The file is re-read on every call so that an --apply run by the
+    calibration script takes effect without a bot restart.
+    """
+    try:
+        import json as _json
+        with open(_ADAPTIVE_EXIT_CONFIG_PATH) as _f:
+            cfg = _json.load(_f)
+        val = cfg.get("tp_raise_mult")
+        if val is not None:
+            return float(val)
+    except Exception:
+        pass
+    return _ADAPTIVE_TP_RAISE_MULT_DEFAULT
+
+
 def _compute_adaptive_adjustments(
     direction: str,
     entry: float,
@@ -6413,6 +6436,7 @@ def _compute_adaptive_adjustments(
     ib_high: float,
     ib_low: float,
     pm_last: float,
+    tp_raise_mult: float = _ADAPTIVE_TP_RAISE_MULT_DEFAULT,
 ) -> "dict | None":
     """Compute adaptive TP/stop adjustments based on pre-market acceptance.
 
@@ -6420,12 +6444,16 @@ def _compute_adaptive_adjustments(
     warranted (e.g. missing data or price exactly at the break level).
 
     Bullish Break logic:
-      pm_last > ib_high  → PM accepted above IB → raise TP by +0.5R (stop unchanged)
+      pm_last > ib_high  → PM accepted above IB → raise TP by +tp_raise_mult×R (stop unchanged)
       pm_last < ib_high  → PM pulled inside IB  → tighten stop to IB mid (TP unchanged)
 
     Bearish Break logic (mirror):
-      pm_last < ib_low   → PM accepted below IB → lower TP by 0.5R (stop unchanged)
+      pm_last < ib_low   → PM accepted below IB → lower TP by tp_raise_mult×R (stop unchanged)
       pm_last > ib_low   → PM pulled inside IB  → tighten stop to IB mid (TP unchanged)
+
+    tp_raise_mult is read from adaptive_exits.json by the caller (default 0.5).
+    calibrate_adaptive_mgmt.py writes the optimal value to that file once ≥ 50
+    adaptive trades have settled.
 
     Returns dict with keys: action, new_stop, new_tp, tp_adjusted_r
     """
@@ -6442,7 +6470,7 @@ def _compute_adaptive_adjustments(
 
     if "Bullish Break" in direction:
         if pm_last > ib_high:
-            new_tp   = round(target + 0.5 * stop_dist, 2)
+            new_tp   = round(target + tp_raise_mult * stop_dist, 2)
             new_stop = stop
             action   = "TP_RAISED"
             tp_r     = round((new_tp - entry) / stop_dist, 2)
@@ -6460,7 +6488,7 @@ def _compute_adaptive_adjustments(
 
     elif "Bearish Break" in direction:
         if pm_last < ib_low:
-            new_tp   = round(target - 0.5 * stop_dist, 2)
+            new_tp   = round(target - tp_raise_mult * stop_dist, 2)
             new_stop = stop
             action   = "TP_RAISED"
             tp_r     = round((entry - new_tp) / stop_dist, 2)
@@ -6545,10 +6573,11 @@ def _pre_open_position_review() -> None:
 
       1. Reads entry/stop/target and IB levels from the paper_trades row.
       2. Fetches the current pre-market price (4:00–8:30 AM ET window).
-      3. Applies the adaptive rule:
-           Bullish Break, PM above IB high → raise TP by +0.5R
+      3. Applies the adaptive rule (tp_raise_mult read from adaptive_exits.json,
+         default 0.5; auto-calibrated by calibrate_adaptive_mgmt.py):
+           Bullish Break, PM above IB high → raise TP by +tp_raise_mult×R
            Bullish Break, PM inside IB     → tighten stop to IB midpoint
-           Bearish Break, PM below IB low  → lower TP by 0.5R (extends target)
+           Bearish Break, PM below IB low  → lower TP by tp_raise_mult×R (extends target)
            Bearish Break, PM inside IB     → tighten stop to IB midpoint
       4. Cancels the current bracket legs for the ticker.
       5. Places a new OCO exit order at the adjusted TP / stop levels.
@@ -6638,6 +6667,10 @@ def _pre_open_position_review() -> None:
             continue
 
         # ── Compute adjustment ────────────────────────────────────────────────
+        # tp_raise_mult is loaded fresh on each position so that calibration
+        # script updates (calibrate_adaptive_mgmt.py --apply) take effect
+        # without restarting the bot.
+        _tp_mult = _load_tp_raise_mult()
         adj = _compute_adaptive_adjustments(
             direction=direction,
             entry=entry,
@@ -6646,6 +6679,7 @@ def _pre_open_position_review() -> None:
             ib_high=ib_high,
             ib_low=ib_low,
             pm_last=pm_last,
+            tp_raise_mult=_tp_mult,
         )
         if adj is None:
             log.info(
@@ -6740,7 +6774,7 @@ def _pre_open_position_review() -> None:
 
         # ── Telegram notification ─────────────────────────────────────────────
         _action_label = (
-            "TP raised +0.5R" if action == "TP_RAISED" else "Stop → IB mid"
+            f"TP raised +{_tp_mult:.2f}R" if action == "TP_RAISED" else "Stop → IB mid"
         )
         _dir_icon = "🟡" if "Bullish" in direction else "🔴"
         tg_send(
