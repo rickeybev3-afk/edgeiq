@@ -37098,6 +37098,46 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     result.append(base)
             return result
 
+        # ── Fixed vs Adaptive comparison (shown when both modes have data) ──
+        if _pt_log_has_mgmt_mode and "Mode" in _pt_log_show.columns:
+            _pt_cmp_fixed  = _pt_log_show[_pt_log_show["Mode"] == "Fixed"]
+            _pt_cmp_adapt  = _pt_log_show[_pt_log_show["Mode"] == "Adaptive"]
+            if len(_pt_cmp_fixed) > 0 and len(_pt_cmp_adapt) > 0:
+                def _pt_mode_stats(df):
+                    wl = df["win_loss"].dropna() if "win_loss" in df.columns else pd.Series(dtype=str)
+                    wins = int(wl.isin(WIN_ALIASES).sum())
+                    losses = int(wl.isin(LOSS_ALIASES).sum())
+                    resolved = wins + losses
+                    wr = wins / resolved * 100 if resolved > 0 else None
+                    avg_r = None
+                    if _pt_log_has_sim_pnl and "Sim P&L (R)" in df.columns:
+                        r_vals = pd.to_numeric(df["Sim P&L (R)"], errors="coerce").dropna()
+                        avg_r = r_vals.mean() if len(r_vals) > 0 else None
+                    return len(df), wins, wr, avg_r
+
+                _pt_fx_n, _pt_fx_w, _pt_fx_wr, _pt_fx_r = _pt_mode_stats(_pt_cmp_fixed)
+                _pt_ad_n, _pt_ad_w, _pt_ad_wr, _pt_ad_r = _pt_mode_stats(_pt_cmp_adapt)
+
+                st.markdown("**Fixed vs Adaptive**")
+                _pt_cmp_c1, _pt_cmp_c2, _pt_cmp_c3, _pt_cmp_c4 = st.columns(4)
+                _pt_cmp_c1.metric("Trades", f"F {_pt_fx_n} / A {_pt_ad_n}", help="Fixed / Adaptive trade count")
+                _pt_cmp_c2.metric("Wins", f"F {_pt_fx_w} / A {_pt_ad_w}", help="Fixed / Adaptive winning trades")
+                _pt_wr_delta = (_pt_ad_wr - _pt_fx_wr) if (_pt_fx_wr is not None and _pt_ad_wr is not None) else None
+                _pt_cmp_c3.metric(
+                    "Win Rate",
+                    f"F {_pt_fx_wr:.1f}% / A {_pt_ad_wr:.1f}%" if (_pt_fx_wr is not None and _pt_ad_wr is not None) else "—",
+                    delta=f"Adaptive {_pt_wr_delta:+.1f}pp" if _pt_wr_delta is not None else None,
+                    help="Win-rate for each mode (Fixed / Adaptive). Delta = Adaptive minus Fixed.",
+                )
+                _pt_r_delta = (_pt_ad_r - _pt_fx_r) if (_pt_fx_r is not None and _pt_ad_r is not None) else None
+                _pt_cmp_c4.metric(
+                    "Avg Sim R",
+                    f"F {_pt_fx_r:+.2f} / A {_pt_ad_r:+.2f}" if (_pt_fx_r is not None and _pt_ad_r is not None) else "—",
+                    delta=f"Adaptive {_pt_r_delta:+.2f}R" if _pt_r_delta is not None else None,
+                    help="Average simulated R per trade for each mode (Fixed / Adaptive). Delta = Adaptive minus Fixed.",
+                )
+                st.divider()
+
         # ── Mode filter ───────────────────────────────────────────────────────
         _pt_mode_options = ["All", "Fixed", "Adaptive"]
         _pt_mode_filter_col, _pt_sim_filter_col = st.columns([1, 2])
