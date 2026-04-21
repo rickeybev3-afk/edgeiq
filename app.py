@@ -2104,13 +2104,14 @@ def render_grid_search_public():
         ("IB size",         _best.get("ib_size", "any")),
         ("MFE min",         _best.get("mfe_min", "any")),
         ("MAE max",         _best.get("mae_max", "any")),
-        ("RVOL cap",        _best.get("rvol_cap", "none")),
-        ("Day of week",     _best.get("day_of_week", "any")),
-        ("Trades/week",     _best.get("trades_per_week", 0)),
-        ("MaxDD R",         _best.get("max_drawdown_r", 0)),
+        ("RVOL cap",        str(_best.get("rvol_cap", "none"))),
+        ("Day of week",     str(_best.get("day_of_week", "any"))),
+        ("Trades/week",     f"{_best.get('trades_per_week', 0):.2f}"),
+        ("MaxDD R",         f"{_best.get('max_drawdown_r', 0):.2f}R = ${abs(_best.get('max_drawdown_r',0))*150:,.0f}"),
     ]
+    _dim_rows_str = [(d, str(v)) for d, v in _dim_rows]
     st.dataframe(
-        __import__("pandas").DataFrame(_dim_rows, columns=["Dimension", "Value"]),
+        __import__("pandas").DataFrame(_dim_rows_str, columns=["Dimension", "Value"]),
         use_container_width=True, hide_index=True,
     )
 
