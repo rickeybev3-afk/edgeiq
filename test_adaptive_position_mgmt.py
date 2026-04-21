@@ -134,12 +134,12 @@ class TestComputeAdaptiveAdjustments(unittest.TestCase):
     # ── Bullish Break: PM inside IB ──────────────────────────────────────────
 
     def test_bullish_pm_inside_ib_tightens_stop(self):
-        # pm_last=99.5 < ib_high=101 → tighten stop to IB mid
-        # ib_mid = (101 + 99) / 2 = 100.0
+        # pm_last=100.5 (inside IB, above ib_mid=100) → tighten stop to IB mid
+        # ib_mid = (101 + 99) / 2 = 100.0; ib_mid < pm_last → valid
         result = self._call(
             direction="Bullish Break",
             entry=100.0, stop=98.0, target=104.0,
-            ib_high=101.0, ib_low=99.0, pm_last=99.5,
+            ib_high=101.0, ib_low=99.0, pm_last=100.5,
         )
         self.assertIsNotNone(result)
         self.assertEqual(result["action"], "STOP_TIGHTENED")
@@ -147,6 +147,16 @@ class TestComputeAdaptiveAdjustments(unittest.TestCase):
         self.assertAlmostEqual(result["new_tp"],   104.0, places=2)  # unchanged
         # tp_r = (104 - 100) / 2 = 2.0
         self.assertAlmostEqual(result["tp_adjusted_r"], 2.0, places=2)
+
+    def test_bullish_stop_tighten_skipped_when_pm_below_ib_mid(self):
+        # pm_last=99.5 < ib_mid=100 → stop at 100 would be ABOVE market price
+        # (triggers immediately for long) → None
+        result = self._call(
+            direction="Bullish Break",
+            entry=100.0, stop=98.0, target=104.0,
+            ib_high=101.0, ib_low=99.0, pm_last=99.5,
+        )
+        self.assertIsNone(result)
 
     def test_bullish_pm_exactly_at_ib_high_returns_none(self):
         # pm_last == ib_high → neither branch → None
@@ -185,12 +195,12 @@ class TestComputeAdaptiveAdjustments(unittest.TestCase):
         self.assertAlmostEqual(result["tp_adjusted_r"], 2.5, places=2)
 
     def test_bearish_pm_inside_ib_tightens_stop(self):
-        # pm_last=100.5 > ib_low=99 → tighten stop to IB mid
-        # ib_mid = (101 + 99) / 2 = 100.0
+        # pm_last=99.7 (inside IB, below ib_mid=100) → tighten stop to IB mid
+        # ib_mid = (101 + 99) / 2 = 100.0; ib_mid > pm_last → valid for short
         result = self._call(
             direction="Bearish Break",
             entry=100.0, stop=102.0, target=96.0,
-            ib_high=101.0, ib_low=99.0, pm_last=100.5,
+            ib_high=101.0, ib_low=99.0, pm_last=99.7,
         )
         self.assertIsNotNone(result)
         self.assertEqual(result["action"], "STOP_TIGHTENED")
@@ -198,6 +208,16 @@ class TestComputeAdaptiveAdjustments(unittest.TestCase):
         self.assertAlmostEqual(result["new_tp"],    96.0, places=2)  # unchanged
         # tp_r = (100 - 96) / 2 = 2.0
         self.assertAlmostEqual(result["tp_adjusted_r"], 2.0, places=2)
+
+    def test_bearish_stop_tighten_skipped_when_pm_above_ib_mid(self):
+        # pm_last=100.5 > ib_mid=100 → stop at 100 would be BELOW market price
+        # (triggers immediately for short) → None
+        result = self._call(
+            direction="Bearish Break",
+            entry=100.0, stop=102.0, target=96.0,
+            ib_high=101.0, ib_low=99.0, pm_last=100.5,
+        )
+        self.assertIsNone(result)
 
     def test_bearish_pm_exactly_at_ib_low_returns_none(self):
         result = self._call(
@@ -334,8 +354,8 @@ class TestPreOpenPositionReview(unittest.TestCase):
                             mock_cancel.assert_not_called()
 
     def test_raises_tp_when_bullish_pm_above_ib(self):
-        """Full happy-path: PM above IB high → old order IDs snapshotted, OCO
-        placed with raised TP, then only old IDs cancelled (new OCO preserved)."""
+        """Full happy-path: PM above IB high → old IDs snapshotted and cancelled
+        first (cancel-first), then OCO placed with raised TP."""
         mock_sb = MagicMock()
         resp_mock = MagicMock()
         resp_mock.data = [{
@@ -366,9 +386,9 @@ class TestPreOpenPositionReview(unittest.TestCase):
                                     with patch.object(_ptb, "tg_send"):
                                         _ptb._pre_open_position_review()
 
-        # OCO placed first, then only the PRE-EXISTING old_ids cancelled
-        mock_oco.assert_called_once()
+        # Cancel called FIRST (cancel-first), then OCO placed with raised TP
         mock_cancel.assert_called_once_with("AAPL", specific_ids=old_ids)
+        mock_oco.assert_called_once()
         # TP should be 104 + 0.5*2 = 105; stop unchanged = 98
         kw = mock_oco.call_args.kwargs
         self.assertAlmostEqual(kw["tp_price"],   105.0, places=2)
@@ -376,8 +396,8 @@ class TestPreOpenPositionReview(unittest.TestCase):
         self.assertEqual(kw["exit_side"], "sell")
 
     def test_tightens_stop_when_bearish_pm_inside_ib(self):
-        """Bearish position with PM inside IB → old IDs snapshotted, OCO placed
-        (stop → IB mid), then only old IDs cancelled (new OCO preserved)."""
+        """Bearish position with PM inside IB (below ib_mid) → cancel-first,
+        OCO placed with stop at IB mid, only old IDs cancelled."""
         mock_sb = MagicMock()
         resp_mock = MagicMock()
         resp_mock.data = [{
@@ -398,27 +418,29 @@ class TestPreOpenPositionReview(unittest.TestCase):
                 with patch.object(_ptb, "_alpaca_get_positions", return_value=[
                     {"symbol": "SPY", "side": "short", "qty": "10"}
                 ]):
-                    with patch.object(_ptb, "_fetch_pm_last_price", return_value=100.5):
+                    # pm_last=99.7 < ib_mid=100 → valid for bearish stop-tighten
+                    with patch.object(_ptb, "_fetch_pm_last_price", return_value=99.7):
                         with patch.object(_ptb, "_alpaca_get_open_order_ids", return_value=old_ids):
-                            with patch.object(
-                                _ptb, "_alpaca_place_oco_exit",
-                                return_value={"ok": True, "order_id": "xyz456"},
-                            ) as mock_oco:
-                                with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1) as mock_cancel:
+                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1) as mock_cancel:
+                                with patch.object(
+                                    _ptb, "_alpaca_place_oco_exit",
+                                    return_value={"ok": True, "order_id": "xyz456"},
+                                ) as mock_oco:
                                     with patch.object(_ptb, "tg_send"):
                                         _ptb._pre_open_position_review()
 
-        mock_oco.assert_called_once()
-        # Only old IDs cancelled; new OCO legs are NOT included
+        # Cancel called FIRST with old IDs, then OCO placed
         mock_cancel.assert_called_once_with("SPY", specific_ids=old_ids)
+        mock_oco.assert_called_once()
         kw = mock_oco.call_args.kwargs
         # ib_mid = (101+99)/2 = 100; stop → 100
         self.assertAlmostEqual(kw["stop_price"], 100.0, places=2)
         self.assertAlmostEqual(kw["tp_price"],    96.0, places=2)  # unchanged
         self.assertEqual(kw["exit_side"], "buy")  # cover short
 
-    def test_oco_failure_sends_telegram_alert_no_db_update(self):
-        """When OCO fails, a Telegram warning is sent and DB is NOT updated."""
+    def test_oco_failure_triggers_rollback_bracket_restored(self):
+        """When adaptive OCO fails, a rollback OCO is placed with original
+        stop/target; Telegram warns about the restored bracket; DB is NOT updated."""
         mock_sb = MagicMock()
         resp_mock = MagicMock()
         resp_mock.data = [{
@@ -432,6 +454,11 @@ class TestPreOpenPositionReview(unittest.TestCase):
             .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.limit.return_value.execute.return_value = resp_mock
 
+        # OCO call 1 = adaptive fails; OCO call 2 = rollback succeeds
+        oco_side_effects = [
+            {"ok": False, "error": "HTTP 422"},
+            {"ok": True, "order_id": "rollback-555"},
+        ]
         with self._dt_ctx():
             with patch.object(_ptb, "_supabase_client", mock_sb):
                 with patch.object(_ptb, "_alpaca_get_positions", return_value=[
@@ -439,19 +466,72 @@ class TestPreOpenPositionReview(unittest.TestCase):
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=102.0):
                         with patch.object(_ptb, "_alpaca_get_open_order_ids", return_value=["old-1"]):
-                            with patch.object(
-                                _ptb, "_alpaca_place_oco_exit",
-                                return_value={"ok": False, "error": "HTTP 422"},
-                            ):
-                                with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker") as mock_cancel:
+                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1) as mock_cancel:
+                                with patch.object(
+                                    _ptb, "_alpaca_place_oco_exit",
+                                    side_effect=oco_side_effects,
+                                ) as mock_oco:
                                     with patch.object(_ptb, "tg_send") as mock_tg:
                                         _ptb._pre_open_position_review()
 
-        self.assertTrue(any("OCO Failed" in str(c) for c in mock_tg.call_args_list))
-        # DB update should NOT have been called
+        # Cancel called FIRST (cancel-first pattern)
+        mock_cancel.assert_called_once_with("AAPL", specific_ids=["old-1"])
+        # OCO called twice: adaptive attempt + rollback
+        self.assertEqual(mock_oco.call_count, 2)
+        # Second call must use ORIGINAL stop and target
+        rollback_kw = mock_oco.call_args_list[1].kwargs
+        self.assertAlmostEqual(rollback_kw["stop_price"],  98.0, places=2)
+        self.assertAlmostEqual(rollback_kw["tp_price"],   104.0, places=2)
+        # Telegram should mention the bracket was restored
+        tg_calls = " ".join(str(c) for c in mock_tg.call_args_list)
+        self.assertIn("Bracket Restored", tg_calls)
+        # DB update must NOT be called (adjustment was not applied)
         mock_sb.table.return_value.update.assert_not_called()
-        # Cancel should NOT be called — original bracket protection is preserved
-        mock_cancel.assert_not_called()
+
+    def test_oco_failure_rollback_also_fails_sends_critical_alert(self):
+        """When both adaptive OCO and rollback OCO fail, a CRITICAL Telegram
+        alert is sent warning that the position may be unprotected."""
+        mock_sb = MagicMock()
+        resp_mock = MagicMock()
+        resp_mock.data = [{
+            "id": "row-9",
+            "ib_high": 101.0, "ib_low": 99.0,
+            "entry_price_sim": 100.0, "stop_price_sim": 98.0,
+            "target_price_sim": 104.0,
+            "actual_outcome": "Bullish Break",
+        }]
+        mock_sb.table.return_value.select.return_value \
+            .eq.return_value.eq.return_value.eq.return_value \
+            .is_.return_value.limit.return_value.execute.return_value = resp_mock
+
+        # Both OCO calls fail
+        oco_side_effects = [
+            {"ok": False, "error": "HTTP 422"},
+            {"ok": False, "error": "HTTP 422"},
+        ]
+        with self._dt_ctx():
+            with patch.object(_ptb, "_supabase_client", mock_sb):
+                with patch.object(_ptb, "_alpaca_get_positions", return_value=[
+                    {"symbol": "AAPL", "side": "long", "qty": "5"}
+                ]):
+                    with patch.object(_ptb, "_fetch_pm_last_price", return_value=102.0):
+                        with patch.object(_ptb, "_alpaca_get_open_order_ids", return_value=["old-1"]):
+                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1):
+                                with patch.object(
+                                    _ptb, "_alpaca_place_oco_exit",
+                                    side_effect=oco_side_effects,
+                                ) as mock_oco:
+                                    with patch.object(_ptb, "tg_send") as mock_tg:
+                                        _ptb._pre_open_position_review()
+
+        # Both OCO attempts called
+        self.assertEqual(mock_oco.call_count, 2)
+        # Telegram must fire the CRITICAL / UNPROTECTED alert
+        tg_calls = " ".join(str(c) for c in mock_tg.call_args_list)
+        self.assertIn("CRITICAL", tg_calls)
+        self.assertIn("UNPROTECTED", tg_calls)
+        # DB update must NOT be called
+        mock_sb.table.return_value.update.assert_not_called()
 
     def test_positions_fetch_error_is_graceful(self):
         """Exception from _alpaca_get_positions should not propagate."""

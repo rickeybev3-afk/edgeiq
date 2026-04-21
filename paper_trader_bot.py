@@ -6435,6 +6435,10 @@ def _compute_adaptive_adjustments(
             action   = "TP_RAISED"
             tp_r     = round((new_tp - entry) / stop_dist, 2)
         elif pm_last < ib_high:
+            # Stop-tighten is only valid if IB mid is BELOW current PM price;
+            # otherwise the new stop would be at or above market (triggers immediately).
+            if ib_mid >= pm_last:
+                return None
             new_stop = round(ib_mid, 2)
             new_tp   = target
             action   = "STOP_TIGHTENED"
@@ -6449,6 +6453,10 @@ def _compute_adaptive_adjustments(
             action   = "TP_RAISED"
             tp_r     = round((entry - new_tp) / stop_dist, 2)
         elif pm_last > ib_low:
+            # Stop-tighten is only valid if IB mid is ABOVE current PM price;
+            # otherwise the new stop would be at or below market (triggers immediately).
+            if ib_mid <= pm_last:
+                return None
             new_stop = round(ib_mid, 2)
             new_tp   = target
             action   = "STOP_TIGHTENED"
@@ -6644,15 +6652,21 @@ def _pre_open_position_review() -> None:
             f"{ib_high if 'Bullish' in direction else ib_low:.2f})"
         )
 
-        # ── Snapshot existing bracket-leg IDs before touching anything ────────
-        # We record these NOW so the post-placement cancel step can target
-        # only the original legs and never accidentally cancel the new OCO legs.
-        old_order_ids = _alpaca_get_open_order_ids(ticker)
-
-        # ── Place new OCO exit order ──────────────────────────────────────────
-        # Position remains fully protected by original bracket during placement.
-        # If OCO is rejected, we skip (original bracket untouched).
         exit_side = "sell" if "Bullish" in direction else "buy"
+
+        # ── Step 1: Snapshot + cancel old bracket legs ────────────────────────
+        # We cancel FIRST so Alpaca's qty-reservation for existing exit legs
+        # does not cause the replacement OCO to be rejected.
+        # If cancel itself fails we skip the adjustment (position remains safe).
+        old_order_ids = _alpaca_get_open_order_ids(ticker)
+        try:
+            cancelled = _alpaca_cancel_orders_for_ticker(ticker, specific_ids=old_order_ids)
+            log.info(f"[AdaptiveMgmt] {ticker} — cancelled {cancelled} old bracket order(s)")
+        except Exception as _ce:
+            log.warning(f"[AdaptiveMgmt] {ticker} — cancel failed: {_ce}; skipping adjustment")
+            continue
+
+        # ── Step 2: Place new OCO exit with adjusted levels ───────────────────
         oca_res = _alpaca_place_oco_exit(
             ticker=ticker,
             qty=qty,
@@ -6662,31 +6676,37 @@ def _pre_open_position_review() -> None:
         )
 
         if not oca_res.get("ok"):
+            # ── Step 3: Rollback — restore original bracket on OCO failure ────
             log.warning(
-                f"[AdaptiveMgmt] {ticker} — OCO order failed: {oca_res.get('error')}; "
-                f"original bracket left unchanged"
+                f"[AdaptiveMgmt] {ticker} — adaptive OCO failed: {oca_res.get('error')}; "
+                f"attempting rollback to original bracket"
             )
-            tg_send(
-                f"⚠️ <b>Adaptive Mgmt — OCO Failed</b>\n"
-                f"Ticker: <b>{ticker}</b> ({direction})\n"
-                f"Error: {oca_res.get('error','unknown')}\n"
-                f"Original bracket unchanged — position is still protected."
+            rollback_res = _alpaca_place_oco_exit(
+                ticker=ticker,
+                qty=qty,
+                exit_side=exit_side,
+                stop_price=stop,    # original stop from DB
+                tp_price=target,    # original target from DB
             )
+            if rollback_res.get("ok"):
+                log.info(f"[AdaptiveMgmt] {ticker} — rollback OCO placed successfully")
+                tg_send(
+                    f"⚠️ <b>Adaptive Mgmt — OCO Failed, Bracket Restored</b>\n"
+                    f"Ticker: <b>{ticker}</b> ({direction})\n"
+                    f"Adaptive OCO error: {oca_res.get('error','unknown')}\n"
+                    f"Original bracket restored — position is protected."
+                )
+            else:
+                log.error(
+                    f"[AdaptiveMgmt] {ticker} — CRITICAL: rollback also failed: "
+                    f"{rollback_res.get('error')}. Position may be unprotected!"
+                )
+                tg_send(
+                    f"🚨 <b>CRITICAL — {ticker} Bracket LOST</b>\n"
+                    f"Adaptive OCO failed AND rollback failed.\n"
+                    f"Position may be <b>UNPROTECTED</b> — check Alpaca immediately!"
+                )
             continue
-
-        # ── OCO confirmed — cancel only the PRE-EXISTING bracket legs ─────────
-        # We pass the snapshot IDs so we never cancel the new OCO's own legs,
-        # even if they appear in a subsequent open-orders listing.
-        try:
-            cancelled = _alpaca_cancel_orders_for_ticker(ticker, specific_ids=old_order_ids)
-            log.info(
-                f"[AdaptiveMgmt] {ticker} — cancelled {cancelled} original order(s) "
-                f"(preserved new OCO legs)"
-            )
-        except Exception as _ce:
-            # New OCO is already active — old legs failing to cancel is non-fatal;
-            # they will be auto-rejected by Alpaca when the OCO fills first.
-            log.warning(f"[AdaptiveMgmt] {ticker} — could not cancel old orders (non-fatal): {_ce}")
 
         new_order_id = oca_res.get("order_id", "")
 
