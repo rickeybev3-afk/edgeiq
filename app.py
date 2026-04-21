@@ -36005,10 +36005,18 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 if min_date else ""
             )
             if n < _MIN_ARM:
+                _pct = int((n / _MIN_ARM) * 100)
                 body = (
-                    f'<div style="font-size:13px;color:#f9a825;margin-top:8px;">'
-                    f'Collecting data (n={n} / need {_MIN_ARM})</div>'
+                    f'<div style="margin-top:8px;">'
+                    f'<div style="font-size:13px;color:#f9a825;margin-bottom:6px;">'
+                    f'{n} of {_MIN_ARM} trades logged — extend your date range or keep trading to unlock stats'
+                    f'</div>'
+                    f'<div style="background:#1a2a3a;border-radius:4px;height:6px;overflow:hidden;">'
+                    f'<div style="width:{_pct}%;background:#f9a825;height:100%;border-radius:4px;"></div>'
+                    f'</div>'
+                    f'<div style="font-size:10px;color:#546e7a;margin-top:4px;">{n} / {_MIN_ARM} trades ({_pct}% there)</div>'
                     f'{since_html}'
+                    f'</div>'
                 )
             else:
                 wr_str   = f"{wr:.1f}%" if wr is not None else "—"
