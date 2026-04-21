@@ -651,13 +651,15 @@ def run_grid_search_p3(
                       _mk("no_fri","dow_no_fri"), _mk("mon_only","dow_mon_only")]
                      if full_mode else
                      [_mk("any","dow_any"), _mk("mon_thu","dow_mon_thu")])
-    # New dim 10 — PM range floor
+    # New dim 10 — PM range floor (locked to "any" until PM backfill completes; --full enables all)
     pm_range_list = ([_mk("any","pm_range_any"), _mk("0.5pct","pm_range_0.5"),
                       _mk("1.0pct","pm_range_1.0"), _mk("1.5pct","pm_range_1.5")]
                      if full_mode else
-                     [_mk("any","pm_range_any"), _mk("0.5pct","pm_range_0.5")])
-    # New dim 11 — PM IB direction match
-    pm_dir_list   = [_mk("any","pm_dir_any"), _mk("bullish","pm_dir_bullish"), _mk("bearish","pm_dir_bearish")]
+                     [_mk("any","pm_range_any")])
+    # New dim 11 — PM IB direction match (locked to "any" until PM backfill completes; --full enables all)
+    pm_dir_list   = ([_mk("any","pm_dir_any"), _mk("bullish","pm_dir_bullish"), _mk("bearish","pm_dir_bearish")]
+                     if full_mode else
+                     [_mk("any","pm_dir_any")])
 
     # Count combos
     n_struct     = len(struct_subsets)
