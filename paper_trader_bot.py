@@ -311,6 +311,12 @@ ENTRY_ALREADY_TRIGGERED_PCT = float(os.getenv("ENTRY_ALREADY_TRIGGERED_PCT", "1.
 # Tracks the date a PDT-block Telegram alert was last sent — prevents N duplicate
 # alerts when N setups all hit the same block in one scan session.
 _PDT_BLOCK_ALERTED_DATE: "date | None" = None
+# Tracks whether the PDT gate was ever observed to be in effect (True) so that the
+# "gate lifted" notification only fires on a genuine sub-$25k → above-$25k transition,
+# never on accounts that started above the threshold.
+_PDT_WAS_IN_EFFECT: "bool | None" = None
+# Set to True after the one-time "PDT Gate Lifted" Telegram message is sent.
+_PDT_LIFTED_ALERTED: bool = False
 
 TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -1157,12 +1163,15 @@ def _alpaca_get(endpoint: str) -> dict:
         return {}
 
 
-def _check_pdt_guard() -> tuple[bool, int, bool]:
+def _check_pdt_guard() -> tuple[bool, int, "bool | None"]:
     """Return (blocked, daytrade_count, pdt_in_effect).
 
     blocked        — True when daytrade_count >= PDT_MAX_DAY_TRADES (live + <$25k only).
     daytrade_count — rolling 5-day count from Alpaca (0 for paper accounts).
-    pdt_in_effect  — True when account is live AND equity < $25k (PDT rules actively apply).
+    pdt_in_effect  — True  when account is live AND equity < $25k (PDT rules actively apply).
+                     False when account is live AND equity >= $25k (no restriction).
+                     None  when the Alpaca account fetch failed — state is unknown; callers
+                           must not treat None as a confirmed crossing in either direction.
     Paper accounts are never blocked — PDT is a real-money brokerage rule.
     """
     if IS_PAPER_ALPACA:
@@ -1170,7 +1179,7 @@ def _check_pdt_guard() -> tuple[bool, int, bool]:
     acct = _alpaca_get("/v2/account")
     if not acct:
         log.warning("[PDT guard] Could not fetch account info — allowing order through")
-        return False, 0, False
+        return False, 0, None  # unknown state — do not infer a crossing in either direction
     equity      = float(acct.get("equity", 0) or 0)
     dt_count    = int(acct.get("daytrade_count", 0) or 0)
     pdt_flagged = acct.get("pattern_day_trader", False)
@@ -1411,6 +1420,26 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
 
     # ── PDT guard (live accounts only, <$25k equity) ───────────────────────────
     _pdt_blocked, _dt_count, _pdt_in_effect = _check_pdt_guard()
+
+    # Detect sub-$25k → above-$25k transition and fire a one-time Telegram alert.
+    # _PDT_WAS_IN_EFFECT starts as None; it is set to True the first time we observe
+    # the gate is active so that accounts that have always been above $25k never trigger
+    # a false notification.
+    # We use identity checks (is True / is False) rather than truthiness so that a
+    # None return from _check_pdt_guard() (Alpaca API fetch failure) is never mistaken
+    # for a confirmed equity crossing.
+    global _PDT_WAS_IN_EFFECT, _PDT_LIFTED_ALERTED
+    if _pdt_in_effect is True:
+        _PDT_WAS_IN_EFFECT = True
+    elif _pdt_in_effect is False and _PDT_WAS_IN_EFFECT is True and not _PDT_LIFTED_ALERTED:
+        _PDT_LIFTED_ALERTED = True
+        log.info("[PDT] Account crossed $25k — PDT gate lifted. Sending Telegram notification.")
+        tg_send(
+            "🎉 <b>PDT Gate Lifted — Account Crossed $25k</b>\n"
+            "Now trading <b>all S2 signals</b> (TCS≥50 + gap≥2%).\n"
+            "PDT quality gate disabled."
+        )
+
     if _pdt_blocked:
         log.warning(
             f"  [{ticker}] ORDER BLOCKED — PDT limit reached "
