@@ -22866,6 +22866,87 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.info("No trades match this system for the selected window.")
                     continue
 
+                # ── Export buttons ─────────────────────────────────────────────────
+                _wkr_export_rows = []
+                for _wkr_er in sorted(
+                    _wkr_rows,
+                    key=lambda r: (r.get("trade_date") or "", r.get("ticker") or ""),
+                ):
+                    _wkr_ev  = _wkr_er.get(_wkr_rc)
+                    _wkr_ent = _wkr_er.get("entry_price_sim")
+                    _wkr_stp = _wkr_er.get("stop_price_sim")
+                    try:
+                        _wkr_ev_f = float(_wkr_ev) if _wkr_ev is not None else None
+                    except Exception:
+                        _wkr_ev_f = None
+                    _wkr_export_rows.append({
+                        "Date":      _wkr_er.get("trade_date") or "",
+                        "Ticker":    _wkr_er.get("ticker") or "",
+                        "Direction": _wkr_er.get("predicted") or "",
+                        "Entry $":   float(_wkr_ent) if _wkr_ent is not None else None,
+                        "Stop $":    float(_wkr_stp) if _wkr_stp is not None else None,
+                        "R":         _wkr_ev_f,
+                        "Status": (
+                            ("Win" if _wkr_ev_f > 0 else "Loss")
+                            if _wkr_ev_f is not None else "Pending"
+                        ),
+                    })
+                _wkr_export_df = _wkr_pd.DataFrame(_wkr_export_rows)
+                _wkr_settled_rs = [r["R"] for r in _wkr_export_rows if r["R"] is not None]
+                _wkr_sum_r  = sum(_wkr_settled_rs)
+                _wkr_sum_n  = len(_wkr_settled_rs)
+                _wkr_sum_wr = (
+                    100.0 * sum(1 for v in _wkr_settled_rs if v > 0) / _wkr_sum_n
+                    if _wkr_sum_n else 0.0
+                )
+                _wkr_summary_row = _wkr_pd.DataFrame([{
+                    "Date":      "SUMMARY",
+                    "Ticker":    "",
+                    "Direction": "",
+                    "Entry $":   None,
+                    "Stop $":    None,
+                    "R":         _wkr_sum_r,
+                    "Status":    f"{_wkr_sum_n} trades | {_wkr_sum_wr:.1f}% WR",
+                }])
+                _wkr_export_full = _wkr_pd.concat(
+                    [_wkr_export_df, _wkr_summary_row], ignore_index=True
+                )
+                _wkr_csv_bytes = _wkr_export_full.to_csv(index=False).encode("utf-8")
+                _wkr_fname_base = (
+                    f"{_wkr_lbl.replace(' ', '_')}_replay_"
+                    f"{_wkr_lens.split(' ')[0].lower()}_"
+                    f"{int(_wkr_days)}d"
+                )
+                try:
+                    import io as _wkr_io
+                    _wkr_xl_buf = _wkr_io.BytesIO()
+                    _wkr_export_full.to_excel(
+                        _wkr_xl_buf, index=False, engine="openpyxl"
+                    )
+                    _wkr_xl_bytes = _wkr_xl_buf.getvalue()
+                    _wkr_has_xl = True
+                except Exception:
+                    _wkr_has_xl = False
+
+                _wkr_dl_c1, _wkr_dl_c2, _wkr_dl_sp = st.columns([1, 1, 4])
+                with _wkr_dl_c1:
+                    st.download_button(
+                        label="\u2b07 Download CSV",
+                        data=_wkr_csv_bytes,
+                        file_name=f"{_wkr_fname_base}.csv",
+                        mime="text/csv",
+                        key=f"_wkr_csv_{_wkr_lbl}",
+                    )
+                if _wkr_has_xl:
+                    with _wkr_dl_c2:
+                        st.download_button(
+                            label="\u2b07 Download Excel",
+                            data=_wkr_xl_bytes,
+                            file_name=f"{_wkr_fname_base}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"_wkr_xl_{_wkr_lbl}",
+                        )
+
                 _wkr_by_date: dict = {}
                 for _wr in sorted(
                     _wkr_rows,
