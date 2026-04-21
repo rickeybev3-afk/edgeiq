@@ -674,9 +674,13 @@ def run_grid_search_p3(
           f"{n_base_dims} base dims × {n_new_dims} new-dim combos) "
           f"across {trading_days:,} trading days...")
 
-    all_results = []
-    done        = 0
-    report_every = max(1, total_combos // 200)
+    import heapq as _heapq
+    top_heap      = []   # min-heap (≤ top_n entries); keeps best qualifying combos
+    n_with_trades = 0    # combos with ≥1 matching trade (any N)
+    n_qualifying  = 0    # combos meeting min_n threshold
+    _tb           = 0    # tiebreaker for stable heap comparison
+    done          = 0
+    report_every  = max(1, total_combos // 200)
 
     # ── STRUCTURE SUBSET LOOP ─────────────────────────────────────────────────
     for struct_label, struct_tokens in struct_subsets:
@@ -800,52 +804,67 @@ def run_grid_search_p3(
 
                                                                         if done % report_every == 0:
                                                                             pct = done / total_combos * 100
-                                                                            print(f"\r  Progress: {done:,}/{total_combos:,} ({pct:.1f}%) | results so far: {len(all_results):,}", end="", flush=True)
+                                                                            print(f"\r  Progress: {done:,}/{total_combos:,} ({pct:.1f}%) | qualifying: {n_qualifying:,} | heap: {len(top_heap)}", end="", flush=True)
 
                                                                         if len(r_sub) == 0:
                                                                             continue
 
-                                                                        qualifies = len(r_sub) >= min_n
+                                                                        n_with_trades += 1
+
+                                                                        # Skip non-qualifying combos entirely — no dict, no stats
+                                                                        if len(r_sub) < min_n:
+                                                                            continue
+
                                                                         stats = _compute_stats_np(r_sub, int(n_sub), trading_days)
                                                                         if not stats:
                                                                             continue
 
-                                                                        combo = {
-                                                                            "phase":           3,
-                                                                            "struct_label":    struct_label,
-                                                                            "struct_tokens":   struct_tokens,
-                                                                            "tcs_offset":      tcs_off,
-                                                                            "tcs_label":       f"+{tcs_off} above baseline" if tcs_off else "Baseline",
-                                                                            "rvol_min":        rvol_min,
-                                                                            "gap_min":         gap_min,
-                                                                            "follow_min":      ft_min,
-                                                                            "follow_label":    LABEL_FOLLOW.get(ft_min, f"≥{ft_min}%"),
-                                                                            "excl_false_break": excl_fb,
-                                                                            "scan_type":       scan_lbl,
-                                                                            "gap_direction":   gdir_lbl,
-                                                                            "vwap_position":   vwap_lbl,
-                                                                            "screener":        scrn_lbl,
-                                                                            "ib_size":         ibs_lbl,
-                                                                            "mfe_min":         mfe_lbl,
-                                                                            "mae_max":         mae_lbl,
-                                                                            "rvol_cap":        rcap_lbl,
-                                                                            "day_of_week":     dow_lbl,
-                                                                            "pm_range_floor":  pmr_lbl,
-                                                                            "pm_ib_dir":       pmd_lbl,
-                                                                            "pm_ib_dir_label": LABEL_PM_DIR.get(pmd_lbl, pmd_lbl),
-                                                                            "qualifies":       qualifies,
-                                                                            **stats,
-                                                                        }
-                                                                        all_results.append(combo)
+                                                                        n_qualifying += 1
+                                                                        score = (stats.get("sharpe", 0.0), stats.get("avg_r", 0.0))
 
-    print(f"\r  Done: {done:,} combinations evaluated, {len(all_results):,} had ≥1 trade.   ")
-    qualifying = [c for c in all_results if c.get("qualifies")]
-    print(f"  {len(qualifying):,} combos met N≥{min_n}.")
+                                                                        # Only build full combo dict if it can enter the heap
+                                                                        if len(top_heap) < top_n or score > top_heap[0][0]:
+                                                                            combo = {
+                                                                                "phase":           3,
+                                                                                "struct_label":    struct_label,
+                                                                                "struct_tokens":   struct_tokens,
+                                                                                "tcs_offset":      tcs_off,
+                                                                                "tcs_label":       f"+{tcs_off} above baseline" if tcs_off else "Baseline",
+                                                                                "rvol_min":        rvol_min,
+                                                                                "gap_min":         gap_min,
+                                                                                "follow_min":      ft_min,
+                                                                                "follow_label":    LABEL_FOLLOW.get(ft_min, f"≥{ft_min}%"),
+                                                                                "excl_false_break": excl_fb,
+                                                                                "scan_type":       scan_lbl,
+                                                                                "gap_direction":   gdir_lbl,
+                                                                                "vwap_position":   vwap_lbl,
+                                                                                "screener":        scrn_lbl,
+                                                                                "ib_size":         ibs_lbl,
+                                                                                "mfe_min":         mfe_lbl,
+                                                                                "mae_max":         mae_lbl,
+                                                                                "rvol_cap":        rcap_lbl,
+                                                                                "day_of_week":     dow_lbl,
+                                                                                "pm_range_floor":  pmr_lbl,
+                                                                                "pm_ib_dir":       pmd_lbl,
+                                                                                "pm_ib_dir_label": LABEL_PM_DIR.get(pmd_lbl, pmd_lbl),
+                                                                                "qualifies":       True,
+                                                                                **stats,
+                                                                            }
+                                                                            _tb += 1
+                                                                            if len(top_heap) < top_n:
+                                                                                _heapq.heappush(top_heap, (score, _tb, combo))
+                                                                            else:
+                                                                                _heapq.heapreplace(top_heap, (score, _tb, combo))
 
-    qualifying.sort(key=lambda x: (x.get("sharpe", 0), x.get("avg_r", 0)), reverse=True)
-    all_results.sort(key=lambda x: (x.get("qualifies", False), x.get("sharpe", 0)), reverse=True)
+    print(f"\r  Done: {done:,} combinations evaluated, {n_with_trades:,} had ≥1 trade.   ")
+    print(f"  {n_qualifying:,} combos met N≥{min_n} — top {len(top_heap)} retained in heap.")
 
-    return all_results, qualifying[:top_n]
+    top_results = sorted(
+        [e[2] for e in top_heap],
+        key=lambda x: (x.get("sharpe", 0.0), x.get("avg_r", 0.0)),
+        reverse=True,
+    )
+    return {"n_with_trades": n_with_trades, "n_qualifying": n_qualifying}, top_results
 
 
 # ── Dimension summary ────────────────────────────────────────────────────────
@@ -956,11 +975,16 @@ def main():
         print("  ⚠ Full mode enabled — all 3+ options per new dimension (~600M combos). This will take ~8h.")
     t_start = datetime.utcnow()
     if args.phase == 3:
-        all_results, top_results = run_grid_search_p3(
+        _p3_meta, top_results = run_grid_search_p3(
             all_rows, min_n=args.min_n, top_n=args.top, full_mode=getattr(args, "full", False)
         )
+        all_results      = top_results          # top-N only; full list no longer held in RAM
+        _n_with_trades   = _p3_meta["n_with_trades"]
+        _n_qualifying    = _p3_meta["n_qualifying"]
     else:
         all_results, top_results = run_grid_search_p1(all_rows, min_n=args.min_n, top_n=args.top)
+        _n_with_trades   = len(all_results)
+        _n_qualifying    = sum(1 for c in all_results if c.get("qualifies"))
     elapsed = (datetime.utcnow() - t_start).total_seconds()
     print(f"  Grid search complete in {elapsed:.0f}s ({elapsed/60:.1f} min)")
     print()
@@ -1067,8 +1091,8 @@ def main():
             "pm_range_floors":  PM_RANGE_FLOORS,
             "pm_ib_dirs":       PM_IB_DIRS,
         },
-        "combos_with_any_trade":  len(all_results),
-        "combos_qualifying":      len(qualifying),
+        "combos_with_any_trade":  _n_with_trades,
+        "combos_qualifying":      _n_qualifying,
         "elapsed_seconds":        round(elapsed, 1),
         "best_combo":             top_results[0] if top_results else None,
         "archive_path":           archive_path,
@@ -1081,7 +1105,7 @@ def main():
         with open(os.path.join(archive_path, "filter_grid_summary.json"), "w") as f:
             json.dump(summary, f, indent=2)
 
-    print(f"  filter_grid_results.json  ({len(all_results):,} combos)")
+    print(f"  filter_grid_results.json  ({len(all_results):,} top combos of {_n_with_trades:,} with trades)")
     print(f"  filter_grid_top20.json    (top 20 slice)")
     print(f"  filter_grid_summary.json")
     print()
