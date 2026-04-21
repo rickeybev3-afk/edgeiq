@@ -493,6 +493,27 @@ class TestThresholdRelationships(unittest.TestCase):
             self.assertFalse(os.path.exists(log))
             self.assertTrue(os.path.exists(log + ".1"))
 
+    def test_tcs_and_backfill_run_history_backup_counts_are_equal(self):
+        self.assertEqual(
+            _TCS_HISTORY_BACKUP_COUNT,
+            _BACKFILL_RUN_HISTORY_BACKUP_COUNT,
+            "_TCS_HISTORY_BACKUP_COUNT and _BACKFILL_RUN_HISTORY_BACKUP_COUNT must both be 1",
+        )
+
+    def test_tcs_and_backfill_log_backup_counts_are_equal(self):
+        self.assertEqual(
+            _TCS_HISTORY_BACKUP_COUNT,
+            _BACKFILL_LOG_BACKUP_COUNT,
+            "_TCS_HISTORY_BACKUP_COUNT and _BACKFILL_LOG_BACKUP_COUNT must both be 1",
+        )
+
+    def test_backfill_run_history_and_backfill_log_backup_counts_are_equal(self):
+        self.assertEqual(
+            _BACKFILL_RUN_HISTORY_BACKUP_COUNT,
+            _BACKFILL_LOG_BACKUP_COUNT,
+            "_BACKFILL_RUN_HISTORY_BACKUP_COUNT and _BACKFILL_LOG_BACKUP_COUNT must both be 1",
+        )
+
 
 # ===========================================================================
 # 5. calibrate_sp_mult.py call site — three-layer coverage
