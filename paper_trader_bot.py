@@ -100,6 +100,17 @@ _OWNER_USER_ID        = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
 # is completely unchanged until you are ready to compare results.
 IB_CONTEXT_ENABLED = os.getenv("IB_CONTEXT_ENABLED", "0").strip() == "1"
 
+# ── Adaptive Position Management toggle ───────────────────────────────────────
+# When enabled (ADAPTIVE_POSITION_MGMT=1) the bot runs _pre_open_position_review
+# at 8:30 AM ET before the regular premarket scan.  For each open Alpaca paper
+# position it reads the IB levels stored at order time and the current pre-market
+# price, then either raises the TP by +0.5R (when PM accepted past the IB break
+# level) or tightens the stop to IB mid (when PM has pulled back inside the IB).
+# Adjustments are recorded on the paper_trades row (mgmt_mode='adaptive',
+# tp_adjusted_r) so you can run A/B comparisons vs the fixed-bracket baseline.
+# Off by default — existing behaviour is completely unchanged when 0.
+ADAPTIVE_POSITION_MGMT = os.getenv("ADAPTIVE_POSITION_MGMT", "0").strip() == "1"
+
 # Known NYSE market holidays (observed dates) for 2024-2028.
 # When an official holiday falls on a Saturday the exchange is closed the
 # preceding Friday; when it falls on a Sunday it is observed the following
@@ -3877,6 +3888,46 @@ def _alert_eod_summary(
     _ib_ctx_icon = "🧠" if IB_CONTEXT_ENABLED else "💤"
     lines.append(f"{_ib_ctx_icon} IB context: <b>{'ACTIVE' if IB_CONTEXT_ENABLED else 'inactive'}</b>")
 
+    # ── Adaptive Position Management A/B stats ────────────────────────────────
+    # Only shown when the feature is enabled AND enough data exists in both arms
+    # to make a meaningful comparison (≥10 settled trades per mode).
+    if ADAPTIVE_POSITION_MGMT and _supabase_client:
+        try:
+            _ab_rows = (
+                _supabase_client.table("paper_trades")
+                .select("mgmt_mode, tiered_pnl_r")
+                .eq("user_id", USER_ID)
+                .not_.is_("tiered_pnl_r", "null")
+                .execute()
+            ).data or []
+
+            def _ab_stats(rows):
+                rs = [float(r["tiered_pnl_r"]) for r in rows if r.get("tiered_pnl_r") is not None]
+                if not rs:
+                    return 0, 0.0, 0.0
+                wr  = 100.0 * sum(1 for v in rs if v > 0) / len(rs)
+                avg = sum(rs) / len(rs)
+                return len(rs), round(wr, 1), round(avg, 2)
+
+            _fixed_rows    = [r for r in _ab_rows if r.get("mgmt_mode") in ("fixed", None, "")]
+            _adaptive_rows = [r for r in _ab_rows if r.get("mgmt_mode") == "adaptive"]
+            _fn, _fwr, _favg = _ab_stats(_fixed_rows)
+            _an, _awr, _aavg = _ab_stats(_adaptive_rows)
+
+            if _fn >= 10 and _an >= 10:
+                lines.append(
+                    f"🔬 <b>A/B Mgmt:</b> "
+                    f"Fixed {_fwr}%WR {_favg:+.2f}R (n={_fn}) vs "
+                    f"Adaptive {_awr}%WR {_aavg:+.2f}R (n={_an})"
+                )
+            elif _an > 0:
+                lines.append(
+                    f"🔬 Adaptive mgmt: <b>{_an}</b> settled trade(s) "
+                    f"(need ≥10 each arm for A/B comparison)"
+                )
+        except Exception as _ab_e:
+            log.debug(f"[AdaptiveMgmt] A/B EOD stats failed: {_ab_e}")
+
     tg_send("\n".join(lines))
 
 
@@ -6264,6 +6315,367 @@ def _ensure_alpaca_columns() -> bool:
         return True
 
 
+# ── Adaptive Position Management helpers ──────────────────────────────────────
+
+def _fetch_pm_last_price(ticker: str) -> float:
+    """Return the most recent pre-market close price for ticker (as of call time).
+
+    Fetches 1-minute SIP bars from 4:00 AM ET to now.  Called at ~8:30 AM so
+    the window covers ~4.5 hours of pre-market action.
+    Returns 0.0 on error or when no bars are available.
+    """
+    import requests as _req
+    ET = pytz.timezone("America/New_York")
+    now_et = datetime.now(ET)
+    today_str = now_et.strftime("%Y-%m-%d")
+    dt = datetime.strptime(today_str, "%Y-%m-%d")
+    start = ET.localize(dt.replace(hour=4, minute=0)).isoformat()
+    end = now_et.isoformat()
+    try:
+        r = _req.get(
+            f"https://data.alpaca.markets/v2/stocks/{ticker}/bars",
+            headers={
+                "APCA-API-KEY-ID":     ALPACA_API_KEY,
+                "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+            },
+            params={
+                "start":     start,
+                "end":       end,
+                "timeframe": "1Min",
+                "feed":      "sip",
+                "limit":     400,
+            },
+            timeout=10,
+        )
+        if r.status_code == 200:
+            bars = r.json().get("bars") or []
+            if bars:
+                return float(bars[-1]["c"])
+    except Exception as _e:
+        log.debug(f"[AdaptiveMgmt] PM last-price fetch failed for {ticker}: {_e}")
+    return 0.0
+
+
+def _compute_adaptive_adjustments(
+    direction: str,
+    entry: float,
+    stop: float,
+    target: float,
+    ib_high: float,
+    ib_low: float,
+    pm_last: float,
+) -> "dict | None":
+    """Compute adaptive TP/stop adjustments based on pre-market acceptance.
+
+    Pure function — no side effects.  Returns None when no adjustment is
+    warranted (e.g. missing data or price exactly at the break level).
+
+    Bullish Break logic:
+      pm_last > ib_high  → PM accepted above IB → raise TP by +0.5R (stop unchanged)
+      pm_last < ib_high  → PM pulled inside IB  → tighten stop to IB mid (TP unchanged)
+
+    Bearish Break logic (mirror):
+      pm_last < ib_low   → PM accepted below IB → lower TP by 0.5R (stop unchanged)
+      pm_last > ib_low   → PM pulled inside IB  → tighten stop to IB mid (TP unchanged)
+
+    Returns dict with keys: action, new_stop, new_tp, tp_adjusted_r
+    """
+    if entry <= 0 or stop <= 0 or target <= 0 or pm_last <= 0:
+        return None
+    if ib_high <= 0 or ib_low <= 0 or ib_high <= ib_low:
+        return None
+
+    stop_dist = abs(entry - stop)
+    if stop_dist <= 0:
+        return None
+
+    ib_mid = (ib_high + ib_low) / 2.0
+
+    if "Bullish Break" in direction:
+        if pm_last > ib_high:
+            new_tp   = round(target + 0.5 * stop_dist, 2)
+            new_stop = stop
+            action   = "TP_RAISED"
+            tp_r     = round((new_tp - entry) / stop_dist, 2)
+        elif pm_last < ib_high:
+            new_stop = round(ib_mid, 2)
+            new_tp   = target
+            action   = "STOP_TIGHTENED"
+            tp_r     = round((target - entry) / stop_dist, 2)
+        else:
+            return None
+
+    elif "Bearish Break" in direction:
+        if pm_last < ib_low:
+            new_tp   = round(target - 0.5 * stop_dist, 2)
+            new_stop = stop
+            action   = "TP_RAISED"
+            tp_r     = round((entry - new_tp) / stop_dist, 2)
+        elif pm_last > ib_low:
+            new_stop = round(ib_mid, 2)
+            new_tp   = target
+            action   = "STOP_TIGHTENED"
+            tp_r     = round((entry - target) / stop_dist, 2)
+        else:
+            return None
+
+    else:
+        return None
+
+    return {
+        "action":        action,
+        "new_stop":      new_stop,
+        "new_tp":        new_tp,
+        "tp_adjusted_r": tp_r,
+    }
+
+
+def _alpaca_place_oco_exit(
+    ticker: str,
+    qty: int,
+    exit_side: str,
+    stop_price: float,
+    tp_price: float,
+) -> dict:
+    """Place an OCO (One-Cancels-Other) exit order for an already-open position.
+
+    exit_side = "sell" for long positions, "buy" for short (cover).
+    The limit leg fires at tp_price; the stop leg fires at stop_price.
+    Returns {'ok': bool, 'order_id': str, 'error': str}.
+    """
+    import requests as _req
+    import json as _json_mod
+    base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+        "Content-Type":        "application/json",
+    }
+    payload = {
+        "symbol":       ticker.upper(),
+        "qty":          str(abs(int(qty))),
+        "side":         exit_side,
+        "type":         "limit",
+        "time_in_force": "day",
+        "order_class":  "oco",
+        "take_profit":  {"limit_price": str(round(tp_price, 2))},
+        "stop_loss":    {"stop_price":  str(round(stop_price, 2))},
+    }
+    try:
+        r = _req.post(
+            f"{base}/v2/orders",
+            headers=headers,
+            data=_json_mod.dumps(payload),
+            timeout=10,
+        )
+        if r.status_code in (200, 201):
+            data = r.json()
+            return {"ok": True, "order_id": data.get("id", ""), "error": ""}
+        return {
+            "ok":       False,
+            "order_id": "",
+            "error":    f"HTTP {r.status_code}: {r.text[:300]}",
+        }
+    except Exception as _e:
+        return {"ok": False, "order_id": "", "error": str(_e)}
+
+
+def _pre_open_position_review() -> None:
+    """8:30 AM ET — adaptively adjust TP/stop for open Alpaca positions.
+
+    For each open Alpaca paper position that was logged as a bot-managed
+    paper_trade today:
+
+      1. Reads entry/stop/target and IB levels from the paper_trades row.
+      2. Fetches the current pre-market price (4:00–8:30 AM ET window).
+      3. Applies the adaptive rule:
+           Bullish Break, PM above IB high → raise TP by +0.5R
+           Bullish Break, PM inside IB     → tighten stop to IB midpoint
+           Bearish Break, PM below IB low  → lower TP by 0.5R (extends target)
+           Bearish Break, PM inside IB     → tighten stop to IB midpoint
+      4. Cancels the current bracket legs for the ticker.
+      5. Places a new OCO exit order at the adjusted TP / stop levels.
+      6. Stamps paper_trades with mgmt_mode='adaptive' and tp_adjusted_r.
+
+    Disabled when ADAPTIVE_POSITION_MGMT=0 (default).
+    All failures are caught and logged — never blocks the main scheduling loop.
+    """
+    if not ADAPTIVE_POSITION_MGMT:
+        return
+
+    log.info("[AdaptiveMgmt] Starting pre-open position review...")
+
+    if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        log.warning("[AdaptiveMgmt] Alpaca credentials missing — skipping review")
+        return
+
+    try:
+        positions = _alpaca_get_positions()
+    except Exception as _pe:
+        log.warning(f"[AdaptiveMgmt] Could not fetch Alpaca positions: {_pe}")
+        return
+
+    if not positions:
+        log.info("[AdaptiveMgmt] No open positions — nothing to review")
+        return
+
+    today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+    adjusted  = 0
+
+    for pos in positions:
+        ticker = (pos.get("symbol") or "").upper()
+        if not ticker:
+            continue
+
+        side = pos.get("side", "long")
+        qty  = abs(int(float(pos.get("qty") or 0)))
+        if qty <= 0:
+            continue
+
+        # ── Look up today's open paper_trade for this ticker ─────────────────
+        if not _supabase_client:
+            continue
+        try:
+            _pt_resp = (
+                _supabase_client.table("paper_trades")
+                .select(
+                    "id, ib_high, ib_low, actual_outcome, "
+                    "entry_price_sim, stop_price_sim, target_price_sim"
+                )
+                .eq("user_id", USER_ID)
+                .eq("ticker", ticker)
+                .eq("trade_date", today_str)
+                .is_("eod_pnl_r", "null")
+                .limit(1)
+                .execute()
+            )
+            pt_rows = _pt_resp.data or []
+        except Exception as _qe:
+            log.warning(f"[AdaptiveMgmt] {ticker} — DB lookup failed: {_qe}")
+            continue
+
+        if not pt_rows:
+            log.debug(f"[AdaptiveMgmt] {ticker} — no open paper_trade row today; skipping")
+            continue
+
+        row       = pt_rows[0]
+        row_id    = row.get("id")
+        ib_high   = float(row.get("ib_high")          or 0)
+        ib_low    = float(row.get("ib_low")            or 0)
+        entry     = float(row.get("entry_price_sim")   or 0)
+        stop      = float(row.get("stop_price_sim")    or 0)
+        target    = float(row.get("target_price_sim")  or 0)
+        direction = row.get("actual_outcome") or ""
+
+        if not all([ib_high, ib_low, entry, stop, target, direction]):
+            log.info(f"[AdaptiveMgmt] {ticker} — incomplete data (ib/entry/stop/target/direction); skipping")
+            continue
+
+        # ── Fetch current pre-market price ───────────────────────────────────
+        pm_last = _fetch_pm_last_price(ticker)
+        if pm_last <= 0:
+            log.info(f"[AdaptiveMgmt] {ticker} — no PM price data; skipping")
+            continue
+
+        # ── Compute adjustment ────────────────────────────────────────────────
+        adj = _compute_adaptive_adjustments(
+            direction=direction,
+            entry=entry,
+            stop=stop,
+            target=target,
+            ib_high=ib_high,
+            ib_low=ib_low,
+            pm_last=pm_last,
+        )
+        if adj is None:
+            log.info(
+                f"[AdaptiveMgmt] {ticker} — no adjustment warranted "
+                f"(direction={direction} pm={pm_last:.2f} ib={ib_low:.2f}–{ib_high:.2f})"
+            )
+            continue
+
+        action   = adj["action"]
+        new_stop = adj["new_stop"]
+        new_tp   = adj["new_tp"]
+        tp_r     = adj["tp_adjusted_r"]
+
+        log.info(
+            f"[AdaptiveMgmt] {ticker} — {action}: "
+            f"stop {stop:.2f}→{new_stop:.2f}  tp {target:.2f}→{new_tp:.2f}  "
+            f"tp_r={tp_r:.2f}R  (pm={pm_last:.2f} vs ib_break="
+            f"{'ib_high' if 'Bullish' in direction else 'ib_low'} "
+            f"{ib_high if 'Bullish' in direction else ib_low:.2f})"
+        )
+
+        # ── Cancel existing bracket legs ──────────────────────────────────────
+        try:
+            cancelled = _alpaca_cancel_orders_for_ticker(ticker)
+            log.info(f"[AdaptiveMgmt] {ticker} — cancelled {cancelled} open order(s)")
+        except Exception as _ce:
+            log.warning(f"[AdaptiveMgmt] {ticker} — cancel failed: {_ce}; skipping adjustment")
+            continue
+
+        # ── Place new OCO exit order ──────────────────────────────────────────
+        exit_side = "sell" if "Bullish" in direction else "buy"
+        oca_res = _alpaca_place_oco_exit(
+            ticker=ticker,
+            qty=qty,
+            exit_side=exit_side,
+            stop_price=new_stop,
+            tp_price=new_tp,
+        )
+
+        if not oca_res.get("ok"):
+            log.warning(
+                f"[AdaptiveMgmt] {ticker} — OCO order failed: {oca_res.get('error')}; "
+                f"reverting to no adjustment"
+            )
+            tg_send(
+                f"⚠️ <b>Adaptive Mgmt — OCO Failed</b>\n"
+                f"Ticker: <b>{ticker}</b> ({direction})\n"
+                f"Error: {oca_res.get('error','unknown')}\n"
+                f"Position remains open with no bracket — monitor manually."
+            )
+            continue
+
+        new_order_id = oca_res.get("order_id", "")
+
+        # ── Persist to paper_trades ───────────────────────────────────────────
+        if row_id and _supabase_client:
+            try:
+                _supabase_client.table("paper_trades").update({
+                    "mgmt_mode":     "adaptive",
+                    "tp_adjusted_r": tp_r,
+                    "alpaca_order_id": new_order_id or None,
+                }).eq("id", row_id).execute()
+            except Exception as _ue:
+                log.warning(f"[AdaptiveMgmt] {ticker} — DB update failed (non-fatal): {_ue}")
+
+        adjusted += 1
+
+        # ── Telegram notification ─────────────────────────────────────────────
+        _action_label = (
+            "TP raised +0.5R" if action == "TP_RAISED" else "Stop → IB mid"
+        )
+        _dir_icon = "🟡" if "Bullish" in direction else "🔴"
+        tg_send(
+            f"🔧 <b>Adaptive Mgmt — {ticker}</b>\n"
+            f"{_dir_icon} {direction}\n"
+            f"PM last: <b>${pm_last:.2f}</b> | "
+            f"{'IB high' if 'Bullish' in direction else 'IB low'}: "
+            f"<b>${ib_high if 'Bullish' in direction else ib_low:.2f}</b>\n"
+            f"Action: <b>{_action_label}</b>\n"
+            f"Stop: ${stop:.2f}→<b>${new_stop:.2f}</b>  "
+            f"TP: ${target:.2f}→<b>${new_tp:.2f}</b>\n"
+            f"New TP: <b>{tp_r:.2f}R</b>  "
+            f"<code>{new_order_id[:8] if new_order_id else 'n/a'}…</code>"
+        )
+
+    log.info(
+        f"[AdaptiveMgmt] Review complete — {adjusted}/{len(positions)} position(s) adjusted"
+    )
+
+
 def _ensure_ib_context_columns() -> bool:
     """Add IB context columns to paper_trades if they are missing.
 
@@ -6299,6 +6711,42 @@ def _ensure_ib_context_columns() -> bool:
                 )
             return False
         log.debug(f"_ensure_ib_context_columns check: {e}")
+        return True
+
+
+def _ensure_adaptive_mgmt_columns() -> bool:
+    """Add Adaptive Position Management columns to paper_trades if missing.
+
+    Only logs the migration SQL when ADAPTIVE_POSITION_MGMT is True — no noise
+    when the feature is turned off.  Returns True on success or unexpected error.
+    """
+    if not _supabase_client:
+        return True
+    try:
+        _supabase_client.table("paper_trades").select(
+            "mgmt_mode, tp_adjusted_r"
+        ).limit(1).execute()
+        if ADAPTIVE_POSITION_MGMT:
+            log.info("Adaptive mgmt columns present ✅")
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if "column" in err or "does not exist" in err or "42703" in err:
+            if ADAPTIVE_POSITION_MGMT:
+                log.warning(
+                    "\n"
+                    "══════════════════════════════════════════════════════════\n"
+                    "  Adaptive Position Management columns are MISSING.\n"
+                    "  ADAPTIVE_POSITION_MGMT=1 is set but adjustments won't\n"
+                    "  be persisted until you run this in Supabase → SQL Editor:\n\n"
+                    "  ALTER TABLE paper_trades\n"
+                    "    ADD COLUMN IF NOT EXISTS mgmt_mode     VARCHAR DEFAULT 'fixed',\n"
+                    "    ADD COLUMN IF NOT EXISTS tp_adjusted_r REAL;\n\n"
+                    "  Then restart the Paper Trader Bot workflow.\n"
+                    "══════════════════════════════════════════════════════════"
+                )
+            return False
+        log.debug(f"_ensure_adaptive_mgmt_columns check: {e}")
         return True
 
 
@@ -6454,6 +6902,9 @@ def main():
     # Ensure IB context columns exist (only warns when IB_CONTEXT_ENABLED=1)
     _ensure_ib_context_columns()
 
+    # Ensure Adaptive Position Management columns exist (only warns when enabled)
+    _ensure_adaptive_mgmt_columns()
+
     # Log Alpaca activation status clearly
     acct_label = "PAPER (Alpaca paper-api)" if IS_PAPER_ALPACA else "⚠️  LIVE (real money)"
     if LIVE_ORDERS_ENABLED:
@@ -6556,6 +7007,7 @@ def main():
     _recalibration_done    = False
     _pdf_export_done       = False
     _div_alert_done        = False
+    _pre_open_review_done  = False
 
     # ── Startup catch-up: recover scans missed due to mid-day restart ─────────
     # Task merges / workflow restarts can happen during market hours.
@@ -6564,6 +7016,12 @@ def main():
     _su_hm = _su.hour * 60 + _su.minute          # minutes since midnight ET
     _su_weekday = _su.weekday() < 5
     if _su_weekday:
+        if _su_hm >= 8 * 60 + 50:
+            _pre_open_review_done = True
+            log.info(
+                "[Catch-up] Started after 8:50 AM — adaptive position review skipped "
+                "(too close to market open; positions hold existing bracket orders)"
+            )
         if _su_hm >= 9 * 60 + 10:
             _premarket_done = True
             log.info("[Catch-up] Started after 9:10 AM — pre-market gap scan skipped (data stale)")
@@ -6667,6 +7125,7 @@ def main():
             _recalibration_done    = False
             _pdf_export_done       = False
             _div_alert_done        = False
+            _pre_open_review_done  = False
 
         if not _market_is_open(now_et):
             # EOD outcome update — 4:20 PM ET (SIP free tier needs data >16 min old;
@@ -6715,6 +7174,22 @@ def main():
             ):
                 _dispatch_scheduled_divergence_alert()
                 _div_alert_done = True
+
+            # 8:30 AM — adaptive position review (ADAPTIVE_POSITION_MGMT=1 only)
+            # Runs before the regular pre-market scan so adjustments are in place
+            # before the market opens.  Silently no-ops when the toggle is off.
+            if (
+                not _pre_open_review_done
+                and now_et.weekday() < 5
+                and now_et.hour == 8
+                and now_et.minute >= 30
+                and now_et.minute < 50
+            ):
+                try:
+                    _pre_open_position_review()
+                except Exception as _apm_e:
+                    log.warning(f"[AdaptiveMgmt] Pre-open review failed (non-fatal): {_apm_e}")
+                _pre_open_review_done = True
 
             # 9:10 AM — pre-market gap scanner (SIP, before Finviz refresh)
             if (
