@@ -21558,6 +21558,355 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.error(f"Correlation analysis failed:\n{_fcr_proc.stderr[-600:]}")
                 except Exception as _fcr_ex:
                     st.error(f"Error: {_fcr_ex}")
+    # ── Exhaustive Grid Search — Phase 3 ─────────────────────────────────────
+    with st.expander("🧬 Exhaustive Grid Search — Phase 3 (All IB Structure Combos + 9 New Dimensions)", expanded=False):
+        import subprocess as _p3_sub
+        import json as _p3_json
+        import os as _p3_os
+        import datetime as _p3_dt
+        import re as _p3_re
+        import pandas as _p3_pd
+
+        _P3_SUM  = "filter_grid_summary.json"
+        _P3_TOP  = "filter_grid_top100.json"
+        _P3_ALL  = "filter_grid_results_v3.json"
+        _P3_DIM  = "filter_grid_dimension_summary.json"
+        _P3_CFG  = "filter_config.json"
+
+        st.markdown(
+            "Extends the Phase 1 optimizer to **all 127 non-empty subsets** of the 7 IB structures "
+            "plus **9 new filter dimensions** (scan type, gap direction, VWAP position, screener pass, "
+            "IB size tier, MFE minimum, MAE maximum, RVOL upper cap, day-of-week group). "
+            "Uses vectorized pandas/numpy — no row-by-row loops. "
+            "Expect ~10–15 minutes for the full all-time dataset."
+        )
+
+        _p3_summary = {}
+        if _p3_os.path.exists(_P3_SUM):
+            try:
+                with open(_P3_SUM) as _f:
+                    _p3_raw = _p3_json.load(_f)
+                if _p3_raw.get("phase") == 3:
+                    _p3_summary = _p3_raw
+            except Exception:
+                pass
+
+        if _p3_summary:
+            _p3_ran   = _p3_summary.get("run_at", "unknown")[:16].replace("T", " ")
+            _p3_dr    = _p3_summary.get("date_range", {})
+            _p3_dr_s  = f"{_p3_dr.get('start','?')} → {_p3_dr.get('end','?')}"
+            _p3_rows  = _p3_summary.get("total_rows", 0)
+            _p3_trad  = _p3_summary.get("traded_rows", 0)
+            _p3_q     = _p3_summary.get("combos_qualifying", 0)
+            _p3_test  = _p3_summary.get("combos_tested", 0)
+            _p3_minn  = _p3_summary.get("min_n", 30)
+            _p3_elap  = _p3_summary.get("elapsed_seconds", 0)
+            st.caption(
+                f"Last Phase 3 run: **{_p3_ran} UTC** · {_p3_dr_s} · "
+                f"{_p3_rows:,} rows · {_p3_trad:,} traded · "
+                f"{_p3_q:,}/{_p3_test:,} combos met N≥{_p3_minn} · "
+                f"completed in {_p3_elap:.0f}s"
+            )
+        else:
+            st.info("No Phase 3 results yet. Run the Exhaustive Grid Search below to generate them.")
+
+        _p3_date_re = _p3_re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        _p3_dr_raw  = _p3_summary.get("date_range", {})
+        _p3_s_def   = _p3_dr_raw.get("start","") if _p3_date_re.match(_p3_dr_raw.get("start","") or "") else ""
+        _p3_e_def   = _p3_dr_raw.get("end","")   if _p3_date_re.match(_p3_dr_raw.get("end","")   or "") else ""
+
+        _p3_c1, _p3_c2, _p3_c3, _p3_c4 = st.columns([2,2,1,1])
+        with _p3_c1:
+            _p3_start = st.text_input("Start date", value=_p3_s_def, placeholder="all history", key="p3_start")
+        with _p3_c2:
+            _p3_end   = st.text_input("End date",   value=_p3_e_def, placeholder="latest",      key="p3_end")
+        with _p3_c3:
+            _p3_minn_inp = st.number_input("Min N", value=int(_p3_summary.get("min_n", 30)),
+                                           min_value=10, max_value=500, step=10, key="p3_min_n")
+        with _p3_c4:
+            _p3_top_inp = st.number_input("Top N", value=100, min_value=10, max_value=500, step=10, key="p3_top_n")
+
+        _p3_run = st.button("▶ Run Phase 3 Exhaustive Grid Search", key="p3_run_btn",
+                            help="Runs ~14M vectorized combinations. Takes ~10–15 min for full history.")
+        if _p3_run:
+            _p3_err = None
+            if _p3_start.strip() and not _p3_date_re.match(_p3_start.strip()):
+                _p3_err = f"Invalid start date: {_p3_start.strip()}"
+            elif _p3_end.strip() and not _p3_date_re.match(_p3_end.strip()):
+                _p3_err = f"Invalid end date: {_p3_end.strip()}"
+            if _p3_err:
+                st.error(_p3_err)
+            else:
+                _p3_cmd = ["python3", "filter_grid_search.py", "--phase", "3",
+                           "--min-n", str(int(_p3_minn_inp)), "--top", str(int(_p3_top_inp))]
+                if _p3_start.strip(): _p3_cmd += ["--start", _p3_start.strip()]
+                if _p3_end.strip():   _p3_cmd += ["--end",   _p3_end.strip()]
+                with st.spinner("Running Phase 3 exhaustive grid search (~14M combinations)…"):
+                    try:
+                        _p3_proc = _p3_sub.run(_p3_cmd, capture_output=True, text=True, timeout=1800)
+                        if _p3_proc.returncode == 0:
+                            st.success("Phase 3 complete! Results updated below.")
+                            st.rerun()
+                        else:
+                            st.error(f"Phase 3 failed:\n{_p3_proc.stderr[-800:]}")
+                    except _p3_sub.TimeoutExpired:
+                        st.error("Phase 3 timed out (>30 min). Try a narrower date range or increase min N.")
+                    except Exception as _p3_ex:
+                        st.error(f"Phase 3 error: {_p3_ex}")
+
+        # ── Top-100 table ─────────────────────────────────────────────────────
+        _p3_top_data = []
+        if _p3_os.path.exists(_P3_TOP):
+            try:
+                with open(_P3_TOP) as _f:
+                    _p3_top_data = _p3_json.load(_f)
+            except Exception:
+                pass
+
+        if _p3_top_data:
+            st.markdown("---")
+            st.markdown("#### Phase 3 Top Combinations (sortable)")
+
+            _p3_sort_col = st.selectbox(
+                "Sort by",
+                ["Sharpe", "Win Rate %", "Profit Factor", "Total R"],
+                key="p3_sort_col",
+            )
+            _p3_sort_map = {
+                "Sharpe":         "sharpe",
+                "Win Rate %":     "win_rate",
+                "Profit Factor":  "profit_factor",
+                "Total R":        "total_r",
+            }
+            _p3_sk = _p3_sort_map[_p3_sort_col]
+
+            _p3_rows_disp = []
+            for _i, _c in enumerate(_p3_top_data, 1):
+                _pf  = _c.get("profit_factor", 0)
+                _pfs = "∞" if _pf == float("inf") else f"{_pf:.2f}"
+                _p3_rows_disp.append({
+                    "#":              _i,
+                    "Structure":      _c.get("struct_label", "?"),
+                    "TCS+":           _c.get("tcs_offset", 0),
+                    "RVOL≥":          _c.get("rvol_min", 0),
+                    "Gap≥%":          _c.get("gap_min", 0),
+                    "Follow":         _c.get("follow_label", "?"),
+                    "No-FB":          "✓" if _c.get("excl_false_break") else "",
+                    "Scan":           _c.get("scan_type", "any"),
+                    "GapDir":         _c.get("gap_direction", "any"),
+                    "VWAP":           _c.get("vwap_position", "any"),
+                    "Screener":       _c.get("screener", "any"),
+                    "IBSize":         _c.get("ib_size", "any"),
+                    "MFE":            _c.get("mfe_min", "any"),
+                    "MAE":            _c.get("mae_max", "any"),
+                    "RVOLCap":        _c.get("rvol_cap", "none"),
+                    "DOW":            _c.get("day_of_week", "any"),
+                    "N":              _c.get("n_trades", 0),
+                    "WR%":            _c.get("win_rate", 0),
+                    "Avg R":          _c.get("avg_r", 0),
+                    "PF":             _pfs,
+                    "Sharpe":         _c.get("sharpe", 0),
+                    "MaxDD":          _c.get("max_drawdown_r", 0),
+                    "Total R":        _c.get("total_r", 0),
+                    "/wk":            _c.get("trades_per_week", 0),
+                    "$/wk":           _c.get("proj_weekly_usd", 0),
+                    "⚠":             "low N" if _c.get("low_sample") else "",
+                })
+
+            _p3_df = _p3_pd.DataFrame(_p3_rows_disp)
+            _p3_sk_col = {"Sharpe": "Sharpe", "Win Rate %": "WR%",
+                          "Profit Factor": "PF", "Total R": "Total R"}.get(_p3_sort_col, "Sharpe")
+
+            def _p3_color(row):
+                try:
+                    s = float(row.get("Sharpe", 0))
+                except (ValueError, TypeError):
+                    s = 0.0
+                is_low = row.get("⚠") == "low N"
+                if is_low:
+                    return ["background-color:#fff8e1; color:#5d4037"] * len(row)
+                if s >= 5:
+                    return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                if s >= 2:
+                    return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+                return ["background-color:#fce4ec; color:#880e4f"] * len(row)
+
+            _p3_df_sorted = _p3_df.copy()
+            try:
+                _p3_df_sorted["_sort_key"] = _p3_pd.to_numeric(_p3_df_sorted[_p3_sk_col], errors="coerce")
+                _p3_df_sorted = _p3_df_sorted.sort_values("_sort_key", ascending=False).drop(columns=["_sort_key"])
+                _p3_df_sorted = _p3_df_sorted.reset_index(drop=True)
+                _p3_df_sorted["#"] = range(1, len(_p3_df_sorted) + 1)
+            except Exception:
+                pass
+
+            st.dataframe(
+                _p3_df_sorted.style.apply(_p3_color, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "🟢 Sharpe ≥ 5 · 🟡 Sharpe 2–5 · 🔴 Sharpe < 2 · "
+                "⚠ low N (< 75 trades, use with caution)"
+            )
+
+            # ── Best combo from Phase 3 ───────────────────────────────────────
+            _p3_best = _p3_top_data[0]
+            st.markdown("---")
+            st.markdown("### 🏆 Suggested Filter Config — Phase 3 Best Combo")
+            st.caption(
+                f"Derived from {_p3_best.get('n_trades','?')} trades · "
+                f"Sharpe {_p3_best.get('sharpe','?')} · "
+                f"Phase 3 run over {_p3_summary.get('date_range',{}).get('start','?')} → "
+                f"{_p3_summary.get('date_range',{}).get('end','?')}"
+            )
+            _p3_m1, _p3_m2, _p3_m3, _p3_m4, _p3_m5 = st.columns(5)
+            _p3_m1.metric("Win Rate",     f"{_p3_best.get('win_rate',0):.1f}%")
+            _p3_m2.metric("Avg R",        f"{_p3_best.get('avg_r',0):.3f}R")
+            _p3_pf = _p3_best.get("profit_factor", 0)
+            _p3_m3.metric("Profit Factor",f"∞" if _p3_pf == float("inf") else f"{_p3_pf:.2f}")
+            _p3_m4.metric("Sharpe",       f"{_p3_best.get('sharpe',0):.3f}")
+            _p3_m5.metric("Proj $/wk",    f"${_p3_best.get('proj_weekly_usd',0):.0f}")
+
+            _p3_dim_rows = [
+                ("Structure subset",  _p3_best.get("struct_label", "?")),
+                ("TCS offset",        f"+{_p3_best.get('tcs_offset',0)} above per-structure baseline"),
+                ("RVOL minimum",      _p3_best.get("rvol_min", "none")),
+                ("Gap minimum %",     _p3_best.get("gap_min", "none")),
+                ("Follow-through",    _p3_best.get("follow_label", "any")),
+                ("Excl false-break",  str(_p3_best.get("excl_false_break", False))),
+                ("Scan type",         _p3_best.get("scan_type", "any")),
+                ("Gap direction",     _p3_best.get("gap_direction", "any")),
+                ("VWAP position",     _p3_best.get("vwap_position", "any")),
+                ("Screener",          _p3_best.get("screener", "any")),
+                ("IB size tier",      _p3_best.get("ib_size", "any")),
+                ("MFE minimum",       _p3_best.get("mfe_min", "any")),
+                ("MAE maximum",       _p3_best.get("mae_max", "any")),
+                ("RVOL upper cap",    _p3_best.get("rvol_cap", "none")),
+                ("Day of week",       _p3_best.get("day_of_week", "any")),
+            ]
+            _p3_dim_df = _p3_pd.DataFrame(_p3_dim_rows, columns=["Dimension", "Value"])
+            st.dataframe(_p3_dim_df, use_container_width=True, hide_index=True)
+
+            _p3_apply_col, _p3_info_col = st.columns([1, 3])
+            with _p3_apply_col:
+                _p3_apply = st.button("✅ Apply Phase 3 Best Filter", key="p3_apply_btn", type="primary")
+            with _p3_info_col:
+                _p3_cur = {}
+                if _p3_os.path.exists(_P3_CFG):
+                    try:
+                        with open(_P3_CFG) as _f:
+                            _p3_cur = _p3_json.load(_f)
+                    except Exception:
+                        pass
+                if _p3_cur:
+                    st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
+                               f"source: {_p3_cur.get('applied_from','?')}")
+            if _p3_apply:
+                _p3_new_cfg = {
+                    "tcs_offset":       _p3_best.get("tcs_offset", 0),
+                    "rvol_min":         _p3_best.get("rvol_min", 0.0),
+                    "gap_min":          _p3_best.get("gap_min", 0.0),
+                    "follow_min_pct":   _p3_best.get("follow_min", -999.0),
+                    "struct_filter":    "custom",
+                    "struct_tokens":    _p3_best.get("struct_tokens", []),
+                    "struct_label":     _p3_best.get("struct_label", ""),
+                    "excl_false_break": _p3_best.get("excl_false_break", False),
+                    "scan_type":        _p3_best.get("scan_type", "any"),
+                    "gap_direction":    _p3_best.get("gap_direction", "any"),
+                    "vwap_position":    _p3_best.get("vwap_position", "any"),
+                    "screener":         _p3_best.get("screener", "any"),
+                    "ib_size":          _p3_best.get("ib_size", "any"),
+                    "mfe_min":          _p3_best.get("mfe_min", "any"),
+                    "mae_max":          _p3_best.get("mae_max", "any"),
+                    "rvol_cap":         _p3_best.get("rvol_cap", "none"),
+                    "day_of_week":      _p3_best.get("day_of_week", "any"),
+                    "applied_at":       _p3_dt.datetime.utcnow().isoformat() + "Z",
+                    "applied_from":     _P3_TOP,
+                    "source_phase":     3,
+                    "source_combo_rank": 1,
+                    "source_sharpe":    _p3_best.get("sharpe"),
+                    "source_n_trades":  _p3_best.get("n_trades"),
+                }
+                try:
+                    with open(_P3_CFG, "w") as _f:
+                        _p3_json.dump(_p3_new_cfg, _f, indent=2)
+                    st.success("filter_config.json updated with Phase 3 best combo.")
+                except Exception as _p3_ex:
+                    st.error(f"Failed to write config: {_p3_ex}")
+
+        # ── Dimension summary panel ───────────────────────────────────────────
+        _p3_dim_summary = {}
+        if _p3_os.path.exists(_P3_DIM):
+            try:
+                with open(_P3_DIM) as _f:
+                    _p3_dim_summary = _p3_json.load(_f)
+            except Exception:
+                pass
+
+        if _p3_dim_summary:
+            st.markdown("---")
+            st.markdown("#### What Drives the Edge? — Dimension Frequency in Top-20 & Top-100")
+            st.caption("Shows how often each filter value appears among the top-ranked combinations.")
+
+            import plotly.graph_objects as _p3_go
+
+            for _dk, _dv in _p3_dim_summary.items():
+                _dlabel = _dv.get("label", _dk)
+                _dvals  = _dv.get("values", {})
+                if not _dvals:
+                    continue
+                _d_names  = list(_dvals.keys())
+                _d_top20  = [_dvals[v].get("in_top_20", 0)  for v in _d_names]
+                _d_top100 = [_dvals[v].get("in_top_100", 0) for v in _d_names]
+                if sum(_d_top20) == 0 and sum(_d_top100) == 0:
+                    continue
+
+                with st.expander(f"📊 {_dlabel}", expanded=False):
+                    _p3_fig = _p3_go.Figure()
+                    _p3_fig.add_trace(_p3_go.Bar(
+                        name="In top 100", x=_d_names, y=_d_top100,
+                        marker_color="#4fc3f7",
+                    ))
+                    _p3_fig.add_trace(_p3_go.Bar(
+                        name="In top 20",  x=_d_names, y=_d_top20,
+                        marker_color="#f48fb1",
+                    ))
+                    _p3_fig.update_layout(
+                        barmode="overlay",
+                        height=220,
+                        margin=dict(l=5, r=5, t=5, b=5),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        legend=dict(orientation="h", y=1.0, x=1.0,
+                                    xanchor="right", yanchor="bottom",
+                                    font=dict(color="#cccccc")),
+                        xaxis=dict(color="#cccccc"),
+                        yaxis=dict(color="#cccccc", gridcolor="#1a1a2e"),
+                        showlegend=True,
+                    )
+                    st.plotly_chart(_p3_fig, use_container_width=True)
+                    _p3_rows_dim = []
+                    for _v in _d_names:
+                        _t20  = _dvals[_v].get("in_top_20", 0)
+                        _t100 = _dvals[_v].get("in_top_100", 0)
+                        _p3_rows_dim.append({"Value": _v, "Top 20": _t20, "Top 100": _t100})
+                    st.dataframe(_p3_pd.DataFrame(_p3_rows_dim), use_container_width=True, hide_index=True)
+
+        # ── Download Phase 3 results ──────────────────────────────────────────
+        if _p3_os.path.exists(_P3_ALL):
+            try:
+                with open(_P3_ALL) as _f:
+                    _p3_bytes = _f.read().encode()
+                st.download_button(
+                    label="⬇ Download all qualifying Phase 3 combos (JSON)",
+                    data=_p3_bytes,
+                    file_name="filter_grid_results_v3.json",
+                    mime="application/json",
+                    key="p3_download_all",
+                )
+            except Exception:
+                pass
 
     # ── Highlight jumped-to trade row (from drill-down ↓ Jump link) ──────────
     import streamlit.components.v1 as _cmp_trade_jump
