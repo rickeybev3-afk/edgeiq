@@ -21850,6 +21850,392 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.error(f"Correlation analysis failed:\n{_fcr_proc.stderr[-600:]}")
                 except Exception as _fcr_ex:
                     st.error(f"Error: {_fcr_ex}")
+    # ── Real Filter Comparison — bot-accurate filters + compounding ──────────
+    with st.expander("📊 Real Filter Comparison — Bot vs Optimized (with Compounding)", expanded=False):
+        import json as _rfc_json
+        import math as _rfc_math
+        import numpy as _rfc_np
+        import pandas as _rfc_pd
+
+        st.markdown(
+            "Compares every filter variant side-by-side using **real Supabase data**, "
+            "properly deduplicated by (ticker, date, structure). "
+            "Includes the bot's actual live filters (RVOL≥1.0, MORNING_TCS_FLOOR=60, no gap filter) "
+            "and per-structure optimized settings — plus **compounding projections** using the same "
+            "20× starting-risk cap as the main P&L simulator."
+        )
+
+        # ── Load TCS thresholds ────────────────────────────────────────────────
+        _RFC_TCS_JSON: dict = {
+            "double_dist": 50, "ntrl_extreme": 53, "trend_bull": 57,
+            "nrml_variation": 57, "neutral": 60, "normal": 64, "non_trend": 65,
+        }
+        try:
+            with open("tcs_thresholds.json") as _rfc_tf:
+                _RFC_TCS_JSON = _rfc_json.load(_rfc_tf)
+        except Exception:
+            pass
+
+        _RFC_SENTINEL = -9999.0
+        _RFC_CACHE_KEY = "rfc_bsr_cache_v2"
+
+        def _rfc_tcs_floor(predicted: str) -> int:
+            p = (predicted or "").lower()
+            for key, tok in [
+                ("double_dist", "dbl dist"), ("ntrl_extreme", "ntrl extreme"),
+                ("trend_bull", "bullish break"), ("trend_bull", "bearish break"),
+                ("nrml_variation", "nrml var"), ("neutral", "neutral"),
+                ("normal", "normal"), ("non_trend", "non_trend"),
+            ]:
+                if tok in p:
+                    return int(_RFC_TCS_JSON.get(key, 60))
+            return 60
+
+        # ── Data load ─────────────────────────────────────────────────────────
+        _rfc_col1, _rfc_col2 = st.columns([1, 4])
+        with _rfc_col1:
+            _rfc_reload = st.button("🔄 Load / Refresh Data", key="rfc_reload_btn")
+        with _rfc_col2:
+            st.caption(
+                "Fetches all `backtest_sim_runs` rows for your account (paginated). "
+                "Only needed once — results cache in session."
+            )
+
+        if _rfc_reload and _AUTH_USER_ID:
+            with st.spinner("Fetching backtest_sim_runs from Supabase…"):
+                _rfc_raw, _rfc_off = [], 0
+                _rfc_cols_sel = (
+                    "ticker,sim_date,predicted,tcs,rvol,gap_pct,"
+                    "tiered_pnl_r,scan_type,screener_pass"
+                )
+                while True:
+                    try:
+                        _rfc_batch = (
+                            supabase.table("backtest_sim_runs")
+                            .select(_rfc_cols_sel)
+                            .eq("user_id", _AUTH_USER_ID)
+                            .range(_rfc_off, _rfc_off + 999)
+                            .execute()
+                            .data or []
+                        )
+                    except Exception as _rfc_ex:
+                        st.error(f"Supabase fetch error: {_rfc_ex}")
+                        _rfc_batch = []
+                        break
+                    _rfc_raw.extend(_rfc_batch)
+                    if len(_rfc_batch) < 1000:
+                        break
+                    _rfc_off += 1000
+                # Deduplicate by (ticker, sim_date, predicted)
+                _rfc_dedup: dict = {}
+                for _rfc_r in _rfc_raw:
+                    if _rfc_r.get("tiered_pnl_r") is None:
+                        continue
+                    try:
+                        _rfc_v = float(_rfc_r["tiered_pnl_r"])
+                    except (TypeError, ValueError):
+                        continue
+                    if _rfc_v == _RFC_SENTINEL:
+                        continue
+                    _rfc_k = (
+                        _rfc_r.get("ticker"),
+                        _rfc_r.get("sim_date"),
+                        _rfc_r.get("predicted") or "",
+                    )
+                    _rfc_dedup[_rfc_k] = _rfc_r
+                st.session_state[_RFC_CACHE_KEY] = list(_rfc_dedup.values())
+            st.success(
+                f"Loaded {len(_rfc_raw):,} raw rows → "
+                f"**{len(st.session_state[_RFC_CACHE_KEY]):,}** unique trades after dedup"
+            )
+
+        _rfc_all = st.session_state.get(_RFC_CACHE_KEY, [])
+
+        if not _rfc_all:
+            st.info("Click **Load / Refresh Data** above to run the comparison.")
+        else:
+            _rfc_trading_days = len(set(r.get("sim_date", "") for r in _rfc_all if r.get("sim_date")))
+            _rfc_weeks = max(_rfc_trading_days / 5, 1)
+
+            # ── Filter functions ──────────────────────────────────────────────
+            def _rfc_passes_tcs(row, tcs_offset: int = 0) -> bool:
+                tcs = row.get("tcs")
+                return tcs is not None and float(tcs) >= _rfc_tcs_floor(row.get("predicted") or "") + tcs_offset
+
+            def _rfc_passes_rvol(row, rvol_min: float = 0.0) -> bool:
+                if rvol_min <= 0:
+                    return True
+                rvol = row.get("rvol")
+                return rvol is not None and float(rvol) >= rvol_min
+
+            def _rfc_passes_gap(row, gap_min: float = 0.0) -> bool:
+                if gap_min <= 0:
+                    return True
+                gap = row.get("gap_pct")
+                return gap is not None and abs(float(gap)) >= gap_min
+
+            def _rfc_passes_morning_tcs(row, morning_floor: int = 60) -> bool:
+                scan = (row.get("scan_type") or "morning").lower()
+                if "intraday" in scan:
+                    return True  # intraday uses global TCS floor — not morning gate
+                tcs = row.get("tcs")
+                return tcs is not None and float(tcs) >= morning_floor
+
+            def _rfc_passes_struct(row, token: str) -> bool:
+                return token in (row.get("predicted") or "").lower()
+
+            def _rfc_filter(rows, gap_min=0.0, rvol_min=0.0, tcs_offset=0,
+                            morning_floor=0, struct_token="", scan_only=""):
+                out = []
+                for r in rows:
+                    if not _rfc_passes_tcs(r, tcs_offset):
+                        continue
+                    if rvol_min > 0 and not _rfc_passes_rvol(r, rvol_min):
+                        continue
+                    if gap_min > 0 and not _rfc_passes_gap(r, gap_min):
+                        continue
+                    if morning_floor > 0 and not _rfc_passes_morning_tcs(r, morning_floor):
+                        continue
+                    if struct_token and not _rfc_passes_struct(r, struct_token):
+                        continue
+                    if scan_only:
+                        scan = (r.get("scan_type") or "morning").lower()
+                        if scan_only == "morning" and "intraday" in scan:
+                            continue
+                        if scan_only == "intraday" and "intraday" not in scan:
+                            continue
+                    out.append(r)
+                return out
+
+            # ── Stats computation ─────────────────────────────────────────────
+            def _rfc_stats(rows, label: str) -> dict | None:
+                if not rows:
+                    return None
+                vals = [float(r["tiered_pnl_r"]) for r in rows]
+                a = _rfc_np.array(vals, dtype=float)
+                n = len(a)
+                if n < 10:
+                    return None
+                wins = a[a > 0]
+                losses = a[a < 0]
+                wr = len(wins) / n * 100
+                avg = float(a.mean())
+                gw = float(wins.sum()) if len(wins) else 0.0
+                gl = abs(float(losses.sum())) if len(losses) else 0.0
+                pf = gw / gl if gl > 0 else float("inf")
+                shp = float(a.mean() / (a.std() + 1e-9) * _rfc_math.sqrt(52 * n / _rfc_weeks))
+                tpw = n / _rfc_weeks
+                wkly = avg * tpw
+                # MaxDD
+                peak = cum = maxdd = 0.0
+                for v in a:
+                    cum += v
+                    if cum > peak:
+                        peak = cum
+                    dd = peak - cum
+                    if dd > maxdd:
+                        maxdd = dd
+                return dict(
+                    label=label, n=n, wr=wr, avg_r=avg,
+                    aw=float(wins.mean()) if len(wins) else 0.0,
+                    al=float(losses.mean()) if len(losses) else 0.0,
+                    sharpe=shp, pf=pf, maxdd_r=maxdd, maxdd_usd=maxdd * 150,
+                    tpw=tpw, wkly_r=wkly, flat_usd_yr=wkly * 150 * 52,
+                )
+
+            # ── Compounding simulation ────────────────────────────────────────
+            def _rfc_compound(rows, start_eq=7000.0, base_1r=150.0, cap_x=20.0):
+                if not rows:
+                    return {}
+                sorted_rows = sorted(rows, key=lambda r: r.get("sim_date") or "")
+                all_dates = sorted(set(r.get("sim_date", "") for r in sorted_rows if r.get("sim_date")))
+                if not all_dates:
+                    return {}
+                start_dt_str = all_dates[0]
+                try:
+                    import datetime as _rfc_dt_inner
+                    start_dt = _rfc_dt_inner.date.fromisoformat(start_dt_str)
+                except Exception:
+                    return {}
+                eq = start_eq
+                eq_by_date: dict = {start_dt_str: eq}
+                by_date: dict = {}
+                for r in sorted_rows:
+                    d = r.get("sim_date", "")
+                    by_date.setdefault(d, []).append(float(r["tiered_pnl_r"]))
+                for d in all_dates:
+                    cf = min(eq / start_eq, cap_x)
+                    actual_1r = base_1r * cf
+                    for rv in by_date.get(d, []):
+                        eq += rv * actual_1r
+                    eq_by_date[d] = eq
+                # Snap equity at Y1/Y2/Y3/Y4
+                checkpoints = {}
+                for yr in [1, 2, 3, 4]:
+                    try:
+                        import datetime as _rfc_dt2
+                        tgt = (start_dt + _rfc_dt2.timedelta(days=yr * 365)).isoformat()
+                    except Exception:
+                        continue
+                    past = [d for d in all_dates if d <= tgt]
+                    if past:
+                        checkpoints[f"Y{yr}"] = eq_by_date.get(past[-1], start_eq)
+                checkpoints["Final"] = eq_by_date.get(all_dates[-1], eq)
+                n_yrs = _rfc_weeks / 52
+                cagr = ((checkpoints["Final"] / start_eq) ** (1 / n_yrs) - 1) * 100 if n_yrs > 0 else 0.0
+                return dict(checkpoints=checkpoints, cagr=cagr, final_eq=checkpoints["Final"])
+
+            # ── Build filter variants ─────────────────────────────────────────
+            # Union helper — dedup by id()
+            def _rfc_union(*lists):
+                seen, out = set(), []
+                for lst in lists:
+                    for r in lst:
+                        if id(r) not in seen:
+                            seen.add(id(r))
+                            out.append(r)
+                return out
+
+            _rfc_ntrl    = _rfc_filter(_rfc_all, struct_token="ntrl extreme")
+            _rfc_dbl     = _rfc_filter(_rfc_all, struct_token="dbl dist", gap_min=3.0, tcs_offset=5)
+            _rfc_neut    = _rfc_filter(_rfc_all, struct_token="neutral", gap_min=2.0)
+            _rfc_neut    = [r for r in _rfc_neut if "ntrl extreme" not in (r.get("predicted") or "").lower()]
+            _rfc_bull    = _rfc_filter(_rfc_all, struct_token="bullish break", gap_min=3.0)
+            _rfc_bear    = _rfc_filter(_rfc_all, struct_token="bearish break", gap_min=3.0)
+
+            _rfc_variants = [
+                # (label, rows)
+                ("Live Bot — no gap, RVOL≥1.0, Morning TCS≥60",
+                 _rfc_filter(_rfc_all, rvol_min=1.0, morning_floor=60)),
+                ("Live Bot + gap≥2%",
+                 _rfc_filter(_rfc_all, gap_min=2.0, rvol_min=1.0, morning_floor=60)),
+                ("All structs + gap≥2% (grid search baseline)",
+                 _rfc_filter(_rfc_all, gap_min=2.0)),
+                ("Ntrl Extreme only — no gap [opt]",
+                 _rfc_ntrl),
+                ("Dbl Dist only — gap≥3%, TCS+5 [opt]",
+                 _rfc_dbl),
+                ("Neutral only — gap≥2% [opt]",
+                 _rfc_neut),
+                ("Bullish Break — gap≥3% [opt]",
+                 _rfc_bull),
+                ("Bearish Break — gap≥3% [opt]",
+                 _rfc_bear),
+                ("Top 3: NE + Dbl Dist + Neutral [opt]",
+                 _rfc_union(_rfc_ntrl, _rfc_dbl, _rfc_neut)),
+                ("All 5 Optimized Portfolio [opt]",
+                 _rfc_union(_rfc_ntrl, _rfc_dbl, _rfc_neut, _rfc_bull, _rfc_bear)),
+            ]
+
+            # ── Compute stats + compounding for each variant ──────────────────
+            _rfc_table_rows = []
+            _rfc_cmp_results = {}
+            for _rfc_lbl, _rfc_vrows in _rfc_variants:
+                _s = _rfc_stats(_rfc_vrows, _rfc_lbl)
+                if not _s:
+                    continue
+                _c = _rfc_compound(_rfc_vrows)
+                _rfc_cmp_results[_rfc_lbl] = _c
+                _pfs = "∞" if _rfc_math.isinf(_s["pf"]) else f"{_s['pf']:.1f}"
+                _rfc_table_rows.append({
+                    "Filter Variant": _rfc_lbl,
+                    "N": _s["n"],
+                    "WR %": round(_s["wr"], 1),
+                    "Avg R": round(_s["avg_r"], 4),
+                    "Avg Win R": round(_s["aw"], 4),
+                    "Avg Loss R": round(_s["al"], 4),
+                    "Sharpe": round(_s["sharpe"], 2),
+                    "PF": _pfs,
+                    "MaxDD R": round(_s["maxdd_r"], 1),
+                    "MaxDD $": f"${_s['maxdd_usd']:,.0f}",
+                    "Trades/wk": round(_s["tpw"], 1),
+                    "Flat $/yr": f"${_s['flat_usd_yr']:,.0f}",
+                    "Comp CAGR": f"{_c.get('cagr', 0):.0f}%" if _c else "—",
+                    "Comp Y1": f"${_c['checkpoints'].get('Y1', 0):,.0f}" if _c and _c.get("checkpoints") else "—",
+                    "Comp Y2": f"${_c['checkpoints'].get('Y2', 0):,.0f}" if _c and _c.get("checkpoints") else "—",
+                    "Comp Y3": f"${_c['checkpoints'].get('Y3', 0):,.0f}" if _c and _c.get("checkpoints") else "—",
+                    "Comp Final": f"${_c.get('final_eq', 0):,.0f}" if _c else "—",
+                })
+
+            if _rfc_table_rows:
+                _rfc_df = _rfc_pd.DataFrame(_rfc_table_rows)
+                st.markdown("##### Side-by-Side Filter Comparison")
+                st.caption(
+                    f"Dataset: **{len(_rfc_all):,} unique trades** · {_rfc_trading_days} trading days "
+                    f"({_rfc_weeks:.0f} wks) · 1R = $150 · Compounding: $7k start, 20× cap ($3k max 1R)"
+                )
+                st.dataframe(_rfc_df.set_index("Filter Variant"), use_container_width=True)
+
+                # ── Compounding equity checkpoints detail ─────────────────────
+                st.markdown("##### Compounding Projections — Equity at Each Year")
+                st.caption(
+                    "Each row runs through trades chronologically, growing position size with equity. "
+                    "Position size capped at 20× starting risk ($3,000 max 1R). "
+                    "Y-columns show equity at approximately 1/2/3/4 years from start of dataset. "
+                    "⚠️ These numbers assume *every qualifying signal is taken* with no PDT limit, "
+                    "no missed days, and no slippage beyond the simulated bar-by-bar stops."
+                )
+                _rfc_comp_rows = []
+                for _rfc_lbl, _rfc_vrows in _rfc_variants:
+                    _c = _rfc_cmp_results.get(_rfc_lbl, {})
+                    if not _c:
+                        continue
+                    _ck = _c.get("checkpoints", {})
+                    _rfc_comp_rows.append({
+                        "Filter Variant": _rfc_lbl,
+                        "Start": "$7,000",
+                        "Y1": f"${_ck.get('Y1', 0):,.0f}",
+                        "Y2": f"${_ck.get('Y2', 0):,.0f}",
+                        "Y3": f"${_ck.get('Y3', 0):,.0f}",
+                        "Y4": f"${_ck.get('Y4', 0):,.0f}",
+                        "Full Period Final": f"${_c.get('final_eq', 0):,.0f}",
+                        "CAGR": f"{_c.get('cagr', 0):.0f}%",
+                    })
+                if _rfc_comp_rows:
+                    st.dataframe(
+                        _rfc_pd.DataFrame(_rfc_comp_rows).set_index("Filter Variant"),
+                        use_container_width=True,
+                    )
+
+                # ── Morning vs Intraday breakdown ─────────────────────────────
+                st.markdown("##### Morning vs Intraday Split (per variant)")
+                _rfc_split_rows = []
+                for _rfc_lbl, _rfc_vrows in _rfc_variants:
+                    _m = _rfc_stats(
+                        [r for r in _rfc_vrows if "intraday" not in (r.get("scan_type") or "morning").lower()],
+                        "morning"
+                    )
+                    _i = _rfc_stats(
+                        [r for r in _rfc_vrows if "intraday" in (r.get("scan_type") or "morning").lower()],
+                        "intraday"
+                    )
+                    _rfc_split_rows.append({
+                        "Filter Variant": _rfc_lbl,
+                        "Morning N": _m["n"] if _m else 0,
+                        "Morning WR": f"{_m['wr']:.1f}%" if _m else "—",
+                        "Morning AvgR": round(_m["avg_r"], 4) if _m else "—",
+                        "Morning Sharpe": round(_m["sharpe"], 2) if _m else "—",
+                        "Morning $/yr": f"${_m['flat_usd_yr']:,.0f}" if _m else "—",
+                        "Intraday N": _i["n"] if _i else 0,
+                        "Intraday WR": f"{_i['wr']:.1f}%" if _i else "—",
+                        "Intraday AvgR": round(_i["avg_r"], 4) if _i else "—",
+                        "Intraday Sharpe": round(_i["sharpe"], 2) if _i else "—",
+                        "Intraday $/yr": f"${_i['flat_usd_yr']:,.0f}" if _i else "—",
+                    })
+                st.dataframe(
+                    _rfc_pd.DataFrame(_rfc_split_rows).set_index("Filter Variant"),
+                    use_container_width=True,
+                )
+
+                st.info(
+                    "**Key insight:** The 20× compounding cap means your 1R grows from $150 → $3,000 "
+                    "once equity reaches $140k ($7k × 20). After that, each trade risks a fixed $3k. "
+                    "The CAGR percentages are real but front-loaded — the account compounds fastest "
+                    "in the early years when 85%+ WR applies to a small base. "
+                    "PDT restrictions, execution gaps, and multi-ticker concurrency limits will all "
+                    "slow real-world compounding vs. these theoretical maximums."
+                )
+
     # ── Exhaustive Grid Search — Phase 3 ─────────────────────────────────────
     with st.expander("🧬 Exhaustive Grid Search — Phase 3 (All IB Structure Combos + 9 New Dimensions)", expanded=False):
         import subprocess as _p3_sub
