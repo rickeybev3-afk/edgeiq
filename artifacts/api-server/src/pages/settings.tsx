@@ -605,6 +605,12 @@ export default function Settings() {
     error: null,
   });
 
+  const [archivePrune, setArchivePrune] = useState<{
+    pruning: boolean;
+    error: string | null;
+    pruned: boolean;
+  }>({ pruning: false, error: null, pruned: false });
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/backfill-heartbeat-window")
@@ -711,6 +717,23 @@ export default function Settings() {
   useEffect(() => {
     fetchArchiveRuns();
   }, []);
+
+  const handleArchivePrune = () => {
+    setArchivePrune({ pruning: true, error: null, pruned: false });
+    fetch("/api/archive-prune", { method: "POST", headers: getWriteHeaders() })
+      .then((r) => {
+        if (!r.ok) return r.json().then((d: { error?: string }) => { throw new Error(d?.error ?? `Server returned ${r.status}`); });
+        return r.json();
+      })
+      .then(() => {
+        setArchivePrune({ pruning: false, error: null, pruned: true });
+        fetchArchiveRuns();
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Pruning failed.";
+        setArchivePrune({ pruning: false, error: msg, pruned: false });
+      });
+  };
 
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealth>({ available: false, loading: true });
   const refetchBackfillHealth = useRef<() => void>(() => {});
@@ -3815,6 +3838,33 @@ export default function Settings() {
                         return `${archiveRuns.total} of ${archiveKeep.runs} runs · ${formatBytes(totalBytes)} total${pruneNote}`;
                       })()}
             </p>
+            {!archiveRuns.loading && !archiveRuns.error && !archiveKeep.loading && archiveRuns.total > archiveKeep.runs && (
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "14px" }}>
+                <button
+                  onClick={handleArchivePrune}
+                  disabled={archivePrune.pruning}
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    background: archivePrune.pruning ? "#374151" : "#dc2626",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "6px",
+                    cursor: archivePrune.pruning ? "not-allowed" : "pointer",
+                    opacity: archivePrune.pruning ? 0.6 : 1,
+                  }}
+                >
+                  {archivePrune.pruning ? "Pruning…" : "Prune now"}
+                </button>
+                {archivePrune.pruned && (
+                  <span style={{ fontSize: "12px", color: "#4ade80" }}>✓ Pruned successfully.</span>
+                )}
+                {archivePrune.error && (
+                  <span style={{ fontSize: "12px", color: "#f87171" }}>⚠ {archivePrune.error}</span>
+                )}
+              </div>
+            )}
             {!archiveRuns.loading && !archiveRuns.error && archiveRuns.runs.length > 0 && (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                 <thead>

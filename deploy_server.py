@@ -14,6 +14,7 @@ import base64
 import json
 import datetime
 import logging
+import shutil
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -739,6 +740,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/archive-keep":
             self._archive_keep_post()
+            return
+        if path == "/api/archive-prune":
+            self._archive_prune_post()
             return
         if path == "/api/rvol-size-tiers":
             self._rvol_size_tiers_post()
@@ -2524,6 +2528,63 @@ class Handler(http.server.BaseHTTPRequestHandler):
             prefs["archive_keep"] = runs
             _save_owner_prefs(prefs)
             body = json.dumps({"runs": runs, "source": "override"}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _archive_prune_post(self):
+        """Delete archive runs beyond the current retention limit immediately.
+
+        Reads the current archive_keep setting, lists grid_search_archive/ sorted
+        newest-first, and removes every directory beyond the limit using shutil.rmtree.
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        Response: {"deleted": [str], "kept": int, "freed_bytes": int}
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            prefs = _load_owner_prefs()
+            keep = int(prefs.get("archive_keep", _DEFAULT_ARCHIVE_KEEP))
+            archive_root = "grid_search_archive"
+            runs = []
+            if os.path.isdir(archive_root):
+                for entry in sorted(os.listdir(archive_root), reverse=True):
+                    entry_path = os.path.join(archive_root, entry)
+                    if os.path.isdir(entry_path):
+                        total_size = 0
+                        for dirpath, _dirnames, filenames in os.walk(entry_path):
+                            for fname in filenames:
+                                try:
+                                    total_size += os.path.getsize(os.path.join(dirpath, fname))
+                                except OSError:
+                                    pass
+                        runs.append((entry, entry_path, total_size))
+            to_delete = runs[keep:]
+            deleted = []
+            freed_bytes = 0
+            for name, path, size in to_delete:
+                try:
+                    shutil.rmtree(path)
+                    deleted.append(name)
+                    freed_bytes += size
+                except Exception:
+                    pass
+            body = json.dumps({"deleted": deleted, "kept": keep, "freed_bytes": freed_bytes}).encode()
             self.send_response(200)
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
