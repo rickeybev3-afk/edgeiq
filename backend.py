@@ -12660,7 +12660,7 @@ def get_mgmt_mode_ab_stats(
     try:
         q = (
             supabase.table("paper_trades")
-            .select("mgmt_mode,tiered_pnl_r")
+            .select("mgmt_mode,tiered_pnl_r,trade_date")
             .eq("user_id", user_id)
             .not_.is_("mgmt_mode", "null")
             .not_.is_("tiered_pnl_r", "null")
@@ -12682,14 +12682,17 @@ def get_mgmt_mode_ab_stats(
                 and float(r["tiered_pnl_r"]) != SENTINEL
             ]
             n = len(vals)
+            dates = [r["trade_date"] for r in arm_rows if r.get("trade_date")]
+            min_date = min(dates) if dates else None
             if n == 0:
-                return {"n": 0, "wins": 0, "wr_pct": None, "avg_r": None}
+                return {"n": 0, "wins": 0, "wr_pct": None, "avg_r": None, "min_date": min_date}
             wins = sum(1 for v in vals if v > 0)
             return {
-                "n":      n,
-                "wins":   wins,
-                "wr_pct": round(wins / n * 100, 1),
-                "avg_r":  round(sum(vals) / n, 3),
+                "n":        n,
+                "wins":     wins,
+                "wr_pct":   round(wins / n * 100, 1),
+                "avg_r":    round(sum(vals) / n, 3),
+                "min_date": min_date,
             }
 
         fixed_rows    = [r for r in rows if str(r.get("mgmt_mode", "")).lower() == "fixed"]

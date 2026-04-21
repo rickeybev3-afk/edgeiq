@@ -35996,13 +35996,19 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _MIN_ARM     = 10
 
         def _ab_arm_html(label: str, stats: dict, color: str) -> str:
-            n     = stats.get("n", 0)
-            wr    = stats.get("wr_pct")
-            avg_r = stats.get("avg_r")
+            n        = stats.get("n", 0)
+            wr       = stats.get("wr_pct")
+            avg_r    = stats.get("avg_r")
+            min_date = stats.get("min_date")
+            since_html = (
+                f'<div style="font-size:10px;color:#78909c;margin-top:2px;">since {min_date}</div>'
+                if min_date else ""
+            )
             if n < _MIN_ARM:
                 body = (
                     f'<div style="font-size:13px;color:#f9a825;margin-top:8px;">'
                     f'Collecting data (n={n} / need {_MIN_ARM})</div>'
+                    f'{since_html}'
                 )
             else:
                 wr_str   = f"{wr:.1f}%" if wr is not None else "—"
@@ -36022,6 +36028,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     f'<div>'
                     f'<div style="font-size:10px;color:#90a4ae;text-transform:uppercase;letter-spacing:1px;">Trades</div>'
                     f'<div style="font-size:20px;font-weight:700;color:#cfd8dc;">{n}</div>'
+                    f'{since_html}'
                     f'</div>'
                     f'</div>'
                 )
