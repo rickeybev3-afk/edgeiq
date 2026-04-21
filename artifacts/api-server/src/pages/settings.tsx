@@ -3978,8 +3978,23 @@ export default function Settings() {
                               {pruneCopied ? "copied!" : "copy"}
                             </button>
                             {pruneNamesExpanded && (
-                              <span style={{ display: "block", marginTop: "4px", fontFamily: "monospace", color: "#cbd5e1", whiteSpace: "pre-wrap", lineHeight: "1.6" }}>
-                                {archivePrune.deleted.join("\n")}
+                              <span style={{ display: "block", marginTop: "6px" }}>
+                                <span style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(archivePrune.deleted!.join("\n")).then(() => {
+                                        setPruneCopied(true);
+                                        setTimeout(() => setPruneCopied(false), 2000);
+                                      });
+                                    }}
+                                    style={{ background: "none", border: "none", color: pruneCopied ? "#4ade80" : "#86efac", fontSize: "11px", cursor: "pointer", textDecoration: "underline", padding: 0 }}
+                                  >
+                                    {pruneCopied ? "copied!" : "copy all"}
+                                  </button>
+                                </span>
+                                <span style={{ display: "block", fontFamily: "monospace", color: "#cbd5e1", whiteSpace: "pre-wrap", lineHeight: "1.6" }}>
+                                  {archivePrune.deleted.join("\n")}
+                                </span>
                               </span>
                             )}
                           </span>
