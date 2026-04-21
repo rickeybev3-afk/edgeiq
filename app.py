@@ -21415,8 +21415,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "features: TCS, gap%, follow-through, RVOL, entry hour."
             )
 
-            _fcr_tab1, _fcr_tab2, _fcr_tab3 = st.tabs(
-                ["🔗 Correlations", "🧩 Mutual Info", "⚡ Pair Interactions"]
+            _fcr_tab1, _fcr_tab2, _fcr_tab3, _fcr_tab4 = st.tabs(
+                ["🔗 Correlations", "🧩 Mutual Info", "⚡ Pair Interactions", "📈 Regime Breakdown"]
             )
 
             with _fcr_tab1:
@@ -21525,30 +21525,153 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 else:
                     st.info("No pairwise interaction data yet — run the correlation analysis.")
 
+            with _fcr_tab4:
+                _fcr_rbd = _fcr_report.get("regime_breakdown", {})
+                _fcr_rc  = _fcr_report.get("regime_counts", {})
+                if _fcr_rbd:
+                    st.caption(
+                        "Rows are labelled **bull / bear / neutral** based on the rolling 20-day "
+                        "win rate at each trade date. "
+                        "Bull ≥ 60 % win rate · Bear ≤ 40 % · Neutral = 40–60 %."
+                    )
+                    _fcr_regime_icons = {"bull": "🐂", "bear": "🐻", "neutral": "〰️"}
+                    _fcr_regime_colors = {
+                        "bull":    ("#e8f5e9", "#1b5e20"),
+                        "bear":    ("#fce4ec", "#b71c1c"),
+                        "neutral": ("#e3f2fd", "#0d47a1"),
+                    }
+                    for _rg_label in ("bull", "bear", "neutral"):
+                        _rg_data = _fcr_rbd.get(_rg_label, {})
+                        _rg_icon = _fcr_regime_icons.get(_rg_label, "")
+                        _rg_n    = _rg_data.get("n_rows", _fcr_rc.get(_rg_label, 0))
+                        _rg_bg, _rg_fg = _fcr_regime_colors[_rg_label]
+                        _rg_summ = _rg_data.get("win_loss_summary") or {}
+                        _rg_wr   = _rg_summ.get("win_rate", "—")
+                        _rg_avgr = _rg_summ.get("avg_r", "—")
+                        _rg_wr_str  = f"{_rg_wr:.1f}%" if isinstance(_rg_wr, (int, float)) else _rg_wr
+                        _rg_avgr_str = f"{_rg_avgr:+.4f}R" if isinstance(_rg_avgr, (int, float)) else _rg_avgr
+                        with st.expander(
+                            f"{_rg_icon} **{_rg_label.capitalize()} regime** — "
+                            f"{_rg_n:,} rows · Win rate: {_rg_wr_str} · Avg R: {_rg_avgr_str}",
+                            expanded=(_rg_label == "bull"),
+                        ):
+                            _rg_note = _rg_data.get("note")
+                            if _rg_note:
+                                st.warning(_rg_note)
+                                continue
+
+                            _rg_corr_data = _rg_data.get("top_correlations", [])
+                            _rg_mi_data   = _rg_data.get("top_mi", [])
+
+                            _rg_c1, _rg_c2 = st.columns(2)
+                            with _rg_c1:
+                                st.markdown("**Top features by |Spearman r|**")
+                                if _rg_corr_data:
+                                    _rg_corr_rows = []
+                                    for _rc in _rg_corr_data:
+                                        _rg_corr_rows.append({
+                                            "Feature":    _rc["feature"],
+                                            "Spearman r": f"{_rc['spearman_r']:+.4f}",
+                                            "|Spearman|": _rc["abs_spearman"],
+                                        })
+                                    _rg_corr_df = _fcr_pd.DataFrame(_rg_corr_rows)
+
+                                    def _rg_corr_color(row, bg=_rg_bg, fg=_rg_fg):
+                                        try:
+                                            v = abs(float(row["|Spearman|"]))
+                                        except (TypeError, ValueError):
+                                            v = 0.0
+                                        if v >= 0.08:
+                                            return [f"background-color:{bg}; color:{fg}"] * len(row)
+                                        return [""] * len(row)
+
+                                    st.dataframe(
+                                        _rg_corr_df.style.apply(_rg_corr_color, axis=1),
+                                        use_container_width=True, hide_index=True,
+                                    )
+
+                            with _rg_c2:
+                                st.markdown("**Top features by MI score**")
+                                if _rg_mi_data:
+                                    _rg_mi_rows = []
+                                    for _rank, _rm in enumerate(_rg_mi_data, 1):
+                                        _rg_mi_rows.append({
+                                            "#":        _rank,
+                                            "Feature":  _rm["feature"],
+                                            "MI Score": f"{_rm['mi_score']:.4f}",
+                                        })
+                                    _rg_mi_df = _fcr_pd.DataFrame(_rg_mi_rows)
+
+                                    def _rg_mi_color(row, bg=_rg_bg, fg=_rg_fg):
+                                        try:
+                                            v = float(str(row["MI Score"]))
+                                        except (TypeError, ValueError):
+                                            v = 0.0
+                                        if v >= 0.01:
+                                            return [f"background-color:{bg}; color:{fg}"] * len(row)
+                                        return [""] * len(row)
+
+                                    st.dataframe(
+                                        _rg_mi_df.style.apply(_rg_mi_color, axis=1),
+                                        use_container_width=True, hide_index=True,
+                                    )
+                else:
+                    st.info(
+                        "No regime breakdown data yet — run the correlation analysis. "
+                        "The regime tab shows which signals are predictive in bull vs bear vs neutral markets."
+                    )
+
         else:
             st.info("No correlation report yet — run the analysis below to generate it.")
 
         # ── Run Correlation Analysis button ───────────────────────────────────
-        _fcr_col1, _fcr_col2 = st.columns([1, 3])
+        _fcr_col1, _fcr_col2, _fcr_col3 = st.columns([1, 1, 2])
         with _fcr_col1:
             _fcr_run_btn = st.button(
                 "📊 Run Correlation Analysis",
                 key="fcr_run_btn",
-                help="Computes Pearson/Spearman, mutual information, and pairwise interaction gains. ~2 min.",
+                help="Computes Pearson/Spearman, mutual information, pairwise interactions, and regime breakdown. ~2 min.",
             )
         with _fcr_col2:
+            _fcr_regime_sel = st.selectbox(
+                "Regime filter",
+                options=["all", "bull", "bear", "neutral"],
+                index=0,
+                key="fcr_regime_sel",
+                help="'all' uses every row for the main analysis; selecting a regime restricts the "
+                     "Correlations / MI / Pairs tabs to that regime only. The Regime Breakdown tab "
+                     "always shows all three regimes side-by-side.",
+            )
+        with _fcr_col3:
             if _fcr_report:
+                _fcr_active_regime = _fcr_report.get("active_regime", "all")
+                _fcr_rc_disp = _fcr_report.get("regime_counts", {})
+                _rcd_bull    = _fcr_rc_disp.get("bull")
+                _rcd_bear    = _fcr_rc_disp.get("bear")
+                _rcd_neutral = _fcr_rc_disp.get("neutral")
+                _rcd_fmt = lambda v: f"{v:,}" if isinstance(v, int) else "?"
                 st.caption(
                     f"{_fcr_report.get('n_rows', 0):,} rows · "
-                    f"{_fcr_report.get('n_features', 0)} features analysed"
+                    f"{_fcr_report.get('n_features', 0)} features · "
+                    f"Regime: **{_fcr_active_regime}** · "
+                    f"bull={_rcd_fmt(_rcd_bull)} | "
+                    f"bear={_rcd_fmt(_rcd_bear)} | "
+                    f"neutral={_rcd_fmt(_rcd_neutral)}"
                 )
 
         if _fcr_run_btn:
-            with st.spinner("Running correlation analysis — fetching 85k rows and computing MI scores…"):
+            _fcr_cmd = ["python3", "filter_correlation_report.py"]
+            if _fcr_regime_sel and _fcr_regime_sel != "all":
+                _fcr_cmd += ["--regime", _fcr_regime_sel]
+            with st.spinner(
+                f"Running correlation analysis "
+                f"({'regime: ' + _fcr_regime_sel if _fcr_regime_sel != 'all' else 'all regimes'}) "
+                "— fetching rows and computing MI scores…"
+            ):
                 try:
                     import subprocess as _fcr_sub
                     _fcr_proc = _fcr_sub.run(
-                        ["python3", "filter_correlation_report.py"],
+                        _fcr_cmd,
                         capture_output=True, text=True, timeout=300,
                     )
                     if _fcr_proc.returncode == 0:

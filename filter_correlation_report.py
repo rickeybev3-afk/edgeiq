@@ -5,11 +5,18 @@ Fetches all backtest_sim_runs rows with tiered_pnl_r populated, then computes:
   (a) Pearson + Spearman correlation of each feature with tiered_pnl_r
   (b) Mutual information score of each feature vs win/loss (binary)
   (c) Pairwise interaction gain for the top-10 features by MI score
+  (d) Regime breakdown: per-regime (bull/bear/neutral) top correlations and MI
+
+Regime detection uses a rolling 20-trading-day win rate:
+  bull    — rolling win rate ≥ 60 %
+  bear    — rolling win rate ≤ 40 %
+  neutral — 40 – 60 % (choppy / sideways)
 
 Output: filter_correlation_report.json
 
 Usage:
-    python filter_correlation_report.py          # full history
+    python filter_correlation_report.py                        # full history, all regimes
+    python filter_correlation_report.py --regime bull          # bull-regime rows only
     python filter_correlation_report.py --start 2025-01-01 --end 2025-12-31
     python filter_correlation_report.py --top-pairs 20
 """
@@ -21,6 +28,8 @@ import json
 import math
 import argparse
 import logging
+import datetime as _dt
+from collections import defaultdict
 from datetime import datetime
 
 import numpy as np
@@ -81,6 +90,11 @@ FIELDS = ",".join(
 
 PAGE_SIZE = 1000
 
+# ── Regime thresholds ──────────────────────────────────────────────────────
+REGIME_WINDOW_DAYS  = 20   # rolling window size (trading days by date count)
+BULL_WIN_THRESHOLD  = 0.60 # rolling win rate ≥ this → bull
+BEAR_WIN_THRESHOLD  = 0.40 # rolling win rate ≤ this → bear
+
 # ── Descriptions ──────────────────────────────────────────────────────────
 FEATURE_DESC = {
     "tcs":                    "Trade Confidence Score",
@@ -138,6 +152,67 @@ def fetch_rows(sb, start_date, end_date):
     return rows
 
 
+# ── Regime detection ──────────────────────────────────────────────────────
+
+def _parse_date(s):
+    try:
+        return _dt.datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return _dt.date.min
+
+
+def assign_regimes(rows):
+    """Label every row with a market regime (bull / bear / neutral).
+
+    Regime is determined by the rolling REGIME_WINDOW_DAYS-day win rate:
+      bull    ≥ BULL_WIN_THRESHOLD
+      bear    ≤ BEAR_WIN_THRESHOLD
+      neutral otherwise
+
+    Returns a parallel list of regime strings.
+    """
+    dated = sorted(rows, key=lambda r: _parse_date(r.get("sim_date")))
+
+    # Map date → list of binary win values
+    date_wins = defaultdict(list)
+    for r in dated:
+        d = _parse_date(r.get("sim_date"))
+        pnl = r.get(TARGET_CONTINUOUS)
+        if pnl is not None:
+            try:
+                date_wins[d].append(1 if float(pnl) > 0 else 0)
+            except (TypeError, ValueError):
+                pass
+
+    sorted_dates = sorted(date_wins.keys())
+
+    # Build date → regime label using rolling window
+    date_to_regime = {}
+    for i, d in enumerate(sorted_dates):
+        start_i = max(0, i - REGIME_WINDOW_DAYS + 1)
+        window_wins = []
+        for wd in sorted_dates[start_i : i + 1]:
+            window_wins.extend(date_wins[wd])
+        if len(window_wins) < 10:
+            date_to_regime[d] = "neutral"
+            continue
+        wr = sum(window_wins) / len(window_wins)
+        if wr >= BULL_WIN_THRESHOLD:
+            date_to_regime[d] = "bull"
+        elif wr <= BEAR_WIN_THRESHOLD:
+            date_to_regime[d] = "bear"
+        else:
+            date_to_regime[d] = "neutral"
+
+    # Attach regime to each original row (preserve original ordering)
+    regimes = []
+    for r in rows:
+        d = _parse_date(r.get("sim_date"))
+        regimes.append(date_to_regime.get(d, "neutral"))
+
+    return regimes
+
+
 # ── Feature extraction ────────────────────────────────────────────────────
 
 def _safe_float(v):
@@ -158,9 +233,6 @@ def extract_arrays(rows):
     y_bin  = (y_cont > 0).astype(int)
 
     # Encode categoricals: structure group, sim_outcome bucket
-    _STRUCT_MAP = {
-        "trend":   1, "neutral": 0, "extreme": -1,
-    }
     def _struct_code(pred):
         p = (pred or "").lower()
         if any(t in p for t in ("bullish break", "bearish break")):
@@ -191,7 +263,6 @@ def extract_arrays(rows):
     X = np.zeros((n_rows, n_cols), dtype=float)
     for col in range(n_cols):
         col_data = X_raw[:, col]
-        valid_mask = np.array([v is not None for v in col_data])
         valid_vals = np.array([float(v) for v in col_data if v is not None], dtype=float)
         median = float(np.median(valid_vals)) if len(valid_vals) > 0 else 0.0
         for row in range(n_rows):
@@ -205,7 +276,6 @@ def extract_arrays(rows):
 def compute_correlations(X, feature_names, y_cont, y_bin):
     """Compute Pearson, Spearman, and point-biserial correlations per feature."""
     results = []
-    n = len(y_cont)
     for i, name in enumerate(feature_names):
         col = X[:, i]
         valid = np.isfinite(col)
@@ -216,7 +286,6 @@ def compute_correlations(X, feature_names, y_cont, y_bin):
         pearson_r, pearson_p = stats.pearsonr(xv, yv)
         spearman_r, spearman_p = stats.spearmanr(xv, yv)
 
-        # Point-biserial vs binary win/loss
         xv_bin, yv_bin = col[valid], y_bin[valid]
         pb_r, pb_p = stats.pointbiserialr(xv_bin, yv_bin)
 
@@ -310,18 +379,63 @@ def compute_pairwise_interactions(X, feature_names, y_bin, top_n=10, max_pairs=4
 # ── Summary statistics ────────────────────────────────────────────────────
 
 def compute_win_loss_summary(y_cont, y_bin):
-    wins  = y_cont[y_bin == 1]
+    wins   = y_cont[y_bin == 1]
     losses = y_cont[y_bin == 0]
     return {
-        "n_total":      int(len(y_cont)),
-        "n_wins":       int(len(wins)),
-        "n_losses":     int(len(losses)),
-        "win_rate":     round(float(np.mean(y_bin)) * 100, 2),
-        "avg_win_r":    round(float(np.mean(wins)),  4) if len(wins)   > 0 else 0.0,
-        "avg_loss_r":   round(float(np.mean(losses)), 4) if len(losses) > 0 else 0.0,
-        "avg_r":        round(float(np.mean(y_cont)), 4),
-        "total_r":      round(float(np.sum(y_cont)), 3),
+        "n_total":    int(len(y_cont)),
+        "n_wins":     int(len(wins)),
+        "n_losses":   int(len(losses)),
+        "win_rate":   round(float(np.mean(y_bin)) * 100, 2),
+        "avg_win_r":  round(float(np.mean(wins)),   4) if len(wins)   > 0 else 0.0,
+        "avg_loss_r": round(float(np.mean(losses)),  4) if len(losses) > 0 else 0.0,
+        "avg_r":      round(float(np.mean(y_cont)),  4),
+        "total_r":    round(float(np.sum(y_cont)),   3),
     }
+
+
+# ── Regime breakdown ──────────────────────────────────────────────────────
+
+def compute_regime_breakdown(rows, regimes, top_n=10):
+    """Return per-regime top correlations and MI scores.
+
+    Args:
+        rows:    full row list
+        regimes: parallel list of regime labels (same length as rows)
+        top_n:   how many top features to include per regime
+
+    Returns:
+        dict with keys 'bull', 'bear', 'neutral', each containing
+        n_rows, win_loss_summary, top_correlations, top_mi.
+    """
+    log.info("Computing regime breakdown…")
+    breakdown = {}
+    for label in ("bull", "bear", "neutral"):
+        subset = [r for r, reg in zip(rows, regimes) if reg == label]
+        n = len(subset)
+        log.info(f"  Regime '{label}': {n:,} rows")
+        if n < 50:
+            breakdown[label] = {
+                "n_rows": n,
+                "win_loss_summary": None,
+                "top_correlations": [],
+                "top_mi": [],
+                "note": f"Too few rows ({n}) for reliable analysis — need ≥ 50.",
+            }
+            continue
+
+        X, feature_names, y_cont, y_bin = extract_arrays(subset)
+        summary = compute_win_loss_summary(y_cont, y_bin)
+        corr    = compute_correlations(X, feature_names, y_cont, y_bin)
+        mi      = compute_mi(X, feature_names, y_bin)
+
+        breakdown[label] = {
+            "n_rows":           n,
+            "win_loss_summary": summary,
+            "top_correlations": corr[:top_n],
+            "top_mi":           mi[:top_n],
+        }
+
+    return breakdown
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
@@ -332,6 +446,10 @@ def main():
     )
     p.add_argument("--start",     metavar="YYYY-MM-DD", default=None)
     p.add_argument("--end",       metavar="YYYY-MM-DD", default=None)
+    p.add_argument("--regime",    choices=["bull", "bear", "neutral"], default=None,
+                   help="Filter to a single regime before computing correlations. "
+                        "When omitted, all regimes are included and a regime_breakdown "
+                        "section is added to the output.")
     p.add_argument("--top-pairs", type=int, default=10,
                    help="Top-N features to use in pairwise interaction analysis")
     p.add_argument("--max-pairs", type=int, default=45,
@@ -345,10 +463,33 @@ def main():
 
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    rows = fetch_rows(sb, args.start, args.end)
-    if len(rows) < 50:
-        log.error(f"Too few rows ({len(rows)}) to compute correlations.")
+    all_rows = fetch_rows(sb, args.start, args.end)
+    if len(all_rows) < 50:
+        log.error(f"Too few rows ({len(all_rows)}) to compute correlations.")
         sys.exit(1)
+
+    # Assign regimes to the full dataset (needed for breakdown even when filtering)
+    log.info("Assigning market regimes…")
+    all_regimes = assign_regimes(all_rows)
+    regime_counts = {lbl: all_regimes.count(lbl) for lbl in ("bull", "bear", "neutral")}
+    log.info(f"  Regime distribution: {regime_counts}")
+
+    # Compute regime breakdown from the full dataset
+    regime_breakdown = compute_regime_breakdown(all_rows, all_regimes)
+
+    # If a specific regime is requested, filter the working set
+    if args.regime:
+        log.info(f"Filtering to '{args.regime}' regime only…")
+        rows = [r for r, reg in zip(all_rows, all_regimes) if reg == args.regime]
+        if len(rows) < 50:
+            log.error(
+                f"Too few '{args.regime}' rows ({len(rows)}) after regime filter. "
+                "Run without --regime for a full-history report."
+            )
+            sys.exit(1)
+        log.info(f"  Using {len(rows):,} '{args.regime}' rows for main analysis.")
+    else:
+        rows = all_rows
 
     log.info("Extracting feature arrays…")
     X, feature_names, y_cont, y_bin = extract_arrays(rows)
@@ -373,14 +514,17 @@ def main():
     }
 
     report = {
-        "run_at":        datetime.utcnow().isoformat() + "Z",
-        "date_range":    date_range,
-        "n_rows":        len(rows),
-        "n_features":    len(feature_names),
-        "win_loss_summary": summary,
-        "correlations":  correlations,
-        "mi_scores":     mi_scores,
+        "run_at":              datetime.utcnow().isoformat() + "Z",
+        "date_range":          date_range,
+        "active_regime":       args.regime or "all",
+        "regime_counts":       regime_counts,
+        "n_rows":              len(rows),
+        "n_features":          len(feature_names),
+        "win_loss_summary":    summary,
+        "correlations":        correlations,
+        "mi_scores":           mi_scores,
         "pairwise_interactions": pairs,
+        "regime_breakdown":    regime_breakdown,
     }
 
     with open(args.out, "w") as f:
@@ -388,10 +532,16 @@ def main():
 
     log.info(f"Report written to {args.out}")
     log.info(f"  Rows: {len(rows):,} | Win rate: {summary['win_rate']:.1f}%")
+    log.info(f"  Regime filter: {args.regime or 'none (all)'}")
     log.info(f"  Top correlation (Spearman): {correlations[0]['feature']} = {correlations[0]['spearman_r']}")
     log.info(f"  Top MI feature: {mi_scores[0]['feature']} = {mi_scores[0]['mi_score']:.4f}")
     if pairs:
-        log.info(f"  Top interaction pair: ({pairs[0]['feature_a']}, {pairs[0]['feature_b']}) gain={pairs[0]['interaction_gain']:.4f}")
+        log.info(
+            f"  Top interaction pair: ({pairs[0]['feature_a']}, {pairs[0]['feature_b']}) "
+            f"gain={pairs[0]['interaction_gain']:.4f}"
+        )
+    log.info(f"  Regime breakdown: bull={regime_counts['bull']:,} | "
+             f"bear={regime_counts['bear']:,} | neutral={regime_counts['neutral']:,}")
 
 
 if __name__ == "__main__":
