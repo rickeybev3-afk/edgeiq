@@ -36041,56 +36041,76 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 f'</div>'
             )
 
-        _ab_fixed_html    = _ab_arm_html("🔒 Fixed Bracket", _ab_fixed, "#5c9bd4")
-        _ab_adaptive_html = _ab_arm_html("⚡ Adaptive Bracket", _ab_adaptive, "#66bb6a")
+        _ab_fixed_n    = _ab_fixed.get("n", 0)
+        _ab_adaptive_n = _ab_adaptive.get("n", 0)
 
-        if _ab_delta is not None:
-            _dwr   = _ab_delta["wr_pct"]
-            _dr    = _ab_delta["avg_r"]
-            _dwr_c = "#66bb6a" if _dwr > 0 else ("#ef9a9a" if _dwr < 0 else "#90a4ae")
-            _dr_c  = "#66bb6a" if _dr  > 0 else ("#ef9a9a" if _dr  < 0 else "#90a4ae")
-            _delta_html = (
-                f'<div style="background:#111e2a;border:1px solid #37474f;'
-                f'border-radius:8px;padding:10px 14px;margin-top:10px;">'
-                f'<div style="font-size:10px;color:#90a4ae;text-transform:uppercase;'
-                f'letter-spacing:1px;margin-bottom:6px;">Δ Adaptive − Fixed</div>'
-                f'<div style="display:flex;gap:24px;">'
-                f'<div><span style="font-size:10px;color:#90a4ae;">ΔWR%&nbsp;</span>'
-                f'<span style="font-size:15px;font-weight:700;color:{_dwr_c};">'
-                f'{"+" if _dwr > 0 else ""}{_dwr:.1f}pp</span></div>'
-                f'<div><span style="font-size:10px;color:#90a4ae;">ΔAvg R&nbsp;</span>'
-                f'<span style="font-size:15px;font-weight:700;color:{_dr_c};">'
-                f'{"+" if _dr > 0 else ""}{_dr:.3f}R</span></div>'
-                f'</div></div>'
+        if _ab_fixed_n == 0 and _ab_adaptive_n == 0:
+            st.markdown(
+                f'<div style="background:#0a1520;border:1px solid #263238;'
+                f'border-radius:10px;padding:14px 18px;margin-bottom:14px;">'
+                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1.5px;'
+                f'text-transform:uppercase;font-weight:700;margin-bottom:10px;">'
+                f'🔬 Mgmt Mode A/B — Adaptive vs Fixed Bracket'
+                f'<span style="font-size:10px;font-weight:400;color:#546e7a;margin-left:8px;">({_ab_range_label})</span></div>'
+                f'<div style="background:#111e2a;border:1px solid #37474f;border-radius:8px;'
+                f'padding:14px 16px;display:flex;align-items:center;gap:10px;">'
+                f'<span style="font-size:18px;">📭</span>'
+                f'<span style="font-size:13px;color:#90a4ae;">'
+                f'No trades recorded in this period — <span style="color:#cfd8dc;">{_ab_range_label}</span>'
+                f'</span></div></div>',
+                unsafe_allow_html=True,
             )
         else:
-            _fn = _ab_fixed.get("n", 0)
-            _an = _ab_adaptive.get("n", 0)
-            _fn_str = f"n={_fn}" if _fn < _MIN_ARM else f"✓ n={_fn}"
-            _an_str = f"n={_an}" if _an < _MIN_ARM else f"✓ n={_an}"
-            _delta_html = (
-                f'<div style="background:#111e2a;border:1px solid #37474f;'
-                f'border-radius:8px;padding:10px 14px;margin-top:10px;">'
-                f'<div style="font-size:11px;color:#f9a825;">'
-                f'Delta row unlocks when both arms reach {_MIN_ARM} trades — '
-                f'Fixed {_fn_str} · Adaptive {_an_str}</div>'
-                f'</div>'
-            )
+            _ab_fixed_html    = _ab_arm_html("🔒 Fixed Bracket", _ab_fixed, "#5c9bd4")
+            _ab_adaptive_html = _ab_arm_html("⚡ Adaptive Bracket", _ab_adaptive, "#66bb6a")
 
-        st.markdown(
-            f'<div style="background:#0a1520;border:1px solid #263238;'
-            f'border-radius:10px;padding:14px 18px;margin-bottom:14px;">'
-            f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1.5px;'
-            f'text-transform:uppercase;font-weight:700;margin-bottom:10px;">'
-            f'🔬 Mgmt Mode A/B — Adaptive vs Fixed Bracket'
-            f'<span style="font-size:10px;font-weight:400;color:#546e7a;margin-left:8px;">({_ab_range_label})</span></div>'
-            f'<div style="display:flex;gap:10px;">'
-            f'{_ab_fixed_html}{_ab_adaptive_html}'
-            f'</div>'
-            f'{_delta_html}'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+            if _ab_delta is not None:
+                _dwr   = _ab_delta["wr_pct"]
+                _dr    = _ab_delta["avg_r"]
+                _dwr_c = "#66bb6a" if _dwr > 0 else ("#ef9a9a" if _dwr < 0 else "#90a4ae")
+                _dr_c  = "#66bb6a" if _dr  > 0 else ("#ef9a9a" if _dr  < 0 else "#90a4ae")
+                _delta_html = (
+                    f'<div style="background:#111e2a;border:1px solid #37474f;'
+                    f'border-radius:8px;padding:10px 14px;margin-top:10px;">'
+                    f'<div style="font-size:10px;color:#90a4ae;text-transform:uppercase;'
+                    f'letter-spacing:1px;margin-bottom:6px;">Δ Adaptive − Fixed</div>'
+                    f'<div style="display:flex;gap:24px;">'
+                    f'<div><span style="font-size:10px;color:#90a4ae;">ΔWR%&nbsp;</span>'
+                    f'<span style="font-size:15px;font-weight:700;color:{_dwr_c};">'
+                    f'{"+" if _dwr > 0 else ""}{_dwr:.1f}pp</span></div>'
+                    f'<div><span style="font-size:10px;color:#90a4ae;">ΔAvg R&nbsp;</span>'
+                    f'<span style="font-size:15px;font-weight:700;color:{_dr_c};">'
+                    f'{"+" if _dr > 0 else ""}{_dr:.3f}R</span></div>'
+                    f'</div></div>'
+                )
+            else:
+                _fn = _ab_fixed.get("n", 0)
+                _an = _ab_adaptive.get("n", 0)
+                _fn_str = f"n={_fn}" if _fn < _MIN_ARM else f"✓ n={_fn}"
+                _an_str = f"n={_an}" if _an < _MIN_ARM else f"✓ n={_an}"
+                _delta_html = (
+                    f'<div style="background:#111e2a;border:1px solid #37474f;'
+                    f'border-radius:8px;padding:10px 14px;margin-top:10px;">'
+                    f'<div style="font-size:11px;color:#f9a825;">'
+                    f'Delta row unlocks when both arms reach {_MIN_ARM} trades — '
+                    f'Fixed {_fn_str} · Adaptive {_an_str}</div>'
+                    f'</div>'
+                )
+
+            st.markdown(
+                f'<div style="background:#0a1520;border:1px solid #263238;'
+                f'border-radius:10px;padding:14px 18px;margin-bottom:14px;">'
+                f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1.5px;'
+                f'text-transform:uppercase;font-weight:700;margin-bottom:10px;">'
+                f'🔬 Mgmt Mode A/B — Adaptive vs Fixed Bracket'
+                f'<span style="font-size:10px;font-weight:400;color:#546e7a;margin-left:8px;">({_ab_range_label})</span></div>'
+                f'<div style="display:flex;gap:10px;">'
+                f'{_ab_fixed_html}{_ab_adaptive_html}'
+                f'</div>'
+                f'{_delta_html}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
     except ValueError as _ab_err:
         if str(_ab_err) != "invalid_range":
             st.caption(f"A/B card unavailable: {_ab_err}")
