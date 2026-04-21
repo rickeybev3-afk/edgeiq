@@ -613,6 +613,10 @@ def _load_filter_config() -> dict:
         follow_min_pct    float — follow_thru_pct must be >= this (default -999 = off)
         struct_filter     str   — "all"|"neutral"|"trend"|"extreme"|"no_extreme" (default "all")
         excl_false_break  bool  — skip rows with false_break_up or false_break_down (default False)
+        pm_range_floor    float — pm_range_pct must be >= this % (0 = off, default 0)
+        pm_ib_dir         str   — "any"|"bullish_accepted"|"bearish_accepted" (default "any")
+                                  bullish_accepted: pm_ib_high > prev_day_ib_high
+                                  bearish_accepted: pm_ib_low  < prev_day_ib_low
 
     Falls back to all-permissive defaults when the file is absent or unreadable,
     preserving full backward compatibility.
@@ -948,6 +952,8 @@ def _enrich_with_ib_context(results: list, trade_date_str: str) -> None:
         r["prev_ib_low"]       = round(prev_ib_low,  4) if prev_ib_low  else None
         r["pm_range_pct"]      = round(pm_range_pct, 4) if pm_range_pct else None
         r["ib_vs_prev_ib_pct"] = ib_vs_prev_ib_pct
+        r["_pm_ib_high"]       = pm_high   # in-memory only; used by filter_config PM-IB direction gate
+        r["_pm_ib_low"]        = pm_low    # in-memory only; used by filter_config PM-IB direction gate
 
         _delta = _ib_context_score_delta(
             today_ib_range=today_ib_range,
@@ -1675,6 +1681,81 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             )
             _patch_skip_reason(r, ticker, "filter_config_false_break")
             return
+
+        # 6. PM range floor
+        # Mirrors filter_grid_search: fail when filter is active AND data is None.
+        _flt_pm_range_floor = float(_flt_cfg.get("pm_range_floor", 0.0))
+        if _flt_pm_range_floor > 0:
+            _flt_pm_rng_v = r.get("pm_range_pct")
+            if _flt_pm_rng_v is None or float(_flt_pm_rng_v) < _flt_pm_range_floor:
+                _flt_pm_rng_desc = (
+                    f"pm_range_pct {float(_flt_pm_rng_v):.2f}% < {_flt_pm_range_floor}%"
+                    if _flt_pm_rng_v is not None
+                    else "pm_range_pct data unavailable"
+                )
+                log.info(f"  [{ticker}] filter_config skip — PM range too narrow: {_flt_pm_rng_desc}")
+                tg_send(
+                    f"⛔ <b>{ticker} Filtered — PM range too narrow</b>\n"
+                    + (
+                        f"PM range <b>{float(_flt_pm_rng_v):.2f}%</b> < floor <b>{_flt_pm_range_floor}%</b>"
+                        if _flt_pm_rng_v is not None
+                        else f"PM range data unavailable, floor={_flt_pm_range_floor}%"
+                    )
+                )
+                _patch_skip_reason(r, ticker, "filter_config_pm_range")
+                return
+
+        # 7. PM IB direction
+        # Mirrors filter_grid_search: bullish_accepted → pm_ib_high > prev_day_ib_high;
+        #                              bearish_accepted → pm_ib_low  < prev_day_ib_low.
+        # Data unavailable → pass through (defensive, same as existing PM_IB_FILTER gate).
+        _flt_pm_ib_dir = str(_flt_cfg.get("pm_ib_dir", "any"))
+        if _flt_pm_ib_dir != "any":
+            # Prefer data cached in r by IB context enrichment to avoid double-fetching.
+            _flt_pm_hi     = r.get("_pm_ib_high")
+            _flt_pm_lo     = r.get("_pm_ib_low")
+            _flt_prev_hi   = r.get("prev_ib_high")
+            _flt_prev_lo   = r.get("prev_ib_low")
+            # Fall back to live fetch when IB_CONTEXT_ENABLED=0 (enrichment didn't run).
+            if _flt_pm_hi is None or _flt_prev_hi is None:
+                _flt_today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+                _flt_open_px   = float(r.get("open_price") or r.get("entry_price_sim") or 0)
+                _, _flt_pm_hi, _flt_pm_lo = _fetch_premarket_range(ticker, _flt_today_str, _flt_open_px)
+                _flt_prev_hi, _flt_prev_lo = _fetch_prev_ib(ticker, _flt_today_str)
+            _flt_pm_data_ok = (
+                _flt_pm_hi is not None and float(_flt_pm_hi) > 0
+                and _flt_prev_hi is not None
+                and float(_flt_prev_hi) > float(_flt_prev_lo or 0) > 0
+            )
+            if _flt_pm_data_ok:
+                _flt_pm_hi_f   = float(_flt_pm_hi)
+                _flt_pm_lo_f   = float(_flt_pm_lo or 0)
+                _flt_prev_hi_f = float(_flt_prev_hi)
+                _flt_prev_lo_f = float(_flt_prev_lo or 0)
+                if _flt_pm_ib_dir == "bullish_accepted":
+                    _flt_pm_dir_pass = _flt_pm_hi_f > _flt_prev_hi_f
+                elif _flt_pm_ib_dir == "bearish_accepted":
+                    _flt_pm_dir_pass = _flt_pm_lo_f < _flt_prev_lo_f
+                else:
+                    _flt_pm_dir_pass = True
+                if not _flt_pm_dir_pass:
+                    log.info(
+                        f"  [{ticker}] filter_config skip — PM direction mismatch "
+                        f"(pm_ib_dir={_flt_pm_ib_dir}, "
+                        f"pm_hi={_flt_pm_hi_f:.2f}, pm_lo={_flt_pm_lo_f:.2f}, "
+                        f"prev_ib_h={_flt_prev_hi_f:.2f}, prev_ib_l={_flt_prev_lo_f:.2f})"
+                    )
+                    tg_send(
+                        f"⛔ <b>{ticker} Filtered — PM direction mismatch</b>\n"
+                        f"Optimizer requires PM IB dir <b>{_flt_pm_ib_dir}</b>.\n"
+                        f"PM: {_flt_pm_lo_f:.2f}–{_flt_pm_hi_f:.2f} | Prior IB: {_flt_prev_lo_f:.2f}–{_flt_prev_hi_f:.2f}"
+                    )
+                    _patch_skip_reason(r, ticker, "filter_config_pm_ib_dir")
+                    return
+            else:
+                log.debug(
+                    f"  [{ticker}] filter_config PM-IB dir check: data unavailable — passing through"
+                )
 
     # ── P-tier position-size multiplier ───────────────────────────────────────
     # Stack on top of IB-range mult: P3 (morning 70+) → 1.50×; P1 (intraday 70+)
