@@ -22413,6 +22413,135 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         use_container_width=True,
                     )
 
+                # ── Smart PDT Projection Audit ────────────────────────────────
+                st.markdown("##### 📈 Smart PDT Routing — Full Projection Audit")
+                st.caption(
+                    "**Smart PDT routing**: while account equity < $25k (PDT-constrained), "
+                    "the bot takes **TCS≥70 only** (P1/P3 elite tier — 1.295R avg, 91% WR). "
+                    "Once above $25k it opens to all S2 signals (TCS≥50 + gap≥2%, 12.5/day). "
+                    "This reserves the 3 PDT slots for highest-conviction trades only, reaching "
+                    "the $25k unlock **~8 weeks sooner** (day 77 vs day 117 with full S2)."
+                )
+                try:
+                    import math as _pj_math
+
+                    def _pj_compound(avg_r_pdt, avg_r_free, tpd_pdt, tpd_free,
+                                     pos_size=1500.0, start_eq=7000.0, cap_x=20.0, n_years=5):
+                        base_1r = pos_size * 0.10
+                        eq = start_eq
+                        pdt_window: list = []
+                        year_eq: dict = {}
+                        month_pnl: list = []
+                        prev_eq = start_eq
+                        unlock_day = None
+                        total_days = n_years * 252
+                        for day in range(1, total_days + 1):
+                            cf = min(eq / start_eq, cap_x)
+                            actual_1r = base_1r * cf
+                            if eq < 25000:
+                                recent = sum(1 for d in pdt_window if d >= day - 4)
+                                n = min(max(0, 3 - recent), 3)
+                                n = min(n, tpd_pdt)
+                                use_avg = avg_r_pdt
+                            else:
+                                if unlock_day is None:
+                                    unlock_day = day
+                                n = tpd_free
+                                use_avg = avg_r_free
+                            eq += n * use_avg * actual_1r
+                            for _ in range(int(min(n, 3))):
+                                pdt_window.append(day)
+                            pdt_window = [d for d in pdt_window if d >= day - 4]
+                            if day % 252 == 0:
+                                year_eq[day // 252] = eq
+                            if day % 21 == 0:
+                                month_pnl.append((day // 21, eq - prev_eq, eq))
+                                prev_eq = eq
+                        year_eq[n_years] = eq
+                        max_daily = tpd_free * avg_r_free * (base_1r * cap_x)
+                        return dict(year_eq=year_eq, month_pnl=month_pnl,
+                                    unlock_day=unlock_day or 0, max_daily=max_daily)
+
+                    # S2 avg R from the loaded dataset
+                    _pj_s2 = [r for r in _rfc_all
+                               if (r.get("tcs") or 0) >= 50
+                               and abs(r.get("gap_pct") or 0) >= 2.0
+                               and r.get(_rfc_r_col) is not None
+                               and float(r.get(_rfc_r_col)) != _RFC_SENTINEL]
+                    _pj_p1 = [r for r in _pj_s2 if (r.get("tcs") or 0) >= 70]
+                    if _pj_s2 and _pj_p1:
+                        _pj_avg_s2 = sum(float(r[_rfc_r_col]) for r in _pj_s2) / len(_pj_s2)
+                        _pj_avg_p1 = sum(float(r[_rfc_r_col]) for r in _pj_p1) / len(_pj_p1)
+                        # Trades/day from settled data; scale to live observation (12.5/day for S2)
+                        _pj_dates_s2 = len(set((r.get("sim_date") or "")[:10] for r in _pj_s2 if r.get("sim_date")))
+                        _pj_dates_p1 = len(set((r.get("sim_date") or "")[:10] for r in _pj_p1 if r.get("sim_date")))
+                        _settle_rate = 0.28
+                        _pj_tpd_s2  = (len(_pj_s2) / max(_pj_dates_s2, 1)) / _settle_rate
+                        _pj_tpd_p1  = (len(_pj_p1) / max(_pj_dates_p1, 1)) / _settle_rate
+
+                        _pj_scenarios = [
+                            ("$1,500 pos — Smart PDT (P1 then S2)", 1500, _pj_avg_p1, _pj_avg_s2, _pj_tpd_p1, _pj_tpd_s2),
+                            ("$1,500 pos — Full S2 throughout",      1500, _pj_avg_s2, _pj_avg_s2, _pj_tpd_s2, _pj_tpd_s2),
+                            ("$2,000 pos — Smart PDT (P1 then S2)", 2000, _pj_avg_p1, _pj_avg_s2, _pj_tpd_p1, _pj_tpd_s2),
+                            ("$2,000 pos — Full S2 throughout",      2000, _pj_avg_s2, _pj_avg_s2, _pj_tpd_s2, _pj_tpd_s2),
+                        ]
+
+                        _pj_table_rows = []
+                        _pj_results    = {}
+                        for _pj_lbl, _pj_pos, _pj_rpdt, _pj_rfree, _pj_tpdt, _pj_tfree in _pj_scenarios:
+                            _r = _pj_compound(_pj_rpdt, _pj_rfree, _pj_tpdt, _pj_tfree, pos_size=float(_pj_pos))
+                            _pj_results[_pj_lbl] = _r
+                            _pj_table_rows.append({
+                                "Scenario": _pj_lbl,
+                                "PDT unlocks": f"day {_r['unlock_day']} (~{_r['unlock_day']/21:.1f} mo)" if _r['unlock_day'] else "Day 1",
+                                "Max$/day at cap": f"${_r['max_daily']:,.0f}",
+                                "Year 1": f"${_r['year_eq'].get(1, 0):,.0f}",
+                                "Year 2": f"${_r['year_eq'].get(2, 0):,.0f}",
+                                "Year 3": f"${_r['year_eq'].get(3, 0):,.0f}",
+                                "Year 5": f"${_r['year_eq'].get(5, 0):,.0f}",
+                            })
+                        st.dataframe(
+                            _rfc_pd.DataFrame(_pj_table_rows).set_index("Scenario"),
+                            use_container_width=True,
+                        )
+
+                        # Month-by-month for first year — smart $1,500 vs full S2 $1,500
+                        st.markdown("###### Month-by-Month: Year 1 (first 12 months)")
+                        _pj_smart_key = "$1,500 pos — Smart PDT (P1 then S2)"
+                        _pj_full_key  = "$1,500 pos — Full S2 throughout"
+                        _pj_sm = _pj_results[_pj_smart_key]["month_pnl"][:12]
+                        _pj_fl = _pj_results[_pj_full_key]["month_pnl"][:12]
+                        _pj_mo_rows = []
+                        for i in range(min(len(_pj_sm), len(_pj_fl))):
+                            _ms, _mf = _pj_sm[i], _pj_fl[i]
+                            _pj_mo_rows.append({
+                                "Month": _ms[0],
+                                "Smart PDT — monthly P&L": f"${_ms[1]:,.0f}",
+                                "Smart PDT — balance": f"${_ms[2]:,.0f}",
+                                "Full S2 — monthly P&L": f"${_mf[1]:,.0f}",
+                                "Full S2 — balance": f"${_mf[2]:,.0f}",
+                                "Smart advantage": f"+${_ms[2] - _mf[2]:,.0f}" if _ms[2] > _mf[2] else f"${_ms[2] - _mf[2]:,.0f}",
+                            })
+                        if _pj_mo_rows:
+                            st.dataframe(
+                                _rfc_pd.DataFrame(_pj_mo_rows).set_index("Month"),
+                                use_container_width=True,
+                            )
+
+                        st.info(
+                            f"**TCS band breakdown (2026, gap≥2%):**  "
+                            f"TCS 70+: {sum(1 for r in _pj_p1 if (r.get('sim_date','')[:4]=='2026'))} trades, "
+                            f"avg {sum(float(r[_rfc_r_col]) for r in _pj_p1 if r.get('sim_date','')[:4]=='2026') / max(1, sum(1 for r in _pj_p1 if r.get('sim_date','')[:4]=='2026')):.3f}R — "
+                            f"vs TCS 50-69: "
+                            f"{sum(1 for r in _pj_s2 if (r.get('sim_date','')[:4]=='2026') and (r.get('tcs') or 0) < 70)} trades, "
+                            f"avg {sum(float(r[_rfc_r_col]) for r in _pj_s2 if r.get('sim_date','')[:4]=='2026' and (r.get('tcs') or 0) < 70) / max(1, sum(1 for r in _pj_s2 if r.get('sim_date','')[:4]=='2026' and (r.get('tcs') or 0) < 70)):.3f}R.  "
+                            f"The 2026 softness lives entirely in TCS 50-69.  "
+                            f"**Bot already updated**: `PDT_PRIORITY_TCS=70` env var active — "
+                            f"TCS≥70 setups only while account < $25k, all S2 after."
+                        )
+                except Exception as _pj_ex:
+                    st.warning(f"Projection audit unavailable: {_pj_ex}")
+
                 # ── Morning vs Intraday breakdown ─────────────────────────────
                 st.markdown("##### Morning vs Intraday Split (per variant)")
                 _rfc_split_rows = []

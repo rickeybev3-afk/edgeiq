@@ -33,6 +33,10 @@ Optional env vars:
                                  covers (default: 60)
   PAPER_CLOSE_LOOKBACK_DAYS    — how many calendar days the nightly paper-trades close-price sweep
                                  covers (default: 60); tune independently of the backtest sweep
+  PDT_PRIORITY_TCS           — TCS floor applied only while account equity < $25k (default: 70).
+                                 When PDT is active, only setups with TCS >= this value are traded.
+                                 TCS≥70 (P1/P3 elite tier) avg 1.295R / 91% WR vs TCS<70 0.680R / 82%.
+                                 Unlocks PDT ~8 weeks sooner. Set to 0 to disable.
 """
 
 import os
@@ -290,6 +294,11 @@ MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", _default_po
 PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
 # Cooldown between repeated PDT floor warnings (seconds) — default 4 hours
 PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
+# PDT quality gate: while equity < $25k, only spend PDT slots on TCS >= this value.
+# TCS≥70 (P1/P3 elite tier): 1.295R avg, 91.4% WR — vs TCS<70: 0.680R avg, 81.9% WR.
+# Prioritising elite setups during the PDT phase reaches the $25k unlock ~8 weeks sooner
+# and adds ~$1.4M to Year-1 compounding vs running all S2 signals.  Set to 0 to disable.
+PDT_PRIORITY_TCS         = int(os.getenv("PDT_PRIORITY_TCS", "70"))
 # Slippage tolerance: if price has just crossed the IB level by ≤ this many %,
 # switch to a market-order entry instead of skipping.  This handles the "price
 # is $0.01 above IB high" case — the breakout just happened, fill at market.
@@ -1422,6 +1431,32 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         else:
             log.info(f"  [{ticker}] PDT block alert suppressed — already sent today")
         _patch_skip_reason(r, ticker, "pdt_blocked")
+        return
+
+    # ── PDT quality gate (live, sub-$25k only) ────────────────────────────────
+    # While PDT is in effect but not yet exhausted, reserve the limited 3-per-5-day
+    # slots exclusively for TCS≥PDT_PRIORITY_TCS (P1/P3 elite tier).
+    #
+    # Data backing (4.9yr settled backtest, S2 universe, gap≥2%):
+    #   TCS≥70 (P1/P3): 1.295R avg, 91.4% WR — elite
+    #   TCS<70  (P2/P4): 0.680R avg, 81.9% WR — good but lower edge
+    #   In 2026 specifically: TCS≥70 = 1.160R/96.6% WR vs TCS 60-69 = 0.348R/71.3%
+    #
+    # Using only TCS≥70 during the PDT phase reaches the $25k unlock ~8 weeks sooner
+    # (day 77 vs day 117) and adds ~$1.4M to Year-1 compounding.  Once the account
+    # clears $25k this gate is disabled and all qualifying S2 signals are taken.
+    if _pdt_in_effect and PDT_PRIORITY_TCS > 0 and _tcs_val < PDT_PRIORITY_TCS:
+        log.info(
+            f"  [{ticker}] PDT quality gate — TCS {_tcs_val:.0f} < PDT_PRIORITY_TCS {PDT_PRIORITY_TCS} "
+            f"(acct sub-$25k, reserving PDT slots for TCS≥{PDT_PRIORITY_TCS} elite tier only)"
+        )
+        tg_send(
+            f"⏭ <b>{ticker} Deferred — PDT Quality Gate</b>\n"
+            f"TCS <b>{_tcs_val:.0f}</b> &lt; PDT priority floor <b>{PDT_PRIORITY_TCS}</b>\n"
+            f"Reserving PDT slots for TCS≥{PDT_PRIORITY_TCS} (P1/P3 elite) while acct &lt;$25k.\n"
+            f"Will trade all S2 signals freely once account clears $25k."
+        )
+        _patch_skip_reason(r, ticker, "pdt_quality_gate")
         return
 
     # ── PDT equity floor warning (fires if equity near $25k boundary) ──────────
