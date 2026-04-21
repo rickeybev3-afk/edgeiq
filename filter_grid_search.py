@@ -261,21 +261,33 @@ PAGE_SIZE = 1000
 
 
 def fetch_all_rows(sb, start_date, end_date, fields: str) -> list[dict]:
+    import time as _time
     rows, offset = [], 0
+    MAX_RETRIES = 5
     while True:
-        q = (
-            sb.table("backtest_sim_runs")
-            .select(fields)
-            .eq("user_id", USER_ID)
-            .order("sim_date")
-            .range(offset, offset + PAGE_SIZE - 1)
-        )
-        if start_date:
-            q = q.gte("sim_date", start_date)
-        if end_date:
-            q = q.lte("sim_date", end_date)
-        res   = q.execute()
-        batch = res.data or []
+        for attempt in range(MAX_RETRIES):
+            try:
+                q = (
+                    sb.table("backtest_sim_runs")
+                    .select(fields)
+                    .eq("user_id", USER_ID)
+                    .order("sim_date")
+                    .range(offset, offset + PAGE_SIZE - 1)
+                )
+                if start_date:
+                    q = q.gte("sim_date", start_date)
+                if end_date:
+                    q = q.lte("sim_date", end_date)
+                res = q.execute()
+                batch = res.data or []
+                break
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    wait = 2 ** attempt
+                    print(f"\n  [fetch] Page offset={offset} error (attempt {attempt+1}/{MAX_RETRIES}): {e}. Retrying in {wait}s...")
+                    _time.sleep(wait)
+                else:
+                    raise
         rows.extend(batch)
         if len(batch) < PAGE_SIZE:
             break
