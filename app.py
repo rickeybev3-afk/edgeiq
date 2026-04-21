@@ -36749,7 +36749,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                               "actual_outcome", "follow_thru_pct", "win_loss",
                               "mae", "mfe", "entry_time", "exit_trigger",
                               "false_break_up", "false_break_down", "min_tcs_filter",
-                              "ib_range_pct", "vwap_at_ib"]
+                              "mgmt_mode", "ib_range_pct", "vwap_at_ib"]
         _pt_include_sim_outcome = "sim_outcome" in _pt_df.columns
         _pt_include_pnl_r_sim   = "pnl_r_sim" in _pt_df.columns
         if _pt_include_sim_outcome:
@@ -36796,6 +36796,20 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _pt_log_show = _pt_log_show.drop(
             columns=[c for c in _pt_log_vwap_helpers if c in _pt_log_show.columns]
         )
+
+        # ── mgmt_mode → "Mode" display column ─────────────────────────────────
+        _pt_log_has_mgmt_mode = "mgmt_mode" in _pt_log_show.columns
+        if _pt_log_has_mgmt_mode:
+            _pt_mode_label_map = {
+                "fixed":    "Fixed",
+                "adaptive": "Adaptive",
+            }
+            _pt_log_show["Mode"] = (
+                _pt_log_show["mgmt_mode"]
+                .apply(lambda v: _pt_mode_label_map.get(str(v).strip().lower(), "—")
+                       if pd.notna(v) and str(v).strip() != "" else "—")
+            )
+            _pt_log_show = _pt_log_show.drop(columns=["mgmt_mode"])
 
         # Derive "Sim Outcome" and "Sim P&L (R)" display columns from the sorted slice,
         # then drop the raw sim_outcome / pnl_r_sim columns so they don't appear twice.
@@ -36961,6 +36975,11 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                 ].reset_index(drop=True)
 
         _pt_col_cfg = {}
+        if _pt_log_has_mgmt_mode:
+            _pt_col_cfg["Mode"] = st.column_config.TextColumn(
+                "Mode",
+                help="Management mode used for this trade: Fixed (static stop/target) or Adaptive (dynamic exits). Click column header to sort and group by mode.",
+            )
         if _pt_log_has_ib_pct:
             _pt_col_cfg["ib_range_pct"] = st.column_config.NumberColumn(
                 "IB Width %", format="%.2f%%", help=f"IB range as % of open price · green < {_ib_threshold:.1f}% (pass) · orange < {_ib_threshold*1.2:.1f}% (near threshold) · red = filtered"
