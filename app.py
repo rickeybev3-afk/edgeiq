@@ -22099,7 +22099,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     if past:
                         checkpoints[f"Y{yr}"] = eq_by_date.get(past[-1], start_eq)
                 checkpoints["Final"] = eq_by_date.get(all_dates[-1], eq)
-                n_yrs = _rfc_weeks / 52
+                # Use this variant's own date span for CAGR (avoids skew for sparse variants)
+                try:
+                    import datetime as _rfc_dt3
+                    _last_dt = _rfc_dt3.date.fromisoformat(all_dates[-1])
+                    n_yrs = max((_last_dt - start_dt).days / 365.25, 1 / 52)
+                except Exception:
+                    n_yrs = max(_rfc_weeks / 52, 1 / 52)
                 cagr = ((checkpoints["Final"] / start_eq) ** (1 / n_yrs) - 1) * 100 if n_yrs > 0 else 0.0
                 return dict(checkpoints=checkpoints, cagr=cagr, final_eq=checkpoints["Final"])
 
@@ -22192,7 +22198,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.caption(
                     "Each row runs through trades chronologically, growing position size with equity. "
                     "Position size capped at 20× starting risk ($3,000 max 1R). "
-                    "Y-columns show equity at approximately 1/2/3/4 years from start of dataset. "
+                    "Y-columns show equity at approximately 1/2/3/5 years from start of dataset. "
                     "⚠️ These numbers assume *every qualifying signal is taken* with no PDT limit, "
                     "no missed days, and no slippage beyond the simulated bar-by-bar stops."
                 )
