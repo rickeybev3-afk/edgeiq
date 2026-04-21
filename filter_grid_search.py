@@ -902,7 +902,13 @@ def main():
                         help="1=original 6-dim search, 3=exhaustive 15-dim (default)")
     parser.add_argument("--full",   action="store_true",
                         help="Enable all 3+ options per new dimension (~600M combos, ~8h runtime)")
+    parser.add_argument("--archive-keep", type=int, default=26,
+                        help="Number of most-recent Phase 3 archive runs to retain (default: 26)")
     args = parser.parse_args()
+
+    if args.archive_keep < 1:
+        print("ERROR: --archive-keep must be at least 1.", file=sys.stderr)
+        sys.exit(1)
 
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("ERROR: SUPABASE_URL and SUPABASE_KEY must be set.", file=sys.stderr)
@@ -1011,6 +1017,24 @@ def main():
                 _shutil.copy2(_src, os.path.join(_archive_dir, _src))
         archive_path = _archive_dir
         print(f"  Archived Phase 3 output → {_archive_dir}/")
+
+        # ── Auto-prune oldest archive runs ────────────────────────────────────
+        _archive_root = "grid_search_archive"
+        try:
+            _all_runs = sorted([
+                d for d in os.listdir(_archive_root)
+                if os.path.isdir(os.path.join(_archive_root, d))
+            ])
+            _excess = len(_all_runs) - args.archive_keep
+            if _excess > 0:
+                _to_prune = _all_runs[:_excess]
+                for _old_run in _to_prune:
+                    _old_path = os.path.join(_archive_root, _old_run)
+                    _shutil.rmtree(_old_path)
+                    print(f"  Pruned old archive run: {_old_path}/")
+                print(f"  Archive pruned: removed {_excess} run(s), {args.archive_keep} retained (limit: {args.archive_keep}).")
+        except Exception as _prune_err:
+            print(f"  Warning: archive pruning failed: {_prune_err}")
 
     summary = {
         "run_at":                 datetime.utcnow().isoformat() + "Z",
