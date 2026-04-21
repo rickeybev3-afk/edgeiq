@@ -614,6 +614,19 @@ export default function Settings() {
   }>({ pruning: false, error: null, pruned: false, deleted: null, freedBytes: null });
 
   const [pruneConfirmOpen, setPruneConfirmOpen] = useState(false);
+  const pruneButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!pruneConfirmOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPruneConfirmOpen(false);
+        pruneButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [pruneConfirmOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3858,6 +3871,7 @@ export default function Settings() {
                 <>
                   <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "14px" }}>
                     <button
+                      ref={pruneButtonRef}
                       onClick={() => setPruneConfirmOpen(true)}
                       disabled={archivePrune.pruning}
                       style={{
@@ -3915,7 +3929,10 @@ export default function Settings() {
                         </p>
                         <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
                           <button
-                            onClick={() => setPruneConfirmOpen(false)}
+                            onClick={() => {
+                              setPruneConfirmOpen(false);
+                              pruneButtonRef.current?.focus();
+                            }}
                             style={{
                               padding: "7px 16px",
                               fontSize: "13px",
