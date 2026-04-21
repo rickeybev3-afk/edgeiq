@@ -1,0 +1,215 @@
+{
+  "struct_label": {
+    "label": "Structure subset",
+    "values": {
+      "Bearish Break + Double Distribution": {
+        "in_top_20": 3,
+        "in_top_100": 8
+      },
+      "Bearish Break + Double Distribution + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 8
+      },
+      "Bearish Break + Normal Variation + Double Distribution": {
+        "in_top_20": 0,
+        "in_top_100": 8
+      },
+      "Bullish Break + Bearish Break + Double Distribution": {
+        "in_top_20": 1,
+        "in_top_100": 8
+      },
+      "Bullish Break + Bearish Break + Double Distribution + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 8
+      },
+      "Bullish Break + Bearish Break + Normal Variation + Double Distribution": {
+        "in_top_20": 0,
+        "in_top_100": 8
+      },
+      "Bullish Break + Double Distribution": {
+        "in_top_20": 6,
+        "in_top_100": 8
+      },
+      "Bullish Break + Double Distribution + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 8
+      },
+      "Bullish Break + Normal Variation + Double Distribution": {
+        "in_top_20": 1,
+        "in_top_100": 8
+      },
+      "Double Distribution": {
+        "in_top_20": 8,
+        "in_top_100": 8
+      },
+      "Double Distribution + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 8
+      },
+      "Normal Variation + Double Distribution": {
+        "in_top_20": 1,
+        "in_top_100": 8
+      },
+      "Normal Variation + Double Distribution + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 4
+      }
+    }
+  },
+  "tcs_offset": {
+    "label": "TCS offset",
+    "values": {
+      "0": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "rvol_min": {
+    "label": "RVOL min",
+    "values": {
+      "0.0": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "gap_min": {
+    "label": "Gap min %",
+    "values": {
+      "5.0": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "follow_min": {
+    "label": "Follow-through min",
+    "values": {
+      "-999.0": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "excl_false_break": {
+    "label": "Excl false-break",
+    "values": {
+      "False": {
+        "in_top_20": 11,
+        "in_top_100": 52
+      },
+      "True": {
+        "in_top_20": 9,
+        "in_top_100": 48
+      }
+    }
+  },
+  "scan_type": {
+    "label": "Scan type",
+    "values": {
+      "any": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "gap_direction": {
+    "label": "Gap direction",
+    "values": {
+      "any": {
+        "in_top_20": 9,
+        "in_top_100": 50
+      },
+      "up": {
+        "in_top_20": 11,
+        "in_top_100": 50
+      }
+    }
+  },
+  "vwap_position": {
+    "label": "VWAP position",
+    "values": {
+      "above": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "screener": {
+    "label": "Screener pass",
+    "values": {
+      "any": {
+        "in_top_20": 9,
+        "in_top_100": 50
+      },
+      "pass": {
+        "in_top_20": 11,
+        "in_top_100": 50
+      }
+    }
+  },
+  "ib_size": {
+    "label": "IB size tier",
+    "values": {
+      "any": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "mfe_min": {
+    "label": "MFE minimum",
+    "values": {
+      "0.5r": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "mae_max": {
+    "label": "MAE maximum",
+    "values": {
+      "any": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "rvol_cap": {
+    "label": "RVOL upper cap",
+    "values": {
+      "none": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "day_of_week": {
+    "label": "Day of week",
+    "values": {
+      "mon_thu": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "pm_range_floor": {
+    "label": "PM range floor",
+    "values": {
+      "any": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  },
+  "pm_ib_dir": {
+    "label": "PM IB direction",
+    "values": {
+      "any": {
+        "in_top_20": 20,
+        "in_top_100": 100
+      }
+    }
+  }
+}
