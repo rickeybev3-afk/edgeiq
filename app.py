@@ -22625,12 +22625,14 @@ Measures how accurately the 7-structure framework classified those days in hinds
     with _wkr_ctrl3:
         _wkr_reload = st.button("🔄 Load / Refresh", key="_wkr_load_btn")
 
-    if _wkr_reload and _AUTH_USER_ID:
+    _wkr_auto = _wkr_cache_key not in st.session_state
+    if (_wkr_reload or _wkr_auto) and _AUTH_USER_ID:
         import datetime as _wkr_dt_load
         _wkr_cutoff = (
             _wkr_dt_load.date.today() - _wkr_dt_load.timedelta(days=int(_wkr_days))
         ).isoformat()
-        with st.spinner("Loading paper_trades…"):
+
+        def _wkr_fetch():
             _wkr_raw, _wkr_off = [], 0
             while True:
                 try:
@@ -22655,7 +22657,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 if len(_wkr_batch) < 1000:
                     break
                 _wkr_off += 1000
-            _wkr_cleaned = []
+            _result = []
             for _wkr_r in _wkr_raw:
                 for _wkr_col in ("tiered_pnl_r", "eod_pnl_r"):
                     _wkr_cv = _wkr_r.get(_wkr_col)
@@ -22665,17 +22667,32 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 _wkr_r[_wkr_col] = None
                         except Exception:
                             pass
-                _wkr_cleaned.append(_wkr_r)
+                _result.append(_wkr_r)
+            return _result
+
+        if _wkr_auto:
+            _wkr_cleaned = _wkr_fetch()
+            st.session_state[_wkr_cache_key] = _wkr_cleaned
+            st.toast(f"Loaded {len(_wkr_cleaned):,} trades for the past {int(_wkr_days)} days.", icon="📅")
+        else:
+            with st.spinner("Loading paper_trades…"):
+                _wkr_cleaned = _wkr_fetch()
             st.session_state[_wkr_cache_key] = _wkr_cleaned
             st.success(f"Loaded {len(_wkr_cleaned):,} paper_trades rows.")
 
     _wkr_all = st.session_state.get(_wkr_cache_key, [])
 
     if not _wkr_all:
-        st.info(
-            "Click **Load / Refresh** above to pull live scanner trades for the selected window. "
-            "Data comes from paper_trades (the same rows that feed the KPI dashboard)."
-        )
+        if not _AUTH_USER_ID:
+            st.info(
+                "Sign in to load this week's replay data automatically. "
+                "Data comes from paper_trades (the same rows that feed the KPI dashboard)."
+            )
+        else:
+            st.info(
+                "No trades found for the selected window. "
+                "Adjust the date range and click **Load / Refresh** to try again."
+            )
     else:
         import pandas   as _wkr_pd
         import datetime as _wkr_dt
