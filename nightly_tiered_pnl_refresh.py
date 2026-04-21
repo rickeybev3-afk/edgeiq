@@ -139,6 +139,11 @@ _TP_CALIB_STATE_FILE = os.path.join(
     ".edgeiq_tp_calib_run.json",
 )
 
+_TP_PREVIEW_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".edgeiq_tp_preview_run.json",
+)
+
 _CACHE_ALERT_STATE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     ".edgeiq_cache_alert_state.json",
@@ -1842,6 +1847,169 @@ def _should_run_tp_calibration() -> bool:
     return True
 
 
+def _should_run_tp_preview() -> bool:
+    """Return True if the Friday-night TP calibration preview should run now.
+
+    Fires when the current ET day is Saturday (weekday() == 5), which
+    corresponds to the Friday-night 00:05 ET scheduled run.  A separate
+    state file prevents it from running more than once per week.
+    """
+    now_et = _et_now()
+    if now_et.weekday() != 5:  # 5 = Saturday (Friday-night run)
+        log.info(
+            "TP preview check: today is %s — not Friday night, skipping.",
+            now_et.strftime("%A"),
+        )
+        return False
+
+    try:
+        with open(_TP_PREVIEW_STATE_FILE) as _sf:
+            _state = json.load(_sf)
+        _last_run_str = _state.get("last_run_utc", "")
+        if _last_run_str:
+            _last_run = datetime.datetime.fromisoformat(_last_run_str)
+            _age_hours = (datetime.datetime.utcnow() - _last_run).total_seconds() / 3600
+            if _age_hours < 6 * 24:  # ran within the last 6 days
+                log.info(
+                    "TP preview already ran %.1f h ago — skipping duplicate run.",
+                    _age_hours,
+                )
+                return False
+    except FileNotFoundError:
+        pass  # No state file → first run; proceed.
+    except Exception as _e:
+        log.warning("Could not read TP preview state file: %s", _e)
+
+    return True
+
+
+def run_tp_calibration_preview() -> None:
+    """Run calibrate_adaptive_mgmt.py in dry-run mode and send a Telegram preview.
+
+    Intended to be called once a week on Friday night (Sat 00:05 ET), giving
+    traders a heads-up about what the Sunday-night automatic calibration would
+    apply.  The function:
+      1. Reads the current tp_raise_mult from adaptive_exits.json (for context).
+      2. Invokes calibrate_adaptive_mgmt.py (no --apply) as a subprocess.
+      3. Parses key values from its stdout (trade count, recommended multiplier).
+      4. Sends a Telegram message framed as a preview / dry-run summary.
+      5. Records the run timestamp to .edgeiq_tp_preview_run.json.
+    """
+    import re as _re
+
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "calibrate_adaptive_mgmt.py")
+    cmd = [sys.executable, script]  # no --apply → dry-run mode
+
+    log.info("─── Friday-night TP calibration preview ──────────────────────")
+    log.info("Running: %s", " ".join(cmd))
+    start = time.monotonic()
+
+    captured_output = ""
+    exit_code = 0
+    exception_msg = ""
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        captured_output = result.stdout or ""
+        exit_code = result.returncode
+        if captured_output:
+            sys.stdout.write(captured_output)
+            sys.stdout.flush()
+        if exit_code == 0:
+            log.info("TP preview dry-run completed (exit 0, %.0fs).", time.monotonic() - start)
+        else:
+            log.warning("TP preview dry-run exited with code %d.", exit_code)
+    except Exception as exc:
+        exception_msg = str(exc)
+        log.error("TP preview dry-run raised an exception: %s", exc)
+
+    elapsed_s = time.monotonic() - start
+    run_date = _et_now().strftime("%Y-%m-%d")
+
+    # ── Persist run timestamp ─────────────────────────────────────────────────
+    try:
+        with open(_TP_PREVIEW_STATE_FILE, "w") as _sf:
+            json.dump({"last_run_utc": datetime.datetime.utcnow().isoformat(),
+                       "exit_code": exit_code}, _sf)
+    except Exception as _se:
+        log.warning("Could not write TP preview state file: %s", _se)
+
+    # ── Read current multiplier from adaptive_exits.json ─────────────────────
+    _adaptive_exits_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                        "adaptive_exits.json")
+    try:
+        with open(_adaptive_exits_path) as _af:
+            _cfg = json.load(_af)
+        current_mult = _cfg.get("tp_raise_mult", 0.50)
+    except Exception:
+        current_mult = 0.50
+
+    # ── Parse key values from script output ───────────────────────────────────
+    # "Only N settled adaptive trade(s) found (minimum required: 50)."
+    _m_low = _re.search(r"Only (\d+) settled adaptive trade", captured_output)
+    # "Found N settled adaptive row(s) total; M classified as TP_RAISED"
+    _m_found = _re.search(r"Found (\d+) settled adaptive row", captured_output)
+    # "Recommendation: tp_raise_mult = X.XX  (was Y.YY)"
+    _m_rec = _re.search(r"Recommendation:\s*tp_raise_mult\s*=\s*([\d.]+)", captured_output)
+
+    # ── Build Telegram message ────────────────────────────────────────────────
+    if exception_msg:
+        tg_msg = (
+            f"\u26a0\ufe0f <b>Friday TP Calibration Preview — ERROR</b>\n"
+            f"Date: {run_date}\n"
+            f"<b>Exception:</b> <code>{html.escape(exception_msg[:300])}</code>"
+        )
+    elif exit_code != 0 and not _m_low:
+        tail = "\n".join(captured_output.splitlines()[-15:]).strip()
+        tg_msg = (
+            f"\u26a0\ufe0f <b>Friday TP Calibration Preview — FAILED</b>\n"
+            f"Date: {run_date}  |  Exit code: {exit_code}\n"
+            f"<code>{html.escape(tail[:600])}</code>"
+        )
+    elif _m_low:
+        n_found = int(_m_low.group(1))
+        tg_msg = (
+            f"\u23f8 <b>TP Calibration Preview (Friday dry-run)</b>\n"
+            f"Date: {run_date}\n"
+            f"Only <b>{n_found}</b> settled adaptive trade(s) found "
+            f"(minimum required: 50).\n"
+            f"No recommendation yet — the Sunday calibration will also skip.\n"
+            f"Current multiplier: <b>tp_raise_mult = {current_mult:.2f}</b> (unchanged)."
+        )
+    elif _m_rec:
+        candidate = float(_m_rec.group(1))
+        n_trades = int(_m_found.group(1)) if _m_found else "?"
+        changed = abs(candidate - current_mult) > 1e-6
+        change_line = (
+            f"tp_raise_mult: <b>{current_mult:.2f} \u2192 {candidate:.2f}</b>"
+            if changed
+            else f"tp_raise_mult: <b>{candidate:.2f}</b> (no change expected)"
+        )
+        tg_msg = (
+            f"\U0001f50d <b>TP Calibration Preview (Friday dry-run)</b>\n"
+            f"Date: {run_date}\n"
+            f"This is a preview of Sunday\u2019s automatic calibration.\n"
+            f"{change_line}\n"
+            f"Trades used: <b>{n_trades}</b> settled adaptive rows\n"
+            f"No changes written \u2014 Sunday\u2019s run will apply this unless vetoed."
+        )
+    else:
+        tail = "\n".join(captured_output.splitlines()[-10:]).strip()
+        tg_msg = (
+            f"\U0001f50d <b>TP Calibration Preview (Friday dry-run)</b>\n"
+            f"Date: {run_date}  |  Elapsed: {elapsed_s:.0f}s\n"
+            f"<code>{html.escape(tail[:600])}</code>"
+        )
+
+    _send_telegram(tg_msg)
+    log.info("TP calibration preview Telegram summary sent.")
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
@@ -1982,6 +2150,11 @@ def main():
             if _shutdown.is_set():
                 break
             _check_all_uncalibrated_screeners()
+            # Send TP calibration preview on Friday night (Sat 00:05 ET).
+            if _should_run_tp_preview():
+                run_tp_calibration_preview()
+                if _shutdown.is_set():
+                    break
             # Run TP calibration once a week on Sunday night (Mon 00:05 ET).
             if _should_run_tp_calibration():
                 run_tp_calibration()
