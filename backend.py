@@ -6729,6 +6729,7 @@ def place_alpaca_bracket_order(
     api_key: str = "",
     secret_key: str = "",
     entry_type: str = "stop",
+    max_notional: float = 1500.0,
 ) -> dict:
     """Place an IB-breakout bracket order on Alpaca.
 
@@ -6771,7 +6772,9 @@ def place_alpaca_bracket_order(
     else:
         return {"ok": False, "error": f"Unsupported direction: {direction}"}
 
-    qty = max(1, int(risk_dollars / ib_range))
+    qty_by_risk     = max(1, int(risk_dollars / ib_range))
+    qty_by_notional = max(1, int(max_notional / entry))
+    qty             = min(qty_by_risk, qty_by_notional)
 
     base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
     headers = {

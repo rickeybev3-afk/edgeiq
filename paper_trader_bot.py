@@ -277,6 +277,7 @@ if os.getenv("EDGEIQ_PRODUCTION", "").strip() != "1":
 IS_PAPER_ALPACA         = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
 MIN_TCS                 = _PAPER_MIN_TCS if IS_PAPER_ALPACA else _LIVE_MIN_TCS
 RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
+MAX_POSITION_SIZE       = float(os.getenv("MAX_POSITION_SIZE", "1500"))  # max notional per position ($)
 # PDT guard: block new orders when day-trade count >= this limit (FINRA: 3 in rolling 5 days)
 PDT_MAX_DAY_TRADES       = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
 # Concurrent position cap: block new orders when open positions >= this limit
@@ -1860,6 +1861,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         api_key      = ALPACA_API_KEY,
         secret_key   = ALPACA_SECRET_KEY,
         entry_type   = "market" if _use_market_entry else "stop",
+        max_notional = MAX_POSITION_SIZE,
     )
 
     acct_type = "PAPER" if IS_PAPER_ALPACA else "LIVE"
