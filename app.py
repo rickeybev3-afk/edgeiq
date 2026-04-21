@@ -22932,8 +22932,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _wkr_cum_usd  = _wkr_cum_r   * _WKR_FLAT_1R
                     _wkr_dsign    = "+" if _wkr_day_tot >= 0 else ""
                     _wkr_csign    = "+" if _wkr_cum_r   >= 0 else ""
-                    _wkr_dusign   = "+" if _wkr_day_usd >= 0 else ""
-                    _wkr_cusign   = "+" if _wkr_cum_usd >= 0 else ""
+                    _wkr_dusign   = "+" if _wkr_day_usd >= 0 else "-"
+                    _wkr_cusign   = "+" if _wkr_cum_usd >= 0 else "-"
                     _wkr_dc       = "#26a69a" if _wkr_day_tot >= 0 else "#ef5350"
                     _wkr_pend_str = (" \u00b7 " + str(_wkr_day_pend) + " pending") if _wkr_day_pend else ""
 
