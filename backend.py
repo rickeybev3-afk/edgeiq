@@ -1429,7 +1429,14 @@ def save_sa_journal(entries):
         pass
 
 
-def _find_peaks(smoothed, bin_centers, threshold_pct=0.30):
+DD_MIN_PRICE_GAP = 0.15       # Minimum $0.15 price gap between the two HVN peaks
+DD_LVN_RATIO = 0.60           # LVN valley must be strictly below 60 % of the lower peak
+DD_HVN_WINDOW_FRAC = 0.20     # ±2-bin window volume must exceed this fraction of total session volume
+DD_HVN_PEAK_RATIO = 2.5       # Peak bin volume must exceed this multiple of the average bin volume
+DD_PEAK_THRESHOLD_PCT = 0.25  # _find_peaks threshold: peaks must exceed this fraction of the profile max
+
+
+def _find_peaks(smoothed, bin_centers, threshold_pct=DD_PEAK_THRESHOLD_PCT):
     """Return indices of local maxima that exceed threshold_pct of the profile max."""
     n = len(smoothed)
     max_v = smoothed.max()
@@ -1456,17 +1463,13 @@ def _is_strong_hvn(pk, vap):
         return False
     avg_bin = total_vol / len(vap)
     window = vap[max(0, pk-2): min(len(vap), pk+3)].sum()
-    return (window / total_vol > 0.20) or (vap[pk] > 2.5 * avg_bin)
-
-
-DD_MIN_PRICE_GAP = 0.15  # Minimum $0.15 price gap between the two HVN peaks
-DD_LVN_RATIO = 0.60      # LVN valley must be strictly below 60 % of the lower peak
+    return (window / total_vol > DD_HVN_WINDOW_FRAC) or (vap[pk] > DD_HVN_PEAK_RATIO * avg_bin)
 
 
 def _detect_double_distribution(bin_centers, vap, min_bin_sep=15):
     """Return (pk1_idx, pk2_idx, lvn_idx) if a valid Double Distribution is found, else None."""
     smoothed = np.convolve(vap.astype(float), np.ones(5)/5, mode="same")
-    peaks = _find_peaks(smoothed, bin_centers, threshold_pct=0.25)
+    peaks = _find_peaks(smoothed, bin_centers, threshold_pct=DD_PEAK_THRESHOLD_PCT)
     for j in range(len(peaks) - 1):
         pk1, pk2 = peaks[j], peaks[j+1]
         # Must be at least 15 bins apart

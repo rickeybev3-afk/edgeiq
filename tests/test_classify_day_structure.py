@@ -573,6 +573,138 @@ def test_dd_min_bin_sep_14_is_rejected(real_backend):
     )
 
 
+# ── B7. Double Distribution: DD_HVN_WINDOW_FRAC boundary ────────────────────
+
+def _vap_window_frac(window_frac, n=50, pk=10):
+    """VAP where the ±2-bin window around *pk* holds exactly *window_frac* of
+    total volume, and vap[pk]/avg_bin == 2.0 (below DD_HVN_PEAK_RATIO=2.5) so
+    the peak-ratio arm of _is_strong_hvn is never satisfied.
+
+    With n=50, pk=10, window = bins [8..12] (5 bins), non-window = 45 bins.
+    Solving 5v / (45 + 5v) = frac  →  v = 9*frac / (1 - frac).
+    """
+    non_window = n - 5
+    v = non_window * window_frac / (5 * (1 - window_frac))
+    vap = np.ones(n, dtype=float)
+    vap[max(0, pk - 2): min(n, pk + 3)] = v
+    return vap
+
+
+def test_dd_hvn_window_frac_exactly_at_threshold_fails(real_backend):
+    """window/total == DD_HVN_WINDOW_FRAC does NOT satisfy strict '>' → not a strong HVN."""
+    frac = real_backend.DD_HVN_WINDOW_FRAC
+    vap = _vap_window_frac(frac)
+    pk = 10
+    result = real_backend._is_strong_hvn(pk, vap)
+    assert not result, (
+        f"window/total == DD_HVN_WINDOW_FRAC ({frac}) must NOT satisfy strict '>', "
+        f"but _is_strong_hvn returned {result!r}"
+    )
+
+
+def test_dd_hvn_window_frac_just_above_threshold_passes(real_backend):
+    """window/total just above DD_HVN_WINDOW_FRAC satisfies strict '>' → strong HVN."""
+    frac = real_backend.DD_HVN_WINDOW_FRAC
+    epsilon = 1e-9
+    vap = _vap_window_frac(frac + epsilon)
+    pk = 10
+    result = real_backend._is_strong_hvn(pk, vap)
+    assert result, (
+        f"window/total just above DD_HVN_WINDOW_FRAC ({frac}) should satisfy strict '>', "
+        f"but _is_strong_hvn returned {result!r}"
+    )
+
+
+# ── B8. Double Distribution: DD_HVN_PEAK_RATIO boundary ─────────────────────
+
+def _vap_peak_ratio(ratio_multiple, n=50, pk=10):
+    """VAP where vap[pk] / avg_bin == ratio_multiple and the window fraction
+    stays below DD_HVN_WINDOW_FRAC (0.20) so only the peak-ratio arm is tested.
+
+    With n=50, all non-peak bins = 1.0 (49 bins).
+    Solving vap[pk] = ratio * (49 + vap[pk]) / 50  →  vap[pk] = 49*ratio / (50-ratio).
+    Window/total ≈ 0.13, which is below the 0.20 fraction gate.
+    """
+    v = (n - 1) * ratio_multiple / (n - ratio_multiple)
+    vap = np.ones(n, dtype=float)
+    vap[pk] = v
+    return vap
+
+
+def test_dd_hvn_peak_ratio_exactly_at_threshold_fails(real_backend):
+    """vap[pk] == DD_HVN_PEAK_RATIO × avg_bin does NOT satisfy strict '>' → not a strong HVN."""
+    ratio = real_backend.DD_HVN_PEAK_RATIO
+    vap = _vap_peak_ratio(ratio)
+    pk = 10
+    result = real_backend._is_strong_hvn(pk, vap)
+    assert not result, (
+        f"vap[pk] == DD_HVN_PEAK_RATIO ({ratio}) × avg_bin must NOT satisfy strict '>', "
+        f"but _is_strong_hvn returned {result!r}"
+    )
+
+
+def test_dd_hvn_peak_ratio_just_above_threshold_passes(real_backend):
+    """vap[pk] just above DD_HVN_PEAK_RATIO × avg_bin satisfies strict '>' → strong HVN."""
+    ratio = real_backend.DD_HVN_PEAK_RATIO
+    epsilon = 1e-9
+    vap = _vap_peak_ratio(ratio + epsilon)
+    pk = 10
+    result = real_backend._is_strong_hvn(pk, vap)
+    assert result, (
+        f"vap[pk] just above DD_HVN_PEAK_RATIO ({ratio}) × avg_bin should satisfy strict '>', "
+        f"but _is_strong_hvn returned {result!r}"
+    )
+
+
+# ── B9. Double Distribution: DD_PEAK_THRESHOLD_PCT boundary ─────────────────
+
+def _smoothed_two_peaks(secondary_height, n=60, pk_main=10, pk_sec=45):
+    """Smoothed profile with a dominant peak at *pk_main* (value=1000) that
+    sets max_v, and a secondary local maximum at *pk_sec* with value
+    *secondary_height*.  Neighbours at ±1 and ±2 around each peak are set to
+    half the peak value so that _find_peaks' strict local-max shape test is
+    satisfied.  All background bins are 0.1.
+    """
+    smoothed = np.full(n, 0.1)
+    main_v = 1000.0
+    smoothed[pk_main] = main_v
+    for off in (1, 2):
+        smoothed[pk_main - off] = main_v * 0.5
+        smoothed[pk_main + off] = main_v * 0.5
+    smoothed[pk_sec] = secondary_height
+    for off in (1, 2):
+        smoothed[pk_sec - off] = secondary_height * 0.5
+        smoothed[pk_sec + off] = secondary_height * 0.5
+    bin_centers = np.linspace(100.0, 110.0, n)
+    return smoothed, bin_centers, pk_sec
+
+
+def test_dd_peak_threshold_pct_exactly_at_threshold_is_included(real_backend):
+    """Secondary peak at exactly DD_PEAK_THRESHOLD_PCT × max_v satisfies '>=' → included."""
+    thr = real_backend.DD_PEAK_THRESHOLD_PCT
+    max_v = 1000.0
+    secondary_height = thr * max_v
+    smoothed, bin_centers, pk_sec = _smoothed_two_peaks(secondary_height)
+    peaks = real_backend._find_peaks(smoothed, bin_centers, threshold_pct=thr)
+    assert pk_sec in peaks, (
+        f"Secondary peak at exactly DD_PEAK_THRESHOLD_PCT ({thr}) × max_v ({max_v}) "
+        f"should satisfy '>=', but _find_peaks returned peaks={peaks}"
+    )
+
+
+def test_dd_peak_threshold_pct_just_below_threshold_is_excluded(real_backend):
+    """Secondary peak just below DD_PEAK_THRESHOLD_PCT × max_v fails '>=' → excluded."""
+    thr = real_backend.DD_PEAK_THRESHOLD_PCT
+    max_v = 1000.0
+    secondary_height = thr * max_v - 0.001
+    smoothed, bin_centers, pk_sec = _smoothed_two_peaks(secondary_height)
+    peaks = real_backend._find_peaks(smoothed, bin_centers, threshold_pct=thr)
+    assert pk_sec not in peaks, (
+        f"Secondary peak just below DD_PEAK_THRESHOLD_PCT ({thr}) × max_v ({max_v}) "
+        f"should fail '>=', but _find_peaks included it: peaks={peaks}"
+    )
+
+
 # ── B5. Trend Day: dist_from_ib > 2.0 × ATR ─────────────────────────────────
 
 def _one_side_up_uniform(bar_high, bar_low, n=78):
