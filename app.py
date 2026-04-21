@@ -21143,7 +21143,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         with _fgs_c3:
             _fgs_minn_inp = st.number_input(
                 "Min trades (N≥)",
-                value=int(_fgs_summary.get("min_n", 50)),
+                value=int(_fgs_summary.get("min_n", 30)),
                 min_value=10, max_value=500, step=10,
                 key="fgs_min_n",
             )

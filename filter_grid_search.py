@@ -80,7 +80,7 @@ def _structure_group(predicted: str) -> str:
 
 # ── Grid dimensions ─────────────────────────────────────────────────────────
 TCS_OFFSETS     = [0, 5, 10, 15]          # added to per-structure baseline
-RVOL_MINS       = [0.0, 1.0, 1.5, 2.0, 2.5]
+RVOL_MINS       = [0.0, 1.0, 1.5, 2.0, 2.5, 3.0]
 GAP_MINS        = [0.0, 1.0, 2.0, 3.0, 5.0]   # abs(gap_pct) must be >= this
 FOLLOW_MINS     = [-999.0, 0.0, 0.5, 1.0]      # -999 = no filter
 STRUCT_FILTERS  = ["all", "neutral", "trend", "extreme", "no_extreme"]
@@ -96,7 +96,7 @@ LABEL_STRUCT = {
 }
 
 # ── Minimum sample guard ────────────────────────────────────────────────────
-DEFAULT_MIN_N = 50
+DEFAULT_MIN_N = 30    # task spec: ≥30 qualifies; 30–75 flagged as low-sample
 DEFAULT_TOP   = 20
 
 # ── Fetch all rows ─────────────────────────────────────────────────────────
@@ -273,7 +273,14 @@ def run_grid_search(
     min_n: int = DEFAULT_MIN_N,
     top_n: int = DEFAULT_TOP,
 ) -> tuple[list[dict], list[dict]]:
-    """Return (all_results, top_results)."""
+    """Return (all_results, top_results).
+
+    all_results  — every combo that produced at least 1 trade, with a
+                   ``qualifies`` flag (True when N >= min_n).
+    top_results  — top_n combos ranked by Sharpe from the qualifying set
+                   (N >= min_n).  Low-sample combos (30 <= N < 75) are
+                   included and flagged — they are NOT excluded from ranking.
+    """
     # Count trading days for frequency calculation
     trading_days = len(set(r["sim_date"] for r in all_rows if r.get("sim_date")))
 
@@ -283,7 +290,7 @@ def run_grid_search(
     )
     print(f"  Running {total_combos:,} filter combinations across {trading_days:,} trading days...")
 
-    results = []
+    all_results = []   # every combo with ≥1 trade (qualifies=True/False)
     done = 0
 
     for tcs_off in TCS_OFFSETS:
@@ -301,10 +308,11 @@ def run_grid_search(
                                 pct = done / total_combos * 100
                                 print(f"\r  Progress: {done:,}/{total_combos:,} ({pct:.0f}%)", end="", flush=True)
 
-                            if len(r_vals) < min_n:
-                                continue
+                            qualifies = len(r_vals) >= min_n
+                            stats = _compute_stats(r_vals, n_scanned, trading_days) if r_vals else {}
+                            if not stats:
+                                continue  # zero-trade combos omitted from output file
 
-                            stats = _compute_stats(r_vals, n_scanned, trading_days)
                             combo = {
                                 "tcs_offset":        tcs_off,
                                 "tcs_label":         f"+{tcs_off} above baseline" if tcs_off else "Baseline",
@@ -315,16 +323,26 @@ def run_grid_search(
                                 "struct_filter":     struct,
                                 "struct_label":      LABEL_STRUCT.get(struct, struct),
                                 "excl_false_break":  excl_fb,
+                                "qualifies":         qualifies,
                                 **stats,
                             }
-                            results.append(combo)
+                            all_results.append(combo)
 
-    print(f"\r  Done: {done:,} combinations evaluated, {len(results):,} met minimum N={min_n}.   ")
+    qualifying = [c for c in all_results if c.get("qualifies")]
+    print(
+        f"\r  Done: {done:,} combinations evaluated, "
+        f"{len(all_results):,} had ≥1 trade, "
+        f"{len(qualifying):,} met N≥{min_n}.   "
+    )
 
-    results.sort(key=lambda x: (x.get("sharpe", 0), x.get("avg_r", 0)), reverse=True)
-    top_results = [r for r in results if not r.get("low_sample")][:top_n]
+    # Sort all results by Sharpe descending; qualifying set sorted same way
+    all_results.sort(key=lambda x: (x.get("qualifies", False), x.get("sharpe", 0), x.get("avg_r", 0)), reverse=True)
+    qualifying.sort(key=lambda x: (x.get("sharpe", 0), x.get("avg_r", 0)), reverse=True)
 
-    return results, top_results
+    # Top N from qualifying set — low-sample combos included but flagged
+    top_results = qualifying[:top_n]
+
+    return all_results, top_results
 
 
 # ── Entry point ───────────────────────────────────────────────────────────
@@ -384,15 +402,17 @@ def main():
             len(TCS_OFFSETS) * len(RVOL_MINS) * len(GAP_MINS)
             * len(FOLLOW_MINS) * len(STRUCT_FILTERS) * len(FALSE_BREAK_EX)
         ),
-        "combos_qualifying": len(all_results),
+        "combos_with_any_trade":  len(all_results),
+        "combos_qualifying":      sum(1 for c in all_results if c.get("qualifies")),
         "best_combo": top_results[0] if top_results else None,
     }
     with open(out_sum, "w") as f:
         json.dump(summary, f, indent=2)
 
+    _n_qualifying = summary["combos_qualifying"]
     print(f"Step 3: Results written.")
-    print(f"  {out_all}  ({len(all_results):,} qualifying combos)")
-    print(f"  {out_top}  (top {len(top_results)} combos)")
+    print(f"  {out_all}  ({len(all_results):,} combos with ≥1 trade, {_n_qualifying:,} qualifying N≥{args.min_n})")
+    print(f"  {out_top}  (top {len(top_results)} qualifying combos)")
     print(f"  {out_sum}  (run metadata)")
     print()
 
