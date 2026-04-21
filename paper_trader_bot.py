@@ -1445,7 +1445,9 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     # Using only TCS≥70 during the PDT phase reaches the $25k unlock ~8 weeks sooner
     # (day 77 vs day 117) and adds ~$1.4M to Year-1 compounding.  Once the account
     # clears $25k this gate is disabled and all qualifying S2 signals are taken.
-    if _pdt_in_effect and PDT_PRIORITY_TCS > 0 and _tcs_val < PDT_PRIORITY_TCS:
+    # Paper mode is exempt — PDT rules don't apply to paper accounts and we want
+    # full S2 coverage for data validation regardless of TCS.
+    if not IS_PAPER_ALPACA and _pdt_in_effect and PDT_PRIORITY_TCS > 0 and _tcs_val < PDT_PRIORITY_TCS:
         log.info(
             f"  [{ticker}] PDT quality gate — TCS {_tcs_val:.0f} < PDT_PRIORITY_TCS {PDT_PRIORITY_TCS} "
             f"(acct sub-$25k, reserving PDT slots for TCS≥{PDT_PRIORITY_TCS} elite tier only)"
