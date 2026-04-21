@@ -613,6 +613,8 @@ export default function Settings() {
     freedBytes: number | null;
   }>({ pruning: false, error: null, pruned: false, deleted: null, freedBytes: null });
 
+  const [pruneConfirmOpen, setPruneConfirmOpen] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/backfill-heartbeat-window")
@@ -3847,36 +3849,111 @@ export default function Settings() {
                         return `${archiveRuns.total} of ${archiveKeep.runs} runs · ${formatBytes(totalBytes)} total${pruneNote}`;
                       })()}
             </p>
-            {!archiveRuns.loading && !archiveRuns.error && !archiveKeep.loading && archiveRuns.total > archiveKeep.runs && (
-              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "14px" }}>
-                <button
-                  onClick={handleArchivePrune}
-                  disabled={archivePrune.pruning}
-                  style={{
-                    padding: "6px 14px",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    background: archivePrune.pruning ? "#374151" : "#dc2626",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "6px",
-                    cursor: archivePrune.pruning ? "not-allowed" : "pointer",
-                    opacity: archivePrune.pruning ? 0.6 : 1,
-                  }}
-                >
-                  {archivePrune.pruning ? "Pruning…" : "Prune now"}
-                </button>
-                {archivePrune.pruned && (
-                  <span style={{ fontSize: "12px", color: "#4ade80" }}>
-                    ✓ Deleted {archivePrune.deleted ?? 0} {archivePrune.deleted === 1 ? "run" : "runs"}
-                    {archivePrune.freedBytes != null ? ` · freed ${formatBytes(archivePrune.freedBytes)}` : ""}
-                  </span>
-                )}
-                {archivePrune.error && (
-                  <span style={{ fontSize: "12px", color: "#f87171" }}>⚠ {archivePrune.error}</span>
-                )}
-              </div>
-            )}
+            {!archiveRuns.loading && !archiveRuns.error && !archiveKeep.loading && archiveRuns.total > archiveKeep.runs && (() => {
+              const pruneCount = archiveRuns.total > archiveKeep.runs ? archiveRuns.total - archiveKeep.runs : 0;
+              const freedBytes = pruneCount > 0
+                ? archiveRuns.runs.slice(archiveKeep.runs).reduce((sum, r) => sum + r.size_bytes, 0)
+                : 0;
+              return (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "14px" }}>
+                    <button
+                      onClick={() => setPruneConfirmOpen(true)}
+                      disabled={archivePrune.pruning}
+                      style={{
+                        padding: "6px 14px",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        background: archivePrune.pruning ? "#374151" : "#dc2626",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "6px",
+                        cursor: archivePrune.pruning ? "not-allowed" : "pointer",
+                        opacity: archivePrune.pruning ? 0.6 : 1,
+                      }}
+                    >
+                      {archivePrune.pruning ? "Pruning…" : "Prune now"}
+                    </button>
+                    {archivePrune.pruned && (
+                      <span style={{ fontSize: "12px", color: "#4ade80" }}>
+                        ✓ Deleted {archivePrune.deleted ?? 0} {archivePrune.deleted === 1 ? "run" : "runs"}
+                        {archivePrune.freedBytes != null ? ` · freed ${formatBytes(archivePrune.freedBytes)}` : ""}
+                      </span>
+                    )}
+                    {archivePrune.error && (
+                      <span style={{ fontSize: "12px", color: "#f87171" }}>⚠ {archivePrune.error}</span>
+                    )}
+                  </div>
+                  {pruneConfirmOpen && (
+                    <div style={{
+                      position: "fixed",
+                      inset: 0,
+                      background: "rgba(0,0,0,0.6)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: 9999,
+                    }}>
+                      <div style={{
+                        background: "#1e2433",
+                        border: "1px solid #374151",
+                        borderRadius: "10px",
+                        padding: "28px 32px",
+                        maxWidth: "420px",
+                        width: "100%",
+                        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                      }}>
+                        <h3 style={{ margin: "0 0 10px", fontSize: "16px", fontWeight: 700, color: "#f1f5f9" }}>
+                          Confirm prune
+                        </h3>
+                        <p style={{ margin: "0 0 20px", fontSize: "13px", color: "#94a3b8", lineHeight: 1.6 }}>
+                          This will permanently delete{" "}
+                          <strong style={{ color: "#f87171" }}>{pruneCount} run{pruneCount !== 1 ? "s" : ""}</strong>{" "}
+                          and free{" "}
+                          <strong style={{ color: "#f87171" }}>{formatBytes(freedBytes)}</strong>.{" "}
+                          This action cannot be undone.
+                        </p>
+                        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                          <button
+                            onClick={() => setPruneConfirmOpen(false)}
+                            style={{
+                              padding: "7px 16px",
+                              fontSize: "13px",
+                              fontWeight: 600,
+                              background: "transparent",
+                              color: "#94a3b8",
+                              border: "1px solid #374151",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => {
+                              setPruneConfirmOpen(false);
+                              handleArchivePrune();
+                            }}
+                            style={{
+                              padding: "7px 16px",
+                              fontSize: "13px",
+                              fontWeight: 600,
+                              background: "#dc2626",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Yes, prune {pruneCount} run{pruneCount !== 1 ? "s" : ""}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             {!archiveRuns.loading && !archiveRuns.error && archiveRuns.runs.length > 0 && (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                 <thead>
