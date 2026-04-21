@@ -920,3 +920,130 @@ def test_ib_vol_confirms_nontrend_072_boundary(real_backend, monkeypatch,
         f"ib_vol_confirms_nontrend={'True' if ib_vol_pct_val > 0.72 else 'False'} — "
         f"expected {expected_label!r}, got {label!r}"
     )
+
+
+# =============================================================================
+# Direct boundary tests for Double Distribution helper functions
+# =============================================================================
+#
+# _is_strong_hvn and _find_peaks are exercised here in isolation so that a bug
+# in either helper produces a failing test that names the specific function
+# rather than pointing ambiguously at _detect_double_distribution.
+# =============================================================================
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _is_strong_hvn — window-fraction boundary (0.20)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Design:
+#   100 bins, all background = 1.0
+#   Peak at index 50 with vap[50] = 0.0  → peak-ratio = 0/avg = 0.0 < 2.5 (never fires)
+#   Window non-peak bins (48, 49, 51, 52) = W  → window sum = 4·W
+#   total = 95·1.0 + 4·W
+#   fraction = 4·W / (95 + 4·W) = 0.20  →  W = 19/3.2 = 5.9375 (boundary, strict > so False)
+#   W = 5.94 → fraction ≈ 0.2001 > 0.20 → True
+#   W = 5.93 → fraction ≈ 0.1999 < 0.20 → False
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("W,expected", [
+    (5.9375, False),   # fraction == 0.20 exactly — strict > means boundary is excluded
+    (5.94,   True),    # fraction just above 0.20 → window condition fires
+    (5.93,   False),   # fraction just below 0.20 → window condition does not fire
+])
+def test_is_strong_hvn_window_fraction_boundary(real_backend, W, expected):
+    """_is_strong_hvn: the 0.20 window-fraction threshold flips the return value.
+
+    The peak bin carries zero volume so the 2.5× peak-ratio path is always False,
+    isolating the window-fraction branch as the sole decision variable.
+    """
+    vap = np.ones(100, dtype=float)
+    pk = 50
+    vap[pk] = 0.0            # peak bin: no volume → peak-ratio branch always False
+    vap[pk - 2] = W          # window non-peak bins
+    vap[pk - 1] = W
+    vap[pk + 1] = W
+    vap[pk + 2] = W
+
+    result = real_backend._is_strong_hvn(pk, vap)
+    assert bool(result) == expected, (
+        f"W={W}: window/total={(4*W)/(95 + 4*W):.6f}, "
+        f"expected _is_strong_hvn={expected}, got {result}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _is_strong_hvn — peak-ratio boundary (2.5)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Design:
+#   100 bins, background = 100.0 (indices 0-99 except peak)
+#   Peak at index 50 with vap[50] = S
+#   total = 99·100 + S = 9 900 + S
+#   avg_bin = (9 900 + S) / 100
+#   peak_ratio = S / avg_bin = 100·S / (9 900 + S) = 2.5  →  S ≈ 253.846 (boundary)
+#   window = 400 + S → fraction = (400+S)/(9900+S) ≈ 0.064 < 0.20 (window path never fires)
+#   S = 254 → ratio ≈ 2.502 > 2.5 → True
+#   S = 253 → ratio ≈ 2.491 < 2.5 → False
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("S,expected", [
+    (24750 / 97.5, False),   # ratio == 2.5 exactly — strict > means boundary is excluded
+    (254,          True),    # ratio just above 2.5 → peak-ratio condition fires
+    (253,          False),   # ratio just below 2.5 → neither condition fires
+])
+def test_is_strong_hvn_peak_ratio_boundary(real_backend, S, expected):
+    """_is_strong_hvn: the 2.5× peak-ratio threshold flips the return value.
+
+    Background volume is large enough that the window-fraction path stays below
+    0.20 throughout, isolating the peak-ratio branch as the sole decision variable.
+    """
+    pk = 50
+    vap = np.full(100, 100.0, dtype=float)
+    vap[pk] = S
+
+    result = real_backend._is_strong_hvn(pk, vap)
+    total = vap.sum()
+    avg_bin = total / len(vap)
+    assert bool(result) == expected, (
+        f"S={S}: peak_ratio={vap[pk]/avg_bin:.4f}, "
+        f"expected _is_strong_hvn={expected}, got {result}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _find_peaks — threshold_pct boundary
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Design:
+#   Array of 20 elements; all non-peak bins = 0.1
+#   Peak1 at index 5:  value = 100.0  (global max — always qualifies)
+#   Peak2 at index 15: value = P2     (secondary — its inclusion depends on threshold_pct)
+#   threshold_pct = 0.30 → boundary = 100.0 × 0.30 = 30.0
+#
+#   P2 = 30.0 → P2 >= 30.0 (True, >= is inclusive) → peak2 included
+#   P2 = 29.9 → P2 >= 30.0 (False)                  → peak2 excluded
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("P2,expected_peaks", [
+    (30.0, [5, 15]),   # exactly at threshold (>=) — boundary value is included
+    (29.9, [5]),       # just below threshold — secondary peak is excluded
+])
+def test_find_peaks_threshold_boundary(real_backend, P2, expected_peaks):
+    """_find_peaks: the threshold_pct boundary correctly includes/excludes borderline peaks.
+
+    Two peaks are constructed so that the primary peak always qualifies.  The
+    secondary peak sits at or just below the threshold, making it the sole variable.
+    The >= operator means the exact boundary value is included.
+    """
+    n = 20
+    smoothed = np.full(n, 0.1, dtype=float)
+    smoothed[5]  = 100.0   # primary peak, global max
+    smoothed[15] = P2      # secondary peak — on or below the 30 % boundary
+
+    bin_centers = np.arange(n, dtype=float)
+
+    peaks = real_backend._find_peaks(smoothed, bin_centers, threshold_pct=0.30)
+    assert peaks == expected_peaks, (
+        f"P2={P2}: threshold=30.0, expected peaks={expected_peaks}, got {peaks}"
+    )
