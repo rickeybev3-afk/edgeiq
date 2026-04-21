@@ -36094,14 +36094,40 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             else:
                 _fn = _ab_fixed.get("n", 0)
                 _an = _ab_adaptive.get("n", 0)
-                _fn_str = f"n={_fn}" if _fn < _MIN_ARM else f"✓ n={_fn}"
-                _an_str = f"n={_an}" if _an < _MIN_ARM else f"✓ n={_an}"
+                _fn_pct  = min(int((_fn / _MIN_ARM) * 100), 100)
+                _an_pct  = min(int((_an / _MIN_ARM) * 100), 100)
+                _fn_done = _fn >= _MIN_ARM
+                _an_done = _an >= _MIN_ARM
+                _fn_bar_color = "#66bb6a" if _fn_done else "#f9a825"
+                _an_bar_color = "#66bb6a" if _an_done else "#f9a825"
+                _fn_label = f"✓ {_fn} trades" if _fn_done else f"{_fn} / {_MIN_ARM} trades ({_fn_pct}% there)"
+                _an_label = f"✓ {_an} trades" if _an_done else f"{_an} / {_MIN_ARM} trades ({_an_pct}% there)"
                 _delta_html = (
                     f'<div style="background:#111e2a;border:1px solid #37474f;'
-                    f'border-radius:8px;padding:10px 14px;margin-top:10px;">'
-                    f'<div style="font-size:11px;color:#f9a825;">'
-                    f'Delta row unlocks when both arms reach {_MIN_ARM} trades — '
-                    f'Fixed {_fn_str} · Adaptive {_an_str}</div>'
+                    f'border-radius:8px;padding:12px 14px;margin-top:10px;">'
+                    f'<div style="font-size:10px;color:#90a4ae;text-transform:uppercase;'
+                    f'letter-spacing:1px;margin-bottom:8px;">Δ Adaptive − Fixed</div>'
+                    f'<div style="font-size:13px;color:#f9a825;margin-bottom:10px;">'
+                    f'Unlocks when both arms reach {_MIN_ARM} trades — extend your date range or keep trading'
+                    f'</div>'
+                    f'<div style="display:flex;gap:16px;">'
+                    f'<div style="flex:1;">'
+                    f'<div style="font-size:10px;color:#5c9bd4;text-transform:uppercase;'
+                    f'letter-spacing:1px;margin-bottom:4px;">🔒 Fixed Bracket</div>'
+                    f'<div style="background:#1a2a3a;border-radius:4px;height:6px;overflow:hidden;">'
+                    f'<div style="width:{_fn_pct}%;background:{_fn_bar_color};height:100%;border-radius:4px;"></div>'
+                    f'</div>'
+                    f'<div style="font-size:10px;color:#546e7a;margin-top:4px;">{_fn_label}</div>'
+                    f'</div>'
+                    f'<div style="flex:1;">'
+                    f'<div style="font-size:10px;color:#66bb6a;text-transform:uppercase;'
+                    f'letter-spacing:1px;margin-bottom:4px;">⚡ Adaptive Bracket</div>'
+                    f'<div style="background:#1a2a3a;border-radius:4px;height:6px;overflow:hidden;">'
+                    f'<div style="width:{_an_pct}%;background:{_an_bar_color};height:100%;border-radius:4px;"></div>'
+                    f'</div>'
+                    f'<div style="font-size:10px;color:#546e7a;margin-top:4px;">{_an_label}</div>'
+                    f'</div>'
+                    f'</div>'
                     f'</div>'
                 )
 
