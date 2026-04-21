@@ -27971,6 +27971,7 @@ table[data-tcs-sort] th[data-tcs-col]:hover {
                 "bearish_break_filtered":("🔴 Bearish Break (skip)", "#ef5350"),
                 "ib_too_wide":           ("📏 IB Too Wide (≥10%)",   "#ef6c00"),
                 "vwap_misaligned":       ("📉 VWAP Misaligned",      "#ffa726"),
+                "pm_ib_filter":          ("🌅 PM-IB Gate Blocked",   "#f57f17"),
                 "pdt_blocked":           ("🚫 PDT Blocked",          "#ab47bc"),
                 "concurrent_cap":        ("🔒 Position Cap",         "#7e57c2"),
                 "invalid_ib":            ("⚠ Invalid IB",            "#546e7a"),
@@ -36330,6 +36331,35 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         f'so you build 3 weeks of calibrated paper data without touching Alpaca again.</div>',
         unsafe_allow_html=True,
     )
+
+    # ── PM-IB gate status banner ─────────────────────────────────────────────
+    _pm_ib_active = os.getenv("PM_IB_FILTER", "0").strip() == "1"
+    if _pm_ib_active:
+        st.markdown(
+            '<div style="background:#1a1200;border:1px solid #f57f17;border-radius:8px;'
+            'padding:10px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">'
+            '<span style="font-size:18px;">🌅</span>'
+            '<div>'
+            '<span style="font-weight:700;color:#ffb300;font-size:13px;">PM-IB Gate is ACTIVE</span>'
+            '<span style="color:#90a4ae;font-size:12px;margin-left:10px;">'
+            'PM_IB_FILTER=1 — the bot requires pre-market price to breach the prior IB in the trade direction before placing an order. '
+            'Blocked setups appear as <b style="color:#f57f17;">PM-IB Gate Blocked</b> in the funnel below.'
+            '</span>'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="background:#0d1117;border:1px solid #263238;border-radius:8px;'
+            'padding:8px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">'
+            '<span style="font-size:16px;">💤</span>'
+            '<span style="color:#546e7a;font-size:12px;">'
+            'PM-IB gate is <b>inactive</b> (PM_IB_FILTER=0) — pre-market/IB directional check is not enforced.'
+            '</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     _pt_ready = ensure_paper_trades_table()
     if not _pt_ready:
