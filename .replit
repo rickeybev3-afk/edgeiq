@@ -146,3 +146,4 @@ packages = ["glibcLocales"]
 [userenv.shared]
 LIVE_MIN_TCS = "70"
 TZ = "America/New_York"
+ADAPTIVE_POSITION_MGMT = "1"
