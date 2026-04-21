@@ -55,6 +55,10 @@ args = "python-tests"
 task = "workflow.run"
 args = "Weekly Phase 3 Grid Search"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "PM/IB Backfill"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -143,6 +147,17 @@ args = "python3 run_weekly_grid_search.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow]]
+name = "PM/IB Backfill"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd /home/runner/workspace && python backfill_pm_prevday_ib.py && echo 'Backfill complete — running filter grid search...' && python filter_grid_search.py"
 
 [agent]
 stack = "PNPM_WORKSPACE"
