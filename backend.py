@@ -12563,8 +12563,12 @@ def compute_r_trend_history(user_id: str = "", r_source: str | None = None) -> "
     return df[["trade_num", "trade_date", "r_val", "roll10", "roll30", "r_source"]]
 
 
-def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
+def load_paper_trades(user_id: str = "", days: int = 21, date_from: str = "", date_to: str = "") -> "pd.DataFrame":
     """Load paper trades from the last N days (default 21 = 3 weeks).
+
+    When date_from / date_to are provided they take precedence over days and
+    constrain the query to an explicit calendar window (ISO date strings,
+    e.g. "2024-03-01").  Either one may be omitted independently.
 
     Rows whose tiered_pnl_r equals TIERED_PNL_SENTINEL (-9999) are permanently
     unfillable (no Alpaca bars available).  The sentinel is replaced with NaN so
@@ -12575,7 +12579,10 @@ def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
         return pd.DataFrame()
     try:
         from datetime import date, timedelta
-        cutoff = str(date.today() - timedelta(days=days + 7))
+        if date_from:
+            cutoff = date_from
+        else:
+            cutoff = str(date.today() - timedelta(days=days + 7))
         q = (
             supabase.table("paper_trades")
             .select("*")
@@ -12583,6 +12590,8 @@ def load_paper_trades(user_id: str = "", days: int = 21) -> "pd.DataFrame":
             .gte("trade_date", cutoff)
             .order("trade_date", desc=True)
         )
+        if date_to:
+            q = q.lte("trade_date", date_to)
         data = q.execute().data
         df = pd.DataFrame(data) if data else pd.DataFrame()
         if not df.empty and "tiered_pnl_r" in df.columns:

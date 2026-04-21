@@ -103,8 +103,8 @@ def _cached_load_accuracy_tracker(user_id: str = ""):
     return load_accuracy_tracker(user_id=user_id)
 
 @st.cache_data(ttl=300, show_spinner=False, max_entries=10)
-def _cached_load_paper_trades(user_id: str = "", days: int = 365):
-    return load_paper_trades(user_id=user_id, days=days)
+def _cached_load_paper_trades(user_id: str = "", days: int = 365, date_from: str = "", date_to: str = ""):
+    return load_paper_trades(user_id=user_id, days=days, date_from=date_from, date_to=date_to)
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_user_prefs(user_id: str = ""):
@@ -36125,14 +36125,65 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         unsafe_allow_html=True,
     )
 
+    # ── Date range selector ─────────────────────────────────────────────────
+    _pt_range_opts = ["Last 3 weeks", "Last 7 days", "Last 30 days", "Last 90 days", "Custom range"]
+    _pt_range_days = {"Last 3 weeks": 21, "Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90}
+    _pt_range_sel = st.radio(
+        "Tracker date range",
+        _pt_range_opts,
+        index=0,
+        horizontal=True,
+        key="pt_date_range",
+        label_visibility="collapsed",
+    )
+    _pt_range_invalid = False
+    _pt_date_from = ""
+    _pt_date_to = ""
+    _pt_days = 21
+    if _pt_range_sel == "Custom range":
+        _pt_c1, _pt_c2 = st.columns(2)
+        with _pt_c1:
+            _pt_custom_from = st.date_input(
+                "From",
+                value=date.today() - timedelta(days=21),
+                max_value=date.today(),
+                key="pt_custom_from",
+            )
+        with _pt_c2:
+            _pt_custom_to = st.date_input(
+                "To",
+                value=date.today(),
+                max_value=date.today(),
+                key="pt_custom_to",
+            )
+        if _pt_custom_from > _pt_custom_to:
+            st.warning("'From' date must be on or before 'To' date.")
+            _pt_range_invalid = True
+        else:
+            _pt_date_from = _pt_custom_from.isoformat()
+            _pt_date_to = _pt_custom_to.isoformat()
+    else:
+        _pt_days = _pt_range_days[_pt_range_sel]
+
+    if _pt_range_invalid:
+        return
+
+    # ── Cache key encodes the selected range so switching ranges auto-reloads ─
+    _pt_cache_key = f"pt_tracker_df__{_pt_range_sel}__{_pt_date_from}__{_pt_date_to}"
+
     _pt_reload = st.button("🔄 Refresh Tracker", key="pt_reload_btn")
-    if _pt_reload or "pt_tracker_df" not in st.session_state:
+    if _pt_reload or _pt_cache_key not in st.session_state:
         if _pt_reload:
             _cached_load_paper_trades.clear()
-        _pt_df = _cached_load_paper_trades(user_id=_AUTH_USER_ID, days=21)
-        st.session_state["pt_tracker_df"] = _pt_df
+        _pt_df = _cached_load_paper_trades(
+            user_id=_AUTH_USER_ID,
+            days=_pt_days,
+            date_from=_pt_date_from,
+            date_to=_pt_date_to,
+        )
+        st.session_state[_pt_cache_key] = _pt_df
     else:
-        _pt_df = st.session_state.get("pt_tracker_df", pd.DataFrame())
+        _pt_df = st.session_state.get(_pt_cache_key, pd.DataFrame())
 
     if _pt_df.empty:
         st.info(
