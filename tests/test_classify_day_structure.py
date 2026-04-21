@@ -400,21 +400,24 @@ def _dd_vap_with_gap(gap_dollars):
 
 
 def test_dd_price_gap_exactly_at_015_is_valid(real_backend):
-    """Price gap == $0.15 exactly satisfies the >= $0.15 requirement (strict < check) → DD found."""
-    bin_centers, vap = _dd_vap_with_gap(0.15)
+    """Price gap == DD_MIN_PRICE_GAP exactly satisfies the >= threshold requirement (strict < check) → DD found."""
+    threshold = real_backend.DD_MIN_PRICE_GAP
+    bin_centers, vap = _dd_vap_with_gap(threshold)
     result = real_backend._detect_double_distribution(bin_centers, vap)
     assert result is not None, (
-        "Price gap of exactly $0.15 should pass the '<$0.15' rejection check, "
+        f"Price gap of exactly ${threshold} should pass the '<${threshold}' rejection check, "
         f"but _detect_double_distribution returned None."
     )
 
 
 def test_dd_price_gap_just_below_015_is_rejected(real_backend):
-    """Price gap of $0.14 (< $0.15 minimum) must be rejected → no DD."""
-    bin_centers, vap = _dd_vap_with_gap(0.14)
+    """Price gap just below DD_MIN_PRICE_GAP must be rejected → no DD."""
+    threshold = real_backend.DD_MIN_PRICE_GAP
+    below = round(threshold - 0.01, 10)
+    bin_centers, vap = _dd_vap_with_gap(below)
     result = real_backend._detect_double_distribution(bin_centers, vap)
     assert result is None, (
-        f"Price gap of $0.14 should fail the $0.15 minimum check, "
+        f"Price gap of ${below} should fail the ${threshold} minimum check, "
         f"but DD was found: {result!r}"
     )
 
@@ -438,21 +441,24 @@ def _dd_vap_with_lvn_ratio(valley_fraction, peak_val=1_000.0):
 
 
 def test_dd_lvn_exactly_at_60pct_of_peak_is_rejected(real_backend):
-    """Smoothed valley == 0.60 × peak fails the strict < 0.60 LVN check → no DD."""
-    bin_centers, vap = _dd_vap_with_lvn_ratio(0.60)
+    """Smoothed valley == DD_LVN_RATIO × peak fails the strict < DD_LVN_RATIO check → no DD."""
+    ratio = real_backend.DD_LVN_RATIO
+    bin_centers, vap = _dd_vap_with_lvn_ratio(ratio)
     result = real_backend._detect_double_distribution(bin_centers, vap)
     assert result is None, (
-        "Valley at exactly 60% of peak should NOT satisfy the '< 0.60' LVN condition, "
+        f"Valley at exactly {ratio * 100:.0f}% of peak should NOT satisfy the '< {ratio}' LVN condition, "
         f"but DD was found: {result!r}"
     )
 
 
 def test_dd_lvn_just_below_60pct_of_peak_is_valid(real_backend):
-    """Smoothed valley at 59 % of peak satisfies strict < 0.60 → DD found."""
-    bin_centers, vap = _dd_vap_with_lvn_ratio(0.59)
+    """Smoothed valley just below DD_LVN_RATIO × peak satisfies strict < DD_LVN_RATIO → DD found."""
+    ratio = real_backend.DD_LVN_RATIO
+    below = round(ratio - 0.01, 10)
+    bin_centers, vap = _dd_vap_with_lvn_ratio(below)
     result = real_backend._detect_double_distribution(bin_centers, vap)
     assert result is not None, (
-        "Valley at 59% of peak should satisfy the '< 0.60' LVN check, "
+        f"Valley at {below * 100:.0f}% of peak should satisfy the '< {ratio}' LVN check, "
         "but _detect_double_distribution returned None."
     )
 

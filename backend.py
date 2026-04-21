@@ -1459,6 +1459,10 @@ def _is_strong_hvn(pk, vap):
     return (window / total_vol > 0.20) or (vap[pk] > 2.5 * avg_bin)
 
 
+DD_MIN_PRICE_GAP = 0.15  # Minimum $0.15 price gap between the two HVN peaks
+DD_LVN_RATIO = 0.60      # LVN valley must be strictly below 60 % of the lower peak
+
+
 def _detect_double_distribution(bin_centers, vap, min_bin_sep=15):
     """Return (pk1_idx, pk2_idx, lvn_idx) if a valid Double Distribution is found, else None."""
     smoothed = np.convolve(vap.astype(float), np.ones(5)/5, mode="same")
@@ -1468,19 +1472,19 @@ def _detect_double_distribution(bin_centers, vap, min_bin_sep=15):
         # Must be at least 15 bins apart
         if (pk2 - pk1) < min_bin_sep:
             continue
-        # Must have a price gap of at least $0.15 between the two HVN peaks
-        if len(bin_centers) > pk2 and (bin_centers[pk2] - bin_centers[pk1]) < 0.15:
+        # Must have a price gap of at least DD_MIN_PRICE_GAP between the two HVN peaks
+        if len(bin_centers) > pk2 and (bin_centers[pk2] - bin_centers[pk1]) < DD_MIN_PRICE_GAP:
             continue
         # Both peaks must qualify as strong HVNs
         if not (_is_strong_hvn(pk1, vap) and _is_strong_hvn(pk2, vap)):
             continue
-        # Price gap between HVN peaks must be at least $0.15
+        # Price gap between HVN peaks must be at least DD_MIN_PRICE_GAP
         sep_price = bin_centers[pk2] - bin_centers[pk1]
-        if sep_price < 0.15:
+        if sep_price < DD_MIN_PRICE_GAP:
             continue
         # Must have a clear LVN valley between them
         vi = int(np.argmin(smoothed[pk1:pk2+1])) + pk1
-        if smoothed[vi] < 0.60 * min(smoothed[pk1], smoothed[pk2]):
+        if smoothed[vi] < DD_LVN_RATIO * min(smoothed[pk1], smoothed[pk2]):
             return pk1, pk2, vi
     return None
 
