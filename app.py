@@ -22605,9 +22605,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
     _wkr_cache_key = "_wkr_cache"
     _WKR_SENTINEL  = -9999.0
-    _WKR_FLAT_1R   = 150.0
-
-    _wkr_ctrl1, _wkr_ctrl2, _wkr_ctrl3 = st.columns([2, 2, 3])
+    _wkr_ctrl1, _wkr_ctrl2, _wkr_ctrl3, _wkr_ctrl4 = st.columns([2, 1, 2, 2])
     with _wkr_ctrl1:
         _wkr_days = st.number_input(
             "Calendar days to look back",
@@ -22616,13 +22614,20 @@ Measures how accurately the 7-structure framework classified those days in hinds
             help="Uses calendar days (not trading days). Weekends are included in the cutoff but will simply have no trades.",
         )
     with _wkr_ctrl2:
+        _WKR_FLAT_1R = st.number_input(
+            "$/R",
+            min_value=1.0, max_value=100000.0, value=150.0, step=10.0,
+            key="_wkr_dollar_per_r",
+            help="Dollar value of 1R — used to convert R-multiples to dollar amounts throughout this journal.",
+        )
+    with _wkr_ctrl3:
         _wkr_lens = st.radio(
             "Exit lens",
             ["Tiered (P1-P4)", "EOD (hold to close)"],
             key="_wkr_lens",
             horizontal=True,
         )
-    with _wkr_ctrl3:
+    with _wkr_ctrl4:
         _wkr_reload = st.button("🔄 Load / Refresh", key="_wkr_load_btn")
 
     _wkr_auto = _wkr_cache_key not in st.session_state
@@ -23069,7 +23074,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         st.caption(
             "\u26a0 Trades with NULL R are shown as \u23f3 Pending and excluded from totals. "
-            "Today's trades may be partially settled. 1R = $150 flat (same as the 4-System Comparison)."
+            f"Today's trades may be partially settled. 1R = ${_WKR_FLAT_1R:,.0f} (set via the $/R input above)."
         )
 
 
@@ -23293,7 +23298,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             ("System 4", "System 2 + EOD exits · Upside ceiling", "#64b5f6", _s4c_s4_rows, "eod_pnl_r"),
         ]
         _s4c_results = [
-            (_s4c_stats(rows, rc), _s4c_compound(rows, rc))
+            (_s4c_stats(rows, rc), _s4c_compound(rows, rc, base_1r=_WKR_FLAT_1R))
             for _, _, _, rows, rc in _s4c_defs
         ]
 
@@ -23454,7 +23459,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 ))
             _s4c_fig.update_layout(
                 title=dict(
-                    text="Compounded Equity — $7k start · $150 1R · 20× cap",
+                    text=f"Compounded Equity — $7k start · ${_WKR_FLAT_1R:,.0f} 1R · 20× cap",
                     font=dict(size=13, color="#90a4ae"),
                 ),
                 height=320,
@@ -23538,7 +23543,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             "**EOD** holds every trade until market close (~1.8R avg, higher variance). "
             "**Raw Sim** is the max favorable excursion — theoretical ceiling, never fully capturable. "
             "**System 4** is always EOD regardless of lens toggle (EOD is its defining characteristic). "
-            "Equity curves: $7k start · $150 initial 1R · 20× cap ($3k max 1R at $140k equity)."
+            f"Equity curves: $7k start · ${_WKR_FLAT_1R:,.0f} initial 1R · 20× cap (${_WKR_FLAT_1R * 20:,.0f} max 1R at $140k equity)."
         )
 
     # ── Exhaustive Grid Search — Phase 3 ─────────────────────────────────────
