@@ -2523,6 +2523,82 @@ def _alpaca_place_trailing_stop(
         return {"ok": False, "order_id": "", "error": str(_e)}
 
 
+
+def _reconcile_open_positions() -> None:
+    """Reconcile open Alpaca positions against paper_trades DB records.
+
+    If Alpaca has an open equity position for a ticker whose most-recent
+    paper_trades record has win_loss already set (auto-verify closed it
+    prematurely), this resets win_loss=NULL so _monitor_trailing_stops()
+    will pick it up and apply stop/target management.
+
+    Also re-populates alpaca_qty from the live Alpaca position so the
+    trailing-stop math stays accurate.
+
+    Called at startup (after LIVE_ORDERS_ENABLED confirmed) and again at
+    each morning watchlist refresh so new multi-day positions are caught.
+    """
+    if not _supabase_client or not LIVE_ORDERS_ENABLED:
+        return
+
+    positions = _alpaca_get_positions()
+    if not positions:
+        return
+
+    from datetime import timedelta as _td
+    today_str    = str(datetime.now(EASTERN).date())
+    lookback_str = str((datetime.now(EASTERN).date() - _td(days=10)).isoformat())
+
+    for pos in positions:
+        ticker = (pos.get("symbol") or "").upper()
+        if not ticker:
+            continue
+        qty = int(float(pos.get("qty") or 0))
+        if qty == 0:
+            continue
+
+        # Look for a paper_trades record that has an alpaca_order_id (was
+        # placed by this bot) but win_loss is already set despite the
+        # Alpaca position still being open.
+        try:
+            rows = (
+                _supabase_client
+                .table("paper_trades")
+                .select("id,ticker,trade_date,win_loss,alpaca_order_id,entry_price_sim,stop_price_sim,target_price_sim")
+                .eq("user_id", USER_ID)
+                .eq("ticker", ticker)
+                .gte("trade_date", lookback_str)
+                .not_.is_("alpaca_order_id", "null")
+                .not_.is_("win_loss", "null")
+                .order("trade_date", desc=True)
+                .limit(3)
+                .execute()
+            ).data or []
+        except Exception as _e:
+            log.warning(f"[Reconcile] DB query error for {ticker}: {_e}")
+            continue
+
+        if not rows:
+            # No prematurely-closed record found — nothing to fix
+            continue
+
+        row = rows[0]
+        log.warning(
+            f"[Reconcile] {ticker}: Alpaca has OPEN position ({qty} shares, avg "
+            f"{pos.get('avg_entry_price','?')}) but paper_trades record from "
+            f"{row['trade_date']} has win_loss='{row['win_loss']}'. "
+            f"Resetting win_loss=NULL so position is actively monitored."
+        )
+        try:
+            _supabase_client.table("paper_trades").update({
+                "win_loss":   None,
+                "alpaca_qty": qty,
+            }).eq("user_id", USER_ID).eq("id", row["id"]).execute()
+            log.info(f"[Reconcile] {ticker}: win_loss reset → NULL, alpaca_qty → {qty}")
+        except Exception as _e:
+            log.warning(f"[Reconcile] Update error for {ticker}: {_e}")
+
+
 def _monitor_trailing_stops() -> None:
     """Check all open Alpaca positions — if any have hit T1 (target_r), cancel
     the bracket and replace with a trailing stop so runners can extend.
@@ -2548,9 +2624,11 @@ def _monitor_trailing_stops() -> None:
     if cur_min < mkt_open_min or cur_min > mkt_close_min:
         return
 
-    today_str = str(now_et.date())
+    today_str    = str(now_et.date())
+    from datetime import timedelta as _td
+    lookback_str = str((now_et.date() - _td(days=5)).isoformat())
 
-    # Fetch open paper_trades for today.
+    # Fetch open paper_trades for today and the past 5 days (covers multi-day positions).
     # nearest_resistance and nearest_support are written by log_context_levels()
     # at scan time so the v6 trail-tightening logic below can read them without
     # a secondary backtest_context_levels lookup (which returns NULL for today's
@@ -2571,7 +2649,7 @@ def _monitor_trailing_stops() -> None:
             .table("paper_trades")
             .select(_BASE_SELECT + _SR_COLS)
             .eq("user_id", USER_ID)
-            .eq("trade_date", today_str)
+            .gte("trade_date", lookback_str)
             .not_.is_("alpaca_order_id", "null")
             .is_("win_loss", "null")
             .execute()
@@ -2592,7 +2670,7 @@ def _monitor_trailing_stops() -> None:
                     .table("paper_trades")
                     .select(_BASE_SELECT)
                     .eq("user_id", USER_ID)
-                    .eq("trade_date", today_str)
+                    .gte("trade_date", lookback_str)
                     .not_.is_("alpaca_order_id", "null")
                     .is_("win_loss", "null")
                     .execute()
@@ -7374,6 +7452,9 @@ def main():
                 _f.write(str(_now_ts))
         except Exception:
             pass
+
+        # Reconcile any open Alpaca positions whose DB record was prematurely closed
+        _reconcile_open_positions()
 
         if _suppress_startup_tg:
             log.info("[STARTUP] Recent restart detected — suppressing duplicate Telegram startup notification")
