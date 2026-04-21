@@ -93,6 +93,13 @@ PAPER_CLOSE_LOOKBACK_DAYS       = int(os.getenv("PAPER_CLOSE_LOOKBACK_DAYS", "60
 _USER_PREFS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
 _OWNER_USER_ID        = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
 
+# ── IB Context Enrichment toggle ──────────────────────────────────────────────
+# When enabled (IB_CONTEXT_ENABLED=1) the bot fetches the prior day's IB range
+# and pre-market (4:00–9:30 AM) range for each ticker at scan time and uses
+# them to apply a ±0–5 TCS adjustment.  Off by default so existing behaviour
+# is completely unchanged until you are ready to compare results.
+IB_CONTEXT_ENABLED = os.getenv("IB_CONTEXT_ENABLED", "0").strip() == "1"
+
 # Known NYSE market holidays (observed dates) for 2024-2028.
 # When an official holiday falls on a Saturday the exchange is closed the
 # preceding Friday; when it falls on a Sunday it is observed the following
@@ -689,6 +696,212 @@ def _fetch_prev_day_bars(tickers: list, trade_date_str: str) -> dict:
             log.warning(f'  context levels: prev-day bars error {e}')
         time.sleep(0.3)
     return result
+
+def _fetch_prev_ib(ticker: str, trade_date_str: str) -> tuple:
+    """Return (prev_ib_high, prev_ib_low) for the prior trading session.
+
+    First queries Supabase paper_trades for the most recent prior row with
+    valid IB data for this ticker. Falls back to Alpaca daily bars (the
+    prior session's high/low as a proxy) if Supabase has no record.
+    Returns (0.0, 0.0) when no data is available.
+    """
+    from datetime import datetime, timedelta
+    import requests as _req
+
+    _look_back_start = (datetime.strptime(trade_date_str, '%Y-%m-%d') - timedelta(days=10)).strftime('%Y-%m-%d')
+
+    if _supabase_client:
+        try:
+            rows = (
+                _supabase_client.table("paper_trades")
+                .select("ib_high, ib_low, trade_date")
+                .eq("ticker", ticker)
+                .lt("trade_date", trade_date_str)
+                .gte("trade_date", _look_back_start)
+                .order("trade_date", desc=True)
+                .limit(1)
+                .execute()
+                .data or []
+            )
+            if rows:
+                _h = float(rows[0].get("ib_high") or 0)
+                _l = float(rows[0].get("ib_low") or 0)
+                if _h > _l > 0:
+                    return _h, _l
+        except Exception as _e:
+            log.debug(f"[IB Context] Supabase prev-IB lookup failed for {ticker}: {_e}")
+
+    # Alpaca daily-bar fallback — treat prior session high/low as IB proxy
+    _start = (datetime.strptime(trade_date_str, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
+    _end   = (datetime.strptime(trade_date_str, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+    try:
+        r = _req.get(
+            f'https://data.alpaca.markets/v2/stocks/{ticker}/bars',
+            headers={'APCA-API-KEY-ID': ALPACA_API_KEY, 'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY},
+            params={'start': _start, 'end': _end, 'timeframe': '1Day', 'feed': 'iex', 'limit': 5},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            _bars = r.json().get('bars') or []
+            if _bars:
+                return float(_bars[-1]['h']), float(_bars[-1]['l'])
+    except Exception as _e:
+        log.debug(f"[IB Context] Alpaca prev-day fallback failed for {ticker}: {_e}")
+
+    return 0.0, 0.0
+
+
+def _fetch_premarket_range(ticker: str, trade_date_str: str, open_px: float) -> float:
+    """Return pre-market range (4:00–9:30 AM ET) as a % of open price.
+
+    Fetches 1-minute SIP bars from Alpaca for the pre-market window and
+    computes (high − low) / open_px × 100. Returns 0.0 when no data is
+    available or open_px is zero.
+    """
+    if open_px <= 0:
+        return 0.0
+    import requests as _req
+    from datetime import datetime
+    ET = pytz.timezone('America/New_York')
+    dt    = datetime.strptime(trade_date_str, '%Y-%m-%d')
+    start = ET.localize(dt.replace(hour=4, minute=0)).isoformat()
+    end   = ET.localize(dt.replace(hour=9, minute=30)).isoformat()
+    try:
+        r = _req.get(
+            f'https://data.alpaca.markets/v2/stocks/{ticker}/bars',
+            headers={'APCA-API-KEY-ID': ALPACA_API_KEY, 'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY},
+            params={'start': start, 'end': end, 'timeframe': '1Min', 'feed': 'sip', 'limit': 400},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            _bars = r.json().get('bars') or []
+            if _bars:
+                _pm_high = max(b['h'] for b in _bars)
+                _pm_low  = min(b['l'] for b in _bars)
+                return round((_pm_high - _pm_low) / open_px * 100, 4)
+    except Exception as _e:
+        log.debug(f"[IB Context] Pre-market range fetch failed for {ticker}: {_e}")
+    return 0.0
+
+
+def _ib_context_score_delta(
+    today_ib_range: float,
+    prev_ib_range: float,
+    pm_range_pct: float,
+    direction: str,
+    today_ib_high: float,
+    today_ib_low: float,
+    prev_ib_high: float,
+    prev_ib_low: float,
+) -> int:
+    """Compute TCS adjustment (−5 to +5) from IB context. Returns 0 when disabled.
+
+    Compression day (today IB < 70% of yesterday):
+      • pre-market accepted direction past prior IB  →  +5
+      • pre-market contained within prior IB range   →  +3
+      • no useful pre-market data                    →  +2
+    Expansion already underway (today IB > 130% of yesterday):
+      → −3  (high uncertainty; fade vs continuation unclear)
+    Large pre-market range penalty (pm_range_pct ≥ 2 %):
+      → additional −2  (chaotic overnight action)
+    Result is clamped to [−5, +5].
+    """
+    if not IB_CONTEXT_ENABLED:
+        return 0
+    if today_ib_range <= 0 or prev_ib_range <= 0:
+        return 0
+
+    ratio = today_ib_range / prev_ib_range
+    delta = 0
+
+    if ratio < 0.70:
+        # Compression — check whether pre-market confirmed direction
+        _pm_inside_prev = (
+            prev_ib_low <= today_ib_high <= prev_ib_high
+            and prev_ib_low <= today_ib_low <= prev_ib_high
+        )
+        _pm_directional = False
+        if direction == "Bullish Break" and pm_range_pct > 0:
+            _pm_directional = today_ib_high >= prev_ib_high * 0.99
+        elif direction == "Bearish Break" and pm_range_pct > 0:
+            _pm_directional = today_ib_low <= prev_ib_low * 1.01
+
+        if _pm_directional:
+            delta = 5
+        elif _pm_inside_prev:
+            delta = 3
+        else:
+            delta = 2
+
+    elif ratio > 1.30:
+        delta = -3
+
+    # Chaotic pre-market penalty
+    if pm_range_pct >= 2.0:
+        delta -= 2
+
+    return max(-5, min(5, delta))
+
+
+def _enrich_with_ib_context(results: list, trade_date_str: str) -> None:
+    """Enrich each result dict with IB context fields and apply TCS delta in-place.
+
+    Skips silently when IB_CONTEXT_ENABLED is False. For each ticker, fetches
+    prev-day IB and pre-market range, stores four new fields on the dict, and
+    adjusts tcs by the ±0–5 context delta.
+
+    New fields added to each result:
+        prev_ib_high      — prior session IB high (or None)
+        prev_ib_low       — prior session IB low  (or None)
+        pm_range_pct      — pre-market range as % of open (or None)
+        ib_vs_prev_ib_pct — today IB range / yesterday IB range × 100 (or None)
+    """
+    if not IB_CONTEXT_ENABLED:
+        return
+    log.info(f"[IB Context] Enriching {len(results)} result(s) for {trade_date_str}...")
+    for r in results:
+        ticker        = r.get("ticker", "")
+        open_px       = float(r.get("open_price") or 0)
+        ib_high       = float(r.get("ib_high") or 0)
+        ib_low        = float(r.get("ib_low") or 0)
+        direction     = r.get("predicted", "")
+        today_ib_range = ib_high - ib_low if ib_high > ib_low > 0 else 0.0
+        try:
+            prev_ib_high, prev_ib_low = _fetch_prev_ib(ticker, trade_date_str)
+            time.sleep(0.15)
+            pm_range_pct = _fetch_premarket_range(ticker, trade_date_str, open_px)
+            time.sleep(0.15)
+        except Exception as _e:
+            log.warning(f"[IB Context] Enrichment error for {ticker}: {_e}")
+            prev_ib_high, prev_ib_low, pm_range_pct = 0.0, 0.0, 0.0
+
+        prev_ib_range     = prev_ib_high - prev_ib_low if prev_ib_high > prev_ib_low > 0 else 0.0
+        ib_vs_prev_ib_pct = round(today_ib_range / prev_ib_range * 100, 2) if prev_ib_range > 0 else None
+
+        r["prev_ib_high"]      = round(prev_ib_high, 4) if prev_ib_high else None
+        r["prev_ib_low"]       = round(prev_ib_low,  4) if prev_ib_low  else None
+        r["pm_range_pct"]      = round(pm_range_pct, 4) if pm_range_pct else None
+        r["ib_vs_prev_ib_pct"] = ib_vs_prev_ib_pct
+
+        _delta = _ib_context_score_delta(
+            today_ib_range=today_ib_range,
+            prev_ib_range=prev_ib_range,
+            pm_range_pct=pm_range_pct or 0.0,
+            direction=direction,
+            today_ib_high=ib_high,
+            today_ib_low=ib_low,
+            prev_ib_high=prev_ib_high,
+            prev_ib_low=prev_ib_low,
+        )
+        if _delta != 0:
+            _old_tcs = float(r.get("tcs", 0))
+            r["tcs"] = round(_old_tcs + _delta, 1)
+            log.info(
+                f"  [{ticker}] IB ctx {_delta:+d} pt(s): "
+                f"ratio={ib_vs_prev_ib_pct}, pm={pm_range_pct:.2f}% | "
+                f"TCS {_old_tcs:.0f} → {r['tcs']:.0f}"
+            )
+
 
 def _fetch_intraday_5min(ticker: str, trade_date_str: str) -> list:
     """Return list of 5-min bar dicts from 9:30 AM–4:00 PM ET on trade_date."""
@@ -4100,6 +4313,14 @@ def morning_scan():
         if _r.get("_struct_tcs_floor") is None:
             _r["_struct_tcs_floor"] = _struct_tcs_floor(_r, _tcs_thresholds, effective_min_tcs)
 
+    # ── IB Context Enrichment (toggle: IB_CONTEXT_ENABLED=1) ─────────────────
+    # Fetches prior-day IB and pre-market range, applies ±0–5 TCS delta.
+    # Must run BEFORE log_paper_trades so enriched TCS is stored.
+    try:
+        _enrich_with_ib_context(results, str(today))
+    except Exception as _ice:
+        log.warning(f"IB context enrichment failed (non-critical, continuing): {_ice}")
+
     # Log ALL scan results to paper_trades with regime_tag attached.
     # min_tcs_filter records the effective threshold for this session;
     # analytics can use it to distinguish qualified vs below-threshold rows.
@@ -4233,6 +4454,12 @@ def intraday_scan():
                 _r["screener_pass"] = _sp
         if _r.get("_struct_tcs_floor") is None:
             _r["_struct_tcs_floor"] = _struct_tcs_floor(_r, _tcs_thresholds, effective_min_tcs)
+
+    # ── IB Context Enrichment (toggle: IB_CONTEXT_ENABLED=1) ─────────────────
+    try:
+        _enrich_with_ib_context(results, str(today))
+    except Exception as _ice:
+        log.warning(f"IB context enrichment failed (non-critical, continuing): {_ice}")
 
     # ── Log ALL intraday results to paper_trades (dedup by ticker+date+scan_type)
     logged = log_paper_trades(results, user_id=USER_ID, min_tcs=effective_min_tcs)
@@ -6019,6 +6246,44 @@ def _ensure_alpaca_columns() -> bool:
         return True
 
 
+def _ensure_ib_context_columns() -> bool:
+    """Add IB context columns to paper_trades if they are missing.
+
+    Only logs the migration SQL when IB_CONTEXT_ENABLED is True — no noise
+    when the feature is turned off. Returns True on success or unexpected error.
+    """
+    if not _supabase_client:
+        return True
+    try:
+        _supabase_client.table("paper_trades").select(
+            "prev_ib_high, prev_ib_low, pm_range_pct, ib_vs_prev_ib_pct"
+        ).limit(1).execute()
+        if IB_CONTEXT_ENABLED:
+            log.info("IB context columns present ✅")
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if "column" in err or "does not exist" in err or "42703" in err:
+            if IB_CONTEXT_ENABLED:
+                log.warning(
+                    "\n"
+                    "══════════════════════════════════════════════════════════\n"
+                    "  IB context columns are MISSING in paper_trades.\n"
+                    "  IB_CONTEXT_ENABLED=1 is set but data won't be stored\n"
+                    "  until you run this in Supabase → SQL Editor:\n\n"
+                    "  ALTER TABLE paper_trades\n"
+                    "    ADD COLUMN IF NOT EXISTS prev_ib_high      REAL,\n"
+                    "    ADD COLUMN IF NOT EXISTS prev_ib_low       REAL,\n"
+                    "    ADD COLUMN IF NOT EXISTS pm_range_pct      REAL,\n"
+                    "    ADD COLUMN IF NOT EXISTS ib_vs_prev_ib_pct REAL;\n\n"
+                    "  Then restart the Paper Trader Bot workflow.\n"
+                    "══════════════════════════════════════════════════════════"
+                )
+            return False
+        log.debug(f"_ensure_ib_context_columns check: {e}")
+        return True
+
+
 def _dispatch_scheduled_divergence_alert() -> None:
     """Read divergence_alert_state.json and dispatch the end-of-session divergence alert.
 
@@ -6167,6 +6432,9 @@ def main():
 
     # Ensure Alpaca order-tracking columns exist in paper_trades
     _ensure_alpaca_columns()
+
+    # Ensure IB context columns exist (only warns when IB_CONTEXT_ENABLED=1)
+    _ensure_ib_context_columns()
 
     # Log Alpaca activation status clearly
     acct_label = "PAPER (Alpaca paper-api)" if IS_PAPER_ALPACA else "⚠️  LIVE (real money)"

@@ -12283,6 +12283,15 @@ def log_paper_trades(rows: list, user_id: str = "", min_tcs: int = 50) -> dict:
                 row_record["tcs_floor"] = int(r["tcs_floor"])
             elif r.get("_struct_tcs_floor") is not None:
                 row_record["tcs_floor"] = int(r["_struct_tcs_floor"])
+            # IB context enrichment fields (nullable — only set when IB_CONTEXT_ENABLED=1)
+            if r.get("prev_ib_high") is not None:
+                row_record["prev_ib_high"] = round(float(r["prev_ib_high"]), 4)
+            if r.get("prev_ib_low") is not None:
+                row_record["prev_ib_low"] = round(float(r["prev_ib_low"]), 4)
+            if r.get("pm_range_pct") is not None:
+                row_record["pm_range_pct"] = round(float(r["pm_range_pct"]), 4)
+            if r.get("ib_vs_prev_ib_pct") is not None:
+                row_record["ib_vs_prev_ib_pct"] = round(float(r["ib_vs_prev_ib_pct"]), 2)
             # Auto-compute pnl_r_sim (simple sim P&L) on insert — no backfill needed for this field.
             # tiered_pnl_r for paper_trades is populated by run_tiered_pnl_backfill.py.
             _sim = apply_rvol_sizing_to_sim(
