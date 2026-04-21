@@ -194,8 +194,9 @@ def _cached_get_mgmt_mode_ab_stats(
     user_id: str = "",
     date_from: str | None = None,
     date_to: str | None = None,
+    min_trades: int = 10,
 ) -> dict:
-    return get_mgmt_mode_ab_stats(user_id=user_id, date_from=date_from, date_to=date_to)
+    return get_mgmt_mode_ab_stats(user_id=user_id, date_from=date_from, date_to=date_to, min_trades=min_trades)
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_sa_journal():
@@ -36467,14 +36468,27 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         _ab_days      = _ab_range_days[_ab_range_sel]
         _ab_date_from = (date.today() - timedelta(days=_ab_days)).isoformat() if _ab_days else None
         _ab_date_to   = None
+
+    _ab_min_col, _ = st.columns([1, 3])
+    with _ab_min_col:
+        _ab_min_trades = st.number_input(
+            "Min trades to unlock",
+            min_value=1,
+            max_value=500,
+            value=st.session_state.get("ab_min_trades", 10),
+            step=1,
+            key="ab_min_trades",
+            help="Minimum trades required in each arm before stats and the Δ row are shown.",
+        )
+
     try:
         if _ab_range_invalid:
             raise ValueError("invalid_range")
-        _ab_stats    = _cached_get_mgmt_mode_ab_stats(user_id=_AUTH_USER_ID, date_from=_ab_date_from, date_to=_ab_date_to)
+        _ab_stats    = _cached_get_mgmt_mode_ab_stats(user_id=_AUTH_USER_ID, date_from=_ab_date_from, date_to=_ab_date_to, min_trades=int(_ab_min_trades))
         _ab_fixed    = _ab_stats.get("fixed", {})
         _ab_adaptive = _ab_stats.get("adaptive", {})
         _ab_delta    = _ab_stats.get("delta")
-        _MIN_ARM     = 10
+        _MIN_ARM     = int(_ab_min_trades)
 
         def _ab_arm_html(label: str, stats: dict, color: str) -> str:
             n        = stats.get("n", 0)

@@ -12645,6 +12645,7 @@ def get_mgmt_mode_ab_stats(
     user_id: str = "",
     date_from: str | None = None,
     date_to: str | None = None,
+    min_trades: int = 10,
 ) -> dict:
     """Return A/B performance stats split by mgmt_mode ('fixed' vs 'adaptive').
 
@@ -12654,8 +12655,8 @@ def get_mgmt_mode_ab_stats(
         wr_pct   — win rate as a percentage (0-100), or None if n == 0
         avg_r    — mean tiered_pnl_r, or None if n == 0
 
-    The 'delta' key is populated only when both arms have >= 10 trades and
-    contains the difference (adaptive minus fixed) for wr_pct and avg_r.
+    The 'delta' key is populated only when both arms have >= min_trades trades
+    and contains the difference (adaptive minus fixed) for wr_pct and avg_r.
 
     Rows without mgmt_mode (NULL / empty) are ignored — they pre-date the
     adaptive feature and should not pollute either arm.
@@ -12710,9 +12711,8 @@ def get_mgmt_mode_ab_stats(
         fixed_stats    = _arm_stats(fixed_rows)
         adaptive_stats = _arm_stats(adaptive_rows)
 
-        MIN_TRADES = 10
         delta = None
-        if fixed_stats["n"] >= MIN_TRADES and adaptive_stats["n"] >= MIN_TRADES:
+        if fixed_stats["n"] >= min_trades and adaptive_stats["n"] >= min_trades:
             delta = {
                 "wr_pct": round(adaptive_stats["wr_pct"] - fixed_stats["wr_pct"], 1),
                 "avg_r":  round(adaptive_stats["avg_r"]  - fixed_stats["avg_r"],  3),
