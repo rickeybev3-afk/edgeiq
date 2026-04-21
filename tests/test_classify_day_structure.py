@@ -16,6 +16,7 @@ module at *test-execution* time we use a session-scoped fixture that checks the
 stub and forces a clean import when needed.
 """
 
+import inspect
 import sys
 import types
 import importlib
@@ -563,5 +564,179 @@ def test_trend_day_atr_boundary(real_backend, dist_multiplier, expected_label):
 
     assert label == expected_label, (
         f"dist_multiplier={dist_multiplier}: dist={dist:.4f}, 2×ATR={2*atr:.4f}, "
+        f"expected {expected_label!r}, got {label!r}"
+    )
+
+
+# ── B6. directional_vol gate: ib_vol_pct < 0.40 ─────────────────────────────
+
+
+def _one_side_up_bars_with_inside_fraction(n_inside, n_outside,
+                                           ib_high=100.5, ib_low=99.5):
+    """n_inside + n_outside bars for a one-side-up (bullish) session.
+
+    All bars share high=103.0 / low=99.6 so that:
+      - one_side_up    = True  (day_high 103.0 >= ib_high 100.5,
+                                day_low  99.6  >  ib_low  99.5)
+      - viol_early_up  = True  (all bar highs 103.0 > ib_high 100.5)
+      - close_pct      ≈ 0.97  (last-bar close 102.9, at_high_extreme ✓)
+      - ib_range_ratio = 1.0/3.4 ≈ 0.29 < 0.40  (directional_vol's second gate ✓)
+      - ATR ≈ 3.4; dist_from_ib = 2.4 < 2×ATR → ATR gate alone does NOT trigger Trend
+        Day, so directional_vol is the sole deciding signal.
+
+    ib_vol_pct = n_inside / (n_inside + n_outside) — control via the arguments.
+    """
+    n = n_inside + n_outside
+    inside_close  = (ib_high + ib_low) / 2.0   # 100.0 — strictly inside IB
+    outside_close = 102.9                        # above ib_high; close_pct ≈ 0.97
+    closes = [inside_close] * n_inside + [outside_close] * n_outside
+    highs  = [103.0] * n
+    lows   = [99.6]  * n
+    vols   = [1]     * n
+    return _make_bars(highs, lows, closes, vols)
+
+
+@pytest.mark.parametrize("n_inside,n_outside,expected_label", [
+    (40, 60, "📊 Normal Variation (Up)"),  # ib_vol_pct = 0.40: strict < fails → Normal Variation
+    (39, 61, "📈 Trend Day"),              # ib_vol_pct = 0.39: directional_vol = True → Trend Day
+])
+def test_directional_vol_040_boundary(real_backend, n_inside, n_outside, expected_label):
+    """ib_vol_pct < 0.40 is a strict check; exactly 0.40 must NOT activate directional_vol.
+
+    The scenario is engineered so that:
+      - dist_from_ib (2.4) < 2 × ATR (≈ 6.8) → the ATR gate alone cannot trigger Trend Day.
+      - ib_range_ratio (≈ 0.29) < 0.40 → the second sub-condition of directional_vol is met.
+    Therefore directional_vol is the *only* variable deciding Trend Day vs Normal Variation,
+    and the flip must occur at exactly ib_vol_pct = 0.40 (strict <).
+    """
+    ib_high, ib_low = 100.5, 99.5
+    bin_centers, vap = _flat_vap()
+    df = _one_side_up_bars_with_inside_fraction(n_inside, n_outside, ib_high, ib_low)
+
+    computed_ivp = n_inside / (n_inside + n_outside)
+
+    label, *_ = real_backend.classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price=102.0
+    )
+
+    assert label == expected_label, (
+        f"n_inside={n_inside}/{n_inside + n_outside} "
+        f"(ib_vol_pct={computed_ivp:.4f}): "
+        f"expected {expected_label!r}, got {label!r}"
+    )
+
+
+# ── B7. balanced_vol gate: ib_vol_pct > 0.65 ────────────────────────────────
+
+
+def test_balanced_vol_065_constant_present(real_backend):
+    """Guard the 0.65 constant in classify_day_structure() against silent edits.
+
+    balanced_vol = ib_vol_pct > 0.65 is computed inside the function but is not
+    currently wired to a branch gate, so no behavioural output changes at this threshold.
+    The only reliable way to protect the constant value itself is to assert its presence
+    directly in the function source — any edit to 0.65 will fail this test immediately.
+    """
+    src = inspect.getsource(real_backend.classify_day_structure)
+    assert "ib_vol_pct > 0.65" in src, (
+        "The balanced_vol threshold 'ib_vol_pct > 0.65' was not found in "
+        "classify_day_structure() source.  If the constant was intentionally changed, "
+        "update this test to match the new value."
+    )
+
+
+@pytest.mark.parametrize("ib_vol_pct_val,balanced_vol_expected", [
+    (0.65,   False),   # == 0.65: strict > not met → balanced_vol = False
+    (0.6501, True),    # just above 0.65 → balanced_vol = True
+])
+def test_balanced_vol_065_boundary(real_backend, monkeypatch,
+                                   ib_vol_pct_val, balanced_vol_expected):
+    """balanced_vol = ib_vol_pct > 0.65 is defined in classify_day_structure() but is not
+    currently wired to a branch gate.  This test verifies two things:
+
+    1. The strict-greater-than operator means exactly 0.65 evaluates to False and
+       0.6501 evaluates to True — guards the operator direction if code changes.
+    2. Neither value unintentionally breaks the Normal label (no hidden gate effect).
+
+    In a no-break session (all bar closes strictly inside IB), ib_vol_pct is structurally
+    1.0 because a valid OHLCV bar cannot have close outside [ib_low, ib_high] without its
+    high or low also breaching the IB boundary.  compute_ib_volume_stats is therefore
+    patched to inject the exact boundary values being probed.
+    """
+    ib_high, ib_low = 101.0, 99.0
+    bin_centers, vap = _flat_vap()
+    # Bars well inside IB — no IB touch, wide IB → no_break=True, not narrow → Normal branch
+    df = _uniform_bars(n=78, bar_high=100.5, bar_low=99.5, close=100.0, vol=1_000)
+
+    # Inject exact ib_vol_pct; ib_range_ratio=0.80 (> 0.25) keeps ib_vol_confirms_nontrend
+    # False so that only balanced_vol changes across the boundary.
+    monkeypatch.setattr(
+        real_backend, "compute_ib_volume_stats",
+        lambda _df, _hi, _lo: (ib_vol_pct_val, 0.80),
+    )
+
+    label, *_ = real_backend.classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price=100.0,
+        avg_ib_range=5.0, avg_daily_vol=100_000,
+    )
+
+    computed_balanced_vol = ib_vol_pct_val > 0.65
+    assert computed_balanced_vol == balanced_vol_expected, (
+        f"ib_vol_pct={ib_vol_pct_val}: "
+        f"expected balanced_vol={balanced_vol_expected}, got {computed_balanced_vol}"
+    )
+    assert label == "⚖️ Normal", (
+        f"ib_vol_pct={ib_vol_pct_val} (balanced_vol={computed_balanced_vol}): "
+        f"expected Normal, got {label!r} — balanced_vol must not gate Normal classification"
+    )
+
+
+# ── B8. ib_vol_confirms_nontrend gate: ib_vol_pct > 0.72 ────────────────────
+
+
+@pytest.mark.parametrize("ib_vol_pct_val,expected_label", [
+    (0.72,   "⚖️ Normal"),     # ib_vol_pct == 0.72: strict > not satisfied → Normal
+    (0.7201, "😴 Non-Trend"),  # ib_vol_pct just above 0.72 → ib_vol_confirms_nontrend=True
+])
+def test_ib_vol_confirms_nontrend_072_boundary(real_backend, monkeypatch,
+                                               ib_vol_pct_val, expected_label):
+    """ib_vol_confirms_nontrend = ib_vol_pct > 0.72 and ib_range_ratio < 0.25.
+
+    In any valid no-break session ib_range > day_range (the IB spans more than the
+    actual day range), so ib_range_ratio is structurally > 1.0 and the sub-condition
+    ib_range_ratio < 0.25 can never be True from real bar data alone.
+    compute_ib_volume_stats is therefore patched to inject ib_range_ratio=0.20 (<0.25),
+    isolating the 0.72 threshold as the sole decision variable.
+
+    The session is set up so that:
+      - no_break = True   (bars stay inside IB boundaries)
+      - is_narrow_ib = True (ib_range 1.0 < 0.20 × avg_ib_range 7.0 = 1.4)
+      - is_low_vol = False (pace 390 / avg_daily_vol 100 = 3.9 >> 0.80)
+    This makes ib_vol_confirms_nontrend the *only* Non-Trend trigger, so the branch
+    flips at exactly ib_vol_pct = 0.72 (strict >).
+    """
+    ib_high, ib_low = 100.5, 99.5
+    avg_ib_range  = 7.0   # is_narrow_ib: ib_range(1.0) < 0.20 × 7.0(=1.4) → True
+    avg_daily_vol = 100   # pace(390) / 100 = 3.9 ≥ 0.80 → is_low_vol = False
+
+    bin_centers, vap = _flat_vap()
+    # Bars strictly inside IB → no_break = True
+    df = _uniform_bars(n=78, bar_high=100.4, bar_low=99.6, close=100.0, vol=1)
+
+    # Inject ib_vol_pct boundary value and ib_range_ratio=0.20 (< 0.25) so that the
+    # second sub-condition of ib_vol_confirms_nontrend is always satisfied here.
+    monkeypatch.setattr(
+        real_backend, "compute_ib_volume_stats",
+        lambda _df, _hi, _lo: (ib_vol_pct_val, 0.20),
+    )
+
+    label, *_ = real_backend.classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price=100.0,
+        avg_ib_range=avg_ib_range, avg_daily_vol=avg_daily_vol,
+    )
+
+    assert label == expected_label, (
+        f"ib_vol_pct={ib_vol_pct_val}: "
+        f"ib_vol_confirms_nontrend={'True' if ib_vol_pct_val > 0.72 else 'False'} — "
         f"expected {expected_label!r}, got {label!r}"
     )
