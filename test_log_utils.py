@@ -1,10 +1,15 @@
-"""Standalone tests for log_utils._rotate_log.
+"""Standalone tests for log_utils._rotate_log and log_config._ensure_log_dir.
 
 Covers _rotate_log directly with arbitrary max_bytes and backup_count values,
 independent of any other module's constants.  Includes a multi-backup
 (backup_count=3) suite that verifies the full shift chain.
+
+Also covers _ensure_log_dir: verifies that deep nested directories are created
+when custom env vars (RESET_LOG_PATH, TCS_HISTORY_LOG_PATH,
+BACKFILL_RUN_HISTORY_LOG_PATH) point to non-existent paths.
 """
 
+import importlib
 import os
 import sys
 import tempfile
@@ -12,6 +17,7 @@ import unittest
 from unittest.mock import patch
 
 from log_utils import _rotate_log
+from log_config import _ensure_log_dir
 
 MAX_BYTES = 1024
 BACKUP_COUNT = 1
@@ -339,6 +345,94 @@ class TestOSErrorHandledGracefully(unittest.TestCase):
                     _rotate_log(log, MAX_BYTES, 3)
                 except OSError:
                     self.fail("_rotate_log must not raise even with backup_count=3")
+
+
+class TestEnsureLogDirDirect(unittest.TestCase):
+    """_ensure_log_dir must create deeply nested directories that do not yet exist."""
+
+    def test_single_level_nested_dir_is_created(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = os.path.join(td, "subdir", "app.log")
+            _ensure_log_dir(target)
+            self.assertTrue(os.path.isdir(os.path.dirname(target)))
+
+    def test_deeply_nested_dir_is_created(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = os.path.join(td, "a", "b", "c", "d", "app.log")
+            _ensure_log_dir(target)
+            self.assertTrue(os.path.isdir(os.path.dirname(target)))
+
+    def test_existing_dir_is_a_noop(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = os.path.join(td, "app.log")
+            _ensure_log_dir(target)
+            _ensure_log_dir(target)
+            self.assertTrue(os.path.isdir(td))
+
+    def test_log_file_itself_is_not_created(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = os.path.join(td, "subdir", "app.log")
+            _ensure_log_dir(target)
+            self.assertFalse(os.path.exists(target))
+
+
+class TestEnsureLogDirViaEnvVars(unittest.TestCase):
+    """log_config must create the parent directory for each custom log path env var."""
+
+    def _reload_log_config(self):
+        """Remove log_config from sys.modules and re-import it so module-level
+        _ensure_log_dir calls run again with the currently patched env vars."""
+        sys.modules.pop("log_config", None)
+        importlib.import_module("log_config")
+
+    def test_reset_log_path_env_var_creates_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            custom_path = os.path.join(td, "custom", "resets", "calibration_resets.log")
+            with patch.dict(os.environ, {"RESET_LOG_PATH": custom_path}):
+                self._reload_log_config()
+            self.assertTrue(
+                os.path.isdir(os.path.join(td, "custom", "resets")),
+                "Parent directory for RESET_LOG_PATH must be created on import",
+            )
+
+    def test_tcs_history_log_path_env_var_creates_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            custom_path = os.path.join(td, "logs", "tcs", "history", "tcs_history.jsonl")
+            with patch.dict(os.environ, {"TCS_HISTORY_LOG_PATH": custom_path}):
+                self._reload_log_config()
+            self.assertTrue(
+                os.path.isdir(os.path.join(td, "logs", "tcs", "history")),
+                "Parent directory for TCS_HISTORY_LOG_PATH must be created on import",
+            )
+
+    def test_backfill_run_history_log_path_env_var_creates_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            custom_path = os.path.join(td, "backfill", "run", "history", "run_history.log")
+            with patch.dict(os.environ, {"BACKFILL_RUN_HISTORY_LOG_PATH": custom_path}):
+                self._reload_log_config()
+            self.assertTrue(
+                os.path.isdir(os.path.join(td, "backfill", "run", "history")),
+                "Parent directory for BACKFILL_RUN_HISTORY_LOG_PATH must be created on import",
+            )
+
+    def test_all_three_env_vars_create_their_directories(self):
+        with tempfile.TemporaryDirectory() as td:
+            reset_path = os.path.join(td, "r", "resets.log")
+            tcs_path = os.path.join(td, "t", "tcs.jsonl")
+            backfill_path = os.path.join(td, "b", "backfill.log")
+            env_patch = {
+                "RESET_LOG_PATH": reset_path,
+                "TCS_HISTORY_LOG_PATH": tcs_path,
+                "BACKFILL_RUN_HISTORY_LOG_PATH": backfill_path,
+            }
+            with patch.dict(os.environ, env_patch):
+                self._reload_log_config()
+            self.assertTrue(os.path.isdir(os.path.join(td, "r")))
+            self.assertTrue(os.path.isdir(os.path.join(td, "t")))
+            self.assertTrue(os.path.isdir(os.path.join(td, "b")))
+
+    def tearDown(self):
+        sys.modules.pop("log_config", None)
 
 
 if __name__ == "__main__":
