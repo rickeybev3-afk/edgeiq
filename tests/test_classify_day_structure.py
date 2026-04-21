@@ -6,8 +6,9 @@ Covered branches (in decision-tree order):
   3. Normal               — no IB break, wide IB
   4. Neutral Extreme      — both IB sides broken, close at day extreme
   5. Neutral              — both IB sides broken, close in middle
-  6. Trend Day            — one side broken early, 2× ATR extension, close at extreme
-  7. Normal Variation     — one side broken but no trend dominance
+  6. Trend Day (Bull)     — one side (up) broken early, 2× ATR extension, close at high extreme
+  7. Trend Day (Bear)     — one side (down) broken early, 2× ATR extension, close at low extreme
+  8. Normal Variation     — one side broken but no trend dominance
 
 NOTE: test_adaptive_position_mgmt.py (alphabetically first) stubs
 sys.modules["backend"] = MagicMock() at module level.  To get the real backend
@@ -289,7 +290,58 @@ def test_trend_day_bullish(real_backend):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. Normal Variation (Up)
+# 7. Trend Day (Bearish)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_trend_day_bearish(real_backend):
+    """One side (down) broken early + close at low extreme + > 2× ATR from IB → 📉 Trend Day (Bear)."""
+    bin_centers, vap = _flat_vap()
+
+    ib_high = 100.5
+    ib_low = 99.5
+
+    n_early = 24
+    n_late = 54
+    n = n_early + n_late
+
+    bar_range = 0.05
+    step = (96.0 - 99.5) / (n - 1)
+
+    highs, lows, closes, volumes = [], [], [], []
+    for i in range(n):
+        c = 99.5 + step * i
+        h = c + bar_range
+        l = c - bar_range
+        highs.append(round(h, 4))
+        lows.append(round(l, 4))
+        closes.append(round(c, 4))
+        volumes.append(500)
+
+    df = _make_bars(highs, lows, closes, volumes)
+
+    day_high = max(highs)
+    day_low = min(lows)
+    final_close = closes[-1]
+    total_range = day_high - day_low
+
+    close_pct = (final_close - day_low) / total_range
+    assert close_pct <= 0.10, f"Setup error: close_pct={close_pct:.3f} must be ≤ 0.10"
+    assert day_low <= ib_low, "Setup error: must break ib_low"
+    assert day_high < ib_high, "Setup error: must NOT touch ib_high"
+
+    early_df = df[df.index <= df.index[0].replace(hour=11, minute=30)]
+    assert float(early_df["low"].min()) < ib_low, "Setup error: early violation required"
+
+    label, color, detail, insight = real_backend.classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price=98.0
+    )
+
+    assert label == "📉 Trend Day (Bear)", f"Expected Trend Day (Bear), got: {label!r}"
+    assert color == "#ff9800"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. Normal Variation (Up)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_normal_variation_up(real_backend):
