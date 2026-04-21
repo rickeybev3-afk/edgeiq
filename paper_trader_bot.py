@@ -1620,10 +1620,12 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     "skip_reason":      "order_placed",
                     "rvol_mult":        _rvol_mult,
                     "sp_mult":          _sp_mult,
-                    # Stamp eligibility so _pre_open_position_review() can
-                    # identify trades opened while the adaptive toggle was ON.
-                    "mgmt_mode":        "adaptive_eligible" if ADAPTIVE_POSITION_MGMT else "fixed",
                 }
+                # Only write mgmt_mode when the adaptive feature is ON so the
+                # fixed code-path remains fully backward-compatible on envs
+                # where the migration hasn't been applied yet.
+                if ADAPTIVE_POSITION_MGMT:
+                    _order_patch["mgmt_mode"] = "adaptive_eligible"
                 if _sp:
                     _order_patch["screener_pass"] = _sp
                 _supabase_client.table("paper_trades").update(_order_patch).eq("user_id", USER_ID).eq("trade_date", str(r.get("sim_date") or r.get("trade_date") or "")).eq("ticker", ticker).execute()
