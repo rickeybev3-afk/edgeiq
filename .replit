@@ -177,3 +177,5 @@ packages = ["glibcLocales"]
 LIVE_MIN_TCS = "70"
 TZ = "America/New_York"
 ADAPTIVE_POSITION_MGMT = "1"
+EDGEIQ_PRODUCTION = "1"
+PDT_MAX_DAY_TRADES = "999"
