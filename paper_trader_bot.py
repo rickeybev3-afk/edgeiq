@@ -1551,29 +1551,31 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 return
 
         # 2. Gap% floor
+        # Mirrors filter_grid_search._apply_combo: fail when filter active AND data is None.
         _flt_gap_min = float(_flt_cfg.get("gap_min", 0.0))
-        if _flt_gap_min > 0 and _gap_pct_v is not None:
-            if abs(float(_gap_pct_v)) < _flt_gap_min:
-                log.info(
-                    f"  [{ticker}] filter_config skip — |gap%| {abs(float(_gap_pct_v)):.2f} < {_flt_gap_min}"
-                )
+        if _flt_gap_min > 0:
+            if _gap_pct_v is None or abs(float(_gap_pct_v)) < _flt_gap_min:
+                _gap_desc = f"|gap%| {abs(float(_gap_pct_v)):.2f} < {_flt_gap_min}" if _gap_pct_v is not None else "gap% data unavailable"
+                log.info(f"  [{ticker}] filter_config skip — {_gap_desc}")
                 tg_send(
                     f"⛔ <b>{ticker} Filtered — Gap below optimizer floor</b>\n"
-                    f"|gap%| <b>{abs(float(_gap_pct_v)):.2f}%</b> < floor <b>{_flt_gap_min}%</b>"
+                    + (f"|gap%| <b>{abs(float(_gap_pct_v)):.2f}%</b> < floor <b>{_flt_gap_min}%</b>"
+                       if _gap_pct_v is not None else f"gap% data unavailable, floor={_flt_gap_min}%")
                 )
                 _patch_skip_reason(r, ticker, "filter_config_gap")
                 return
 
-        # 3. Follow-through floor (only meaningful after IB close)
+        # 3. Follow-through floor
+        # Mirrors filter_grid_search._apply_combo: fail when filter active AND data is None.
         _flt_ft_min = float(_flt_cfg.get("follow_min_pct", -999.0))
-        if _flt_ft_min > -900 and _ft_pct_v is not None:
-            if float(_ft_pct_v) < _flt_ft_min:
-                log.info(
-                    f"  [{ticker}] filter_config skip — follow_thru {float(_ft_pct_v):.2f}% < {_flt_ft_min}%"
-                )
+        if _flt_ft_min > -900:
+            if _ft_pct_v is None or float(_ft_pct_v) < _flt_ft_min:
+                _ft_desc = f"follow_thru {float(_ft_pct_v):.2f}% < {_flt_ft_min}%" if _ft_pct_v is not None else "follow_thru data unavailable"
+                log.info(f"  [{ticker}] filter_config skip — {_ft_desc}")
                 tg_send(
                     f"⛔ <b>{ticker} Filtered — Low follow-through</b>\n"
-                    f"Follow-thru <b>{float(_ft_pct_v):.2f}%</b> < floor <b>{_flt_ft_min}%</b>"
+                    + (f"Follow-thru <b>{float(_ft_pct_v):.2f}%</b> < floor <b>{_flt_ft_min}%</b>"
+                       if _ft_pct_v is not None else f"Follow-thru data unavailable, floor={_flt_ft_min}%")
                 )
                 _patch_skip_reason(r, ticker, "filter_config_follow_thru")
                 return
@@ -1584,14 +1586,20 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             _flt_pred_low = _direction_raw.lower()
             _flt_is_trend   = any(t in _flt_pred_low for t in ("bullish break", "bearish break"))
             _flt_is_extreme = any(t in _flt_pred_low for t in ("ntrl extreme", "dbl dist"))
+            # _flt_struct_grp mirrors filter_grid_search._structure_group() exactly:
+            #   "trend" → bullish/bearish break families
+            #   "extreme" → ntrl extreme / dbl dist families
+            #   "neutral" → everything else (neither trend nor extreme)
+            _flt_struct_grp = "trend" if _flt_is_trend else ("extreme" if _flt_is_extreme else "neutral")
             _flt_pass_struct = True
-            if _flt_struct == "trend"      and not _flt_is_trend:
+            if _flt_struct == "trend"      and _flt_struct_grp != "trend":
                 _flt_pass_struct = False
-            elif _flt_struct == "neutral"  and _flt_is_trend:
+            elif _flt_struct == "neutral"  and _flt_struct_grp != "neutral":
+                # "neutral" filter = NOT trend AND NOT extreme (matches grid search exactly)
                 _flt_pass_struct = False
-            elif _flt_struct == "extreme"  and not _flt_is_extreme:
+            elif _flt_struct == "extreme"  and _flt_struct_grp != "extreme":
                 _flt_pass_struct = False
-            elif _flt_struct == "no_extreme" and _flt_is_extreme:
+            elif _flt_struct == "no_extreme" and _flt_struct_grp == "extreme":
                 _flt_pass_struct = False
             if not _flt_pass_struct:
                 log.info(
