@@ -1966,6 +1966,155 @@ def render_beta_portal(beta_user_id: str):
 # BUILD NOTES VIEWER  — accessible via /?notes=<USER_ID>
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+def render_grid_search_public():
+    """Public Phase 3 grid search viewer — no login required. /?gs=edgeiq"""
+    import json as _gs_json, os as _gs_os
+    import pandas as _gs_pd
+
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { display: none !important; }
+    .block-container { padding-top: 1.5rem; max-width: 1400px; }
+    </style>""", unsafe_allow_html=True)
+
+    st.markdown("## 🧬 EdgeIQ — Phase 3 Grid Search Results")
+
+    _GS_SUM  = "filter_grid_summary.json"
+    _GS_TOP  = "filter_grid_top100.json"
+
+    _summary = {}
+    if _gs_os.path.exists(_GS_SUM):
+        try:
+            with open(_GS_SUM) as _f:
+                _summary = _gs_json.load(_f)
+        except Exception:
+            pass
+
+    if _summary:
+        _ran  = _summary.get("run_at", "?")[:16].replace("T", " ")
+        _dr   = _summary.get("date_range", {})
+        _rows = _summary.get("total_rows", 0)
+        _q    = _summary.get("combos_qualifying", 0)
+        st.caption(
+            f"Last run: **{_ran} UTC** · {_dr.get('start','?')} → {_dr.get('end','?')} · "
+            f"{_rows:,} rows · {_q:,} qualifying combos"
+        )
+
+    _top_data = []
+    if _gs_os.path.exists(_GS_TOP):
+        try:
+            with open(_GS_TOP) as _f:
+                _top_data = _gs_json.load(_f)
+        except Exception:
+            pass
+
+    if not _top_data:
+        st.error("No grid search results found. Run Phase 3 grid search first.")
+        return
+
+    _sort_col = st.selectbox(
+        "Sort by",
+        ["Weekly Expectancy", "Trades/Week", "Sharpe", "Win Rate %", "Total R"],
+        key="gs_sort_col",
+    )
+    _sort_map = {
+        "Weekly Expectancy": "WklyR",
+        "Trades/Week":       "/wk",
+        "Sharpe":            "Sharpe",
+        "Win Rate %":        "WR%",
+        "Total R":           "Total R",
+    }
+
+    _rows_disp = []
+    for _i, _c in enumerate(_top_data, 1):
+        _pf  = _c.get("profit_factor", 0)
+        _pfs = "∞" if _pf == float("inf") else f"{_pf:.2f}"
+        _rows_disp.append({
+            "#":        _i,
+            "Structure": _c.get("struct_label", "?"),
+            "TCS+":     _c.get("tcs_offset", 0),
+            "Gap≥%":    _c.get("gap_min", 0),
+            "RVOL≥":    _c.get("rvol_min", 0),
+            "N":        _c.get("n_trades", 0),
+            "WR%":      round(_c.get("win_rate", 0), 1),
+            "Avg R":    round(_c.get("avg_r", 0), 3),
+            "PF":       _pfs,
+            "Sharpe":   round(_c.get("sharpe", 0), 3),
+            "MaxDD":    round(_c.get("max_drawdown_r", 0), 1),
+            "Total R":  round(_c.get("total_r", 0), 1),
+            "/wk":      round(_c.get("trades_per_week", 0), 1),
+            "$/wk":     round(_c.get("proj_weekly_usd", 0), 0),
+            "WklyR":    round(_c.get("weekly_expectancy_r", 0), 3),
+            "Scan":     _c.get("scan_type", "any"),
+            "DOW":      _c.get("day_of_week", "any"),
+            "⚠":       "low N" if _c.get("low_sample") else "",
+        })
+
+    _sk_col = _sort_map.get(_sort_col, "WklyR")
+    _df = _gs_pd.DataFrame(_rows_disp)
+    try:
+        _df["_sk"] = _gs_pd.to_numeric(_df[_sk_col], errors="coerce")
+        _df = _df.sort_values("_sk", ascending=False).drop(columns=["_sk"]).reset_index(drop=True)
+        _df["#"] = range(1, len(_df) + 1)
+    except Exception:
+        pass
+
+    def _gs_color(row):
+        try:
+            s = float(row.get("Sharpe", 0))
+        except (ValueError, TypeError):
+            s = 0.0
+        if row.get("⚠") == "low N":
+            return ["background-color:#fff8e1; color:#5d4037"] * len(row)
+        if s >= 5:
+            return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+        if s >= 2:
+            return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+        return ["background-color:#fce4ec; color:#880e4f"] * len(row)
+
+    st.dataframe(
+        _df.style.apply(_gs_color, axis=1),
+        use_container_width=True, hide_index=True, height=600,
+    )
+
+    st.divider()
+    _sel = st.number_input(f"Select combo (1–{len(_top_data)})", min_value=1,
+                           max_value=len(_top_data), value=1, step=1, key="gs_sel")
+    _best = _top_data[max(0, int(_sel) - 1)]
+    st.markdown(f"### Combo #{_sel} Detail")
+    _m1, _m2, _m3, _m4, _m5, _m6 = st.columns(6)
+    _m1.metric("N",        _best.get("n_trades", 0))
+    _m2.metric("Win Rate", f"{_best.get('win_rate',0):.1f}%")
+    _m3.metric("Avg R",    f"{_best.get('avg_r',0):.3f}R")
+    _m4.metric("Sharpe",   f"{_best.get('sharpe',0):.3f}")
+    _m5.metric("$/wk",     f"${_best.get('proj_weekly_usd',0):.0f}")
+    _m6.metric("WklyR",    f"{_best.get('weekly_expectancy_r',0):.3f}")
+
+    _dim_rows = [
+        ("Structure",       _best.get("struct_label", "?")),
+        ("TCS offset",      f"+{_best.get('tcs_offset',0)}"),
+        ("RVOL min",        _best.get("rvol_min", "any")),
+        ("Gap min %",       _best.get("gap_min", "any")),
+        ("Follow-through",  _best.get("follow_label", "any")),
+        ("Excl false-break",str(_best.get("excl_false_break", False))),
+        ("Scan type",       _best.get("scan_type", "any")),
+        ("Gap direction",   _best.get("gap_direction", "any")),
+        ("VWAP position",   _best.get("vwap_position", "any")),
+        ("IB size",         _best.get("ib_size", "any")),
+        ("MFE min",         _best.get("mfe_min", "any")),
+        ("MAE max",         _best.get("mae_max", "any")),
+        ("RVOL cap",        _best.get("rvol_cap", "none")),
+        ("Day of week",     _best.get("day_of_week", "any")),
+        ("Trades/week",     _best.get("trades_per_week", 0)),
+        ("MaxDD R",         _best.get("max_drawdown_r", 0)),
+    ]
+    st.dataframe(
+        __import__("pandas").DataFrame(_dim_rows, columns=["Dimension", "Value"]),
+        use_container_width=True, hide_index=True,
+    )
+
+
 def render_build_notes():
     """Render build notes as a live hosted page. Accessible via /?notes=USER_ID."""
     _NOTES_PASSCODE = os.environ.get("NOTES_PASSCODE", "")
@@ -6636,6 +6785,12 @@ if _notes_param == _NOTES_USER_ID or _notes_param == _PUBLIC_NOTES_CODE:
 _private_param = st.query_params.get("private", "")
 if _private_param == _PRIVATE_KEY:
     render_private_build_notes()
+    st.stop()
+
+# ── Grid Search public viewer — accessible via /?gs=edgeiq ──────────────────
+_gs_param = st.query_params.get("gs", "")
+if _gs_param == "edgeiq":
+    render_grid_search_public()
     st.stop()
 
 # ── Trade Journal Logger — accessible via /?journal=<USER_ID> ────────────────
