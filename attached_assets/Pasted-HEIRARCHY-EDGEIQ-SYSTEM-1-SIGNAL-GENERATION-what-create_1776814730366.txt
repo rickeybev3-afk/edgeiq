@@ -1,0 +1,55 @@
+HEIRARCHY
+EDGEIQ SYSTEM
+│
+├── 1. SIGNAL GENERATION  (what creates a setup)
+│   ├── IB structure: high/low of the first 60 min (9:30–10:30)
+│   ├── Gap %: how far price opened above/below prior close
+│   ├── TCS (Trade Confidence Score): composite of volume, structure,
+│   │   gap, sector — scores each setup 0–100
+│   └── Scan type: Morning (first trigger) or Intraday (later in day)
+│
+├── 2. SIGNAL FILTER  (which setups the system accepts)
+│   ├── System 1  — TCS≥60  (current live bot) 
+│   ├── System 2  — TCS≥50 + |gap|≥2%  ← best backtested edge
+│   ├── System 3  — Union of S1+S2
+│   └── System 4  — S2 + end-of-day exits (captures full-day runners)
+│
+├── 3. PDT GATE STACK  (live only, while <$25k)
+│   ├── Hard block: 3 round-trips used in 5 days → no new orders
+│   ├── Quality gate (NEW): TCS≥70 only while sub-$25k
+│   │   └── TCS 60–69 setups deferred → frees slots for P1/P3 elite
+│   ├── Equity floor warning: fires Telegram at $26k as buffer
+│   └── Concurrent cap: max open positions at once
+│
+├── 4. EXECUTION  (how a trade is actually placed)
+│   ├── Entry: bracket order at IB high/low breakout
+│   ├── Slippage tolerance: if price just crossed by ≤1.5%, fill at market
+│   ├── Anti-chase: if price already ran >1.5% past entry, skip
+│   └── Stop/target: derived from IB range (tiered trail or EOD)
+│
+├── 5. POSITION SIZING + COMPOUNDING  (how money multiplies)
+│   ├── 1R = 10% of position size ($1,500 pos → 1R = $150)
+│   ├── Compounding factor = current equity ÷ starting equity ($7k)
+│   ├── Each win grows the factor → next trade risks more dollars
+│   ├── Cap: 20× = $3,000 max 1R  (hits at ~$140k equity)
+│   └── At cap: $3,000 × 12.5 trades/day × avg R = ~$35k/day ceiling
+│
+├── 6. PDT TIMELINE  (the growth path)
+│   │
+│   ├── Phase 1 — Sub-$25k, PDT-on (months 1–3ish)
+│   │   ├── Smart: TCS≥70 only → 8.2 trades/day → compounding faster
+│   │   └── Full S2: TCS≥50 → 12.5/day but lower avg R per slot used
+│   │
+│   ├── Phase 2 — Above $25k, PDT lifted (month 4+ onward)
+│   │   └── Full S2 opens up → 12.5 trades/day, all signals taken
+│   │
+│   └── Phase 3 — Cap territory ($140k+)
+│       └── 1R fixed at $3,000, trades/day × avg R = raw dollar machine
+│
+└── 7. ANALYTICS / VALIDATION
+    ├── 4.9yr backtest dataset (backtest_sim_runs)
+    │   └── 14,594 Pending rows being resolved now → completes dataset
+    ├── Filter Comparison (any TCS/gap combo, side-by-side)
+    ├── 4-System Comparison (S1/S2/S3/S4 head-to-head)
+    ├── Smart PDT Projection Audit (compounding model live from data)
+    └── This Week's Replay (per-system trade journal, current week)
