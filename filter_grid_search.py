@@ -334,21 +334,23 @@ def _compute_stats_np(r_arr: np.ndarray, n_scanned: int, n_trading_days: int) ->
     trades_per_day  = n / max(n_trading_days, 1)
     trades_per_week = trades_per_day * 5
     dollar_per_week = trades_per_week * avg_r * 150.0
+    weekly_expectancy_r = round(avg_r * trades_per_week, 4)
     return {
-        "n_trades":          n,
-        "n_scanned":         n_scanned,
-        "scan_to_trade_pct": round(n / max(n_scanned, 1) * 100, 1),
-        "win_rate":          round(wr * 100, 1),
-        "avg_r":             round(avg_r, 4),
-        "total_r":           round(total_r, 3),
-        "profit_factor":     _profit_factor(wins_sum, losses_sum),
-        "sharpe":            _sharpe(avg_r, std_r),
-        "max_drawdown_r":    _max_drawdown(r_arr),
-        "avg_win_r":         round(float(wins.mean()),  3) if len(wins)   else 0.0,
-        "avg_loss_r":        round(float(losses.mean()), 3) if len(losses) else 0.0,
-        "trades_per_week":   round(trades_per_week, 2),
-        "proj_weekly_usd":   round(dollar_per_week, 2),
-        "low_sample":        n < 75,
+        "n_trades":             n,
+        "n_scanned":            n_scanned,
+        "scan_to_trade_pct":    round(n / max(n_scanned, 1) * 100, 1),
+        "win_rate":             round(wr * 100, 1),
+        "avg_r":                round(avg_r, 4),
+        "total_r":              round(total_r, 3),
+        "profit_factor":        _profit_factor(wins_sum, losses_sum),
+        "sharpe":               _sharpe(avg_r, std_r),
+        "max_drawdown_r":       _max_drawdown(r_arr),
+        "avg_win_r":            round(float(wins.mean()),  3) if len(wins)   else 0.0,
+        "avg_loss_r":           round(float(losses.mean()), 3) if len(losses) else 0.0,
+        "trades_per_week":      round(trades_per_week, 2),
+        "proj_weekly_usd":      round(dollar_per_week, 2),
+        "weekly_expectancy_r":  weekly_expectancy_r,
+        "low_sample":           n < 75,
     }
 
 
@@ -436,8 +438,8 @@ def run_grid_search_p1(all_rows, min_n=DEFAULT_MIN_N, top_n=DEFAULT_TOP):
 
     qualifying = [c for c in all_results if c.get("qualifies")]
     print(f"\r  Done: {done:,} combos, {len(qualifying):,} met N≥{min_n}.   ")
-    all_results.sort(key=lambda x: (x.get("qualifies",False), x.get("sharpe",0)), reverse=True)
-    qualifying.sort(key=lambda x: x.get("sharpe", 0), reverse=True)
+    all_results.sort(key=lambda x: (x.get("qualifies",False), x.get("weekly_expectancy_r",0)), reverse=True)
+    qualifying.sort(key=lambda x: x.get("weekly_expectancy_r", 0), reverse=True)
     return all_results, qualifying[:top_n]
 
 
@@ -832,7 +834,7 @@ def run_grid_search_p3(
                                                                             continue
 
                                                                         n_qualifying += 1
-                                                                        score = (stats.get("sharpe", 0.0), stats.get("avg_r", 0.0))
+                                                                        score = (stats.get("weekly_expectancy_r", 0.0), stats.get("avg_r", 0.0))
 
                                                                         # Only build full combo dict if it can enter the heap
                                                                         if len(top_heap) < top_n or score > top_heap[0][0]:
@@ -873,7 +875,7 @@ def run_grid_search_p3(
 
     top_results = sorted(
         [e[2] for e in top_heap],
-        key=lambda x: (x.get("sharpe", 0.0), x.get("avg_r", 0.0)),
+        key=lambda x: (x.get("weekly_expectancy_r", 0.0), x.get("avg_r", 0.0)),
         reverse=True,
     )
     return {"n_with_trades": n_with_trades, "n_qualifying": n_qualifying}, top_results
@@ -1123,8 +1125,8 @@ def main():
     print()
 
     # ── Console table ─────────────────────────────────────────────────────────
-    print(f"=== TOP 10 COMBOS (by Sharpe) — Phase {args.phase} ===")
-    hdr = f"{'#':<3} {'N':>5} {'WR%':>6} {'AvgR':>6} {'PF':>7} {'Sharpe':>7} {'MaxDD':>6}  Label"
+    print(f"=== TOP 10 COMBOS (by Weekly Expectancy) — Phase {args.phase} ===")
+    hdr = f"{'#':<3} {'N':>5} {'WR%':>6} {'AvgR':>6} {'T/wk':>6} {'Wk$':>7} {'WklyR':>7} {'MaxDD':>6}  Label"
     print(hdr); print("-" * len(hdr))
     for i, c in enumerate(top_results[:10], 1):
         if args.phase == 3:
@@ -1140,11 +1142,10 @@ def main():
             if c.get("pm_range_floor", 0) > 0: parts.append(f"PM≥{c['pm_range_floor']}%")
             if c.get("pm_ib_dir", "any") != "any": parts.append(c.get("pm_ib_dir_label", c.get("pm_ib_dir", "")))
             lbl = " | ".join(parts) if parts else "TCS baseline only"
-        pf = c.get("profit_factor", 0)
-        pf_str = "   ∞" if pf == float("inf") else f"{pf:7.2f}"
         print(f"{i:<3} {c['n_trades']:>5} {c['win_rate']:>6.1f} "
-              f"{c['avg_r']:>6.3f} {pf_str} "
-              f"{c['sharpe']:>7.3f} {c['max_drawdown_r']:>6.2f}  {lbl}")
+              f"{c['avg_r']:>6.3f} {c['trades_per_week']:>6.2f} "
+              f"{c['proj_weekly_usd']:>7.0f} {c['weekly_expectancy_r']:>7.4f} "
+              f"{c['max_drawdown_r']:>6.2f}  {lbl}")
 
     if top_results:
         best = top_results[0]
@@ -1156,8 +1157,8 @@ def main():
         pf = best.get("profit_factor", 0)
         print(f"  Profit Factor: {'∞' if pf == float('inf') else f'{pf:.3f}'}")
         print(f"  Sharpe       : {best['sharpe']}")
+        print(f"  Weekly Exp   : {best['weekly_expectancy_r']:.4f}R/wk  (${best['proj_weekly_usd']:.0f}/wk at $150 risk)")
         print(f"  Max Drawdown : {best['max_drawdown_r']}R")
-        print(f"  Proj weekly  : ${best['proj_weekly_usd']:.0f} at $150 risk")
         if args.phase == 3:
             print(f"  Structure    : {best.get('struct_label','?')}")
             print(f"  Scan type    : {best.get('scan_type','?')}")
