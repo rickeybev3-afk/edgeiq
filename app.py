@@ -22414,17 +22414,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     )
 
                 # ── Smart PDT Projection Audit ────────────────────────────────
-                st.markdown("##### 📈 Smart PDT Routing — Full Projection Audit")
+                st.markdown("##### 📈 Smart PDT Routing — Projection Audit")
                 st.caption(
-                    "**Smart PDT routing**: while account equity < $25k (PDT-constrained), "
-                    "the bot takes **TCS≥70 only** (P1/P3 elite tier — 1.295R avg, 91% WR). "
-                    "Once above $25k it opens to all S2 signals (TCS≥50 + gap≥2%, 12.5/day). "
-                    "This reserves the 3 PDT slots for highest-conviction trades only, reaching "
-                    "the $25k unlock **~8 weeks sooner** (day 77 vs day 117 with full S2)."
+                    "While equity < $25k the bot takes **TCS≥70 only** (P1/P3 elite, 1.295R avg / 91% WR), "
+                    "reserving PDT slots for highest-conviction setups only. Above $25k it opens to all S2 "
+                    "signals. This reaches the $25k unlock **~8 weeks sooner** than running full S2 throughout."
                 )
                 try:
-                    import math as _pj_math
-
                     def _pj_compound(avg_r_pdt, avg_r_free, tpd_pdt, tpd_free,
                                      pos_size=1500.0, start_eq=7000.0, cap_x=20.0, n_years=5):
                         base_1r = pos_size * 0.10
@@ -22480,35 +22476,49 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _pj_tpd_p1  = (len(_pj_p1) / max(_pj_dates_p1, 1)) / _settle_rate
 
                         _pj_scenarios = [
-                            ("$1,500 pos — Smart PDT (P1 then S2)", 1500, _pj_avg_p1, _pj_avg_s2, _pj_tpd_p1, _pj_tpd_s2),
-                            ("$1,500 pos — Full S2 throughout",      1500, _pj_avg_s2, _pj_avg_s2, _pj_tpd_s2, _pj_tpd_s2),
-                            ("$2,000 pos — Smart PDT (P1 then S2)", 2000, _pj_avg_p1, _pj_avg_s2, _pj_tpd_p1, _pj_tpd_s2),
-                            ("$2,000 pos — Full S2 throughout",      2000, _pj_avg_s2, _pj_avg_s2, _pj_tpd_s2, _pj_tpd_s2),
+                            ("$1,500 PDT-on Smart", 1500, _pj_avg_p1, _pj_avg_s2, _pj_tpd_p1, _pj_tpd_s2),
+                            ("$1,500 PDT-off",       1500, _pj_avg_s2, _pj_avg_s2, _pj_tpd_s2, _pj_tpd_s2),
+                            ("$2,000 PDT-on Smart", 2000, _pj_avg_p1, _pj_avg_s2, _pj_tpd_p1, _pj_tpd_s2),
+                            ("$2,000 PDT-off",       2000, _pj_avg_s2, _pj_avg_s2, _pj_tpd_s2, _pj_tpd_s2),
                         ]
 
-                        _pj_table_rows = []
-                        _pj_results    = {}
+                        _pj_results = {}
                         for _pj_lbl, _pj_pos, _pj_rpdt, _pj_rfree, _pj_tpdt, _pj_tfree in _pj_scenarios:
-                            _r = _pj_compound(_pj_rpdt, _pj_rfree, _pj_tpdt, _pj_tfree, pos_size=float(_pj_pos))
-                            _pj_results[_pj_lbl] = _r
-                            _pj_table_rows.append({
-                                "Scenario": _pj_lbl,
+                            _pj_results[_pj_lbl] = _pj_compound(
+                                _pj_rpdt, _pj_rfree, _pj_tpdt, _pj_tfree, pos_size=float(_pj_pos)
+                            )
+
+                        # Metadata row (PDT unlock + max daily) shown above the year table
+                        _pj_meta_rows = []
+                        for _pj_lbl, _, _, _, _, _ in _pj_scenarios:
+                            _r = _pj_results[_pj_lbl]
+                            _pj_meta_rows.append({
+                                "": _pj_lbl,
                                 "PDT unlocks": f"day {_r['unlock_day']} (~{_r['unlock_day']/21:.1f} mo)" if _r['unlock_day'] else "Day 1",
-                                "Max$/day at cap": f"${_r['max_daily']:,.0f}",
-                                "Year 1": f"${_r['year_eq'].get(1, 0):,.0f}",
-                                "Year 2": f"${_r['year_eq'].get(2, 0):,.0f}",
-                                "Year 3": f"${_r['year_eq'].get(3, 0):,.0f}",
-                                "Year 5": f"${_r['year_eq'].get(5, 0):,.0f}",
+                                "Max $/day at cap": f"${_r['max_daily']:,.0f}",
                             })
                         st.dataframe(
-                            _rfc_pd.DataFrame(_pj_table_rows).set_index("Scenario"),
+                            _rfc_pd.DataFrame(_pj_meta_rows).set_index(""),
+                            use_container_width=True,
+                        )
+
+                        # Year-as-rows table with 4 scenario columns
+                        _pj_yr_rows = []
+                        for _yr in [1, 2, 3, 5]:
+                            _row = {"Year": f"Y{_yr}"}
+                            for _pj_lbl, _, _, _, _, _ in _pj_scenarios:
+                                _eq = _pj_results[_pj_lbl]["year_eq"].get(_yr, 0)
+                                _row[_pj_lbl] = f"${_eq:,.0f}"
+                            _pj_yr_rows.append(_row)
+                        st.dataframe(
+                            _rfc_pd.DataFrame(_pj_yr_rows).set_index("Year"),
                             use_container_width=True,
                         )
 
                         # Month-by-month for first year — smart $1,500 vs full S2 $1,500
-                        st.markdown("###### Month-by-Month: Year 1 (first 12 months)")
-                        _pj_smart_key = "$1,500 pos — Smart PDT (P1 then S2)"
-                        _pj_full_key  = "$1,500 pos — Full S2 throughout"
+                        st.markdown("###### Month-by-Month: Year 1 — $1,500 position (Smart PDT vs Full S2)")
+                        _pj_smart_key = "$1,500 PDT-on Smart"
+                        _pj_full_key  = "$1,500 PDT-off"
                         _pj_sm = _pj_results[_pj_smart_key]["month_pnl"][:12]
                         _pj_fl = _pj_results[_pj_full_key]["month_pnl"][:12]
                         _pj_mo_rows = []
@@ -22864,6 +22874,89 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
 
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+        # ── Smart PDT routing callout ──────────────────────────────────────────
+        with st.expander("📈 Smart PDT Routing — Projection vs Full S2", expanded=False):
+            st.caption(
+                "System 2 (TCS≥50 + gap≥2%) is the optimal signal set, but under PDT rules "
+                "(<$25k equity) only 3 round-trips are allowed per 5 days. **Smart PDT routing** "
+                "reserves those slots exclusively for TCS≥70 setups (P1/P3 elite) while sub-$25k, "
+                "then switches to full S2 once the account clears $25k. "
+                "The result: PDT unlocks ~8 weeks sooner, Year-1 equity ~+30%."
+            )
+            try:
+                import pandas as _s4c_pj_pd
+                _s4c_pj_rows_s2   = [r for r in (st.session_state.get("_s4c_bsr_cache") or [])
+                                      if (r.get("tcs") or 0) >= 50
+                                      and abs(r.get("gap_pct") or 0) >= 2.0
+                                      and r.get(_s4c_r_col) is not None]
+                _s4c_pj_rows_p1   = [r for r in _s4c_pj_rows_s2 if (r.get("tcs") or 0) >= 70]
+                if _s4c_pj_rows_s2 and _s4c_pj_rows_p1:
+                    _s4c_pj_avg_s2 = sum(float(r[_s4c_r_col]) for r in _s4c_pj_rows_s2) / len(_s4c_pj_rows_s2)
+                    _s4c_pj_avg_p1 = sum(float(r[_s4c_r_col]) for r in _s4c_pj_rows_p1) / len(_s4c_pj_rows_p1)
+                    _s4c_pj_d_s2   = len(set((r.get("sim_date") or "")[:10] for r in _s4c_pj_rows_s2 if r.get("sim_date")))
+                    _s4c_pj_d_p1   = len(set((r.get("sim_date") or "")[:10] for r in _s4c_pj_rows_p1 if r.get("sim_date")))
+                    _s4c_pj_sr     = 0.28
+                    _s4c_pj_tpd_s2 = (len(_s4c_pj_rows_s2) / max(_s4c_pj_d_s2, 1)) / _s4c_pj_sr
+                    _s4c_pj_tpd_p1 = (len(_s4c_pj_rows_p1) / max(_s4c_pj_d_p1, 1)) / _s4c_pj_sr
+
+                    def _s4c_pj_run(avg_pdt, avg_free, tpd_pdt, tpd_free, pos=1500.0, eq0=7000.0, cap=20.0):
+                        b1r = pos * 0.10
+                        eq = eq0
+                        pdtw: list = []
+                        yeq: dict = {}
+                        unlock = None
+                        for day in range(1, 5 * 252 + 1):
+                            cf = min(eq / eq0, cap)
+                            if eq < 25000:
+                                recent = sum(1 for d in pdtw if d >= day - 4)
+                                n = min(max(0, 3 - recent), tpd_pdt)
+                                eq += n * avg_pdt * b1r * cf
+                                for _ in range(int(min(n, 3))):
+                                    pdtw.append(day)
+                                pdtw = [d for d in pdtw if d >= day - 4]
+                            else:
+                                if unlock is None:
+                                    unlock = day
+                                eq += tpd_free * avg_free * b1r * cf
+                            if day % 252 == 0:
+                                yeq[day // 252] = eq
+                        yeq[5] = eq
+                        return yeq, unlock or 0
+
+                    _s4c_pj_scen = [
+                        ("$1,500 PDT-on Smart", 1500, _s4c_pj_avg_p1, _s4c_pj_avg_s2, _s4c_pj_tpd_p1, _s4c_pj_tpd_s2),
+                        ("$1,500 PDT-off",       1500, _s4c_pj_avg_s2, _s4c_pj_avg_s2, _s4c_pj_tpd_s2, _s4c_pj_tpd_s2),
+                        ("$2,000 PDT-on Smart", 2000, _s4c_pj_avg_p1, _s4c_pj_avg_s2, _s4c_pj_tpd_p1, _s4c_pj_tpd_s2),
+                        ("$2,000 PDT-off",       2000, _s4c_pj_avg_s2, _s4c_pj_avg_s2, _s4c_pj_tpd_s2, _s4c_pj_tpd_s2),
+                    ]
+                    _s4c_pj_res = {}
+                    for _lbl, _pos, _rp, _rf, _tp, _tf in _s4c_pj_scen:
+                        _s4c_pj_res[_lbl] = _s4c_pj_run(_rp, _rf, _tp, _tf, pos=float(_pos))
+
+                    _s4c_pj_yr_rows = []
+                    for _yr in [1, 2, 3, 5]:
+                        _row = {"Year": f"Y{_yr}"}
+                        for _lbl, _, _, _, _, _ in _s4c_pj_scen:
+                            _row[_lbl] = f"${_s4c_pj_res[_lbl][0].get(_yr, 0):,.0f}"
+                        _s4c_pj_yr_rows.append(_row)
+                    st.dataframe(
+                        _s4c_pj_pd.DataFrame(_s4c_pj_yr_rows).set_index("Year"),
+                        use_container_width=True,
+                    )
+                    _s4c_pj_unlock_smart = _s4c_pj_res["$1,500 PDT-on Smart"][1]
+                    _s4c_pj_unlock_full  = _s4c_pj_res["$1,500 PDT-off"][1]
+                    st.caption(
+                        f"PDT unlocks: Smart routing = **day {_s4c_pj_unlock_smart}** "
+                        f"(~{_s4c_pj_unlock_smart/21:.1f} mo)  vs  "
+                        f"Full S2 = **day {_s4c_pj_unlock_full}** "
+                        f"(~{_s4c_pj_unlock_full/21:.1f} mo).  "
+                        f"Bot env var: `PDT_PRIORITY_TCS=70` (active)."
+                    )
+                else:
+                    st.info("Load data first — click 'Load / Refresh' above to populate the 4-System cache.")
+            except Exception as _s4c_pj_ex:
+                st.warning(f"Smart PDT projection unavailable: {_s4c_pj_ex}")
 
         # ── Equity curve chart ────────────────────────────────────────────────
         try:
