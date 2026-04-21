@@ -690,6 +690,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/pdt-status":
             self._pdt_status()
             return
+        if path == "/api/settled-count":
+            self._settled_count_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -1538,6 +1541,88 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         body = json.dumps(data).encode()
         self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _settled_count_get(self):
+        """Return the number of settled vs total rows in backtest_sim_runs.
+
+        A row is considered *settled* when its ``tiered_pnl_r`` column is NOT NULL
+        and is not the sentinel value -9999 (which marks rows where Alpaca bar data
+        was unavailable).
+
+        Response:
+          {"available": true, "settled": int, "total": int, "pct": float}
+          {"available": false}           — when Supabase is not configured
+          {"available": false, "error": str} — on query failure
+        """
+        _raw_supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+        import re as _re_sc
+        _m_sc = _re_sc.search(r"supabase\.com/dashboard/project/([a-z0-9]+)", _raw_supabase_url)
+        supabase_url = f"https://{_m_sc.group(1)}.supabase.co" if _m_sc else _raw_supabase_url
+        supabase_key = (
+            os.environ.get("SUPABASE_KEY")
+            or os.environ.get("SUPABASE_ANON_KEY")
+            or os.environ.get("VITE_SUPABASE_ANON_KEY")
+            or ""
+        ).strip()
+
+        if not supabase_url or not supabase_key:
+            body = json.dumps({"available": False}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        base_url = supabase_url.rstrip("/")
+
+        def _count_rows(extra_filters: str) -> int:
+            url = (
+                f"{base_url}/rest/v1/backtest_sim_runs"
+                f"?select=id{extra_filters}"
+            )
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Prefer": "count=exact",
+                    "Range": "0-0",
+                    "Range-Unit": "items",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    content_range = resp.getheader("Content-Range", "*/0")
+            except urllib.error.HTTPError as exc:
+                content_range = exc.headers.get("Content-Range", "*/0") if exc.headers else "*/0"
+                if exc.code not in (200, 206):
+                    raise
+            # PostgREST returns Content-Range like "0-0/22594" or "*/22594"
+            parts = content_range.split("/")
+            last = parts[-1].strip()
+            return int(last) if last.isdigit() else 0
+
+        try:
+            total = _count_rows("")
+            settled = _count_rows("&tiered_pnl_r=not.is.null&tiered_pnl_r=neq.-9999")
+            pct = round((settled / total * 100), 1) if total > 0 else 0.0
+            body = json.dumps({
+                "available": True,
+                "settled": settled,
+                "total": total,
+                "pct": pct,
+            }).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"available": False, "error": str(exc)}).encode()
+            self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")

@@ -938,6 +938,127 @@ interface GridSearchData {
   error?: string;
 }
 
+interface SettledCountData {
+  available: boolean;
+  settled?: number;
+  total?: number;
+  pct?: number;
+  error?: string;
+}
+
+function SettledCountPanel() {
+  const [data, setData] = useState<SettledCountData>({ available: false });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/settled-count");
+        const json: SettledCountData = await res.json();
+        if (!cancelled) { setData(json); setLoading(false); }
+      } catch {
+        if (!cancelled) { setData({ available: false, error: "Could not load settled count." }); setLoading(false); }
+      }
+    };
+    load();
+    const interval = setInterval(load, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const pct = data.pct ?? 0;
+  const isComplete = data.available && (data.settled ?? 0) === (data.total ?? -1) && (data.total ?? 0) > 0;
+
+  return (
+    <div
+      style={{
+        background: "#1e2435",
+        border: isComplete ? "1px solid #166534" : "1px solid #2d3748",
+        borderRadius: "10px",
+        padding: "20px 24px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+        <h2 style={{ fontSize: "13px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
+          Dataset Completeness
+        </h2>
+        {!loading && data.available && (
+          <span
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              color: isComplete ? "#86efac" : "#60a5fa",
+              background: isComplete ? "rgba(74,222,128,0.1)" : "rgba(96,165,250,0.1)",
+              border: isComplete ? "1px solid #14532d" : "1px solid #1e3a5f",
+              borderRadius: "4px",
+              padding: "2px 8px",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              fontFamily: "monospace",
+            }}
+          >
+            {pct.toFixed(1)}%
+          </span>
+        )}
+      </div>
+
+      {loading && (
+        <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>Loading…</p>
+      )}
+      {!loading && !data.available && (
+        <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>
+          {data.error ?? "Supabase not configured — settled count unavailable."}
+        </p>
+      )}
+      {!loading && data.available && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+            <span style={{ fontSize: "20px", fontWeight: 700, color: isComplete ? "#4ade80" : "#60a5fa", fontFamily: "monospace" }}>
+              {(data.settled ?? 0).toLocaleString()}
+            </span>
+            <span style={{ fontSize: "14px", color: "#475569" }}>/</span>
+            <span style={{ fontSize: "14px", color: "#94a3b8", fontFamily: "monospace" }}>
+              {(data.total ?? 0).toLocaleString()}
+            </span>
+            <span style={{ fontSize: "13px", color: "#64748b" }}>rows settled</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div
+              style={{
+                flex: 1,
+                height: "6px",
+                background: "#0e1117",
+                borderRadius: "3px",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  width: `${Math.min(100, pct)}%`,
+                  background: isComplete ? "#22c55e" : "#3b82f6",
+                  borderRadius: "3px",
+                  transition: "width 0.5s ease",
+                }}
+              />
+            </div>
+            <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", fontFamily: "monospace" }}>
+              {(data.total ?? 0) - (data.settled ?? 0) > 0
+                ? `${((data.total ?? 0) - (data.settled ?? 0)).toLocaleString()} pending`
+                : "complete"}
+            </span>
+          </div>
+          {isComplete && (
+            <p style={{ fontSize: "12px", color: "#4ade80", margin: 0 }}>
+              4.9-year dataset fully settled — backtest statistics are complete.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GridSearchPanel() {
   const [data, setData] = useState<GridSearchData>({ available: false });
   const [loading, setLoading] = useState(true);
@@ -2328,6 +2449,8 @@ function Home({ health }: { health: HealthState }) {
             </div>
           )}
         </div>
+
+        <SettledCountPanel />
 
         <GridSearchPanel />
 
