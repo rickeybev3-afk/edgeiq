@@ -12632,7 +12632,11 @@ def get_intraday_closed_paper_trades(user_id: str = "") -> "pd.DataFrame":
         return pd.DataFrame()
 
 
-def get_mgmt_mode_ab_stats(user_id: str = "") -> dict:
+def get_mgmt_mode_ab_stats(
+    user_id: str = "",
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict:
     """Return A/B performance stats split by mgmt_mode ('fixed' vs 'adaptive').
 
     For each arm returns:
@@ -12646,6 +12650,9 @@ def get_mgmt_mode_ab_stats(user_id: str = "") -> dict:
 
     Rows without mgmt_mode (NULL / empty) are ignored — they pre-date the
     adaptive feature and should not pollute either arm.
+
+    Optional date_from / date_to (ISO date strings, e.g. '2024-01-01') filter
+    by trade_date; omitting either end leaves that bound open (all-time by default).
     """
     empty = {"fixed": {}, "adaptive": {}, "delta": None}
     if not supabase:
@@ -12657,8 +12664,12 @@ def get_mgmt_mode_ab_stats(user_id: str = "") -> dict:
             .eq("user_id", user_id)
             .not_.is_("mgmt_mode", "null")
             .not_.is_("tiered_pnl_r", "null")
-            .execute()
         )
+        if date_from:
+            q = q.gte("trade_date", date_from)
+        if date_to:
+            q = q.lte("trade_date", date_to)
+        q = q.execute()
         rows = q.data or []
 
         SENTINEL = -9999

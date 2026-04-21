@@ -190,8 +190,12 @@ def _cached_compute_adaptive_weights(user_id: str = ""):
     return compute_adaptive_weights(user_id)
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _cached_get_mgmt_mode_ab_stats(user_id: str = "") -> dict:
-    return get_mgmt_mode_ab_stats(user_id=user_id)
+def _cached_get_mgmt_mode_ab_stats(
+    user_id: str = "",
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict:
+    return get_mgmt_mode_ab_stats(user_id=user_id, date_from=date_from, date_to=date_to)
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_sa_journal():
@@ -35941,8 +35945,20 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     st.markdown("---")
 
     # ── Mgmt Mode A/B Card ──────────────────────────────────────────────────
+    _ab_range_opts  = ["Last 7 days", "Last 30 days", "Last 90 days", "All-time"]
+    _ab_range_days  = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90, "All-time": None}
+    _ab_range_sel   = st.radio(
+        "A/B date range",
+        _ab_range_opts,
+        index=3,
+        horizontal=True,
+        key="ab_date_range",
+        label_visibility="collapsed",
+    )
+    _ab_days        = _ab_range_days[_ab_range_sel]
+    _ab_date_from   = (date.today() - timedelta(days=_ab_days)).isoformat() if _ab_days else None
     try:
-        _ab_stats    = _cached_get_mgmt_mode_ab_stats(user_id=_AUTH_USER_ID)
+        _ab_stats    = _cached_get_mgmt_mode_ab_stats(user_id=_AUTH_USER_ID, date_from=_ab_date_from)
         _ab_fixed    = _ab_stats.get("fixed", {})
         _ab_adaptive = _ab_stats.get("adaptive", {})
         _ab_delta    = _ab_stats.get("delta")
@@ -36028,7 +36044,8 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             f'border-radius:10px;padding:14px 18px;margin-bottom:14px;">'
             f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1.5px;'
             f'text-transform:uppercase;font-weight:700;margin-bottom:10px;">'
-            f'🔬 Mgmt Mode A/B — Adaptive vs Fixed Bracket</div>'
+            f'🔬 Mgmt Mode A/B — Adaptive vs Fixed Bracket'
+            f'<span style="font-size:10px;font-weight:400;color:#546e7a;margin-left:8px;">({_ab_range_sel})</span></div>'
             f'<div style="display:flex;gap:10px;">'
             f'{_ab_fixed_html}{_ab_adaptive_html}'
             f'</div>'
