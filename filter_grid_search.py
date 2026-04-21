@@ -239,7 +239,7 @@ def _structure_group(p: str) -> str:
     return "neutral"
 
 # ── Minimum sample guard ─────────────────────────────────────────────────────
-DEFAULT_MIN_N = 30
+DEFAULT_MIN_N = 100
 DEFAULT_TOP   = 100
 
 # ── Supabase fields ──────────────────────────────────────────────────────────
