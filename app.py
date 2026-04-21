@@ -22049,16 +22049,55 @@ Measures how accurately the 7-structure framework classified those days in hinds
         if not _rfc_all:
             st.info("Click **Load / Refresh Data** above to run the comparison.")
         else:
-            _rfc_trading_days = len(set(r.get("sim_date", "") for r in _rfc_all if r.get("sim_date")))
-            _rfc_weeks = max(_rfc_trading_days / 5, 1)
+            import datetime as _rfc_dt
 
-            # ── Exit lens ─────────────────────────────────────────────────────
-            _rfc_lens = st.radio(
-                "Exit lens",
-                ["Tiered (P1-P4)", "EOD (hold to close)", "Raw Sim (MFE ceiling)"],
-                key="_rfc_lens",
-                horizontal=True,
-            )
+            # ── Date-window selector ──────────────────────────────────────────
+            _rfc_ctrl1, _rfc_ctrl2 = st.columns([2, 5])
+            with _rfc_ctrl1:
+                _rfc_date_mode = st.selectbox(
+                    "Date window",
+                    ["Recent 1 year", "All time", "Custom"],
+                    key="_rfc_date_mode",
+                )
+            with _rfc_ctrl2:
+                # ── Exit lens ─────────────────────────────────────────────────
+                _rfc_lens = st.radio(
+                    "Exit lens",
+                    ["Tiered (P1-P4)", "EOD (hold to close)", "Raw Sim (MFE ceiling)"],
+                    key="_rfc_lens",
+                    horizontal=True,
+                )
+
+            _rfc_all_dates = sorted(set(r.get("sim_date") for r in _rfc_all if r.get("sim_date")))
+            _rfc_max_dt    = _rfc_all_dates[-1] if _rfc_all_dates else "2026-01-01"
+            _rfc_min_dt    = _rfc_all_dates[0]  if _rfc_all_dates else "2021-01-01"
+
+            if _rfc_date_mode == "Recent 1 year":
+                _rfc_cutoff   = (
+                    _rfc_dt.date.fromisoformat(_rfc_max_dt) - _rfc_dt.timedelta(days=365)
+                ).isoformat()
+                _rfc_filtered = [r for r in _rfc_all if (r.get("sim_date") or "") >= _rfc_cutoff]
+            elif _rfc_date_mode == "All time":
+                _rfc_filtered = list(_rfc_all)
+            else:
+                _rfc_cust_col1, _rfc_cust_col2 = st.columns(2)
+                with _rfc_cust_col1:
+                    _rfc_c_start = st.date_input(
+                        "From", key="_rfc_cust_start",
+                        value=_rfc_dt.date.fromisoformat(_rfc_min_dt),
+                    )
+                with _rfc_cust_col2:
+                    _rfc_c_end = st.date_input(
+                        "To", key="_rfc_cust_end",
+                        value=_rfc_dt.date.fromisoformat(_rfc_max_dt),
+                    )
+                _rfc_filtered = [
+                    r for r in _rfc_all
+                    if _rfc_c_start.isoformat() <= (r.get("sim_date") or "") <= _rfc_c_end.isoformat()
+                ]
+
+            _rfc_trading_days = len(set(r.get("sim_date", "") for r in _rfc_filtered if r.get("sim_date")))
+            _rfc_weeks = max(_rfc_trading_days / 5, 1)
             _rfc_r_col = {
                 "Tiered (P1-P4)":        "tiered_pnl_r",
                 "EOD (hold to close)":   "eod_pnl_r",
@@ -22230,26 +22269,26 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             out.append(r)
                 return out
 
-            _rfc_ntrl    = _rfc_filter(_rfc_all, struct_token="ntrl extreme")
-            _rfc_dbl     = _rfc_filter(_rfc_all, struct_token="dbl dist", gap_min=3.0, tcs_offset=5)
-            _rfc_neut    = _rfc_filter(_rfc_all, struct_token="neutral", gap_min=2.0)
+            _rfc_ntrl    = _rfc_filter(_rfc_filtered, struct_token="ntrl extreme")
+            _rfc_dbl     = _rfc_filter(_rfc_filtered, struct_token="dbl dist", gap_min=3.0, tcs_offset=5)
+            _rfc_neut    = _rfc_filter(_rfc_filtered, struct_token="neutral", gap_min=2.0)
             _rfc_neut    = [r for r in _rfc_neut if "ntrl extreme" not in (r.get("predicted") or "").lower()]
-            _rfc_bull    = _rfc_filter(_rfc_all, struct_token="bullish break", gap_min=3.0)
-            _rfc_bear    = _rfc_filter(_rfc_all, struct_token="bearish break", gap_min=3.0)
+            _rfc_bull    = _rfc_filter(_rfc_filtered, struct_token="bullish break", gap_min=3.0)
+            _rfc_bear    = _rfc_filter(_rfc_filtered, struct_token="bearish break", gap_min=3.0)
 
             _rfc_variants = [
                 # (label, rows)
                 ("Live Bot — no gap, RVOL≥1.0, Morning TCS≥60",
-                 _rfc_filter(_rfc_all, rvol_min=1.0, morning_floor=60,
+                 _rfc_filter(_rfc_filtered, rvol_min=1.0, morning_floor=60,
                              bearish_requires_gap_down=True)),
                 ("Live Bot + gap≥2%",
-                 _rfc_filter(_rfc_all, gap_min=2.0, rvol_min=1.0, morning_floor=60,
+                 _rfc_filter(_rfc_filtered, gap_min=2.0, rvol_min=1.0, morning_floor=60,
                              bearish_requires_gap_down=True)),
                 ("★ Combined Best — gap≥2%, TCS morn≥60, no RVOL gate",
-                 _rfc_filter(_rfc_all, gap_min=2.0, morning_floor=60,
+                 _rfc_filter(_rfc_filtered, gap_min=2.0, morning_floor=60,
                              bearish_requires_gap_down=True)),
                 ("Phase 3 Best — gap≥2% only (max volume)",
-                 _rfc_filter(_rfc_all, gap_min=2.0)),
+                 _rfc_filter(_rfc_filtered, gap_min=2.0)),
                 ("Ntrl Extreme only — no gap [opt]",
                  _rfc_ntrl),
                 ("Dbl Dist only — gap≥3%, TCS+5 [opt]",
@@ -22301,8 +22340,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rfc_df = _rfc_pd.DataFrame(_rfc_table_rows)
                 st.markdown("##### Side-by-Side Filter Comparison")
                 st.caption(
-                    f"Dataset: **{len(_rfc_all):,} unique trades** · {_rfc_trading_days} trading days "
-                    f"({_rfc_weeks:.0f} wks) · 1R = $150 · Compounding: $7k start, 20× cap ($3k max 1R)"
+                    f"Dataset: **{len(_rfc_filtered):,} unique trades** · {_rfc_trading_days} trading days "
+                    f"({_rfc_weeks:.0f} wks) · window: {_rfc_date_mode} · "
+                    f"1R = $150 · Compounding: $7k start, 20× cap ($3k max 1R)"
                 )
                 st.dataframe(_rfc_df.set_index("Filter Variant"), use_container_width=True)
 
