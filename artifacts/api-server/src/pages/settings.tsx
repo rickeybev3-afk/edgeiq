@@ -275,6 +275,9 @@ interface GridSearchCombo {
   win_rate?: number;
   avg_r?: number;
   sharpe?: number;
+  trades_per_week?: number;
+  proj_weekly_usd?: number;
+  weekly_expectancy_r?: number;
 }
 
 interface GridSearchResultsState {
@@ -1062,6 +1065,7 @@ export default function Settings() {
     file_exists: false,
     loading: false,
   });
+  const [gridSortMetric, setGridSortMetric] = useState<"weekly_expectancy_r" | "sharpe">("weekly_expectancy_r");
 
   const fetchGridSearchResults = () => {
     setGridSearchResults((s) => ({ ...s, loading: true }));
@@ -3627,20 +3631,49 @@ export default function Settings() {
 
           {(gridSearchResults.file_exists || gridSearchResults.results.length > 0) && (
             <div style={{ marginTop: "28px" }}>
-              <div style={{ fontSize: "13px", fontWeight: 600, color: "#94a3b8", marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                Top Filter Combinations
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Top Filter Combinations
+                </div>
+                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                  <span style={{ fontSize: "11px", color: "#475569", marginRight: "4px" }}>Sort:</span>
+                  {(["weekly_expectancy_r", "sharpe"] as const).map((metric) => (
+                    <button
+                      key={metric}
+                      onClick={() => setGridSortMetric(metric)}
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        borderRadius: "5px",
+                        border: `1px solid ${gridSortMetric === metric ? "#38bdf8" : "#2d3748"}`,
+                        background: gridSortMetric === metric ? "rgba(56,189,248,0.12)" : "transparent",
+                        color: gridSortMetric === metric ? "#38bdf8" : "#64748b",
+                        cursor: "pointer",
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {metric === "weekly_expectancy_r" ? "Wkly Exp" : "Sharpe"}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div style={{ overflowX: "auto", borderRadius: "8px", border: "1px solid #2d3748" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontFamily: "monospace" }}>
                   <thead>
                     <tr style={{ background: "rgba(45,55,72,0.6)" }}>
-                      {["#", "Filters", "Trades", "Win %", "Avg R", "Sharpe"].map((h) => (
+                      {["#", "Filters", "Trades", "Win %", "Avg R", "T/wk", "Wk$", "WklyR", "Sharpe"].map((h) => (
                         <th
                           key={h}
                           style={{
                             padding: "9px 12px",
-                            textAlign: h === "#" || h === "Trades" || h === "Win %" || h === "Avg R" || h === "Sharpe" ? "right" : "left",
-                            color: "#64748b",
+                            textAlign: h === "Filters" ? "left" : "right",
+                            color: h === "WklyR" && gridSortMetric === "weekly_expectancy_r"
+                              ? "#38bdf8"
+                              : h === "Sharpe" && gridSortMetric === "sharpe"
+                              ? "#38bdf8"
+                              : "#64748b",
                             fontWeight: 600,
                             fontSize: "11px",
                             letterSpacing: "0.05em",
@@ -3655,7 +3688,9 @@ export default function Settings() {
                     </tr>
                   </thead>
                   <tbody>
-                    {gridSearchResults.results.map((combo, i) => {
+                    {[...gridSearchResults.results]
+                      .sort((a, b) => (b[gridSortMetric] ?? 0) - (a[gridSortMetric] ?? 0))
+                      .map((combo, i) => {
                       const filters: string[] = [];
                       if (combo.tcs_label) filters.push(combo.tcs_label);
                       if (combo.struct_label) filters.push(combo.struct_label);
@@ -3672,7 +3707,7 @@ export default function Settings() {
                           }}
                         >
                           <td style={{ padding: "9px 12px", textAlign: "right", color: "#475569", fontWeight: 600 }}>{i + 1}</td>
-                          <td style={{ padding: "9px 12px", color: "#cbd5e1", maxWidth: "320px" }}>
+                          <td style={{ padding: "9px 12px", color: "#cbd5e1", maxWidth: "280px" }}>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
                               {filters.map((f) => (
                                 <span
@@ -3693,7 +3728,7 @@ export default function Settings() {
                             </div>
                           </td>
                           <td style={{ padding: "9px 12px", textAlign: "right", color: "#94a3b8" }}>
-                            {combo.n_trades ?? "—"}
+                            {combo.n_trades != null ? combo.n_trades.toLocaleString() : "—"}
                           </td>
                           <td style={{ padding: "9px 12px", textAlign: "right", color: combo.win_rate != null && combo.win_rate >= 60 ? "#4ade80" : "#94a3b8" }}>
                             {combo.win_rate != null ? `${combo.win_rate.toFixed(1)}%` : "—"}
@@ -3702,6 +3737,15 @@ export default function Settings() {
                             {combo.avg_r != null ? combo.avg_r.toFixed(3) : "—"}
                           </td>
                           <td style={{ padding: "9px 12px", textAlign: "right", color: "#94a3b8" }}>
+                            {combo.trades_per_week != null ? combo.trades_per_week.toFixed(1) : "—"}
+                          </td>
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: combo.proj_weekly_usd != null && combo.proj_weekly_usd > 0 ? "#4ade80" : "#94a3b8" }}>
+                            {combo.proj_weekly_usd != null ? `$${combo.proj_weekly_usd.toFixed(0)}` : "—"}
+                          </td>
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: gridSortMetric === "weekly_expectancy_r" ? "#e2e8f0" : "#94a3b8", fontWeight: gridSortMetric === "weekly_expectancy_r" ? 600 : 400 }}>
+                            {combo.weekly_expectancy_r != null ? combo.weekly_expectancy_r.toFixed(3) : "—"}
+                          </td>
+                          <td style={{ padding: "9px 12px", textAlign: "right", color: gridSortMetric === "sharpe" ? "#e2e8f0" : "#94a3b8", fontWeight: gridSortMetric === "sharpe" ? 600 : 400 }}>
                             {combo.sharpe != null ? combo.sharpe.toFixed(2) : "—"}
                           </td>
                         </tr>
