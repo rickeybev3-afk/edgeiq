@@ -1157,8 +1157,8 @@ _DEFAULT_MFE_LIST      = [("any", "mfe_any"), ("0.5r", "mfe_0.5r")]
 _DEFAULT_MAE_LIST      = [("any", "mae_any"), ("0.5r", "mae_0.5r")]
 _DEFAULT_RVOL_CAP_LIST = [("none", "rvol_cap_none"), ("lt5", "rvol_cap_lt5")]
 _DEFAULT_DOW_LIST      = [("any", "dow_any"), ("mon_thu", "dow_mon_thu")]
-_DEFAULT_PM_RANGE_LIST = [("any", "pm_range_any"), ("0.5pct", "pm_range_0.5")]
-_DEFAULT_PM_DIR_LIST   = [("any", "pm_dir_any"), ("bullish", "pm_dir_bullish"), ("bearish", "pm_dir_bearish")]
+_DEFAULT_PM_RANGE_LIST = [("any", "pm_range_any")]  # binary locked off until PM backfill completes
+_DEFAULT_PM_DIR_LIST   = [("any", "pm_dir_any")]    # binary locked off until PM backfill completes
 
 if __name__ == "__main__":
     main()
