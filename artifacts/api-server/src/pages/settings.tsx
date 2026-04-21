@@ -270,6 +270,20 @@ interface GridSearchResultsState {
   loading: boolean;
 }
 
+interface GridSearchAlertConfigState {
+  webhook_url: string;
+  telegram_token_set: boolean;
+  telegram_chat_id: string;
+  sources: { webhook: "ui" | "env" | "none"; telegram: "ui" | "env" | "none" };
+  draftWebhook: string;
+  draftTelegramToken: string;
+  draftTelegramChatId: string;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface EodRecalcRun {
   completed_at: string;
   path: string;
@@ -365,7 +379,9 @@ export default function Settings() {
       "backfill-heartbeat-window",
       "eod-recalc-health",
       "rvol-size-tiers",
+      "tp-calib-history",
       "grid-search",
+      "grid-search-alerts",
       "archive-keep",
     ];
     const visibleSections = new Set<string>();
@@ -845,6 +861,51 @@ export default function Settings() {
     return () => { cancelled = true; };
   }, []);
 
+  const [gridSearchAlert, setGridSearchAlert] = useState<GridSearchAlertConfigState>({
+    webhook_url: "",
+    telegram_token_set: false,
+    telegram_chat_id: "",
+    sources: { webhook: "none", telegram: "none" },
+    draftWebhook: "",
+    draftTelegramToken: "",
+    draftTelegramChatId: "",
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/grid-search-alert-config")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setGridSearchAlert((s) => ({
+            ...s,
+            webhook_url: data.webhook_url ?? "",
+            telegram_token_set: !!data.telegram_token_set,
+            telegram_chat_id: data.telegram_chat_id ?? "",
+            sources: data.sources ?? { webhook: "none", telegram: "none" },
+            draftWebhook: data.webhook_url ?? "",
+            draftTelegramToken: "",
+            draftTelegramChatId: data.telegram_chat_id ?? "",
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load grid search alert config.";
+          setGridSearchAlert((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
 
   useEffect(() => {
@@ -1094,12 +1155,12 @@ export default function Settings() {
   }
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history", "#grid-search", "#archive-keep"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading, tpCalibHistory.loading, archiveKeep.loading]
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history", "#grid-search", "#grid-search-alerts", "#archive-keep"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading, tpCalibHistory.loading, gridSearchAlert.loading, archiveKeep.loading]
   );
 
   useEffect(() => {
-    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history", "grid-search", "archive-keep"];
+    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history", "grid-search", "grid-search-alerts", "archive-keep"];
     const visibleSections = new Set<string>();
 
     const observer = new IntersectionObserver(
@@ -1227,6 +1288,45 @@ export default function Settings() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setRecalcZeroAlerts((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handleGridSearchAlertSave() {
+    setGridSearchAlert((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const body: Record<string, string> = {
+        webhook_url: gridSearchAlert.draftWebhook.trim(),
+        telegram_chat_id: gridSearchAlert.draftTelegramChatId.trim(),
+      };
+      if (gridSearchAlert.draftTelegramToken.trim()) {
+        body.telegram_token = gridSearchAlert.draftTelegramToken.trim();
+      }
+      const res = await fetch("/api/grid-search-alert-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setGridSearchAlert((s) => ({
+        ...s,
+        webhook_url: data.webhook_url ?? "",
+        telegram_token_set: !!data.telegram_token_set,
+        telegram_chat_id: data.telegram_chat_id ?? "",
+        sources: data.sources ?? s.sources,
+        draftWebhook: data.webhook_url ?? "",
+        draftTelegramToken: "",
+        draftTelegramChatId: data.telegram_chat_id ?? "",
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setGridSearchAlert((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setGridSearchAlert((s) => ({ ...s, saving: false, error: msg }));
     }
   }
 
@@ -1604,6 +1704,7 @@ export default function Settings() {
               { id: "rvol-size-tiers", label: "RVOL Tiers" },
               { id: "tp-calib-history", label: "TP Calibration" },
               { id: "grid-search", label: "Grid Search" },
+              { id: "grid-search-alerts", label: "Grid Search Alerts" },
               { id: "archive-keep", label: "Archive Retention" },
             ] as const
           ).map(({ id, label }) => (
@@ -3610,6 +3711,176 @@ export default function Settings() {
             <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
               ⚠ {archiveKeep.error}
             </p>
+          )}
+        </section>
+
+        <section
+          id="grid-search-alerts"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "60px",
+            marginBottom: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Grid Search Alert Destination
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            Configure where the weekly grid search scheduler sends its completion alerts.
+            Supports Slack / generic webhooks and Telegram bots. Settings saved here take
+            effect on the next grid search run without a server restart.
+          </p>
+
+          {gridSearchAlert.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : gridSearchAlert.error && !gridSearchAlert.webhook_url ? (
+            <div style={{ padding: "10px 12px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: "7px", color: "#f87171", fontSize: "12px" }}>
+              ⚠ {gridSearchAlert.error}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                  <label style={{ fontSize: "13px", fontWeight: 600, color: "#94a3b8" }}>
+                    Slack / Webhook URL
+                  </label>
+                  {gridSearchAlert.sources.webhook === "env" && (
+                    <span style={{ fontSize: "11px", color: "#64748b", background: "rgba(100,116,139,0.12)", border: "1px solid #334155", borderRadius: "4px", padding: "1px 6px" }}>
+                      from env var
+                    </span>
+                  )}
+                  {gridSearchAlert.sources.webhook === "ui" && (
+                    <span style={{ fontSize: "11px", color: "#4ade80", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.25)", borderRadius: "4px", padding: "1px 6px" }}>
+                      saved
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="url"
+                  value={gridSearchAlert.draftWebhook}
+                  placeholder="https://hooks.slack.com/services/…"
+                  onChange={(e) => setGridSearchAlert((s) => ({ ...s, draftWebhook: e.target.value }))}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    background: "#0f1623",
+                    border: "1px solid #334155",
+                    borderRadius: "6px",
+                    padding: "8px 10px",
+                    color: "#e2e8f0",
+                    fontSize: "13px",
+                    fontFamily: "monospace",
+                    outline: "none",
+                  }}
+                />
+                <p style={{ fontSize: "11px", color: "#475569", marginTop: "4px", marginBottom: 0 }}>
+                  Any endpoint that accepts a POST with <code style={{ fontSize: "11px", color: "#64748b" }}>{"{"}"text": "…"{"}"}</code> JSON. Leave blank to disable.
+                </p>
+              </div>
+
+              <div style={{ borderTop: "1px solid #1e2d40", paddingTop: "20px" }}>
+                <p style={{ fontSize: "13px", fontWeight: 600, color: "#94a3b8", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  Telegram
+                  {gridSearchAlert.sources.telegram === "env" && (
+                    <span style={{ fontSize: "11px", color: "#64748b", background: "rgba(100,116,139,0.12)", border: "1px solid #334155", borderRadius: "4px", padding: "1px 6px", fontWeight: 400 }}>
+                      from env vars
+                    </span>
+                  )}
+                  {gridSearchAlert.sources.telegram === "ui" && (
+                    <span style={{ fontSize: "11px", color: "#4ade80", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.25)", borderRadius: "4px", padding: "1px 6px", fontWeight: 400 }}>
+                      saved
+                    </span>
+                  )}
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  <div>
+                    <label style={{ fontSize: "12px", color: "#64748b", display: "block", marginBottom: "4px" }}>
+                      Bot Token
+                    </label>
+                    {gridSearchAlert.telegram_token_set && (
+                      <p style={{ fontSize: "11px", color: "#4ade80", marginBottom: "4px", marginTop: 0 }}>
+                        ✓ A bot token is currently stored. Enter a new value to replace it, or leave blank to keep it.
+                      </p>
+                    )}
+                    <input
+                      type="password"
+                      value={gridSearchAlert.draftTelegramToken}
+                      placeholder={gridSearchAlert.telegram_token_set ? "Enter new token to replace…" : "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabc…"}
+                      onChange={(e) => setGridSearchAlert((s) => ({ ...s, draftTelegramToken: e.target.value }))}
+                      style={{
+                        width: "100%",
+                        boxSizing: "border-box",
+                        background: "#0f1623",
+                        border: "1px solid #334155",
+                        borderRadius: "6px",
+                        padding: "8px 10px",
+                        color: "#e2e8f0",
+                        fontSize: "13px",
+                        fontFamily: "monospace",
+                        outline: "none",
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "12px", color: "#64748b", display: "block", marginBottom: "4px" }}>
+                      Chat ID
+                    </label>
+                    <input
+                      type="text"
+                      value={gridSearchAlert.draftTelegramChatId}
+                      placeholder="-1001234567890"
+                      onChange={(e) => setGridSearchAlert((s) => ({ ...s, draftTelegramChatId: e.target.value }))}
+                      style={{
+                        width: "100%",
+                        boxSizing: "border-box",
+                        background: "#0f1623",
+                        border: "1px solid #334155",
+                        borderRadius: "6px",
+                        padding: "8px 10px",
+                        color: "#e2e8f0",
+                        fontSize: "13px",
+                        fontFamily: "monospace",
+                        outline: "none",
+                      }}
+                    />
+                    <p style={{ fontSize: "11px", color: "#475569", marginTop: "4px", marginBottom: 0 }}>
+                      Both bot token and chat ID are required to enable Telegram alerts.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <button
+                  onClick={handleGridSearchAlertSave}
+                  disabled={gridSearchAlert.saving}
+                  style={{
+                    padding: "8px 18px",
+                    background: gridSearchAlert.saving ? "#1e3a5f" : "#1d4ed8",
+                    color: gridSearchAlert.saving ? "#64748b" : "#fff",
+                    border: "none",
+                    borderRadius: "6px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: gridSearchAlert.saving ? "default" : "pointer",
+                    transition: "background 0.15s",
+                  }}
+                >
+                  {gridSearchAlert.saving ? "Saving…" : "Save Alert Settings"}
+                </button>
+                {gridSearchAlert.saved && (
+                  <span style={{ fontSize: "13px", color: "#4ade80" }}>✓ Saved successfully.</span>
+                )}
+              </div>
+              {gridSearchAlert.error && (
+                <div style={{ padding: "10px 12px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: "7px", color: "#f87171", fontSize: "12px" }}>
+                  ⚠ {gridSearchAlert.error}
+                </div>
+              )}
+            </div>
           )}
         </section>
       </div>

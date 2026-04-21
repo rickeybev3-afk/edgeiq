@@ -46,6 +46,28 @@ from apscheduler.triggers.cron import CronTrigger
 
 SUMMARY_FILE = "filter_grid_summary.json"
 CATCH_UP_THRESHOLD_DAYS = 7
+_ALERT_CONFIG_FILE = ".local/grid_search_alert_config.json"
+
+
+def _load_ui_alert_config() -> dict:
+    """Load notification settings saved via the dashboard UI.
+
+    Returns a dict with keys: webhook_url, telegram_token, telegram_chat_id.
+    Falls back to empty strings when the file does not exist or cannot be parsed.
+    """
+    try:
+        if os.path.exists(_ALERT_CONFIG_FILE):
+            with open(_ALERT_CONFIG_FILE) as _f:
+                data = json.load(_f)
+                return {
+                    "webhook_url": data.get("webhook_url", "").strip(),
+                    "telegram_token": data.get("telegram_token", "").strip(),
+                    "telegram_chat_id": data.get("telegram_chat_id", "").strip(),
+                }
+    except Exception:
+        pass
+    return {"webhook_url": "", "telegram_token": "", "telegram_chat_id": ""}
+
 
 SCHEDULE_HOUR   = 2
 SCHEDULE_MINUTE = 0
@@ -54,8 +76,13 @@ SCHEDULE_MINUTE = 0
 # ── Notification helpers ───────────────────────────────────────────────────────
 
 def _notify_webhook(message: str) -> None:
-    """POST *message* to ALERT_WEBHOOK_URL as {"text": message}. Silently skipped if not set."""
-    webhook_url = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+    """POST *message* to the configured webhook URL as {"text": message}.
+
+    Checks the dashboard UI config first (.local/grid_search_alert_config.json),
+    then falls back to the ALERT_WEBHOOK_URL environment variable.
+    Silently skipped when neither is set.
+    """
+    webhook_url = _load_ui_alert_config()["webhook_url"] or os.environ.get("ALERT_WEBHOOK_URL", "").strip()
     if not webhook_url:
         return
     try:
@@ -73,9 +100,15 @@ def _notify_webhook(message: str) -> None:
 
 
 def _notify_telegram(message: str) -> None:
-    """Send *message* via Telegram bot. Silently skipped if token/chat-id not set."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    """Send *message* via Telegram bot.
+
+    Checks the dashboard UI config first (.local/grid_search_alert_config.json),
+    then falls back to the TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID environment
+    variables.  Silently skipped when either value is missing.
+    """
+    ui_cfg = _load_ui_alert_config()
+    token = ui_cfg["telegram_token"] or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = ui_cfg["telegram_chat_id"] or os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         return
     try:
@@ -225,17 +258,20 @@ def main() -> None:
     print("[grid-search-scheduler] Phase 3 grid search weekly scheduler starting.", flush=True)
     print("[grid-search-scheduler] Cron schedule: Sunday 02:00 UTC (day_of_week=sun, hour=2, minute=0)", flush=True)
 
-    webhook_configured = bool(os.environ.get("ALERT_WEBHOOK_URL", "").strip())
+    ui_cfg = _load_ui_alert_config()
+    webhook_configured = bool(ui_cfg["webhook_url"] or os.environ.get("ALERT_WEBHOOK_URL", "").strip())
     telegram_configured = bool(
-        os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-        and os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+        (ui_cfg["telegram_token"] or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip())
+        and (ui_cfg["telegram_chat_id"] or os.environ.get("TELEGRAM_CHAT_ID", "").strip())
     )
     if webhook_configured or telegram_configured:
         destinations = []
         if webhook_configured:
-            destinations.append("webhook (ALERT_WEBHOOK_URL)")
+            src = "dashboard UI" if ui_cfg["webhook_url"] else "ALERT_WEBHOOK_URL env var"
+            destinations.append(f"webhook ({src})")
         if telegram_configured:
-            destinations.append("Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)")
+            src = "dashboard UI" if ui_cfg["telegram_token"] else "env vars"
+            destinations.append(f"Telegram ({src})")
         print(
             f"[grid-search-scheduler] Notifications enabled via: {', '.join(destinations)}",
             flush=True,
@@ -249,7 +285,7 @@ def main() -> None:
     else:
         print(
             "[grid-search-scheduler] No notification destination configured "
-            "(set ALERT_WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID to enable alerts).",
+            "(set ALERT_WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID via the dashboard or as env vars).",
             flush=True,
         )
 

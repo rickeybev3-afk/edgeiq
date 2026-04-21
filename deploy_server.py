@@ -28,6 +28,7 @@ _TRADING_MODE_FILE = "/tmp/trading_mode.json"
 _TRADING_WRITE_SECRET = os.environ.get("DASHBOARD_WRITE_SECRET", "").strip()
 _USER_PREFS_FILE = ".local/user_prefs.json"
 _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
+_GRID_SEARCH_ALERT_CONFIG_FILE = ".local/grid_search_alert_config.json"
 _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_BACKTEST_LOOKBACK_DAYS = int(os.environ.get("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_MIN_TCS = int(os.environ.get("PAPER_TRADE_MIN_TCS", "50"))
@@ -161,6 +162,36 @@ def _load_owner_prefs() -> dict:
             pass
 
     return result
+
+
+def _load_grid_search_alert_config() -> dict:
+    """Load grid-search notification settings from .local/grid_search_alert_config.json.
+
+    Returns a dict with keys: webhook_url (str), telegram_token (str), telegram_chat_id (str).
+    Missing keys default to empty strings.
+    """
+    try:
+        if os.path.exists(_GRID_SEARCH_ALERT_CONFIG_FILE):
+            with open(_GRID_SEARCH_ALERT_CONFIG_FILE) as _f:
+                data = json.load(_f)
+                return {
+                    "webhook_url": data.get("webhook_url", ""),
+                    "telegram_token": data.get("telegram_token", ""),
+                    "telegram_chat_id": data.get("telegram_chat_id", ""),
+                }
+    except Exception:
+        pass
+    return {"webhook_url": "", "telegram_token": "", "telegram_chat_id": ""}
+
+
+def _save_grid_search_alert_config(cfg: dict) -> None:
+    """Persist grid-search notification settings to .local/grid_search_alert_config.json."""
+    try:
+        os.makedirs(os.path.dirname(_GRID_SEARCH_ALERT_CONFIG_FILE), exist_ok=True)
+        with open(_GRID_SEARCH_ALERT_CONFIG_FILE, "w") as _f:
+            json.dump(cfg, _f)
+    except Exception:
+        pass
 
 
 def _load_all_subscriber_prefs() -> list:
@@ -646,6 +677,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/grid-search-results":
             self._grid_search_results_get()
             return
+        if path == "/api/grid-search-alert-config":
+            self._grid_search_alert_config_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -717,6 +751,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/grid-search-cancel":
             self._grid_search_cancel_post()
+            return
+        if path == "/api/grid-search-alert-config":
+            self._grid_search_alert_config_post()
             return
         self._proxy() if streamlit_ready else self._loading()
 
@@ -1363,6 +1400,122 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+
+    def _grid_search_alert_config_get(self):
+        """Return the current grid-search notification configuration.
+
+        Response: {
+            "webhook_url": str,
+            "telegram_token_set": bool,
+            "telegram_chat_id": str,
+            "sources": {"webhook": "ui"|"env"|"none", "telegram": "ui"|"env"|"none"}
+        }
+        The telegram_token value is never returned in plaintext — only a boolean
+        indicating whether one has been stored.  This prevents accidental exposure
+        in browser DevTools or network logs.
+        """
+        try:
+            cfg = _load_grid_search_alert_config()
+            env_webhook = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+            env_tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+            env_tg_chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+            webhook_url = cfg["webhook_url"] or env_webhook
+            telegram_chat_id = cfg["telegram_chat_id"] or env_tg_chat
+            telegram_token_set = bool(cfg["telegram_token"] or env_tg_token)
+
+            webhook_source = "ui" if cfg["webhook_url"] else ("env" if env_webhook else "none")
+            if cfg["telegram_token"]:
+                telegram_source = "ui"
+            elif env_tg_token:
+                telegram_source = "env"
+            else:
+                telegram_source = "none"
+
+            body = json.dumps({
+                "webhook_url": webhook_url,
+                "telegram_token_set": telegram_token_set,
+                "telegram_chat_id": telegram_chat_id,
+                "sources": {"webhook": webhook_source, "telegram": telegram_source},
+            }).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _grid_search_alert_config_post(self):
+        """Accept and persist grid-search notification settings.
+
+        Payload fields (all optional):
+          webhook_url     — Slack / generic webhook URL (empty string to clear)
+          telegram_token  — Telegram bot token (omit to keep existing; empty string to clear)
+          telegram_chat_id — Telegram chat ID (empty string to clear)
+
+        Response: same shape as GET.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+
+            cfg = _load_grid_search_alert_config()
+
+            if "webhook_url" in payload:
+                cfg["webhook_url"] = str(payload["webhook_url"]).strip()
+            if "telegram_token" in payload:
+                cfg["telegram_token"] = str(payload["telegram_token"]).strip()
+            if "telegram_chat_id" in payload:
+                cfg["telegram_chat_id"] = str(payload["telegram_chat_id"]).strip()
+
+            _save_grid_search_alert_config(cfg)
+
+            env_webhook = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+            env_tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+            env_tg_chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+            webhook_url = cfg["webhook_url"] or env_webhook
+            telegram_chat_id = cfg["telegram_chat_id"] or env_tg_chat
+            telegram_token_set = bool(cfg["telegram_token"] or env_tg_token)
+
+            webhook_source = "ui" if cfg["webhook_url"] else ("env" if env_webhook else "none")
+            if cfg["telegram_token"]:
+                telegram_source = "ui"
+            elif env_tg_token:
+                telegram_source = "env"
+            else:
+                telegram_source = "none"
+
+            body = json.dumps({
+                "webhook_url": webhook_url,
+                "telegram_token_set": telegram_token_set,
+                "telegram_chat_id": telegram_chat_id,
+                "sources": {"webhook": webhook_source, "telegram": telegram_source},
+            }).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _paper_lookback_get(self):
         """Return the effective paper-trades look-back window.
