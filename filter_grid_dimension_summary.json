@@ -2,55 +2,83 @@
   "struct_label": {
     "label": "Structure subset",
     "values": {
-      "Bearish Break + Double Distribution": {
-        "in_top_20": 4,
-        "in_top_100": 8
+      "Bearish Break + Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 1,
+        "in_top_100": 6
       },
-      "Bearish Break + Double Distribution + Non-Trend": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Bearish Break + Normal Variation + Double Distribution": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Bullish Break + Bearish Break + Double Distribution": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Bullish Break + Bearish Break + Double Distribution + Non-Trend": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Bullish Break + Bearish Break + Normal Variation + Double Distribution": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Bullish Break + Double Distribution": {
-        "in_top_20": 7,
-        "in_top_100": 8
-      },
-      "Bullish Break + Double Distribution + Non-Trend": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Bullish Break + Normal Variation + Double Distribution": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Double Distribution": {
-        "in_top_20": 8,
-        "in_top_100": 8
-      },
-      "Double Distribution + Non-Trend": {
-        "in_top_20": 0,
-        "in_top_100": 8
-      },
-      "Normal Variation + Double Distribution": {
+      "Bearish Break + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
         "in_top_20": 1,
         "in_top_100": 8
       },
-      "Normal Variation + Double Distribution + Non-Trend": {
+      "Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 1,
+        "in_top_100": 6
+      },
+      "Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
+        "in_top_20": 1,
+        "in_top_100": 6
+      },
+      "Bullish Break + Bearish Break + Neutral Extreme + Neutral": {
+        "in_top_20": 0,
+        "in_top_100": 2
+      },
+      "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 2,
+        "in_top_100": 6
+      },
+      "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
+        "in_top_20": 2,
+        "in_top_100": 8
+      },
+      "Bullish Break + Bearish Break + Neutral Extreme + Neutral + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 2
+      },
+      "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral": {
+        "in_top_20": 0,
+        "in_top_100": 2
+      },
+      "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 2,
+        "in_top_100": 6
+      },
+      "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
+        "in_top_20": 2,
+        "in_top_100": 6
+      },
+      "Bullish Break + Bearish Break + Normal Variation + Neutral Extreme + Neutral + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 2
+      },
+      "Bullish Break + Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 2,
+        "in_top_100": 6
+      },
+      "Bullish Break + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
+        "in_top_20": 2,
+        "in_top_100": 6
+      },
+      "Bullish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 2,
+        "in_top_100": 6
+      },
+      "Bullish Break + Normal Variation + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
+        "in_top_20": 2,
+        "in_top_100": 6
+      },
+      "Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 0,
+        "in_top_100": 4
+      },
+      "Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
+        "in_top_20": 0,
+        "in_top_100": 4
+      },
+      "Normal Variation + Neutral Extreme + Neutral + Double Distribution": {
+        "in_top_20": 0,
+        "in_top_100": 4
+      },
+      "Normal Variation + Neutral Extreme + Neutral + Double Distribution + Non-Trend": {
         "in_top_20": 0,
         "in_top_100": 4
       }
@@ -59,7 +87,7 @@
   "tcs_offset": {
     "label": "TCS offset",
     "values": {
-      "15": {
+      "0": {
         "in_top_20": 20,
         "in_top_100": 100
       }
@@ -78,11 +106,11 @@
     "label": "Gap min %",
     "values": {
       "0.0": {
-        "in_top_20": 11,
+        "in_top_20": 8,
         "in_top_100": 52
       },
       "2.0": {
-        "in_top_20": 9,
+        "in_top_20": 12,
         "in_top_100": 48
       }
     }
@@ -99,9 +127,13 @@
   "excl_false_break": {
     "label": "Excl false-break",
     "values": {
-      "True": {
+      "False": {
         "in_top_20": 20,
-        "in_top_100": 100
+        "in_top_100": 76
+      },
+      "True": {
+        "in_top_20": 0,
+        "in_top_100": 24
       }
     }
   },
@@ -118,12 +150,12 @@
     "label": "Gap direction",
     "values": {
       "any": {
-        "in_top_20": 11,
-        "in_top_100": 50
+        "in_top_20": 20,
+        "in_top_100": 66
       },
       "up": {
-        "in_top_20": 9,
-        "in_top_100": 50
+        "in_top_20": 0,
+        "in_top_100": 34
       }
     }
   },
@@ -140,12 +172,12 @@
     "label": "Screener pass",
     "values": {
       "any": {
-        "in_top_20": 11,
-        "in_top_100": 50
+        "in_top_20": 20,
+        "in_top_100": 96
       },
       "pass": {
-        "in_top_20": 9,
-        "in_top_100": 50
+        "in_top_20": 0,
+        "in_top_100": 4
       }
     }
   },
@@ -161,7 +193,7 @@
   "mfe_min": {
     "label": "MFE minimum",
     "values": {
-      "0.5r": {
+      "any": {
         "in_top_20": 20,
         "in_top_100": 100
       }
