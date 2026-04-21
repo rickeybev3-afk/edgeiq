@@ -609,7 +609,9 @@ export default function Settings() {
     pruning: boolean;
     error: string | null;
     pruned: boolean;
-  }>({ pruning: false, error: null, pruned: false });
+    deleted: number | null;
+    freedBytes: number | null;
+  }>({ pruning: false, error: null, pruned: false, deleted: null, freedBytes: null });
 
   useEffect(() => {
     let cancelled = false;
@@ -719,19 +721,25 @@ export default function Settings() {
   }, []);
 
   const handleArchivePrune = () => {
-    setArchivePrune({ pruning: true, error: null, pruned: false });
+    setArchivePrune({ pruning: true, error: null, pruned: false, deleted: null, freedBytes: null });
     fetch("/api/archive-prune", { method: "POST", headers: getWriteHeaders() })
       .then((r) => {
         if (!r.ok) return r.json().then((d: { error?: string }) => { throw new Error(d?.error ?? `Server returned ${r.status}`); });
         return r.json();
       })
-      .then(() => {
-        setArchivePrune({ pruning: false, error: null, pruned: true });
+      .then((data: { deleted?: string[]; freed_bytes?: number }) => {
+        setArchivePrune({
+          pruning: false,
+          error: null,
+          pruned: true,
+          deleted: Array.isArray(data.deleted) ? data.deleted.length : null,
+          freedBytes: typeof data.freed_bytes === "number" ? data.freed_bytes : null,
+        });
         fetchArchiveRuns();
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Pruning failed.";
-        setArchivePrune({ pruning: false, error: msg, pruned: false });
+        setArchivePrune({ pruning: false, error: msg, pruned: false, deleted: null, freedBytes: null });
       });
   };
 
@@ -3717,9 +3725,10 @@ export default function Settings() {
                   max={500}
                   value={archiveKeep.draft}
                   disabled={archiveKeep.saving}
-                  onChange={(e) =>
-                    setArchiveKeep((s) => ({ ...s, draft: e.target.value, error: null }))
-                  }
+                  onChange={(e) => {
+                    setArchiveKeep((s) => ({ ...s, draft: e.target.value, error: null }));
+                    setArchivePrune((s) => s.pruned ? { ...s, pruned: false, deleted: null, freedBytes: null } : s);
+                  }}
                   onKeyDown={(e) => e.key === "Enter" && handleArchiveKeepSave()}
                   style={{
                     width: "100px",
@@ -3858,7 +3867,10 @@ export default function Settings() {
                   {archivePrune.pruning ? "Pruning…" : "Prune now"}
                 </button>
                 {archivePrune.pruned && (
-                  <span style={{ fontSize: "12px", color: "#4ade80" }}>✓ Pruned successfully.</span>
+                  <span style={{ fontSize: "12px", color: "#4ade80" }}>
+                    ✓ Deleted {archivePrune.deleted ?? 0} {archivePrune.deleted === 1 ? "run" : "runs"}
+                    {archivePrune.freedBytes != null ? ` · freed ${formatBytes(archivePrune.freedBytes)}` : ""}
+                  </span>
                 )}
                 {archivePrune.error && (
                   <span style={{ fontSize: "12px", color: "#f87171" }}>⚠ {archivePrune.error}</span>
