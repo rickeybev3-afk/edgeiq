@@ -372,3 +372,196 @@ def test_normal_variation_up(real_backend):
     )
 
     assert label == "📊 Normal Variation (Up)", f"Expected Normal Variation (Up), got: {label!r}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Boundary tests — each hard-coded threshold tested at its exact edge value
+# and just the other side to prove the branch flips there and not elsewhere.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── B1. Double Distribution: $0.15 price-gap minimum ────────────────────────
+
+def _dd_vap_with_gap(gap_dollars):
+    """Two strong HVN peaks (bins 20 and 60); bin_centers arranged so
+    bin_centers[60] - bin_centers[20] == gap_dollars exactly.
+    The valley between peaks is zero, giving a clear LVN.
+    """
+    n = 100
+    bin_centers = np.linspace(100.0, 101.0, n)
+    bin_centers[20] = 100.0
+    bin_centers[60] = 100.0 + gap_dollars
+    vap = np.zeros(n, dtype=float)
+    vap[18:23] = 1_000.0
+    vap[58:63] = 1_000.0
+    vap[[0, 1, 2, 96, 97, 98, 99]] = 1.0
+    return bin_centers, vap
+
+
+def test_dd_price_gap_exactly_at_015_is_valid(real_backend):
+    """Price gap == $0.15 exactly satisfies the >= $0.15 requirement (strict < check) → DD found."""
+    bin_centers, vap = _dd_vap_with_gap(0.15)
+    result = real_backend._detect_double_distribution(bin_centers, vap)
+    assert result is not None, (
+        "Price gap of exactly $0.15 should pass the '<$0.15' rejection check, "
+        f"but _detect_double_distribution returned None."
+    )
+
+
+def test_dd_price_gap_just_below_015_is_rejected(real_backend):
+    """Price gap of $0.14 (< $0.15 minimum) must be rejected → no DD."""
+    bin_centers, vap = _dd_vap_with_gap(0.14)
+    result = real_backend._detect_double_distribution(bin_centers, vap)
+    assert result is None, (
+        f"Price gap of $0.14 should fail the $0.15 minimum check, "
+        f"but DD was found: {result!r}"
+    )
+
+
+# ── B2. Double Distribution: LVN valley strictly < 60 % of peak height ──────
+
+def _dd_vap_with_lvn_ratio(valley_fraction, peak_val=1_000.0):
+    """Two HVN peaks (bins 18:23 and 58:63); uniform valley (bins 23:58)
+    set to valley_fraction × peak_val.  At interior positions the 5-bin
+    convolution smoothed value equals the raw value exactly, so the
+    smoothed LVN == valley_fraction × smoothed_peak.
+    """
+    n = 100
+    bin_centers = np.linspace(100.0, 110.0, n)
+    vap = np.zeros(n, dtype=float)
+    vap[18:23] = peak_val
+    vap[58:63] = peak_val
+    vap[23:58] = valley_fraction * peak_val
+    vap[[0, 1, 2, 96, 97, 98, 99]] = 1.0
+    return bin_centers, vap
+
+
+def test_dd_lvn_exactly_at_60pct_of_peak_is_rejected(real_backend):
+    """Smoothed valley == 0.60 × peak fails the strict < 0.60 LVN check → no DD."""
+    bin_centers, vap = _dd_vap_with_lvn_ratio(0.60)
+    result = real_backend._detect_double_distribution(bin_centers, vap)
+    assert result is None, (
+        "Valley at exactly 60% of peak should NOT satisfy the '< 0.60' LVN condition, "
+        f"but DD was found: {result!r}"
+    )
+
+
+def test_dd_lvn_just_below_60pct_of_peak_is_valid(real_backend):
+    """Smoothed valley at 59 % of peak satisfies strict < 0.60 → DD found."""
+    bin_centers, vap = _dd_vap_with_lvn_ratio(0.59)
+    result = real_backend._detect_double_distribution(bin_centers, vap)
+    assert result is not None, (
+        "Valley at 59% of peak should satisfy the '< 0.60' LVN check, "
+        "but _detect_double_distribution returned None."
+    )
+
+
+# ── B3. Non-Trend: ib_range < 20 % of avg_ib_range ─────────────────────────
+
+@pytest.mark.parametrize("ib_ratio,expected_label", [
+    (0.20,   "⚖️ Normal"),      # exactly at threshold → is_narrow_ib = False → Normal
+    (0.1999, "😴 Non-Trend"),   # just below 0.20 → is_narrow_ib = True → Non-Trend
+])
+def test_non_trend_ib_ratio_boundary(real_backend, ib_ratio, expected_label):
+    """ib_range / avg_ib_range boundary at 0.20: strict < means 0.20 goes to Normal."""
+    avg_ib_range = 5.0
+    ib_range = ib_ratio * avg_ib_range
+    ib_low  = 100.0
+    ib_high = ib_low + ib_range
+
+    mid = (ib_high + ib_low) / 2.0
+    df  = _uniform_bars(n=78, bar_high=mid + 0.001, bar_low=mid - 0.001,
+                        close=mid, vol=100)
+    bin_centers, vap = _flat_vap()
+
+    label, *_ = real_backend.classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price=mid,
+        avg_daily_vol=500_000, avg_ib_range=avg_ib_range,
+    )
+
+    assert label == expected_label, (
+        f"ib_ratio={ib_ratio} (ib_range={ib_range:.4f}, 0.20×avg={0.20*avg_ib_range:.4f}): "
+        f"expected {expected_label!r}, got {label!r}"
+    )
+
+
+# ── B4. Neutral Extreme: close_pct >= 0.90 or <= 0.10 ───────────────────────
+
+def _both_sides_df(day_high, day_low, final_close):
+    """Bars that touch both IB sides with fixed day extremes and a specific final close."""
+    n = 78
+    mid_close = (day_high + day_low) / 2.0
+    highs  = [day_high] * n
+    lows   = [day_low]  * n
+    closes = [mid_close] * (n - 1) + [final_close]
+    return _make_bars(highs, lows, closes, [1_000] * n)
+
+
+@pytest.mark.parametrize("close_pct,expected_label", [
+    (0.90,   "⚡ Neutral Extreme"),   # at high-extreme boundary (>= 0.90)
+    (0.8999, "🔄 Neutral"),           # just below high-extreme
+    (0.10,   "⚡ Neutral Extreme"),   # at low-extreme boundary (<= 0.10)
+    (0.1001, "🔄 Neutral"),           # just above low-extreme
+])
+def test_neutral_extreme_close_pct_boundary(real_backend, close_pct, expected_label):
+    """Neutral Extreme uses >= 0.90 / <= 0.10; exact boundary values must classify correctly."""
+    day_low, day_high = 99.0, 105.0
+    total_range = day_high - day_low
+    final_close = day_low + close_pct * total_range
+
+    df = _both_sides_df(day_high, day_low, final_close)
+    bin_centers, vap = _flat_vap()
+    ib_high, ib_low = 101.0, 100.0
+
+    label, *_ = real_backend.classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price=102.0
+    )
+
+    computed_pct = (final_close - day_low) / total_range
+    assert label == expected_label, (
+        f"close_pct={close_pct} (computed={computed_pct:.6f}): "
+        f"expected {expected_label!r}, got {label!r}"
+    )
+
+
+# ── B5. Trend Day: dist_from_ib > 2.0 × ATR ─────────────────────────────────
+
+def _one_side_up_uniform(bar_high, bar_low, n=78):
+    """All bars identical at bar_high/bar_low with close = bar_high.
+
+    ATR = bar_high - bar_low (constant TR for all bars).
+    dist_from_ib = bar_high - ib_high (computed by caller).
+    close = bar_high → close_pct = 1.0 → at_high_extreme satisfied.
+    early bars all exceed ib_high → viol_early_up satisfied.
+    """
+    return _uniform_bars(n=n, bar_high=bar_high, bar_low=bar_low,
+                         close=bar_high, vol=1_000)
+
+
+@pytest.mark.parametrize("dist_multiplier,expected_label", [
+    (2.00, "📊 Normal Variation (Up)"),  # dist == 2.0 × ATR: strict > not met → Normal Variation
+    (2.05, "📈 Trend Day"),              # dist > 2.0 × ATR: Trend Day
+])
+def test_trend_day_atr_boundary(real_backend, dist_multiplier, expected_label):
+    """dist_from_ib > 2.0 × ATR is strict; exactly 2.0× must yield Normal Variation."""
+    bar_range = 0.20        # ATR will equal this value
+    ib_high   = 100.00
+    ib_low    =  99.50      # ib_range = 0.50 → ib_range_ratio >> 0.40 → directional_vol = False
+
+    bar_low  = ib_high + bar_range * (dist_multiplier - 1)
+    bar_high = bar_low + bar_range
+
+    df = _one_side_up_uniform(bar_high, bar_low)
+    bin_centers, vap = _flat_vap()
+
+    atr  = real_backend.compute_atr(df)
+    dist = float(df["close"].iloc[-1]) - ib_high
+
+    label, *_ = real_backend.classify_day_structure(
+        df, bin_centers, vap, ib_high, ib_low, poc_price=ib_high + bar_range
+    )
+
+    assert label == expected_label, (
+        f"dist_multiplier={dist_multiplier}: dist={dist:.4f}, 2×ATR={2*atr:.4f}, "
+        f"expected {expected_label!r}, got {label!r}"
+    )
