@@ -35945,7 +35945,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
     st.markdown("---")
 
     # ── Mgmt Mode A/B Card ──────────────────────────────────────────────────
-    _ab_range_opts  = ["Last 7 days", "Last 30 days", "Last 90 days", "All-time"]
+    _ab_range_opts  = ["Last 7 days", "Last 30 days", "Last 90 days", "All-time", "Custom range"]
     _ab_range_days  = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90, "All-time": None}
     _ab_range_sel   = st.radio(
         "A/B date range",
@@ -35955,10 +35955,41 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
         key="ab_date_range",
         label_visibility="collapsed",
     )
-    _ab_days        = _ab_range_days[_ab_range_sel]
-    _ab_date_from   = (date.today() - timedelta(days=_ab_days)).isoformat() if _ab_days else None
+    _ab_range_invalid = False
+    _ab_range_label   = _ab_range_sel
+    if _ab_range_sel == "Custom range":
+        _ab_c1, _ab_c2 = st.columns(2)
+        with _ab_c1:
+            _ab_custom_from = st.date_input(
+                "From",
+                value=date.today() - timedelta(days=30),
+                max_value=date.today(),
+                key="ab_custom_from",
+            )
+        with _ab_c2:
+            _ab_custom_to = st.date_input(
+                "To",
+                value=date.today(),
+                max_value=date.today(),
+                key="ab_custom_to",
+            )
+        if _ab_custom_from > _ab_custom_to:
+            st.warning("'From' date must be on or before 'To' date.")
+            _ab_range_invalid = True
+            _ab_date_from = None
+            _ab_date_to   = None
+        else:
+            _ab_date_from   = _ab_custom_from.isoformat()
+            _ab_date_to     = _ab_custom_to.isoformat()
+            _ab_range_label = f"{_ab_custom_from} → {_ab_custom_to}"
+    else:
+        _ab_days      = _ab_range_days[_ab_range_sel]
+        _ab_date_from = (date.today() - timedelta(days=_ab_days)).isoformat() if _ab_days else None
+        _ab_date_to   = None
     try:
-        _ab_stats    = _cached_get_mgmt_mode_ab_stats(user_id=_AUTH_USER_ID, date_from=_ab_date_from)
+        if _ab_range_invalid:
+            raise ValueError("invalid_range")
+        _ab_stats    = _cached_get_mgmt_mode_ab_stats(user_id=_AUTH_USER_ID, date_from=_ab_date_from, date_to=_ab_date_to)
         _ab_fixed    = _ab_stats.get("fixed", {})
         _ab_adaptive = _ab_stats.get("adaptive", {})
         _ab_delta    = _ab_stats.get("delta")
@@ -36045,7 +36076,7 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             f'<div style="font-size:11px;color:#90a4ae;letter-spacing:1.5px;'
             f'text-transform:uppercase;font-weight:700;margin-bottom:10px;">'
             f'🔬 Mgmt Mode A/B — Adaptive vs Fixed Bracket'
-            f'<span style="font-size:10px;font-weight:400;color:#546e7a;margin-left:8px;">({_ab_range_sel})</span></div>'
+            f'<span style="font-size:10px;font-weight:400;color:#546e7a;margin-left:8px;">({_ab_range_label})</span></div>'
             f'<div style="display:flex;gap:10px;">'
             f'{_ab_fixed_html}{_ab_adaptive_html}'
             f'</div>'
@@ -36053,6 +36084,9 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             f'</div>',
             unsafe_allow_html=True,
         )
+    except ValueError as _ab_err:
+        if str(_ab_err) != "invalid_range":
+            st.caption(f"A/B card unavailable: {_ab_err}")
     except Exception as _ab_err:
         st.caption(f"A/B card unavailable: {_ab_err}")
 
