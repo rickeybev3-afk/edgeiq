@@ -5723,12 +5723,23 @@ def build_chart(df, ib_high, ib_low, bin_centers, vap, poc_price, title,
     return fig
 
 
+_STRUCTURE_TRIGGER_TIPS = {
+    "Non-Trend":    "No IB break · narrow IB (< 20 % of day range) · price balanced inside IB",
+    "Normal":       "No IB break · majority of closes stayed inside IB · balanced volume",
+    "Trend":        "One-sided IB break · early violation within first 2 hrs · close at range extreme · > 2.0× ATR from IB boundary",
+    "Ntrl Extreme": "Both IB sides broken · close at top or bottom 10 % of day range",
+    "Neutral":      "Both IB sides broken · close near midpoint (not at range extreme)",
+    "Nrml Var":     "One-sided IB break · NOT an early/extreme trend day · moderate directional volume",
+    "Dbl Dist":     "Double-distribution volume profile detected (two distinct peaks)",
+}
+
 def render_structure_banner(label, color, detail, probs, tcs,
                             is_runner=False, sector_bonus=0.0, insight=None):
     top3 = sorted(probs.items(), key=lambda x: x[1], reverse=True)[:3]
     prob_pills = "".join(
-        f'<span style="display:inline-block; background:{color}33; border:1px solid {color}66; '
-        f'border-radius:4px; padding:2px 8px; margin:2px 4px; font-size:13px; color:#eee;">'
+        f'<span title="{_STRUCTURE_TRIGGER_TIPS.get(n, n)}" '
+        f'style="display:inline-block; background:{color}33; border:1px solid {color}66; '
+        f'border-radius:4px; padding:2px 8px; margin:2px 4px; font-size:13px; color:#eee; cursor:help;">'
         f'<b>{n}</b> {p}%</span>'
         for n, p in top3
     )
