@@ -110,6 +110,7 @@ DEFAULT_STOP_TIGHTEN_FRAC = 1.0
 TP_RAISED_DELTA_THRESHOLD = 0.10
 
 ADAPTIVE_EXITS_PATH = os.path.join(os.path.dirname(__file__), "adaptive_exits.json")
+TP_CALIB_HISTORY_PATH = os.path.join(os.path.dirname(__file__), "tp_calib_history.json")
 
 # mgmt_mode values that represent fixed (non-adaptive) exits for the baseline.
 FIXED_MODE_VALUES = ("fixed", "adaptive_eligible")
@@ -916,6 +917,30 @@ def _apply_to_config(
         print(
             f"  adaptive_exits.json updated: stop_tighten_frac {old_frac:.2f} → {optimal_frac:.2f}"
         )
+
+    # ── Append to calibration history ─────────────────────────────────────────
+    history_entry = {
+        "date": today,
+        "old_mult": round(old_mult, 4),
+        "new_mult": round(optimal, 4),
+        "trade_count": n,
+        "date_range": date_range,
+    }
+    try:
+        try:
+            with open(TP_CALIB_HISTORY_PATH) as _hf:
+                history = json.load(_hf)
+            if not isinstance(history, list):
+                history = []
+        except FileNotFoundError:
+            history = []
+        history.append(history_entry)
+        with open(TP_CALIB_HISTORY_PATH, "w") as _hf:
+            json.dump(history, _hf, indent=2)
+            _hf.write("\n")
+        print(f"  tp_calib_history.json updated ({len(history)} total entries).")
+    except Exception as _he:
+        print(f"  WARNING: could not write calibration history: {_he}")
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────

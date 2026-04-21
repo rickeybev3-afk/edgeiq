@@ -32,6 +32,7 @@ _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "
 _DEFAULT_BACKTEST_LOOKBACK_DAYS = int(os.environ.get("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_MIN_TCS = int(os.environ.get("PAPER_TRADE_MIN_TCS", "50"))
 _ADAPTIVE_EXITS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
+_TP_CALIB_HISTORY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tp_calib_history.json")
 _RVOL_SIZE_TIERS_DEFAULT = [
     {"rvol_min": 3.5, "multiplier": 1.5},
     {"rvol_min": 2.5, "multiplier": 1.25},
@@ -611,6 +612,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/config":
             self._config_get()
+            return
+        if path == "/api/tp-calib-history":
+            self._tp_calib_history_get()
             return
         if path == "/api/gap-down-calibration":
             self._gap_down_calibration()
@@ -1998,6 +2002,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "last_updated": cfg.get("last_updated"),
                 "data_sources": cfg.get("data_sources"),
             }
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _tp_calib_history_get(self):
+        """Return the TP calibration history from tp_calib_history.json.
+
+        Response: {"history": [...], "available": bool}
+        Each entry has: date, old_mult, new_mult, trade_count, date_range.
+        Entries are returned newest-first (last N = 20).
+        """
+        try:
+            with open(_TP_CALIB_HISTORY_JSON) as _f:
+                history = json.load(_f)
+            if not isinstance(history, list):
+                history = []
+            history_sorted = list(reversed(history[-20:]))
+            payload = {"history": history_sorted, "available": True, "total": len(history)}
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+        except FileNotFoundError:
+            payload = {"history": [], "available": False, "total": 0}
             body = json.dumps(payload).encode()
             self.send_response(200)
         except Exception as exc:

@@ -185,6 +185,22 @@ interface AdaptiveConfigState {
   error: string | null;
 }
 
+interface TpCalibEntry {
+  date: string;
+  old_mult: number;
+  new_mult: number;
+  trade_count: number;
+  date_range: string;
+}
+
+interface TpCalibHistoryState {
+  history: TpCalibEntry[];
+  available: boolean;
+  total: number;
+  loading: boolean;
+  error: string | null;
+}
+
 interface ConfigParam {
   value: number;
   source: "env" | "override";
@@ -696,6 +712,41 @@ export default function Settings() {
     return () => { cancelled = true; };
   }, []);
 
+  const [tpCalibHistory, setTpCalibHistory] = useState<TpCalibHistoryState>({
+    history: [],
+    available: false,
+    total: 0,
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/tp-calib-history")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setTpCalibHistory({
+            history: Array.isArray(data.history) ? data.history : [],
+            available: !!data.available,
+            total: typeof data.total === "number" ? data.total : 0,
+            loading: false,
+            error: null,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load calibration history.";
+          setTpCalibHistory((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
 
   useEffect(() => {
@@ -785,12 +836,12 @@ export default function Settings() {
   }
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers"],
-    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading]
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history"],
+    [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading, tpCalibHistory.loading]
   );
 
   useEffect(() => {
-    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers"];
+    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history"];
     const visibleSections = new Set<string>();
 
     const observer = new IntersectionObserver(
@@ -1224,6 +1275,7 @@ export default function Settings() {
               { id: "backfill-heartbeat-window", label: "Alert Window" },
               { id: "eod-recalc-health", label: "EOD Recalc" },
               { id: "rvol-size-tiers", label: "RVOL Tiers" },
+              { id: "tp-calib-history", label: "TP Calibration" },
             ] as const
           ).map(({ id, label }) => (
             <NavPill
@@ -2738,6 +2790,97 @@ export default function Settings() {
                     </p>
                   ))}
                 </div>
+              )}
+            </>
+          )}
+        </section>
+
+        <section
+          id="tp-calib-history"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "60px",
+            marginBottom: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            TP Calibration History
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            Each row shows one weekly calibration run — the date it ran, how the TP-raise multiplier changed, and how many settled adaptive trades it was based on.
+          </p>
+
+          {tpCalibHistory.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : tpCalibHistory.error ? (
+            <div style={{ padding: "10px 12px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: "7px", color: "#f87171", fontSize: "12px" }}>
+              ⚠ {tpCalibHistory.error}
+            </div>
+          ) : !tpCalibHistory.available || tpCalibHistory.history.length === 0 ? (
+            <div style={{ padding: "14px 16px", background: "rgba(255,255,255,0.02)", border: "1px solid #1e2d40", borderRadius: "7px" }}>
+              <p style={{ fontSize: "13px", color: "#475569", margin: 0 }}>
+                No calibration runs recorded yet. History is written each time the weekly TP calibration runs with <code style={{ fontSize: "12px", color: "#94a3b8" }}>--apply</code>.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "110px 90px 90px 90px 1fr",
+                  gap: "8px",
+                  marginBottom: "8px",
+                  padding: "0 4px",
+                }}
+              >
+                {["Date", "Old mult", "New mult", "Trades", "Trade date range"].map((h) => (
+                  <span key={h} style={{ fontSize: "11px", color: "#475569", fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                    {h}
+                  </span>
+                ))}
+              </div>
+              {tpCalibHistory.history.map((entry, i) => {
+                const changed = Math.abs(entry.new_mult - entry.old_mult) > 0.001;
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "110px 90px 90px 90px 1fr",
+                      gap: "8px",
+                      padding: "10px 4px",
+                      borderTop: i === 0 ? "1px solid #2d3748" : "1px solid #1a2332",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: "12px", color: "#94a3b8", fontFamily: "monospace" }}>{entry.date}</span>
+                    <span style={{ fontSize: "12px", color: "#94a3b8", fontFamily: "monospace", fontVariantNumeric: "tabular-nums" }}>{entry.old_mult.toFixed(2)}×</span>
+                    <span
+                      style={{
+                        fontSize: "12px",
+                        fontFamily: "monospace",
+                        fontVariantNumeric: "tabular-nums",
+                        fontWeight: changed ? 700 : 400,
+                        color: changed
+                          ? entry.new_mult > entry.old_mult ? "#4ade80" : "#f87171"
+                          : "#94a3b8",
+                      }}
+                    >
+                      {changed && entry.new_mult > entry.old_mult ? "▲ " : changed ? "▼ " : ""}
+                      {entry.new_mult.toFixed(2)}×
+                    </span>
+                    <span style={{ fontSize: "12px", color: "#94a3b8", fontFamily: "monospace", fontVariantNumeric: "tabular-nums" }}>{entry.trade_count}</span>
+                    <span style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace" }}>{entry.date_range}</span>
+                  </div>
+                );
+              })}
+              {tpCalibHistory.total > tpCalibHistory.history.length && (
+                <p style={{ fontSize: "11px", color: "#475569", marginTop: "10px", marginBottom: 0 }}>
+                  Showing last {tpCalibHistory.history.length} of {tpCalibHistory.total} total runs.
+                </p>
               )}
             </>
           )}
