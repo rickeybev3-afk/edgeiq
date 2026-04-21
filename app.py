@@ -21094,7 +21094,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
         st.markdown(
             "Grid-searches every combination of TCS offset, RVOL min, gap floor, "
-            "follow-through floor, structure type, and false-break exclusion across "
+            "follow-through floor, structure type, false-break exclusion, "
+            "**pre-market range floor (PM%)**, and **PM/IB direction match** across "
             "the **full historical backtest dataset** to find which filter stack "
             "produces the best risk-adjusted edge."
         )
@@ -21227,6 +21228,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _parts.append(_c.get("struct_label", _c.get("struct_filter", "")))
                 if _c.get("excl_false_break"):
                     _parts.append("no false-break")
+                if _c.get("pm_range_floor", 0):
+                    _parts.append(f"PM≥{_c['pm_range_floor']}%")
+                if _c.get("pm_ib_dir", "any") != "any":
+                    _parts.append(_c.get("pm_ib_dir_label", _c.get("pm_ib_dir", "")))
                 _label = " · ".join(_parts) if _parts else "TCS baseline only"
                 _pf_val = _c.get("profit_factor", 0)
                 _pf_str = "∞" if _pf_val == float("inf") else f"{_pf_val:.2f}"
@@ -21284,6 +21289,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _fgs_best_parts.append(_fgs_best.get("struct_label", ""))
                 if _fgs_best.get("excl_false_break"):
                     _fgs_best_parts.append("Exclude false-break rows")
+                if _fgs_best.get("pm_range_floor", 0):
+                    _fgs_best_parts.append(f"PM range ≥ {_fgs_best['pm_range_floor']}%")
+                if _fgs_best.get("pm_ib_dir", "any") != "any":
+                    _fgs_best_parts.append(_fgs_best.get("pm_ib_dir_label", _fgs_best.get("pm_ib_dir", "")))
 
                 st.markdown("**Best combo:**")
                 _fgs_bc1, _fgs_bc2, _fgs_bc3, _fgs_bc4, _fgs_bc5 = st.columns(5)
@@ -21323,6 +21332,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             f"FT≥{_fgs_cur_cfg.get('follow_min_pct','any')} · "
                             f"struct={_fgs_cur_cfg.get('struct_filter','all')} · "
                             f"excl_fb={_fgs_cur_cfg.get('excl_false_break',False)} · "
+                            f"PM≥{_fgs_cur_cfg.get('pm_range_floor',0)}% · "
+                            f"PM dir={_fgs_cur_cfg.get('pm_ib_dir','any')} · "
                             f"set {_fgs_cur_cfg.get('applied_at','?')[:10]}"
                         )
 
@@ -21334,6 +21345,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "follow_min_pct":    _fgs_best.get("follow_min", -999.0),
                         "struct_filter":     _fgs_best.get("struct_filter", "all"),
                         "excl_false_break":  _fgs_best.get("excl_false_break", False),
+                        "pm_range_floor":    _fgs_best.get("pm_range_floor", 0.0),
+                        "pm_ib_dir":         _fgs_best.get("pm_ib_dir", "any"),
                         "applied_at":        _fgs_dt.datetime.utcnow().isoformat() + "Z",
                         "applied_from":      _FGS_TOP,
                         "source_combo_rank": 1,

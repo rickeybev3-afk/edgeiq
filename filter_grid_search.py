@@ -103,11 +103,17 @@ P1_FOLLOW_MINS  = [-999.0, 0.0, 0.5, 1.0]
 P1_STRUCT_FILTERS = ["all", "neutral", "trend", "extreme", "no_extreme"]
 P1_FALSE_BREAK_EX = [False, True]
 
-# ── Grid dimensions — Phase 3 (reduced originals + 9 new) ──────────────────
+# ── Grid dimensions — Phase 3 (reduced originals + 11 dims) ─────────────────
 P3_TCS_OFFSETS  = [0, 5, 10, 15]
 P3_RVOL_MINS    = [0.0, 1.5, 2.5]        # reduced from 6 to stay feasible
 P3_GAP_MINS     = [0.0, 2.0, 5.0]        # reduced from 5
 P3_FOLLOW_MINS  = [-999.0, 0.0, 1.0]     # reduced from 4
+
+# New PM/IB dimensions (added in task-1827)
+PM_RANGE_FLOORS = [0.0, 0.5, 1.0, 1.5]   # pm_range_pct must be >= this (0 = no filter)
+PM_IB_DIRS      = ["any", "bullish_accepted", "bearish_accepted"]
+# bullish_accepted  → pm_ib_high > prev_day_ib_high (PM cleared prior IB high)
+# bearish_accepted  → pm_ib_low  < prev_day_ib_low  (PM broke prior IB low)
 
 # Structure: all 127 non-empty subsets of the 7 structures (generated at runtime)
 P3_FALSE_BREAK_EX = [False, True]
@@ -221,6 +227,12 @@ _NEUTRAL_FAMILY = {"neutral", "ntrl extreme", "nrml var", "normal", "non_trend"}
 _TREND_FAMILY   = {"bullish break", "bearish break"}
 _EXTREME_FAMILY = {"ntrl extreme", "dbl dist"}
 
+LABEL_PM_DIR = {
+    "any":               "any PM dir",
+    "bullish_accepted":  "PM bullish",
+    "bearish_accepted":  "PM bearish",
+}
+
 def _structure_group(p: str) -> str:
     if any(t in p for t in _TREND_FAMILY):   return "trend"
     if any(t in p for t in _EXTREME_FAMILY): return "extreme"
@@ -234,14 +246,16 @@ DEFAULT_TOP   = 100
 FIELDS_P1 = (
     "tcs,rvol,gap_pct,follow_thru_pct,predicted,"
     "false_break_up,false_break_down,"
-    "tiered_pnl_r,sim_date"
+    "tiered_pnl_r,sim_date,"
+    "pm_ib_high,pm_ib_low,pm_range_pct,prev_day_ib_high,prev_day_ib_low"
 )
 FIELDS_P3 = (
     "tcs,rvol,gap_pct,follow_thru_pct,predicted,"
     "false_break_up,false_break_down,"
     "tiered_pnl_r,sim_date,"
     "scan_type,gap_vs_ib_pct,vwap_at_ib,ib_low,ib_high,open_price,"
-    "screener_pass,mfe,mae"
+    "screener_pass,mfe,mae,"
+    "pm_ib_high,pm_ib_low,pm_range_pct,prev_day_ib_high,prev_day_ib_low"
 )
 PAGE_SIZE = 1000
 
@@ -331,7 +345,8 @@ def _compute_stats_np(r_arr: np.ndarray, n_scanned: int, n_trading_days: int) ->
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _apply_combo_p1(
-    all_rows, tcs_offset, rvol_min, gap_min, follow_min, struct_filter, excl_fb
+    all_rows, tcs_offset, rvol_min, gap_min, follow_min, struct_filter, excl_fb,
+    pm_range_floor: float = 0.0, pm_ib_dir: str = "any",
 ):
     r_vals, n_scanned = [], 0
     for row in all_rows:
@@ -354,6 +369,16 @@ def _apply_combo_p1(
         if struct_filter == "extreme"    and grp != "extreme":      continue
         if struct_filter == "no_extreme" and grp == "extreme":      continue
         if excl_fb and (fb_u or fb_d):                             continue
+        if pm_range_floor > 0:
+            pm_rng = row.get("pm_range_pct")
+            if pm_rng is None or pm_rng < pm_range_floor:          continue
+        if pm_ib_dir != "any":
+            pm_hi = row.get("pm_ib_high");  pm_lo = row.get("pm_ib_low")
+            pd_hi = row.get("prev_day_ib_high"); pd_lo = row.get("prev_day_ib_low")
+            if pm_ib_dir == "bullish_accepted":
+                if pm_hi is None or pd_hi is None or pm_hi <= pd_hi: continue
+            elif pm_ib_dir == "bearish_accepted":
+                if pm_lo is None or pd_lo is None or pm_lo >= pd_lo: continue
         n_scanned += 1
         if pnl is not None:
             r_vals.append(pnl)
@@ -536,6 +561,24 @@ def _build_masks_p3(df: pd.DataFrame) -> dict:
     masks["dow_no_fri"]   = dow_arr != 4
     masks["dow_mon_only"] = dow_arr == 0
 
+    # ── PM range floor masks ──────────────────────────────────────────────────
+    pm_range_arr = pd.to_numeric(df.get("pm_range_pct", pd.Series(np.nan, index=df.index)), errors="coerce").values
+    masks["pm_range_any"] = np.ones(len(df), dtype=bool)
+    masks["pm_range_0.5"] = ~np.isnan(pm_range_arr) & (pm_range_arr >= 0.5)
+    masks["pm_range_1.0"] = ~np.isnan(pm_range_arr) & (pm_range_arr >= 1.0)
+    masks["pm_range_1.5"] = ~np.isnan(pm_range_arr) & (pm_range_arr >= 1.5)
+
+    # ── PM IB direction masks ─────────────────────────────────────────────────
+    pm_hi_arr  = pd.to_numeric(df.get("pm_ib_high",       pd.Series(np.nan, index=df.index)), errors="coerce").values
+    pm_lo_arr  = pd.to_numeric(df.get("pm_ib_low",        pd.Series(np.nan, index=df.index)), errors="coerce").values
+    pd_hi_arr  = pd.to_numeric(df.get("prev_day_ib_high", pd.Series(np.nan, index=df.index)), errors="coerce").values
+    pd_lo_arr  = pd.to_numeric(df.get("prev_day_ib_low",  pd.Series(np.nan, index=df.index)), errors="coerce").values
+    pm_hi_ok   = ~np.isnan(pm_hi_arr) & ~np.isnan(pd_hi_arr)
+    pm_lo_ok   = ~np.isnan(pm_lo_arr) & ~np.isnan(pd_lo_arr)
+    masks["pm_dir_any"]     = np.ones(len(df), dtype=bool)
+    masks["pm_dir_bullish"] = pm_hi_ok & (pm_hi_arr > pd_hi_arr)   # PM cleared prior IB high
+    masks["pm_dir_bearish"] = pm_lo_ok & (pm_lo_arr < pd_lo_arr)   # PM broke prior IB low
+
     return masks, r_arr
 
 
@@ -577,7 +620,7 @@ def run_grid_search_p3(
 
     struct_subsets = _build_structure_subsets()
 
-    # ── Build iteration lists for 9 new dimensions ────────────────────────────
+    # ── Build iteration lists for 11 new dimensions ───────────────────────────
     # Map label → mask key
     def _mk(lbl, key):
         return (lbl, key)
@@ -608,12 +651,20 @@ def run_grid_search_p3(
                       _mk("no_fri","dow_no_fri"), _mk("mon_only","dow_mon_only")]
                      if full_mode else
                      [_mk("any","dow_any"), _mk("mon_thu","dow_mon_thu")])
+    # New dim 10 — PM range floor
+    pm_range_list = ([_mk("any","pm_range_any"), _mk("0.5pct","pm_range_0.5"),
+                      _mk("1.0pct","pm_range_1.0"), _mk("1.5pct","pm_range_1.5")]
+                     if full_mode else
+                     [_mk("any","pm_range_any"), _mk("0.5pct","pm_range_0.5")])
+    # New dim 11 — PM IB direction match
+    pm_dir_list   = [_mk("any","pm_dir_any"), _mk("bullish","pm_dir_bullish"), _mk("bearish","pm_dir_bearish")]
 
     # Count combos
     n_struct     = len(struct_subsets)
     n_new_dims   = (len(scan_list) * len(gap_dir_list) * len(vwap_list) *
                     len(screener_list) * len(ib_size_list) * len(mfe_list) *
-                    len(mae_list) * len(rvol_cap_list) * len(dow_list))
+                    len(mae_list) * len(rvol_cap_list) * len(dow_list) *
+                    len(pm_range_list) * len(pm_dir_list))
     n_base_dims  = len(P3_TCS_OFFSETS) * len(P3_RVOL_MINS) * len(P3_GAP_MINS) * len(P3_FOLLOW_MINS) * len(P3_FALSE_BREAK_EX)
     total_combos = n_struct * n_new_dims * n_base_dims
 
@@ -659,7 +710,8 @@ def run_grid_search_p3(
                                 if not m1.any():
                                     done += (len(gap_dir_list)*len(vwap_list)*len(screener_list)*
                                              len(ib_size_list)*len(mfe_list)*len(mae_list)*
-                                             len(rvol_cap_list)*len(dow_list))
+                                             len(rvol_cap_list)*len(dow_list)*
+                                             len(pm_range_list)*len(pm_dir_list))
                                     continue
 
                                 for gdir_lbl, gdir_key in gap_dir_list:
@@ -667,7 +719,8 @@ def run_grid_search_p3(
                                     m2 = m1 & m_gdir
                                     if not m2.any():
                                         done += (len(vwap_list)*len(screener_list)*len(ib_size_list)*
-                                                 len(mfe_list)*len(mae_list)*len(rvol_cap_list)*len(dow_list))
+                                                 len(mfe_list)*len(mae_list)*len(rvol_cap_list)*
+                                                 len(dow_list)*len(pm_range_list)*len(pm_dir_list))
                                         continue
 
                                     for vwap_lbl, vwap_key in vwap_list:
@@ -675,7 +728,8 @@ def run_grid_search_p3(
                                         m3 = m2 & m_vwap
                                         if not m3.any():
                                             done += (len(screener_list)*len(ib_size_list)*
-                                                     len(mfe_list)*len(mae_list)*len(rvol_cap_list)*len(dow_list))
+                                                     len(mfe_list)*len(mae_list)*len(rvol_cap_list)*
+                                                     len(dow_list)*len(pm_range_list)*len(pm_dir_list))
                                             continue
 
                                         for scrn_lbl, scrn_key in screener_list:
@@ -683,7 +737,8 @@ def run_grid_search_p3(
                                             m4 = m3 & m_scrn
                                             if not m4.any():
                                                 done += (len(ib_size_list)*len(mfe_list)*
-                                                         len(mae_list)*len(rvol_cap_list)*len(dow_list))
+                                                         len(mae_list)*len(rvol_cap_list)*
+                                                         len(dow_list)*len(pm_range_list)*len(pm_dir_list))
                                                 continue
 
                                             for ibs_lbl, ibs_key in ib_size_list:
@@ -691,74 +746,95 @@ def run_grid_search_p3(
                                                 m5 = m4 & m_ibs
                                                 if not m5.any():
                                                     done += (len(mfe_list)*len(mae_list)*
-                                                             len(rvol_cap_list)*len(dow_list))
+                                                             len(rvol_cap_list)*len(dow_list)*
+                                                             len(pm_range_list)*len(pm_dir_list))
                                                     continue
 
                                                 for mfe_lbl, mfe_key in mfe_list:
                                                     m_mfe = masks[mfe_key]
                                                     m6 = m5 & m_mfe
                                                     if not m6.any():
-                                                        done += len(mae_list)*len(rvol_cap_list)*len(dow_list)
+                                                        done += (len(mae_list)*len(rvol_cap_list)*
+                                                                 len(dow_list)*len(pm_range_list)*len(pm_dir_list))
                                                         continue
 
                                                     for mae_lbl, mae_key in mae_list:
                                                         m_mae = masks[mae_key]
                                                         m7 = m6 & m_mae
                                                         if not m7.any():
-                                                            done += len(rvol_cap_list)*len(dow_list)
+                                                            done += (len(rvol_cap_list)*len(dow_list)*
+                                                                     len(pm_range_list)*len(pm_dir_list))
                                                             continue
 
                                                         for rcap_lbl, rcap_key in rvol_cap_list:
                                                             m_rcap = masks[rcap_key]
                                                             m8 = m7 & m_rcap
                                                             if not m8.any():
-                                                                done += len(dow_list)
+                                                                done += (len(dow_list)*
+                                                                         len(pm_range_list)*len(pm_dir_list))
                                                                 continue
 
                                                             for dow_lbl, dow_key in dow_list:
                                                                 m_dow = masks[dow_key]
-                                                                final_mask = m8 & m_dow & masks["r_valid"]
-                                                                done += 1
-
-                                                                r_sub = r_arr[final_mask]
-                                                                n_sub = final_mask.sum()
-
-                                                                if done % report_every == 0:
-                                                                    pct = done / total_combos * 100
-                                                                    print(f"\r  Progress: {done:,}/{total_combos:,} ({pct:.1f}%) | results so far: {len(all_results):,}", end="", flush=True)
-
-                                                                if len(r_sub) == 0:
+                                                                m9 = m8 & m_dow
+                                                                if not m9.any():
+                                                                    done += len(pm_range_list)*len(pm_dir_list)
                                                                     continue
 
-                                                                qualifies = len(r_sub) >= min_n
-                                                                stats = _compute_stats_np(r_sub, int(n_sub), trading_days)
-                                                                if not stats:
-                                                                    continue
+                                                                for pmr_lbl, pmr_key in pm_range_list:
+                                                                    m_pmr = masks[pmr_key]
+                                                                    m10 = m9 & m_pmr
+                                                                    if not m10.any():
+                                                                        done += len(pm_dir_list)
+                                                                        continue
 
-                                                                combo = {
-                                                                    "phase":           3,
-                                                                    "struct_label":    struct_label,
-                                                                    "struct_tokens":   struct_tokens,
-                                                                    "tcs_offset":      tcs_off,
-                                                                    "tcs_label":       f"+{tcs_off} above baseline" if tcs_off else "Baseline",
-                                                                    "rvol_min":        rvol_min,
-                                                                    "gap_min":         gap_min,
-                                                                    "follow_min":      ft_min,
-                                                                    "follow_label":    LABEL_FOLLOW.get(ft_min, f"≥{ft_min}%"),
-                                                                    "excl_false_break": excl_fb,
-                                                                    "scan_type":       scan_lbl,
-                                                                    "gap_direction":   gdir_lbl,
-                                                                    "vwap_position":   vwap_lbl,
-                                                                    "screener":        scrn_lbl,
-                                                                    "ib_size":         ibs_lbl,
-                                                                    "mfe_min":         mfe_lbl,
-                                                                    "mae_max":         mae_lbl,
-                                                                    "rvol_cap":        rcap_lbl,
-                                                                    "day_of_week":     dow_lbl,
-                                                                    "qualifies":       qualifies,
-                                                                    **stats,
-                                                                }
-                                                                all_results.append(combo)
+                                                                    for pmd_lbl, pmd_key in pm_dir_list:
+                                                                        m_pmd = masks[pmd_key]
+                                                                        final_mask = m10 & m_pmd & masks["r_valid"]
+                                                                        done += 1
+
+                                                                        r_sub = r_arr[final_mask]
+                                                                        n_sub = final_mask.sum()
+
+                                                                        if done % report_every == 0:
+                                                                            pct = done / total_combos * 100
+                                                                            print(f"\r  Progress: {done:,}/{total_combos:,} ({pct:.1f}%) | results so far: {len(all_results):,}", end="", flush=True)
+
+                                                                        if len(r_sub) == 0:
+                                                                            continue
+
+                                                                        qualifies = len(r_sub) >= min_n
+                                                                        stats = _compute_stats_np(r_sub, int(n_sub), trading_days)
+                                                                        if not stats:
+                                                                            continue
+
+                                                                        combo = {
+                                                                            "phase":           3,
+                                                                            "struct_label":    struct_label,
+                                                                            "struct_tokens":   struct_tokens,
+                                                                            "tcs_offset":      tcs_off,
+                                                                            "tcs_label":       f"+{tcs_off} above baseline" if tcs_off else "Baseline",
+                                                                            "rvol_min":        rvol_min,
+                                                                            "gap_min":         gap_min,
+                                                                            "follow_min":      ft_min,
+                                                                            "follow_label":    LABEL_FOLLOW.get(ft_min, f"≥{ft_min}%"),
+                                                                            "excl_false_break": excl_fb,
+                                                                            "scan_type":       scan_lbl,
+                                                                            "gap_direction":   gdir_lbl,
+                                                                            "vwap_position":   vwap_lbl,
+                                                                            "screener":        scrn_lbl,
+                                                                            "ib_size":         ibs_lbl,
+                                                                            "mfe_min":         mfe_lbl,
+                                                                            "mae_max":         mae_lbl,
+                                                                            "rvol_cap":        rcap_lbl,
+                                                                            "day_of_week":     dow_lbl,
+                                                                            "pm_range_floor":  pmr_lbl,
+                                                                            "pm_ib_dir":       pmd_lbl,
+                                                                            "pm_ib_dir_label": LABEL_PM_DIR.get(pmd_lbl, pmd_lbl),
+                                                                            "qualifies":       qualifies,
+                                                                            **stats,
+                                                                        }
+                                                                        all_results.append(combo)
 
     print(f"\r  Done: {done:,} combinations evaluated, {len(all_results):,} had ≥1 trade.   ")
     qualifying = [c for c in all_results if c.get("qualifies")]
@@ -788,6 +864,8 @@ _DIMENSION_KEYS = [
     ("mae_max",         "MAE maximum"),
     ("rvol_cap",        "RVOL upper cap"),
     ("day_of_week",     "Day of week"),
+    ("pm_range_floor",  "PM range floor"),
+    ("pm_ib_dir",       "PM IB direction"),
 ]
 
 
@@ -901,12 +979,15 @@ def main():
         _mal = _DEFAULT_MAE_LIST
         _rcl = _DEFAULT_RVOL_CAP_LIST
         _dl  = _DEFAULT_DOW_LIST
+        _prl = _DEFAULT_PM_RANGE_LIST
+        _pdl = _DEFAULT_PM_DIR_LIST
         n_combos = (
             len(P3_TCS_OFFSETS) * len(P3_RVOL_MINS) * len(P3_GAP_MINS) * len(P3_FOLLOW_MINS)
             * len(P3_FALSE_BREAK_EX) * n_struct_opts
             * len(_sl) * len(_gdl) * len(_vl)
             * len(_scl) * len(_ibl) * len(_mfl)
             * len(_mal) * len(_rcl) * len(_dl)
+            * len(_prl) * len(_pdl)
         )
     else:
         n_combos = (
@@ -940,6 +1021,10 @@ def main():
         "min_n":                  args.min_n,
         "top_n":                  args.top,
         "combos_tested":          n_combos,
+        "pm_dimensions": {
+            "pm_range_floors":  PM_RANGE_FLOORS,
+            "pm_ib_dirs":       PM_IB_DIRS,
+        },
         "combos_with_any_trade":  len(all_results),
         "combos_qualifying":      len(qualifying),
         "elapsed_seconds":        round(elapsed, 1),
@@ -974,6 +1059,8 @@ def main():
             if (c.get("follow_min") or -999) > -900: parts.append(f"FT{c.get('follow_label','?')}")
             if c.get("struct_filter","all") != "all": parts.append(c.get("struct_label",""))
             if c.get("excl_false_break"): parts.append("no-FB")
+            if c.get("pm_range_floor", 0) > 0: parts.append(f"PM≥{c['pm_range_floor']}%")
+            if c.get("pm_ib_dir", "any") != "any": parts.append(c.get("pm_ib_dir_label", c.get("pm_ib_dir", "")))
             lbl = " | ".join(parts) if parts else "TCS baseline only"
         pf = c.get("profit_factor", 0)
         pf_str = "   ∞" if pf == float("inf") else f"{pf:7.2f}"
@@ -1004,6 +1091,17 @@ def main():
             print(f"  MAE max      : {best.get('mae_max','?')}")
             print(f"  RVOL cap     : {best.get('rvol_cap','?')}")
             print(f"  Day of week  : {best.get('day_of_week','?')}")
+            print(f"  PM range floor: {best.get('pm_range_floor', 0) or 'none'}%")
+            print(f"  PM IB dir    : {best.get('pm_ib_dir_label', best.get('pm_ib_dir', 'any'))}")
+        else:
+            print(f"  TCS offset   : +{best.get('tcs_offset',0)} above per-structure baseline")
+            print(f"  RVOL min     : {best.get('rvol_min', 0) or 'none'}")
+            print(f"  Gap min      : {best.get('gap_min', 0) or 'none'}%")
+            print(f"  Follow-thru  : {best.get('follow_label', 'any')}")
+            print(f"  Structure    : {best.get('struct_label', 'all')}")
+            print(f"  Excl fb      : {best.get('excl_false_break', False)}")
+            print(f"  PM range floor: {best.get('pm_range_floor', 0) or 'none'}%")
+            print(f"  PM IB dir    : {best.get('pm_ib_dir_label', best.get('pm_ib_dir', 'any'))}")
 
     print()
     print("Done.")
@@ -1019,6 +1117,8 @@ _DEFAULT_MFE_LIST      = [("any", "mfe_any"), ("0.5r", "mfe_0.5r")]
 _DEFAULT_MAE_LIST      = [("any", "mae_any"), ("0.5r", "mae_0.5r")]
 _DEFAULT_RVOL_CAP_LIST = [("none", "rvol_cap_none"), ("lt5", "rvol_cap_lt5")]
 _DEFAULT_DOW_LIST      = [("any", "dow_any"), ("mon_thu", "dow_mon_thu")]
+_DEFAULT_PM_RANGE_LIST = [("any", "pm_range_any"), ("0.5pct", "pm_range_0.5")]
+_DEFAULT_PM_DIR_LIST   = [("any", "pm_dir_any"), ("bullish", "pm_dir_bullish"), ("bearish", "pm_dir_bearish")]
 
 if __name__ == "__main__":
     main()
