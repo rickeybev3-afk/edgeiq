@@ -134,6 +134,11 @@ _STATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 _NR_FINISH_FILE = "/tmp/nightly_refresh.finish_time"
 
+_TP_CALIB_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".edgeiq_tp_calib_run.json",
+)
+
 _CACHE_ALERT_STATE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     ".edgeiq_cache_alert_state.json",
@@ -1670,6 +1675,173 @@ def run_backfill(date_from: str = "", date_to: str = ""):
     _send_telegram(msg)
 
 
+# ── Weekly adaptive TP calibration ───────────────────────────────────────────
+
+
+def run_tp_calibration() -> None:
+    """Run calibrate_adaptive_mgmt.py --apply and send a Telegram summary.
+
+    Intended to be called once a week (Sunday night / Monday 00:05 ET).
+    The function:
+      1. Invokes calibrate_adaptive_mgmt.py --apply as a subprocess.
+      2. Parses key values from its stdout (trade count, old/new multiplier,
+         or the "not enough trades" message).
+      3. Sends a Telegram notification summarising the outcome.
+      4. Records the run timestamp to .edgeiq_tp_calib_run.json so callers
+         can check when it last ran.
+    """
+    import re as _re
+
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "calibrate_adaptive_mgmt.py")
+    cmd = [sys.executable, script, "--apply"]
+
+    log.info("─── Weekly TP calibration ────────────────────────────────────")
+    log.info("Running: %s", " ".join(cmd))
+    start = time.monotonic()
+
+    captured_output = ""
+    exit_code = 0
+    exception_msg = ""
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        captured_output = result.stdout or ""
+        exit_code = result.returncode
+        if captured_output:
+            sys.stdout.write(captured_output)
+            sys.stdout.flush()
+        if exit_code == 0:
+            log.info("TP calibration completed (exit 0, %.0fs).", time.monotonic() - start)
+        else:
+            log.warning("TP calibration exited with code %d.", exit_code)
+    except Exception as exc:
+        exception_msg = str(exc)
+        log.error("TP calibration raised an exception: %s", exc)
+
+    elapsed_s = time.monotonic() - start
+    run_date = _et_now().strftime("%Y-%m-%d")
+
+    # ── Persist run timestamp ─────────────────────────────────────────────────
+    try:
+        with open(_TP_CALIB_STATE_FILE, "w") as _sf:
+            json.dump({"last_run_utc": datetime.datetime.utcnow().isoformat(),
+                       "exit_code": exit_code}, _sf)
+    except Exception as _se:
+        log.warning("Could not write TP calibration state file: %s", _se)
+
+    # ── Parse key values from script output ───────────────────────────────────
+    # "Only N settled adaptive trade(s) found (minimum required: 50)."
+    _m_low = _re.search(r"Only (\d+) settled adaptive trade", captured_output)
+    # "Found N settled adaptive row(s) total; M classified as TP_RAISED"
+    _m_found = _re.search(r"Found (\d+) settled adaptive row", captured_output)
+    # "adaptive_exits.json updated: tp_raise_mult OLD → NEW"
+    _m_update = _re.search(
+        r"adaptive_exits\.json updated:\s*tp_raise_mult\s+([\d.]+)\s*\u2192\s*([\d.]+)",
+        captured_output,
+    )
+    # Fallback arrow written as ASCII
+    if not _m_update:
+        _m_update = _re.search(
+            r"adaptive_exits\.json updated:\s*tp_raise_mult\s+([\d.]+)\s*-+>\s*([\d.]+)",
+            captured_output,
+        )
+
+    # ── Build Telegram message ────────────────────────────────────────────────
+    if exception_msg:
+        tg_msg = (
+            f"\u26a0\ufe0f <b>Weekly TP Calibration — ERROR</b>\n"
+            f"Date: {run_date}\n"
+            f"<b>Exception:</b> <code>{html.escape(exception_msg[:300])}</code>"
+        )
+    elif exit_code != 0 and not _m_low:
+        tail = "\n".join(captured_output.splitlines()[-15:]).strip()
+        tg_msg = (
+            f"\u26a0\ufe0f <b>Weekly TP Calibration — FAILED</b>\n"
+            f"Date: {run_date}  |  Exit code: {exit_code}\n"
+            f"<code>{html.escape(tail[:600])}</code>"
+        )
+    elif _m_low:
+        n_found = int(_m_low.group(1))
+        tg_msg = (
+            f"\u23f8 <b>Weekly TP Calibration — skipped (not enough data)</b>\n"
+            f"Date: {run_date}\n"
+            f"Only <b>{n_found}</b> settled adaptive trade(s) found "
+            f"(minimum required: 50).\n"
+            f"Calibration will run automatically once enough trades have settled."
+        )
+    elif _m_update:
+        old_mult = _m_update.group(1)
+        new_mult = _m_update.group(2)
+        n_trades = int(_m_found.group(1)) if _m_found else "?"
+        changed = abs(float(old_mult) - float(new_mult)) > 1e-6
+        icon = "\u2705" if changed else "\u2139\ufe0f"
+        change_line = (
+            f"tp_raise_mult: <b>{old_mult} \u2192 {new_mult}</b>"
+            if changed
+            else f"tp_raise_mult: <b>{new_mult}</b> (no change)"
+        )
+        tg_msg = (
+            f"{icon} <b>Weekly TP Calibration</b>\n"
+            f"Date: {run_date}\n"
+            f"{change_line}\n"
+            f"Trades used: <b>{n_trades}</b> settled adaptive rows\n"
+            f"adaptive_exits.json updated."
+        )
+    else:
+        # Calibration ran but we couldn't parse expected lines — show tail.
+        tail = "\n".join(captured_output.splitlines()[-10:]).strip()
+        tg_msg = (
+            f"\u2139\ufe0f <b>Weekly TP Calibration</b>\n"
+            f"Date: {run_date}  |  Elapsed: {elapsed_s:.0f}s\n"
+            f"<code>{html.escape(tail[:600])}</code>"
+        )
+
+    _send_telegram(tg_msg)
+    log.info("TP calibration Telegram summary sent.")
+
+
+def _should_run_tp_calibration() -> bool:
+    """Return True if the weekly TP calibration should run now.
+
+    Fires when the current ET day is Monday (weekday() == 0), which corresponds
+    to the Sunday-night 00:05 ET scheduled run.  A state file prevents it from
+    running more than once per week: if the last run was within the past 6 days
+    the function returns False.
+    """
+    now_et = _et_now()
+    if now_et.weekday() != 0:  # 0 = Monday (Sunday night run)
+        log.info(
+            "TP calibration check: today is %s — not Sunday night, skipping.",
+            now_et.strftime("%A"),
+        )
+        return False
+
+    try:
+        with open(_TP_CALIB_STATE_FILE) as _sf:
+            _state = json.load(_sf)
+        _last_run_str = _state.get("last_run_utc", "")
+        if _last_run_str:
+            _last_run = datetime.datetime.fromisoformat(_last_run_str)
+            _age_hours = (datetime.datetime.utcnow() - _last_run).total_seconds() / 3600
+            if _age_hours < 6 * 24:  # ran within the last 6 days
+                log.info(
+                    "TP calibration already ran %.1f h ago — skipping duplicate run.",
+                    _age_hours,
+                )
+                return False
+    except FileNotFoundError:
+        pass  # No state file → first run; proceed.
+    except Exception as _e:
+        log.warning("Could not read TP calibration state file: %s", _e)
+
+    return True
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
@@ -1810,6 +1982,11 @@ def main():
             if _shutdown.is_set():
                 break
             _check_all_uncalibrated_screeners()
+            # Run TP calibration once a week on Sunday night (Mon 00:05 ET).
+            if _should_run_tp_calibration():
+                run_tp_calibration()
+                if _shutdown.is_set():
+                    break
 
         refresh_summary_cache()
 
