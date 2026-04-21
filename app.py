@@ -1388,6 +1388,7 @@ _DEFAULTS = {
     "replay_ticker":        "",
     "replay_date":          None,
     "replay_avg_vol":       None,
+    "replay_avg_ib_range":   None,
     "replay_intraday_curve": None,
     "replay_sector_bonus":  0.0,
     # Small Account Challenge tab
@@ -5810,13 +5811,11 @@ def render_structure_banner(label, color, detail, probs, tcs,
     # Key Insights box — separate call so Streamlit's markdown parser doesn't escape inner HTML
     if insight:
         st.markdown(
-            f'<div style="margin-top:8px; background:rgba(255,255,255,0.04);'
-            f' border-left:4px solid {color}; border-radius:6px; padding:10px 16px;'
-            f' box-shadow: inset 0 0 0 1px {color}22;">'
-            f'<span style="font-size:11px; font-weight:700; color:{color};'
-            f' letter-spacing:0.5px;">💡 Key Insight</span><br>'
-            f'<span style="font-size:13px; color:#d0d8f0; line-height:1.6;">{insight}</span>'
-            f'</div>',
+            f\'<div style="margin-top:6px; background:rgba(255,255,255,0.07);\'
+            f\' border-left:3px solid {color}; border-radius:6px; padding:12px;">\'
+            f\'<span style="font-size:13px; font-weight:700; color:{color};">💡 Key Insight:</span>\'
+            f\'<span style="font-size:13px; color:#d0d8f0; line-height:1.6;">&nbsp;{insight}</span>\'
+            f\'</div>\',
             unsafe_allow_html=True,
         )
 
@@ -6282,7 +6281,7 @@ def render_velocity_widget(df):
 
 
 def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
-                    avg_daily_vol=None, sector_bonus=0.0, sector_etf="IWM",
+                    avg_daily_vol=None, avg_ib_range=None, sector_bonus=0.0, sector_etf="IWM",
                     intraday_curve=None, is_live=False):
     ib_high, ib_low = compute_initial_balance(df)
 
@@ -6300,7 +6299,8 @@ def render_analysis(df, num_bins, ticker, chart_title, is_ib_live=False,
     st.session_state.sa_vap         = vap
     _sa_val, _sa_vah = _compute_value_area(bin_centers, vap)
     label, color, detail, insight = classify_day_structure(
-        df, bin_centers, vap, ib_high, ib_low, poc_price, avg_daily_vol=avg_daily_vol
+        df, bin_centers, vap, ib_high, ib_low, poc_price,
+        avg_daily_vol=avg_daily_vol, avg_ib_range=avg_ib_range,
     )
     probs = compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_price)
     tcs = compute_tcs(df, ib_high, ib_low, poc_price, sector_bonus=sector_bonus)
@@ -41389,9 +41389,18 @@ with tab_chart:
                             sector_bonus = 10.0 if etf_chg > 1.0 else 0.0
                             st.session_state.sector_pct_chg = etf_chg
 
+                            # ── 10-day average IB range (for Non-Trend classifier) ───
+                            try:
+                                avg_ib_rng = fetch_avg_ib_range(
+                                    api_key, secret_key, ticker, selected_date)
+                            except Exception:
+                                avg_ib_rng = None
+                            st.session_state.avg_ib_range = avg_ib_rng
+
                             render_analysis(df, num_bins, ticker,
                                             f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')}",
                                             avg_daily_vol=avg_vol,
+                                            avg_ib_range=avg_ib_rng,
                                             sector_bonus=sector_bonus,
                                             sector_etf=sector_etf,
                                             intraday_curve=curve,
@@ -41412,7 +41421,9 @@ with tab_chart:
                                         st.success(f"Loaded **{len(df2)}** 1-min bars via IEX (auto-switched from SIP).")
                                         render_analysis(df2, num_bins, ticker,
                                                         f"{ticker} — Volume Profile | {selected_date.strftime('%B %d, %Y')} (IEX)",
-                                                        avg_daily_vol=None, sector_bonus=0.0,
+                                                        avg_daily_vol=None,
+                                                        avg_ib_range=st.session_state.get("avg_ib_range"),
+                                                        sector_bonus=0.0,
                                                         sector_etf=sector_etf, intraday_curve=None,
                                                         is_live=False)
                                         render_log_entry_ui()
@@ -41476,6 +41487,11 @@ with tab_chart:
                             except Exception:
                                 st.session_state.replay_avg_vol = None
                             try:
+                                st.session_state.replay_avg_ib_range = fetch_avg_ib_range(
+                                    api_key, secret_key, ticker, selected_date)
+                            except Exception:
+                                st.session_state.replay_avg_ib_range = None
+                            try:
                                 st.session_state.replay_intraday_curve = build_rvol_intraday_curve(
                                     api_key, secret_key, ticker, selected_date,
                                     lookback_days=50, feed=data_feed)
@@ -41528,6 +41544,7 @@ with tab_chart:
                     f"🎬 Replay — {_rtk} | {_cur_et.strftime('%H:%M ET')} | {_rdate}",
                     is_ib_live=(_cur_et.time() <= dtime(10, 30)),
                     avg_daily_vol=st.session_state.replay_avg_vol,
+                    avg_ib_range=st.session_state.get("replay_avg_ib_range"),
                     sector_bonus=st.session_state.replay_sector_bonus,
                     sector_etf=sector_etf,
                     intraday_curve=st.session_state.replay_intraday_curve,
@@ -41601,6 +41618,12 @@ with tab_chart:
                     st.session_state.rvol_avg_vol = avg_vol
 
                     try:
+                        st.session_state.avg_ib_range = fetch_avg_ib_range(
+                            api_key, secret_key, ticker, today)
+                    except Exception:
+                        st.session_state.avg_ib_range = None
+
+                    try:
                         curve = build_rvol_intraday_curve(
                             api_key, secret_key, ticker, today,
                             lookback_days=50, feed=live_feed)
@@ -41664,6 +41687,7 @@ with tab_chart:
                 render_analysis(df, num_bins, st.session_state.live_ticker,
                                 chart_title, is_ib_live=is_ib_live,
                                 avg_daily_vol=st.session_state.get("rvol_avg_vol"),
+                                avg_ib_range=st.session_state.get("avg_ib_range"),
                                 sector_bonus=live_sector_bonus,
                                 sector_etf=sector_etf,
                                 intraday_curve=st.session_state.get("rvol_intraday_curve"),
