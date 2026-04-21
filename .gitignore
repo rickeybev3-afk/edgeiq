@@ -67,3 +67,5 @@ eod_sweep_status.json
 brain_weights_historical.json
 .edgeiq_tiered_pnl_run_stats.json
 .edgeiq_tiered_pnl_run_stats.json
+backfill_history.json
+ladder_refresh_meta.json
