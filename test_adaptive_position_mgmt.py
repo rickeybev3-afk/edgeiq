@@ -331,7 +331,8 @@ class TestPreOpenPositionReview(unittest.TestCase):
                             mock_cancel.assert_not_called()
 
     def test_raises_tp_when_bullish_pm_above_ib(self):
-        """Full happy-path: PM above IB high → cancel + OCO with raised TP."""
+        """Full happy-path: PM above IB high → OCO placed first with raised TP,
+        then old orders cancelled."""
         mock_sb = MagicMock()
         resp_mock = MagicMock()
         resp_mock.data = [{
@@ -351,15 +352,17 @@ class TestPreOpenPositionReview(unittest.TestCase):
                     {"symbol": "AAPL", "side": "long", "qty": "5"}
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=102.0):
-                        with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=2):
-                            with patch.object(
-                                _ptb, "_alpaca_place_oco_exit",
-                                return_value={"ok": True, "order_id": "abc123"},
-                            ) as mock_oco:
+                        with patch.object(
+                            _ptb, "_alpaca_place_oco_exit",
+                            return_value={"ok": True, "order_id": "abc123"},
+                        ) as mock_oco:
+                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=2) as mock_cancel:
                                 with patch.object(_ptb, "tg_send"):
                                     _ptb._pre_open_position_review()
 
+        # OCO is placed, then old orders cancelled
         mock_oco.assert_called_once()
+        mock_cancel.assert_called_once_with("AAPL")
         # TP should be 104 + 0.5*2 = 105; stop unchanged = 98
         kw = mock_oco.call_args.kwargs
         self.assertAlmostEqual(kw["tp_price"],   105.0, places=2)
@@ -367,7 +370,8 @@ class TestPreOpenPositionReview(unittest.TestCase):
         self.assertEqual(kw["exit_side"], "sell")
 
     def test_tightens_stop_when_bearish_pm_inside_ib(self):
-        """Bearish position with PM inside IB → stop tightened to IB mid."""
+        """Bearish position with PM inside IB → OCO placed first (stop → IB mid),
+        then old orders cancelled."""
         mock_sb = MagicMock()
         resp_mock = MagicMock()
         resp_mock.data = [{
@@ -387,15 +391,17 @@ class TestPreOpenPositionReview(unittest.TestCase):
                     {"symbol": "SPY", "side": "short", "qty": "10"}
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=100.5):
-                        with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1):
-                            with patch.object(
-                                _ptb, "_alpaca_place_oco_exit",
-                                return_value={"ok": True, "order_id": "xyz456"},
-                            ) as mock_oco:
+                        with patch.object(
+                            _ptb, "_alpaca_place_oco_exit",
+                            return_value={"ok": True, "order_id": "xyz456"},
+                        ) as mock_oco:
+                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1) as mock_cancel:
                                 with patch.object(_ptb, "tg_send"):
                                     _ptb._pre_open_position_review()
 
         mock_oco.assert_called_once()
+        # Old orders cancelled AFTER successful OCO placement
+        mock_cancel.assert_called_once_with("SPY")
         kw = mock_oco.call_args.kwargs
         # ib_mid = (101+99)/2 = 100; stop → 100
         self.assertAlmostEqual(kw["stop_price"], 100.0, places=2)
@@ -423,17 +429,19 @@ class TestPreOpenPositionReview(unittest.TestCase):
                     {"symbol": "AAPL", "side": "long", "qty": "5"}
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=102.0):
-                        with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1):
-                            with patch.object(
-                                _ptb, "_alpaca_place_oco_exit",
-                                return_value={"ok": False, "error": "HTTP 422"},
-                            ):
+                        with patch.object(
+                            _ptb, "_alpaca_place_oco_exit",
+                            return_value={"ok": False, "error": "HTTP 422"},
+                        ):
+                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker") as mock_cancel:
                                 with patch.object(_ptb, "tg_send") as mock_tg:
                                     _ptb._pre_open_position_review()
 
         self.assertTrue(any("OCO Failed" in str(c) for c in mock_tg.call_args_list))
         # DB update should NOT have been called
         mock_sb.table.return_value.update.assert_not_called()
+        # Cancel should NOT be called — original bracket protection is preserved
+        mock_cancel.assert_not_called()
 
     def test_positions_fetch_error_is_graceful(self):
         """Exception from _alpaca_get_positions should not propagate."""

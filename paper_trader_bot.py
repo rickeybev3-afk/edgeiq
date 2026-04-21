@@ -6607,15 +6607,9 @@ def _pre_open_position_review() -> None:
             f"{ib_high if 'Bullish' in direction else ib_low:.2f})"
         )
 
-        # ── Cancel existing bracket legs ──────────────────────────────────────
-        try:
-            cancelled = _alpaca_cancel_orders_for_ticker(ticker)
-            log.info(f"[AdaptiveMgmt] {ticker} — cancelled {cancelled} open order(s)")
-        except Exception as _ce:
-            log.warning(f"[AdaptiveMgmt] {ticker} — cancel failed: {_ce}; skipping adjustment")
-            continue
-
-        # ── Place new OCO exit order ──────────────────────────────────────────
+        # ── Place new OCO exit order FIRST (before cancelling anything) ─────────
+        # Placing before cancellation means the original bracket legs remain
+        # active and protecting the position if the new OCO order is rejected.
         exit_side = "sell" if "Bullish" in direction else "buy"
         oca_res = _alpaca_place_oco_exit(
             ticker=ticker,
@@ -6628,15 +6622,24 @@ def _pre_open_position_review() -> None:
         if not oca_res.get("ok"):
             log.warning(
                 f"[AdaptiveMgmt] {ticker} — OCO order failed: {oca_res.get('error')}; "
-                f"reverting to no adjustment"
+                f"original bracket left unchanged"
             )
             tg_send(
                 f"⚠️ <b>Adaptive Mgmt — OCO Failed</b>\n"
                 f"Ticker: <b>{ticker}</b> ({direction})\n"
                 f"Error: {oca_res.get('error','unknown')}\n"
-                f"Position remains open with no bracket — monitor manually."
+                f"Original bracket unchanged — position is still protected."
             )
             continue
+
+        # ── OCO placed successfully — now cancel the old bracket legs ─────────
+        try:
+            cancelled = _alpaca_cancel_orders_for_ticker(ticker)
+            log.info(f"[AdaptiveMgmt] {ticker} — cancelled {cancelled} old order(s) after new OCO confirmed")
+        except Exception as _ce:
+            # New OCO is already in place; old orders failing to cancel is
+            # non-fatal — they will be rejected when position closes.
+            log.warning(f"[AdaptiveMgmt] {ticker} — could not cancel old orders (non-fatal): {_ce}")
 
         new_order_id = oca_res.get("order_id", "")
 
