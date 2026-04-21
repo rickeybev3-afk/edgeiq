@@ -60,3 +60,9 @@ brain_weights.json
 tcs_threshold_history.jsonl
 tcs_threshold_history.jsonl.*
 .backfill_heartbeat_alerted.json
+.ticker_screener_pass.json
+eod_recalc_history.json
+eod_sweep_history.json
+eod_sweep_status.json
+brain_weights_historical.json
+.edgeiq_tiered_pnl_run_stats.json
