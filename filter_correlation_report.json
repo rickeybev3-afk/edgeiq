@@ -1,0 +1,461 @@
+{
+  "run_at": "2026-04-21T03:12:52.306013Z",
+  "date_range": {
+    "start": "2025-01-01",
+    "end": "2026-04-17"
+  },
+  "n_rows": 60216,
+  "n_features": 21,
+  "win_loss_summary": {
+    "n_total": 60216,
+    "n_wins": 35451,
+    "n_losses": 24765,
+    "win_rate": 58.87,
+    "avg_win_r": 0.5766,
+    "avg_loss_r": -0.3223,
+    "avg_r": 0.2069,
+    "total_r": 12461.012
+  },
+  "correlations": [
+    {
+      "feature": "mfe",
+      "description": "Max Favourable Excursion (R)",
+      "pearson_r": 0.0005,
+      "pearson_p": 0.896274,
+      "spearman_r": 0.3099,
+      "spearman_p": 0.0,
+      "pb_r": -0.0006,
+      "pb_p": 0.886312,
+      "abs_spearman": 0.3099
+    },
+    {
+      "feature": "entry_hour",
+      "description": "Entry hour (ET, 24h)",
+      "pearson_r": 0.134,
+      "pearson_p": 0.0,
+      "spearman_r": 0.126,
+      "spearman_p": 0.0,
+      "pb_r": 0.1121,
+      "pb_p": 0.0,
+      "abs_spearman": 0.126
+    },
+    {
+      "feature": "gap_pct",
+      "description": "Gap % from prior close",
+      "pearson_r": 0.0305,
+      "pearson_p": 0.0,
+      "spearman_r": 0.1253,
+      "spearman_p": 0.0,
+      "pb_r": 0.0363,
+      "pb_p": 0.0,
+      "abs_spearman": 0.1253
+    },
+    {
+      "feature": "screener_pass",
+      "description": "Screener pass flag (0/1)",
+      "pearson_r": NaN,
+      "pearson_p": NaN,
+      "spearman_r": NaN,
+      "spearman_p": NaN,
+      "pb_r": NaN,
+      "pb_p": NaN,
+      "abs_spearman": NaN
+    },
+    {
+      "feature": "false_break_down",
+      "description": "False-break-down flag (0/1)",
+      "pearson_r": -0.1219,
+      "pearson_p": 0.0,
+      "spearman_r": -0.1198,
+      "spearman_p": 0.0,
+      "pb_r": -0.0934,
+      "pb_p": 0.0,
+      "abs_spearman": 0.1198
+    },
+    {
+      "feature": "false_break_up",
+      "description": "False-break-up flag (0/1)",
+      "pearson_r": -0.1099,
+      "pearson_p": 0.0,
+      "spearman_r": -0.1165,
+      "spearman_p": 0.0,
+      "pb_r": -0.0984,
+      "pb_p": 0.0,
+      "abs_spearman": 0.1165
+    },
+    {
+      "feature": "struct_code",
+      "description": "struct_code",
+      "pearson_r": -0.1258,
+      "pearson_p": 0.0,
+      "spearman_r": -0.1083,
+      "spearman_p": 0.0,
+      "pb_r": -0.0934,
+      "pb_p": 0.0,
+      "abs_spearman": 0.1083
+    },
+    {
+      "feature": "stop_dist_pct",
+      "description": "Stop distance %",
+      "pearson_r": -0.0533,
+      "pearson_p": 0.0,
+      "spearman_r": -0.0905,
+      "spearman_p": 0.0,
+      "pb_r": 0.0035,
+      "pb_p": 0.396549,
+      "abs_spearman": 0.0905
+    },
+    {
+      "feature": "tcs",
+      "description": "Trade Confidence Score",
+      "pearson_r": 0.1296,
+      "pearson_p": 0.0,
+      "spearman_r": 0.082,
+      "spearman_p": 0.0,
+      "pb_r": 0.0688,
+      "pb_p": 0.0,
+      "abs_spearman": 0.082
+    },
+    {
+      "feature": "ib_range_pct",
+      "description": "IB range as % of open",
+      "pearson_r": -0.034,
+      "pearson_p": 0.0,
+      "spearman_r": -0.0649,
+      "spearman_p": 0.0,
+      "pb_r": 0.0089,
+      "pb_p": 0.029619,
+      "abs_spearman": 0.0649
+    },
+    {
+      "feature": "gap_vs_ib_pct",
+      "description": "Gap as % of IB range",
+      "pearson_r": 0.0909,
+      "pearson_p": 0.0,
+      "spearman_r": 0.0561,
+      "spearman_p": 0.0,
+      "pb_r": 0.0203,
+      "pb_p": 1e-06,
+      "abs_spearman": 0.0561
+    },
+    {
+      "feature": "mae",
+      "description": "Max Adverse Excursion (R)",
+      "pearson_r": -0.0027,
+      "pearson_p": 0.510543,
+      "spearman_r": -0.0397,
+      "spearman_p": 0.0,
+      "pb_r": -0.0014,
+      "pb_p": 0.737916,
+      "abs_spearman": 0.0397
+    },
+    {
+      "feature": "follow_thru_pct",
+      "description": "IB follow-through %",
+      "pearson_r": 0.0959,
+      "pearson_p": 0.0,
+      "spearman_r": -0.0248,
+      "spearman_p": 0.0,
+      "pb_r": 0.0085,
+      "pb_p": 0.037659,
+      "abs_spearman": 0.0248
+    },
+    {
+      "feature": "volume_ib",
+      "description": "IB volume",
+      "pearson_r": 0.0233,
+      "pearson_p": 0.0,
+      "spearman_r": -0.0242,
+      "spearman_p": 0.0,
+      "pb_r": 0.0273,
+      "pb_p": 0.0,
+      "abs_spearman": 0.0242
+    },
+    {
+      "feature": "aft_volume",
+      "description": "After-hours volume",
+      "pearson_r": 0.0284,
+      "pearson_p": 0.0,
+      "spearman_r": -0.0206,
+      "spearman_p": 0.0,
+      "pb_r": 0.0245,
+      "pb_p": 0.0,
+      "abs_spearman": 0.0206
+    },
+    {
+      "feature": "open_vs_poc_pct",
+      "description": "Open vs POC offset %",
+      "pearson_r": -0.0274,
+      "pearson_p": 0.0,
+      "spearman_r": 0.0125,
+      "spearman_p": 0.002113,
+      "pb_r": -0.0015,
+      "pb_p": 0.70937,
+      "abs_spearman": 0.0125
+    },
+    {
+      "feature": "day_of_week",
+      "description": "Day of week (0=Mon)",
+      "pearson_r": -0.0033,
+      "pearson_p": 0.416998,
+      "spearman_r": -0.0109,
+      "spearman_p": 0.007521,
+      "pb_r": -0.0056,
+      "pb_p": 0.165892,
+      "abs_spearman": 0.0109
+    },
+    {
+      "feature": "rvol",
+      "description": "Relative volume (vs 20d avg)",
+      "pearson_r": 0.003,
+      "pearson_p": 0.459569,
+      "spearman_r": 0.0095,
+      "spearman_p": 0.020231,
+      "pb_r": 0.0064,
+      "pb_p": 0.115208,
+      "abs_spearman": 0.0095
+    },
+    {
+      "feature": "close_vs_vwap_pct",
+      "description": "Close vs VWAP %",
+      "pearson_r": 0.024,
+      "pearson_p": 0.0,
+      "spearman_r": -0.0059,
+      "spearman_p": 0.149468,
+      "pb_r": -0.0093,
+      "pb_p": 0.02315,
+      "abs_spearman": 0.0059
+    },
+    {
+      "feature": "ib_midpoint_vs_poc_pct",
+      "description": "IB midpoint vs POC %",
+      "pearson_r": -0.0471,
+      "pearson_p": 0.0,
+      "spearman_r": 0.0003,
+      "spearman_p": 0.94176,
+      "pb_r": -0.0047,
+      "pb_p": 0.251653,
+      "abs_spearman": 0.0003
+    },
+    {
+      "feature": "sim_code",
+      "description": "sim_code",
+      "pearson_r": NaN,
+      "pearson_p": NaN,
+      "spearman_r": NaN,
+      "spearman_p": NaN,
+      "pb_r": NaN,
+      "pb_p": NaN,
+      "abs_spearman": NaN
+    }
+  ],
+  "mi_scores": [
+    {
+      "feature": "follow_thru_pct",
+      "description": "IB follow-through %",
+      "mi_score": 0.221737
+    },
+    {
+      "feature": "gap_pct",
+      "description": "Gap % from prior close",
+      "mi_score": 0.196862
+    },
+    {
+      "feature": "mfe",
+      "description": "Max Favourable Excursion (R)",
+      "mi_score": 0.055149
+    },
+    {
+      "feature": "stop_dist_pct",
+      "description": "Stop distance %",
+      "mi_score": 0.052502
+    },
+    {
+      "feature": "ib_range_pct",
+      "description": "IB range as % of open",
+      "mi_score": 0.045656
+    },
+    {
+      "feature": "rvol",
+      "description": "Relative volume (vs 20d avg)",
+      "mi_score": 0.025677
+    },
+    {
+      "feature": "gap_vs_ib_pct",
+      "description": "Gap as % of IB range",
+      "mi_score": 0.024892
+    },
+    {
+      "feature": "tcs",
+      "description": "Trade Confidence Score",
+      "mi_score": 0.020352
+    },
+    {
+      "feature": "close_vs_vwap_pct",
+      "description": "Close vs VWAP %",
+      "mi_score": 0.013173
+    },
+    {
+      "feature": "aft_volume",
+      "description": "After-hours volume",
+      "mi_score": 0.012824
+    },
+    {
+      "feature": "entry_hour",
+      "description": "Entry hour (ET, 24h)",
+      "mi_score": 0.012283
+    },
+    {
+      "feature": "mae",
+      "description": "Max Adverse Excursion (R)",
+      "mi_score": 0.012151
+    },
+    {
+      "feature": "open_vs_poc_pct",
+      "description": "Open vs POC offset %",
+      "mi_score": 0.011933
+    },
+    {
+      "feature": "day_of_week",
+      "description": "Day of week (0=Mon)",
+      "mi_score": 0.011012
+    },
+    {
+      "feature": "volume_ib",
+      "description": "IB volume",
+      "mi_score": 0.00907
+    },
+    {
+      "feature": "ib_midpoint_vs_poc_pct",
+      "description": "IB midpoint vs POC %",
+      "mi_score": 0.008505
+    },
+    {
+      "feature": "struct_code",
+      "description": "struct_code",
+      "mi_score": 0.007735
+    },
+    {
+      "feature": "false_break_down",
+      "description": "False-break-down flag (0/1)",
+      "mi_score": 0.007645
+    },
+    {
+      "feature": "false_break_up",
+      "description": "False-break-up flag (0/1)",
+      "mi_score": 0.007052
+    },
+    {
+      "feature": "sim_code",
+      "description": "sim_code",
+      "mi_score": 8.4e-05
+    },
+    {
+      "feature": "screener_pass",
+      "description": "Screener pass flag (0/1)",
+      "mi_score": 0.0
+    }
+  ],
+  "pairwise_interactions": [
+    {
+      "feature_a": "mfe",
+      "feature_b": "ib_range_pct",
+      "desc_a": "Max Favourable Excursion (R)",
+      "desc_b": "IB range as % of open",
+      "mi_a": 0.055149,
+      "mi_b": 0.045656,
+      "mi_pair": 0.017408,
+      "interaction_gain": -0.03774
+    },
+    {
+      "feature_a": "stop_dist_pct",
+      "feature_b": "ib_range_pct",
+      "desc_a": "Stop distance %",
+      "desc_b": "IB range as % of open",
+      "mi_a": 0.052502,
+      "mi_b": 0.045656,
+      "mi_pair": 0.006225,
+      "interaction_gain": -0.046278
+    },
+    {
+      "feature_a": "mfe",
+      "feature_b": "stop_dist_pct",
+      "desc_a": "Max Favourable Excursion (R)",
+      "desc_b": "Stop distance %",
+      "mi_a": 0.055149,
+      "mi_b": 0.052502,
+      "mi_pair": 0.004297,
+      "interaction_gain": -0.050852
+    },
+    {
+      "feature_a": "follow_thru_pct",
+      "feature_b": "gap_pct",
+      "desc_a": "IB follow-through %",
+      "desc_b": "Gap % from prior close",
+      "mi_a": 0.221737,
+      "mi_b": 0.196862,
+      "mi_pair": 0.166636,
+      "interaction_gain": -0.055101
+    },
+    {
+      "feature_a": "follow_thru_pct",
+      "feature_b": "stop_dist_pct",
+      "desc_a": "IB follow-through %",
+      "desc_b": "Stop distance %",
+      "mi_a": 0.221737,
+      "mi_b": 0.052502,
+      "mi_pair": 0.154571,
+      "interaction_gain": -0.067165
+    },
+    {
+      "feature_a": "gap_pct",
+      "feature_b": "stop_dist_pct",
+      "desc_a": "Gap % from prior close",
+      "desc_b": "Stop distance %",
+      "mi_a": 0.196862,
+      "mi_b": 0.052502,
+      "mi_pair": 0.12361,
+      "interaction_gain": -0.073252
+    },
+    {
+      "feature_a": "follow_thru_pct",
+      "feature_b": "mfe",
+      "desc_a": "IB follow-through %",
+      "desc_b": "Max Favourable Excursion (R)",
+      "mi_a": 0.221737,
+      "mi_b": 0.055149,
+      "mi_pair": 0.14037,
+      "interaction_gain": -0.081367
+    },
+    {
+      "feature_a": "follow_thru_pct",
+      "feature_b": "ib_range_pct",
+      "desc_a": "IB follow-through %",
+      "desc_b": "IB range as % of open",
+      "mi_a": 0.221737,
+      "mi_b": 0.045656,
+      "mi_pair": 0.129735,
+      "interaction_gain": -0.092002
+    },
+    {
+      "feature_a": "gap_pct",
+      "feature_b": "mfe",
+      "desc_a": "Gap % from prior close",
+      "desc_b": "Max Favourable Excursion (R)",
+      "mi_a": 0.196862,
+      "mi_b": 0.055149,
+      "mi_pair": 0.101224,
+      "interaction_gain": -0.095639
+    },
+    {
+      "feature_a": "gap_pct",
+      "feature_b": "ib_range_pct",
+      "desc_a": "Gap % from prior close",
+      "desc_b": "IB range as % of open",
+      "mi_a": 0.196862,
+      "mi_b": 0.045656,
+      "mi_pair": 0.081105,
+      "interaction_gain": -0.115758
+    }
+  ]
+}

@@ -1,0 +1,398 @@
+"""
+filter_correlation_report.py — Feature correlation & interaction analysis.
+
+Fetches all backtest_sim_runs rows with tiered_pnl_r populated, then computes:
+  (a) Pearson + Spearman correlation of each feature with tiered_pnl_r
+  (b) Mutual information score of each feature vs win/loss (binary)
+  (c) Pairwise interaction gain for the top-10 features by MI score
+
+Output: filter_correlation_report.json
+
+Usage:
+    python filter_correlation_report.py          # full history
+    python filter_correlation_report.py --start 2025-01-01 --end 2025-12-31
+    python filter_correlation_report.py --top-pairs 20
+"""
+
+import os
+import re
+import sys
+import json
+import math
+import argparse
+import logging
+from datetime import datetime
+
+import numpy as np
+from scipy import stats
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.preprocessing import KBinsDiscretizer
+
+from supabase import create_client
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger(__name__)
+
+# ── Supabase connection ────────────────────────────────────────────────────
+raw_url = os.environ.get("SUPABASE_URL", "")
+_m = re.search(r"supabase\.com/dashboard/project/([a-z0-9]+)", raw_url)
+if _m:
+    SUPABASE_URL = f"https://{_m.group(1)}.supabase.co"
+elif ".supabase.co" in raw_url:
+    _pid = raw_url.split(".supabase.co")[0].split("https://")[-1]
+    SUPABASE_URL = f"https://{_pid}.supabase.co"
+else:
+    SUPABASE_URL = raw_url
+
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+USER_ID = "a5e1fcab-8369-42c4-8550-a8a19734510c"
+
+# ── Feature definitions ────────────────────────────────────────────────────
+NUMERIC_FEATURES = [
+    "tcs",
+    "gap_pct",
+    "gap_vs_ib_pct",
+    "follow_thru_pct",
+    "rvol",
+    "ib_range_pct",
+    "open_vs_poc_pct",
+    "ib_midpoint_vs_poc_pct",
+    "stop_dist_pct",
+    "entry_hour",
+    "day_of_week",
+    "close_vs_vwap_pct",
+    "volume_ib",
+    "aft_volume",
+    "mfe",
+    "mae",
+    "screener_pass",
+    "false_break_up",
+    "false_break_down",
+]
+
+CATEGORICAL_FEATURES = ["predicted", "sim_outcome", "scan_type"]
+
+TARGET_CONTINUOUS = "tiered_pnl_r"
+TARGET_BINARY     = "win"          # derived: tiered_pnl_r > 0
+
+FIELDS = ",".join(
+    ["tiered_pnl_r", "sim_date"] + NUMERIC_FEATURES + CATEGORICAL_FEATURES
+)
+
+PAGE_SIZE = 1000
+
+# ── Descriptions ──────────────────────────────────────────────────────────
+FEATURE_DESC = {
+    "tcs":                    "Trade Confidence Score",
+    "gap_pct":                "Gap % from prior close",
+    "gap_vs_ib_pct":          "Gap as % of IB range",
+    "follow_thru_pct":        "IB follow-through %",
+    "rvol":                   "Relative volume (vs 20d avg)",
+    "ib_range_pct":           "IB range as % of open",
+    "open_vs_poc_pct":        "Open vs POC offset %",
+    "ib_midpoint_vs_poc_pct": "IB midpoint vs POC %",
+    "stop_dist_pct":          "Stop distance %",
+    "entry_hour":             "Entry hour (ET, 24h)",
+    "day_of_week":            "Day of week (0=Mon)",
+    "close_vs_vwap_pct":      "Close vs VWAP %",
+    "volume_ib":              "IB volume",
+    "aft_volume":             "After-hours volume",
+    "mfe":                    "Max Favourable Excursion (R)",
+    "mae":                    "Max Adverse Excursion (R)",
+    "screener_pass":          "Screener pass flag (0/1)",
+    "false_break_up":         "False-break-up flag (0/1)",
+    "false_break_down":       "False-break-down flag (0/1)",
+    "predicted":              "Structure prediction (categorical)",
+    "sim_outcome":            "Simulated outcome (categorical)",
+    "scan_type":              "Scan type (categorical)",
+}
+
+
+# ── Data fetching ─────────────────────────────────────────────────────────
+
+def fetch_rows(sb, start_date, end_date):
+    rows = []
+    offset = 0
+    log.info("Fetching backtest_sim_runs rows with tiered_pnl_r populated…")
+    while True:
+        q = (
+            sb.table("backtest_sim_runs")
+            .select(FIELDS)
+            .eq("user_id", USER_ID)
+            .not_.is_(TARGET_CONTINUOUS, "null")
+            .order("sim_date")
+            .range(offset, offset + PAGE_SIZE - 1)
+        )
+        if start_date:
+            q = q.gte("sim_date", start_date)
+        if end_date:
+            q = q.lte("sim_date", end_date)
+        batch = q.execute().data or []
+        rows.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+        if offset % 10000 == 0:
+            log.info(f"  …{offset:,} rows fetched")
+    log.info(f"Total rows fetched: {len(rows):,}")
+    return rows
+
+
+# ── Feature extraction ────────────────────────────────────────────────────
+
+def _safe_float(v):
+    try:
+        f = float(v)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_arrays(rows):
+    """Return (X_numeric, feature_names, y_cont, y_bin) as numpy arrays.
+
+    Rows with None for tiered_pnl_r are excluded. For each numeric feature,
+    missing values are imputed with the column median.
+    """
+    y_cont = np.array([r[TARGET_CONTINUOUS] for r in rows], dtype=float)
+    y_bin  = (y_cont > 0).astype(int)
+
+    # Encode categoricals: structure group, sim_outcome bucket
+    _STRUCT_MAP = {
+        "trend":   1, "neutral": 0, "extreme": -1,
+    }
+    def _struct_code(pred):
+        p = (pred or "").lower()
+        if any(t in p for t in ("bullish break", "bearish break")):
+            return 1
+        if any(t in p for t in ("ntrl extreme", "dbl dist")):
+            return -1
+        return 0
+
+    _SIM_MAP = {"Win": 1, "Loss": -1, "Scratch": 0}
+    def _sim_code(s):
+        return _SIM_MAP.get(str(s).strip(), 0)
+
+    feature_names_num = list(NUMERIC_FEATURES)
+    feature_names_cat = ["struct_code", "sim_code"]
+    all_feature_names = feature_names_num + feature_names_cat
+
+    raw_matrix = []
+    for r in rows:
+        row_vals = []
+        for f in feature_names_num:
+            row_vals.append(_safe_float(r.get(f)))
+        row_vals.append(float(_struct_code(r.get("predicted"))))
+        row_vals.append(float(_sim_code(r.get("sim_outcome"))))
+        raw_matrix.append(row_vals)
+
+    X_raw = np.array(raw_matrix, dtype=object)
+    n_rows, n_cols = X_raw.shape
+    X = np.zeros((n_rows, n_cols), dtype=float)
+    for col in range(n_cols):
+        col_data = X_raw[:, col]
+        valid_mask = np.array([v is not None for v in col_data])
+        valid_vals = np.array([float(v) for v in col_data if v is not None], dtype=float)
+        median = float(np.median(valid_vals)) if len(valid_vals) > 0 else 0.0
+        for row in range(n_rows):
+            X[row, col] = float(col_data[row]) if col_data[row] is not None else median
+
+    return X, all_feature_names, y_cont, y_bin
+
+
+# ── Correlation computation ───────────────────────────────────────────────
+
+def compute_correlations(X, feature_names, y_cont, y_bin):
+    """Compute Pearson, Spearman, and point-biserial correlations per feature."""
+    results = []
+    n = len(y_cont)
+    for i, name in enumerate(feature_names):
+        col = X[:, i]
+        valid = np.isfinite(col)
+        if valid.sum() < 30:
+            continue
+        xv, yv = col[valid], y_cont[valid]
+
+        pearson_r, pearson_p = stats.pearsonr(xv, yv)
+        spearman_r, spearman_p = stats.spearmanr(xv, yv)
+
+        # Point-biserial vs binary win/loss
+        xv_bin, yv_bin = col[valid], y_bin[valid]
+        pb_r, pb_p = stats.pointbiserialr(xv_bin, yv_bin)
+
+        results.append({
+            "feature":         name,
+            "description":     FEATURE_DESC.get(name, name),
+            "pearson_r":       round(float(pearson_r), 4),
+            "pearson_p":       round(float(pearson_p), 6),
+            "spearman_r":      round(float(spearman_r), 4),
+            "spearman_p":      round(float(spearman_p), 6),
+            "pb_r":            round(float(pb_r), 4),
+            "pb_p":            round(float(pb_p), 6),
+            "abs_spearman":    abs(round(float(spearman_r), 4)),
+        })
+
+    results.sort(key=lambda x: x["abs_spearman"], reverse=True)
+    return results
+
+
+# ── Mutual information ────────────────────────────────────────────────────
+
+def compute_mi(X, feature_names, y_bin):
+    """Mutual information of each feature vs win/loss (binary)."""
+    mi_scores = mutual_info_classif(X, y_bin, random_state=42)
+    mi_results = []
+    for i, name in enumerate(feature_names):
+        mi_results.append({
+            "feature":     name,
+            "description": FEATURE_DESC.get(name, name),
+            "mi_score":    round(float(mi_scores[i]), 6),
+        })
+    mi_results.sort(key=lambda x: x["mi_score"], reverse=True)
+    return mi_results
+
+
+# ── Pairwise interaction analysis ─────────────────────────────────────────
+
+def compute_pairwise_interactions(X, feature_names, y_bin, top_n=10, max_pairs=45):
+    """Interaction gain for top-N feature pairs.
+
+    Interaction gain = MI(pair_binned, y) - max(MI(a, y), MI(b, y))
+    A positive gain means the pair together predicts the outcome better
+    than either feature alone.
+    """
+    log.info(f"Computing pairwise interactions for top-{top_n} features…")
+    mi_individual = mutual_info_classif(X, y_bin, random_state=42)
+
+    top_indices = np.argsort(mi_individual)[::-1][:top_n]
+
+    binner = KBinsDiscretizer(n_bins=5, encode="ordinal", strategy="quantile")
+
+    results = []
+    pairs_done = 0
+    for ia in range(len(top_indices)):
+        for ib in range(ia + 1, len(top_indices)):
+            if pairs_done >= max_pairs:
+                break
+            idx_a, idx_b = top_indices[ia], top_indices[ib]
+            col_a = X[:, idx_a].reshape(-1, 1)
+            col_b = X[:, idx_b].reshape(-1, 1)
+            try:
+                bin_a = binner.fit_transform(col_a).astype(int).flatten()
+                bin_b = binner.fit_transform(col_b).astype(int).flatten()
+                pair_code = bin_a * 5 + bin_b
+                pair_mi = mutual_info_classif(
+                    pair_code.reshape(-1, 1), y_bin,
+                    discrete_features=True, random_state=42
+                )[0]
+                interaction_gain = float(pair_mi) - max(
+                    float(mi_individual[idx_a]),
+                    float(mi_individual[idx_b])
+                )
+                results.append({
+                    "feature_a":        feature_names[idx_a],
+                    "feature_b":        feature_names[idx_b],
+                    "desc_a":           FEATURE_DESC.get(feature_names[idx_a], feature_names[idx_a]),
+                    "desc_b":           FEATURE_DESC.get(feature_names[idx_b], feature_names[idx_b]),
+                    "mi_a":             round(float(mi_individual[idx_a]), 6),
+                    "mi_b":             round(float(mi_individual[idx_b]), 6),
+                    "mi_pair":          round(float(pair_mi), 6),
+                    "interaction_gain": round(interaction_gain, 6),
+                })
+            except Exception as exc:
+                log.debug(f"Pair ({feature_names[idx_a]}, {feature_names[idx_b]}): {exc}")
+            pairs_done += 1
+
+    results.sort(key=lambda x: x["interaction_gain"], reverse=True)
+    return results
+
+
+# ── Summary statistics ────────────────────────────────────────────────────
+
+def compute_win_loss_summary(y_cont, y_bin):
+    wins  = y_cont[y_bin == 1]
+    losses = y_cont[y_bin == 0]
+    return {
+        "n_total":      int(len(y_cont)),
+        "n_wins":       int(len(wins)),
+        "n_losses":     int(len(losses)),
+        "win_rate":     round(float(np.mean(y_bin)) * 100, 2),
+        "avg_win_r":    round(float(np.mean(wins)),  4) if len(wins)   > 0 else 0.0,
+        "avg_loss_r":   round(float(np.mean(losses)), 4) if len(losses) > 0 else 0.0,
+        "avg_r":        round(float(np.mean(y_cont)), 4),
+        "total_r":      round(float(np.sum(y_cont)), 3),
+    }
+
+
+# ── Main ─────────────────────────────────────────────────────────────────
+
+def main():
+    p = argparse.ArgumentParser(
+        description="Feature correlation and interaction analysis for backtest_sim_runs"
+    )
+    p.add_argument("--start",     metavar="YYYY-MM-DD", default=None)
+    p.add_argument("--end",       metavar="YYYY-MM-DD", default=None)
+    p.add_argument("--top-pairs", type=int, default=10,
+                   help="Top-N features to use in pairwise interaction analysis")
+    p.add_argument("--max-pairs", type=int, default=45,
+                   help="Max pairs to evaluate (default 45 = C(10,2))")
+    p.add_argument("--out",       default="filter_correlation_report.json")
+    args = p.parse_args()
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        log.error("SUPABASE_URL and SUPABASE_KEY must be set.")
+        sys.exit(1)
+
+    sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+    rows = fetch_rows(sb, args.start, args.end)
+    if len(rows) < 50:
+        log.error(f"Too few rows ({len(rows)}) to compute correlations.")
+        sys.exit(1)
+
+    log.info("Extracting feature arrays…")
+    X, feature_names, y_cont, y_bin = extract_arrays(rows)
+
+    log.info("Computing Pearson/Spearman/point-biserial correlations…")
+    correlations = compute_correlations(X, feature_names, y_cont, y_bin)
+
+    log.info("Computing mutual information scores…")
+    mi_scores = compute_mi(X, feature_names, y_bin)
+
+    log.info("Computing pairwise interaction gains…")
+    pairs = compute_pairwise_interactions(
+        X, feature_names, y_bin,
+        top_n=args.top_pairs,
+        max_pairs=args.max_pairs,
+    )
+
+    summary = compute_win_loss_summary(y_cont, y_bin)
+    date_range = {
+        "start": args.start or "all",
+        "end":   args.end   or "latest",
+    }
+
+    report = {
+        "run_at":        datetime.utcnow().isoformat() + "Z",
+        "date_range":    date_range,
+        "n_rows":        len(rows),
+        "n_features":    len(feature_names),
+        "win_loss_summary": summary,
+        "correlations":  correlations,
+        "mi_scores":     mi_scores,
+        "pairwise_interactions": pairs,
+    }
+
+    with open(args.out, "w") as f:
+        json.dump(report, f, indent=2)
+
+    log.info(f"Report written to {args.out}")
+    log.info(f"  Rows: {len(rows):,} | Win rate: {summary['win_rate']:.1f}%")
+    log.info(f"  Top correlation (Spearman): {correlations[0]['feature']} = {correlations[0]['spearman_r']}")
+    log.info(f"  Top MI feature: {mi_scores[0]['feature']} = {mi_scores[0]['mi_score']:.4f}")
+    if pairs:
+        log.info(f"  Top interaction pair: ({pairs[0]['feature_a']}, {pairs[0]['feature_b']}) gain={pairs[0]['interaction_gain']:.4f}")
+
+
+if __name__ == "__main__":
+    main()

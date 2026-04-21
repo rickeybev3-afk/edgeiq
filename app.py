@@ -21367,6 +21367,180 @@ Measures how accurately the 7-structure framework classified those days in hinds
             except Exception:
                 pass
 
+        # ── Feature Correlation & Interaction Analysis ───────────────────────
+        st.divider()
+        st.markdown("#### 📊 Feature Correlation & Interaction Analysis")
+        st.caption(
+            "Shows which signals most strongly predict win/loss across all history. "
+            "Correlations vs `tiered_pnl_r`; mutual information (MI) and interaction "
+            "gain vs win/loss (binary). Run time: ~2 min for 85k rows."
+        )
+
+        _FCR_FILE = "filter_correlation_report.json"
+        _fcr_report = {}
+        if _fgs_os.path.exists(_FCR_FILE):
+            try:
+                with open(_FCR_FILE) as _f:
+                    _fcr_report = _fgs_json.load(_f)
+            except Exception:
+                pass
+
+        if _fcr_report:
+            _fcr_meta = _fcr_report.get("win_loss_summary", {})
+            _fcr_ran  = _fcr_report.get("run_at", "?")[:16].replace("T", " ")
+            _fcr_dr   = _fcr_report.get("date_range", {})
+            st.caption(
+                f"Last run: **{_fcr_ran} UTC** · "
+                f"{_fcr_report.get('n_rows', 0):,} rows · "
+                f"Win rate: {_fcr_meta.get('win_rate', 0):.1f}% · "
+                f"Range: {_fcr_dr.get('start','?')} → {_fcr_dr.get('end','?')}"
+            )
+
+            _fcr_tab1, _fcr_tab2, _fcr_tab3 = st.tabs(
+                ["🔗 Correlations", "🧩 Mutual Info", "⚡ Pair Interactions"]
+            )
+
+            with _fcr_tab1:
+                _fcr_corr = _fcr_report.get("correlations", [])
+                if _fcr_corr:
+                    import pandas as _fcr_pd
+                    _fcr_corr_rows = []
+                    for _cc in _fcr_corr:
+                        _fcr_corr_rows.append({
+                            "Feature":      _cc["feature"],
+                            "Description":  _cc["description"],
+                            "Pearson r":    f"{_cc['pearson_r']:+.4f}",
+                            "Spearman r":   f"{_cc['spearman_r']:+.4f}",
+                            "Point-Biserial r": f"{_cc['pb_r']:+.4f}",
+                            "|Spearman|":   _cc["abs_spearman"],
+                        })
+                    _fcr_corr_df = _fcr_pd.DataFrame(_fcr_corr_rows)
+
+                    def _fcr_corr_color(row):
+                        try:
+                            v = abs(float(row["|Spearman|"]))
+                        except (TypeError, ValueError):
+                            v = 0.0
+                        if v >= 0.15:
+                            return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                        if v >= 0.08:
+                            return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+                        return [""] * len(row)
+
+                    st.dataframe(
+                        _fcr_corr_df.style.apply(_fcr_corr_color, axis=1),
+                        use_container_width=True, hide_index=True,
+                    )
+                    st.caption(
+                        "Green = |Spearman r| ≥ 0.15 (strong signal). "
+                        "Light green = ≥ 0.08 (moderate). "
+                        "Sorted by |Spearman r|."
+                    )
+
+            with _fcr_tab2:
+                _fcr_mi = _fcr_report.get("mi_scores", [])
+                if _fcr_mi:
+                    _fcr_mi_rows = []
+                    for _rank, _mi in enumerate(_fcr_mi, 1):
+                        _fcr_mi_rows.append({
+                            "#":           _rank,
+                            "Feature":     _mi["feature"],
+                            "Description": _mi["description"],
+                            "MI Score":    f"{_mi['mi_score']:.4f}",
+                        })
+                    _fcr_mi_df = _fcr_pd.DataFrame(_fcr_mi_rows)
+
+                    def _fcr_mi_color(row):
+                        try:
+                            v = float(str(row["MI Score"]))
+                        except (TypeError, ValueError):
+                            v = 0.0
+                        if v >= 0.03:
+                            return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                        if v >= 0.01:
+                            return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+                        return [""] * len(row)
+
+                    st.dataframe(
+                        _fcr_mi_df.style.apply(_fcr_mi_color, axis=1),
+                        use_container_width=True, hide_index=True,
+                    )
+                    st.caption(
+                        "Mutual information quantifies how much knowing a feature "
+                        "reduces uncertainty about win/loss. Higher = more predictive."
+                    )
+
+            with _fcr_tab3:
+                _fcr_pairs = _fcr_report.get("pairwise_interactions", [])
+                if _fcr_pairs:
+                    _fcr_pair_rows = []
+                    for _p in _fcr_pairs[:20]:
+                        _fcr_pair_rows.append({
+                            "Feature A":        _p["feature_a"],
+                            "Feature B":        _p["feature_b"],
+                            "MI(A)":            f"{_p['mi_a']:.4f}",
+                            "MI(B)":            f"{_p['mi_b']:.4f}",
+                            "MI(pair)":         f"{_p['mi_pair']:.4f}",
+                            "Interaction Gain": f"{_p['interaction_gain']:+.4f}",
+                        })
+                    _fcr_pair_df = _fcr_pd.DataFrame(_fcr_pair_rows)
+
+                    def _fcr_pair_color(row):
+                        try:
+                            v = float(str(row["Interaction Gain"]))
+                        except (TypeError, ValueError):
+                            v = 0.0
+                        if v > 0.01:
+                            return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                        if v > 0:
+                            return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+                        return ["background-color:#fce4ec; color:#b71c1c"] * len(row)
+
+                    st.dataframe(
+                        _fcr_pair_df.style.apply(_fcr_pair_color, axis=1),
+                        use_container_width=True, hide_index=True,
+                    )
+                    st.caption(
+                        "Interaction gain > 0 means the pair together predicts "
+                        "win/loss better than either feature alone. Green = synergy."
+                    )
+                else:
+                    st.info("No pairwise interaction data yet — run the correlation analysis.")
+
+        else:
+            st.info("No correlation report yet — run the analysis below to generate it.")
+
+        # ── Run Correlation Analysis button ───────────────────────────────────
+        _fcr_col1, _fcr_col2 = st.columns([1, 3])
+        with _fcr_col1:
+            _fcr_run_btn = st.button(
+                "📊 Run Correlation Analysis",
+                key="fcr_run_btn",
+                help="Computes Pearson/Spearman, mutual information, and pairwise interaction gains. ~2 min.",
+            )
+        with _fcr_col2:
+            if _fcr_report:
+                st.caption(
+                    f"{_fcr_report.get('n_rows', 0):,} rows · "
+                    f"{_fcr_report.get('n_features', 0)} features analysed"
+                )
+
+        if _fcr_run_btn:
+            with st.spinner("Running correlation analysis — fetching 85k rows and computing MI scores…"):
+                try:
+                    import subprocess as _fcr_sub
+                    _fcr_proc = _fcr_sub.run(
+                        ["python3", "filter_correlation_report.py"],
+                        capture_output=True, text=True, timeout=300,
+                    )
+                    if _fcr_proc.returncode == 0:
+                        st.success("Correlation analysis complete! Reload to see updated results.")
+                        st.rerun()
+                    else:
+                        st.error(f"Correlation analysis failed:\n{_fcr_proc.stderr[-600:]}")
+                except Exception as _fcr_ex:
+                    st.error(f"Error: {_fcr_ex}")
+
     # ── Highlight jumped-to trade row (from drill-down ↓ Jump link) ──────────
     import streamlit.components.v1 as _cmp_trade_jump
     _cmp_trade_jump.html(

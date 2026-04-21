@@ -593,6 +593,12 @@ def _sp_size_mult(screener_pass: str | None) -> float:
 # Hard block setups with RVOL < RVOL_MIN_FLOOR when RVOL data is available.
 RVOL_MIN_FLOOR = float(os.environ.get("RVOL_MIN_FLOOR", "1.0"))
 
+# When PM_IB_FILTER=1, the bot fetches the pre-market session range (4:00–9:30 AM ET)
+# and gates entries on whether price accepted past the prior day's IB in the trade
+# direction. Bullish: pm_high >= prev_ib_high. Bearish: pm_low <= prev_ib_low.
+# Setups where PM_IB data is unavailable are passed through (defensive default).
+PM_IB_FILTER = os.getenv("PM_IB_FILTER", "0").strip() == "1"
+
 # ── filter_config.json — optimizer-derived entry gates ─────────────────────────
 _FILTER_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "filter_config.json")
 _FILTER_CONFIG_CACHE: dict | None = None
@@ -1502,6 +1508,52 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             log.info(
                 f"  [{ticker}] RVOL {_rvol_float:.2f}× → RVOL bonus mult "
                 f"{_rvol_mult:.2f}× → risk ${risk_dollars:,.0f}"
+            )
+
+    # ── PM-IB directional gate (PM_IB_FILTER=1) ────────────────────────────
+    # Gate: PM must accept past the prior session's IB in the trade direction.
+    # Bullish: pm_high >= prev_ib_high   Bearish: pm_low <= prev_ib_low
+    # When PM or prev-IB data is unavailable the setup is passed through (defensive).
+    if PM_IB_FILTER:
+        _pm_dir_low   = direction.lower()
+        _pm_today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+        _pm_open_px   = float(r.get("open_price") or r.get("entry_price_sim") or 0)
+        _pm_data      = _fetch_premarket_range(ticker, _pm_today_str, _pm_open_px)
+        _pm_rng_pct, _pm_hi, _pm_lo = _pm_data
+        _prev_ib_h, _prev_ib_lo = _fetch_prev_ib(ticker, _pm_today_str)
+        _pm_data_ok = _pm_hi > 0 and _prev_ib_h > _prev_ib_lo > 0
+        if _pm_data_ok:
+            if "bullish" in _pm_dir_low:
+                _pm_accepted = _pm_hi >= _prev_ib_h
+            elif "bearish" in _pm_dir_low:
+                _pm_accepted = _pm_lo <= _prev_ib_lo
+            else:
+                _pm_accepted = True  # non-directional / unknown → pass through
+
+            if not _pm_accepted:
+                log.info(
+                    f"  [{ticker}] PM-IB gate skip — PM did not accept past prior IB "
+                    f"in {_pm_dir_low} direction "
+                    f"(pm_hi={_pm_hi:.2f}, pm_lo={_pm_lo:.2f}, "
+                    f"prev_ib_h={_prev_ib_h:.2f}, prev_ib_l={_prev_ib_lo:.2f})"
+                )
+                tg_send(
+                    f"⛔ <b>{ticker} Blocked — PM-IB gate</b>\n"
+                    f"Pre-market did not accept past prior IB in <b>{_pm_dir_low}</b> direction.\n"
+                    f"PM: {_pm_lo:.2f}–{_pm_hi:.2f} | Prior IB: {_prev_ib_lo:.2f}–{_prev_ib_h:.2f}"
+                )
+                _patch_skip_reason(r, ticker, "pm_ib_filter")
+                return
+            else:
+                log.info(
+                    f"  [{ticker}] PM-IB gate PASS "
+                    f"(pm_hi={_pm_hi:.2f}, pm_lo={_pm_lo:.2f}, "
+                    f"prev_ib_h={_prev_ib_h:.2f}, prev_ib_l={_prev_ib_lo:.2f})"
+                )
+        else:
+            log.debug(
+                f"  [{ticker}] PM-IB gate: data unavailable — passing through "
+                f"(pm_hi={_pm_hi:.2f}, prev_ib_h={_prev_ib_h:.2f})"
             )
 
     # ── filter_config.json additional entry gates ────────────────────────────
@@ -4084,6 +4136,11 @@ def _alert_eod_summary(
     # IB context enrichment status
     _ib_ctx_icon = "🧠" if IB_CONTEXT_ENABLED else "💤"
     lines.append(f"{_ib_ctx_icon} IB context: <b>{'ACTIVE' if IB_CONTEXT_ENABLED else 'inactive'}</b>")
+
+    # PM-IB directional gate status
+    _pm_ib_icon = "🌅" if PM_IB_FILTER else "💤"
+    lines.append(f"{_pm_ib_icon} PM-IB gate: <b>{'ACTIVE' if PM_IB_FILTER else 'inactive'}</b>"
+                 + (" (bullish: pm_hi≥prev_ib_hi · bearish: pm_lo≤prev_ib_lo)" if PM_IB_FILTER else ""))
 
     # ── Adaptive Position Management A/B stats ────────────────────────────────
     # Only shown when the feature is enabled AND enough data exists in both arms
