@@ -21985,7 +21985,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 return token in (row.get("predicted") or "").lower()
 
             def _rfc_filter(rows, gap_min=0.0, rvol_min=0.0, tcs_offset=0,
-                            morning_floor=0, struct_token="", scan_only=""):
+                            morning_floor=0, struct_token="", scan_only="",
+                            bearish_requires_gap_down=False):
                 out = []
                 for r in rows:
                     if not _rfc_passes_tcs(r, tcs_offset):
@@ -21998,6 +21999,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         continue
                     if struct_token and not _rfc_passes_struct(r, struct_token):
                         continue
+                    # Bot rule: Bearish Break only taken on gap-down screener signals
+                    if bearish_requires_gap_down and "bearish break" in (r.get("predicted") or "").lower():
+                        if (r.get("screener_pass") or "").lower() != "gap_down":
+                            continue
                     if scan_only:
                         scan = (r.get("scan_type") or "morning").lower()
                         if scan_only == "morning" and "intraday" in scan:
@@ -22069,9 +22074,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     for rv in by_date.get(d, []):
                         eq += rv * actual_1r
                     eq_by_date[d] = eq
-                # Snap equity at Y1/Y2/Y3/Y4
+                # Snap equity at Y1/Y2/Y3/Y5
                 checkpoints = {}
-                for yr in [1, 2, 3, 4]:
+                for yr in [1, 2, 3, 5]:
                     try:
                         import datetime as _rfc_dt2
                         tgt = (start_dt + _rfc_dt2.timedelta(days=yr * 365)).isoformat()
@@ -22106,9 +22111,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _rfc_variants = [
                 # (label, rows)
                 ("Live Bot — no gap, RVOL≥1.0, Morning TCS≥60",
-                 _rfc_filter(_rfc_all, rvol_min=1.0, morning_floor=60)),
+                 _rfc_filter(_rfc_all, rvol_min=1.0, morning_floor=60,
+                             bearish_requires_gap_down=True)),
                 ("Live Bot + gap≥2%",
-                 _rfc_filter(_rfc_all, gap_min=2.0, rvol_min=1.0, morning_floor=60)),
+                 _rfc_filter(_rfc_all, gap_min=2.0, rvol_min=1.0, morning_floor=60,
+                             bearish_requires_gap_down=True)),
                 ("All structs + gap≥2% (grid search baseline)",
                  _rfc_filter(_rfc_all, gap_min=2.0)),
                 ("Ntrl Extreme only — no gap [opt]",
@@ -22154,6 +22161,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "Comp Y1": f"${_c['checkpoints'].get('Y1', 0):,.0f}" if _c and _c.get("checkpoints") else "—",
                     "Comp Y2": f"${_c['checkpoints'].get('Y2', 0):,.0f}" if _c and _c.get("checkpoints") else "—",
                     "Comp Y3": f"${_c['checkpoints'].get('Y3', 0):,.0f}" if _c and _c.get("checkpoints") else "—",
+                    "Comp Y5": f"${_c['checkpoints'].get('Y5', 0):,.0f}" if _c and _c.get("checkpoints") else "—",
                     "Comp Final": f"${_c.get('final_eq', 0):,.0f}" if _c else "—",
                 })
 
@@ -22187,7 +22195,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "Y1": f"${_ck.get('Y1', 0):,.0f}",
                         "Y2": f"${_ck.get('Y2', 0):,.0f}",
                         "Y3": f"${_ck.get('Y3', 0):,.0f}",
-                        "Y4": f"${_ck.get('Y4', 0):,.0f}",
+                        "Y5": f"${_ck.get('Y5', 0):,.0f}",
                         "Full Period Final": f"${_c.get('final_eq', 0):,.0f}",
                         "CAGR": f"{_c.get('cagr', 0):.0f}%",
                     })
