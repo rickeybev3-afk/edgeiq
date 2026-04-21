@@ -1102,17 +1102,8 @@ TCS_THRESHOLDS_FILE  = "tcs_thresholds.json"          # per-structure TCS cutoff
 from log_config import _TCS_HISTORY_LOG_PATH, _TCS_HISTORY_MAX_BYTES, _TCS_HISTORY_BACKUP_COUNT  # noqa: E402
 TCS_THRESHOLD_HISTORY_FILE = _TCS_HISTORY_LOG_PATH  # append-only history log (one JSON record per line); path overrideable via TCS_HISTORY_LOG_PATH env var
 
-
-
-def _parse_retention_days(env_val: str | None, default: int = 90) -> int:
-    try:
-        val = int(env_val)
-        return val if val > 0 else default
-    except (TypeError, ValueError):
-        return default
-
-TCS_HISTORY_RETENTION_DAYS = _parse_retention_days(os.environ.get("TCS_HISTORY_RETENTION_DAYS"), 90)  # days of history to keep in the threshold history log
-TCS_BASE_SCORE = _parse_retention_days(os.environ.get("TCS_BASE_SCORE"), 65)  # baseline TCS gate used in compute_structure_tcs_thresholds(); override via env var
+TCS_HISTORY_RETENTION_DAYS = _parse_int_env("TCS_HISTORY_RETENTION_DAYS", 90)  # days of history to keep in the threshold history log
+TCS_BASE_SCORE = _parse_int_env("TCS_BASE_SCORE", 65)  # baseline TCS gate used in compute_structure_tcs_thresholds(); override via env var
 
 # Canonical display-label mapping for TCS structure weight keys.
 # Single source of truth — imported by app.py and paper_trader_bot.py.
