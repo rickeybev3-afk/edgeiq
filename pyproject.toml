@@ -16,6 +16,7 @@ dependencies = [
     "streamlit-lightweight-charts>=0.7.20",
     "pytest>=9.0",
     "supabase>=2.28.3",
+    "apscheduler>=3.10",
 ]
 
 [tool.pytest.ini_options]

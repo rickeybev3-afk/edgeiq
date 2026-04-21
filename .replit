@@ -51,6 +51,10 @@ args = "60-Day Backtest Runner"
 task = "workflow.run"
 args = "python-tests"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Weekly Phase 3 Grid Search"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -128,6 +132,17 @@ args = "python -m pytest -v"
 
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow]]
+name = "Weekly Phase 3 Grid Search"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 run_weekly_grid_search.py"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"
