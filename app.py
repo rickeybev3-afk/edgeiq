@@ -5811,11 +5811,11 @@ def render_structure_banner(label, color, detail, probs, tcs,
     # Key Insights box — separate call so Streamlit's markdown parser doesn't escape inner HTML
     if insight:
         st.markdown(
-            f\'<div style="margin-top:6px; background:rgba(255,255,255,0.07);\'
-            f\' border-left:3px solid {color}; border-radius:6px; padding:12px;">\'
-            f\'<span style="font-size:13px; font-weight:700; color:{color};">💡 Key Insight:</span>\'
-            f\'<span style="font-size:13px; color:#d0d8f0; line-height:1.6;">&nbsp;{insight}</span>\'
-            f\'</div>\',
+            "<div style='margin-top:6px; background:rgba(255,255,255,0.07);"
+            f" border-left:3px solid {color}; border-radius:6px; padding:12px;'>"
+            f"<span style='font-size:13px; font-weight:700; color:{color};'>💡 Key Insight:</span>"
+            f"<span style='font-size:13px; color:#d0d8f0; line-height:1.6;'>&nbsp;{insight}</span>"
+            "</div>",
             unsafe_allow_html=True,
         )
 
@@ -22347,254 +22347,355 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
 
 
-    # ── 3-System Showdown ─────────────────────────────────────────────────────
-    with st.expander("🆚 3-System Showdown — P1–P4 vs Phase 3 Best vs Combined", expanded=False):
-        import os   as _ssd_os
-        import math as _ssd_math
-        import numpy as _ssd_np
-        import pandas as _ssd_pd
+    # ── 4-System Comparison ───────────────────────────────────────────────────
+    st.markdown("### 📊 4-System Comparison")
+    st.caption(
+        "Compares all four trading systems across every exit strategy using the full "
+        "backtest history (2021 → present, ~31k unique signals). "
+        "Use the **Exit lens** toggle to see how tiered vs EOD vs raw-sim exits change the numbers."
+    )
 
-        _SSD_CACHE = "_ssd_data_cache"
+    _s4c_cache_key = "_s4c_bsr_cache"
+    _S4C_SENTINEL  = -9999.0
 
-        # ── Load & cache data from Supabase ──────────────────────────────────
-        if _SSD_CACHE not in st.session_state:
-            try:
-                _ssd_resp = supabase.table("paper_trades") \
-                    .select("ticker,predicted,scan_type,tcs,rvol,gap_pct,tiered_pnl_r,trade_date") \
-                    .eq("user_id", USER_ID) \
-                    .not_.is_("tiered_pnl_r", "null") \
-                    .execute()
-                _ssd_raw = [r for r in (_ssd_resp.data or [])
-                            if r.get("tiered_pnl_r") not in (None, -9999.0, -9999)]
-                st.session_state[_SSD_CACHE] = _ssd_raw
-            except Exception as _ssd_err:
-                st.error(f"Could not load trade data: {_ssd_err}")
-                st.stop()
+    _s4c_col_btn, _s4c_col_cap = st.columns([1, 4])
+    with _s4c_col_btn:
+        _s4c_reload = st.button("🔄 Load / Refresh", key="_s4c_load_btn")
+    with _s4c_col_cap:
+        st.caption(
+            "Fetches `backtest_sim_runs` with all 3 R columns (tiered, EOD, raw sim). "
+            "Cached for the session — one load is enough."
+        )
 
-        _ssd_all = st.session_state.get(_SSD_CACHE, [])
+    if _s4c_reload and _AUTH_USER_ID:
+        with st.spinner("Loading backtest_sim_runs (all exit columns)…"):
+            _s4c_raw, _s4c_off = [], 0
+            while True:
+                try:
+                    _s4c_batch = (
+                        supabase.table("backtest_sim_runs")
+                        .select("ticker,sim_date,predicted,tcs,gap_pct,tiered_pnl_r,eod_pnl_r,pnl_r_sim,scan_type")
+                        .eq("user_id", _AUTH_USER_ID)
+                        .range(_s4c_off, _s4c_off + 999)
+                        .execute()
+                        .data or []
+                    )
+                except Exception as _s4c_ex:
+                    st.error(f"Supabase error: {_s4c_ex}")
+                    _s4c_batch = []
+                    break
+                _s4c_raw.extend(_s4c_batch)
+                if len(_s4c_batch) < 1000:
+                    break
+                _s4c_off += 1000
+            _s4c_dedup = {}
+            for _r in _s4c_raw:
+                _v = _r.get("tiered_pnl_r")
+                if _v is None:
+                    continue
+                try:
+                    if float(_v) == _S4C_SENTINEL:
+                        continue
+                except Exception:
+                    continue
+                _k = (_r.get("ticker"), _r.get("sim_date"), _r.get("predicted") or "")
+                _s4c_dedup[_k] = _r
+            st.session_state[_s4c_cache_key] = list(_s4c_dedup.values())
+            st.success(
+                f"Loaded {len(st.session_state[_s4c_cache_key]):,} unique backtest rows."
+            )
 
-        if not _ssd_all:
-            st.warning("No trade data found. Run the simulation or backfill first.")
+    _s4c_all = st.session_state.get(_s4c_cache_key, [])
+
+    if not _s4c_all:
+        st.info(
+            "Click **Load / Refresh** above to pull the full backtest history "
+            "(4.7 years, ~31k unique rows)."
+        )
+    else:
+        import math     as _s4c_math
+        import numpy    as _s4c_np
+        import pandas   as _s4c_pd
+        import datetime as _s4c_dt
+
+        # ── Controls ─────────────────────────────────────────────────────────
+        _s4c_ctrl1, _s4c_ctrl2 = st.columns([2, 5])
+        with _s4c_ctrl1:
+            _s4c_date_mode = st.selectbox(
+                "Date window",
+                ["Recent 1 year", "All time", "Custom"],
+                key="_s4c_date_mode",
+            )
+        with _s4c_ctrl2:
+            _s4c_lens = st.radio(
+                "Exit lens",
+                ["Tiered (P1-P4)", "EOD (hold to close)", "Raw Sim (MFE ceiling)"],
+                key="_s4c_lens",
+                horizontal=True,
+            )
+
+        _s4c_all_dates = sorted(set(r.get("sim_date") for r in _s4c_all if r.get("sim_date")))
+        _s4c_max_dt    = _s4c_all_dates[-1] if _s4c_all_dates else "2026-01-01"
+        _s4c_min_dt    = _s4c_all_dates[0]  if _s4c_all_dates else "2021-01-01"
+
+        if _s4c_date_mode == "Recent 1 year":
+            _s4c_cutoff   = (
+                _s4c_dt.date.fromisoformat(_s4c_max_dt) - _s4c_dt.timedelta(days=365)
+            ).isoformat()
+            _s4c_filtered = [r for r in _s4c_all if (r.get("sim_date") or "") >= _s4c_cutoff]
+        elif _s4c_date_mode == "All time":
+            _s4c_filtered = list(_s4c_all)
         else:
-            # ── Filter definitions ────────────────────────────────────────────
-            # System 1: Old Bot — P1/P2/P3/P4 tiers combined
-            #   P1 = Intraday TCS 70+   P2 = Morning TCS 70+
-            #   P3 = Intraday TCS 50-69  P4 = Morning TCS 50-69
-            def _ssd_sys1(r):
-                return (r.get("tcs") or 0) >= 60
-
-            # System 2: Phase 3 Grid Search Best — gap ≥ 2%, no RVOL gate
-            def _ssd_sys2(r):
-                return abs(r.get("gap_pct") or 0) >= 2.0
-
-            # System 3: Combined — trade passes System 1 OR System 2 (union, deduped)
-            def _ssd_sys3(r):
-                return _ssd_sys1(r) or _ssd_sys2(r)
-
-            _ssd_s1 = sorted([r for r in _ssd_all if _ssd_sys1(r)], key=lambda x: x["trade_date"])
-            _ssd_s2 = sorted([r for r in _ssd_all if _ssd_sys2(r)], key=lambda x: x["trade_date"])
-            _ssd_s3 = sorted([r for r in _ssd_all if _ssd_sys3(r)], key=lambda x: x["trade_date"])
-
-            # ── Stats helper ──────────────────────────────────────────────────
-            def _ssd_stats(rows):
-                if not rows:
-                    return None
-                R = _ssd_np.array([r["tiered_pnl_r"] for r in rows], dtype=float)
-                n      = len(R)
-                wins   = R[R > 0]
-                losses = R[R < 0]
-                wr     = len(wins) / n * 100
-                avg_r  = float(R.mean())
-                total_r = float(R.sum())
-                aw     = float(wins.mean())  if len(wins)   else 0.0
-                al     = float(losses.mean()) if len(losses) else 0.0
-                pf     = abs(wins.sum() / losses.sum()) if losses.sum() != 0 else float("inf")
-                dates  = sorted(set(r["trade_date"][:10] for r in rows))
-                n_weeks = max(1, len(dates) / 5.0)
-                tpw    = n / n_weeks
-                wkly_r = avg_r * tpw
-                shp    = float(R.mean() / (R.std() + 1e-9) * _ssd_math.sqrt(52 * n / n_weeks))
-                # Max drawdown
-                peak = cum = maxdd = 0.0
-                for v in R:
-                    cum += v
-                    if cum > peak:
-                        peak = cum
-                    dd = peak - cum
-                    if dd > maxdd:
-                        maxdd = dd
-                # Cumulative equity curve
-                cum_r = list(_ssd_np.cumsum(R))
-                return dict(n=n, wr=wr, avg_r=avg_r, total_r=total_r,
-                            aw=aw, al=al, pf=pf, tpw=tpw, wkly_r=wkly_r,
-                            shp=shp, maxdd=maxdd, cum_r=cum_r,
-                            n_weeks=n_weeks, dates=dates)
-
-            _s1s = _ssd_stats(_ssd_s1)
-            _s2s = _ssd_stats(_ssd_s2)
-            _s3s = _ssd_stats(_ssd_s3)
-
-            _ssd_systems = [
-                ("🔴 System 1", "P1–P4 Old Bot\n(TCS ≥ 60, all scans)", "#ef5350", _s1s),
-                ("🟡 System 2", "Phase 3 Best\n(gap ≥ 2%, no RVOL gate)", "#ffd54f", _s2s),
-                ("🟢 System 3", "Combined\n(S1 OR S2, deduped)", "#66bb6a", _s3s),
+            _s4c_cust_col1, _s4c_cust_col2 = st.columns(2)
+            with _s4c_cust_col1:
+                _s4c_c_start = st.date_input(
+                    "From", key="_s4c_cust_start",
+                    value=_s4c_dt.date.fromisoformat(_s4c_min_dt),
+                )
+            with _s4c_cust_col2:
+                _s4c_c_end = st.date_input(
+                    "To", key="_s4c_cust_end",
+                    value=_s4c_dt.date.fromisoformat(_s4c_max_dt),
+                )
+            _s4c_filtered = [
+                r for r in _s4c_all
+                if _s4c_c_start.isoformat() <= (r.get("sim_date") or "") <= _s4c_c_end.isoformat()
             ]
 
-            # ── Description ──────────────────────────────────────────────────
-            st.markdown(
-                "Compares your three systems head-to-head using the same live Supabase dataset. "
-                "**System 3** takes any trade that would have been taken by System 1 **or** System 2 — "
-                "deduped so each trade is counted once."
-            )
-            st.caption(
-                "System 1 = P1🔴 Intraday TCS 70+  ·  P2🟠 Morning TCS 70+  ·  "
-                "P3🟡 Intraday TCS 60–69  ·  P4🟢 Morning TCS 60–69  (base: TCS ≥ 60)  |  "
-                "System 2 = Phase 3 grid search best combo (gap ≥ 2%)  |  "
-                "System 3 = Union of both"
-            )
-            st.markdown("---")
+        _s4c_r_col = {
+            "Tiered (P1-P4)":        "tiered_pnl_r",
+            "EOD (hold to close)":   "eod_pnl_r",
+            "Raw Sim (MFE ceiling)": "pnl_r_sim",
+        }[_s4c_lens]
 
-            # ── Metric cards ─────────────────────────────────────────────────
-            _ssd_cols = st.columns(3)
-            _ssd_metric_labels = ["Trades/wk", "Win Rate", "Avg R/trade", "Weekly R", "Total $", "Max DD"]
+        # ── System definitions ────────────────────────────────────────────────
+        def _s4c_sys1(r):
+            return (r.get("tcs") or 0) >= 60
 
-            # find best value per metric for gold badge
-            def _ssd_best_idx(vals, higher_is_better=True):
-                valid = [(i, v) for i, v in enumerate(vals) if v is not None]
-                if not valid:
-                    return -1
-                return max(valid, key=lambda x: x[1] if higher_is_better else -x[1])[0]
+        def _s4c_sys2(r):
+            return (r.get("tcs") or 0) >= 50 and abs(r.get("gap_pct") or 0) >= 2.0
 
-            _ssd_tpw_vals  = [s["tpw"]    if s else None for _, _, _, s in _ssd_systems]
-            _ssd_wr_vals   = [s["wr"]     if s else None for _, _, _, s in _ssd_systems]
-            _ssd_avgr_vals = [s["avg_r"]  if s else None for _, _, _, s in _ssd_systems]
-            _ssd_wkly_vals = [s["wkly_r"] if s else None for _, _, _, s in _ssd_systems]
-            _ssd_totd_vals = [s["total_r"] * 150 if s else None for _, _, _, s in _ssd_systems]
-            _ssd_maxdd_vals= [s["maxdd"]  if s else None for _, _, _, s in _ssd_systems]
+        _s4c_s1_rows = [r for r in _s4c_filtered if _s4c_sys1(r)]
+        _s4c_s2_rows = [r for r in _s4c_filtered if _s4c_sys2(r)]
+        _s4c_s3_seen: set = set()
+        _s4c_s3_rows: list = []
+        for _r in _s4c_filtered:
+            if _s4c_sys1(_r) or _s4c_sys2(_r):
+                _id = (_r.get("ticker"), _r.get("sim_date"), _r.get("predicted") or "")
+                if _id not in _s4c_s3_seen:
+                    _s4c_s3_seen.add(_id)
+                    _s4c_s3_rows.append(_r)
+        _s4c_s4_rows = list(_s4c_s2_rows)
 
-            _ssd_best_tpw  = _ssd_best_idx(_ssd_tpw_vals)
-            _ssd_best_wr   = _ssd_best_idx(_ssd_wr_vals)
-            _ssd_best_avgr = _ssd_best_idx(_ssd_avgr_vals)
-            _ssd_best_wkly = _ssd_best_idx(_ssd_wkly_vals)
-            _ssd_best_totd = _ssd_best_idx(_ssd_totd_vals)
-            _ssd_best_maxdd= _ssd_best_idx(_ssd_maxdd_vals, higher_is_better=False)
+        # ── Stats helper ──────────────────────────────────────────────────────
+        def _s4c_stats(rows, r_col):
+            if not rows:
+                return None
+            vals = []
+            for _sr in rows:
+                _v = _sr.get(r_col)
+                if _v is None:
+                    continue
+                try:
+                    vals.append(float(_v))
+                except Exception:
+                    continue
+            if not vals:
+                return None
+            n    = len(vals)
+            wins = [v for v in vals if v > 0]
+            avg  = sum(vals) / n
+            wr   = 100.0 * len(wins) / n
+            cum, peak, maxdd = 0.0, 0.0, 0.0
+            for v in vals:
+                cum += v
+                if cum > peak:
+                    peak = cum
+                dd = peak - cum
+                if dd > maxdd:
+                    maxdd = dd
+            date_set = set(_sr.get("sim_date") for _sr in rows if _sr.get("sim_date"))
+            tpd = n / max(len(date_set), 1)
+            return dict(n=n, wr=wr, avg_r=avg, maxdd=maxdd, tpd=tpd)
 
-            for _ssd_ci, (_ssd_title, _ssd_desc, _ssd_col, _ssd_s) in enumerate(_ssd_systems):
-                with _ssd_cols[_ssd_ci]:
-                    if not _ssd_s:
-                        st.markdown(
-                            f'<div style="background:#1e2a3a;border-radius:10px;padding:16px;'
-                            f'border:2px solid {_ssd_col};text-align:center;">'
-                            f'<div style="font-size:16px;font-weight:700;color:{_ssd_col};">{_ssd_title}</div>'
-                            f'<div style="font-size:11px;color:#90a4ae;margin-top:4px;">{_ssd_desc.replace(chr(10), "<br>")}</div>'
-                            f'<div style="font-size:12px;color:#546e7a;margin-top:10px;">No data</div>'
-                            f'</div>', unsafe_allow_html=True
-                        )
-                        continue
-
-                    _pf_str = "∞" if _ssd_math.isinf(_ssd_s["pf"]) else f"{_ssd_s['pf']:.1f}"
-
-                    def _badge(idx):
-                        return ' <span style="font-size:9px;background:#ffd54f;color:#000;border-radius:3px;padding:1px 4px;font-weight:700;">BEST</span>' if _ssd_ci == idx else ""
-
-                    _rows_html = "".join([
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Trades/wk</td>'
-                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_ssd_s["tpw"]:.1f}{_badge(_ssd_best_tpw)}</td></tr>',
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Win Rate</td>'
-                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_ssd_s["wr"]:.1f}%{_badge(_ssd_best_wr)}</td></tr>',
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Avg R/trade</td>'
-                        f'<td style="color:#{"66bb6a" if _ssd_s["avg_r"] > 0 else "ef5350"};font-weight:700;font-size:13px;">{_ssd_s["avg_r"]:+.3f}R{_badge(_ssd_best_avgr)}</td></tr>',
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Weekly R</td>'
-                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_ssd_s["wkly_r"]:+.1f}R/wk{_badge(_ssd_best_wkly)}</td></tr>',
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Total $</td>'
-                        f'<td style="color:#{"66bb6a" if _ssd_s["total_r"] > 0 else "ef5350"};font-weight:700;font-size:13px;">${_ssd_s["total_r"]*150:+,.0f}{_badge(_ssd_best_totd)}</td></tr>',
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Profit Factor</td>'
-                        f'<td style="color:#fff;font-weight:600;font-size:13px;">{_pf_str}</td></tr>',
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Max DD</td>'
-                        f'<td style="color:#{"ef5350"};font-size:13px;">{_ssd_s["maxdd"]:.1f}R  (${_ssd_s["maxdd"]*150:,.0f}){_badge(_ssd_best_maxdd)}</td></tr>',
-                        f'<tr><td style="color:#90a4ae;padding:3px 8px 3px 0;font-size:12px;">Sharpe</td>'
-                        f'<td style="color:#fff;font-size:13px;">{_ssd_s["shp"]:.2f}</td></tr>',
-                    ])
-
-                    st.markdown(
-                        f'<div style="background:#1a2535;border-radius:10px;padding:16px;'
-                        f'border:2px solid {_ssd_col};">'
-                        f'<div style="font-size:15px;font-weight:700;color:{_ssd_col};margin-bottom:2px;">{_ssd_title}</div>'
-                        f'<div style="font-size:11px;color:#90a4ae;margin-bottom:10px;">{_ssd_desc.replace(chr(10),"<br>")}</div>'
-                        f'<div style="font-size:11px;color:#78909c;margin-bottom:6px;">{_ssd_s["n"]} trades · {_ssd_s["n_weeks"]:.1f} wks of data</div>'
-                        f'<table style="width:100%;border-collapse:collapse;">{_rows_html}</table>'
-                        f'</div>', unsafe_allow_html=True
-                    )
-
-            # ── Equity curve comparison ───────────────────────────────────────
-            st.markdown("---")
-            st.markdown("##### Cumulative R — Equity Curve")
-
+        # ── Compound helper ────────────────────────────────────────────────────
+        def _s4c_compound(rows, r_col, start_eq=7000.0, base_1r=150.0, cap_x=20.0):
+            if not rows:
+                return {}
+            sorted_rows = sorted(rows, key=lambda r: r.get("sim_date") or "")
+            all_d = sorted(set(r.get("sim_date") for r in sorted_rows if r.get("sim_date")))
+            if not all_d:
+                return {}
             try:
-                import plotly.graph_objects as _ssd_go
+                start_dt = _s4c_dt.date.fromisoformat(all_d[0])
+            except Exception:
+                return {}
+            eq = start_eq
+            eq_by_date: dict = {all_d[0]: eq}
+            by_date: dict = {}
+            for r in sorted_rows:
+                _v = r.get(r_col)
+                if _v is None:
+                    continue
+                try:
+                    by_date.setdefault(r.get("sim_date", ""), []).append(float(_v))
+                except Exception:
+                    continue
+            for d in all_d:
+                cf = min(eq / start_eq, cap_x)
+                a1r = base_1r * cf
+                for rv in by_date.get(d, []):
+                    eq += rv * a1r
+                eq_by_date[d] = eq
+            cp: dict = {}
+            for yr in [1, 2, 3, 5]:
+                try:
+                    tgt = (start_dt + _s4c_dt.timedelta(days=yr * 365)).isoformat()
+                except Exception:
+                    continue
+                past = [d for d in all_d if d <= tgt]
+                if past:
+                    cp[f"Y{yr}"] = eq_by_date.get(past[-1], start_eq)
+            cp["Final"] = eq_by_date.get(all_d[-1], eq)
+            return dict(checkpoints=cp, eq_by_date=eq_by_date, all_dates=all_d)
 
-                _ssd_fig = _ssd_go.Figure()
+        # ── Build system definitions ──────────────────────────────────────────
+        _s4c_defs = [
+            ("System 1", "TCS ≥ 60 · Matches live bot",          "#ef5350", _s4c_s1_rows, _s4c_r_col),
+            ("System 2", "TCS ≥ 50 + gap ≥ 2% · Phase 3 best",  "#ffd54f", _s4c_s2_rows, _s4c_r_col),
+            ("System 3", "Union S1+S2 · Broadest coverage",       "#66bb6a", _s4c_s3_rows, _s4c_r_col),
+            ("System 4", "System 2 + EOD exits · Upside ceiling", "#64b5f6", _s4c_s4_rows, "eod_pnl_r"),
+        ]
+        _s4c_results = [
+            (_s4c_stats(rows, rc), _s4c_compound(rows, rc))
+            for _, _, _, rows, rc in _s4c_defs
+        ]
 
-                _ssd_curve_defs = [
-                    (_ssd_s1, _ssd_s1, "#ef5350", "System 1 (P1–P4)"),
-                    (_ssd_s2, _ssd_s2, "#ffd54f", "System 2 (Phase 3 Best)"),
-                    (_ssd_s3, _ssd_s3, "#66bb6a", "System 3 (Combined)"),
-                ]
+        # ── Dollar formatter ──────────────────────────────────────────────────
+        def _s4c_fd(v):
+            if v is None:
+                return "—"
+            if v >= 1_000_000:
+                return f"${v / 1_000_000:.2f}M"
+            if v >= 1_000:
+                return f"${v / 1_000:.0f}k"
+            return f"${v:.0f}"
 
-                for _ssd_rows, _, _ssd_lc, _ssd_ln in _ssd_curve_defs:
-                    if not _ssd_rows:
-                        continue
-                    _ssd_cum = list(_ssd_np.cumsum([r["tiered_pnl_r"] for r in _ssd_rows]))
-                    _ssd_xs  = list(range(len(_ssd_cum)))
-                    _ssd_fig.add_trace(_ssd_go.Scatter(
-                        x=_ssd_xs, y=_ssd_cum,
-                        mode="lines", name=_ssd_ln,
-                        line=dict(color=_ssd_lc, width=2),
-                    ))
-
-                _ssd_fig.update_layout(
-                    height=280,
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(26,37,53,0.6)",
-                    font=dict(color="#cfd8dc", size=11),
-                    margin=dict(l=40, r=20, t=20, b=40),
-                    xaxis=dict(showgrid=False, title="Trade #"),
-                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title="Cumulative R"),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                    hovermode="x unified",
-                )
-                _ssd_fig.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
-                st.plotly_chart(_ssd_fig, use_container_width=True, config={"displayModeBar": False})
-
-            except Exception as _ssd_plot_err:
-                st.caption(f"Chart unavailable: {_ssd_plot_err}")
-
-            # ── Winner summary ────────────────────────────────────────────────
-            st.markdown("---")
-            st.markdown("##### Bottom Line")
-
-            _ssd_winner_lines = []
-            if _s1s and _s2s and _s3s:
-                # Best avg R
-                _best_avg = max([("System 1", _s1s["avg_r"]), ("System 2", _s2s["avg_r"]), ("System 3", _s3s["avg_r"])], key=lambda x: x[1])
-                # Best weekly R
-                _best_wkly = max([("System 1", _s1s["wkly_r"]), ("System 2", _s2s["wkly_r"]), ("System 3", _s3s["wkly_r"])], key=lambda x: x[1])
-                # Safest
-                _safest = min([("System 1", _s1s["maxdd"]), ("System 2", _s2s["maxdd"]), ("System 3", _s3s["maxdd"])], key=lambda x: x[1])
-
+        # ── 4 Cards ───────────────────────────────────────────────────────────
+        _s4c_card_cols = st.columns(4)
+        for _s4c_ci, ((_s4c_tit, _s4c_sub, _s4c_clr, _s4c_rows, _s4c_rc), (_s4c_st, _s4c_cp)) \
+                in enumerate(zip(_s4c_defs, _s4c_results)):
+            with _s4c_card_cols[_s4c_ci]:
+                _cp_d      = _s4c_cp.get("checkpoints", {}) if _s4c_cp else {}
+                _eod_lock  = " (EOD locked)" if _s4c_rc == "eod_pnl_r" and _s4c_r_col != "eod_pnl_r" else ""
+                _tpd_txt   = f"{_s4c_st['tpd']:.1f}/day" if _s4c_st else "—"
+                _wr_txt    = f"{_s4c_st['wr']:.0f}%"     if _s4c_st else "—"
+                _avgr_txt  = f"{_s4c_st['avg_r']:.2f}R"  if _s4c_st else "—"
+                _n_txt     = f"{_s4c_st['n']:,} trades"  if _s4c_st else ""
+                _y1_txt    = _s4c_fd(_cp_d.get("Y1"))
+                _y3_txt    = _s4c_fd(_cp_d.get("Y3"))
+                _y5_txt    = _s4c_fd(_cp_d.get("Y5"))
                 st.markdown(
-                    f"- **Highest quality per trade:** {_best_avg[0]} at **{_best_avg[1]:+.3f}R avg**\n"
-                    f"- **Most weekly income:** {_best_wkly[0]} at **{_best_wkly[1]:+.1f}R/wk**\n"
-                    f"- **Safest (lowest drawdown):** {_safest[0]} at **{_safest[1]:.1f}R max DD** (${_safest[1]*150:,.0f})"
+                    "<div style='background:rgba(255,255,255,0.05);"
+                    f"border:1px solid {_s4c_clr}33;"
+                    f"border-top:3px solid {_s4c_clr};"
+                    "border-radius:8px;padding:14px 12px;text-align:center;'>"
+                    f"<div style='font-size:14px;font-weight:700;color:{_s4c_clr};'>{_s4c_tit}</div>"
+                    f"<div style='font-size:11px;color:#90a4ae;margin-bottom:8px;'>{_s4c_sub}</div>"
+                    "<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    "<span style='font-size:11px;color:#78909c;'>Trades/day</span>"
+                    f"<span style='font-size:12px;color:#cfd8dc;'>{_tpd_txt}</span></div>"
+                    "<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    "<span style='font-size:11px;color:#78909c;'>Win rate</span>"
+                    f"<span style='font-size:12px;color:#cfd8dc;'>{_wr_txt}</span></div>"
+                    "<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    f"<span style='font-size:11px;color:#78909c;'>Avg R{_eod_lock}</span>"
+                    f"<span style='font-size:12px;font-weight:600;color:{_s4c_clr};'>{_avgr_txt}</span></div>"
+                    "<hr style='border-color:rgba(255,255,255,0.08);margin:6px 0;'/>"
+                    "<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    "<span style='font-size:11px;color:#78909c;'>Y1</span>"
+                    f"<span style='font-size:12px;font-weight:600;color:{_s4c_clr};'>{_y1_txt}</span></div>"
+                    "<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    "<span style='font-size:11px;color:#78909c;'>Y3</span>"
+                    f"<span style='font-size:12px;font-weight:600;color:{_s4c_clr};'>{_y3_txt}</span></div>"
+                    "<div style='display:flex;justify-content:space-between;margin-bottom:4px;'>"
+                    "<span style='font-size:11px;color:#78909c;'>Y5</span>"
+                    f"<span style='font-size:12px;font-weight:600;color:{_s4c_clr};'>{_y5_txt}</span></div>"
+                    f"<div style='font-size:10px;color:#546e7a;margin-top:6px;'>{_n_txt}</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
                 )
-                # Explicit recommendation
-                _rec_system = _best_avg[0] if _best_avg[1] >= 0.5 else _best_wkly[0]
-                st.info(
-                    f"**Recommendation:** If you care most about R per trade quality → go with **{_best_avg[0]}**. "
-                    f"If you want the most weekly dollars → **{_best_wkly[0]}**. "
-                    f"System 3 (Combined) gives you the broadest coverage — "
-                    f"every trade from either system with no duplicates."
-                )
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+        # ── Equity curve chart ────────────────────────────────────────────────
+        try:
+            import plotly.graph_objects as _s4c_go
+            _s4c_fig = _s4c_go.Figure()
+            for (_s4c_tit, _, _s4c_clr, _, _), (_, _s4c_cp) in zip(_s4c_defs, _s4c_results):
+                if not _s4c_cp or not _s4c_cp.get("all_dates"):
+                    continue
+                _s4c_fig.add_trace(_s4c_go.Scatter(
+                    x=_s4c_cp["all_dates"],
+                    y=[_s4c_cp["eq_by_date"].get(d) for d in _s4c_cp["all_dates"]],
+                    mode="lines",
+                    name=_s4c_tit,
+                    line=dict(color=_s4c_clr, width=2),
+                    hovertemplate=f"%{{x}}<br>{_s4c_tit}: $%{{y:,.0f}}<extra></extra>",
+                ))
+            _s4c_fig.update_layout(
+                title=dict(
+                    text="Compounded Equity — $7k start · $150 1R · 20× cap",
+                    font=dict(size=13, color="#90a4ae"),
+                ),
+                height=320,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(26,37,53,0.6)",
+                font=dict(color="#cfd8dc", size=11),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
+                margin=dict(l=60, r=20, t=40, b=40),
+                xaxis=dict(gridcolor="rgba(255,255,255,0.06)"),
+                yaxis=dict(
+                    gridcolor="rgba(255,255,255,0.06)",
+                    tickformat="$,.0f",
+                    hoverformat="$,.0f",
+                ),
+            )
+            st.plotly_chart(_s4c_fig, use_container_width=True)
+        except Exception as _s4c_ce:
+            st.warning(f"Chart error: {_s4c_ce}")
+
+        # ── Summary table ─────────────────────────────────────────────────────
+        _s4c_tbl: list = []
+        for (_s4c_tit, _, _, _, _s4c_rc), (_s4c_st, _s4c_cp) in zip(_s4c_defs, _s4c_results):
+            if not _s4c_st:
+                continue
+            _cp_d     = _s4c_cp.get("checkpoints", {}) if _s4c_cp else {}
+            _lens_lbl = "EOD" if _s4c_rc == "eod_pnl_r" else _s4c_lens.split(" ")[0]
+            _s4c_tbl.append({
+                "System":     _s4c_tit,
+                "Lens":       _lens_lbl,
+                "Trades/Day": f"{_s4c_st['tpd']:.1f}",
+                "Win %":      f"{_s4c_st['wr']:.0f}%",
+                "Avg R":      f"{_s4c_st['avg_r']:.2f}R",
+                "Max DD":     f"{_s4c_st['maxdd']:.1f}R",
+                "Y1":         _s4c_fd(_cp_d.get("Y1")),
+                "Y3":         _s4c_fd(_cp_d.get("Y3")),
+                "Y5":         _s4c_fd(_cp_d.get("Y5")),
+            })
+        if _s4c_tbl:
+            st.dataframe(
+                _s4c_pd.DataFrame(_s4c_tbl).set_index("System"),
+                use_container_width=True,
+            )
+
+        st.caption(
+            "**Tiered** uses calibrated P1–P4 targets (~0.6R avg, most conservative). "
+            "**EOD** holds every trade until market close (~1.8R avg, higher variance). "
+            "**Raw Sim** is the max favorable excursion — theoretical ceiling, never fully capturable. "
+            "**System 4** is always EOD regardless of lens toggle (EOD is its defining characteristic). "
+            "Equity curves: $7k start · $150 initial 1R · 20× cap ($3k max 1R at $140k equity)."
+        )
 
     # ── Exhaustive Grid Search — Phase 3 ─────────────────────────────────────
     with st.expander("🧬 Exhaustive Grid Search — Phase 3 (All IB Structure Combos + 9 New Dimensions)", expanded=False):
