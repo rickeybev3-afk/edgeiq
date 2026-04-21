@@ -525,6 +525,48 @@ def test_neutral_extreme_close_pct_boundary(real_backend, close_pct, expected_la
     )
 
 
+# ── B6. Double Distribution: min_bin_sep = 15 (bin-count gate) ───────────────
+
+def _dd_vap_with_bin_sep(bin_sep, pk1=20):
+    """Two strong HVN peaks whose indices are exactly *bin_sep* apart.
+
+    Each peak is a 5-bin-wide spike (vap[pk-2:pk+3] = 1_000) so that the
+    5-point moving-average smoothing creates a strict local maximum exactly
+    at *pk*.  The valley between the two spikes is zero → clear LVN.
+
+    With linspace(100, 110, 100) the bin spacing is ≈ 0.101, so even
+    14 bins apart gives a price gap ≈ 1.41 >> $0.15 — the only check that
+    can flip the result is the bin-count gate (pk2 - pk1 < 15).
+    """
+    n = 100
+    bin_centers = np.linspace(100.0, 110.0, n)
+    vap = np.zeros(n, dtype=float)
+    pk2 = pk1 + bin_sep
+    vap[max(0, pk1 - 2): pk1 + 3] = 1_000.0
+    vap[max(0, pk2 - 2): pk2 + 3] = 1_000.0
+    return bin_centers, vap
+
+
+def test_dd_min_bin_sep_exactly_15_is_valid(real_backend):
+    """Peaks exactly 15 bins apart satisfy pk2 - pk1 >= 15 → DD found."""
+    bin_centers, vap = _dd_vap_with_bin_sep(15)
+    result = real_backend._detect_double_distribution(bin_centers, vap)
+    assert result is not None, (
+        "Peaks exactly 15 bins apart should pass the min_bin_sep=15 gate, "
+        "but _detect_double_distribution returned None."
+    )
+
+
+def test_dd_min_bin_sep_14_is_rejected(real_backend):
+    """Peaks only 14 bins apart fail the pk2 - pk1 < 15 gate → no DD."""
+    bin_centers, vap = _dd_vap_with_bin_sep(14)
+    result = real_backend._detect_double_distribution(bin_centers, vap)
+    assert result is None, (
+        "Peaks only 14 bins apart should be rejected by the min_bin_sep=15 "
+        f"gate, but DD was found: {result!r}"
+    )
+
+
 # ── B5. Trend Day: dist_from_ib > 2.0 × ATR ─────────────────────────────────
 
 def _one_side_up_uniform(bar_high, bar_low, n=78):
