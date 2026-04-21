@@ -290,6 +290,334 @@ function formatUtc(iso: string): string {
   }
 }
 
+interface PdtDayEntry {
+  date: string;
+  count: number;
+  avg_tcs: number | null;
+  tickers: string[];
+  estimated_r: number | null;
+  r_rows: number;
+}
+
+interface PdtSummary {
+  total_deferred: number;
+  avg_tcs: number | null;
+  total_estimated_r: number | null;
+  r_rows: number;
+  elite_slots_used: number;
+}
+
+interface PdtGatedData {
+  available: boolean;
+  loading: boolean;
+  per_day: PdtDayEntry[];
+  summary: PdtSummary;
+  error: string | null;
+}
+
+function PdtGatedPanel() {
+  const [data, setData] = useState<PdtGatedData>({
+    available: false,
+    loading: true,
+    per_day: [],
+    summary: { total_deferred: 0, avg_tcs: null, total_estimated_r: null, r_rows: 0, elite_slots_used: 0 },
+    error: null,
+  });
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/pdt-gated-trades");
+        const json = await res.json();
+        if (!cancelled) {
+          setData({
+            available: json.available ?? false,
+            loading: false,
+            per_day: json.per_day ?? [],
+            summary: json.summary ?? { total_deferred: 0, avg_tcs: null, total_estimated_r: null, r_rows: 0, elite_slots_used: 0 },
+            error: json.error ?? null,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setData((prev) => ({ ...prev, loading: false, error: "Could not load PDT gate data." }));
+        }
+      }
+    };
+    load();
+    const interval = setInterval(load, 5 * 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const s = data.summary;
+  const hasData = data.available && s.total_deferred > 0;
+
+  return (
+    <div
+      style={{
+        background: "#1e2435",
+        border: "1px solid #2d3748",
+        borderRadius: "10px",
+        padding: "20px 24px",
+        maxWidth: "640px",
+        width: "100%",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+        <h2
+          style={{
+            fontSize: "13px",
+            fontWeight: 700,
+            color: "#94a3b8",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            margin: 0,
+          }}
+        >
+          PDT Quality Gate — Deferred Setups
+        </h2>
+        {hasData && data.per_day.length > 0 && (
+          <button
+            onClick={() => setExpanded((o) => !o)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#64748b",
+              fontSize: "11px",
+              padding: "2px 6px",
+              borderRadius: "4px",
+              lineHeight: 1,
+            }}
+            title={expanded ? "Hide daily breakdown" : "Show daily breakdown"}
+          >
+            {expanded ? "▲ Hide" : "▼ Details"}
+          </button>
+        )}
+      </div>
+      <p
+        style={{
+          fontSize: "12px",
+          color: "#64748b",
+          marginTop: "4px",
+          marginBottom: "16px",
+          lineHeight: "1.5",
+        }}
+      >
+        TCS&lt;70 setups deferred while account is sub-$25k (last 90 days). PDT slots reserved for elite tier only.
+      </p>
+
+      {data.loading && (
+        <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>Loading…</p>
+      )}
+      {!data.loading && data.error && !hasData && (
+        <p style={{ fontSize: "13px", color: "#f87171", margin: 0 }}>⚠ {data.error}</p>
+      )}
+      {!data.loading && !data.error && !hasData && (
+        <div
+          style={{
+            padding: "16px",
+            background: "rgba(74,222,128,0.06)",
+            border: "1px solid #14532d",
+            borderRadius: "8px",
+            fontSize: "13px",
+            color: "#86efac",
+          }}
+        >
+          No PDT-gated setups in the last 90 days — all qualifying signals were taken.
+        </div>
+      )}
+
+      {hasData && (
+        <>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+              gap: "10px",
+              marginBottom: expanded ? "16px" : 0,
+            }}
+          >
+            <div
+              style={{
+                background: "rgba(251,146,60,0.08)",
+                border: "1px solid rgba(251,146,60,0.25)",
+                borderRadius: "8px",
+                padding: "10px 14px",
+              }}
+            >
+              <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Deferred
+              </div>
+              <div style={{ fontSize: "22px", fontWeight: 700, color: "#fb923c", fontFamily: "monospace" }}>
+                {s.total_deferred}
+              </div>
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>setups</div>
+            </div>
+
+            <div
+              style={{
+                background: "rgba(148,163,184,0.06)",
+                border: "1px solid #2d3748",
+                borderRadius: "8px",
+                padding: "10px 14px",
+              }}
+            >
+              <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Avg TCS
+              </div>
+              <div style={{ fontSize: "22px", fontWeight: 700, color: "#cbd5e1", fontFamily: "monospace" }}>
+                {s.avg_tcs != null ? s.avg_tcs.toFixed(1) : "—"}
+              </div>
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>of deferred</div>
+            </div>
+
+            <div
+              style={{
+                background: s.total_estimated_r != null && s.total_estimated_r > 0
+                  ? "rgba(74,222,128,0.06)"
+                  : s.total_estimated_r != null && s.total_estimated_r < 0
+                    ? "rgba(239,68,68,0.06)"
+                    : "rgba(148,163,184,0.06)",
+                border: "1px solid #2d3748",
+                borderRadius: "8px",
+                padding: "10px 14px",
+              }}
+            >
+              <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Est. Missed R
+              </div>
+              <div
+                style={{
+                  fontSize: "22px",
+                  fontWeight: 700,
+                  fontFamily: "monospace",
+                  color: s.total_estimated_r == null
+                    ? "#64748b"
+                    : s.total_estimated_r >= 0
+                      ? "#4ade80"
+                      : "#f87171",
+                }}
+              >
+                {s.total_estimated_r != null
+                  ? `${s.total_estimated_r >= 0 ? "+" : ""}${s.total_estimated_r.toFixed(2)}R`
+                  : "—"}
+              </div>
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                {s.r_rows > 0 ? `${s.r_rows} of ${s.total_deferred} settled` : "no settled data"}
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: "rgba(99,102,241,0.08)",
+                border: "1px solid rgba(99,102,241,0.25)",
+                borderRadius: "8px",
+                padding: "10px 14px",
+              }}
+            >
+              <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Elite Slots Used
+              </div>
+              <div style={{ fontSize: "22px", fontWeight: 700, color: "#818cf8", fontFamily: "monospace" }}>
+                {s.elite_slots_used}
+              </div>
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>TCS≥70 trades taken</div>
+            </div>
+          </div>
+
+          {expanded && data.per_day.length > 0 && (
+            <div
+              style={{
+                background: "#131720",
+                border: "1px solid #2d3748",
+                borderRadius: "8px",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "auto 1fr auto auto auto",
+                  gap: "0",
+                  fontSize: "11px",
+                  color: "#475569",
+                  fontWeight: 600,
+                  padding: "6px 14px",
+                  borderBottom: "1px solid #2d3748",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                <span>Date</span>
+                <span style={{ paddingLeft: "12px" }}>Tickers</span>
+                <span style={{ textAlign: "right", paddingLeft: "12px" }}>Count</span>
+                <span style={{ textAlign: "right", paddingLeft: "12px" }}>Avg TCS</span>
+                <span style={{ textAlign: "right", paddingLeft: "12px" }}>Est. R</span>
+              </div>
+              {data.per_day.map((day) => (
+                <div
+                  key={day.date}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "auto 1fr auto auto auto",
+                    gap: "0",
+                    fontSize: "12px",
+                    padding: "7px 14px",
+                    borderBottom: "1px solid #1e2435",
+                    alignItems: "center",
+                  }}
+                >
+                  <span style={{ color: "#64748b", fontFamily: "monospace", whiteSpace: "nowrap" }}>{day.date}</span>
+                  <span
+                    style={{
+                      color: "#94a3b8",
+                      fontSize: "11px",
+                      paddingLeft: "12px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={day.tickers.join(", ")}
+                  >
+                    {day.tickers.join(", ") || "—"}
+                  </span>
+                  <span style={{ color: "#fb923c", fontWeight: 600, textAlign: "right", paddingLeft: "12px" }}>{day.count}</span>
+                  <span style={{ color: "#cbd5e1", textAlign: "right", paddingLeft: "12px" }}>
+                    {day.avg_tcs != null ? day.avg_tcs.toFixed(1) : "—"}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "monospace",
+                      fontWeight: 600,
+                      textAlign: "right",
+                      paddingLeft: "12px",
+                      color: day.estimated_r == null
+                        ? "#475569"
+                        : day.estimated_r >= 0
+                          ? "#4ade80"
+                          : "#f87171",
+                    }}
+                  >
+                    {day.estimated_r != null
+                      ? `${day.estimated_r >= 0 ? "+" : ""}${day.estimated_r.toFixed(2)}R`
+                      : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function DbEventsPanel() {
   const [events, setEvents] = useState<DbEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1644,6 +1972,8 @@ function Home({ health }: { health: HealthState }) {
         <GridSearchPanel />
 
         <ConfigPanel />
+
+        <PdtGatedPanel />
 
         <DbEventsPanel />
       </div>

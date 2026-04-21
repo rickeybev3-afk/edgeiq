@@ -684,6 +684,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/grid-search-alert-config":
             self._grid_search_alert_config_get()
             return
+        if path == "/api/pdt-gated-trades":
+            self._pdt_gated_trades()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -2747,6 +2750,183 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 })
 
         body = json.dumps({"screeners": results}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _pdt_gated_trades(self):
+        """Return PDT quality-gate deferred trades from paper_trades (skip_reason='pdt_quality_gate').
+
+        Fetches rows from the last 90 days and returns:
+          - per_day: list of {date, count, avg_tcs, tickers, estimated_r, r_rows}
+          - summary: {total_deferred, avg_tcs, total_estimated_r, r_rows, elite_slots_used}
+          - elite_slots_used: count of settled trades in the same window with tcs>=70 and no pdt skip
+
+        Response shape:
+          {
+            "available": bool,
+            "per_day": [{date, count, avg_tcs, tickers, estimated_r, r_rows}, ...],
+            "summary": {total_deferred, avg_tcs, total_estimated_r, r_rows, elite_slots_used},
+            "error": null|str
+          }
+        """
+        import re as _re
+        import urllib.request as _ur
+        import urllib.error as _ue
+        import urllib.parse as _up
+        import datetime as _dt
+
+        _raw_url = os.environ.get("SUPABASE_URL", "").strip()
+        _m = _re.search(r"supabase\.com/dashboard/project/([a-z0-9]+)", _raw_url)
+        supabase_url = f"https://{_m.group(1)}.supabase.co" if _m else _raw_url
+        supabase_key = (
+            os.environ.get("SUPABASE_KEY") or
+            os.environ.get("SUPABASE_ANON_KEY") or
+            os.environ.get("VITE_SUPABASE_ANON_KEY") or
+            ""
+        ).strip()
+
+        if not supabase_url or not supabase_key:
+            body = json.dumps({
+                "available": False,
+                "per_day": [],
+                "summary": {"total_deferred": 0, "avg_tcs": None, "total_estimated_r": None, "r_rows": 0, "elite_slots_used": 0},
+                "error": "Supabase not configured",
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        cutoff = (_dt.datetime.utcnow() - _dt.timedelta(days=90)).strftime("%Y-%m-%d")
+
+        def _fetch_json(url: str, headers: dict) -> list:
+            all_rows = []
+            page_size = 1000
+            offset = 0
+            while True:
+                paged_url = url + f"&limit={page_size}&offset={offset}"
+                req = _ur.Request(paged_url, headers=headers)
+                with _ur.urlopen(req, timeout=15) as resp:
+                    chunk = json.loads(resp.read())
+                if not chunk:
+                    break
+                all_rows.extend(chunk)
+                if len(chunk) < page_size:
+                    break
+                offset += page_size
+            return all_rows
+
+        _headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Accept": "application/json",
+        }
+
+        try:
+            gated_qs = (
+                "skip_reason=eq.pdt_quality_gate"
+                f"&trade_date=gte.{cutoff}"
+                "&select=trade_date,tcs,tiered_pnl_r,ticker"
+                "&order=trade_date.desc"
+            )
+            gated_rows = _fetch_json(f"{supabase_url}/rest/v1/paper_trades?{gated_qs}", _headers)
+        except Exception as exc:
+            body = json.dumps({
+                "available": False,
+                "per_day": [],
+                "summary": {"total_deferred": 0, "avg_tcs": None, "total_estimated_r": None, "r_rows": 0, "elite_slots_used": 0},
+                "error": f"Failed to fetch gated trades: {exc}",
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        try:
+            elite_qs = (
+                "skip_reason=is.null"
+                f"&trade_date=gte.{cutoff}"
+                "&tcs=gte.70"
+                "&select=id"
+            )
+            req_elite = _ur.Request(
+                f"{supabase_url}/rest/v1/paper_trades?{elite_qs}",
+                headers={**_headers, "Prefer": "count=exact", "Range": "0-0"},
+            )
+            elite_slots_used = 0
+            try:
+                with _ur.urlopen(req_elite, timeout=10) as resp:
+                    cr = resp.getheader("Content-Range", "")
+                    if "/" in cr:
+                        total_str = cr.split("/", 1)[1]
+                        elite_slots_used = int(total_str) if total_str.isdigit() else 0
+            except _ue.HTTPError as he:
+                cr = he.headers.get("Content-Range", "")
+                if "/" in cr:
+                    total_str = cr.split("/", 1)[1]
+                    elite_slots_used = int(total_str) if total_str.isdigit() else 0
+        except Exception:
+            elite_slots_used = 0
+
+        from collections import defaultdict as _dd
+        per_day_map = _dd(lambda: {"count": 0, "tcs_sum": 0.0, "tcs_count": 0, "r_sum": 0.0, "r_rows": 0, "tickers": []})
+        for row in gated_rows:
+            d = str(row.get("trade_date", ""))
+            if not d:
+                continue
+            bucket = per_day_map[d]
+            bucket["count"] += 1
+            tcs_val = row.get("tcs")
+            if tcs_val is not None:
+                bucket["tcs_sum"] += float(tcs_val)
+                bucket["tcs_count"] += 1
+            r_val = row.get("tiered_pnl_r")
+            if r_val is not None:
+                bucket["r_sum"] += float(r_val)
+                bucket["r_rows"] += 1
+            ticker = row.get("ticker", "")
+            if ticker and ticker not in bucket["tickers"]:
+                bucket["tickers"].append(ticker)
+
+        per_day = []
+        for d in sorted(per_day_map.keys(), reverse=True):
+            b = per_day_map[d]
+            per_day.append({
+                "date": d,
+                "count": b["count"],
+                "avg_tcs": round(b["tcs_sum"] / b["tcs_count"], 1) if b["tcs_count"] else None,
+                "tickers": sorted(b["tickers"]),
+                "estimated_r": round(b["r_sum"], 2) if b["r_rows"] else None,
+                "r_rows": b["r_rows"],
+            })
+
+        total_deferred = len(gated_rows)
+        all_tcs = [float(r["tcs"]) for r in gated_rows if r.get("tcs") is not None]
+        all_r = [float(r["tiered_pnl_r"]) for r in gated_rows if r.get("tiered_pnl_r") is not None]
+        summary = {
+            "total_deferred": total_deferred,
+            "avg_tcs": round(sum(all_tcs) / len(all_tcs), 1) if all_tcs else None,
+            "total_estimated_r": round(sum(all_r), 2) if all_r else None,
+            "r_rows": len(all_r),
+            "elite_slots_used": elite_slots_used,
+        }
+
+        body = json.dumps({
+            "available": True,
+            "per_day": per_day,
+            "summary": summary,
+            "error": None,
+        }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
