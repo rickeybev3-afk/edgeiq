@@ -3805,7 +3805,11 @@ export default function Settings() {
                   ? `⚠ Could not load run list: ${archiveRuns.error}`
                   : archiveRuns.total === 0
                     ? "No archive runs stored yet."
-                    : `Stored runs: ${archiveRuns.total} of ${archiveKeep.runs} limit${archiveRuns.total > archiveKeep.runs ? ` — ${archiveRuns.total - archiveKeep.runs} would be pruned` : ""}`}
+                    : (() => {
+                        const totalBytes = archiveRuns.runs.reduce((sum, r) => sum + r.size_bytes, 0);
+                        const pruneNote = archiveRuns.total > archiveKeep.runs ? ` — ${archiveRuns.total - archiveKeep.runs} would be pruned` : "";
+                        return `${archiveRuns.total} of ${archiveKeep.runs} runs · ${formatBytes(totalBytes)} total${pruneNote}`;
+                      })()}
             </p>
             {!archiveRuns.loading && !archiveRuns.error && archiveRuns.runs.length > 0 && (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
