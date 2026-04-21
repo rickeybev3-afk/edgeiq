@@ -22609,6 +22609,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
     _wkr_cache_key = "_wkr_cache"
     _WKR_SENTINEL  = -9999.0
+
+    # Pre-populate $/R from saved user preferences on the first render of this session.
+    # Use the already-loaded _cached_prefs to avoid an extra network round-trip.
+    if "_wkr_dollar_per_r" not in st.session_state and _AUTH_USER_ID:
+        _wkr_init_prefs = st.session_state.get("_cached_prefs") or load_user_prefs(_AUTH_USER_ID)
+        _wkr_init_r = 150.0
+        try:
+            _wkr_init_r = float(_wkr_init_prefs.get("dollar_per_r", 150.0))
+            if not (1.0 <= _wkr_init_r <= 100000.0):
+                _wkr_init_r = 150.0
+        except (TypeError, ValueError):
+            pass
+        st.session_state["_wkr_dollar_per_r"] = _wkr_init_r
+        st.session_state["_wkr_dollar_per_r_last_saved"] = _wkr_init_r
+
     _wkr_ctrl1, _wkr_ctrl2, _wkr_ctrl3, _wkr_ctrl4 = st.columns([2, 1, 2, 2])
     with _wkr_ctrl1:
         _wkr_days = st.number_input(
@@ -22624,6 +22639,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
             key="_wkr_dollar_per_r",
             help="Dollar value of 1R — used to convert R-multiples to dollar amounts throughout this journal.",
         )
+
+    # Persist $/R to user preferences whenever the trader changes it.
+    # Merge into _cached_prefs so subsequent preference saves don't clobber this value.
+    if _AUTH_USER_ID and st.session_state.get("_wkr_dollar_per_r_last_saved") != st.session_state["_wkr_dollar_per_r"]:
+        _wkr_save_prefs = {**st.session_state.get("_cached_prefs", {}), "dollar_per_r": st.session_state["_wkr_dollar_per_r"]}
+        save_user_prefs(_AUTH_USER_ID, _wkr_save_prefs)
+        st.session_state["_cached_prefs"] = _wkr_save_prefs
+        st.session_state["_wkr_dollar_per_r_last_saved"] = st.session_state["_wkr_dollar_per_r"]
+
     with _wkr_ctrl3:
         _wkr_lens = st.radio(
             "Exit lens",
