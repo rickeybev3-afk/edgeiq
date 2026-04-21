@@ -12632,6 +12632,75 @@ def get_intraday_closed_paper_trades(user_id: str = "") -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+def get_mgmt_mode_ab_stats(user_id: str = "") -> dict:
+    """Return A/B performance stats split by mgmt_mode ('fixed' vs 'adaptive').
+
+    For each arm returns:
+        n        — trade count (rows with a valid tiered_pnl_r)
+        wins     — count of tiered_pnl_r > 0
+        wr_pct   — win rate as a percentage (0-100), or None if n == 0
+        avg_r    — mean tiered_pnl_r, or None if n == 0
+
+    The 'delta' key is populated only when both arms have >= 10 trades and
+    contains the difference (adaptive minus fixed) for wr_pct and avg_r.
+
+    Rows without mgmt_mode (NULL / empty) are ignored — they pre-date the
+    adaptive feature and should not pollute either arm.
+    """
+    empty = {"fixed": {}, "adaptive": {}, "delta": None}
+    if not supabase:
+        return empty
+    try:
+        q = (
+            supabase.table("paper_trades")
+            .select("mgmt_mode,tiered_pnl_r")
+            .eq("user_id", user_id)
+            .not_.is_("mgmt_mode", "null")
+            .not_.is_("tiered_pnl_r", "null")
+            .execute()
+        )
+        rows = q.data or []
+
+        SENTINEL = -9999
+
+        def _arm_stats(arm_rows):
+            vals = [
+                float(r["tiered_pnl_r"])
+                for r in arm_rows
+                if r.get("tiered_pnl_r") is not None
+                and float(r["tiered_pnl_r"]) != SENTINEL
+            ]
+            n = len(vals)
+            if n == 0:
+                return {"n": 0, "wins": 0, "wr_pct": None, "avg_r": None}
+            wins = sum(1 for v in vals if v > 0)
+            return {
+                "n":      n,
+                "wins":   wins,
+                "wr_pct": round(wins / n * 100, 1),
+                "avg_r":  round(sum(vals) / n, 3),
+            }
+
+        fixed_rows    = [r for r in rows if str(r.get("mgmt_mode", "")).lower() == "fixed"]
+        adaptive_rows = [r for r in rows if str(r.get("mgmt_mode", "")).lower() == "adaptive"]
+
+        fixed_stats    = _arm_stats(fixed_rows)
+        adaptive_stats = _arm_stats(adaptive_rows)
+
+        MIN_TRADES = 10
+        delta = None
+        if fixed_stats["n"] >= MIN_TRADES and adaptive_stats["n"] >= MIN_TRADES:
+            delta = {
+                "wr_pct": round(adaptive_stats["wr_pct"] - fixed_stats["wr_pct"], 1),
+                "avg_r":  round(adaptive_stats["avg_r"]  - fixed_stats["avg_r"],  3),
+            }
+
+        return {"fixed": fixed_stats, "adaptive": adaptive_stats, "delta": delta}
+    except Exception as e:
+        print(f"get_mgmt_mode_ab_stats error: {e}")
+        return empty
+
+
 def count_paper_tiered_pending(user_id: str = "") -> int:
     """Return the count of paper_trades rows that qualify for tiered P&L backfill.
 
