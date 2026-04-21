@@ -13,7 +13,7 @@ import unittest
 from io import StringIO
 from unittest.mock import patch
 
-from log_utils import _parse_int_env, validate_env_config, _INT_ENV_REGISTRY
+from log_utils import _parse_int_env, validate_env_config, get_config_issues, _INT_ENV_REGISTRY
 
 
 class TestParseIntEnv(unittest.TestCase):
@@ -171,6 +171,63 @@ class TestValidateEnvConfig(unittest.TestCase):
                     validate_env_config(strict=True)
                 output = mock_err.getvalue()
                 self.assertIn("TCS_BASE_SCORE", output)
+
+
+class TestGetConfigIssues(unittest.TestCase):
+    """get_config_issues() must reflect the result of the last validate_env_config() call."""
+
+    def _run_with_env(self, env_overrides: dict):
+        clean_env = {k: v for k, v in os.environ.items() if k not in _INT_ENV_REGISTRY}
+        clean_env.update(env_overrides)
+        with patch.dict(os.environ, clean_env, clear=True):
+            with patch("sys.stderr", new_callable=StringIO):
+                validate_env_config()
+            return get_config_issues()
+
+    def test_clean_env_returns_empty_list(self):
+        issues = self._run_with_env({})
+        self.assertEqual(issues, [])
+
+    def test_bad_var_appears_in_issues(self):
+        issues = self._run_with_env({"TCS_HISTORY_MAX_BYTES": "notanumber"})
+        names = [i["name"] for i in issues]
+        self.assertIn("TCS_HISTORY_MAX_BYTES", names)
+
+    def test_issue_dict_has_required_keys(self):
+        issues = self._run_with_env({"TCS_HISTORY_BACKUP_COUNT": "bad"})
+        self.assertEqual(len(issues), 1)
+        issue = issues[0]
+        self.assertIn("name", issue)
+        self.assertIn("bad_value", issue)
+        self.assertIn("default", issue)
+        self.assertIn("description", issue)
+
+    def test_issue_bad_value_matches_env(self):
+        issues = self._run_with_env({"RESET_LOG_MAX_BYTES": "xyz"})
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["bad_value"], "xyz")
+
+    def test_issue_default_matches_registry(self):
+        issues = self._run_with_env({"TCS_BASE_SCORE": "0"})
+        self.assertEqual(len(issues), 1)
+        expected_default, _ = _INT_ENV_REGISTRY["TCS_BASE_SCORE"]
+        self.assertEqual(issues[0]["default"], expected_default)
+
+    def test_multiple_bad_vars_all_appear(self):
+        issues = self._run_with_env({
+            "TCS_HISTORY_MAX_BYTES": "abc",
+            "BACKFILL_LOG_BACKUP_COUNT": "-5",
+        })
+        names = [i["name"] for i in issues]
+        self.assertIn("TCS_HISTORY_MAX_BYTES", names)
+        self.assertIn("BACKFILL_LOG_BACKUP_COUNT", names)
+        self.assertEqual(len(issues), 2)
+
+    def test_description_is_non_empty_string(self):
+        issues = self._run_with_env({"TCS_HISTORY_RETENTION_DAYS": "bad"})
+        self.assertEqual(len(issues), 1)
+        self.assertIsInstance(issues[0]["description"], str)
+        self.assertTrue(issues[0]["description"].strip())
 
 
 class TestRegistryCompleteness(unittest.TestCase):

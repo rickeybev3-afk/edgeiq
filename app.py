@@ -18,7 +18,7 @@ from url_sync import (
     _url_push, _url_push_opt,
 )
 
-from log_utils import _rotate_log, _parse_int_env, validate_env_config
+from log_utils import _rotate_log, _parse_int_env, validate_env_config, get_config_issues
 
 validate_env_config()
 
@@ -384,6 +384,37 @@ def _db_status_widget() -> None:
                 _ss["_db_next_retry_ts"] = _now
                 _cached_check_db_connection.clear()
                 st.rerun()
+
+def _render_config_health_badge() -> None:
+    """Show a ⚠ Config issues badge in the sidebar when bad env vars are detected.
+
+    Absent when all variables are correctly configured.  When issues exist the
+    badge is rendered as a Streamlit expander so the operator can click to see
+    exactly which variables are affected and what defaults are being used.
+    """
+    _issues = get_config_issues()
+    if not _issues:
+        return
+
+    _n = len(_issues)
+    _label = "issue" if _n == 1 else "issues"
+    with st.sidebar.expander(
+        f"⚠️ Config {_label} detected ({_n})",
+        expanded=False,
+    ):
+        st.caption(
+            "The following environment variables were set to invalid values. "
+            "The defaults shown below are being used instead."
+        )
+        for _issue in _issues:
+            st.markdown(
+                f"**`{_issue['name']}`**  \n"
+                f"Bad value: `{_issue['bad_value']!r}`  \n"
+                f"Default used: `{_issue['default']}`  \n"
+                f"_{_issue['description']}_"
+            )
+            st.divider()
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_get_breadth_regime_history(days: int = 30, user_id: str = "") -> list:
@@ -6968,6 +6999,9 @@ with st.sidebar:
 
     # ── Database connection status ─────────────────────────────────────────
     _db_status_widget()
+
+    # ── Config health badge ─────────────────────────────────────────────────
+    _render_config_health_badge()
 
     # ── Credential health indicator ────────────────────────────────────────
     _cred_healthy_ts = get_runtime_last_healthy_ts()

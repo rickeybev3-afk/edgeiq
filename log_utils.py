@@ -11,6 +11,14 @@ import sys
 # ── Registry of all recognised integer env vars ───────────────────────────────
 # Maps env-var name → (default_value, human description).
 # Used by validate_env_config() to perform a startup sanity check.
+# Cached result of the last validate_env_config() call.  Populated at startup
+# and readable via get_config_issues() without re-running the validation.
+_CONFIG_ISSUES: list[str] = []
+# Snapshot of the raw env-var values captured at validation time so that
+# get_config_issues() always reports the exact startup-state values even if
+# the process environment changes afterwards.
+_CONFIG_ISSUE_SNAPSHOTS: dict[str, str] = {}
+
 _INT_ENV_REGISTRY: dict[str, tuple[int, str]] = {
     # log_config.py — TCS threshold-history log
     "TCS_HISTORY_MAX_BYTES":          (500 * 1024, "TCS history log max size in bytes"),
@@ -48,6 +56,34 @@ def _parse_int_env(name: str, default: int) -> int:
         return default
 
 
+def get_config_issues() -> list[dict]:
+    """Return details about every misconfigured env var found at startup.
+
+    Each entry is a dict with keys:
+      ``name``        — environment variable name
+      ``bad_value``   — the raw string that was set at validation time (snapshot)
+      ``default``     — the integer default that will be used instead
+      ``description`` — human-readable description of the variable
+    Returns an empty list when all variables are correctly configured.
+
+    The ``bad_value`` is captured once during ``validate_env_config()`` so this
+    function always reports the exact startup-state value even if os.environ
+    changes afterwards.
+    """
+    result = []
+    for name in _CONFIG_ISSUES:
+        default, description = _INT_ENV_REGISTRY.get(name, (None, name))
+        result.append(
+            {
+                "name": name,
+                "bad_value": _CONFIG_ISSUE_SNAPSHOTS.get(name, ""),
+                "default": default,
+                "description": description,
+            }
+        )
+    return result
+
+
 def validate_env_config(strict: bool = False) -> list[str]:
     """Check all documented integer env vars for valid values.
 
@@ -68,7 +104,12 @@ def validate_env_config(strict: bool = False) -> list[str]:
         or os.environ.get("STRICT_CONFIG_VALIDATION", "").lower() in ("1", "true", "yes")
     )
 
+    global _CONFIG_ISSUES, _CONFIG_ISSUE_SNAPSHOTS
+
     bad: list[str] = []
+    # Snapshot the bad values at validation time so get_config_issues() always
+    # reports the exact startup-state values, even if os.environ changes later.
+    bad_snapshots: dict[str, str] = {}
     for name, (default, description) in _INT_ENV_REGISTRY.items():
         raw = os.environ.get(name)
         if raw is None or raw.strip() == "":
@@ -82,6 +123,7 @@ def validate_env_config(strict: bool = False) -> list[str]:
                     file=sys.stderr,
                 )
                 bad.append(name)
+                bad_snapshots[name] = raw
         except (TypeError, ValueError):
             print(
                 f"CONFIG WARNING: {name}={raw!r} — {description} is not a valid integer; "
@@ -89,6 +131,10 @@ def validate_env_config(strict: bool = False) -> list[str]:
                 file=sys.stderr,
             )
             bad.append(name)
+            bad_snapshots[name] = raw
+
+    _CONFIG_ISSUES = bad[:]
+    _CONFIG_ISSUE_SNAPSHOTS = bad_snapshots
 
     if bad and _strict:
         print(
