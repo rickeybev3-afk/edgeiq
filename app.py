@@ -21396,6 +21396,24 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 f"Range: {_fcr_dr.get('start','?')} → {_fcr_dr.get('end','?')}"
             )
 
+            import pandas as _fcr_pd  # imported once before all tabs to avoid NameError
+
+            # Coverage scope warning when report is not all-history
+            _fcr_start_raw = _fcr_dr.get("start", "all")
+            _fcr_end_raw   = _fcr_dr.get("end", "latest")
+            if _fcr_start_raw not in ("all", "", None) or _fcr_end_raw not in ("latest", "", None):
+                st.warning(
+                    f"⚠ This report covers **{_fcr_start_raw} → {_fcr_end_raw}** only — "
+                    "not all-time history. Run without date filters for full coverage."
+                )
+
+            # Note on post-trade features
+            st.caption(
+                "⚠ MFE, MAE, and sim_outcome are post-trade fields — their high correlation "
+                "reflects trade outcome, not predictive pre-entry signals. Focus on pre-entry "
+                "features: TCS, gap%, follow-through, RVOL, entry hour."
+            )
+
             _fcr_tab1, _fcr_tab2, _fcr_tab3 = st.tabs(
                 ["🔗 Correlations", "🧩 Mutual Info", "⚡ Pair Interactions"]
             )
@@ -21403,7 +21421,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
             with _fcr_tab1:
                 _fcr_corr = _fcr_report.get("correlations", [])
                 if _fcr_corr:
-                    import pandas as _fcr_pd
                     _fcr_corr_rows = []
                     for _cc in _fcr_corr:
                         _fcr_corr_rows.append({
