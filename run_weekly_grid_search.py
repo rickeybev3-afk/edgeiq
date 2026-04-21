@@ -23,6 +23,12 @@ After every run (success or failure) a short alert is sent to one or both of:
   • Telegram — set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
 
 If neither destination is configured the notification step is silently skipped.
+
+To control which events send a notification set GRID_SEARCH_NOTIFY_ON to a
+comma-separated list of event types:
+  • "success"          — notify only on successful runs
+  • "failure"          — notify only on failed runs
+  • "success,failure"  — notify on both (default when the variable is absent or empty)
 """
 
 from __future__ import annotations
@@ -90,6 +96,24 @@ def _send_notification(message: str) -> None:
     """Dispatch *message* to every configured notification destination."""
     _notify_webhook(message)
     _notify_telegram(message)
+
+
+def _notify_on_events() -> frozenset[str]:
+    """Return the set of event types that should trigger a notification.
+
+    Reads GRID_SEARCH_NOTIFY_ON (comma-separated, case-insensitive).
+    Recognised tokens are ``success`` and ``failure``.  Unknown tokens are
+    ignored.  When the variable is absent or empty, defaults to both events
+    (preserving existing behaviour).
+    """
+    raw = os.environ.get("GRID_SEARCH_NOTIFY_ON", "").strip()
+    if not raw:
+        return frozenset({"success", "failure"})
+    tokens = {t.strip().lower() for t in raw.split(",")}
+    recognised = tokens & {"success", "failure"}
+    if not recognised:
+        return frozenset({"success", "failure"})
+    return frozenset(recognised)
 
 
 def _build_success_message(start_time: datetime, finish_time: datetime) -> str:
@@ -177,16 +201,23 @@ def run_grid_search() -> None:
 
     finish_time = datetime.now(timezone.utc)
     finish_str = finish_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+    notify_on = _notify_on_events()
     if result.returncode == 0:
         print(f"\n[grid-search-scheduler] Run completed successfully at {finish_str}.", flush=True)
         print("[grid-search-scheduler] Output JSON files refreshed.", flush=True)
-        _send_notification(_build_success_message(start_time, finish_time))
+        if "success" in notify_on:
+            _send_notification(_build_success_message(start_time, finish_time))
+        else:
+            print("[grid-search-scheduler] Success notification suppressed (GRID_SEARCH_NOTIFY_ON).", flush=True)
     else:
         print(
             f"\n[grid-search-scheduler] Run FAILED (exit code {result.returncode}) at {finish_str}.",
             flush=True,
         )
-        _send_notification(_build_failure_message(result.returncode, start_time, finish_time))
+        if "failure" in notify_on:
+            _send_notification(_build_failure_message(result.returncode, start_time, finish_time))
+        else:
+            print("[grid-search-scheduler] Failure notification suppressed (GRID_SEARCH_NOTIFY_ON).", flush=True)
     print(f"{'='*60}\n", flush=True)
 
 
@@ -207,6 +238,12 @@ def main() -> None:
             destinations.append("Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)")
         print(
             f"[grid-search-scheduler] Notifications enabled via: {', '.join(destinations)}",
+            flush=True,
+        )
+        notify_on = _notify_on_events()
+        print(
+            f"[grid-search-scheduler] Notifying on events: {', '.join(sorted(notify_on))} "
+            f"(GRID_SEARCH_NOTIFY_ON={os.environ.get('GRID_SEARCH_NOTIFY_ON', '<not set — default: both>').strip() or '<empty — default: both>'})",
             flush=True,
         )
     else:

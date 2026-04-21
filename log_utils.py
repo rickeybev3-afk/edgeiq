@@ -24,6 +24,7 @@ _STRING_ENV_REGISTRY: dict[str, tuple[bool, str]] = {
     "ALERT_WEBHOOK_URL":      (False, "webhook URL for Slack/webhook alert notifications"),
     "TELEGRAM_BOT_TOKEN":     (False, "Telegram bot token for alert notifications"),
     "TELEGRAM_CHAT_ID":       (False, "Telegram chat ID to receive alert notifications"),
+    "GRID_SEARCH_NOTIFY_ON":  (False, "comma-separated event types that trigger a grid-search notification: 'success', 'failure', or 'success,failure' (default: both)"),
 }
 
 # Groups where at least one member must be non-empty (acts as a single required
