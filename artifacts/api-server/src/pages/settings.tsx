@@ -616,6 +616,7 @@ export default function Settings() {
     freedBytes: number | null;
   }>({ pruning: false, error: null, pruned: false, deleted: null, freedBytes: null });
   const [pruneNamesExpanded, setPruneNamesExpanded] = useState(false);
+  const [pruneCopied, setPruneCopied] = useState(false);
 
   const [pruneConfirmOpen, setPruneConfirmOpen] = useState(false);
   const pruneButtonRef = useRef<HTMLButtonElement>(null);
@@ -3963,6 +3964,18 @@ export default function Settings() {
                               style={{ background: "none", border: "none", color: "#86efac", fontSize: "11px", cursor: "pointer", textDecoration: "underline", padding: 0 }}
                             >
                               {pruneNamesExpanded ? "hide" : "show"} names
+                            </button>
+                            {" "}
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(archivePrune.deleted!.join("\n")).then(() => {
+                                  setPruneCopied(true);
+                                  setTimeout(() => setPruneCopied(false), 2000);
+                                });
+                              }}
+                              style={{ background: "none", border: "none", color: pruneCopied ? "#4ade80" : "#86efac", fontSize: "11px", cursor: "pointer", textDecoration: "underline", padding: 0 }}
+                            >
+                              {pruneCopied ? "copied!" : "copy"}
                             </button>
                             {pruneNamesExpanded && (
                               <span style={{ display: "block", marginTop: "4px", fontFamily: "monospace", color: "#cbd5e1", whiteSpace: "pre-wrap", lineHeight: "1.6" }}>
