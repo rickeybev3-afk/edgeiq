@@ -16,6 +16,11 @@ Design
   refreshed so the Ladder tab is warm well before the midnight backfill.
 • After each midnight backfill the view is refreshed a second time so it
   captures any rows written by the backfill itself.
+• After each backfill (startup and midnight) the pending row resolver step
+  runs: it calls backfill_pending_sim_rows.py to resolve any rows whose
+  actual_outcome is still 'Pending' (left behind when batch_backtest.py
+  fails mid-run).  If more than PENDING_ROW_ALERT_THRESHOLD (default 50)
+  rows remain after the resolver, a Slack/Telegram alert is fired.
 • If the backfill or refresh raises an exception the scheduler logs the error
   and continues to the next nightly window rather than crashing.
 • SIGTERM / SIGINT (e.g. Replit workflow stop) are caught so the process
@@ -156,6 +161,13 @@ _HEARTBEAT_ALERT_STATE_FILE = os.getenv(
         ".backfill_heartbeat_alerted.json",
     ),
 )
+
+_PENDING_RESOLVER_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".edgeiq_pending_resolver_alert.json",
+)
+
+_DEFAULT_PENDING_ALERT_THRESHOLD = 50
 
 _DEFAULT_COOLDOWN_HOURS = 23
 _DEFAULT_SUPPRESSION_ALERT_NIGHTS = 5
@@ -2010,6 +2022,225 @@ def run_tp_calibration_preview() -> None:
     log.info("TP calibration preview Telegram summary sent.")
 
 
+# ── Pending row resolver ──────────────────────────────────────────────────────
+
+
+def _get_pending_alert_threshold() -> int:
+    """Return the configured threshold above which unresolved Pending rows trigger an alert.
+
+    Read from PENDING_ROW_ALERT_THRESHOLD (default 50).  Set to 0 to disable
+    the pending-row alert entirely.
+    """
+    raw = os.getenv("PENDING_ROW_ALERT_THRESHOLD", "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v >= 0:
+                return v
+        except ValueError:
+            log.warning(
+                "PENDING_ROW_ALERT_THRESHOLD='%s' is not a valid integer; "
+                "using default %d.",
+                raw,
+                _DEFAULT_PENDING_ALERT_THRESHOLD,
+            )
+    return _DEFAULT_PENDING_ALERT_THRESHOLD
+
+
+def _pending_maybe_send_recovery() -> None:
+    """Send a one-time recovery notification if a previous pending-row alert was on record."""
+    try:
+        with open(_PENDING_RESOLVER_STATE_FILE) as _sf:
+            _state = json.load(_sf)
+        if _state.get("last_alerted_utc"):
+            log.info("Pending resolver: all clear — sending recovery notification.")
+            _send_slack(
+                "[EdgeIQ] Pending row resolver: all Pending rows have been resolved. "
+                "No further alerts will fire until new rows accumulate."
+            )
+            _send_telegram(
+                "\u2705 <b>Pending row resolver — all clear</b>\n"
+                "All Pending rows have been resolved. No further alerts will fire "
+                "until new rows accumulate."
+            )
+        os.remove(_PENDING_RESOLVER_STATE_FILE)
+    except FileNotFoundError:
+        pass
+    except Exception as _e:
+        log.warning("Could not clear pending resolver alert state: %s", _e)
+
+
+def run_pending_resolver(date_from: str = "", date_to: str = "") -> None:
+    """Resolve any backtest_sim_runs rows whose actual_outcome = 'Pending'.
+
+    Imports backfill_pending_sim_rows in-process and calls backfill_pending().
+    This is intentionally run *after* run_backfill() so that any Pending rows
+    left behind by a partial batch_backtest.py run are caught within the same
+    nightly window rather than silently accumulating.
+
+    After the resolver finishes, the remaining Pending count is checked.
+    If it exceeds PENDING_ROW_ALERT_THRESHOLD (default 50) a Slack + Telegram
+    alert is fired so the operator knows rows need attention.  A 23-hour
+    cooldown (persisted to _PENDING_RESOLVER_STATE_FILE) prevents the same
+    alert from firing on every consecutive nightly run.
+
+    If the remaining count is zero and a previous alert was on record, a
+    one-time recovery notification is sent before clearing the state.
+    """
+    log.info("─── Pending row resolver ─────────────────────────────────────")
+    threshold = _get_pending_alert_threshold()
+
+    # ── Import the resolver module ────────────────────────────────────────────
+    try:
+        import backfill_pending_sim_rows as _bpr
+    except ImportError as _ie:
+        log.error(
+            "Could not import backfill_pending_sim_rows — pending resolver skipped: %s",
+            _ie,
+        )
+        return
+
+    # ── Count Pending rows before running ─────────────────────────────────────
+    count_before = _bpr.count_pending(date_from=date_from, date_to=date_to)
+    if count_before == 0:
+        log.info("Pending resolver: no Pending rows found — nothing to do.")
+        _pending_maybe_send_recovery()
+        return
+    if count_before < 0:
+        log.warning("Pending resolver: pre-run count query failed — skipping resolver run.")
+        return
+
+    log.info(
+        "Pending resolver: %d Pending row(s) found — running backfill_pending().",
+        count_before,
+    )
+
+    # ── Run the resolver ──────────────────────────────────────────────────────
+    rate_limit = "--no-ratelimit" not in sys.argv
+    resolver_stats: dict = {}
+    try:
+        resolver_stats = _bpr.backfill_pending(
+            dry_run=False,
+            rate_limit=rate_limit,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except Exception as _exc:
+        log.error("Pending resolver raised an exception: %s", _exc)
+
+    resolved = resolver_stats.get("updated", 0)
+    non_dir  = resolver_stats.get("non_directional", 0)
+    errors   = resolver_stats.get("errors", 0)
+    log.info(
+        "Pending resolver finished: resolved=%d, non_directional=%d, errors=%d.",
+        resolved,
+        non_dir,
+        errors,
+    )
+
+    # ── Count Pending rows after running ──────────────────────────────────────
+    count_after = _bpr.count_pending(date_from=date_from, date_to=date_to)
+    if count_after < 0:
+        log.warning(
+            "Pending resolver: post-run count query failed — cannot assess remaining rows."
+        )
+        return
+
+    log.info(
+        "Pending resolver: %d row(s) before → %d row(s) after (%d resolved this run).",
+        count_before,
+        count_after,
+        count_before - count_after,
+    )
+
+    # ── Recovery notification if resolved to zero ──────────────────────────────
+    if count_after == 0:
+        log.info("Pending resolver: all Pending rows resolved.")
+        _pending_maybe_send_recovery()
+        return
+
+    # ── Alert if remaining count exceeds threshold ─────────────────────────────
+    if threshold == 0:
+        log.info(
+            "Pending resolver: %d row(s) remain but PENDING_ROW_ALERT_THRESHOLD=0 "
+            "— alert suppressed.",
+            count_after,
+        )
+        return
+
+    if count_after <= threshold:
+        log.info(
+            "Pending resolver: %d row(s) remain (threshold: %d) — within acceptable range.",
+            count_after,
+            threshold,
+        )
+        return
+
+    # Remaining count exceeds threshold — check 23-hour cooldown before alerting.
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        with open(_PENDING_RESOLVER_STATE_FILE) as _sf:
+            _pr_state = json.load(_sf)
+        _last_str = _pr_state.get("last_alerted_utc", "")
+        if _last_str:
+            _last_dt = datetime.datetime.fromisoformat(_last_str)
+            if _last_dt.tzinfo is None:
+                _last_dt = _last_dt.replace(tzinfo=datetime.timezone.utc)
+            _hours_ago = (now_utc - _last_dt).total_seconds() / 3600
+            if _hours_ago < _DEFAULT_COOLDOWN_HOURS:
+                log.info(
+                    "Pending resolver alert already sent %.1f h ago — suppressing "
+                    "duplicate (cooldown: %d h).",
+                    _hours_ago,
+                    _DEFAULT_COOLDOWN_HOURS,
+                )
+                return
+    except FileNotFoundError:
+        pass
+    except Exception as _e:
+        log.warning("Could not read pending resolver alert state: %s", _e)
+
+    run_date = _et_now().strftime("%Y-%m-%d")
+    plain_msg = (
+        f"[EdgeIQ] {count_after} unresolved Pending rows remain after nightly resolver\n"
+        f"Date: {run_date}\n"
+        f"Before: {count_before}  After: {count_after}  Resolved this run: {resolved}\n"
+        f"Threshold: {threshold}  Errors: {errors}\n"
+        f"Re-run backfill_pending_sim_rows.py manually or investigate Alpaca bar-fetch errors.\n"
+        f"Set PENDING_ROW_ALERT_THRESHOLD to adjust this threshold (0 to disable)."
+    )
+    html_msg = (
+        f"\u26a0\ufe0f <b>Pending row resolver — unresolved rows remain</b>\n"
+        f"Date: {run_date}\n"
+        f"<b>Before:</b> {count_before}  <b>After:</b> {count_after}  "
+        f"<b>Resolved this run:</b> {resolved}\n"
+        f"<b>Threshold:</b> {threshold}  <b>Errors:</b> {errors}\n"
+        f"Re-run <code>backfill_pending_sim_rows.py</code> manually or investigate "
+        f"Alpaca bar-fetch errors.\n"
+        f"<i>Set PENDING_ROW_ALERT_THRESHOLD to adjust this threshold (0 to disable).</i>"
+    )
+    log.warning(
+        "Pending resolver alert: %d row(s) remain after resolver run (threshold: %d).",
+        count_after,
+        threshold,
+    )
+    _send_slack(plain_msg)
+    _send_telegram(html_msg)
+
+    # Persist alert timestamp for cooldown deduplication.
+    try:
+        with open(_PENDING_RESOLVER_STATE_FILE, "w") as _sf:
+            json.dump(
+                {
+                    "last_alerted_utc": now_utc.isoformat(),
+                    "count_after": count_after,
+                },
+                _sf,
+            )
+    except Exception as _e:
+        log.warning("Could not write pending resolver alert state: %s", _e)
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
@@ -2108,6 +2339,7 @@ def main():
     log.info("─── Startup run ──────────────────────────────────────────────")
     _check_backfill_heartbeat()
     run_backfill(date_from=date_from, date_to=date_to)
+    run_pending_resolver(date_from=date_from, date_to=date_to)
     _check_all_uncalibrated_screeners()
     refresh_summary_cache()
 
@@ -2147,6 +2379,9 @@ def main():
         if do_backfill:
             _check_backfill_heartbeat()
             run_backfill(date_from=date_from, date_to=date_to)
+            if _shutdown.is_set():
+                break
+            run_pending_resolver(date_from=date_from, date_to=date_to)
             if _shutdown.is_set():
                 break
             _check_all_uncalibrated_screeners()
