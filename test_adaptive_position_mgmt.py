@@ -691,5 +691,123 @@ class TestFetchPmLastPrice(unittest.TestCase):
         self.assertAlmostEqual(result, 55.5, places=2)
 
 
+# ---------------------------------------------------------------------------
+# EOD normalization — adaptive_eligible → fixed for unadjusted trades
+# ---------------------------------------------------------------------------
+
+class TestEodNormalization(unittest.TestCase):
+    """Verify that trades opened while toggle was ON but never adjusted are
+    normalised to mgmt_mode='fixed' when eod_pnl_r is written at settlement."""
+
+    def test_eligible_but_unadjusted_trade_normalized_to_fixed(self):
+        """_recalc_eod_pnl_r_recent must write mgmt_mode='fixed' when settling
+        a row whose mgmt_mode is still 'adaptive_eligible' (no OCO adjustment
+        was applied during the pre-open review)."""
+        mock_sb = MagicMock()
+
+        # One row: adaptive_eligible, has close_price but no eod_pnl_r
+        row = {
+            "id": "row-eod-1",
+            "actual_outcome": "Bullish Break",
+            "ib_high": 101.0,
+            "ib_low": 99.0,
+            "close_price": 102.5,
+            "mgmt_mode": "adaptive_eligible",
+        }
+        page_mock = MagicMock()
+        page_mock.data = [row]
+        # Chain for paginated select query.
+        # lookback_days=None → no .gte() added, chain ends at .range().execute()
+        (mock_sb.table.return_value
+                .select.return_value
+                .eq.return_value
+                .eq.return_value
+                .is_.return_value
+                .not_.is_.return_value
+                .order.return_value
+                .range.return_value
+                .execute.return_value) = page_mock
+
+        orig_sb = _ptb._supabase_client
+
+        # Stub compute_trade_sim_tiered to return a known eod_pnl_r value
+        fake_tiered_mod = MagicMock()
+        fake_tiered_mod.compute_trade_sim_tiered = MagicMock(
+            return_value={"eod_pnl_r": -0.5}
+        )
+        import sys
+        sys.modules["backend"] = fake_tiered_mod
+        try:
+            _ptb._supabase_client = mock_sb
+            # lookback_days=None → no cutoff → no .gte() branch (simpler chain)
+            _ptb._recalc_eod_pnl_r_recent(lookback_days=None)
+        finally:
+            _ptb._supabase_client = orig_sb
+            del sys.modules["backend"]
+
+        # Verify DB update was called at least once
+        mock_sb.table.return_value.update.assert_called()
+        # Capture the payload(s) and check that mgmt_mode='fixed' was included
+        all_payloads = [
+            call.args[0]
+            for call in mock_sb.table.return_value.update.call_args_list
+        ]
+        self.assertTrue(
+            any(p.get("mgmt_mode") == "fixed" for p in all_payloads),
+            f"Expected mgmt_mode='fixed' in update payloads, got: {all_payloads}",
+        )
+
+    def test_adaptive_row_mgmt_mode_not_overwritten(self):
+        """Rows with mgmt_mode='adaptive' (already adjusted) must NOT have
+        their mgmt_mode overwritten during eod_pnl_r normalisation."""
+        mock_sb = MagicMock()
+
+        row = {
+            "id": "row-eod-2",
+            "actual_outcome": "Bullish Break",
+            "ib_high": 101.0,
+            "ib_low": 99.0,
+            "close_price": 105.0,
+            "mgmt_mode": "adaptive",
+        }
+        page_mock = MagicMock()
+        page_mock.data = [row]
+        (mock_sb.table.return_value
+                .select.return_value
+                .eq.return_value
+                .eq.return_value
+                .is_.return_value
+                .not_.is_.return_value
+                .order.return_value
+                .range.return_value
+                .execute.return_value) = page_mock
+
+        orig_sb = _ptb._supabase_client
+
+        fake_tiered_mod = MagicMock()
+        fake_tiered_mod.compute_trade_sim_tiered = MagicMock(
+            return_value={"eod_pnl_r": 1.5}
+        )
+        import sys
+        sys.modules["backend"] = fake_tiered_mod
+        try:
+            _ptb._supabase_client = mock_sb
+            _ptb._recalc_eod_pnl_r_recent(lookback_days=None)
+        finally:
+            _ptb._supabase_client = orig_sb
+            del sys.modules["backend"]
+
+        all_payloads = [
+            call.args[0]
+            for call in mock_sb.table.return_value.update.call_args_list
+        ]
+        # mgmt_mode must NOT appear in the payload for an already-adaptive row
+        for p in all_payloads:
+            self.assertNotIn(
+                "mgmt_mode", p,
+                f"mgmt_mode should not be overwritten for 'adaptive' row: {p}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

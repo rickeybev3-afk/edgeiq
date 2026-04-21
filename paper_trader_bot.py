@@ -3949,7 +3949,9 @@ def _alert_eod_summary(
                 avg = sum(rs) / len(rs)
                 return len(rs), round(wr, 1), round(avg, 2)
 
-            _fixed_rows    = [r for r in _ab_rows if r.get("mgmt_mode") in ("fixed", None, "")]
+            # 'adaptive_eligible' rows that were never adjusted are fixed-arm;
+            # normalization to 'fixed' happens in _recalc_eod_pnl_r_recent.
+            _fixed_rows    = [r for r in _ab_rows if r.get("mgmt_mode") in ("fixed", "adaptive_eligible", None, "")]
             _adaptive_rows = [r for r in _ab_rows if r.get("mgmt_mode") == "adaptive"]
             _fn, _fwr, _favg = _ab_stats(_fixed_rows)
             _an, _awr, _aavg = _ab_stats(_adaptive_rows)
@@ -4842,7 +4844,7 @@ def _recalc_eod_pnl_r_recent(lookback_days: int | None = None) -> dict:
             try:
                 query = (
                     _supabase_client.table("paper_trades")
-                    .select("id,actual_outcome,ib_high,ib_low,close_price")
+                    .select("id,actual_outcome,ib_high,ib_low,close_price,mgmt_mode")
                     .eq("user_id", USER_ID)
                     .eq("actual_outcome", direction)
                     .is_("eod_pnl_r", "null")
@@ -4910,8 +4912,13 @@ def _recalc_eod_pnl_r_recent(lookback_days: int | None = None) -> dict:
             continue
 
         try:
+            _eod_patch = {"eod_pnl_r": round(float(eod_pnl_r), 6)}
+            # Normalize 'adaptive_eligible' to 'fixed' for unadjusted trades so
+            # every settled row carries only a terminal mgmt_mode state.
+            if row.get("mgmt_mode") == "adaptive_eligible":
+                _eod_patch["mgmt_mode"] = "fixed"
             _supabase_client.table("paper_trades").update(
-                {"eod_pnl_r": round(float(eod_pnl_r), 6)}
+                _eod_patch
             ).eq("id", row_id).execute()
             log.info(f"    id={row_id}: eod_pnl_r → {eod_pnl_r:.4f}R")
             written += 1
