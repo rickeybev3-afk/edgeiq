@@ -1,0 +1,38 @@
+{
+  "run_at": "2026-04-21T02:26:20.404077Z",
+  "date_range": {
+    "start": "all",
+    "end": "latest"
+  },
+  "total_rows": 131738,
+  "traded_rows": 80991,
+  "min_n": 50,
+  "top_n": 30,
+  "combos_tested": 4000,
+  "combos_qualifying": 3174,
+  "best_combo": {
+    "tcs_offset": 10,
+    "tcs_label": "+10 above baseline",
+    "rvol_min": 0.0,
+    "gap_min": 5.0,
+    "follow_min": 1.0,
+    "follow_label": "\u22651%",
+    "struct_filter": "neutral",
+    "struct_label": "Neutral-family only",
+    "excl_false_break": true,
+    "n_trades": 141,
+    "n_scanned": 142,
+    "scan_to_trade_pct": 99.3,
+    "win_rate": 92.2,
+    "avg_r": 1.2915,
+    "total_r": 182.105,
+    "profit_factor": 27.742,
+    "sharpe": 20.195,
+    "max_drawdown_r": 1.556,
+    "avg_win_r": 1.453,
+    "avg_loss_r": -0.619,
+    "trades_per_week": 0.57,
+    "proj_weekly_usd": 111.31,
+    "low_sample": false
+  }
+}

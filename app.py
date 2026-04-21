@@ -21077,6 +21077,280 @@ Measures how accurately the 7-structure framework classified those days in hinds
         unsafe_allow_html=True,
     )
 
+    # ── Filter Optimizer ─────────────────────────────────────────────────────
+    st.divider()
+    with st.expander("🔬 Filter Combination Optimizer", expanded=False):
+        import subprocess as _fgs_sub
+        import json as _fgs_json
+        import os as _fgs_os
+        import datetime as _fgs_dt
+
+        _FGS_SUM  = "filter_grid_summary.json"
+        _FGS_TOP  = "filter_grid_top20.json"
+        _FGS_ALL  = "filter_grid_results.json"
+        _FGS_CFG  = "filter_config.json"
+
+        st.markdown(
+            "Grid-searches every combination of TCS offset, RVOL min, gap floor, "
+            "follow-through floor, structure type, and false-break exclusion across "
+            "the **full historical backtest dataset** to find which filter stack "
+            "produces the best risk-adjusted edge."
+        )
+
+        # ── Load summary metadata ────────────────────────────────────────────
+        _fgs_summary = {}
+        if _fgs_os.path.exists(_FGS_SUM):
+            try:
+                with open(_FGS_SUM) as _f:
+                    _fgs_summary = _fgs_json.load(_f)
+            except Exception:
+                pass
+
+        if _fgs_summary:
+            _fgs_ran = _fgs_summary.get("run_at", "unknown")[:16].replace("T", " ")
+            _fgs_dr  = _fgs_summary.get("date_range", {})
+            _fgs_dr_str = f"{_fgs_dr.get('start','?')} → {_fgs_dr.get('end','?')}"
+            _fgs_rows = _fgs_summary.get("total_rows", 0)
+            _fgs_traded = _fgs_summary.get("traded_rows", 0)
+            _fgs_q = _fgs_summary.get("combos_qualifying", 0)
+            _fgs_tested = _fgs_summary.get("combos_tested", 0)
+            _fgs_minn = _fgs_summary.get("min_n", 50)
+            st.caption(
+                f"Last run: **{_fgs_ran} UTC** · "
+                f"Date range: {_fgs_dr_str} · "
+                f"{_fgs_rows:,} total rows · {_fgs_traded:,} traded · "
+                f"{_fgs_q:,}/{_fgs_tested:,} combos met N≥{_fgs_minn}"
+            )
+        else:
+            st.info("No grid search results yet — run the optimizer below to generate them.")
+
+        # ── Run controls ─────────────────────────────────────────────────────
+        _fgs_c1, _fgs_c2, _fgs_c3, _fgs_c4 = st.columns([2, 2, 1, 1])
+        with _fgs_c1:
+            _fgs_start = st.text_input(
+                "Start date (YYYY-MM-DD)",
+                value=_fgs_summary.get("date_range", {}).get("start", ""),
+                placeholder="leave blank = all history",
+                key="fgs_start_date",
+            )
+        with _fgs_c2:
+            _fgs_end = st.text_input(
+                "End date (YYYY-MM-DD)",
+                value=_fgs_summary.get("date_range", {}).get("end", ""),
+                placeholder="leave blank = latest",
+                key="fgs_end_date",
+            )
+        with _fgs_c3:
+            _fgs_minn_inp = st.number_input(
+                "Min trades (N≥)",
+                value=int(_fgs_summary.get("min_n", 50)),
+                min_value=10, max_value=500, step=10,
+                key="fgs_min_n",
+            )
+        with _fgs_c4:
+            _fgs_top_inp = st.number_input(
+                "Top N combos",
+                value=20, min_value=5, max_value=100, step=5,
+                key="fgs_top_n",
+            )
+
+        _fgs_run_btn = st.button(
+            "▶ Run Grid Search",
+            key="fgs_run_btn",
+            help="Fetches all backtest rows from Supabase and evaluates every filter combination. Takes ~5 min for full history.",
+        )
+
+        if _fgs_run_btn:
+            _fgs_cmd = ["python3", "filter_grid_search.py",
+                        "--min-n", str(int(_fgs_minn_inp)),
+                        "--top", str(int(_fgs_top_inp))]
+            if _fgs_start and _fgs_start.strip():
+                _fgs_cmd += ["--start", _fgs_start.strip()]
+            if _fgs_end and _fgs_end.strip():
+                _fgs_cmd += ["--end", _fgs_end.strip()]
+            with st.spinner("Running grid search — fetching rows and evaluating combinations..."):
+                try:
+                    _fgs_proc = _fgs_sub.run(
+                        _fgs_cmd, capture_output=True, text=True, timeout=600
+                    )
+                    if _fgs_proc.returncode == 0:
+                        st.success("Grid search complete! Results updated below.")
+                        st.rerun()
+                    else:
+                        st.error(f"Grid search failed:\n{_fgs_proc.stderr[-800:]}")
+                except _fgs_sub.TimeoutExpired:
+                    st.error("Grid search timed out (>10 min). Try a narrower date range or increase min N.")
+                except Exception as _fgs_ex:
+                    st.error(f"Grid search error: {_fgs_ex}")
+
+        # ── Load and display top combos ───────────────────────────────────────
+        _fgs_top_data = []
+        if _fgs_os.path.exists(_FGS_TOP):
+            try:
+                with open(_FGS_TOP) as _f:
+                    _fgs_top_data = _fgs_json.load(_f)
+            except Exception:
+                pass
+
+        if _fgs_top_data:
+            st.markdown("#### Top Filter Combinations")
+
+            _fgs_rows_disp = []
+            for _i, _c in enumerate(_fgs_top_data, 1):
+                _parts = []
+                if _c.get("tcs_offset"):
+                    _parts.append(f"TCS+{_c['tcs_offset']}")
+                if _c.get("rvol_min"):
+                    _parts.append(f"RVOL≥{_c['rvol_min']}")
+                if _c.get("gap_min"):
+                    _parts.append(f"|gap|≥{_c['gap_min']}%")
+                if (_c.get("follow_min") or -999) > -900:
+                    _parts.append(f"FT{_c.get('follow_label','?')}")
+                if _c.get("struct_filter", "all") != "all":
+                    _parts.append(_c.get("struct_label", _c.get("struct_filter", "")))
+                if _c.get("excl_false_break"):
+                    _parts.append("no false-break")
+                _label = " · ".join(_parts) if _parts else "TCS baseline only"
+                _pf_val = _c.get("profit_factor", 0)
+                _pf_str = "∞" if _pf_val == float("inf") else f"{_pf_val:.2f}"
+                _fgs_rows_disp.append({
+                    "#": _i,
+                    "Filter Combination": _label,
+                    "N": _c.get("n_trades", 0),
+                    "WR%": f"{_c.get('win_rate', 0):.1f}%",
+                    "Avg R": f"{_c.get('avg_r', 0):.3f}",
+                    "PF": _pf_str,
+                    "Sharpe": f"{_c.get('sharpe', 0):.3f}",
+                    "MaxDD": f"{_c.get('max_drawdown_r', 0):.2f}R",
+                    "/wk": f"{_c.get('trades_per_week', 0):.1f}",
+                    "$/wk": f"${_c.get('proj_weekly_usd', 0):.0f}",
+                    "⚠": "low N" if _c.get("low_sample") else "",
+                })
+
+            import pandas as _fgs_pd
+            _fgs_df = _fgs_pd.DataFrame(_fgs_rows_disp)
+
+            def _fgs_color(row):
+                sharpe_str = row.get("Sharpe", "0")
+                try:
+                    s = float(sharpe_str)
+                except ValueError:
+                    s = 0.0
+                is_low = row.get("⚠") == "low N"
+                if is_low:
+                    return ["background-color:#fff8e1; color:#5d4037"] * len(row)
+                if s >= 5:
+                    return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                if s >= 2:
+                    return ["background-color:#f1f8e9; color:#33691e"] * len(row)
+                return [""] * len(row)
+
+            st.dataframe(
+                _fgs_df.style.apply(_fgs_color, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # ── Best combo detail card ────────────────────────────────────────
+            if _fgs_top_data:
+                _fgs_best = _fgs_top_data[0]
+                _fgs_best_parts = []
+                if _fgs_best.get("tcs_offset"):
+                    _fgs_best_parts.append(f"TCS +{_fgs_best['tcs_offset']} above baseline")
+                if _fgs_best.get("rvol_min"):
+                    _fgs_best_parts.append(f"RVOL ≥ {_fgs_best['rvol_min']}")
+                if _fgs_best.get("gap_min"):
+                    _fgs_best_parts.append(f"|gap%| ≥ {_fgs_best['gap_min']}%")
+                if (_fgs_best.get("follow_min") or -999) > -900:
+                    _fgs_best_parts.append(f"Follow-through {_fgs_best.get('follow_label','?')}")
+                if _fgs_best.get("struct_filter", "all") != "all":
+                    _fgs_best_parts.append(_fgs_best.get("struct_label", ""))
+                if _fgs_best.get("excl_false_break"):
+                    _fgs_best_parts.append("Exclude false-break rows")
+
+                st.markdown("**Best combo:**")
+                _fgs_bc1, _fgs_bc2, _fgs_bc3, _fgs_bc4, _fgs_bc5 = st.columns(5)
+                _fgs_bc1.metric("Win Rate", f"{_fgs_best.get('win_rate', 0):.1f}%")
+                _fgs_bc2.metric("Avg R", f"{_fgs_best.get('avg_r', 0):.3f}R")
+                _fgs_bc3.metric("Profit Factor", f"{_fgs_best.get('profit_factor', 0):.2f}" if _fgs_best.get('profit_factor') != float('inf') else "∞")
+                _fgs_bc4.metric("Sharpe", f"{_fgs_best.get('sharpe', 0):.3f}")
+                _fgs_bc5.metric("Proj $/wk", f"${_fgs_best.get('proj_weekly_usd', 0):.0f}")
+                st.caption("Active filters: " + "  ·  ".join(_fgs_best_parts) if _fgs_best_parts else "TCS baseline only")
+
+                # ── Apply button ─────────────────────────────────────────────
+                st.markdown("---")
+                st.markdown(
+                    "**Apply to bot config** — writes the best combo's thresholds to "
+                    "`filter_config.json`, which the Paper Trader Bot reads at startup "
+                    "to gate entries beyond TCS."
+                )
+                _fgs_apply_col1, _fgs_apply_col2 = st.columns([1, 3])
+                with _fgs_apply_col1:
+                    _fgs_apply_btn = st.button(
+                        "✅ Apply Top Filter",
+                        key="fgs_apply_btn",
+                        type="primary",
+                    )
+                with _fgs_apply_col2:
+                    _fgs_cur_cfg = {}
+                    if _fgs_os.path.exists(_FGS_CFG):
+                        try:
+                            with open(_FGS_CFG) as _f:
+                                _fgs_cur_cfg = _fgs_json.load(_f)
+                        except Exception:
+                            pass
+                    if _fgs_cur_cfg:
+                        st.caption(
+                            f"Current config: RVOL≥{_fgs_cur_cfg.get('rvol_min',0)} · "
+                            f"|gap|≥{_fgs_cur_cfg.get('gap_min',0)}% · "
+                            f"FT≥{_fgs_cur_cfg.get('follow_min_pct','any')} · "
+                            f"struct={_fgs_cur_cfg.get('struct_filter','all')} · "
+                            f"excl_fb={_fgs_cur_cfg.get('excl_false_break',False)} · "
+                            f"set {_fgs_cur_cfg.get('applied_at','?')[:10]}"
+                        )
+
+                if _fgs_apply_btn:
+                    _fgs_new_cfg = {
+                        "tcs_offset":        _fgs_best.get("tcs_offset", 0),
+                        "rvol_min":          _fgs_best.get("rvol_min", 0.0),
+                        "gap_min":           _fgs_best.get("gap_min", 0.0),
+                        "follow_min_pct":    _fgs_best.get("follow_min", -999.0),
+                        "struct_filter":     _fgs_best.get("struct_filter", "all"),
+                        "excl_false_break":  _fgs_best.get("excl_false_break", False),
+                        "applied_at":        _fgs_dt.datetime.utcnow().isoformat() + "Z",
+                        "applied_from":      _FGS_TOP,
+                        "source_combo_rank": 1,
+                        "source_sharpe":     _fgs_best.get("sharpe"),
+                        "source_n_trades":   _fgs_best.get("n_trades"),
+                    }
+                    try:
+                        with open(_FGS_CFG, "w") as _f:
+                            _fgs_json.dump(_fgs_new_cfg, _f, indent=2)
+                        st.success(
+                            f"filter_config.json updated — "
+                            f"RVOL≥{_fgs_new_cfg['rvol_min']} · "
+                            f"|gap|≥{_fgs_new_cfg['gap_min']}% · "
+                            f"struct={_fgs_new_cfg['struct_filter']}. "
+                            "Restart Paper Trader Bot to pick up the new config."
+                        )
+                    except Exception as _fgs_ex:
+                        st.error(f"Failed to write filter_config.json: {_fgs_ex}")
+
+        # ── Full results download ─────────────────────────────────────────────
+        if _fgs_os.path.exists(_FGS_ALL):
+            try:
+                with open(_FGS_ALL) as _f:
+                    _fgs_all_bytes = _f.read().encode()
+                st.download_button(
+                    label="⬇ Download all qualifying combos (JSON)",
+                    data=_fgs_all_bytes,
+                    file_name="filter_grid_results.json",
+                    mime="application/json",
+                    key="fgs_download_all",
+                )
+            except Exception:
+                pass
+
     # ── Highlight jumped-to trade row (from drill-down ↓ Jump link) ──────────
     import streamlit.components.v1 as _cmp_trade_jump
     _cmp_trade_jump.html(

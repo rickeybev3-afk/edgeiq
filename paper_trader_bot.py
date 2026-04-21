@@ -593,6 +593,41 @@ def _sp_size_mult(screener_pass: str | None) -> float:
 # Hard block setups with RVOL < RVOL_MIN_FLOOR when RVOL data is available.
 RVOL_MIN_FLOOR = float(os.environ.get("RVOL_MIN_FLOOR", "1.0"))
 
+# ── filter_config.json — optimizer-derived entry gates ─────────────────────────
+_FILTER_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "filter_config.json")
+_FILTER_CONFIG_CACHE: dict | None = None
+
+def _load_filter_config() -> dict:
+    """Load filter_config.json, written by the Filter Optimizer in the dashboard.
+
+    Returns a dict with keys:
+        tcs_offset        int   — extra TCS points above per-structure baseline (default 0)
+        rvol_min          float — minimum RVOL (stacks on top of RVOL_MIN_FLOOR; default 0)
+        gap_min           float — abs(gap_pct) must be >= this % (default 0)
+        follow_min_pct    float — follow_thru_pct must be >= this (default -999 = off)
+        struct_filter     str   — "all"|"neutral"|"trend"|"extreme"|"no_extreme" (default "all")
+        excl_false_break  bool  — skip rows with false_break_up or false_break_down (default False)
+
+    Falls back to all-permissive defaults when the file is absent or unreadable,
+    preserving full backward compatibility.
+    """
+    global _FILTER_CONFIG_CACHE
+    try:
+        if not os.path.exists(_FILTER_CONFIG_PATH):
+            return {}
+        mtime = os.path.getmtime(_FILTER_CONFIG_PATH)
+        if _FILTER_CONFIG_CACHE is not None:
+            if abs(mtime - _FILTER_CONFIG_CACHE.get("_mtime", 0)) < 1:
+                return _FILTER_CONFIG_CACHE
+        with open(_FILTER_CONFIG_PATH) as _f:
+            cfg = json.load(_f)
+        cfg["_mtime"] = mtime
+        _FILTER_CONFIG_CACHE = cfg
+        return cfg
+    except Exception as _fce:
+        log.debug(f"filter_config.json not loaded (non-fatal): {_fce}")
+        return {}
+
 _ADAPTIVE_EXIT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "adaptive_exits.json")
 _RVOL_SIZE_TIERS_DEFAULT = [
     {"rvol_min": 3.5, "multiplier": 1.5},
@@ -1468,6 +1503,118 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"  [{ticker}] RVOL {_rvol_float:.2f}× → RVOL bonus mult "
                 f"{_rvol_mult:.2f}× → risk ${risk_dollars:,.0f}"
             )
+
+    # ── filter_config.json additional entry gates ────────────────────────────
+    # Applied after RVOL floor; all gates are optional (no-ops when config absent).
+    _flt_cfg = _load_filter_config()
+    if _flt_cfg:
+        _direction_raw = r.get("predicted", "") or ""
+        _gap_pct_v     = r.get("gap_pct")
+        _ft_pct_v      = r.get("follow_thru_pct")
+        _fb_up         = r.get("false_break_up")
+        _fb_dn         = r.get("false_break_down")
+
+        # 1. TCS additional offset
+        _flt_tcs_offset = int(_flt_cfg.get("tcs_offset", 0))
+        if _flt_tcs_offset > 0:
+            import json as _flt_json
+            _flt_tcs_thresholds: dict = {}
+            _flt_tcs_path = os.path.join(os.path.dirname(__file__), "tcs_thresholds.json")
+            try:
+                with open(_flt_tcs_path) as _flt_f:
+                    _flt_tcs_thresholds = _flt_json.load(_flt_f)
+            except Exception:
+                pass
+            _flt_pred_low = _direction_raw.lower()
+            _flt_base = 60
+            for _flt_key, _flt_token in [
+                ("double_dist","dbl dist"), ("ntrl_extreme","ntrl extreme"),
+                ("trend_bull","bullish break"), ("trend_bull","bearish break"),
+                ("nrml_variation","nrml var"), ("neutral","neutral"),
+                ("normal","normal"), ("non_trend","non_trend"),
+            ]:
+                if _flt_token in _flt_pred_low:
+                    _flt_base = _flt_tcs_thresholds.get(_flt_key, 60)
+                    break
+            _flt_tcs_required = _flt_base + _flt_tcs_offset
+            if _tcs_val < _flt_tcs_required:
+                log.info(
+                    f"  [{ticker}] filter_config skip — TCS {_tcs_val:.0f} < "
+                    f"base {_flt_base} + offset {_flt_tcs_offset} = {_flt_tcs_required}"
+                )
+                tg_send(
+                    f"⛔ <b>{ticker} Filtered — TCS below elevated threshold</b>\n"
+                    f"TCS <b>{_tcs_val:.0f}</b> < required <b>{_flt_tcs_required:.0f}</b> "
+                    f"(+{_flt_tcs_offset} optimizer offset)"
+                )
+                _patch_skip_reason(r, ticker, "filter_config_tcs")
+                return
+
+        # 2. Gap% floor
+        _flt_gap_min = float(_flt_cfg.get("gap_min", 0.0))
+        if _flt_gap_min > 0 and _gap_pct_v is not None:
+            if abs(float(_gap_pct_v)) < _flt_gap_min:
+                log.info(
+                    f"  [{ticker}] filter_config skip — |gap%| {abs(float(_gap_pct_v)):.2f} < {_flt_gap_min}"
+                )
+                tg_send(
+                    f"⛔ <b>{ticker} Filtered — Gap below optimizer floor</b>\n"
+                    f"|gap%| <b>{abs(float(_gap_pct_v)):.2f}%</b> < floor <b>{_flt_gap_min}%</b>"
+                )
+                _patch_skip_reason(r, ticker, "filter_config_gap")
+                return
+
+        # 3. Follow-through floor (only meaningful after IB close)
+        _flt_ft_min = float(_flt_cfg.get("follow_min_pct", -999.0))
+        if _flt_ft_min > -900 and _ft_pct_v is not None:
+            if float(_ft_pct_v) < _flt_ft_min:
+                log.info(
+                    f"  [{ticker}] filter_config skip — follow_thru {float(_ft_pct_v):.2f}% < {_flt_ft_min}%"
+                )
+                tg_send(
+                    f"⛔ <b>{ticker} Filtered — Low follow-through</b>\n"
+                    f"Follow-thru <b>{float(_ft_pct_v):.2f}%</b> < floor <b>{_flt_ft_min}%</b>"
+                )
+                _patch_skip_reason(r, ticker, "filter_config_follow_thru")
+                return
+
+        # 4. Structure filter
+        _flt_struct = str(_flt_cfg.get("struct_filter", "all"))
+        if _flt_struct != "all":
+            _flt_pred_low = _direction_raw.lower()
+            _flt_is_trend   = any(t in _flt_pred_low for t in ("bullish break", "bearish break"))
+            _flt_is_extreme = any(t in _flt_pred_low for t in ("ntrl extreme", "dbl dist"))
+            _flt_pass_struct = True
+            if _flt_struct == "trend"      and not _flt_is_trend:
+                _flt_pass_struct = False
+            elif _flt_struct == "neutral"  and _flt_is_trend:
+                _flt_pass_struct = False
+            elif _flt_struct == "extreme"  and not _flt_is_extreme:
+                _flt_pass_struct = False
+            elif _flt_struct == "no_extreme" and _flt_is_extreme:
+                _flt_pass_struct = False
+            if not _flt_pass_struct:
+                log.info(
+                    f"  [{ticker}] filter_config skip — structure '{_direction_raw}' "
+                    f"excluded by struct_filter='{_flt_struct}'"
+                )
+                tg_send(
+                    f"⛔ <b>{ticker} Filtered — Structure type excluded</b>\n"
+                    f"<b>{_direction_raw}</b> is outside optimizer struct_filter=<b>{_flt_struct}</b>"
+                )
+                _patch_skip_reason(r, ticker, "filter_config_struct")
+                return
+
+        # 5. False-break exclusion
+        if _flt_cfg.get("excl_false_break") and (_fb_up or _fb_dn):
+            _fb_desc = "up+down" if (_fb_up and _fb_dn) else ("up" if _fb_up else "down")
+            log.info(f"  [{ticker}] filter_config skip — false_break_{_fb_desc} detected")
+            tg_send(
+                f"⛔ <b>{ticker} Filtered — False break detected</b>\n"
+                f"False break <b>{_fb_desc}</b> — optimizer excludes these setups"
+            )
+            _patch_skip_reason(r, ticker, "filter_config_false_break")
+            return
 
     # ── P-tier position-size multiplier ───────────────────────────────────────
     # Stack on top of IB-range mult: P3 (morning 70+) → 1.50×; P1 (intraday 70+)
