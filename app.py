@@ -21879,7 +21879,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _RFC_SENTINEL = -9999.0
         _RFC_CACHE_KEY = "rfc_bsr_cache_v2"
 
+        # MIN_TCS in paper mode = 60 (matches PAPER_TRADE_MIN_TCS env default)
+        _RFC_MIN_TCS = 60
+
         def _rfc_tcs_floor(predicted: str) -> int:
+            """Per-structure calibrated floor (morning/eod only)."""
             p = (predicted or "").lower()
             for key, tok in [
                 ("double_dist", "dbl dist"), ("ntrl_extreme", "ntrl extreme"),
@@ -21888,8 +21892,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 ("normal", "normal"), ("non_trend", "non_trend"),
             ]:
                 if tok in p:
-                    return int(_RFC_TCS_JSON.get(key, 60))
-            return 60
+                    return int(_RFC_TCS_JSON.get(key, _RFC_MIN_TCS))
+            return _RFC_MIN_TCS
 
         # ── Data load ─────────────────────────────────────────────────────────
         _rfc_col1, _rfc_col2 = st.columns([1, 4])
@@ -21960,7 +21964,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
             # ── Filter functions ──────────────────────────────────────────────
             def _rfc_passes_tcs(row, tcs_offset: int = 0) -> bool:
                 tcs = row.get("tcs")
-                return tcs is not None and float(tcs) >= _rfc_tcs_floor(row.get("predicted") or "") + tcs_offset
+                if tcs is None:
+                    return False
+                scan = (row.get("scan_type") or "morning").lower()
+                if scan == "intraday":
+                    # Bot bypasses per-struct calibration for intraday — global MIN_TCS only
+                    floor = _RFC_MIN_TCS
+                else:
+                    # Morning/EOD: calibrated per-structure threshold
+                    floor = _rfc_tcs_floor(row.get("predicted") or "")
+                return float(tcs) >= floor + tcs_offset
 
             def _rfc_passes_rvol(row, rvol_min: float = 0.0) -> bool:
                 if rvol_min <= 0:
