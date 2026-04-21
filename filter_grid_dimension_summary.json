@@ -3,7 +3,7 @@
     "label": "Structure subset",
     "values": {
       "Bearish Break + Double Distribution": {
-        "in_top_20": 3,
+        "in_top_20": 4,
         "in_top_100": 8
       },
       "Bearish Break + Double Distribution + Non-Trend": {
@@ -15,7 +15,7 @@
         "in_top_100": 8
       },
       "Bullish Break + Bearish Break + Double Distribution": {
-        "in_top_20": 1,
+        "in_top_20": 0,
         "in_top_100": 8
       },
       "Bullish Break + Bearish Break + Double Distribution + Non-Trend": {
@@ -27,7 +27,7 @@
         "in_top_100": 8
       },
       "Bullish Break + Double Distribution": {
-        "in_top_20": 6,
+        "in_top_20": 7,
         "in_top_100": 8
       },
       "Bullish Break + Double Distribution + Non-Trend": {
@@ -35,7 +35,7 @@
         "in_top_100": 8
       },
       "Bullish Break + Normal Variation + Double Distribution": {
-        "in_top_20": 1,
+        "in_top_20": 0,
         "in_top_100": 8
       },
       "Double Distribution": {
@@ -59,7 +59,7 @@
   "tcs_offset": {
     "label": "TCS offset",
     "values": {
-      "0": {
+      "15": {
         "in_top_20": 20,
         "in_top_100": 100
       }
@@ -77,9 +77,13 @@
   "gap_min": {
     "label": "Gap min %",
     "values": {
-      "5.0": {
-        "in_top_20": 20,
-        "in_top_100": 100
+      "0.0": {
+        "in_top_20": 11,
+        "in_top_100": 52
+      },
+      "2.0": {
+        "in_top_20": 9,
+        "in_top_100": 48
       }
     }
   },
@@ -95,13 +99,9 @@
   "excl_false_break": {
     "label": "Excl false-break",
     "values": {
-      "False": {
-        "in_top_20": 11,
-        "in_top_100": 52
-      },
       "True": {
-        "in_top_20": 9,
-        "in_top_100": 48
+        "in_top_20": 20,
+        "in_top_100": 100
       }
     }
   },
@@ -118,11 +118,11 @@
     "label": "Gap direction",
     "values": {
       "any": {
-        "in_top_20": 9,
+        "in_top_20": 11,
         "in_top_100": 50
       },
       "up": {
-        "in_top_20": 11,
+        "in_top_20": 9,
         "in_top_100": 50
       }
     }
@@ -130,7 +130,7 @@
   "vwap_position": {
     "label": "VWAP position",
     "values": {
-      "above": {
+      "any": {
         "in_top_20": 20,
         "in_top_100": 100
       }
@@ -140,11 +140,11 @@
     "label": "Screener pass",
     "values": {
       "any": {
-        "in_top_20": 9,
+        "in_top_20": 11,
         "in_top_100": 50
       },
       "pass": {
-        "in_top_20": 11,
+        "in_top_20": 9,
         "in_top_100": 50
       }
     }
@@ -188,7 +188,7 @@
   "day_of_week": {
     "label": "Day of week",
     "values": {
-      "mon_thu": {
+      "any": {
         "in_top_20": 20,
         "in_top_100": 100
       }
