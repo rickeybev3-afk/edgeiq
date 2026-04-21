@@ -220,6 +220,21 @@ interface ConfigSummaryState {
   error: string | null;
 }
 
+interface GridSearchStatus {
+  running: boolean;
+  started_at: string | null;
+  last_exit_code: number | null;
+  last_finished_at: string | null;
+  last_run_at: string | null;
+}
+
+interface GridSearchState {
+  status: GridSearchStatus | null;
+  triggering: boolean;
+  error: string | null;
+  toast: { kind: "success" | "error"; message: string } | null;
+}
+
 interface EodRecalcRun {
   completed_at: string;
   path: string;
@@ -238,6 +253,15 @@ interface EodRecalcHealth {
   elapsed_s?: number;
   error?: string;
   history?: EodRecalcRun[];
+}
+
+function getWriteHeaders(extra: Record<string, string> = {}): HeadersInit {
+  const secret = (import.meta.env as Record<string, string>)["VITE_DASHBOARD_WRITE_SECRET"] ?? "";
+  return {
+    "Content-Type": "application/json",
+    ...(secret ? { "X-Dashboard-Secret": secret } : {}),
+    ...extra,
+  };
 }
 
 function formatRelativeTime(isoTimestamp: string): string {
@@ -306,6 +330,7 @@ export default function Settings() {
       "backfill-heartbeat-window",
       "eod-recalc-health",
       "rvol-size-tiers",
+      "grid-search",
     ];
     const visibleSections = new Set<string>();
     const observer = new IntersectionObserver(
@@ -770,6 +795,82 @@ export default function Settings() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  const [gridSearch, setGridSearch] = useState<GridSearchState>({
+    status: null,
+    triggering: false,
+    error: null,
+    toast: null,
+  });
+
+  const gridSearchPrevRunning = useRef<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const poll = () => {
+      fetch("/api/grid-search-status")
+        .then((r) => r.json())
+        .then((data: GridSearchStatus) => {
+          if (cancelled) return;
+          const wasRunning = gridSearchPrevRunning.current;
+          const isRunning = data.running;
+          gridSearchPrevRunning.current = isRunning;
+
+          setGridSearch((s) => {
+            let toast = s.toast;
+            if (wasRunning && !isRunning && data.last_exit_code !== null) {
+              if (data.last_exit_code === 0) {
+                toast = { kind: "success", message: "Grid search completed successfully." };
+              } else {
+                toast = { kind: "error", message: `Grid search finished with exit code ${data.last_exit_code}.` };
+              }
+            }
+            return { ...s, status: data, error: null, toast };
+          });
+
+          if (intervalId !== null) clearInterval(intervalId);
+          intervalId = setInterval(poll, isRunning ? 5_000 : 60_000);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setGridSearch((s) => ({ ...s, error: "Could not reach server." }));
+          }
+        });
+    };
+
+    poll();
+    intervalId = setInterval(poll, 60_000);
+    return () => {
+      cancelled = true;
+      if (intervalId !== null) clearInterval(intervalId);
+    };
+  }, []);
+
+  const handleGridSearchRun = async () => {
+    setGridSearch((s) => ({ ...s, triggering: true, error: null, toast: null }));
+    try {
+      const res = await fetch("/api/grid-search-run", { method: "POST", headers: getWriteHeaders() });
+      const data = await res.json();
+      if (!res.ok) {
+        setGridSearch((s) => ({
+          ...s,
+          triggering: false,
+          error: data.error ?? `Server returned ${res.status}`,
+        }));
+      } else {
+        gridSearchPrevRunning.current = true;
+        setGridSearch((s) => ({
+          ...s,
+          triggering: false,
+          status: s.status ? { ...s.status, running: true, started_at: data.started_at ?? null } : null,
+        }));
+      }
+    } catch {
+      setGridSearch((s) => ({ ...s, triggering: false, error: "Could not reach server." }));
+    }
+  };
+
   function handleRvolTierAdd() {
     setRvolTiers((s) => ({
       ...s,
@@ -836,12 +937,12 @@ export default function Settings() {
   }
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history"],
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history", "#grid-search"],
     [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading, tpCalibHistory.loading]
   );
 
   useEffect(() => {
-    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history"];
+    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history", "grid-search"];
     const visibleSections = new Set<string>();
 
     const observer = new IntersectionObserver(
@@ -1276,6 +1377,7 @@ export default function Settings() {
               { id: "eod-recalc-health", label: "EOD Recalc" },
               { id: "rvol-size-tiers", label: "RVOL Tiers" },
               { id: "tp-calib-history", label: "TP Calibration" },
+              { id: "grid-search", label: "Grid Search" },
             ] as const
           ).map(({ id, label }) => (
             <NavPill
@@ -2883,6 +2985,137 @@ export default function Settings() {
                 </p>
               )}
             </>
+          )}
+        </section>
+
+        <section
+          id="grid-search"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "60px",
+            marginTop: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Grid Search
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "16px", lineHeight: "1.6" }}>
+            Run the Phase 3 filter grid search on demand — useful after a data import or parameter
+            change without waiting for the weekly Sunday schedule.
+          </p>
+
+          {gridSearch.toast && (
+            <div
+              style={{
+                marginBottom: "16px",
+                padding: "12px 14px",
+                background: gridSearch.toast.kind === "success" ? "rgba(74,222,128,0.1)" : "rgba(248,113,113,0.1)",
+                border: `1px solid ${gridSearch.toast.kind === "success" ? "#4ade80" : "#f87171"}`,
+                borderRadius: "7px",
+                color: gridSearch.toast.kind === "success" ? "#4ade80" : "#f87171",
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "10px",
+              }}
+            >
+              <span>{gridSearch.toast.kind === "success" ? "✓" : "⚠"} {gridSearch.toast.message}</span>
+              <button
+                onClick={() => setGridSearch((s) => ({ ...s, toast: null }))}
+                style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: "16px", lineHeight: 1, padding: 0, flexShrink: 0 }}
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={handleGridSearchRun}
+            disabled={gridSearch.triggering || gridSearch.status?.running === true}
+            style={{
+              padding: "9px 18px",
+              background: (gridSearch.triggering || gridSearch.status?.running) ? "#14532d" : "#166534",
+              border: "1px solid #4ade80",
+              borderRadius: "7px",
+              color: "#dcfce7",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: (gridSearch.triggering || gridSearch.status?.running) ? "not-allowed" : "pointer",
+              opacity: (gridSearch.triggering || gridSearch.status?.running) ? 0.7 : 1,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "7px",
+              transition: "opacity 0.15s",
+            }}
+          >
+            <span style={{ fontSize: "15px" }}>▶</span>
+            {gridSearch.status?.running
+              ? "Running…"
+              : gridSearch.triggering
+              ? "Starting…"
+              : "Run Now"}
+          </button>
+
+          {gridSearch.status?.running && (
+            <div style={{ marginTop: "14px", display: "flex", alignItems: "center", gap: "10px" }}>
+              <svg width="18" height="18" viewBox="0 0 18 18" style={{ animation: "spin 1s linear infinite" }}>
+                <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+                <circle cx="9" cy="9" r="7" fill="none" stroke="#4ade80" strokeWidth="2" strokeDasharray="32" strokeDashoffset="10" />
+              </svg>
+              <span style={{ fontSize: "13px", color: "#4ade80" }}>
+                Grid search running…
+                {gridSearch.status.started_at && (
+                  <span style={{ color: "#64748b", marginLeft: "8px" }}>
+                    Started {formatRelativeTime(gridSearch.status.started_at)}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+
+          {gridSearch.error && (
+            <div style={{ marginTop: "14px", padding: "12px 14px", background: "rgba(248,113,113,0.1)", border: "1px solid #f87171", borderRadius: "7px", color: "#f87171", fontSize: "13px" }}>
+              ⚠ {gridSearch.error}
+            </div>
+          )}
+
+          {gridSearch.status && !gridSearch.status.running && (
+            <div style={{ marginTop: "20px", display: "flex", flexWrap: "wrap", gap: "12px" }}>
+              {gridSearch.status.last_run_at && (
+                <div style={{ padding: "12px 16px", background: "rgba(100,116,139,0.08)", border: "1px solid rgba(100,116,139,0.3)", borderRadius: "8px", minWidth: "160px" }}>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Last completed run</div>
+                  <div style={{ fontSize: "13px", color: "#94a3b8", fontFamily: "monospace" }}>
+                    {formatRelativeTime(gridSearch.status.last_run_at)}
+                  </div>
+                </div>
+              )}
+              {gridSearch.status.last_finished_at && gridSearch.status.last_exit_code !== null && (
+                <div
+                  style={{
+                    padding: "12px 16px",
+                    background: gridSearch.status.last_exit_code === 0 ? "rgba(74,222,128,0.08)" : "rgba(248,113,113,0.08)",
+                    border: `1px solid ${gridSearch.status.last_exit_code === 0 ? "rgba(74,222,128,0.3)" : "rgba(248,113,113,0.3)"}`,
+                    borderRadius: "8px",
+                    minWidth: "160px",
+                  }}
+                >
+                  <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Session result</div>
+                  <div style={{ fontSize: "13px", fontFamily: "monospace", color: gridSearch.status.last_exit_code === 0 ? "#4ade80" : "#f87171", fontWeight: 600 }}>
+                    {gridSearch.status.last_exit_code === 0 ? "✓ Success" : `✗ Exit ${gridSearch.status.last_exit_code}`}
+                  </div>
+                  {gridSearch.status.last_finished_at && (
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px" }}>
+                      {formatRelativeTime(gridSearch.status.last_finished_at)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </section>
       </div>

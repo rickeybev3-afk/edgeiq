@@ -391,6 +391,13 @@ _db_cache_checked_at: Optional[datetime] = None
 _db_events: list = []
 _db_current_outage_start: Optional[datetime] = None
 
+# Grid search run state — protected by _grid_search_lock
+_grid_search_lock = threading.Lock()
+_grid_search_proc: Optional[object] = None          # subprocess.Popen or None
+_grid_search_started_at: Optional[str] = None       # ISO string
+_grid_search_last_exit_code: Optional[int] = None
+_grid_search_last_finished_at: Optional[str] = None
+
 
 def _send_db_alert(message: str) -> None:
     """Post a DB state-change alert to ALERT_WEBHOOK_URL; silently skipped if not configured."""
@@ -622,6 +629,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/screener-calibration":
             self._screener_calibration()
             return
+        if path == "/api/grid-search-status":
+            self._grid_search_status_get()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -684,6 +694,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/context-dryrun":
             self._context_dryrun_post()
+            return
+        if path == "/api/grid-search-run":
+            self._grid_search_run_post()
             return
         self._proxy() if streamlit_ready else self._loading()
 
@@ -2503,6 +2516,139 @@ class Handler(http.server.BaseHTTPRequestHandler):
             conn.close()
         except Exception:
             self._loading()
+
+    def _grid_search_status_get(self):
+        """Return the current state of the grid search subprocess.
+
+        Response fields:
+          running         — bool, True while the Popen process is alive
+          started_at      — ISO string or null, when the current/last run began
+          last_exit_code  — int or null, exit code of the most recent completed run
+          last_finished_at — ISO string or null
+          last_run_at     — ISO string from filter_grid_summary.json, or null
+        """
+        global _grid_search_proc, _grid_search_started_at, _grid_search_last_exit_code, _grid_search_last_finished_at
+
+        with _grid_search_lock:
+            proc = _grid_search_proc
+            started_at = _grid_search_started_at
+            if proc is not None:
+                rc = proc.poll()
+                if rc is not None:
+                    # Process finished since we last checked — capture exit code
+                    _grid_search_last_exit_code = rc
+                    _grid_search_last_finished_at = datetime.now(timezone.utc).isoformat()
+                    _grid_search_proc = None
+                    proc = None
+            running = proc is not None
+            last_exit_code = _grid_search_last_exit_code
+            last_finished_at = _grid_search_last_finished_at
+
+        # Read last_run_at from filter_grid_summary.json if it exists
+        last_run_at = None
+        summary_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_summary.json")
+        try:
+            with open(summary_path) as _f:
+                _summary = json.load(_f)
+            last_run_at = _summary.get("run_started") or _summary.get("timestamp")
+        except Exception:
+            pass
+
+        data = {
+            "running": running,
+            "started_at": started_at,
+            "last_exit_code": last_exit_code,
+            "last_finished_at": last_finished_at,
+            "last_run_at": last_run_at,
+        }
+        body = json.dumps(data).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _grid_search_run_post(self):
+        """Launch filter_grid_search.py --phase 3 as a background subprocess.
+
+        Requires the DASHBOARD_WRITE_SECRET header when the env var is set,
+        matching the same authz model used by POST /api/trading-mode.
+
+        Returns immediately with {"status": "started"} — the caller should poll
+        GET /api/grid-search-status to track completion.  Returns 409 if a run
+        is already in progress, and 404 if the script is not found.
+        """
+        import subprocess as _sp
+        import sys as _sys
+
+        global _grid_search_proc, _grid_search_started_at, _grid_search_last_exit_code, _grid_search_last_finished_at
+
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_search.py")
+        if not os.path.isfile(script):
+            body = json.dumps({"error": "filter_grid_search.py not found on server"}).encode()
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        with _grid_search_lock:
+            proc = _grid_search_proc
+            if proc is not None and proc.poll() is None:
+                body = json.dumps({"error": "A grid search is already running", "status": "already_running"}).encode()
+                self.send_response(409)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            try:
+                log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_search.log")
+                log_fh = open(log_path, "a")
+                new_proc = _sp.Popen(
+                    [_sys.executable, script, "--phase", "3"],
+                    stdout=log_fh,
+                    stderr=_sp.STDOUT,
+                    cwd=os.path.dirname(os.path.abspath(__file__)),
+                )
+                _grid_search_proc = new_proc
+                _grid_search_started_at = datetime.now(timezone.utc).isoformat()
+                _grid_search_last_exit_code = None
+                _grid_search_last_finished_at = None
+            except Exception as exc:
+                body = json.dumps({"error": f"Failed to start grid search: {exc}"}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        body = json.dumps({"status": "started", "started_at": _grid_search_started_at}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, fmt, *args):
         pass
