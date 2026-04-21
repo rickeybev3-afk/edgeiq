@@ -3807,7 +3807,11 @@ export default function Settings() {
                     ? "No archive runs stored yet."
                     : (() => {
                         const totalBytes = archiveRuns.runs.reduce((sum, r) => sum + r.size_bytes, 0);
-                        const pruneNote = archiveRuns.total > archiveKeep.runs ? ` — ${archiveRuns.total - archiveKeep.runs} would be pruned` : "";
+                        const pruneCount = archiveRuns.total > archiveKeep.runs ? archiveRuns.total - archiveKeep.runs : 0;
+                        const freedBytes = pruneCount > 0
+                          ? archiveRuns.runs.slice(archiveKeep.runs).reduce((sum, r) => sum + r.size_bytes, 0)
+                          : 0;
+                        const pruneNote = pruneCount > 0 ? ` · ${pruneCount} would be pruned · ${formatBytes(freedBytes)} would be freed` : "";
                         return `${archiveRuns.total} of ${archiveKeep.runs} runs · ${formatBytes(totalBytes)} total${pruneNote}`;
                       })()}
             </p>
