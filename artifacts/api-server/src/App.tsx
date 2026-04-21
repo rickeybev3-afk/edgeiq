@@ -1406,6 +1406,339 @@ interface ScreenerCalibState {
   error: string | null;
 }
 
+interface PdtStatusData {
+  is_paper: boolean;
+  pdt_max_day_trades: number;
+  pdt_equity_floor: number;
+  pdt_priority_tcs: number;
+  pdt_threshold: number;
+  equity?: number;
+  daytrade_count?: number;
+  day_trades_remaining?: number;
+  pdt_flagged?: boolean;
+  gate_active?: boolean;
+  gate_blocked?: boolean;
+  alpaca_error?: string;
+}
+
+function BotStatusCard({ data, loading, error }: { data: PdtStatusData | null; loading: boolean; error: string | null }) {
+  const fmtDollar = (n: number) =>
+    n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+
+  return (
+    <div
+      style={{
+        background: "#1e2435",
+        border: "1px solid #2d3748",
+        borderRadius: "10px",
+        padding: "20px 24px",
+      }}
+    >
+      <h2
+        style={{
+          fontSize: "13px",
+          fontWeight: 700,
+          color: "#94a3b8",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          marginBottom: "16px",
+          marginTop: 0,
+        }}
+      >
+        Bot Status
+      </h2>
+
+      {loading && (
+        <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>Loading…</p>
+      )}
+      {error && (
+        <p style={{ fontSize: "13px", color: "#f87171", margin: 0 }}>⚠ {error}</p>
+      )}
+
+      {!loading && !error && data && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+
+          {/* Mode badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: data.is_paper ? "#60a5fa" : "#4ade80",
+                flexShrink: 0,
+                boxShadow: data.is_paper ? "0 0 5px #60a5fa" : "0 0 5px #4ade80",
+                display: "inline-block",
+              }}
+            />
+            <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Mode</span>
+            <span
+              style={{
+                fontSize: "12px",
+                fontWeight: 700,
+                color: data.is_paper ? "#93c5fd" : "#86efac",
+                background: data.is_paper ? "rgba(96,165,250,0.12)" : "rgba(74,222,128,0.12)",
+                border: data.is_paper ? "1px solid #1d4ed8" : "1px solid #166534",
+                borderRadius: "4px",
+                padding: "2px 8px",
+              }}
+            >
+              {data.is_paper ? "Paper" : "Live"}
+            </span>
+          </div>
+
+          {/* Paper mode notice */}
+          {data.is_paper && (
+            <div
+              style={{
+                padding: "10px 14px",
+                background: "rgba(96,165,250,0.06)",
+                border: "1px solid #1e3a5f",
+                borderRadius: "8px",
+                fontSize: "12px",
+                color: "#7dd3fc",
+                lineHeight: "1.5",
+              }}
+            >
+              PDT rules are a real-money brokerage restriction and do not apply to paper accounts.
+              Day-trade slots are unlimited in paper mode.
+            </div>
+          )}
+
+          {/* Live mode detail rows */}
+          {!data.is_paper && (
+            <>
+              {/* Equity row */}
+              {data.equity != null ? (
+                <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Account Equity</span>
+                    <span
+                      style={{
+                        fontSize: "14px",
+                        fontWeight: 700,
+                        fontFamily: "monospace",
+                        color: data.equity >= data.pdt_threshold ? "#86efac" : "#fb923c",
+                      }}
+                    >
+                      {fmtDollar(data.equity)}
+                    </span>
+                  </div>
+                  {/* Progress bar toward $25k */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div
+                      style={{
+                        flex: 1,
+                        height: 5,
+                        background: "#0e1117",
+                        borderRadius: 3,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${Math.min(100, Math.round((data.equity / data.pdt_threshold) * 100))}%`,
+                          background: data.equity >= data.pdt_threshold ? "#22c55e" : "#f97316",
+                          borderRadius: 3,
+                          transition: "width 0.4s ease",
+                        }}
+                      />
+                    </div>
+                    <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap" }}>
+                      {fmtDollar(data.pdt_threshold)} PDT limit
+                    </span>
+                  </div>
+                  {data.equity < data.pdt_equity_floor && (
+                    <p style={{ fontSize: "11px", color: "#f59e0b", margin: "6px 0 0", lineHeight: "1.4" }}>
+                      ⚠ Below warning floor ({fmtDollar(data.pdt_equity_floor)})
+                    </p>
+                  )}
+                </div>
+              ) : data.alpaca_error ? (
+                <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px" }}>
+                  <p style={{ fontSize: "12px", color: "#f87171", margin: 0 }}>
+                    ⚠ Alpaca unavailable: {data.alpaca_error}
+                  </p>
+                </div>
+              ) : null}
+
+              {/* Day-trades row */}
+              {data.daytrade_count != null && (
+                <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>Day-Trades Used</span>
+                    <span
+                      style={{
+                        fontSize: "14px",
+                        fontWeight: 700,
+                        fontFamily: "monospace",
+                        color:
+                          data.gate_blocked
+                            ? "#f87171"
+                            : data.daytrade_count >= data.pdt_max_day_trades - 1
+                            ? "#f59e0b"
+                            : "#86efac",
+                      }}
+                    >
+                      {data.daytrade_count} / {data.pdt_max_day_trades}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div
+                      style={{
+                        flex: 1,
+                        height: 5,
+                        background: "#0e1117",
+                        borderRadius: 3,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${Math.min(100, Math.round((data.daytrade_count / data.pdt_max_day_trades) * 100))}%`,
+                          background:
+                            data.gate_blocked
+                              ? "#ef4444"
+                              : data.daytrade_count >= data.pdt_max_day_trades - 1
+                              ? "#f59e0b"
+                              : "#22c55e",
+                          borderRadius: 3,
+                          transition: "width 0.4s ease",
+                        }}
+                      />
+                    </div>
+                    <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap" }}>
+                      {data.day_trades_remaining} remaining · rolling 5-day
+                    </span>
+                  </div>
+                  {data.gate_blocked && (
+                    <p style={{ fontSize: "11px", color: "#f87171", margin: "6px 0 0", lineHeight: "1.4" }}>
+                      PDT block active — no new day-trade orders will be placed.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* TCS gate row */}
+              <div style={{ borderTop: "1px solid #2d3748", paddingTop: "12px", display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                <span style={{ fontSize: "14px", color: "#cbd5e1", flex: 1 }}>TCS Gate</span>
+                <div style={{ textAlign: "right" }}>
+                  {data.gate_active ? (
+                    <>
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          color: "#f59e0b",
+                          background: "rgba(245,158,11,0.1)",
+                          border: "1px solid #92400e",
+                          borderRadius: "4px",
+                          padding: "2px 8px",
+                          display: "inline-block",
+                        }}
+                      >
+                        ON — TCS ≥ {data.pdt_priority_tcs}
+                      </span>
+                      <p style={{ fontSize: "11px", color: "#94a3b8", margin: "4px 0 0", lineHeight: "1.4" }}>
+                        Quality gate active: only elite setups taken while below PDT threshold.
+                      </p>
+                    </>
+                  ) : data.gate_active === false && data.pdt_priority_tcs > 0 ? (
+                    <span
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        color: "#86efac",
+                        background: "rgba(74,222,128,0.08)",
+                        border: "1px solid #166534",
+                        borderRadius: "4px",
+                        padding: "2px 8px",
+                        display: "inline-block",
+                      }}
+                    >
+                      Gate OFF — trading all S2
+                    </span>
+                  ) : data.pdt_priority_tcs === 0 ? (
+                    <span
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        color: "#94a3b8",
+                        background: "rgba(255,255,255,0.05)",
+                        border: "1px solid #334155",
+                        borderRadius: "4px",
+                        padding: "2px 8px",
+                        display: "inline-block",
+                      }}
+                    >
+                      Disabled (PDT_PRIORITY_TCS=0)
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: "13px", color: "#475569" }}>—</span>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Config summary (always shown) */}
+          <div
+            style={{
+              borderTop: "1px solid #2d3748",
+              paddingTop: "12px",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "6px",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "11px",
+                color: "#64748b",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid #2d3748",
+                borderRadius: "4px",
+                padding: "2px 8px",
+                fontFamily: "monospace",
+              }}
+            >
+              Max DT: {data.pdt_max_day_trades}
+            </span>
+            <span
+              style={{
+                fontSize: "11px",
+                color: "#64748b",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid #2d3748",
+                borderRadius: "4px",
+                padding: "2px 8px",
+                fontFamily: "monospace",
+              }}
+            >
+              TCS floor: {data.pdt_priority_tcs > 0 ? data.pdt_priority_tcs : "off"}
+            </span>
+            <span
+              style={{
+                fontSize: "11px",
+                color: "#64748b",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid #2d3748",
+                borderRadius: "4px",
+                padding: "2px 8px",
+                fontFamily: "monospace",
+              }}
+            >
+              Warn floor: {fmtDollar(data.pdt_equity_floor)}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Home({ health }: { health: HealthState }) {
   const [credAlertsEnabled, setCredAlertsEnabled] = useState<boolean | null>(null);
   const [backfillErrorAlertsEnabled, setBackfillErrorAlertsEnabled] = useState<boolean | null>(null);
@@ -1414,6 +1747,7 @@ function Home({ health }: { health: HealthState }) {
   const [eodHistoryOpen, setEodHistoryOpen] = useState(false);
   const [eodRecalcHealth, setEodRecalcHealth] = useState<EodRecalcHealth>({ available: false, loading: true });
   const [screenerCalib, setScreenerCalib] = useState<ScreenerCalibState>({ loading: true, screeners: [], error: null });
+  const [pdtStatus, setPdtStatus] = useState<{ loading: boolean; data: PdtStatusData | null; error: string | null }>({ loading: true, data: null, error: null });
   useSecondTick(health.db_checked_at);
 
   useEffect(() => {
@@ -1516,6 +1850,26 @@ function Home({ health }: { health: HealthState }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const fetchPdtStatus = () => {
+      fetch("/api/pdt-status")
+        .then((r) => {
+          if (!r.ok) throw new Error(`Server returned ${r.status}`);
+          return r.json();
+        })
+        .then((d: PdtStatusData) => {
+          if (!cancelled) setPdtStatus({ loading: false, data: d, error: null });
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setPdtStatus({ loading: false, data: null, error: err instanceof Error ? err.message : "Failed to load" });
+        });
+    };
+    fetchPdtStatus();
+    const interval = setInterval(fetchPdtStatus, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
   const settingsBase = import.meta.env.BASE_URL.replace(/\/$/, "");
   const eodStale = eodSweep.ran_at ? isEodStale(eodSweep.ran_at) : false;
 
@@ -1554,6 +1908,12 @@ function Home({ health }: { health: HealthState }) {
             Connected and ready.
           </p>
         </div>
+
+        <BotStatusCard
+          data={pdtStatus.data}
+          loading={pdtStatus.loading}
+          error={pdtStatus.error}
+        />
 
         <div
           style={{

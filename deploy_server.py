@@ -687,6 +687,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/pdt-gated-trades":
             self._pdt_gated_trades()
             return
+        if path == "/api/pdt-status":
+            self._pdt_status()
+            return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
             rel = path.replace("/app/static/", "", 1).replace("/static/", "", 1)
@@ -1452,6 +1455,89 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
             self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _pdt_status(self):
+        """Return the current PDT (Pattern Day Trader) gate status.
+
+        Response shape:
+        {
+            "is_paper": bool,           // true if using paper Alpaca account
+            "pdt_max_day_trades": int,  // rolling-5-day slot limit (default 3)
+            "pdt_equity_floor": float,  // warning floor in $ (default 26000)
+            "pdt_priority_tcs": int,    // quality-gate TCS floor (0 = gate off)
+            "pdt_threshold": float,     // regulatory threshold ($25,000)
+            // live-only fields (omitted when is_paper=true or Alpaca unavailable):
+            "equity": float,            // current account equity
+            "daytrade_count": int,      // rolling 5-day day-trade count
+            "day_trades_remaining": int,// slots left before PDT block
+            "pdt_flagged": bool,        // Alpaca pattern_day_trader flag
+            "gate_active": bool,        // true when equity < $25k and gate TCS > 0
+            "gate_blocked": bool,       // true when daytrade_count >= limit
+            "alpaca_error": str,        // set if Alpaca call failed
+        }
+        """
+        is_paper = os.environ.get("IS_PAPER_ALPACA", "true").strip().lower() == "true"
+        try:
+            pdt_max = int(os.environ.get("PDT_MAX_DAY_TRADES", "3"))
+        except (ValueError, TypeError):
+            pdt_max = 3
+        try:
+            pdt_floor = float(os.environ.get("PDT_EQUITY_FLOOR", "26000"))
+        except (ValueError, TypeError):
+            pdt_floor = 26000.0
+        try:
+            pdt_tcs = int(os.environ.get("PDT_PRIORITY_TCS", "70"))
+        except (ValueError, TypeError):
+            pdt_tcs = 70
+        pdt_threshold = 25_000.0
+
+        data: dict = {
+            "is_paper": is_paper,
+            "pdt_max_day_trades": pdt_max,
+            "pdt_equity_floor": pdt_floor,
+            "pdt_priority_tcs": pdt_tcs,
+            "pdt_threshold": pdt_threshold,
+        }
+
+        if not is_paper:
+            alpaca_key = os.environ.get("ALPACA_API_KEY", "").strip()
+            alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+            if alpaca_key and alpaca_secret:
+                try:
+                    req = urllib.request.Request(
+                        "https://api.alpaca.markets/v2/account",
+                        headers={
+                            "APCA-API-KEY-ID": alpaca_key,
+                            "APCA-API-SECRET-KEY": alpaca_secret,
+                        },
+                    )
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        acct = json.loads(resp.read().decode())
+                    equity = float(acct.get("equity") or 0)
+                    dt_count = int(acct.get("daytrade_count") or 0)
+                    pdt_flagged = bool(acct.get("pattern_day_trader", False))
+                    gate_active = equity < pdt_threshold and pdt_tcs > 0
+                    gate_blocked = dt_count >= pdt_max or pdt_flagged
+                    data.update({
+                        "equity": equity,
+                        "daytrade_count": dt_count,
+                        "day_trades_remaining": max(0, pdt_max - dt_count),
+                        "pdt_flagged": pdt_flagged,
+                        "gate_active": gate_active,
+                        "gate_blocked": gate_blocked,
+                    })
+                except Exception as exc:
+                    data["alpaca_error"] = str(exc)
+            else:
+                data["alpaca_error"] = "Alpaca credentials not configured"
+
+        body = json.dumps(data).encode()
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
