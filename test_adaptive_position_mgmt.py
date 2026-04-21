@@ -32,6 +32,9 @@ import os
 os.environ.setdefault("ALPACA_API_KEY",    "test_key")
 os.environ.setdefault("ALPACA_SECRET_KEY", "test_secret")
 os.environ["ADAPTIVE_POSITION_MGMT"] = "1"
+# Must be set before paper_trader_bot is imported so IB_CONTEXT_ENABLED=True
+# in the cached module object (prevents test_ib_context.py interference).
+os.environ.setdefault("IB_CONTEXT_ENABLED", "1")
 
 import paper_trader_bot as _ptb
 
@@ -331,8 +334,8 @@ class TestPreOpenPositionReview(unittest.TestCase):
                             mock_cancel.assert_not_called()
 
     def test_raises_tp_when_bullish_pm_above_ib(self):
-        """Full happy-path: PM above IB high → OCO placed first with raised TP,
-        then old orders cancelled."""
+        """Full happy-path: PM above IB high → old order IDs snapshotted, OCO
+        placed with raised TP, then only old IDs cancelled (new OCO preserved)."""
         mock_sb = MagicMock()
         resp_mock = MagicMock()
         resp_mock.data = [{
@@ -346,23 +349,26 @@ class TestPreOpenPositionReview(unittest.TestCase):
             .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.limit.return_value.execute.return_value = resp_mock
 
+        old_ids = ["old-stop-1", "old-tp-1"]
+
         with self._dt_ctx():
             with patch.object(_ptb, "_supabase_client", mock_sb):
                 with patch.object(_ptb, "_alpaca_get_positions", return_value=[
                     {"symbol": "AAPL", "side": "long", "qty": "5"}
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=102.0):
-                        with patch.object(
-                            _ptb, "_alpaca_place_oco_exit",
-                            return_value={"ok": True, "order_id": "abc123"},
-                        ) as mock_oco:
-                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=2) as mock_cancel:
-                                with patch.object(_ptb, "tg_send"):
-                                    _ptb._pre_open_position_review()
+                        with patch.object(_ptb, "_alpaca_get_open_order_ids", return_value=old_ids):
+                            with patch.object(
+                                _ptb, "_alpaca_place_oco_exit",
+                                return_value={"ok": True, "order_id": "abc123"},
+                            ) as mock_oco:
+                                with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=2) as mock_cancel:
+                                    with patch.object(_ptb, "tg_send"):
+                                        _ptb._pre_open_position_review()
 
-        # OCO is placed, then old orders cancelled
+        # OCO placed first, then only the PRE-EXISTING old_ids cancelled
         mock_oco.assert_called_once()
-        mock_cancel.assert_called_once_with("AAPL")
+        mock_cancel.assert_called_once_with("AAPL", specific_ids=old_ids)
         # TP should be 104 + 0.5*2 = 105; stop unchanged = 98
         kw = mock_oco.call_args.kwargs
         self.assertAlmostEqual(kw["tp_price"],   105.0, places=2)
@@ -370,8 +376,8 @@ class TestPreOpenPositionReview(unittest.TestCase):
         self.assertEqual(kw["exit_side"], "sell")
 
     def test_tightens_stop_when_bearish_pm_inside_ib(self):
-        """Bearish position with PM inside IB → OCO placed first (stop → IB mid),
-        then old orders cancelled."""
+        """Bearish position with PM inside IB → old IDs snapshotted, OCO placed
+        (stop → IB mid), then only old IDs cancelled (new OCO preserved)."""
         mock_sb = MagicMock()
         resp_mock = MagicMock()
         resp_mock.data = [{
@@ -385,23 +391,26 @@ class TestPreOpenPositionReview(unittest.TestCase):
             .eq.return_value.eq.return_value.eq.return_value \
             .is_.return_value.limit.return_value.execute.return_value = resp_mock
 
+        old_ids = ["old-stop-spy-1", "old-limit-spy-1"]
+
         with self._dt_ctx():
             with patch.object(_ptb, "_supabase_client", mock_sb):
                 with patch.object(_ptb, "_alpaca_get_positions", return_value=[
                     {"symbol": "SPY", "side": "short", "qty": "10"}
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=100.5):
-                        with patch.object(
-                            _ptb, "_alpaca_place_oco_exit",
-                            return_value={"ok": True, "order_id": "xyz456"},
-                        ) as mock_oco:
-                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1) as mock_cancel:
-                                with patch.object(_ptb, "tg_send"):
-                                    _ptb._pre_open_position_review()
+                        with patch.object(_ptb, "_alpaca_get_open_order_ids", return_value=old_ids):
+                            with patch.object(
+                                _ptb, "_alpaca_place_oco_exit",
+                                return_value={"ok": True, "order_id": "xyz456"},
+                            ) as mock_oco:
+                                with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=1) as mock_cancel:
+                                    with patch.object(_ptb, "tg_send"):
+                                        _ptb._pre_open_position_review()
 
         mock_oco.assert_called_once()
-        # Old orders cancelled AFTER successful OCO placement
-        mock_cancel.assert_called_once_with("SPY")
+        # Only old IDs cancelled; new OCO legs are NOT included
+        mock_cancel.assert_called_once_with("SPY", specific_ids=old_ids)
         kw = mock_oco.call_args.kwargs
         # ib_mid = (101+99)/2 = 100; stop → 100
         self.assertAlmostEqual(kw["stop_price"], 100.0, places=2)
@@ -429,13 +438,14 @@ class TestPreOpenPositionReview(unittest.TestCase):
                     {"symbol": "AAPL", "side": "long", "qty": "5"}
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=102.0):
-                        with patch.object(
-                            _ptb, "_alpaca_place_oco_exit",
-                            return_value={"ok": False, "error": "HTTP 422"},
-                        ):
-                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker") as mock_cancel:
-                                with patch.object(_ptb, "tg_send") as mock_tg:
-                                    _ptb._pre_open_position_review()
+                        with patch.object(_ptb, "_alpaca_get_open_order_ids", return_value=["old-1"]):
+                            with patch.object(
+                                _ptb, "_alpaca_place_oco_exit",
+                                return_value={"ok": False, "error": "HTTP 422"},
+                            ):
+                                with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker") as mock_cancel:
+                                    with patch.object(_ptb, "tg_send") as mock_tg:
+                                        _ptb._pre_open_position_review()
 
         self.assertTrue(any("OCO Failed" in str(c) for c in mock_tg.call_args_list))
         # DB update should NOT have been called
@@ -470,13 +480,14 @@ class TestPreOpenPositionReview(unittest.TestCase):
                     {"symbol": "NVDA", "side": "long", "qty": "2"}
                 ]):
                     with patch.object(_ptb, "_fetch_pm_last_price", return_value=102.0):
-                        with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=2):
-                            with patch.object(
-                                _ptb, "_alpaca_place_oco_exit",
-                                return_value={"ok": True, "order_id": "def789"},
-                            ):
-                                with patch.object(_ptb, "tg_send"):
-                                    _ptb._pre_open_position_review()
+                        with patch.object(_ptb, "_alpaca_get_open_order_ids", return_value=["nvda-old-1"]):
+                            with patch.object(_ptb, "_alpaca_cancel_orders_for_ticker", return_value=2):
+                                with patch.object(
+                                    _ptb, "_alpaca_place_oco_exit",
+                                    return_value={"ok": True, "order_id": "def789"},
+                                ):
+                                    with patch.object(_ptb, "tg_send"):
+                                        _ptb._pre_open_position_review()
 
         # Verify DB update was called with mgmt_mode='adaptive'
         mock_sb.table.return_value.update.assert_called_once()

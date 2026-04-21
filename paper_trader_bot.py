@@ -2122,8 +2122,14 @@ def _alpaca_get_positions() -> list:
     return []
 
 
-def _alpaca_cancel_orders_for_ticker(ticker: str) -> int:
-    """Cancel all open orders for a ticker. Returns count cancelled."""
+def _alpaca_get_open_order_ids(ticker: str) -> list:
+    """Return a list of open Alpaca order IDs for *ticker* without cancelling them.
+
+    Used by adaptive-management code to snapshot existing bracket-leg IDs
+    before placing a replacement OCO, so the cancel step can target only
+    the pre-existing legs (not the newly placed ones).
+    Returns an empty list on any error.
+    """
     base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
     headers = {
         "APCA-API-KEY-ID":     ALPACA_API_KEY,
@@ -2138,11 +2144,42 @@ def _alpaca_cancel_orders_for_ticker(ticker: str) -> int:
             timeout=8,
         )
         if resp.status_code != 200:
-            return 0
-        orders = resp.json() or []
+            return []
+        return [o["id"] for o in (resp.json() or []) if o.get("id")]
+    except Exception as _e:
+        log.warning(f"[AdaptiveMgmt] get_open_order_ids error for {ticker}: {_e}")
+    return []
+
+
+def _alpaca_cancel_orders_for_ticker(ticker: str, specific_ids: list | None = None) -> int:
+    """Cancel open orders for a ticker.
+
+    When *specific_ids* is provided cancel exactly those order IDs (no extra
+    API listing call).  When *specific_ids* is None, fetch all open orders for
+    the ticker and cancel them all (original behaviour — used by trailing-stop
+    logic).  Returns count of successfully cancelled orders.
+    """
+    base = "https://paper-api.alpaca.markets" if IS_PAPER_ALPACA else "https://api.alpaca.markets"
+    headers = {
+        "APCA-API-KEY-ID":     ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+    }
+    try:
+        import requests as _req
+        if specific_ids is not None:
+            ids_to_cancel = [i for i in specific_ids if i]
+        else:
+            resp = _req.get(
+                f"{base}/v2/orders",
+                headers=headers,
+                params={"status": "open", "symbols": ticker.upper(), "limit": 50},
+                timeout=8,
+            )
+            if resp.status_code != 200:
+                return 0
+            ids_to_cancel = [o.get("id", "") for o in (resp.json() or [])]
         cancelled = 0
-        for o in orders:
-            oid = o.get("id", "")
+        for oid in ids_to_cancel:
             if not oid:
                 continue
             dr = _req.delete(f"{base}/v2/orders/{oid}", headers=headers, timeout=8)
@@ -6607,9 +6644,14 @@ def _pre_open_position_review() -> None:
             f"{ib_high if 'Bullish' in direction else ib_low:.2f})"
         )
 
-        # ── Place new OCO exit order FIRST (before cancelling anything) ─────────
-        # Placing before cancellation means the original bracket legs remain
-        # active and protecting the position if the new OCO order is rejected.
+        # ── Snapshot existing bracket-leg IDs before touching anything ────────
+        # We record these NOW so the post-placement cancel step can target
+        # only the original legs and never accidentally cancel the new OCO legs.
+        old_order_ids = _alpaca_get_open_order_ids(ticker)
+
+        # ── Place new OCO exit order ──────────────────────────────────────────
+        # Position remains fully protected by original bracket during placement.
+        # If OCO is rejected, we skip (original bracket untouched).
         exit_side = "sell" if "Bullish" in direction else "buy"
         oca_res = _alpaca_place_oco_exit(
             ticker=ticker,
@@ -6632,13 +6674,18 @@ def _pre_open_position_review() -> None:
             )
             continue
 
-        # ── OCO placed successfully — now cancel the old bracket legs ─────────
+        # ── OCO confirmed — cancel only the PRE-EXISTING bracket legs ─────────
+        # We pass the snapshot IDs so we never cancel the new OCO's own legs,
+        # even if they appear in a subsequent open-orders listing.
         try:
-            cancelled = _alpaca_cancel_orders_for_ticker(ticker)
-            log.info(f"[AdaptiveMgmt] {ticker} — cancelled {cancelled} old order(s) after new OCO confirmed")
+            cancelled = _alpaca_cancel_orders_for_ticker(ticker, specific_ids=old_order_ids)
+            log.info(
+                f"[AdaptiveMgmt] {ticker} — cancelled {cancelled} original order(s) "
+                f"(preserved new OCO legs)"
+            )
         except Exception as _ce:
-            # New OCO is already in place; old orders failing to cancel is
-            # non-fatal — they will be rejected when position closes.
+            # New OCO is already active — old legs failing to cancel is non-fatal;
+            # they will be auto-rejected by Alpaca when the OCO fills first.
             log.warning(f"[AdaptiveMgmt] {ticker} — could not cancel old orders (non-fatal): {_ce}")
 
         new_order_id = oca_res.get("order_id", "")
