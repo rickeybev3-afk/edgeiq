@@ -687,30 +687,29 @@ export default function Settings() {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  const fetchArchiveRuns = () => {
+    setArchiveRuns((s) => ({ ...s, loading: true, error: null }));
     fetch("/api/archive-runs")
       .then((r) => {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();
       })
       .then((data) => {
-        if (!cancelled) {
-          setArchiveRuns({
-            runs: Array.isArray(data.runs) ? data.runs : [],
-            total: typeof data.total === "number" ? data.total : 0,
-            loading: false,
-            error: null,
-          });
-        }
+        setArchiveRuns({
+          runs: Array.isArray(data.runs) ? data.runs : [],
+          total: typeof data.total === "number" ? data.total : 0,
+          loading: false,
+          error: null,
+        });
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          const msg = err instanceof Error ? err.message : "Could not load archive runs.";
-          setArchiveRuns((s) => ({ ...s, loading: false, error: msg }));
-        }
+        const msg = err instanceof Error ? err.message : "Could not load archive runs.";
+        setArchiveRuns((s) => ({ ...s, loading: false, error: msg }));
       });
-    return () => { cancelled = true; };
+  };
+
+  useEffect(() => {
+    fetchArchiveRuns();
   }, []);
 
   const [backfillHealth, setBackfillHealth] = useState<BackfillHealth>({ available: false, loading: true });
@@ -1540,6 +1539,7 @@ export default function Settings() {
         saved: true,
       }));
       fetchConfig();
+      fetchArchiveRuns();
       setTimeout(() => setArchiveKeep((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -1569,6 +1569,7 @@ export default function Settings() {
         saved: true,
       }));
       fetchConfig();
+      fetchArchiveRuns();
       setTimeout(() => setArchiveKeep((s) => ({ ...s, saved: false })), 3000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
