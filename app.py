@@ -37098,18 +37098,64 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
                     result.append(base)
             return result
 
+        # ── Mode filter ───────────────────────────────────────────────────────
+        _pt_mode_options = ["All", "Fixed", "Adaptive"]
+        _pt_mode_filter_col, _pt_sim_filter_col = st.columns([1, 2])
+        with _pt_mode_filter_col:
+            _pt_mode_filter = st.selectbox(
+                "Mode",
+                options=_pt_mode_options,
+                index=0,
+                key="pt_log_mode_filter",
+                help="Filter the trade log to Fixed (static stop/target) or Adaptive (dynamic exits) trades only",
+            ) if _pt_log_has_mgmt_mode else "All"
+
+        if _pt_log_has_mgmt_mode and _pt_mode_filter != "All":
+            _pt_log_show = _pt_log_show[
+                _pt_log_show["Mode"] == _pt_mode_filter
+            ].reset_index(drop=True)
+
         _pt_sim_filter = False
-        if _pt_log_has_sim_col:
-            _pt_sim_filter = st.checkbox(
-                "⚠ Show sim failures only",
-                value=False,
-                key="pt_log_sim_filter",
-                help="When checked, only rows with a missing-sim annotation are shown",
-            )
-            if _pt_sim_filter:
-                _pt_log_show = _pt_log_show[
-                    _pt_log_show["Sim"].str.startswith("⚠ No sim")
-                ].reset_index(drop=True)
+        with _pt_sim_filter_col:
+            if _pt_log_has_sim_col:
+                _pt_sim_filter = st.checkbox(
+                    "⚠ Show sim failures only",
+                    value=False,
+                    key="pt_log_sim_filter",
+                    help="When checked, only rows with a missing-sim annotation are shown",
+                )
+                if _pt_sim_filter:
+                    _pt_log_show = _pt_log_show[
+                        _pt_log_show["Sim Outcome"].str.startswith("⚠ No sim")
+                    ].reset_index(drop=True)
+
+        # ── KPI mini-row (reflects active mode + sim filter) ──────────────────
+        _pt_kpi_wl = (
+            _pt_log_show["win_loss"].dropna()
+            if "win_loss" in _pt_log_show.columns
+            else pd.Series(dtype=str)
+        )
+        _pt_kpi_wins   = int(_pt_kpi_wl.isin(WIN_ALIASES).sum())
+        _pt_kpi_losses = int(_pt_kpi_wl.isin(LOSS_ALIASES).sum())
+        _pt_kpi_total  = len(_pt_log_show)
+        _pt_kpi_resolved = _pt_kpi_wins + _pt_kpi_losses
+        _pt_kpi_wr     = (_pt_kpi_wins / _pt_kpi_resolved * 100) if _pt_kpi_resolved > 0 else None
+        _pt_kpi_avg_r  = None
+        if _pt_log_has_sim_pnl and "Sim P&L (R)" in _pt_log_show.columns:
+            _pt_kpi_r_vals = pd.to_numeric(_pt_log_show["Sim P&L (R)"], errors="coerce").dropna()
+            _pt_kpi_avg_r = _pt_kpi_r_vals.mean() if len(_pt_kpi_r_vals) > 0 else None
+
+        _pt_kpi_cols = st.columns(4)
+        _pt_kpi_cols[0].metric("Trades", _pt_kpi_total)
+        _pt_kpi_cols[1].metric("Wins", _pt_kpi_wins)
+        _pt_kpi_cols[2].metric(
+            "Win Rate",
+            f"{_pt_kpi_wr:.1f}%" if _pt_kpi_wr is not None else "—",
+        )
+        _pt_kpi_cols[3].metric(
+            "Avg Sim R",
+            f"{_pt_kpi_avg_r:+.2f}R" if _pt_kpi_avg_r is not None else "—",
+        )
 
         _pt_col_cfg = {}
         if _pt_log_has_mgmt_mode:
@@ -37140,7 +37186,12 @@ def render_paper_trade_tab(api_key: str = "", secret_key: str = ""):
             hide_index=True,
             column_config=_pt_col_cfg if _pt_col_cfg else None,
         )
-        _pt_caption_suffix = " · ⚠ Sim-failure filter active" if (_pt_log_has_sim_col and _pt_sim_filter) else ""
+        _pt_caption_parts = []
+        if _pt_log_has_mgmt_mode and _pt_mode_filter != "All":
+            _pt_caption_parts.append(f"Mode: {_pt_mode_filter}")
+        if _pt_log_has_sim_col and _pt_sim_filter:
+            _pt_caption_parts.append("⚠ Sim-failure filter active")
+        _pt_caption_suffix = (" · " + " · ".join(_pt_caption_parts)) if _pt_caption_parts else ""
         st.caption(
             f"Showing {len(_pt_log_show)} paper trades from last 21 days · "
             "Only TCS-filtered qualifying setups are stored here"
