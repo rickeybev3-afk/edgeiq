@@ -1468,6 +1468,9 @@ def _detect_double_distribution(bin_centers, vap, min_bin_sep=15):
         # Must be at least 15 bins apart
         if (pk2 - pk1) < min_bin_sep:
             continue
+        # Must have a price gap of at least $0.15 between the two HVN peaks
+        if len(bin_centers) > pk2 and (bin_centers[pk2] - bin_centers[pk1]) < 0.15:
+            continue
         # Both peaks must qualify as strong HVNs
         if not (_is_strong_hvn(pk1, vap) and _is_strong_hvn(pk2, vap)):
             continue
@@ -4437,7 +4440,7 @@ def compute_ib_volume_stats(df, ib_high, ib_low):
 # ║  the entire signal engine and all downstream scoring.                        ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
-                           avg_daily_vol=None):
+                           avg_daily_vol=None, avg_ib_range=None):
     """7-structure classification using the exact IB-interaction decision tree.
 
     Decision tree (mirrors the video framework):
@@ -4481,9 +4484,9 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
 
     # Where did the close land in the day's range? (0 = at low, 1 = at high)
     close_pct       = (final_price - day_low) / total_range if total_range > 0 else 0.5
-    # "At extreme" = top or bottom 20% of day range
-    at_high_extreme = close_pct >= 0.80
-    at_low_extreme  = close_pct <= 0.20
+    # "At extreme" = top or bottom 10% of day range (tightened from 20%)
+    at_high_extreme = close_pct >= 0.90
+    at_low_extreme  = close_pct <= 0.10
     at_extreme      = at_high_extreme or at_low_extreme
 
     # Early IB violation (first 2 hrs of regular session)
@@ -4509,15 +4512,17 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
         detail  = (f"HVNs at ${bin_centers[pk1]:.2f} ({pct1:.0f}% vol) & "
                    f"${bin_centers[pk2]:.2f} ({pct2:.0f}% vol). "
                    f"LVN at ${lvn_price:.2f} (${sep_price:.2f} gap).")
-        insight = (f"Two separate auctions detected. LVN at ${lvn_price:.2f} separates the "
-                   f"two value areas — expect rapid, high-momentum moves through it. "
-                   f"Gap Fill toward the opposing HVN is the primary target.")
+        insight = (f"Two separate auctions confirmed — LVN at ${lvn_price:.2f} separates the "
+                   f"two value areas (${sep_price:.2f} price gap, ≥$0.15 required). "
+                   f"Expect rapid high-momentum moves through the LVN. "
+                   f"Gap fill toward the opposing HVN is the primary target.")
         return ("⚡ Double Distribution", "#00bcd4", detail, insight)
 
     # ── STEP 2: No IB break → Normal or Non-Trend ─────────────────────────────
     if no_break:
         # Non-Trend: narrow IB + low volume interest (holiday, eve-of-news, etc.)
-        is_narrow_ib = ib_range < 0.20 * total_range
+        _nt_ref_range = avg_ib_range if (avg_ib_range and avg_ib_range > 0) else total_range
+        is_narrow_ib = ib_range < 0.20 * _nt_ref_range
         total_vol = float(df["volume"].sum())
         if avg_daily_vol and avg_daily_vol > 0:
             pace     = (total_vol / max(1, len(df))) * 390.0
@@ -4529,9 +4534,10 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
             detail  = (f"IB ${ib_range:.2f} = {ib_range/total_range*100:.0f}% of day range. "
                        f"IB volume {ib_vol_pct*100:.0f}% of session total. "
                        f"Volume participation is anemic — no institutional interest.")
-            insight = (f"Tight initial balance with {ib_vol_pct*100:.0f}% of session volume "
-                       f"inside the opening range signals no institutional interest. "
-                       f"Avoid chasing breakouts. Wait for a volume-backed catalyst.")
+            insight = (f"IB range is less than 20% of the 10-day average IB — "
+                       f"tight opening balance with {ib_vol_pct*100:.0f}% of session volume inside. "
+                       f"No institutional interest detected. "
+                       f"Avoid chasing breakouts; wait for a volume-backed catalyst.")
             return ("😴 Non-Trend", "#78909c", detail, insight)
 
         # Normal: wide IB set by large players in first hour, never violated
@@ -4556,23 +4562,25 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
             detail  = (f"Both IB extremes tested. Price closing at day's {side} "
                        f"(${final_price:.2f}, top {close_pct*100:.0f}% of range) — "
                        f"late-session dominance confirmed.")
-            insight = (f"Both sides of the IB were probed, then one side took over. "
-                       f"Late-session conviction pushed the close to the "
-                       f"{'top' if at_high_extreme else 'bottom'} 20% of the day range. "
+            insight = (f"Both IB extremes hit — then one side took firm control. "
+                       f"Close within the {'top' if at_high_extreme else 'bottom'} 10% of the day range "
+                       f"(${final_price:.2f}, {close_pct*100:.0f}% of range) confirms late-session dominance. "
                        f"This pattern frequently resolves with a "
                        f"{'gap up' if at_high_extreme else 'gap down'} next morning. "
-                       f"Key level: ${extreme_lvl:.2f}.")
+                       f"Key level to hold: ${extreme_lvl:.2f}.")
             return ("⚡ Neutral Extreme", "#7e57c2", detail, insight)
         else:
-            # Closes anywhere that is NOT at the extreme = Neutral
-            # (back inside IB, between IB and extreme band, or middle of range)
+            # Neutral: both sides touched, close back inside (or near) the IB range
             pct_inside = float(((df["close"] >= ib_low) & (df["close"] <= ib_high)).mean()) * 100
-            detail  = (f"Both IB extremes tested. Close at ${final_price:.2f} "
+            _back_inside = ib_low <= final_price <= ib_high
+            _inside_str  = "price closed back inside the IB range" if _back_inside else f"close at ${final_price:.2f}, outside IB but not at extreme"
+            detail  = (f"Both IB extremes tested. {_inside_str.capitalize()} "
                        f"({close_pct*100:.0f}% of day range) — neither side dominated.")
-            insight = (f"Coast-to-coast action with no winner — a classic Neutral day. "
-                       f"Large players on both sides active but not far off on value. "
-                       f"Price gravitates back toward POC ${poc_price:.2f}. "
-                       f"Fade the extremes; avoid chasing direction into the close.")
+            insight = (f"Coast-to-coast action with no dominant side — classic Neutral. "
+                       f"{'Price closed back inside the IB range' if _back_inside else 'Price outside IB but not at extreme'}, "
+                       f"confirming no directional conviction. "
+                       f"Value area gravitates back toward POC ${poc_price:.2f}. "
+                       f"Fade both extremes; best entries near IB boundaries.")
             return ("🔄 Neutral", "#80cbc4", detail, insight)
 
     # ── STEP 4: ONE side only broken → Trend Day or Normal Variation ──────────
@@ -4585,7 +4593,7 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
     is_trend = (
         ((viol_early_up   and at_high_extreme and bullish) or
          (viol_early_down and at_low_extreme  and not bullish))
-        and (dist_from_ib > 1.0 * atr or directional_vol)
+        and (dist_from_ib > 2.0 * atr or directional_vol)
     )
 
     if is_trend:
@@ -4594,7 +4602,8 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
         detail  = (f"{direction} Trend — IB {'High' if bullish else 'Low'} violated early, "
                    f"price {dist_atr:.1f}× ATR outside IB. "
                    f"{ib_vol_pct*100:.0f}% of volume inside IB — directional flow.{confirmed}")
-        insight = (f"Strong directional conviction from the open — only ONE IB side ever touched. "
+        insight = (f"Strong directional conviction — only ONE IB side touched, "
+                   f"and price closed {dist_atr:.1f}× ATR from the IB boundary (≥2× required). "
                    f"{'Buyers' if bullish else 'Sellers'} dominated all session. "
                    f"Trend continuation is the high-probability path. "
                    f"Add on pullbacks to POC ${poc_price:.2f}; avoid fading.")
@@ -4602,16 +4611,33 @@ def classify_day_structure(df, bin_centers, vap, ib_high, ib_low, poc_price,
         return (lbl, "#ff9800", detail, insight)
 
     # Normal Variation: one side broken, but not a full trend
+    # Detect belly: % of post-break bars within ±0.5 ATR band of the broken IB level
+    _break_level  = ib_high if bullish else ib_low
+    _break_time   = df.index[0].replace(hour=10, minute=30)  # after IB forms
+    _post_break   = df[df.index > _break_time]
+    _belly_band   = 0.5 * atr
+    if not _post_break.empty and _belly_band > 0:
+        _in_belly = ((_post_break["close"] >= _break_level - _belly_band) &
+                     (_post_break["close"] <= _break_level + _belly_band))
+        _belly_pct = float(_in_belly.mean()) * 100
+    else:
+        _belly_pct = 0.0
+    _belly_str = (f"New belly forming around ${_break_level:.2f} "
+                  f"({_belly_pct:.0f}% of post-break bars within ±${_belly_band:.2f})."
+                  if _belly_pct >= 30 else "")
     direction = "Up" if bullish else "Down"
     detail  = (f"IB {'High' if bullish else 'Low'} "
                f"${ib_high if bullish else ib_low:.2f} breached; "
                f"opposite side ${ib_low if bullish else ib_high:.2f} held. "
-               f"Close at ${final_price:.2f} ({close_pct*100:.0f}% of range).")
+               f"Close at ${final_price:.2f} ({close_pct*100:.0f}% of range). {_belly_str}")
     insight = (f"{'Buyers' if bullish else 'Sellers'} pushed outside the opening range "
-               f"but didn't sustain a full trend. "
-               f"New value area forming {'above' if bullish else 'below'} "
-               f"${ib_high if bullish else ib_low:.2f}. "
-               f"Watch for acceptance or rejection at that level.")
+               f"but didn't sustain a full Trend Day (price < 2 ATR from IB boundary). "
+               + (f"A new value belly is consolidating around ${_break_level:.2f} — "
+                  f"watch for acceptance above that level as a continuation signal. "
+                  if _belly_pct >= 30 else
+                  f"No sustained belly yet — price still probing. "
+                  f"Watch for acceptance or rejection at ${_break_level:.2f}. ")
+               + f"POC ${poc_price:.2f} is the magnet if this fails.")
     return (f"📊 Normal Variation ({direction})", "#aed581" if bullish else "#ffab91",
             detail, insight)
 
@@ -4663,7 +4689,7 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
 
     # Close position in day range (0 = at low, 1 = at high)
     close_pct   = (final_price - day_low) / total_range if total_range > 0 else 0.5
-    at_extreme  = close_pct >= 0.80 or close_pct <= 0.20   # top/bottom 20% of range
+    at_extreme  = close_pct >= 0.90 or close_pct <= 0.10   # top/bottom 10% of range
 
     # Early IB violation — only meaningful for one-side-only days
     two_hr_end  = df.index[0].replace(hour=11, minute=30)
@@ -4700,7 +4726,7 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
     # Trend / Normal Variation / Dbl Dist → only score when ONE side broken
     if one_side:
         # Trend: early break, close at extreme, directional volume
-        trend_strength = 5.0 + max(0.0, (dist_ib / max(atr, 0.01) - 1.0) * 25.0)
+        trend_strength = 5.0 + max(0.0, (dist_ib / max(atr, 0.01) - 2.0) * 25.0)
         is_trend_day   = viol_early and at_extreme
         s_trend   = trend_strength * ib_trend_boost if is_trend_day else 4.0
         s_nrml_var= 4.0 if is_trend_day else (40.0 * (0.7 + 0.6 * (1.0 - ib_vol_pct)))

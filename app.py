@@ -5810,11 +5810,12 @@ def render_structure_banner(label, color, detail, probs, tcs,
     # Key Insights box — separate call so Streamlit's markdown parser doesn't escape inner HTML
     if insight:
         st.markdown(
-            f'<div style="margin-top:6px; background:#1a2744; border-left:3px solid {color}99;'
-            f' border-radius:5px; padding:9px 14px;">'
-            f'<span style="font-size:10px; color:#888; text-transform:uppercase;'
-            f' letter-spacing:1px; font-weight:600;">KEY INSIGHTS</span><br>'
-            f'<span style="font-size:13px; color:#d0d8f0; line-height:1.55;">{insight}</span>'
+            f'<div style="margin-top:8px; background:rgba(255,255,255,0.04);'
+            f' border-left:4px solid {color}; border-radius:6px; padding:10px 16px;'
+            f' box-shadow: inset 0 0 0 1px {color}22;">'
+            f'<span style="font-size:11px; font-weight:700; color:{color};'
+            f' letter-spacing:0.5px;">💡 Key Insight</span><br>'
+            f'<span style="font-size:13px; color:#d0d8f0; line-height:1.6;">{insight}</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -22380,7 +22381,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             #   P1 = Intraday TCS 70+   P2 = Morning TCS 70+
             #   P3 = Intraday TCS 50-69  P4 = Morning TCS 50-69
             def _ssd_sys1(r):
-                return (r.get("tcs") or 0) >= 50
+                return (r.get("tcs") or 0) >= 60
 
             # System 2: Phase 3 Grid Search Best — gap ≥ 2%, no RVOL gate
             def _ssd_sys2(r):
@@ -22434,7 +22435,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _s3s = _ssd_stats(_ssd_s3)
 
             _ssd_systems = [
-                ("🔴 System 1", "P1–P4 Old Bot\n(TCS ≥ 50, all scans)", "#ef5350", _s1s),
+                ("🔴 System 1", "P1–P4 Old Bot\n(TCS ≥ 60, all scans)", "#ef5350", _s1s),
                 ("🟡 System 2", "Phase 3 Best\n(gap ≥ 2%, no RVOL gate)", "#ffd54f", _s2s),
                 ("🟢 System 3", "Combined\n(S1 OR S2, deduped)", "#66bb6a", _s3s),
             ]
@@ -22447,7 +22448,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             )
             st.caption(
                 "System 1 = P1🔴 Intraday TCS 70+  ·  P2🟠 Morning TCS 70+  ·  "
-                "P3🟡 Intraday TCS 50–69  ·  P4🟢 Morning TCS 50–69  |  "
+                "P3🟡 Intraday TCS 60–69  ·  P4🟢 Morning TCS 60–69  (base: TCS ≥ 60)  |  "
                 "System 2 = Phase 3 grid search best combo (gap ≥ 2%)  |  "
                 "System 3 = Union of both"
             )
