@@ -22001,7 +22001,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 _rfc_raw, _rfc_off = [], 0
                 _rfc_cols_sel = (
                     "ticker,sim_date,predicted,tcs,rvol,gap_pct,"
-                    "tiered_pnl_r,scan_type,screener_pass"
+                    "tiered_pnl_r,eod_pnl_r,pnl_r_sim,scan_type,screener_pass"
                 )
                 while True:
                     try:
@@ -22051,6 +22051,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
         else:
             _rfc_trading_days = len(set(r.get("sim_date", "") for r in _rfc_all if r.get("sim_date")))
             _rfc_weeks = max(_rfc_trading_days / 5, 1)
+
+            # ── Exit lens ─────────────────────────────────────────────────────
+            _rfc_lens = st.radio(
+                "Exit lens",
+                ["Tiered (P1-P4)", "EOD (hold to close)", "Raw Sim (MFE ceiling)"],
+                key="_rfc_lens",
+                horizontal=True,
+            )
+            _rfc_r_col = {
+                "Tiered (P1-P4)":        "tiered_pnl_r",
+                "EOD (hold to close)":   "eod_pnl_r",
+                "Raw Sim (MFE ceiling)": "pnl_r_sim",
+            }[_rfc_lens]
 
             # ── Filter functions ──────────────────────────────────────────────
             def _rfc_passes_tcs(row, tcs_offset: int = 0) -> bool:
@@ -22117,10 +22130,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 return out
 
             # ── Stats computation ─────────────────────────────────────────────
-            def _rfc_stats(rows, label: str) -> dict | None:
+            def _rfc_stats(rows, label: str, r_col: str = "tiered_pnl_r") -> dict | None:
                 if not rows:
                     return None
-                vals = [float(r["tiered_pnl_r"]) for r in rows]
+                vals = [float(r[r_col]) for r in rows if r.get(r_col) is not None]
                 a = _rfc_np.array(vals, dtype=float)
                 n = len(a)
                 if n < 10:
@@ -22153,7 +22166,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
 
             # ── Compounding simulation ────────────────────────────────────────
-            def _rfc_compound(rows, start_eq=7000.0, base_1r=150.0, cap_x=20.0):
+            def _rfc_compound(rows, r_col: str = "tiered_pnl_r", start_eq=7000.0, base_1r=150.0, cap_x=20.0):
                 if not rows:
                     return {}
                 sorted_rows = sorted(rows, key=lambda r: r.get("sim_date") or "")
@@ -22171,7 +22184,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 by_date: dict = {}
                 for r in sorted_rows:
                     d = r.get("sim_date", "")
-                    by_date.setdefault(d, []).append(float(r["tiered_pnl_r"]))
+                    _v = r.get(r_col)
+                    if _v is None:
+                        continue
+                    try:
+                        by_date.setdefault(d, []).append(float(_v))
+                    except Exception:
+                        continue
                 for d in all_dates:
                     cf = min(eq / start_eq, cap_x)
                     actual_1r = base_1r * cf
@@ -22251,10 +22270,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _rfc_table_rows = []
             _rfc_cmp_results = {}
             for _rfc_lbl, _rfc_vrows in _rfc_variants:
-                _s = _rfc_stats(_rfc_vrows, _rfc_lbl)
+                _s = _rfc_stats(_rfc_vrows, _rfc_lbl, _rfc_r_col)
                 if not _s:
                     continue
-                _c = _rfc_compound(_rfc_vrows)
+                _c = _rfc_compound(_rfc_vrows, _rfc_r_col)
                 _rfc_cmp_results[_rfc_lbl] = _c
                 _pfs = "∞" if _rfc_math.isinf(_s["pf"]) else f"{_s['pf']:.1f}"
                 _rfc_table_rows.append({
@@ -22324,11 +22343,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 for _rfc_lbl, _rfc_vrows in _rfc_variants:
                     _m = _rfc_stats(
                         [r for r in _rfc_vrows if "intraday" not in (r.get("scan_type") or "morning").lower()],
-                        "morning"
+                        "morning",
+                        _rfc_r_col,
                     )
                     _i = _rfc_stats(
                         [r for r in _rfc_vrows if "intraday" in (r.get("scan_type") or "morning").lower()],
-                        "intraday"
+                        "intraday",
+                        _rfc_r_col,
                     )
                     _rfc_split_rows.append({
                         "Filter Variant": _rfc_lbl,
