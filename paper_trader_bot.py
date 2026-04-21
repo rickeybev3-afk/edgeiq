@@ -6406,6 +6406,7 @@ def _fetch_pm_last_price(ticker: str) -> float:
 
 
 _ADAPTIVE_TP_RAISE_MULT_DEFAULT = 0.5
+_ADAPTIVE_STOP_TIGHTEN_FRAC_DEFAULT = 1.0  # 1.0 = stop moves to exact IB midpoint
 
 
 def _load_tp_raise_mult() -> float:
@@ -6428,6 +6429,31 @@ def _load_tp_raise_mult() -> float:
     return _ADAPTIVE_TP_RAISE_MULT_DEFAULT
 
 
+def _load_stop_tighten_frac() -> float:
+    """Load the calibrated stop-tighten fraction from adaptive_exits.json.
+
+    Returns the value of ``stop_tighten_frac`` written by calibrate_adaptive_mgmt.py,
+    or the hard-coded default (1.0 = exact IB midpoint) when the key is absent
+    or the file cannot be read.  The file is re-read on every call so calibration
+    updates take effect without a bot restart.
+
+    The loaded value is clamped to [0.0, 1.0]; a value outside this range would
+    move the stop away from the IB-midpoint direction and is treated as invalid.
+    """
+    try:
+        import json as _json
+        with open(_ADAPTIVE_EXIT_CONFIG_PATH) as _f:
+            cfg = _json.load(_f)
+        val = cfg.get("stop_tighten_frac")
+        if val is not None:
+            frac = float(val)
+            if 0.0 <= frac <= 1.0:
+                return frac
+    except Exception:
+        pass
+    return _ADAPTIVE_STOP_TIGHTEN_FRAC_DEFAULT
+
+
 def _compute_adaptive_adjustments(
     direction: str,
     entry: float,
@@ -6437,6 +6463,7 @@ def _compute_adaptive_adjustments(
     ib_low: float,
     pm_last: float,
     tp_raise_mult: float = _ADAPTIVE_TP_RAISE_MULT_DEFAULT,
+    stop_tighten_frac: float = _ADAPTIVE_STOP_TIGHTEN_FRAC_DEFAULT,
 ) -> "dict | None":
     """Compute adaptive TP/stop adjustments based on pre-market acceptance.
 
@@ -6445,15 +6472,19 @@ def _compute_adaptive_adjustments(
 
     Bullish Break logic:
       pm_last > ib_high  → PM accepted above IB → raise TP by +tp_raise_mult×R (stop unchanged)
-      pm_last < ib_high  → PM pulled inside IB  → tighten stop to IB mid (TP unchanged)
+      pm_last < ib_high  → PM pulled inside IB  → tighten stop (TP unchanged)
 
     Bearish Break logic (mirror):
       pm_last < ib_low   → PM accepted below IB → lower TP by tp_raise_mult×R (stop unchanged)
-      pm_last > ib_low   → PM pulled inside IB  → tighten stop to IB mid (TP unchanged)
+      pm_last > ib_low   → PM pulled inside IB  → tighten stop (TP unchanged)
 
     tp_raise_mult is read from adaptive_exits.json by the caller (default 0.5).
-    calibrate_adaptive_mgmt.py writes the optimal value to that file once ≥ 50
-    adaptive trades have settled.
+    stop_tighten_frac controls where the tightened stop is placed relative to
+    the IB midpoint: new_stop = entry + frac*(ib_mid - entry).
+      frac=1.0 → stop moves to exact IB midpoint (original hardcoded behaviour).
+      frac=0.5 → stop moves halfway between entry and IB midpoint.
+    Both values are written to adaptive_exits.json by calibrate_adaptive_mgmt.py
+    once ≥ 50 adaptive trades have settled.
 
     Returns dict with keys: action, new_stop, new_tp, tp_adjusted_r
     """
@@ -6467,6 +6498,8 @@ def _compute_adaptive_adjustments(
         return None
 
     ib_mid = (ib_high + ib_low) / 2.0
+    # Fractional stop placement: frac=1.0 → ib_mid, frac=0.0 → entry
+    tightened_stop = entry + stop_tighten_frac * (ib_mid - entry)
 
     if "Bullish Break" in direction:
         if pm_last > ib_high:
@@ -6475,11 +6508,11 @@ def _compute_adaptive_adjustments(
             action   = "TP_RAISED"
             tp_r     = round((new_tp - entry) / stop_dist, 2)
         elif pm_last < ib_high:
-            # Stop-tighten is only valid if IB mid is BELOW current PM price;
+            # Stop-tighten is only valid if the new stop is BELOW current PM price;
             # otherwise the new stop would be at or above market (triggers immediately).
-            if ib_mid >= pm_last:
+            if tightened_stop >= pm_last:
                 return None
-            new_stop = round(ib_mid, 2)
+            new_stop = round(tightened_stop, 2)
             new_tp   = target
             action   = "STOP_TIGHTENED"
             tp_r     = round((target - entry) / stop_dist, 2)
@@ -6493,11 +6526,11 @@ def _compute_adaptive_adjustments(
             action   = "TP_RAISED"
             tp_r     = round((entry - new_tp) / stop_dist, 2)
         elif pm_last > ib_low:
-            # Stop-tighten is only valid if IB mid is ABOVE current PM price;
+            # Stop-tighten is only valid if the new stop is ABOVE current PM price;
             # otherwise the new stop would be at or below market (triggers immediately).
-            if ib_mid <= pm_last:
+            if tightened_stop <= pm_last:
                 return None
-            new_stop = round(ib_mid, 2)
+            new_stop = round(tightened_stop, 2)
             new_tp   = target
             action   = "STOP_TIGHTENED"
             tp_r     = round((entry - target) / stop_dist, 2)
@@ -6667,10 +6700,10 @@ def _pre_open_position_review() -> None:
             continue
 
         # ── Compute adjustment ────────────────────────────────────────────────
-        # tp_raise_mult is loaded fresh on each position so that calibration
-        # script updates (calibrate_adaptive_mgmt.py --apply) take effect
-        # without restarting the bot.
-        _tp_mult = _load_tp_raise_mult()
+        # Both calibration params are loaded fresh on each position so that
+        # calibrate_adaptive_mgmt.py --apply takes effect without a bot restart.
+        _tp_mult    = _load_tp_raise_mult()
+        _st_frac    = _load_stop_tighten_frac()
         adj = _compute_adaptive_adjustments(
             direction=direction,
             entry=entry,
@@ -6680,6 +6713,7 @@ def _pre_open_position_review() -> None:
             ib_low=ib_low,
             pm_last=pm_last,
             tp_raise_mult=_tp_mult,
+            stop_tighten_frac=_st_frac,
         )
         if adj is None:
             log.info(

@@ -59,6 +59,10 @@
   ],
 
   "global_fallback_target_r": 1.0,
+
+  "stop_tighten_frac": 1.0,
+  "_stop_tighten_frac_note": "Fraction of distance from entry to IB midpoint where the tightened stop is placed. 1.0 = exact IB mid (original behaviour). Calibrated by calibrate_adaptive_mgmt.py once >=50 total settled adaptive trades are available.",
+
   "data_sources": {
     "backtest_qualified_rows": 1000,
     "live_paper_trades_mfe_rows": 314,
