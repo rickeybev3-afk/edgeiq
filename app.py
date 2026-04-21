@@ -21873,6 +21873,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "⚠ low N (< 75 trades, use with caution)"
             )
 
+            _p3_csv_bytes = _p3_df_sorted.to_csv(index=False).encode("utf-8")
+            _p3_csv_date  = datetime.utcnow().strftime("%Y-%m-%d")
+            st.download_button(
+                label="⬇ Download CSV",
+                data=_p3_csv_bytes,
+                file_name=f"filter_grid_top100_{_p3_csv_date}.csv",
+                mime="text/csv",
+                key="p3_top100_csv_dl",
+            )
+
             # ── Best combo from Phase 3 ───────────────────────────────────────
             _p3_best = _p3_top_data[0]
             st.markdown("---")
