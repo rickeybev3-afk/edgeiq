@@ -914,6 +914,23 @@ def main():
             * len(P1_FOLLOW_MINS) * len(P1_STRUCT_FILTERS) * len(P1_FALSE_BREAK_EX)
         )
 
+    # ── Archive Phase 3 output to a dated subfolder ──────────────────────────
+    archive_path = None
+    if args.phase == 3:
+        import shutil as _shutil
+        _archive_date = datetime.utcnow().strftime("%Y-%m-%d")
+        _archive_dir  = os.path.join("grid_search_archive", _archive_date)
+        os.makedirs(_archive_dir, exist_ok=True)
+        for _src in [
+            "filter_grid_results_v3.json",
+            "filter_grid_top100.json",
+            "filter_grid_dimension_summary.json",
+        ]:
+            if os.path.exists(_src):
+                _shutil.copy2(_src, os.path.join(_archive_dir, _src))
+        archive_path = _archive_dir
+        print(f"  Archived Phase 3 output → {_archive_dir}/")
+
     summary = {
         "run_at":                 datetime.utcnow().isoformat() + "Z",
         "phase":                  args.phase,
@@ -927,9 +944,16 @@ def main():
         "combos_qualifying":      len(qualifying),
         "elapsed_seconds":        round(elapsed, 1),
         "best_combo":             top_results[0] if top_results else None,
+        "archive_path":           archive_path,
     }
     with open("filter_grid_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
+
+    # Also write summary into the archive folder so each run is self-contained
+    if archive_path:
+        with open(os.path.join(archive_path, "filter_grid_summary.json"), "w") as f:
+            json.dump(summary, f, indent=2)
+
     print(f"  filter_grid_results.json  ({len(all_results):,} combos)")
     print(f"  filter_grid_top20.json    (top 20 slice)")
     print(f"  filter_grid_summary.json")

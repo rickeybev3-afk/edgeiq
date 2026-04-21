@@ -37,5 +37,6 @@
     "proj_weekly_usd": 33.71,
     "low_sample": true
   },
+  "phase": 3,
   "archive_path": "grid_search_archive/2026-04-21"
 }

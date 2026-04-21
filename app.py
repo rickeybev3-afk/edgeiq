@@ -22026,6 +22026,130 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _p3_rows_dim.append({"Value": _v, "Top 20": _t20, "Top 100": _t100})
                     st.dataframe(_p3_pd.DataFrame(_p3_rows_dim), use_container_width=True, hide_index=True)
 
+        # ── Run History & Sharpe delta ──────────────────────────────────────
+        _p3_arch_root = "grid_search_archive"
+        _p3_hist_runs = []
+        if _p3_os.path.exists(_p3_arch_root):
+            for _p3_dname in sorted(_p3_os.listdir(_p3_arch_root), reverse=True):
+                _p3_dpath = _p3_os.path.join(_p3_arch_root, _p3_dname)
+                _p3_sumf  = _p3_os.path.join(_p3_dpath, "filter_grid_summary.json")
+                if not (_p3_os.path.isdir(_p3_dpath) and _p3_os.path.exists(_p3_sumf)):
+                    continue
+                try:
+                    with open(_p3_sumf) as _f:
+                        _p3_hs = _p3_json.load(_f)
+                    if _p3_hs.get("phase") != 3:
+                        continue
+                    _p3_hist_runs.append({
+                        "folder":   _p3_dname,
+                        "path":     _p3_dpath,
+                        "summary":  _p3_hs,
+                    })
+                except Exception:
+                    continue
+
+        if _p3_hist_runs:
+            st.markdown("---")
+            with st.expander("🕓 Run History — Compare past grid search runs", expanded=False):
+                _p3_hist_rows = []
+                for _hi, _hr in enumerate(_p3_hist_runs):
+                    _hs   = _hr["summary"]
+                    _hbc  = _hs.get("best_combo") or {}
+                    _hsh  = _hbc.get("sharpe")
+                    _p3_hist_rows.append({
+                        "Run date":          _hr["folder"],
+                        "Run at (UTC)":      (_hs.get("run_at") or "")[:16].replace("T", " "),
+                        "Combos qualifying": _hs.get("combos_qualifying", 0),
+                        "Best Sharpe":       round(_hsh, 3) if isinstance(_hsh, (int, float)) else "—",
+                        "Best structure":    _hbc.get("struct_label", "—"),
+                        "Win rate %":        _hbc.get("win_rate", "—"),
+                        "N trades":          _hbc.get("n_trades", "—"),
+                        "Elapsed (s)":       _hs.get("elapsed_seconds", "—"),
+                        "Archive":           _hr["path"],
+                    })
+
+                _p3_hist_df = _p3_pd.DataFrame(_p3_hist_rows)
+
+                # Sharpe delta column vs the immediately preceding run
+                _p3_sharpe_vals = []
+                for _r in _p3_hist_rows:
+                    _sv = _r["Best Sharpe"]
+                    _p3_sharpe_vals.append(float(_sv) if isinstance(_sv, (int, float)) else None)
+
+                _p3_delta_col = []
+                for _di in range(len(_p3_sharpe_vals)):
+                    _cur = _p3_sharpe_vals[_di]
+                    _prv = _p3_sharpe_vals[_di + 1] if _di + 1 < len(_p3_sharpe_vals) else None
+                    if _cur is None or _prv is None:
+                        _p3_delta_col.append("—")
+                    else:
+                        _d = _cur - _prv
+                        _p3_delta_col.append(f"+{_d:.3f}" if _d >= 0 else f"{_d:.3f}")
+                _p3_hist_df["Sharpe Δ vs prev"] = _p3_delta_col
+
+                _p3_hist_disp = _p3_hist_df[[
+                    "Run date", "Run at (UTC)", "Combos qualifying",
+                    "Best Sharpe", "Sharpe Δ vs prev",
+                    "Best structure", "Win rate %", "N trades", "Elapsed (s)",
+                ]]
+
+                def _p3_hist_color(row):
+                    _delta = row.get("Sharpe Δ vs prev", "—")
+                    if isinstance(_delta, str) and _delta.startswith("+"):
+                        return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
+                    if isinstance(_delta, str) and _delta.startswith("-"):
+                        return ["background-color:#fce4ec; color:#880e4f"] * len(row)
+                    return [""] * len(row)
+
+                st.dataframe(
+                    _p3_hist_disp.style.apply(_p3_hist_color, axis=1),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "🟢 Sharpe improved vs. previous run · 🔴 Sharpe declined vs. previous run. "
+                    "Runs are listed newest-first. Archive folders live in grid_search_archive/."
+                )
+
+                # Per-run detail expanders with top-5 comparison
+                if len(_p3_hist_runs) >= 2:
+                    st.markdown("##### Top-5 Sharpe comparison — latest vs. previous run")
+                    _p3_newest = _p3_hist_runs[0]
+                    _p3_prev   = _p3_hist_runs[1]
+                    _p3_cmp_cols = st.columns(2)
+                    for _ci, (_p3_hr_cmp, _p3_label_cmp) in enumerate([
+                        (_p3_newest, f"Latest ({_p3_newest['folder']})"),
+                        (_p3_prev,   f"Previous ({_p3_prev['folder']})"),
+                    ]):
+                        _p3_topf = _p3_os.path.join(_p3_hr_cmp["path"], "filter_grid_top100.json")
+                        _p3_top5 = []
+                        if _p3_os.path.exists(_p3_topf):
+                            try:
+                                with open(_p3_topf) as _f:
+                                    _p3_top5 = _p3_json.load(_f)[:5]
+                            except Exception:
+                                pass
+                        with _p3_cmp_cols[_ci]:
+                            st.markdown(f"**{_p3_label_cmp}**")
+                            if _p3_top5:
+                                _p3_t5_rows = []
+                                for _ri, _rc in enumerate(_p3_top5, 1):
+                                    _p3_t5_rows.append({
+                                        "#":          _ri,
+                                        "Structure":  _rc.get("struct_label", "?"),
+                                        "Sharpe":     _rc.get("sharpe", 0),
+                                        "WR%":        _rc.get("win_rate", 0),
+                                        "Avg R":      _rc.get("avg_r", 0),
+                                        "N":          _rc.get("n_trades", 0),
+                                    })
+                                st.dataframe(
+                                    _p3_pd.DataFrame(_p3_t5_rows),
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                            else:
+                                st.caption("No top-100 file found for this run.")
+
         # ── Download Phase 3 results ──────────────────────────────────────────
         if _p3_os.path.exists(_P3_ALL):
             try:
