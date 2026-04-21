@@ -609,9 +609,10 @@ export default function Settings() {
     pruning: boolean;
     error: string | null;
     pruned: boolean;
-    deleted: number | null;
+    deleted: string[] | null;
     freedBytes: number | null;
   }>({ pruning: false, error: null, pruned: false, deleted: null, freedBytes: null });
+  const [pruneNamesExpanded, setPruneNamesExpanded] = useState(false);
 
   const [pruneConfirmOpen, setPruneConfirmOpen] = useState(false);
   const pruneButtonRef = useRef<HTMLButtonElement>(null);
@@ -761,7 +762,7 @@ export default function Settings() {
           pruning: false,
           error: null,
           pruned: true,
-          deleted: Array.isArray(data.deleted) ? data.deleted.length : null,
+          deleted: Array.isArray(data.deleted) ? data.deleted : null,
           freedBytes: typeof data.freed_bytes === "number" ? data.freed_bytes : null,
         });
         fetchArchiveRuns();
@@ -3908,8 +3909,24 @@ export default function Settings() {
                     </button>
                     {archivePrune.pruned && (
                       <span style={{ fontSize: "12px", color: "#4ade80" }}>
-                        ✓ Deleted {archivePrune.deleted ?? 0} {archivePrune.deleted === 1 ? "run" : "runs"}
+                        ✓ Deleted {archivePrune.deleted?.length ?? 0} {(archivePrune.deleted?.length ?? 0) === 1 ? "run" : "runs"}
                         {archivePrune.freedBytes != null ? ` · freed ${formatBytes(archivePrune.freedBytes)}` : ""}
+                        {archivePrune.deleted && archivePrune.deleted.length > 0 && (
+                          <span>
+                            {" "}
+                            <button
+                              onClick={() => setPruneNamesExpanded((v) => !v)}
+                              style={{ background: "none", border: "none", color: "#86efac", fontSize: "11px", cursor: "pointer", textDecoration: "underline", padding: 0 }}
+                            >
+                              {pruneNamesExpanded ? "hide" : "show"} names
+                            </button>
+                            {pruneNamesExpanded && (
+                              <span style={{ display: "block", marginTop: "4px", fontFamily: "monospace", color: "#cbd5e1", whiteSpace: "pre-wrap", lineHeight: "1.6" }}>
+                                {archivePrune.deleted.join("\n")}
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </span>
                     )}
                     {archivePrune.error && (
