@@ -33,6 +33,7 @@ _DEFAULT_BACKTEST_LOOKBACK_DAYS = int(os.environ.get("BACKTEST_CLOSE_LOOKBACK_DA
 _DEFAULT_MIN_TCS = int(os.environ.get("PAPER_TRADE_MIN_TCS", "50"))
 _ADAPTIVE_EXITS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
 _TP_CALIB_HISTORY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tp_calib_history.json")
+_GRID_SEARCH_SUMMARY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_summary.json")
 _RVOL_SIZE_TIERS_DEFAULT = [
     {"rvol_min": 3.5, "multiplier": 1.5},
     {"rvol_min": 2.5, "multiplier": 1.25},
@@ -631,6 +632,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/grid-search-status":
             self._grid_search_status_get()
+            return
+        if path == "/api/grid-search-summary":
+            self._grid_search_summary()
             return
         # Serve files from /static/ directly — bypass Streamlit to ensure correct content-type
         if path.startswith("/app/static/") or path.startswith("/static/"):
@@ -2436,6 +2440,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             logging.warning("gap-down calibration endpoint error: %s", exc)
             body = json.dumps({"count": 0, "threshold": THRESHOLD, "ready": False, "error": "Could not load calibration data."}).encode()
+            self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _grid_search_summary(self):
+        """Return the contents of filter_grid_summary.json with a stale flag.
+
+        Adds a boolean ``stale`` field: True when ``run_at`` is more than 7 days old
+        or missing.  If the file does not exist, ``available`` is False.
+
+        Response (file present):
+          {"available": true, "stale": bool, <all fields from filter_grid_summary.json>}
+        Response (file absent):
+          {"available": false}
+        """
+        try:
+            with open(_GRID_SEARCH_SUMMARY_JSON, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            run_at = data.get("run_at")
+            stale = True
+            if run_at:
+                try:
+                    from datetime import datetime, timezone
+                    run_dt = datetime.fromisoformat(run_at.replace("Z", "+00:00"))
+                    age_days = (datetime.now(timezone.utc) - run_dt).total_seconds() / 86400
+                    stale = age_days > 7
+                except Exception:
+                    stale = True
+            payload = {**data, "available": True, "stale": stale}
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+        except FileNotFoundError:
+            body = json.dumps({"available": False}).encode()
+            self.send_response(200)
+        except Exception as exc:
+            logging.warning("grid-search-summary endpoint error: %s", exc)
+            body = json.dumps({"available": False, "error": "Could not load grid search summary."}).encode()
             self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

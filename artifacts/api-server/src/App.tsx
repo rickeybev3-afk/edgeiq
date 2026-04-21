@@ -577,6 +577,225 @@ async function resetConfigValue(
   throw new Error("Unknown config key");
 }
 
+interface GridSearchBestCombo {
+  tcs_offset?: number;
+  tcs_label?: string;
+  rvol_min?: number;
+  gap_min?: number;
+  follow_min?: number;
+  follow_label?: string;
+  struct_filter?: string;
+  struct_label?: string;
+  excl_false_break?: boolean;
+  n_trades?: number;
+  win_rate?: number;
+  avg_r?: number;
+  total_r?: number;
+  profit_factor?: number;
+  sharpe?: number;
+  max_drawdown_r?: number;
+  trades_per_week?: number;
+  proj_weekly_usd?: number;
+  low_sample?: boolean;
+}
+
+interface GridSearchData {
+  available: boolean;
+  stale?: boolean;
+  run_at?: string;
+  combos_tested?: number;
+  combos_qualifying?: number;
+  min_n?: number;
+  best_combo?: GridSearchBestCombo;
+  error?: string;
+}
+
+function GridSearchPanel() {
+  const [data, setData] = useState<GridSearchData>({ available: false });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/grid-search-summary");
+        const json: GridSearchData = await res.json();
+        if (!cancelled) { setData(json); setLoading(false); }
+      } catch {
+        if (!cancelled) { setData({ available: false, error: "Could not load grid search data." }); setLoading(false); }
+      }
+    };
+    load();
+    const interval = setInterval(load, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const bc = data.best_combo;
+
+  return (
+    <div
+      style={{
+        background: "#1e2435",
+        border: data.stale ? "1px solid #78350f" : "1px solid #2d3748",
+        borderRadius: "10px",
+        padding: "20px 24px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+        <h2 style={{ fontSize: "13px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
+          Grid Search
+        </h2>
+        {!loading && data.available && data.stale && (
+          <span
+            title="Last run was more than 7 days ago"
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "#fbbf24",
+              background: "rgba(251,191,36,0.1)",
+              border: "1px solid #78350f",
+              borderRadius: "4px",
+              padding: "2px 8px",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            Stale
+          </span>
+        )}
+      </div>
+
+      {loading && (
+        <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>Loading…</p>
+      )}
+      {!loading && !data.available && (
+        <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>
+          {data.error ?? "No grid search results found. Run the weekly grid search to populate this panel."}
+        </p>
+      )}
+      {!loading && data.available && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            {data.run_at && (
+              <span style={{ fontSize: "12px", color: "#64748b", fontFamily: "monospace" }}>
+                {formatEodAge(data.run_at)}
+              </span>
+            )}
+            {data.combos_tested != null && (
+              <span style={{ fontSize: "12px", color: "#475569" }}>
+                {data.combos_qualifying?.toLocaleString() ?? "—"} / {data.combos_tested?.toLocaleString()} combos qualified
+              </span>
+            )}
+            {data.min_n != null && (
+              <span style={{ fontSize: "12px", color: "#475569" }}>
+                min N={data.min_n}
+              </span>
+            )}
+          </div>
+
+          {bc && (
+            <div
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #2d3748",
+                borderRadius: "8px",
+                padding: "14px 16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "10px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 700, color: "#cbd5e1" }}>Best Combo</span>
+                {bc.low_sample && (
+                  <span
+                    title="Fewer trades than the minimum sample threshold — treat with caution"
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      color: "#f59e0b",
+                      background: "rgba(245,158,11,0.1)",
+                      border: "1px solid #92400e",
+                      borderRadius: "4px",
+                      padding: "1px 6px",
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Low sample
+                  </span>
+                )}
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
+                  gap: "8px 16px",
+                }}
+              >
+                {[
+                  { label: "Sharpe", value: bc.sharpe?.toFixed(2) },
+                  { label: "N trades", value: bc.n_trades?.toLocaleString() },
+                  { label: "Win rate", value: bc.win_rate != null ? `${bc.win_rate.toFixed(1)}%` : undefined },
+                  { label: "Avg R", value: bc.avg_r?.toFixed(3) },
+                  { label: "Total R", value: bc.total_r?.toFixed(2) },
+                  { label: "Max DD", value: bc.max_drawdown_r != null ? `${bc.max_drawdown_r.toFixed(2)} R` : undefined },
+                  { label: "Profit factor", value: bc.profit_factor?.toFixed(2) },
+                  { label: "Trades/wk", value: bc.trades_per_week?.toFixed(1) },
+                ].map(({ label, value }) => (
+                  value != null ? (
+                    <div key={label} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                      <span style={{ fontSize: "11px", color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</span>
+                      <span style={{ fontSize: "14px", fontWeight: 700, color: "#e2e8f0", fontFamily: "monospace" }}>{value}</span>
+                    </div>
+                  ) : null
+                ))}
+              </div>
+
+              <div style={{ borderTop: "1px solid #2d3748", paddingTop: "10px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                <span style={{ fontSize: "11px", color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "4px" }}>Parameters</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {bc.tcs_label && (
+                    <span style={{ fontSize: "12px", color: "#94a3b8", background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: "4px", padding: "2px 8px" }}>
+                      TCS: {bc.tcs_label}
+                    </span>
+                  )}
+                  {bc.rvol_min != null && (
+                    <span style={{ fontSize: "12px", color: "#94a3b8", background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: "4px", padding: "2px 8px" }}>
+                      RVol ≥ {bc.rvol_min}
+                    </span>
+                  )}
+                  {bc.gap_min != null && (
+                    <span style={{ fontSize: "12px", color: "#94a3b8", background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: "4px", padding: "2px 8px" }}>
+                      Gap ≥ {bc.gap_min}%
+                    </span>
+                  )}
+                  {bc.follow_label && (
+                    <span style={{ fontSize: "12px", color: "#94a3b8", background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: "4px", padding: "2px 8px" }}>
+                      Follow {bc.follow_label}
+                    </span>
+                  )}
+                  {bc.struct_label && (
+                    <span style={{ fontSize: "12px", color: "#94a3b8", background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: "4px", padding: "2px 8px" }}>
+                      {bc.struct_label}
+                    </span>
+                  )}
+                  {bc.excl_false_break != null && (
+                    <span style={{ fontSize: "12px", color: "#94a3b8", background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: "4px", padding: "2px 8px" }}>
+                      Excl false break: {bc.excl_false_break ? "Yes" : "No"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConfigPanel() {
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1421,6 +1640,8 @@ function Home({ health }: { health: HealthState }) {
             </div>
           )}
         </div>
+
+        <GridSearchPanel />
 
         <ConfigPanel />
 
