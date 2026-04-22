@@ -1337,6 +1337,41 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
         _patch_skip_reason(r, _ticker_raw, "orders_disabled")
         return "skipped:orders_disabled"
 
+    # ── Restart deduplication — in-process set (fast, catches rapid restarts) ──
+    if _ticker_raw.upper() in _PLACED_THIS_SESSION:
+        log.warning(
+            f"  [{_ticker_raw}] skip order — already placed this session "
+            f"(restart dedup guard). Not re-entering."
+        )
+        _patch_skip_reason(r, _ticker_raw, "already_placed_this_session")
+        return "skipped:already_placed_this_session"
+
+    # ── Restart deduplication — DB check (durable, catches cold restarts) ──────
+    if _supabase_client:
+        try:
+            _today_str = str(r.get("sim_date") or r.get("trade_date") or date.today())
+            _dup_res = (
+                _supabase_client.table("paper_trades")
+                .select("alpaca_order_id")
+                .eq("user_id", USER_ID)
+                .eq("trade_date", _today_str)
+                .eq("ticker", _ticker_raw.upper())
+                .not_.is_("alpaca_order_id", "null")
+                .limit(1)
+                .execute()
+            )
+            if _dup_res.data:
+                _existing_oid = _dup_res.data[0].get("alpaca_order_id", "")[:8]
+                log.warning(
+                    f"  [{_ticker_raw}] skip order — order already placed today "
+                    f"(order_id prefix: {_existing_oid}…). Restart dedup guard."
+                )
+                _PLACED_THIS_SESSION.add(_ticker_raw.upper())
+                _patch_skip_reason(r, _ticker_raw, "already_placed_today")
+                return "skipped:already_placed_today"
+        except Exception as _dup_err:
+            log.debug(f"  [{_ticker_raw}] DB dedup check failed (non-fatal): {_dup_err}")
+
     direction = r.get("predicted", "")
     if direction not in ("Bullish Break", "Bearish Break"):
         log.info(f"  [{_ticker_raw}] skip order — prediction is '{direction}' (not directional)")
@@ -2089,6 +2124,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
             target             = result["target"],
             qty                = qty,
         )
+        _PLACED_THIS_SESSION.add(ticker.upper())
         return "placed"
     else:
         log.warning(f"  ❌ [{ticker}] Order failed: {result.get('error')}")
@@ -2134,13 +2170,22 @@ def _send_skip_outcome_tg(ticker: str, outcome: str) -> None:
             f"price already past entry ({detail} slippage)" if detail
             else "price already past entry (chase guard)"
         ),
-        "position_already_open":      "position already open in this ticker",
-        "invalid_ib":                 "invalid IB range data",
-        "pdt_blocked_silent":         "PDT limit reached (alert already sent today)",
+        "position_already_open":       "position already open in this ticker",
+        "invalid_ib":                  "invalid IB range data",
+        "pdt_blocked_silent":          "PDT limit reached (alert already sent today)",
+        "already_placed_this_session": "already entered today (restart guard)",
+        "already_placed_today":        "already entered today (restart guard)",
     }
     reason_text = _reason_map.get(skip_key, skip_key.replace("_", " "))
     tg_send(f"⛔ <b>{html.escape(ticker)}</b> — Not entered: {reason_text}")
 
+
+# ── Restart order-deduplication guard ────────────────────────────────────────
+# In-process set of tickers already ordered this session.  Populated by
+# _place_order_for_setup on success; checked at the top of that function.
+# Survives within a single process lifetime — covers rapid back-to-back restarts
+# where Alpaca's position list hasn't caught up yet.
+_PLACED_THIS_SESSION: set[str] = set()
 
 # ── Trailing stop monitoring ──────────────────────────────────────────────────
 # Guard set: (ticker, trade_date) pairs that already have trailing stop active.
