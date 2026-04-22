@@ -6955,18 +6955,155 @@ def place_alpaca_bracket_order(
         "Content-Type":        "application/json",
     }
     if entry_type == "market":
-        # Price has already crossed the IB level (within slippage tolerance).
-        # Submit as market order — fills immediately at current price.
-        payload = {
+        # ── Step 1: plain market order (no bracket) ────────────────────────────
+        # Alpaca paper accounts silently cancel bracket legs when the parent is a
+        # market order that fills immediately.  Instead we place a bare market
+        # order, wait for the fill, then attach the bracket as a separate OCO.
+        market_payload = {
             "symbol":        ticker.upper(),
             "qty":           str(qty),
             "side":          side,
             "type":          "market",
             "time_in_force": "day",
-            "order_class":   "bracket",
+        }
+        try:
+            m_resp = requests.post(
+                f"{base}/v2/orders",
+                headers=headers,
+                json=market_payload,
+                timeout=10,
+            )
+            m_data = m_resp.json() if m_resp.content else {}
+            if m_resp.status_code not in (200, 201):
+                msg = m_data.get("message") or m_data.get("error") or m_resp.text[:200]
+                return {"ok": False, "error": f"Market order HTTP {m_resp.status_code}: {msg}"}
+        except Exception as exc:
+            return {"ok": False, "error": f"Market order request failed: {exc}"}
+
+        market_order_id = m_data.get("id", "")
+
+        # ── Step 2: poll until filled (up to 10s, 1s intervals) ──────────────
+        filled = False
+        for _ in range(10):
+            time.sleep(1)
+            try:
+                chk = requests.get(
+                    f"{base}/v2/orders/{market_order_id}",
+                    headers=headers,
+                    timeout=8,
+                )
+                chk_data = chk.json() if chk.content else {}
+                if chk_data.get("status") == "filled":
+                    filled = True
+                    break
+            except Exception:
+                pass  # transient — keep polling
+
+        if not filled:
+            logging.critical(
+                "[BRACKET] %s: market order %s not filled within 10s — skipping OCO submission",
+                ticker, market_order_id,
+            )
+            _tg_token   = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+            _tg_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+            if _tg_token and _tg_chat_id:
+                _send_telegram_message(
+                    _tg_token, _tg_chat_id,
+                    f"⚠️ {ticker}: market order not confirmed filled — OCO bracket NOT submitted (potential naked position)",
+                )
+            return {
+                "ok":       True,
+                "order_id": market_order_id,
+                "qty":      qty,
+                "entry":    entry,
+                "stop":     stop,
+                "target":   target,
+                "side":     side,
+                "warning":  "fill not confirmed within 10s — OCO not submitted",
+                "raw":      m_data,
+            }
+
+        # ── Step 3: submit OCO bracket now that the position is open ──────────
+        oco_side    = "sell" if side == "buy" else "buy"
+        oco_payload = {
+            "symbol":        ticker.upper(),
+            "qty":           str(qty),
+            "side":          oco_side,
+            "type":          "limit",
+            "time_in_force": "gtc",
+            "order_class":   "oco",
             "stop_loss":     {"stop_price": str(stop)},
             "take_profit":   {"limit_price": str(target)},
         }
+        try:
+            oco_resp = requests.post(
+                f"{base}/v2/orders",
+                headers=headers,
+                json=oco_payload,
+                timeout=10,
+            )
+            oco_data = oco_resp.json() if oco_resp.content else {}
+            if oco_resp.status_code not in (200, 201):
+                oco_msg = oco_data.get("message") or oco_data.get("error") or oco_resp.text[:200]
+                logging.critical(
+                    "[BRACKET] %s: entry filled but OCO submission failed — NAKED POSITION. Error: %s",
+                    ticker, oco_msg,
+                )
+                _tg_token   = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+                _tg_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+                if _tg_token and _tg_chat_id:
+                    _send_telegram_message(
+                        _tg_token, _tg_chat_id,
+                        f"⚠️ {ticker}: entry filled but OCO bracket failed — NAKED POSITION",
+                    )
+                return {
+                    "ok":       True,
+                    "order_id": market_order_id,
+                    "qty":      qty,
+                    "entry":    entry,
+                    "stop":     stop,
+                    "target":   target,
+                    "side":     side,
+                    "warning":  f"OCO submission failed: {oco_msg}",
+                    "raw":      m_data,
+                }
+        except Exception as oco_exc:
+            logging.critical(
+                "[BRACKET] %s: entry filled but OCO request raised exception — NAKED POSITION. %s",
+                ticker, oco_exc,
+            )
+            _tg_token   = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+            _tg_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+            if _tg_token and _tg_chat_id:
+                _send_telegram_message(
+                    _tg_token, _tg_chat_id,
+                    f"⚠️ {ticker}: entry filled but OCO bracket failed — NAKED POSITION",
+                )
+            return {
+                "ok":       True,
+                "order_id": market_order_id,
+                "qty":      qty,
+                "entry":    entry,
+                "stop":     stop,
+                "target":   target,
+                "side":     side,
+                "warning":  f"OCO request exception: {oco_exc}",
+                "raw":      m_data,
+            }
+
+        return {
+            "ok":          True,
+            "order_id":    market_order_id,
+            "oco_order_id": oco_data.get("id", ""),
+            "qty":         qty,
+            "entry":       entry,
+            "stop":        stop,
+            "target":      target,
+            "side":        side,
+            "raw":         m_data,
+            "oco_raw":     oco_data,
+        }
+
     else:
         payload = {
             "symbol":        ticker.upper(),
