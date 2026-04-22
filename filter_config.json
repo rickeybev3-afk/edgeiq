@@ -11,5 +11,8 @@
   "pm_ib_dir": "any",
   "rvol_min": 0.0,
   "scan_type": "any",
-  "vwap_position": "any"
+  "vwap_position": "any",
+  "drawdown_lookback_n": 20,
+  "drawdown_warning_r": -8.0,
+  "drawdown_critical_r": -12.0
 }

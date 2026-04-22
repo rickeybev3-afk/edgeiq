@@ -95,8 +95,9 @@ BACKTEST_CLOSE_LOOKBACK_DAYS    = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", 
 BACKTEST_STALE_THRESHOLD_DAYS   = int(os.getenv("BACKTEST_STALE_THRESHOLD_DAYS", "3"))
 PAPER_CLOSE_LOOKBACK_DAYS       = int(os.getenv("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
 
-_USER_PREFS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
-_OWNER_USER_ID        = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
+_USER_PREFS_FILE_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
+_OWNER_USER_ID               = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
+_DRAWDOWN_ALERT_STATE_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "drawdown_alert_state.json")
 
 # ── IB Context Enrichment toggle ──────────────────────────────────────────────
 # When enabled (IB_CONTEXT_ENABLED=1) the bot fetches the prior day's IB range
@@ -4703,6 +4704,159 @@ def _alert_eod_summary(
     tg_send("\n".join(lines))
 
 
+def _load_drawdown_alert_state() -> dict:
+    """Load the persisted drawdown alert state from disk.
+
+    Schema:
+        last_alerted_threshold  float | None  — the most negative threshold level
+                                                 whose alert has already been sent
+                                                 (e.g. -8.0 means the warning alert
+                                                 fired; -12.0 means the critical alert
+                                                 fired).  None = no active alert.
+        last_alerted_date       str   | None  — ISO date when that alert was sent.
+    """
+    import json as _json
+    try:
+        if os.path.exists(_DRAWDOWN_ALERT_STATE_PATH):
+            with open(_DRAWDOWN_ALERT_STATE_PATH) as _f:
+                return _json.load(_f)
+    except Exception as _e:
+        log.debug(f"[Drawdown] Could not load alert state: {_e}")
+    return {"last_alerted_threshold": None, "last_alerted_date": None}
+
+
+def _save_drawdown_alert_state(state: dict) -> None:
+    """Persist the drawdown alert state to disk."""
+    import json as _json
+    try:
+        os.makedirs(os.path.dirname(_DRAWDOWN_ALERT_STATE_PATH), exist_ok=True)
+        with open(_DRAWDOWN_ALERT_STATE_PATH, "w") as _f:
+            _json.dump(state, _f, indent=2)
+    except Exception as _e:
+        log.warning(f"[Drawdown] Could not save alert state: {_e}")
+
+
+def _compute_rolling_drawdown(r_values: list) -> float:
+    """Return the peak-to-trough drawdown (always <= 0) over the supplied R series.
+
+    The series is ordered oldest-first.  We walk the cumulative P&L curve and
+    track the running peak; the drawdown at each step is (cum_pnl - peak).  The
+    function returns the *minimum* (worst) drawdown seen in the window.
+
+    Returns 0.0 when the list is empty or contains only gains.
+    """
+    if not r_values:
+        return 0.0
+    peak = 0.0
+    cum  = 0.0
+    worst = 0.0
+    for r in r_values:
+        cum += r
+        if cum > peak:
+            peak = cum
+        dd = cum - peak
+        if dd < worst:
+            worst = dd
+    return worst
+
+
+def _check_and_alert_rolling_drawdown() -> None:
+    """Fetch the last N settled trades, compute rolling drawdown, fire rate-limited
+    Telegram warnings when configurable thresholds are breached.
+
+    Thresholds are read from filter_config.json:
+        drawdown_lookback_n   int   — window size (default 20)
+        drawdown_warning_r    float — warning level, e.g. -8.0  (default -8.0)
+        drawdown_critical_r   float — critical level, e.g. -12.0 (default -12.0)
+
+    Rate limiting: the alert fires at most once per threshold crossing.  When
+    drawdown recovers above all thresholds the state resets so a future
+    deterioration triggers fresh alerts.
+    """
+    if not _supabase_client:
+        return
+
+    cfg           = _load_filter_config()
+    lookback_n    = int(cfg.get("drawdown_lookback_n",  20))
+    warn_thresh   = float(cfg.get("drawdown_warning_r", -8.0))
+    crit_thresh   = float(cfg.get("drawdown_critical_r", -12.0))
+
+    # Ensure critical is always the more-negative of the two.
+    if warn_thresh < crit_thresh:
+        warn_thresh, crit_thresh = crit_thresh, warn_thresh
+
+    try:
+        rows = (
+            _supabase_client.table("paper_trades")
+            .select("id, tiered_pnl_r, trade_date")
+            .eq("user_id", USER_ID)
+            .not_.is_("tiered_pnl_r", "null")
+            .order("trade_date", desc=True)
+            .order("id", desc=True)
+            .limit(lookback_n)
+            .execute()
+        ).data or []
+    except Exception as _db_e:
+        log.warning(f"[Drawdown] DB fetch failed: {_db_e}")
+        return
+
+    if not rows:
+        log.debug("[Drawdown] No settled trades found — skipping drawdown check.")
+        return
+
+    # Reverse to chronological order (oldest first) before computing drawdown.
+    r_vals = [float(r["tiered_pnl_r"]) for r in reversed(rows) if r.get("tiered_pnl_r") is not None]
+    if not r_vals:
+        return
+
+    dd = _compute_rolling_drawdown(r_vals)
+    n  = len(r_vals)
+    log.info(f"[Drawdown] Rolling drawdown over last {n} trades: {dd:+.2f}R  "
+             f"(warn={warn_thresh:+.1f}R  crit={crit_thresh:+.1f}R)")
+
+    state = _load_drawdown_alert_state()
+    last_alerted = state.get("last_alerted_threshold")  # None or a float
+
+    # ── Recovery reset ────────────────────────────────────────────────────────
+    # If drawdown is now above all thresholds, clear the alert state so future
+    # crossings are treated as fresh events.
+    if dd > warn_thresh and last_alerted is not None:
+        log.info(f"[Drawdown] Drawdown recovered to {dd:+.2f}R — resetting alert state.")
+        _save_drawdown_alert_state({"last_alerted_threshold": None, "last_alerted_date": None})
+        return
+
+    # ── Determine which level to alert (if any) ───────────────────────────────
+    today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+
+    if dd <= crit_thresh and last_alerted != crit_thresh:
+        level   = "🚨 CRITICAL"
+        thresh  = crit_thresh
+        advice  = "Consider pausing the bot or switching back to the conservative filter."
+    elif dd <= warn_thresh and last_alerted not in (warn_thresh, crit_thresh):
+        level   = "⚠️ WARNING"
+        thresh  = warn_thresh
+        advice  = "Monitor closely. Consider tightening filters if losses continue."
+    else:
+        return
+
+    cum_r   = sum(r_vals)
+    msg = (
+        f"{level} — Rolling Drawdown Alert\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📉 Drawdown: <b>{dd:+.2f}R</b>  (threshold: {thresh:+.1f}R)\n"
+        f"📊 Window: last <b>{n}</b> settled trades\n"
+        f"💰 Cumulative P&L in window: <b>{cum_r:+.2f}R</b>\n"
+        f"📅 Date: {today_str}\n"
+        f"💡 {advice}"
+    )
+    sent = tg_send(msg)
+    if sent:
+        log.warning(f"[Drawdown] {level} alert sent (dd={dd:+.2f}R, threshold={thresh:+.1f}R)")
+        _save_drawdown_alert_state({"last_alerted_threshold": thresh, "last_alerted_date": today_str})
+    else:
+        log.warning(f"[Drawdown] {level} alert could not be sent via Telegram.")
+
+
 def _alert_tcs_threshold_changes(old: dict, new: dict, min_delta: int = 3) -> None:
     """Fire a Telegram alert if any structure's TCS threshold shifted by ≥ min_delta pts."""
     changes = []
@@ -6249,6 +6403,12 @@ def eod_update():
         global_filtered=len(_global_filtered),
         struct_filtered=len(_struct_filtered),
     )
+
+    # ── Rolling drawdown check ─────────────────────────────────────────────
+    try:
+        _check_and_alert_rolling_drawdown()
+    except Exception as _dd_exc:
+        log.warning(f"[Drawdown] Rolling drawdown check failed (non-critical): {_dd_exc}")
 
     # ── Beta subscriber broadcast (clean — no TCS/brain language) ─────────
     _broadcast_eod_to_subscribers(results, today)
