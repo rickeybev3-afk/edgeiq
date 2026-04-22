@@ -1513,6 +1513,23 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         _patch_skip_reason(r, ticker, "concurrent_cap")
         return
 
+    # ── Per-ticker existing-position guard ─────────────────────────────────────
+    # Prevents duplicate entries on bot restart. If Alpaca already holds an open
+    # position in this ticker (from a prior session or earlier today), skip the
+    # new order entirely rather than pyramiding unintentionally.
+    try:
+        _live_positions = _alpaca_get_positions()
+        _open_tickers   = {p.get("symbol", "").upper() for p in (_live_positions or [])}
+        if ticker.upper() in _open_tickers:
+            log.warning(
+                f"  [{ticker}] skip order — Alpaca already has an open position in this ticker. "
+                f"Restart/duplicate-entry guard engaged."
+            )
+            _patch_skip_reason(r, ticker, "position_already_open")
+            return
+    except Exception as _guard_err:
+        log.warning(f"  [{ticker}] Per-ticker position guard check failed ({_guard_err}) — allowing order through")
+
     ib_high = float(r.get("ib_high") or 0)
     ib_low  = float(r.get("ib_low")  or 0)
     if ib_high <= 0 or ib_low <= 0 or ib_high <= ib_low:
@@ -2598,10 +2615,17 @@ def _alpaca_place_trailing_stop(
 def _reconcile_open_positions() -> None:
     """Reconcile open Alpaca positions against paper_trades DB records.
 
-    If Alpaca has an open equity position for a ticker whose most-recent
-    paper_trades record has win_loss already set (auto-verify closed it
-    prematurely), this resets win_loss=NULL so _monitor_trailing_stops()
-    will pick it up and apply stop/target management.
+    Pass 1 — win_loss reset:
+      If Alpaca has an open position whose paper_trades record has win_loss
+      already set (auto-verify closed it prematurely), reset win_loss=NULL
+      so _monitor_trailing_stops() will actively manage it.
+
+    Pass 2 — naked position bracket re-attachment:
+      If an open Alpaca position has NO active exit orders (stop/limit), look
+      up the original stop_price_sim and target_price_sim from paper_trades
+      and re-attach an OCO bracket.  This handles overnight positions whose
+      GTC/day brackets expired at the prior session close, as well as any
+      positions left naked by a bot restart.
 
     Also re-populates alpaca_qty from the live Alpaca position so the
     trailing-stop math stays accurate.
@@ -2628,6 +2652,7 @@ def _reconcile_open_positions() -> None:
         if qty == 0:
             continue
 
+        # ── Pass 1: win_loss reset ─────────────────────────────────────────────
         # Look for a paper_trades record that has an alpaca_order_id (was
         # placed by this bot) but win_loss is already set despite the
         # Alpaca position still being open.
@@ -2647,27 +2672,92 @@ def _reconcile_open_positions() -> None:
             ).data or []
         except Exception as _e:
             log.warning(f"[Reconcile] DB query error for {ticker}: {_e}")
-            continue
+            rows = []
 
-        if not rows:
-            # No prematurely-closed record found — nothing to fix
-            continue
+        if rows:
+            row = rows[0]
+            log.warning(
+                f"[Reconcile] {ticker}: Alpaca has OPEN position ({qty} shares, avg "
+                f"{pos.get('avg_entry_price','?')}) but paper_trades record from "
+                f"{row['trade_date']} has win_loss='{row['win_loss']}'. "
+                f"Resetting win_loss=NULL so position is actively monitored."
+            )
+            try:
+                _supabase_client.table("paper_trades").update({
+                    "win_loss":   None,
+                    "alpaca_qty": qty,
+                }).eq("user_id", USER_ID).eq("id", row["id"]).execute()
+                log.info(f"[Reconcile] {ticker}: win_loss reset → NULL, alpaca_qty → {qty}")
+            except Exception as _e:
+                log.warning(f"[Reconcile] Update error for {ticker}: {_e}")
 
-        row = rows[0]
-        log.warning(
-            f"[Reconcile] {ticker}: Alpaca has OPEN position ({qty} shares, avg "
-            f"{pos.get('avg_entry_price','?')}) but paper_trades record from "
-            f"{row['trade_date']} has win_loss='{row['win_loss']}'. "
-            f"Resetting win_loss=NULL so position is actively monitored."
-        )
+        # ── Pass 2: naked position bracket re-attachment ───────────────────────
+        # If the position has no open exit orders, re-attach an OCO bracket
+        # using the stop/target from the most recent paper_trades record.
         try:
-            _supabase_client.table("paper_trades").update({
-                "win_loss":   None,
-                "alpaca_qty": qty,
-            }).eq("user_id", USER_ID).eq("id", row["id"]).execute()
-            log.info(f"[Reconcile] {ticker}: win_loss reset → NULL, alpaca_qty → {qty}")
+            open_exit_ids = _alpaca_get_open_order_ids(ticker)
+            if open_exit_ids:
+                # Already has active orders — nothing to do
+                continue
+
+            # Fetch most recent paper_trades row for this ticker (any win_loss state)
+            pt_rows = (
+                _supabase_client
+                .table("paper_trades")
+                .select("id,ticker,trade_date,alpaca_order_id,entry_price_sim,stop_price_sim,target_price_sim,predicted")
+                .eq("user_id", USER_ID)
+                .eq("ticker", ticker)
+                .gte("trade_date", lookback_str)
+                .not_.is_("alpaca_order_id", "null")
+                .order("trade_date", desc=True)
+                .limit(1)
+                .execute()
+            ).data or []
+
+            if not pt_rows:
+                log.warning(f"[Reconcile] {ticker}: naked position but no paper_trades record found — skipping bracket re-attach")
+                continue
+
+            pt = pt_rows[0]
+            stop_px   = float(pt.get("stop_price_sim")   or 0)
+            target_px = float(pt.get("target_price_sim") or 0)
+            direction = (pt.get("predicted") or "Bullish Break")
+            exit_side = "sell" if "Bullish" in direction else "buy"
+
+            if stop_px <= 0 or target_px <= 0:
+                log.warning(
+                    f"[Reconcile] {ticker}: naked position, but stop_price_sim={stop_px} or "
+                    f"target_price_sim={target_px} is missing — cannot re-attach bracket"
+                )
+                continue
+
+            log.warning(
+                f"[Reconcile] {ticker}: open position ({qty} shares) has NO active exit orders. "
+                f"Re-attaching OCO bracket — stop=${stop_px:.2f}, target=${target_px:.2f}"
+            )
+            oco_result = _alpaca_place_oco_exit(ticker, qty, exit_side, stop_px, target_px)
+            if oco_result.get("ok"):
+                log.info(
+                    f"[Reconcile] {ticker}: OCO bracket re-attached successfully. "
+                    f"order_id={oco_result.get('order_id','?')[:12]}"
+                )
+                tg_send(
+                    f"🔁 <b>{ticker} Bracket Re-attached</b>\n"
+                    f"Overnight/restart: naked position detected on startup.\n"
+                    f"Qty: <b>{qty}</b> | Stop: <b>${stop_px:.2f}</b> | Target: <b>${target_px:.2f}</b>\n"
+                    f"OCO order placed — position is now protected."
+                )
+            else:
+                log.error(
+                    f"[Reconcile] {ticker}: Failed to re-attach OCO bracket: {oco_result.get('error','?')}"
+                )
+                tg_send(
+                    f"⚠️ <b>{ticker} Bracket Re-attach FAILED</b>\n"
+                    f"Naked position ({qty} shares) has no exit orders.\n"
+                    f"Manual intervention needed — stop=${stop_px:.2f}, target=${target_px:.2f}"
+                )
         except Exception as _e:
-            log.warning(f"[Reconcile] Update error for {ticker}: {_e}")
+            log.warning(f"[Reconcile] Bracket re-attach error for {ticker}: {_e}")
 
 
 def _monitor_trailing_stops() -> None:
