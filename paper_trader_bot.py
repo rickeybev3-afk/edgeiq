@@ -4836,7 +4836,7 @@ def watchlist_refresh(midday: bool = False):
     """9:35 AM ET (or 11:45 AM midday) — pull today's movers from Finviz, save to Supabase.
 
     Runs FOUR screener passes and merges them:
-      Pass 1 — Gap-of-day plays: ≥3% change · Float ≤100M · $1–$20
+      Pass 1 — Gap-of-day plays: ≥2% change · Float ≤100M · $1–$20
                Catches high-momentum small-float catalysts.
       Pass 2 — Trend continuation plays: ≥1% change · Float ≤500M · $5–$50
                Above 20-day AND 50-day SMA · Avg vol ≥2M
@@ -4868,10 +4868,11 @@ def watchlist_refresh(midday: bool = False):
     log.info("=" * 60)
     log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze + gap-down passes)")
     log.info("=" * 60)
+    _PASS1_GAP_MIN_PCT = 2.0   # Pass 1 gap-of-day threshold — shown in Telegram message
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
-            change_min_pct=2.0,
+            change_min_pct=_PASS1_GAP_MIN_PCT,
             float_max_m=100.0,
             price_min=PRICE_MIN,
             price_max=PRICE_MAX,
@@ -4972,7 +4973,7 @@ def watchlist_refresh(midday: bool = False):
                     f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
                     f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze · "
                     f"{len(gap_down_tickers)} gap-down)\n"
-                    f"Gap: ≥2% chg · Float ≤100M · ${PRICE_MIN:.0f}–${PRICE_MAX:.0f}\n"
+                    f"Gap ≥{_PASS1_GAP_MIN_PCT:.1f}%: Float ≤100M · ${PRICE_MIN:.0f}–${PRICE_MAX:.0f}\n"
                     f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
                     f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
                     f"{_gd_line}"
