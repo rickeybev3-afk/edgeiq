@@ -342,6 +342,9 @@ MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", _default_po
 PDT_EQUITY_FLOOR         = float(os.getenv("PDT_EQUITY_FLOOR", "26000"))
 # Cooldown between repeated PDT floor warnings (seconds) — default 4 hours
 PDT_FLOOR_WARN_COOLDOWN  = int(os.getenv("PDT_FLOOR_WARN_COOLDOWN", "14400"))
+# Cooldown between repeated OrderGuard Telegram alerts for the same ticker (seconds) — default 5 min.
+# Only the first alert within each window is sent; the log warning is always written.
+ORDERGUARD_ALERT_COOLDOWN = int(os.getenv("ORDERGUARD_ALERT_COOLDOWN", "300"))
 # PDT quality gate: while equity < $25k, only spend PDT slots on TCS >= this value.
 # TCS≥70 (P1/P3 elite tier): 1.295R avg, 91.4% WR — vs TCS<70: 0.680R avg, 81.9% WR.
 # Prioritising elite setups during the PDT phase reaches the $25k unlock ~8 weeks sooner
@@ -1361,6 +1364,11 @@ def _patch_skip_reason(r: dict, ticker: str, reason: str) -> None:
         log.debug(f"  [{ticker}] skip_reason patch failed (non-fatal): {_sr_err}")
 
 
+# Per-ticker timestamps of the last OrderGuard Telegram alert (epoch seconds).
+# Used to enforce ORDERGUARD_ALERT_COOLDOWN so noisy scan retries don't flood the channel.
+_orderguard_last_alert: dict[str, float] = {}
+
+
 def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
 
@@ -2114,12 +2122,21 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
         log.warning(
             f"  [{ticker}] [OrderGuard] skipping — already have an open Alpaca position"
         )
-        tg_send(
-            f"🛡️ <b>[OrderGuard] Duplicate-Entry Blocked</b>\n"
-            f"Ticker: <b>{ticker}</b>\n"
-            f"Reason: existing open position\n"
-            f"Time: {_ts}"
-        )
+        _og_now = time.time()
+        _og_key = ticker.upper()
+        if (_og_now - _orderguard_last_alert.get(_og_key, 0.0)) >= ORDERGUARD_ALERT_COOLDOWN:
+            _orderguard_last_alert[_og_key] = _og_now
+            tg_send(
+                f"🛡️ <b>[OrderGuard] Duplicate-Entry Blocked</b>\n"
+                f"Ticker: <b>{ticker}</b>\n"
+                f"Reason: existing open position\n"
+                f"Time: {_ts}"
+            )
+        else:
+            log.info(
+                f"  [{ticker}] [OrderGuard] Telegram alert suppressed "
+                f"(cooldown {ORDERGUARD_ALERT_COOLDOWN}s)"
+            )
         return
 
     # ── OrderGuard: skip if there are pending (unfilled) orders for this ticker ─
@@ -2129,12 +2146,21 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
         log.warning(
             f"  [{ticker}] [OrderGuard] skipping — {len(_open_order_ids)} open order(s) already exist"
         )
-        tg_send(
-            f"🛡️ <b>[OrderGuard] Duplicate-Entry Blocked</b>\n"
-            f"Ticker: <b>{ticker}</b>\n"
-            f"Reason: {len(_open_order_ids)} open order(s) already pending\n"
-            f"Time: {_ts}"
-        )
+        _og_now = time.time()
+        _og_key = ticker.upper()
+        if (_og_now - _orderguard_last_alert.get(_og_key, 0.0)) >= ORDERGUARD_ALERT_COOLDOWN:
+            _orderguard_last_alert[_og_key] = _og_now
+            tg_send(
+                f"🛡️ <b>[OrderGuard] Duplicate-Entry Blocked</b>\n"
+                f"Ticker: <b>{ticker}</b>\n"
+                f"Reason: {len(_open_order_ids)} open order(s) already pending\n"
+                f"Time: {_ts}"
+            )
+        else:
+            log.info(
+                f"  [{ticker}] [OrderGuard] Telegram alert suppressed "
+                f"(cooldown {ORDERGUARD_ALERT_COOLDOWN}s)"
+            )
         return
 
     result = place_alpaca_bracket_order(
