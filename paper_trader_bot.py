@@ -37,6 +37,10 @@ Optional env vars:
                                  When PDT is active, only setups with TCS >= this value are traded.
                                  TCS≥70 (P1/P3 elite tier) avg 1.295R / 91% WR vs TCS<70 0.680R / 82%.
                                  Unlocks PDT ~8 weeks sooner. Set to 0 to disable.
+  PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT — Pass 3 short-float threshold (default: 15.0).
+                                 Must be one of 5, 10, 15, 20, 25, or 30 (Finviz breakpoints).
+                                 Validated at startup; invalid values fall back to the nearest
+                                 supported breakpoint and log an ERROR.
 """
 
 import html
@@ -94,6 +98,34 @@ SWEEP_ALERT_MAX_TICKERS      = int(os.getenv("SWEEP_ALERT_MAX_TICKERS", "10"))
 BACKTEST_CLOSE_LOOKBACK_DAYS    = int(os.getenv("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 BACKTEST_STALE_THRESHOLD_DAYS   = int(os.getenv("BACKTEST_STALE_THRESHOLD_DAYS", "3"))
 PAPER_CLOSE_LOOKBACK_DAYS       = int(os.getenv("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
+
+# ── Pass 3 (short-squeeze) screener constants ──────────────────────────────────
+# Maps numeric short-float thresholds → Finviz filter codes (sh_short_o{N}).
+# Add entries here whenever Finviz introduces a new breakpoint.
+_SHORT_FLOAT_FILTER_MAP: dict[float, str] = {
+    5.0:  "sh_short_o5",
+    10.0: "sh_short_o10",
+    15.0: "sh_short_o15",
+    20.0: "sh_short_o20",
+    25.0: "sh_short_o25",
+    30.0: "sh_short_o30",
+}
+# Configurable via env var — must be a key in _SHORT_FLOAT_FILTER_MAP.
+_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT: float = float(
+    os.getenv("PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT", "15.0")
+)
+
+# ── Startup validation: catch misconfigured short-float threshold immediately ──
+if _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT not in _SHORT_FLOAT_FILTER_MAP:
+    _supported_vals = sorted(_SHORT_FLOAT_FILTER_MAP)
+    _nearest_val = min(_supported_vals, key=lambda v: abs(v - _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT))
+    log.error(
+        f"[startup] PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT={_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT}% "
+        f"is not a supported Finviz breakpoint. "
+        f"Supported values: {_supported_vals}. "
+        f"Falling back to nearest supported value: {_nearest_val}%."
+    )
+    _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = _nearest_val
 
 _USER_PREFS_FILE_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
 _OWNER_USER_ID               = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
@@ -5113,7 +5145,6 @@ def watchlist_refresh(midday: bool = False):
     _PASS2_PRICE_MIN       = 5.0    # Pass 2 price floor
     _PASS2_PRICE_MAX       = 50.0   # Pass 2 price ceiling
     _PASS2_AVG_VOL_MIN_K   = 2000   # Pass 2 avg-volume floor (thousands)
-    _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = 15.0  # Pass 3 short-float threshold — shown in Telegram message
     _PASS3_CHANGE_MIN_PCT  = 1.0    # Pass 3 minimum change threshold
     _PASS3_FLOAT_MAX_M     = 50.0   # Pass 3 float cap (millions)
     _PASS3_PRICE_MIN       = 1.0    # Pass 3 price floor
@@ -5124,28 +5155,9 @@ def watchlist_refresh(midday: bool = False):
     _PASS4_PRICE_MAX       = PRICE_MAX   # Pass 4 price ceiling — mirrors global PRICE_MAX
     _PASS4_AVG_VOL_MIN_K   = 500    # Pass 4 avg-volume floor (thousands)
 
-    # Maps numeric short-float thresholds → Finviz filter codes (sh_short_o{N}).
-    # Add entries here whenever Finviz introduces a new breakpoint.
-    _SHORT_FLOAT_FILTER_MAP: dict[float, str] = {
-        5.0:  "sh_short_o5",
-        10.0: "sh_short_o10",
-        15.0: "sh_short_o15",
-        20.0: "sh_short_o20",
-        25.0: "sh_short_o25",
-        30.0: "sh_short_o30",
-    }
-    _pass3_short_float_filter = _SHORT_FLOAT_FILTER_MAP.get(_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT)
-    if _pass3_short_float_filter is None:
-        _supported = sorted(_SHORT_FLOAT_FILTER_MAP)
-        _nearest = min(_supported, key=lambda v: abs(v - _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT))
-        log.error(
-            f"[watchlist_refresh] _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT={_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT}% "
-            f"is not a supported Finviz breakpoint. "
-            f"Supported values: {_supported}. "
-            f"Falling back to nearest supported value: {_nearest}%."
-        )
-        _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = _nearest
-        _pass3_short_float_filter = _SHORT_FLOAT_FILTER_MAP[_nearest]
+    # _SHORT_FLOAT_FILTER_MAP and _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT are
+    # module-level constants (validated at startup); use them directly here.
+    _pass3_short_float_filter = _SHORT_FLOAT_FILTER_MAP[_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT]
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
