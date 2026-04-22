@@ -618,13 +618,23 @@ with _r1c4:
     st.metric("Max loss per trade", f"${pnl_fixed_risk:,.0f}",
               help="This is your 1R — the most you lose on a stopped-out trade.")
 
-pnl_pos_compound = st.checkbox(
-    "📈 Grow trade size as account grows",
-    value=False, key="fs_pnl_pos_compound",
-    help="When checked: if your account doubles, your trade size doubles too "
-         "(capped at 20× to keep numbers realistic). "
-         "When unchecked: always the same trade size regardless of P&L.",
-)
+if bot_mode:
+    pnl_pos_compound = True
+    st.checkbox(
+        "📈 Grow trade size as account grows",
+        value=True, disabled=True, key="fs_pnl_pos_compound",
+        help="Bot Mode always compounds — 2.1% of current equity per trade, $4k hard cap. "
+             "This toggle has no effect while Bot Mode is ON.",
+    )
+    st.caption("↑ Always ON in Bot Mode — bot scales risk with equity automatically.")
+else:
+    pnl_pos_compound = st.checkbox(
+        "📈 Grow trade size as account grows",
+        value=False, key="fs_pnl_pos_compound",
+        help="When checked: if your account doubles, your trade size doubles too "
+             "(capped at 20× to keep numbers realistic). "
+             "When unchecked: always the same trade size regardless of P&L.",
+    )
 
 pnl_risk_mode = "Fixed position size ($)"
 pnl_risk_pct  = None
