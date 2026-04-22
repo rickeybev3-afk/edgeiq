@@ -6901,7 +6901,7 @@ def place_alpaca_bracket_order(
     api_key: str = "",
     secret_key: str = "",
     entry_type: str = "stop",
-    max_notional: float = 1500.0,
+    max_notional: float = 10000.0,
 ) -> dict:
     """Place an IB-breakout bracket order on Alpaca.
 

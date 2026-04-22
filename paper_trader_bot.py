@@ -281,13 +281,11 @@ if os.getenv("EDGEIQ_PRODUCTION", "").strip() != "1":
 IS_PAPER_ALPACA         = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
 MIN_TCS                 = _PAPER_MIN_TCS if IS_PAPER_ALPACA else _LIVE_MIN_TCS
 RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
-# Max notional per position.
-# Paper: set very high ($500k) so risk-based sizing (risk_dollars / ib_range) is always the
-# binding constraint — this makes the paper account an accurate simulation of live trading
-# where position size = risk_dollars / risk_per_share (e.g. 2.1% equity ÷ stop distance).
-# Live: $1,500 hard cap protects real capital; raise proportionally as live equity grows past $25k.
-_default_max_pos = "500000" if IS_PAPER_ALPACA else "1500"
-MAX_POSITION_SIZE       = float(os.getenv("MAX_POSITION_SIZE", _default_max_pos))  # max notional per position ($)
+# Notional position size as a fraction of account equity.
+# Default 20%: at $10k live start → $2,000/trade; compounds automatically as equity grows.
+# Raise above $25k (e.g. NOTIONAL_PCT=0.40) to let the 2.1% risk formula start driving instead.
+# Live hard floor: never go below $1,500 notional regardless of equity.
+NOTIONAL_PCT            = float(os.getenv("NOTIONAL_PCT", "0.20"))    # fraction of equity per trade
 # PDT guard: block new orders when day-trade count >= this limit (FINRA: 3 in rolling 5 days)
 PDT_MAX_DAY_TRADES       = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
 # Concurrent position cap: block new orders when open positions >= this limit
@@ -471,6 +469,40 @@ def _compute_risk_dollars() -> float:
         return risk
     log.warning(f"  Could not fetch account equity — using fallback ${RISK_PER_TRADE:.0f}/trade")
     return RISK_PER_TRADE
+
+
+def _compute_trade_notional() -> float:
+    """Return the target notional (dollars deployed) per trade.
+
+    Formula: equity × NOTIONAL_PCT (default 20%).
+    At $10k live start → $2,000/trade; at $95k paper → $19,000/trade.
+    Compounds automatically — as equity grows, so does per-trade size.
+
+    Hard floors:
+      Paper: $500 minimum (avoids 1-share rounding on tiny test balances).
+      Live:  $1,500 minimum (keeps risk meaningful on a small real account).
+
+    Raise NOTIONAL_PCT via env var (e.g. 0.40) above $25k to let the 2.1%
+    risk formula start driving instead of the notional cap.
+
+    Falls back to NOTIONAL_PCT × $10,000 if account equity cannot be fetched.
+    """
+    equity = get_alpaca_account_equity(
+        is_paper   = IS_PAPER_ALPACA,
+        api_key    = ALPACA_API_KEY,
+        secret_key = ALPACA_SECRET_KEY,
+    )
+    _floor = 500.0 if IS_PAPER_ALPACA else 1500.0
+    if equity and equity > 0:
+        notional = max(equity * NOTIONAL_PCT, _floor)
+        log.info(
+            f"  Account equity: ${equity:,.0f} → "
+            f"{NOTIONAL_PCT*100:.0f}% notional = ${notional:,.0f}/trade"
+        )
+        return notional
+    fallback = max(NOTIONAL_PCT * 10_000, _floor)
+    log.warning(f"  Could not fetch account equity — notional fallback ${fallback:,.0f}/trade")
+    return fallback
 
 
 # ── P1–P4 tier priority ordering ───────────────────────────────────────────────
@@ -1940,6 +1972,12 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"({_stop_reason})"
         )
 
+    # Dual-constraint sizing: notional (equity × NOTIONAL_PCT) and risk (2.1% of equity)
+    # are both computed live; qty = min(qty_by_risk, qty_by_notional) picks the tighter.
+    # Under $25k the notional cap (~20% of equity) almost always wins over 2.1% risk at
+    # typical 5% IB stops (which would imply 42%-of-equity positions). Both compound.
+    _trade_notional = _compute_trade_notional()
+
     result = place_alpaca_bracket_order(
         ticker       = ticker,
         ib_high      = ib_high,
@@ -1951,7 +1989,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         api_key      = ALPACA_API_KEY,
         secret_key   = ALPACA_SECRET_KEY,
         entry_type   = "market" if _use_market_entry else "stop",
-        max_notional = MAX_POSITION_SIZE,
+        max_notional = _trade_notional,
     )
 
     acct_type = "PAPER" if IS_PAPER_ALPACA else "LIVE"
@@ -1973,13 +2011,16 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             if _sp_mult != 1.0
             else ""
         )
+        _position_value = round(qty * result["entry"], 2)
+        _actual_risk    = round(qty * abs(result["entry"] - result["stop"]), 2)
         tg_send(
             f"📋 <b>{acct_type} Order Placed — {ticker}</b>\n"
             f"{'🟡' if direction == 'Bullish Break' else '🔴'} {direction}\n"
             f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
             f"Target: ${result['target']}\n"
-            f"Qty: {qty} shares | Risk: ${risk_dollars:,.0f} "
-            f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier{_rvol_bonus_label}{_sp_label} · 1R base)\n"
+            f"Qty: {qty} shares @ ${result['entry']} = <b>${_position_value:,.0f} in</b>\n"
+            f"Risk: ${_actual_risk:,.0f} actual "
+            f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier{_rvol_bonus_label}{_sp_label})\n"
             f"<code>{order_id[:8]}…</code>"
         )
         # Patch Supabase paper_trades row with order metadata + skip_reason
