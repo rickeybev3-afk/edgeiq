@@ -2064,6 +2064,23 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
     # typical 5% IB stops (which would imply 42%-of-equity positions). Both compound.
     _trade_notional = _compute_trade_notional()
 
+    # ── OrderGuard: skip if Alpaca already holds a position in this ticker ────
+    _live_positions = _alpaca_get_positions()
+    _live_tickers = {p["symbol"].upper() for p in _live_positions}
+    if ticker.upper() in _live_tickers:
+        log.warning(
+            f"  [{ticker}] [OrderGuard] skipping — already have an open Alpaca position"
+        )
+        return
+
+    # ── OrderGuard: skip if there are pending (unfilled) orders for this ticker ─
+    _open_order_ids = _alpaca_get_open_order_ids(ticker)
+    if _open_order_ids:
+        log.warning(
+            f"  [{ticker}] [OrderGuard] skipping — {len(_open_order_ids)} open order(s) already exist"
+        )
+        return
+
     result = place_alpaca_bracket_order(
         ticker       = ticker,
         ib_high      = ib_high,
