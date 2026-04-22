@@ -16263,6 +16263,46 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f"(`?min_tcs_trades={_MIN_TCS_TRADES}`). "
                     "Copy the current URL to share this exact setting with a colleague."
                 )
+                import streamlit.components.v1 as _cmp_copy_link
+                _cmp_copy_link.html(
+                    """
+                    <button id="copy-link-btn" onclick="copyLink()" style="
+                        display:inline-flex;align-items:center;gap:6px;
+                        padding:4px 10px;font-size:12px;cursor:pointer;
+                        border:1px solid #555;border-radius:6px;
+                        background:#1e1e2e;color:#cdd6f4;
+                        font-family:sans-serif;transition:background 0.2s;">
+                      \U0001f517 Copy link
+                    </button>
+                    <script>
+                    function copyLink() {
+                        var url = window.parent.location.href;
+                        navigator.clipboard.writeText(url).then(function() {
+                            var btn = document.getElementById('copy-link-btn');
+                            btn.textContent = '\u2713 Copied!';
+                            btn.style.color = '#a6e3a1';
+                            btn.style.borderColor = '#a6e3a1';
+                            setTimeout(function() {
+                                btn.innerHTML = '\U0001f517 Copy link';
+                                btn.style.color = '#cdd6f4';
+                                btn.style.borderColor = '#555';
+                            }, 1500);
+                        }).catch(function() {
+                            var btn = document.getElementById('copy-link-btn');
+                            btn.textContent = '\u26a0 Copy failed';
+                            btn.style.color = '#f38ba8';
+                            btn.style.borderColor = '#f38ba8';
+                            setTimeout(function() {
+                                btn.innerHTML = '\U0001f517 Copy link';
+                                btn.style.color = '#cdd6f4';
+                                btn.style.borderColor = '#555';
+                            }, 2000);
+                        });
+                    }
+                    </script>
+                    """,
+                    height=40,
+                )
             _url_push("min_tcs_trades", str(_MIN_TCS_TRADES))
 
             # Persist slider value to user prefs whenever it changes
