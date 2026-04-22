@@ -24929,7 +24929,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         # Initialise slider position from URL param `tcs_floor` (falls back to config value)
         _url_init_int("tcs_floor", "p3_tcs_intraday_min_slider",
                       default=_p3_tcs_cur_val, clamp=(30, 55, 1))
-        _p3_tcs_slider_col, _p3_tcs_btn_col = st.columns([4, 1])
+        _p3_tcs_slider_col, _p3_tcs_btn_col, _p3_tcs_copy_col = st.columns([4, 1, 1])
         with _p3_tcs_slider_col:
             _p3_tcs_new_val = st.slider(
                 "Intraday TCS floor (tcs_intraday_min)",
@@ -24945,6 +24945,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
         with _p3_tcs_btn_col:
             st.markdown("&nbsp;", unsafe_allow_html=True)
             _p3_tcs_save_btn = st.button("\U0001f4be Save", key="p3_tcs_floor_save_btn", type="primary")
+        with _p3_tcs_copy_col:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            _render_copy_link_button("copy-link-tcs-floor")
         st.caption(f"Current value: **{_p3_tcs_cur_val}**. Bot hot-reloads filter_config.json on mtime change \u2014 no restart needed.")
         if _p3_tcs_save_btn:
             _p3_tcs_cfg = {}
