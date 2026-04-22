@@ -24981,7 +24981,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
             except Exception:
                 pass
         _p3_warn_cur = max(1, min(20, _p3_warn_cur))
-        _p3_warn_col, _p3_warn_btn_col, _p3_warn_reset_col = st.columns([4, 1, 1])
+        # Initialise input from URL param `tcs_warn` (falls back to config value)
+        _url_init_int("tcs_warn", "p3_tcs_warn_threshold_input",
+                      default=_p3_warn_cur, clamp=(1, 20, 1))
+        _p3_warn_col, _p3_warn_btn_col, _p3_warn_reset_col, _p3_warn_copy_col = st.columns([4, 1, 1, 1])
         with _p3_warn_col:
             _p3_warn_new_val = st.number_input(
                 "Warning threshold (±TCS points)",
@@ -24992,12 +24995,17 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 key="p3_tcs_warn_threshold_input",
                 help="Show a warning when the selected TCS floor differs from the combo's optimised baseline by more than this many points. Lower = more sensitive (e.g. ±2), higher = less sensitive (e.g. ±10). Range: 1–20.",
             )
+        # Persist input value to URL so a reload restores the same threshold
+        _url_push("tcs_warn", str(int(_p3_warn_new_val)))
         with _p3_warn_btn_col:
             st.markdown("&nbsp;", unsafe_allow_html=True)
             _p3_warn_save_btn = st.button("💾 Save", key="p3_tcs_warn_save_btn", type="primary")
         with _p3_warn_reset_col:
             st.markdown("&nbsp;", unsafe_allow_html=True)
             _p3_warn_reset_btn = st.button("↺ Reset (±5)", key="p3_tcs_warn_reset_btn")
+        with _p3_warn_copy_col:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            _render_copy_link_button("copy-link-tcs-warn")
         st.caption(f"Current threshold: **±{_p3_warn_cur}**. Warning fires when slider diverges from combo baseline by more than this many TCS points.")
         if _p3_warn_save_btn:
             _p3_warn_cfg = {}
