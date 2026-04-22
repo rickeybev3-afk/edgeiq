@@ -1,6 +1,6 @@
 """Unit tests for squeeze-specific win/loss and R-value calculations.
 
-Covers four bug-fixes merged into the squeeze trade pipeline:
+Covers five bug-fixes / behaviour paths in the squeeze trade pipeline:
 
   1. Squeeze win/loss price override (_squeeze_win_loss_override in
      backfill_pending_sim_rows.py):
@@ -22,6 +22,12 @@ Covers four bug-fixes merged into the squeeze trade pipeline:
        ensures bearish squeeze rows use the correct short-trade directional formula.
      — Bearish stopped-out trade (close > ib_high) → pnl_r_sim < 0.
      — Without the fix (wrong actual_outcome) the same row gives pnl_r_sim > 0.
+
+  5. v6 intraday MFE/MAE path coverage for compute_trade_sim:
+     — Bearish v6: mfe >= target_r → trailing_exit with captured_r = mfe - 1.0R > 0.
+     — Bearish v6: mae >= 1.0 → stopped_out with pnl_r_sim = -1.0.
+     — Bearish v6: tight_trail_exit when nearest_support is within 0.3R of entry.
+     — Symmetric bullish MFE/MAE cases as positive control.
 
 All sections import the *real* functions from their source modules so
 regressions in production code are caught automatically.
@@ -536,4 +542,172 @@ def test_bearish_wrong_direction_gives_opposite_sign(real_backend):
     assert bugged["pnl_r_sim"] > 0, (
         f"With wrong direction (Bullish Break) pnl_r_sim should be > 0 "
         f"(demonstrating the original bug), got {bugged['pnl_r_sim']}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. v6 intraday MFE/MAE path coverage  (backend.compute_trade_sim)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The EOD-close fallback path (mfe=None / mae=None) is already exercised in
+# Section 4.  This section exercises the v6 intraday bracket/trail paths for
+# both bearish and bullish directions so a regression in the short-side MFE/MAE
+# logic is caught immediately.
+#
+# IB levels: ib_low=100, ib_high=105, ib_range=5, target_r=2.0
+#   Bearish short: entry=100 (ib_low), stop=105 (ib_high), target=90 (100−2×5)
+#                  stop_dist_pct = 5/100 × 100 = 5.0 %
+#   Bullish long:  entry=105 (ib_high), stop=100 (ib_low),  target=115 (105+2×5)
+#                  stop_dist_pct = 5/105 × 100 ≈ 4.762 %
+#
+# v6 bearish flow:
+#   1. If mfe_r >= target_r (T1 hit) → trailing_exit or tight_trail_exit
+#      • nearest_support within 0.3R below entry → trail_r = 0.5 (tight)
+#      • otherwise                                → trail_r = 1.0 (normal)
+#      captured_r = max(0, mfe_r − trail_r)
+#   2. Elif mae_r >= 1.0 (stop hit before T1) → stopped_out, pnl_r = −1.0
+#   3. Neither → held to EOD (close/ft_pct fallback)
+#
+# v6 bullish flow mirrors the bearish flow but uses nearest_resistance and
+# the smart-stop-widened _eff_stop_r threshold.  For the test rows supplied
+# (tcs=50, rvol=1.0, ib_range_pct=5.0, scan_type='daily') the smart buffer
+# is 0.0, so _eff_stop_r = 1.0 — the same threshold as bearish.
+
+def _intraday_sim_row(
+    predicted: str,
+    actual_outcome: str,
+    mfe: float,
+    mae: float,
+    ib_high: float = 105.0,
+    ib_low: float = 100.0,
+    close_price: float | None = None,
+    nearest_resistance: float | None = None,
+    nearest_support: float | None = None,
+) -> dict:
+    """Minimal row dict for compute_trade_sim with real intraday MFE/MAE values.
+
+    Supply mfe and mae so _has_clean_mfe is True and the v4/v5/v6 intraday
+    paths are activated instead of falling through to the EOD close fallback.
+    """
+    return {
+        "ib_high":                ib_high,
+        "ib_low":                 ib_low,
+        "predicted":              predicted,
+        "actual_outcome":         actual_outcome,
+        "close_price":            close_price,
+        "mfe":                    mfe,
+        "mae":                    mae,
+        "tcs":                    50,
+        "rvol":                   1.0,
+        "ib_range_pct":           5.0,
+        "scan_type":              "daily",
+        "pnl_r_actual":           None,
+        "alpaca_exit_fill_price": None,
+        "nearest_resistance":     nearest_resistance,
+        "nearest_support":        nearest_support,
+    }
+
+
+# ── Parametrized cases ────────────────────────────────────────────────────────
+# Each entry: (id, direction, mfe, mae, nearest_resistance, nearest_support,
+#              expected_outcome, expected_pnl_r)
+#
+# nearest_support=99.0  is 1.0R inside the 0.3R boundary below entry=100
+#   → (entry − ns) = 1.0, 0.3 × ib_range = 1.5  → qualifies for tight trail
+# nearest_resistance=106.0 is 1.0R inside the 0.3R boundary above entry=105
+#   → (nr − entry) = 1.0, 0.3 × ib_range = 1.5  → qualifies for tight trail
+
+_V6_MFE_MAE_CASES = [
+    # ── Bearish short ─────────────────────────────────────────────────────────
+    # T1 hit (mfe=2.5 >= target_r=2.0), no S/R nearby → normal trail (1.0R)
+    # captured_r = max(0, 2.5 − 1.0) = 1.5
+    (
+        "bearish_t1_hit_trailing_exit",
+        "Bearish Break", 2.5, 0.5, None, None,
+        "trailing_exit", pytest.approx(1.5),
+    ),
+    # Stop hit before T1 (mae=1.2 >= 1.0, mfe=0.5 < target_r) → −1.0R
+    (
+        "bearish_mae_stopped_out",
+        "Bearish Break", 0.5, 1.2, None, None,
+        "stopped_out", pytest.approx(-1.0),
+    ),
+    # T1 hit AND nearest_support within 0.3R below entry → tight trail (0.5R)
+    # captured_r = max(0, 2.5 − 0.5) = 2.0
+    (
+        "bearish_t1_hit_tight_trail_exit",
+        "Bearish Break", 2.5, 0.5, None, 99.0,
+        "tight_trail_exit", pytest.approx(2.0),
+    ),
+    # ── Bullish long (positive control) ──────────────────────────────────────
+    # T1 hit (mfe=2.5 >= target_r=2.0), no S/R nearby → normal trail (1.0R)
+    # captured_r = max(0, 2.5 − 1.0) = 1.5
+    (
+        "bullish_t1_hit_trailing_exit",
+        "Bullish Break", 2.5, 0.5, None, None,
+        "trailing_exit", pytest.approx(1.5),
+    ),
+    # Stop hit before T1 (mae=1.2 >= _eff_stop_r=1.0, mfe=0.5 < target_r) → −1.0R
+    (
+        "bullish_mae_stopped_out",
+        "Bullish Break", 0.5, 1.2, None, None,
+        "stopped_out", pytest.approx(-1.0),
+    ),
+    # T1 hit AND nearest_resistance within 0.3R above entry → tight trail (0.5R)
+    # captured_r = max(0, 2.5 − 0.5) = 2.0
+    (
+        "bullish_t1_hit_tight_trail_exit",
+        "Bullish Break", 2.5, 0.5, 106.0, None,
+        "tight_trail_exit", pytest.approx(2.0),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id,direction,mfe,mae,nearest_resistance,nearest_support,"
+    "expected_outcome,expected_pnl_r",
+    [(*c,) for c in _V6_MFE_MAE_CASES],
+    ids=[c[0] for c in _V6_MFE_MAE_CASES],
+)
+def test_v6_intraday_mfe_mae_paths(
+    real_backend,
+    case_id,
+    direction,
+    mfe,
+    mae,
+    nearest_resistance,
+    nearest_support,
+    expected_outcome,
+    expected_pnl_r,
+):
+    """compute_trade_sim v6 intraday MFE/MAE paths produce the correct
+    sim_outcome and pnl_r_sim for both bearish and bullish squeeze rows.
+
+    Tests the three v6 intraday branches:
+      • T1 hit, no tight S/R  → trailing_exit,      captured_r = mfe − 1.0R
+      • MAE >= stop threshold  → stopped_out,         pnl_r_sim = −1.0R
+      • T1 hit + tight S/R     → tight_trail_exit,   captured_r = mfe − 0.5R
+    """
+    row = _intraday_sim_row(
+        predicted=direction,
+        actual_outcome=direction,
+        mfe=mfe,
+        mae=mae,
+        nearest_resistance=nearest_resistance,
+        nearest_support=nearest_support,
+    )
+    result = real_backend.compute_trade_sim(row, target_r=2.0)
+
+    assert result["sim_outcome"] not in ("no_trade", "missing_data", "invalid_ib"), (
+        f"[{case_id}] Expected a valid simulation, got sim_outcome="
+        f"{result['sim_outcome']!r}"
+    )
+    assert result["sim_outcome"] == expected_outcome, (
+        f"[{case_id}] direction={direction!r} mfe={mfe} mae={mae} "
+        f"nearest_resistance={nearest_resistance} nearest_support={nearest_support} "
+        f"→ expected sim_outcome={expected_outcome!r}, got {result['sim_outcome']!r}"
+    )
+    assert result["pnl_r_sim"] == expected_pnl_r, (
+        f"[{case_id}] direction={direction!r} mfe={mfe} mae={mae} "
+        f"→ expected pnl_r_sim={expected_pnl_r}, got {result['pnl_r_sim']}"
     )
