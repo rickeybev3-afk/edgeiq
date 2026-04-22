@@ -974,19 +974,33 @@ def set_user_session(access_token: str, refresh_token: str) -> None:
 # ── Supabase Auth helpers ─────────────────────────────────────────────────────
 
 def auth_login(email: str, password: str) -> dict:
-    """Sign in via Supabase email/password auth."""
+    """Sign in via Supabase email/password auth. Times out after 10 s."""
     if not supabase:
         return {"user": None, "session": None, "error": "Supabase not configured."}
-    try:
-        resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        return {"user": resp.user, "session": resp.session, "error": None}
-    except Exception as exc:
-        msg = str(exc)
-        if "Invalid login credentials" in msg:
-            msg = "Invalid email or password."
-        elif "Email not confirmed" in msg:
-            msg = "Please confirm your email before logging in."
-        return {"user": None, "session": None, "error": msg}
+    import threading as _thr
+    _result: dict = {}
+
+    def _do_login():
+        try:
+            resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            _result.update({"user": resp.user, "session": resp.session, "error": None})
+        except Exception as exc:
+            msg = str(exc)
+            if "Invalid login credentials" in msg:
+                msg = "Invalid email or password."
+            elif "Email not confirmed" in msg:
+                msg = "Please confirm your email before logging in."
+            _result.update({"user": None, "session": None, "error": msg})
+
+    t = _thr.Thread(target=_do_login, daemon=True)
+    t.start()
+    t.join(timeout=10)
+    if t.is_alive():
+        return {"user": None, "session": None,
+                "error": "Login timed out — Supabase is busy. Please try again in a moment."}
+    if not _result:
+        return {"user": None, "session": None, "error": "Login failed — no response received."}
+    return _result
 
 
 def auth_signup(email: str, password: str) -> dict:
@@ -10396,9 +10410,11 @@ def list_backtest_tiered_sentinel_tickers(
         return {"total_sentinel": 0, "total_tickers": 0,
                 "ticker_list_complete": True, "tickers": []}
     try:
-        def _base_q():
+        def _make_q(select_str: str, count_mode=None):
+            kw = {"count": count_mode} if count_mode else {}
             q = (
                 supabase.table("backtest_sim_runs")
+                .select(select_str, **kw)
                 .eq("tiered_pnl_r", TIERED_PNL_SENTINEL)
             )
             if user_id:
@@ -10410,7 +10426,7 @@ def list_backtest_tiered_sentinel_tickers(
             return q
 
         # 1. Exact total count (server-side).
-        count_resp = _base_q().select("id", count="exact").limit(1).execute()
+        count_resp = _make_q("id", count_mode="exact").limit(1).execute()
         total_sentinel = count_resp.count or 0
         if total_sentinel == 0:
             return {"total_sentinel": 0, "total_tickers": 0,
@@ -10425,8 +10441,7 @@ def list_backtest_tiered_sentinel_tickers(
         rows_seen = 0
         for page in range(MAX_PAGES):
             chunk = (
-                _base_q()
-                .select("ticker,sim_date")
+                _make_q("ticker,sim_date")
                 .range(page * PAGE, page * PAGE + PAGE - 1)
                 .execute()
                 .data or []
@@ -10780,9 +10795,11 @@ def get_missing_close_price_stats(user_id: str = "") -> dict:
         return {"total_missing": 0, "total_tickers": 0, "top_tickers": [], "all_tickers": [],
                 "ticker_list_complete": True}
     try:
-        def _base_q():
+        def _make_q(select_str: str, count_mode=None):
+            kw = {"count": count_mode} if count_mode else {}
             q = (
                 supabase.table("backtest_sim_runs")
+                .select(select_str, **kw)
                 .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
                 .is_("close_price", "null")
             )
@@ -10790,8 +10807,8 @@ def get_missing_close_price_stats(user_id: str = "") -> dict:
                 q = q.eq("user_id", user_id)
             return q
 
-        # 1. Exact total count (server-side, no row data; head=True suppresses row payload)
-        count_resp = _base_q().select("id", count="exact").limit(1).execute()
+        # 1. Exact total count (server-side, no row data)
+        count_resp = _make_q("id", count_mode="exact").limit(1).execute()
         total_missing = count_resp.count or 0
         if total_missing == 0:
             return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
@@ -10805,8 +10822,7 @@ def get_missing_close_price_stats(user_id: str = "") -> dict:
         rows_seen = 0
         for page in range(MAX_PAGES):
             chunk = (
-                _base_q()
-                .select("ticker")
+                _make_q("ticker")
                 .range(page * PAGE, page * PAGE + PAGE - 1)
                 .execute()
                 .data or []
@@ -10854,9 +10870,11 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
         return {"total_missing": 0, "total_tickers": 0, "top_tickers": [], "all_tickers": [],
                 "ticker_list_complete": True}
     try:
-        def _base_q():
+        def _make_q(select_str: str, count_mode=None):
+            kw = {"count": count_mode} if count_mode else {}
             q = (
                 supabase.table("paper_trades")
+                .select(select_str, **kw)
                 .in_("win_loss", ["W", "L", "Win", "Loss"])
                 .is_("close_price", "null")
             )
@@ -10865,7 +10883,7 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
             return q
 
         # 1. Exact total count (server-side, no row data)
-        count_resp = _base_q().select("id", count="exact").limit(1).execute()
+        count_resp = _make_q("id", count_mode="exact").limit(1).execute()
         total_missing = count_resp.count or 0
         if total_missing == 0:
             return {"total_missing": 0, "total_tickers": 0, "top_tickers": [],
@@ -10878,8 +10896,7 @@ def get_paper_trade_missing_close_price_stats(user_id: str = "") -> dict:
         rows_seen = 0
         for page in range(MAX_PAGES):
             chunk = (
-                _base_q()
-                .select("ticker")
+                _make_q("ticker")
                 .range(page * PAGE, page * PAGE + PAGE - 1)
                 .execute()
                 .data or []
