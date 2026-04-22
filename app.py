@@ -24807,13 +24807,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _p3_combo_baseline_tcs = None
                 if _p3_combo_baseline_tcs is not None:
                     _p3_tcs_diff = _p3_preview_tcs - _p3_combo_baseline_tcs
-                    if abs(_p3_tcs_diff) > _P3_TCS_WARN_THRESHOLD:
-                        _p3_diff_sign = f"+{_p3_tcs_diff}" if _p3_tcs_diff > 0 else str(_p3_tcs_diff)
-                        st.warning(
-                            f"This combo was optimised with a TCS baseline of **{_p3_combo_baseline_tcs}** "
-                            f"and your slider is **{_p3_diff_sign}** from that. "
-                            "Applied performance may differ from backtest results."
-                        )
+                    _p3_tcs_just_saved = st.session_state.get("_p3_tcs_threshold_saved", False)
+                    if abs(_p3_tcs_diff) > _P3_TCS_WARN_THRESHOLD or _p3_tcs_just_saved:
+                        if abs(_p3_tcs_diff) > _P3_TCS_WARN_THRESHOLD:
+                            _p3_diff_sign = f"+{_p3_tcs_diff}" if _p3_tcs_diff > 0 else str(_p3_tcs_diff)
+                            st.warning(
+                                f"This combo was optimised with a TCS baseline of **{_p3_combo_baseline_tcs}** "
+                                f"and your slider is **{_p3_diff_sign}** from that. "
+                                "Applied performance may differ from backtest results."
+                            )
                         _p3_inline_threshold_val = st.number_input(
                             f"Warning threshold (±TCS pts) — currently ±{_P3_TCS_WARN_THRESHOLD}",
                             min_value=1,
@@ -24848,6 +24850,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             try:
                                 with open(_P3_CFG, "w") as _f:
                                     _p3_json.dump(_p3_inline_cfg, _f, indent=2)
+                                st.session_state["_p3_tcs_threshold_saved"] = True
                                 st.rerun()
                             except Exception as _p3_inline_ex:
                                 st.error(f"Failed to save threshold: {_p3_inline_ex}")
@@ -24866,6 +24869,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.rerun()
                             except Exception as _p3_reset_ex:
                                 st.error(f"Failed to reset threshold: {_p3_reset_ex}")
+                        if st.session_state.pop("_p3_tcs_threshold_saved", False):
+                            st.success("Saved ✓")
             with _p3_info_col:
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
