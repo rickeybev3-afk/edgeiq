@@ -974,33 +974,39 @@ def set_user_session(access_token: str, refresh_token: str) -> None:
 # ── Supabase Auth helpers ─────────────────────────────────────────────────────
 
 def auth_login(email: str, password: str) -> dict:
-    """Sign in via Supabase email/password auth. Times out after 10 s."""
-    if not supabase:
-        return {"user": None, "session": None, "error": "Supabase not configured."}
-    import threading as _thr
-    _result: dict = {}
-
-    def _do_login():
-        try:
-            resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            _result.update({"user": resp.user, "session": resp.session, "error": None})
-        except Exception as exc:
-            msg = str(exc)
-            if "Invalid login credentials" in msg:
-                msg = "Invalid email or password."
-            elif "Email not confirmed" in msg:
-                msg = "Please confirm your email before logging in."
-            _result.update({"user": None, "session": None, "error": msg})
-
-    t = _thr.Thread(target=_do_login, daemon=True)
-    t.start()
-    t.join(timeout=10)
-    if t.is_alive():
+    """Sign in via direct httpx call to Supabase auth (15 s timeout, bypasses gotrue client)."""
+    import httpx as _httpx, types as _types
+    try:
+        r = _httpx.post(
+            f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
+            json={"email": email, "password": password},
+            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
+            timeout=15.0,
+        )
+        data = r.json()
+        if r.status_code == 200:
+            ud = data.get("user") or {}
+            user = _types.SimpleNamespace(
+                id=ud.get("id", ""),
+                email=ud.get("email", email),
+            )
+            session = _types.SimpleNamespace(
+                access_token=data.get("access_token", ""),
+                refresh_token=data.get("refresh_token", ""),
+            )
+            return {"user": user, "session": session, "error": None}
+        msg = (data.get("error_description") or data.get("msg")
+               or data.get("message") or "Login failed.")
+        if "Invalid login credentials" in msg or "invalid_credentials" in str(data.get("error","")):
+            msg = "Invalid email or password."
+        elif "Email not confirmed" in msg:
+            msg = "Please confirm your email before logging in."
+        return {"user": None, "session": None, "error": msg}
+    except _httpx.TimeoutException:
         return {"user": None, "session": None,
-                "error": "Login timed out — Supabase is busy. Please try again in a moment."}
-    if not _result:
-        return {"user": None, "session": None, "error": "Login failed — no response received."}
-    return _result
+                "error": "Login timed out — Supabase is busy. Try again in a moment."}
+    except Exception as exc:
+        return {"user": None, "session": None, "error": f"Login error: {exc}"}
 
 
 def auth_signup(email: str, password: str) -> dict:
@@ -1061,46 +1067,47 @@ def clear_session_cache() -> None:
 
 
 def try_restore_session() -> dict:
-    """Attempt to restore a previous session from the cached refresh token.
+    """Attempt to restore a previous session via direct httpx call (bypasses gotrue client).
 
     Returns {"user": <User>, "email": str} on success, {} on failure.
-    Times out after 6 seconds so a slow Supabase doesn't block the login page.
     """
-    if not supabase:
-        return {}
     cache = load_session_cache()
     token = cache.get("refresh_token", "")
     if not token:
         return {}
-
-    import threading as _thr
-    _result: dict = {}
-
-    def _do_refresh():
-        try:
-            resp = supabase.auth.refresh_session(token)
-            if resp and resp.user:
-                save_session_cache(
-                    str(resp.user.id),
-                    str(resp.user.email),
-                    resp.session.refresh_token if resp.session else token,
-                )
-                _result.update({
-                    "user":          resp.user,
-                    "email":         str(resp.user.email),
-                    "access_token":  resp.session.access_token  if resp.session else "",
-                    "refresh_token": resp.session.refresh_token if resp.session else "",
-                })
-        except Exception as _e:
-            print(f"Session restore failed: {_e}")
-            clear_session_cache()
-
-    t = _thr.Thread(target=_do_refresh, daemon=True)
-    t.start()
-    t.join(timeout=6)
-    if t.is_alive():
+    import httpx as _httpx, types as _types
+    try:
+        r = _httpx.post(
+            f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
+            json={"refresh_token": token},
+            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
+            timeout=8.0,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            ud = data.get("user") or {}
+            new_rt = data.get("refresh_token", token)
+            uid = ud.get("id", cache.get("user_id", ""))
+            email = ud.get("email", cache.get("email", ""))
+            save_session_cache(uid, email, new_rt)
+            user = _types.SimpleNamespace(id=uid, email=email)
+            session = _types.SimpleNamespace(
+                access_token=data.get("access_token", ""),
+                refresh_token=new_rt,
+            )
+            return {
+                "user": user, "email": email,
+                "access_token": data.get("access_token", ""),
+                "refresh_token": new_rt,
+            }
+        print(f"Session restore failed: HTTP {r.status_code}")
+        clear_session_cache()
+    except _httpx.TimeoutException:
         print("Session restore timed out — showing login page")
-    return _result
+    except Exception as _e:
+        print(f"Session restore failed: {_e}")
+        clear_session_cache()
+    return {}
 
 
 def check_user_id_column_exists() -> bool:
