@@ -22108,8 +22108,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         )
 
                 if _fgs_apply_btn:
+                    _fgs_cur_tcs_intraday_min = 35
+                    if _fgs_os.path.exists(_FGS_CFG):
+                        try:
+                            with open(_FGS_CFG) as _f:
+                                _fgs_cur_tcs_intraday_min = int(_fgs_json.load(_f).get("tcs_intraday_min", 35))
+                        except Exception:
+                            pass
                     _fgs_new_cfg = {
                         "tcs_offset":        _fgs_best.get("tcs_offset", 0),
+                        "tcs_intraday_min":  _fgs_cur_tcs_intraday_min,
                         "rvol_min":          _fgs_best.get("rvol_min", 0.0),
                         "gap_min":           _fgs_best.get("gap_min", 0.0),
                         "follow_min_pct":    _fgs_best.get("follow_min", -999.0),
@@ -24559,6 +24567,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             if _p3_apply:
                 _p3_new_cfg = {
                     "tcs_offset":       _p3_best.get("tcs_offset", 0),
+                    "tcs_intraday_min": int(_p3_cur.get("tcs_intraday_min", 35)),
                     "rvol_min":         _p3_best.get("rvol_min", 0.0),
                     "gap_min":          _p3_best.get("gap_min", 0.0),
                     "follow_min_pct":   _p3_best.get("follow_min", -999.0),

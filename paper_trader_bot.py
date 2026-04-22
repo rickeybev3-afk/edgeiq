@@ -531,10 +531,13 @@ except ImportError as e:
 def _struct_tcs_floor(r: dict, tcs_thresholds: dict, regime_floor: int) -> int:
     """Return the effective TCS floor for a scan result.
 
-    For INTRADAY scans: always returns max(MIN_TCS, regime_floor).
-    5-yr data shows intraday TCS 50-59 is +1.265R / 74.8% WR across ALL
-    structures — per-structure calibration adds no value here and would be
-    overwritten nightly to 62-65, blocking profitable setups.
+    For INTRADAY scans: returns max(tcs_intraday_min, regime_floor).
+    tcs_intraday_min is read from filter_config.json (default = MIN_TCS=49).
+    Setting tcs_intraday_min=35 in filter_config unlocks the 35-49 TCS band
+    for intraday setups; hist data shows TCS>=35 intraday = 98% WR (107 trades)
+    vs 100% WR at TCS>=50 — nearly identical edge with 2x the trade volume.
+    Per-structure calibration is bypassed for intraday as before.
+    LIVE_MIN_TCS (70) is always the hard floor in live mode regardless of this.
 
     For MORNING / EOD scans: uses calibrated per-structure threshold from
     tcs_thresholds.json (written nightly by the recalibration), then applies
@@ -544,8 +547,18 @@ def _struct_tcs_floor(r: dict, tcs_thresholds: dict, regime_floor: int) -> int:
     """
     scan_type = str(r.get("scan_type") or "").lower()
     if scan_type == "intraday":
-        # Bypass per-structure calibration for intraday — use global floor only
-        return max(MIN_TCS, regime_floor)
+        # Use filter_config tcs_intraday_min if set; fall back to global MIN_TCS.
+        # Never let paper-mode config override the live-money floor.
+        try:
+            _flt = _load_filter_config()
+            _intraday_floor = int(_flt.get("tcs_intraday_min", MIN_TCS))
+        except Exception:
+            _intraday_floor = MIN_TCS
+        effective = max(_intraday_floor, regime_floor)
+        if IS_PAPER_ALPACA:
+            return effective
+        # Live mode: never go below _LIVE_MIN_TCS regardless of filter_config
+        return max(effective, _LIVE_MIN_TCS)
     predicted = str(r.get("predicted") or "").strip()
     wk        = label_to_weight_key(predicted) if predicted else ""
     cal_tcs   = tcs_thresholds.get(wk, MIN_TCS) if wk else MIN_TCS
@@ -775,6 +788,9 @@ def _load_filter_config() -> dict:
 
     Returns a dict with keys:
         tcs_offset        int   — extra TCS points above per-structure baseline (default 0)
+        tcs_intraday_min  int   — intraday TCS floor, overrides MIN_TCS for intraday scans only
+                                  (default = MIN_TCS = 49 paper; live always uses _LIVE_MIN_TCS=70)
+                                  Set to 35 to unlock 35-49 TCS band: 98% WR on 107 intraday trades.
         rvol_min          float — minimum RVOL (stacks on top of RVOL_MIN_FLOOR; default 0)
         gap_min           float — abs(gap_pct) must be >= this % (default 0)
         follow_min_pct    float — follow_thru_pct must be >= this (default -999 = off)
@@ -8161,7 +8177,14 @@ def main():
     else:
         log.warning("Telegram alerts: DISABLED (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set)")
 
-    log.info(f"Watching {len(TICKERS)} tickers | TCS ≥ {MIN_TCS} | feed: {FEED.upper()}")
+    _flt_startup = _load_filter_config()
+    _intraday_tcs_startup = int(_flt_startup.get("tcs_intraday_min", MIN_TCS))
+    _morning_tcs_startup  = MORNING_TCS_FLOOR
+    log.info(
+        f"Watching {len(TICKERS)} tickers | feed: {FEED.upper()} | "
+        f"TCS floors → morning ≥ {_morning_tcs_startup} | intraday ≥ {_intraday_tcs_startup} "
+        f"(from filter_config.json; live floor = {_LIVE_MIN_TCS} hard cap)"
+    )
     log.info(
         f"Look-back windows — paper close: {PAPER_CLOSE_LOOKBACK_DAYS} days "
         f"(PAPER_CLOSE_LOOKBACK_DAYS) | backtest close: {BACKTEST_CLOSE_LOOKBACK_DAYS} days "

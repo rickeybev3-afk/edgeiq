@@ -2,6 +2,8 @@
   "_note": "Phase 3 best combo (Apr 21 grid search). gap>=2% any direction. gap_dir=any allows both gap-up and gap-down setups through. 84.6% WR, avg_R +0.929R, 21.5 trades/wk (~4.3/day), MaxDD 21.6R ($3,239 at $150/R), +4,894R total over 4.9yr. Source: grid_search_archive/2026-04-21/filter_grid_summary.json best_combo.",
   "_source": "Apr 21 best combo — gap>=2%, gap_dir=any, all 5 structures",
   "tcs_offset": 0,
+  "tcs_intraday_min": 35,
+  "_tcs_intraday_min_note": "Intraday TCS floor — overrides global MIN_TCS (49) for intraday scans only. Hist data: TCS>=35 intraday = 98% WR on 107 trades vs 100% WR on 51 at TCS>=50. Unlocks 35-49 range for expanded watchlist. LIVE floor (_LIVE_MIN_TCS=70) is never overridden by this setting.",
   "gap_min": 2.0,
   "gap_direction": "any",
   "follow_min_pct": -999.0,
@@ -11,7 +13,6 @@
   "pm_ib_dir": "any",
   "rvol_min": 0.0,
   "scan_type": "any",
-  "vwap_position": "any",
   "drawdown_lookback_n": 20,
   "drawdown_warning_r": -8.0,
   "drawdown_critical_r": -12.0
