@@ -1,0 +1,23 @@
+{
+  "_note": "Auto-generated from Phase 3 grid search best combo (ranked #13 by MaxDD-adjusted quality). gap_direction=up reduces MaxDD 21.6R\u21925.6R with better WR/avgR/PF.",
+  "_source_combo": 13,
+  "tcs_offset": 0,
+  "gap_min": 2.0,
+  "gap_direction": "up",
+  "follow_min_pct": -999.0,
+  "struct_filter": "all",
+  "excl_false_break": false,
+  "pm_range_floor": 0.0,
+  "pm_ib_dir": "any",
+  "struct_tokens": [
+    "bullish break",
+    "bearish break",
+    "ntrl extreme",
+    "neutral",
+    "dbl dist",
+    "non_trend"
+  ],
+  "rvol_min": 0.0,
+  "scan_type": "any",
+  "vwap_position": "any"
+}

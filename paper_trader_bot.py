@@ -1695,6 +1695,31 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 _patch_skip_reason(r, ticker, "filter_config_gap")
                 return
 
+        # 2.5. Gap direction (up / down / any)
+        # Mirrors filter_grid_search: gap_dir_up = gap_pct > 0, gap_dir_down = gap_pct < 0.
+        _flt_gap_dir = str(_flt_cfg.get("gap_direction", "any"))
+        if _flt_gap_dir != "any":
+            if _gap_pct_v is None:
+                log.info(f"  [{ticker}] filter_config skip — gap_direction={_flt_gap_dir} required but gap_pct unavailable")
+                _patch_skip_reason(r, ticker, "filter_config_gap_dir")
+                return
+            _gap_float = float(_gap_pct_v)
+            _gap_dir_pass = (
+                (_flt_gap_dir == "up"   and _gap_float > 0) or
+                (_flt_gap_dir == "down" and _gap_float < 0)
+            )
+            if not _gap_dir_pass:
+                log.info(
+                    f"  [{ticker}] filter_config skip — gap_direction={_flt_gap_dir}, "
+                    f"actual gap={_gap_float:+.2f}%"
+                )
+                tg_send(
+                    f"⛔ <b>{ticker} Filtered — Gap direction mismatch</b>\n"
+                    f"Optimizer requires gap-<b>{_flt_gap_dir}</b>, actual: <b>{_gap_float:+.2f}%</b>"
+                )
+                _patch_skip_reason(r, ticker, "filter_config_gap_dir")
+                return
+
         # 3. Follow-through floor
         # Mirrors filter_grid_search._apply_combo: fail when filter active AND data is None.
         _flt_ft_min = float(_flt_cfg.get("follow_min_pct", -999.0))
