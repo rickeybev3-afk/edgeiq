@@ -93,6 +93,108 @@ from backend import (
     _VJ_NEGATIVE_SIGNALS,
 )
 
+# ── Shared UI helpers ─────────────────────────────────────────────────────────
+
+def _render_copy_link_button(btn_id: str = "copy-link-btn") -> None:
+    """Render a 🔗 Copy link button that copies window.parent.location.href to clipboard.
+
+    Each call site should pass a unique *btn_id* so that multiple buttons on the
+    same page don't share the same DOM id or JS function name.
+
+    Includes a legacy-copy fallback (execCommand) and a manual-copy text field for
+    browsers/contexts where the Clipboard API is blocked.
+    """
+    import streamlit.components.v1 as _cmp_v1
+    _safe_id = btn_id.replace("-", "_")
+    _fallback_id = f"{btn_id}-fallback"
+    _field_id = f"{btn_id}-field"
+    _cmp_v1.html(
+        f"""
+        <div style="font-family:sans-serif;">
+        <button id="{btn_id}" onclick="copyLink_{_safe_id}()" style="
+            display:inline-flex;align-items:center;gap:6px;
+            padding:4px 10px;font-size:12px;cursor:pointer;
+            border:1px solid #555;border-radius:6px;
+            background:#1e1e2e;color:#cdd6f4;
+            font-family:sans-serif;transition:background 0.2s;">
+          \U0001f517 Copy link
+        </button>
+        <div id="{_fallback_id}" style="display:none;margin-top:6px;">
+          <input id="{_field_id}" type="text" readonly style="
+            width:100%;box-sizing:border-box;
+            padding:4px 8px;font-size:12px;
+            background:#1e1e2e;color:#cdd6f4;
+            border:1px solid #a6e3a1;border-radius:6px;
+            font-family:sans-serif;" />
+          <div style="font-size:11px;color:#a6e3a1;margin-top:3px;">
+            \U0001f4cb Tap the field above and copy the URL manually.
+          </div>
+        </div>
+        </div>
+        <script>
+        function showBtn_{_safe_id}(text, color, borderColor) {{
+            var btn = document.getElementById('{btn_id}');
+            btn.textContent = text;
+            btn.style.color = color;
+            btn.style.borderColor = borderColor;
+        }}
+        function resetBtn_{_safe_id}() {{
+            var btn = document.getElementById('{btn_id}');
+            btn.innerHTML = '\U0001f517 Copy link';
+            btn.style.color = '#cdd6f4';
+            btn.style.borderColor = '#555';
+        }}
+        function showFallback_{_safe_id}(url) {{
+            var box = document.getElementById('{_fallback_id}');
+            var field = document.getElementById('{_field_id}');
+            field.value = url;
+            box.style.display = 'block';
+            field.focus();
+            field.select();
+            setTimeout(function() {{ box.style.display = 'none'; }}, 8000);
+        }}
+        function legacyCopy_{_safe_id}(url) {{
+            var ta = document.createElement('textarea');
+            ta.value = url;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            var ok = false;
+            try {{ ok = document.execCommand('copy'); }} catch(e) {{}}
+            document.body.removeChild(ta);
+            return ok;
+        }}
+        function copyLink_{_safe_id}() {{
+            var url = window.parent.location.href;
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(url).then(function() {{
+                    showBtn_{_safe_id}('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
+                    setTimeout(resetBtn_{_safe_id}, 1500);
+                }}).catch(function() {{
+                    if (legacyCopy_{_safe_id}(url)) {{
+                        showBtn_{_safe_id}('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
+                        setTimeout(resetBtn_{_safe_id}, 1500);
+                    }} else {{
+                        showFallback_{_safe_id}(url);
+                        resetBtn_{_safe_id}();
+                    }}
+                }});
+            }} else {{
+                if (legacyCopy_{_safe_id}(url)) {{
+                    showBtn_{_safe_id}('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
+                    setTimeout(resetBtn_{_safe_id}, 1500);
+                }} else {{
+                    showFallback_{_safe_id}(url);
+                }}
+            }}
+        }}
+        </script>
+        """,
+        height=100,
+    )
+
 # ── Cached DB-loader wrappers (ttl=300 s ≈ 5 min) ────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_load_journal(user_id: str = ""):
@@ -11415,6 +11517,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
         _rp_end_iso   = _rp_end.isoformat()
         _url_push("rp_start_date", _rp_start_iso)
         _url_push("rp_end_date", _rp_end_iso)
+        _render_copy_link_button("copy-link-rp-date-range")
         _cmp_rp_filters.html(
             f"<script>"
             f"localStorage.setItem('rp_start_date', {repr(_rp_start_iso)});"
@@ -14658,6 +14761,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                     f'&#9679; {_rp_log_active_filters} {_rp_filter_word} active</span>',
                                     unsafe_allow_html=True,
                                 )
+                            _render_copy_link_button("copy-link-rp-log-filters")
                             if st.button("↺ Reset filters", key="_rp_log_reset_btn"):
                                 for _qp_key in ["rp_log_ticker", "rp_log_wl", "rp_log_neutral", "rp_log_boosted", "rp_log_marginal", "rp_log_from", "rp_log_to"]:
                                     if _qp_key in st.query_params:
@@ -16263,95 +16367,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     f"(`?min_tcs_trades={_MIN_TCS_TRADES}`). "
                     "Copy the current URL to share this exact setting with a colleague."
                 )
-                import streamlit.components.v1 as _cmp_copy_link
-                _cmp_copy_link.html(
-                    """
-                    <div style="font-family:sans-serif;">
-                    <button id="copy-link-btn" onclick="copyLink()" style="
-                        display:inline-flex;align-items:center;gap:6px;
-                        padding:4px 10px;font-size:12px;cursor:pointer;
-                        border:1px solid #555;border-radius:6px;
-                        background:#1e1e2e;color:#cdd6f4;
-                        font-family:sans-serif;transition:background 0.2s;">
-                      \U0001f517 Copy link
-                    </button>
-                    <div id="copy-fallback" style="display:none;margin-top:6px;">
-                      <input id="copy-url-field" type="text" readonly style="
-                        width:100%;box-sizing:border-box;
-                        padding:4px 8px;font-size:12px;
-                        background:#1e1e2e;color:#cdd6f4;
-                        border:1px solid #a6e3a1;border-radius:6px;
-                        font-family:sans-serif;" />
-                      <div style="font-size:11px;color:#a6e3a1;margin-top:3px;">
-                        \U0001f4cb Tap the field above and copy the URL manually.
-                      </div>
-                    </div>
-                    </div>
-                    <script>
-                    function showBtn(text, color, borderColor) {
-                        var btn = document.getElementById('copy-link-btn');
-                        btn.textContent = text;
-                        btn.style.color = color;
-                        btn.style.borderColor = borderColor;
-                    }
-                    function resetBtn() {
-                        var btn = document.getElementById('copy-link-btn');
-                        btn.innerHTML = '\U0001f517 Copy link';
-                        btn.style.color = '#cdd6f4';
-                        btn.style.borderColor = '#555';
-                    }
-                    function showFallback(url) {
-                        var box = document.getElementById('copy-fallback');
-                        var field = document.getElementById('copy-url-field');
-                        field.value = url;
-                        box.style.display = 'block';
-                        field.focus();
-                        field.select();
-                        setTimeout(function() {
-                            box.style.display = 'none';
-                        }, 8000);
-                    }
-                    function legacyCopy(url) {
-                        var ta = document.createElement('textarea');
-                        ta.value = url;
-                        ta.style.position = 'fixed';
-                        ta.style.opacity = '0';
-                        document.body.appendChild(ta);
-                        ta.focus();
-                        ta.select();
-                        var ok = false;
-                        try { ok = document.execCommand('copy'); } catch(e) {}
-                        document.body.removeChild(ta);
-                        return ok;
-                    }
-                    function copyLink() {
-                        var url = window.parent.location.href;
-                        if (navigator.clipboard && navigator.clipboard.writeText) {
-                            navigator.clipboard.writeText(url).then(function() {
-                                showBtn('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
-                                setTimeout(resetBtn, 1500);
-                            }).catch(function() {
-                                if (legacyCopy(url)) {
-                                    showBtn('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
-                                    setTimeout(resetBtn, 1500);
-                                } else {
-                                    showFallback(url);
-                                    resetBtn();
-                                }
-                            });
-                        } else {
-                            if (legacyCopy(url)) {
-                                showBtn('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
-                                setTimeout(resetBtn, 1500);
-                            } else {
-                                showFallback(url);
-                            }
-                        }
-                    }
-                    </script>
-                    """,
-                    height=100,
-                )
+                _render_copy_link_button("copy-link-min-tcs-trades")
             _url_push("min_tcs_trades", str(_MIN_TCS_TRADES))
 
             # Persist slider value to user prefs whenever it changes
@@ -16898,6 +16914,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                                     f"— cool-down active"
                                                 )
                                 _cooldown_countdown_fragment()
+            _render_copy_link_button("copy-link-tkr-sort-filter")
             _sort_key, _sort_asc_default = _sort_col_map[_sort_choice]
             _sort_asc = (not _sort_asc_default) if _sort_reverse else _sort_asc_default
             _r_filter_key = _r_filter_col_map[_r_filter_col]
