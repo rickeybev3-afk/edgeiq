@@ -8289,6 +8289,12 @@ def main():
             except Exception as _cue:
                 log.warning(f"[Catch-up] Intraday scan failed: {_cue}")
             _intraday_done = True
+        if 15 * 60 + 35 <= _su_hm < 16 * 60 and not _eod_cancel_done:
+            log.info(
+                "[Catch-up] Started after 3:35 PM — EOD cancel not yet run; "
+                "will fire on first loop to clean up any remaining open orders "
+                "before market close"
+            )
         if _su_hm >= 16 * 60 + 20 and not _eod_done:
             log.info("[Catch-up] Past 4:20 PM — running EOD update (idempotent guard inside)...")
             try:
