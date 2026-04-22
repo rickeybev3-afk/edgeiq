@@ -1403,6 +1403,18 @@ def main():
         except Exception as _prune_err:
             print(f"  Warning: archive pruning failed: {_prune_err}")
 
+    # ── Tag each combo with lookahead flag (MFE/MAE filters use future data) ──
+    def _is_lookahead(c: dict) -> bool:
+        return c.get("mfe_min", "any") != "any" or c.get("mae_max", "any") != "any"
+
+    for c in top_results:
+        c["is_lookahead"] = _is_lookahead(c)
+
+    # Best clean combo = best deployable result with no lookahead filters
+    _clean_results = [c for c in top_results if not c["is_lookahead"]]
+    best_clean = _clean_results[0] if _clean_results else None
+    best_all   = top_results[0] if top_results else None
+
     summary = {
         "run_at":                 datetime.utcnow().isoformat() + "Z",
         "phase":                  args.phase,
@@ -1419,7 +1431,8 @@ def main():
         "combos_with_any_trade":  _n_with_trades,
         "combos_qualifying":      _n_qualifying,
         "elapsed_seconds":        round(elapsed, 1),
-        "best_combo":             top_results[0] if top_results else None,
+        "best_combo":             best_clean,   # deployable — no lookahead filters
+        "best_combo_with_lookahead": best_all,  # overall best, may use MFE/MAE (not deployable live)
         "archive_path":           archive_path,
     }
     with open("filter_grid_summary.json", "w") as f:
@@ -1458,10 +1471,9 @@ def main():
               f"{c['proj_weekly_usd']:>7.0f} {c['weekly_expectancy_r']:>7.4f} "
               f"{c['max_drawdown_r']:>6.2f}  {lbl}")
 
-    if top_results:
-        best = top_results[0]
-        print()
-        print("=== BEST COMBO DETAIL ===")
+    def _print_combo_detail(label: str, best: dict, phase: int) -> None:
+        lookahead_warn = " ⚠️  LOOKAHEAD BIAS — not deployable live" if best.get("is_lookahead") else " ✅ CLEAN — no lookahead filters"
+        print(f"=== {label}{lookahead_warn} ===")
         print(f"  Trades       : {best['n_trades']} ({best['trades_per_week']:.1f}/week)")
         print(f"  Win Rate     : {best['win_rate']}%")
         print(f"  Avg R        : {best['avg_r']:.4f}R")
@@ -1470,15 +1482,17 @@ def main():
         print(f"  Sharpe       : {best['sharpe']}")
         print(f"  Weekly Exp   : {best['weekly_expectancy_r']:.4f}R/wk  (${best['proj_weekly_usd']:.0f}/wk at $150 risk)")
         print(f"  Max Drawdown : {best['max_drawdown_r']}R")
-        if args.phase == 3:
+        if phase == 3:
             print(f"  Structure    : {best.get('struct_label','?')}")
             print(f"  Scan type    : {best.get('scan_type','?')}")
             print(f"  Gap direction: {best.get('gap_direction','?')}")
             print(f"  VWAP pos     : {best.get('vwap_position','?')}")
             print(f"  Screener     : {best.get('screener','?')}")
             print(f"  IB size      : {best.get('ib_size','?')}")
-            print(f"  MFE min      : {best.get('mfe_min','?')}")
-            print(f"  MAE max      : {best.get('mae_max','?')}")
+            mfe = best.get('mfe_min','?')
+            mae = best.get('mae_max','?')
+            print(f"  MFE min      : {mfe}" + (" ← LOOKAHEAD" if mfe != "any" else ""))
+            print(f"  MAE max      : {mae}" + (" ← LOOKAHEAD" if mae != "any" else ""))
             print(f"  RVOL cap     : {best.get('rvol_cap','?')}")
             print(f"  Day of week  : {best.get('day_of_week','?')}")
             print(f"  PM range floor: {best.get('pm_range_floor', 0) or 'none'}%")
@@ -1492,6 +1506,18 @@ def main():
             print(f"  Excl fb      : {best.get('excl_false_break', False)}")
             print(f"  PM range floor: {best.get('pm_range_floor', 0) or 'none'}%")
             print(f"  PM IB dir    : {best.get('pm_ib_dir_label', best.get('pm_ib_dir', 'any'))}")
+
+    if top_results:
+        print()
+        # Always show the overall best (may have lookahead)
+        _print_combo_detail("BEST COMBO OVERALL", best_all, args.phase)
+        # Show best deployable separately if different
+        if best_clean and best_clean is not best_all:
+            print()
+            _print_combo_detail("BEST DEPLOYABLE COMBO (no lookahead)", best_clean, args.phase)
+        elif not best_clean:
+            print()
+            print("⚠️  WARNING: No clean (non-lookahead) combo found in top results.")
 
     print()
     print("Done.")

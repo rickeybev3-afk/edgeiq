@@ -163,26 +163,60 @@ def _build_success_message(start_time: datetime, finish_time: datetime) -> str:
         try:
             with open(SUMMARY_FILE) as f:
                 data = json.load(f)
-            best = data.get("best_combo") or data.get("best") or {}
-            combos = data.get("combos_tested")
+            best_clean    = data.get("best_combo") or {}
+            best_lookahead = data.get("best_combo_with_lookahead") or data.get("best_combo") or {}
+            combos     = data.get("combos_tested")
             total_rows = data.get("total_rows")
 
             if combos is not None:
                 lines.append(f"Combos tested: {combos:,}")
             if total_rows is not None:
                 lines.append(f"Rows evaluated: {total_rows:,}")
-            if best:
-                sharpe = best.get("sharpe")
-                n = (
-                    best.get("n_trades")
-                    or best.get("n")
-                    or best.get("trades")
-                    or best.get("total_trades")
-                )
+
+            # ── Best deployable combo (no MFE/MAE lookahead) ──
+            if best_clean:
+                sharpe = best_clean.get("sharpe")
+                n      = best_clean.get("n_trades") or best_clean.get("n")
+                wr     = best_clean.get("win_rate")
+                avg_r  = best_clean.get("avg_r")
+                struct = best_clean.get("struct_label", "")
+                lines.append("")
+                lines.append("✅ Best deployable combo (no lookahead):")
                 if sharpe is not None:
-                    lines.append(f"Top Sharpe: {sharpe:.3f}")
+                    lines.append(f"  Sharpe: {sharpe:.3f}")
                 if n is not None:
-                    lines.append(f"N (trades): {n}")
+                    lines.append(f"  N: {n:,}")
+                if wr is not None:
+                    lines.append(f"  WR: {wr}%  AvgR: {avg_r:.3f}R" if avg_r else f"  WR: {wr}%")
+                if struct:
+                    lines.append(f"  {struct[:55]}")
+            else:
+                lines.append("")
+                lines.append("⚠️ No clean deployable combo in top results")
+
+            # ── Best overall (may have lookahead bias) ──
+            if best_lookahead and best_lookahead.get("is_lookahead"):
+                sharpe = best_lookahead.get("sharpe")
+                n      = best_lookahead.get("n_trades") or best_lookahead.get("n")
+                wr     = best_lookahead.get("win_rate")
+                avg_r  = best_lookahead.get("avg_r")
+                mfe    = best_lookahead.get("mfe_min", "any")
+                mae    = best_lookahead.get("mae_max", "any")
+                struct = best_lookahead.get("struct_label", "")
+                lines.append("")
+                lines.append("⚠️ Best overall (LOOKAHEAD — not deployable live):")
+                if sharpe is not None:
+                    lines.append(f"  Sharpe: {sharpe:.3f}")
+                if n is not None:
+                    lines.append(f"  N: {n:,}")
+                if wr is not None:
+                    lines.append(f"  WR: {wr}%  AvgR: {avg_r:.3f}R" if avg_r else f"  WR: {wr}%")
+                if mfe != "any":
+                    lines.append(f"  MFE≥{mfe} filter active ← forward-looking")
+                if mae != "any":
+                    lines.append(f"  MAE≤{mae} filter active ← forward-looking")
+                if struct:
+                    lines.append(f"  {struct[:55]}")
         except Exception as exc:
             lines.append(f"(could not read summary: {exc})")
 
