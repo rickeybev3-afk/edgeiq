@@ -2276,7 +2276,7 @@ def _query_morning_tcs_band(
         resp = (
             backend_mod.supabase
             .table("backtest_sim_runs")
-            .select("actual_outcome")
+            .select("actual_outcome,win_loss")
             .eq("scan_type", "morning")
             .gte("tcs", tcs_lo)
             .lte("tcs", tcs_hi)
@@ -2288,7 +2288,7 @@ def _query_morning_tcs_band(
         )
         rows = resp.data or []
         total = len(rows)
-        wins  = sum(1 for r in rows if str(r.get("actual_outcome", "")).strip() == "Win")
+        wins  = sum(1 for r in rows if str(r.get("win_loss", "")).strip() == "Win")
         if total >= limit:
             log.warning(
                 "Morning TCS band %d-%d result set hit limit=%d — consider raising limit.",

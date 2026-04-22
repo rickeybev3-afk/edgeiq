@@ -35,6 +35,6 @@
   "source_weekly_expectancy_r": 19.9439,
   "source_n_trades": 5266,
   "_tcs_intraday_min_note": "Intraday TCS floor set to 45 on 2026-04-22 after live SIP data sub-band analysis (208 outcomes). 45-49 band: 37 trades, 97.3% WR, +0.397R avg. 40-44 band excluded: 71.9% WR, +0.285R avg (weakest). 35-39 band excluded: 82.9% WR, +0.565R avg. Set at 45 to capture high-WR 45-49 band while excluding dilutive 35-44 range. Live floor (_LIVE_MIN_TCS=70) is never overridden.",
-  "morning_tcs_min": 60,
-  "_morning_tcs_min_note": "Morning TCS floor raised 55->60 on 2026-04-22 by nightly recalibration (MORNING_TCS_CALIB_DAYS=90). TCS 55-59: 0.0% WR / 664 trades -- below 75% threshold."
+  "morning_tcs_min": 50,
+  "_morning_tcs_min_note": "Morning TCS floor lowered 55->50 on 2026-04-22 by nightly recalibration (MORNING_TCS_CALIB_DAYS=90). TCS 55-59: 81.8% WR / 664 trades, TCS 50-54: 78.7% WR / 855 trades -- both bands clear 75% threshold."
 }
