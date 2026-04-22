@@ -2068,16 +2068,30 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
     _live_positions = _alpaca_get_positions()
     _live_tickers = {p["symbol"].upper() for p in _live_positions}
     if ticker.upper() in _live_tickers:
+        _ts = _now_for_order.strftime("%Y-%m-%d %H:%M:%S ET")
         log.warning(
             f"  [{ticker}] [OrderGuard] skipping — already have an open Alpaca position"
+        )
+        tg_send(
+            f"🛡️ <b>[OrderGuard] Duplicate-Entry Blocked</b>\n"
+            f"Ticker: <b>{ticker}</b>\n"
+            f"Reason: existing open position\n"
+            f"Time: {_ts}"
         )
         return
 
     # ── OrderGuard: skip if there are pending (unfilled) orders for this ticker ─
     _open_order_ids = _alpaca_get_open_order_ids(ticker)
     if _open_order_ids:
+        _ts = _now_for_order.strftime("%Y-%m-%d %H:%M:%S ET")
         log.warning(
             f"  [{ticker}] [OrderGuard] skipping — {len(_open_order_ids)} open order(s) already exist"
+        )
+        tg_send(
+            f"🛡️ <b>[OrderGuard] Duplicate-Entry Blocked</b>\n"
+            f"Ticker: <b>{ticker}</b>\n"
+            f"Reason: {len(_open_order_ids)} open order(s) already pending\n"
+            f"Time: {_ts}"
         )
         return
 
