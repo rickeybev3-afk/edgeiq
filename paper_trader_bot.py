@@ -474,33 +474,37 @@ def _compute_risk_dollars() -> float:
 def _compute_trade_notional() -> float:
     """Return the target notional (dollars deployed) per trade.
 
-    Formula: equity × NOTIONAL_PCT (default 20%).
+    Live mode: always returns the fixed $1,500 live cap — equity-scaled notional
+    is paper-only until the user explicitly goes live and adjusts the cap.
+
+    Paper mode formula: equity × NOTIONAL_PCT (default 20%).
     At $10k live start → $2,000/trade; at $95k paper → $19,000/trade.
     Compounds automatically — as equity grows, so does per-trade size.
-
-    Hard floors:
-      Paper: $500 minimum (avoids 1-share rounding on tiny test balances).
-      Live:  $1,500 minimum (keeps risk meaningful on a small real account).
+    Floor: $500 (avoids 1-share rounding on tiny test balances).
 
     Raise NOTIONAL_PCT via env var (e.g. 0.40) above $25k to let the 2.1%
     risk formula start driving instead of the notional cap.
 
-    Falls back to NOTIONAL_PCT × $10,000 if account equity cannot be fetched.
+    Falls back to NOTIONAL_PCT × $100,000 if account equity cannot be fetched.
     """
+    if not IS_PAPER_ALPACA:
+        # Live mode: fixed $1,500 cap until user is ready to scale up.
+        log.info("  Live mode — notional capped at $1,500")
+        return 1500.0
+
     equity = get_alpaca_account_equity(
         is_paper   = IS_PAPER_ALPACA,
         api_key    = ALPACA_API_KEY,
         secret_key = ALPACA_SECRET_KEY,
     )
-    _floor = 500.0 if IS_PAPER_ALPACA else 1500.0
     if equity and equity > 0:
-        notional = max(equity * NOTIONAL_PCT, _floor)
+        notional = max(equity * NOTIONAL_PCT, 500.0)
         log.info(
             f"  Account equity: ${equity:,.0f} → "
             f"{NOTIONAL_PCT*100:.0f}% notional = ${notional:,.0f}/trade"
         )
         return notional
-    fallback = max(NOTIONAL_PCT * 10_000, _floor)
+    fallback = max(NOTIONAL_PCT * 100_000, 500.0)
     log.warning(f"  Could not fetch account equity — notional fallback ${fallback:,.0f}/trade")
     return fallback
 
@@ -2011,15 +2015,20 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             if _sp_mult != 1.0
             else ""
         )
-        _position_value = round(qty * result["entry"], 2)
-        _actual_risk    = round(qty * abs(result["entry"] - result["stop"]), 2)
+        _position_value  = round(qty * result["entry"], 2)
+        _actual_risk     = round(qty * abs(result["entry"] - result["stop"]), 2)
+        # Approximate equity from notional so we can show risk as % of equity.
+        # _trade_notional = equity × NOTIONAL_PCT, so equity ≈ notional / NOTIONAL_PCT.
+        # Falls back to position value when NOTIONAL_PCT is 0 (shouldn't happen).
+        _approx_equity   = (_trade_notional / NOTIONAL_PCT) if NOTIONAL_PCT > 0 else _position_value
+        _risk_pct_equity = round(_actual_risk / _approx_equity * 100, 2) if _approx_equity > 0 else 0.0
         tg_send(
             f"📋 <b>{acct_type} Order Placed — {ticker}</b>\n"
             f"{'🟡' if direction == 'Bullish Break' else '🔴'} {direction}\n"
             f"Entry: ${result['entry']} | Stop: ${result['stop']} | "
             f"Target: ${result['target']}\n"
             f"Qty: {qty} shares @ ${result['entry']} = <b>${_position_value:,.0f} in</b>\n"
-            f"Risk: ${_actual_risk:,.0f} actual "
+            f"Risk: ${_actual_risk:,.0f} ({_risk_pct_equity:.1f}% equity) "
             f"({_ib_mult:.2f}× IB · {_ptier_mult:.2f}× P-tier{_rvol_bonus_label}{_sp_label})\n"
             f"<code>{order_id[:8]}…</code>"
         )
