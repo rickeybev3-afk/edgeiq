@@ -95,6 +95,42 @@ from backend import (
 
 # ── Shared UI helpers ─────────────────────────────────────────────────────────
 
+def _auto_dismiss_success(key, msg=None, icon="✅", seconds=3.0):
+    """Show a timed success banner and rerun when it expires.
+
+    The session-state value at ``key`` may be either:
+    - a **float** timestamp  →  ``st.session_state[key] = time.time()``
+    - a **dict** with ``"at"`` (timestamp) and ``"msg"`` (message) keys
+      →  ``st.session_state[key] = {"at": time.time(), "msg": "..."}``
+
+    Pass ``msg`` to override any message stored in the dict.
+    Pass ``icon=None`` to omit the icon from the success banner.
+    Adding a new auto-dismiss success takes 2 lines: set the key, then call this.
+    """
+    val = st.session_state.get(key)
+    if not val:
+        return
+    if isinstance(val, dict):
+        saved_at = val["at"]
+        if msg is None:
+            msg = val.get("msg", "Saved.")
+    else:
+        saved_at = val
+        if msg is None:
+            msg = "Saved."
+    elapsed = time.time() - saved_at
+    if elapsed < seconds:
+        if icon:
+            st.success(msg, icon=icon)
+        else:
+            st.success(msg)
+        time.sleep(seconds - elapsed)
+        del st.session_state[key]
+        st.rerun()
+    else:
+        del st.session_state[key]
+
+
 def _render_copy_link_button(btn_id: str = "copy-link-btn") -> None:
     """Render a 🔗 Copy link button that copies window.parent.location.href to clipboard.
 
@@ -7928,16 +7964,7 @@ with st.sidebar:
             st.session_state["_tcs_alert_prefs_saved_at"] = time.time()
         else:
             st.error("Could not save preferences — database and local file both failed.", icon="⚠️")
-    _tcs_alert_prefs_saved_at = st.session_state.get("_tcs_alert_prefs_saved_at")
-    if _tcs_alert_prefs_saved_at:
-        _tcs_ap_elapsed = time.time() - _tcs_alert_prefs_saved_at
-        if _tcs_ap_elapsed < 3.0:
-            st.success("Alert preferences saved.", icon="✅")
-            time.sleep(3.0 - _tcs_ap_elapsed)
-            del st.session_state["_tcs_alert_prefs_saved_at"]
-            st.rerun()
-        else:
-            del st.session_state["_tcs_alert_prefs_saved_at"]
+    _auto_dismiss_success("_tcs_alert_prefs_saved_at", "Alert preferences saved.")
 
     _tcs_saved_str = _cached_get_tcs_alert_config_last_saved()
     if _tcs_saved_str:
@@ -7974,16 +8001,7 @@ with st.sidebar:
             st.session_state["_tcs_thresh_saved_at"] = time.time()
         else:
             st.error("Could not save thresholds — database and local file both failed.", icon="⚠️")
-    _tcs_thresh_saved_at = st.session_state.get("_tcs_thresh_saved_at")
-    if _tcs_thresh_saved_at:
-        _tcs_th_elapsed = time.time() - _tcs_thresh_saved_at
-        if _tcs_th_elapsed < 3.0:
-            st.success("Thresholds saved.", icon="✅")
-            time.sleep(3.0 - _tcs_th_elapsed)
-            del st.session_state["_tcs_thresh_saved_at"]
-            st.rerun()
-        else:
-            del st.session_state["_tcs_thresh_saved_at"]
+    _auto_dismiss_success("_tcs_thresh_saved_at", "Thresholds saved.")
 
     st.markdown("---")
     st.markdown("**IB Range % Filter Threshold**")
@@ -8010,16 +8028,7 @@ with st.sidebar:
             st.session_state["_ib_range_save_confirm"] = {"at": time.time(), "msg": f"IB range % threshold saved: {_ib_new_val:.1f}%"}
         else:
             st.error("Could not save — database and local file both failed.", icon="⚠️")
-    _ib_confirm = st.session_state.get("_ib_range_save_confirm")
-    if _ib_confirm:
-        _ib_elapsed = time.time() - _ib_confirm["at"]
-        if _ib_elapsed < 3.0:
-            st.success(_ib_confirm["msg"], icon="✅")
-            time.sleep(3.0 - _ib_elapsed)
-            del st.session_state["_ib_range_save_confirm"]
-            st.rerun()
-        else:
-            del st.session_state["_ib_range_save_confirm"]
+    _auto_dismiss_success("_ib_range_save_confirm")
 
     st.markdown("---")
     st.markdown("**Squeeze Calibration Min-Trades Threshold**")
@@ -8057,16 +8066,7 @@ with st.sidebar:
             st.session_state["_sq_calib_save_confirm"] = {"at": time.time(), "msg": f"Squeeze calibration threshold saved: {int(_sq_new_val)} trades"}
         else:
             st.error("Could not save — database and local file both failed.", icon="⚠️")
-    _sq_confirm = st.session_state.get("_sq_calib_save_confirm")
-    if _sq_confirm:
-        _sq_elapsed = time.time() - _sq_confirm["at"]
-        if _sq_elapsed < 3.0:
-            st.success(_sq_confirm["msg"], icon="✅")
-            time.sleep(3.0 - _sq_elapsed)
-            del st.session_state["_sq_calib_save_confirm"]
-            st.rerun()
-        else:
-            del st.session_state["_sq_calib_save_confirm"]
+    _auto_dismiss_success("_sq_calib_save_confirm")
 
     # ── Calibration alert history ─────────────────────────────────────────────
     st.markdown("**Calibration Alert History**")
@@ -8275,16 +8275,7 @@ with st.sidebar:
                 st.session_state["_div_recip_save_confirm"] = {"at": time.time(), "msg": _div_recip_msg}
         else:
             st.warning("Sign in to save per-user alert recipients.", icon="⚠️")
-    _div_recip_confirm = st.session_state.get("_div_recip_save_confirm")
-    if _div_recip_confirm:
-        _div_recip_elapsed = time.time() - _div_recip_confirm["at"]
-        if _div_recip_elapsed < 3.0:
-            st.success(_div_recip_confirm["msg"], icon="✅")
-            time.sleep(3.0 - _div_recip_elapsed)
-            del st.session_state["_div_recip_save_confirm"]
-            st.rerun()
-        else:
-            del st.session_state["_div_recip_save_confirm"]
+    _auto_dismiss_success("_div_recip_save_confirm")
 
     if st.button("🔔 Send test alert", key="_div_test_alert_btn", use_container_width=True):
         if not _div_uid:
@@ -17501,16 +17492,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # ────────────────────────────────────────────────────────────────────
                 def _render_inline_recip_editor(expanded=False):
                     """Inline personal-recipient editor — mirrors the sidebar save logic."""
-                    _inl_div_saved_at = st.session_state.get("_inl_div_saved_at")
-                    if _inl_div_saved_at:
-                        _inl_div_elapsed = time.time() - _inl_div_saved_at
-                        if _inl_div_elapsed < 3.0:
-                            st.success("Recipients saved.", icon="✅")
-                            time.sleep(3.0 - _inl_div_elapsed)
-                            del st.session_state["_inl_div_saved_at"]
-                            st.rerun()
-                        else:
-                            del st.session_state["_inl_div_saved_at"]
+                    _auto_dismiss_success("_inl_div_saved_at", "Recipients saved.")
                     with st.expander("✏️ Edit recipients", expanded=expanded):
                         _inl_tg = st.text_input(
                             "Telegram Chat ID",
@@ -22369,16 +22351,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         }
                     except Exception as _fgs_ex:
                         st.error(f"Failed to write filter_config.json: {_fgs_ex}")
-                _fgs_apply_confirm = st.session_state.get("_fgs_apply_save_confirm")
-                if _fgs_apply_confirm:
-                    _fgs_apply_elapsed = time.time() - _fgs_apply_confirm["at"]
-                    if _fgs_apply_elapsed < 3.0:
-                        st.success(_fgs_apply_confirm["msg"])
-                        time.sleep(3.0 - _fgs_apply_elapsed)
-                        del st.session_state["_fgs_apply_save_confirm"]
-                        st.rerun()
-                    else:
-                        del st.session_state["_fgs_apply_save_confirm"]
+                _auto_dismiss_success("_fgs_apply_save_confirm", icon=None)
 
         # ── Full results download ─────────────────────────────────────────────
         if _fgs_os.path.exists(_FGS_ALL):
@@ -22436,16 +22409,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.session_state["_fgs_tcs_floor_save_confirm"] = {"at": time.time(), "msg": f"TCS intraday floor saved as {_tcs_new_val} — bot will pick it up on the next scan."}
             except Exception as _tcs_ex:
                 st.error(f"Failed to write filter_config.json: {_tcs_ex}")
-        _fgs_tcs_confirm = st.session_state.get("_fgs_tcs_floor_save_confirm")
-        if _fgs_tcs_confirm:
-            _fgs_tcs_elapsed = time.time() - _fgs_tcs_confirm["at"]
-            if _fgs_tcs_elapsed < 3.0:
-                st.success(_fgs_tcs_confirm["msg"])
-                time.sleep(3.0 - _fgs_tcs_elapsed)
-                del st.session_state["_fgs_tcs_floor_save_confirm"]
-                st.rerun()
-            else:
-                del st.session_state["_fgs_tcs_floor_save_confirm"]
+        _auto_dismiss_success("_fgs_tcs_floor_save_confirm", icon=None)
 
         # ── Feature Correlation & Interaction Analysis ───────────────────────
         st.divider()
@@ -24988,18 +24952,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.rerun()
                             except Exception as _p3_reset_ex:
                                 st.error(f"Failed to reset threshold: {_p3_reset_ex}")
-                        _p3_saved_at = st.session_state.get("_p3_tcs_threshold_saved")
-                        if _p3_saved_at:
-                            _p3_elapsed = time.time() - _p3_saved_at
-                            _p3_dismiss_after = 3.0
-                            if _p3_elapsed < _p3_dismiss_after:
-                                st.success("Saved ✓")
-                                _p3_remaining = _p3_dismiss_after - _p3_elapsed
-                                time.sleep(_p3_remaining)
-                                del st.session_state["_p3_tcs_threshold_saved"]
-                                st.rerun()
-                            else:
-                                del st.session_state["_p3_tcs_threshold_saved"]
+                        _auto_dismiss_success("_p3_tcs_threshold_saved", "Saved ✓", icon=None)
             with _p3_info_col:
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
@@ -25047,16 +25000,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     }
                 except Exception as _p3_ex:
                     st.error(f"Failed to write config: {_p3_ex}")
-            _p3_combo_confirm = st.session_state.get("_p3_combo_apply_confirm")
-            if _p3_combo_confirm:
-                _p3_combo_elapsed = time.time() - _p3_combo_confirm["at"]
-                if _p3_combo_elapsed < 3.0:
-                    st.success(_p3_combo_confirm["msg"])
-                    time.sleep(3.0 - _p3_combo_elapsed)
-                    del st.session_state["_p3_combo_apply_confirm"]
-                    st.rerun()
-                else:
-                    del st.session_state["_p3_combo_apply_confirm"]
+            _auto_dismiss_success("_p3_combo_apply_confirm", icon=None)
 
         # ── TCS Intraday Floor slider (Phase 3) ──────────────────────────────
         st.divider()
@@ -25107,16 +25051,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.session_state["_p3_tcs_floor_save_confirm"] = {"at": time.time(), "msg": f"TCS intraday floor saved as {_p3_tcs_new_val} \u2014 bot will pick it up on the next scan."}
             except Exception as _p3_tcs_ex:
                 st.error(f"Failed to write filter_config.json: {_p3_tcs_ex}")
-        _p3_tcs_floor_confirm = st.session_state.get("_p3_tcs_floor_save_confirm")
-        if _p3_tcs_floor_confirm:
-            _p3_tcs_floor_elapsed = time.time() - _p3_tcs_floor_confirm["at"]
-            if _p3_tcs_floor_elapsed < 3.0:
-                st.success(_p3_tcs_floor_confirm["msg"])
-                time.sleep(3.0 - _p3_tcs_floor_elapsed)
-                del st.session_state["_p3_tcs_floor_save_confirm"]
-                st.rerun()
-            else:
-                del st.session_state["_p3_tcs_floor_save_confirm"]
+        _auto_dismiss_success("_p3_tcs_floor_save_confirm", icon=None)
 
         # ── TCS Divergence Warning Sensitivity ──────────────────────────────────
         st.divider()
@@ -25170,16 +25105,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.session_state["_p3_warn_save_confirm"] = {"at": time.time(), "msg": f"Warning threshold saved as ±{int(_p3_warn_new_val)} — applies immediately to all combos."}
             except Exception as _p3_warn_ex:
                 st.error(f"Failed to write filter_config.json: {_p3_warn_ex}")
-        _p3_warn_confirm = st.session_state.get("_p3_warn_save_confirm")
-        if _p3_warn_confirm:
-            _p3_warn_elapsed = time.time() - _p3_warn_confirm["at"]
-            if _p3_warn_elapsed < 3.0:
-                st.success(_p3_warn_confirm["msg"])
-                time.sleep(3.0 - _p3_warn_elapsed)
-                del st.session_state["_p3_warn_save_confirm"]
-                st.rerun()
-            else:
-                del st.session_state["_p3_warn_save_confirm"]
+        _auto_dismiss_success("_p3_warn_save_confirm", icon=None)
         if _p3_warn_reset_btn:
             _p3_warn_reset_cfg = {}
             if _p3_os.path.exists(_P3_CFG):
