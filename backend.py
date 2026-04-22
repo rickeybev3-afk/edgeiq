@@ -7272,30 +7272,60 @@ def reconcile_alpaca_fills(
     """Fetch today's filled orders from Alpaca and patch alpaca_fill_price
     and alpaca_exit_fill_price on matching paper_trades rows.
 
-    - alpaca_fill_price      : entry fill (parent bracket order filled_avg_price)
-    - alpaca_exit_fill_price : exit fill from a filled take-profit or stop-loss leg
+    Pass 1 — symbol+date scan (bracket orders and trailing-stop fills):
+      - Buy-side filled orders  → alpaca_fill_price (entry)
+      - Sell-side filled orders (no legs) → alpaca_exit_fill_price (force-close exits)
+      - Bracket legs that filled → alpaca_exit_fill_price
 
-    Matching is by ticker + trade_date + user_id.
-    Returns dict: matched (int), unmatched (int), errors (int), exit_fills (int).
+    Pass 2 — direct order-ID lookup (catches rows missed by symbol+date):
+      - For each paper_trades row where alpaca_order_id IS NOT NULL and
+        alpaca_fill_price IS NULL, fetch GET /v2/orders/{id} from Alpaca.
+
+    Both passes log matched/unmatched counts and ticker detail so fill
+    reconciliation issues are visible in the log.
+
+    Returns dict: matched (int), unmatched (int), errors (int), exit_fills (int),
+                  order_id_matched (int).
     """
-    if not supabase:
-        return {"matched": 0, "unmatched": 0, "errors": 0, "exit_fills": 0}
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
 
+    _empty = {"matched": 0, "unmatched": 0, "errors": 0, "exit_fills": 0, "order_id_matched": 0}
+    if not supabase:
+        return _empty
+
+    ak = api_key or ALPACA_API_KEY
+    sk = secret_key or ALPACA_SECRET_KEY
+
+    # ── Pass 1: symbol+date scan ──────────────────────────────────────────────
     fills, err = fetch_alpaca_fills(
-        api_key=api_key or ALPACA_API_KEY,
-        secret_key=secret_key or ALPACA_SECRET_KEY,
+        api_key=ak,
+        secret_key=sk,
         is_paper=is_paper,
         trade_date=trade_date,
     )
     if err:
-        return {"matched": 0, "unmatched": 0, "errors": 1, "error": err, "exit_fills": 0}
+        _log.warning(f"[Reconcile] Alpaca fills fetch failed: {err}")
+        return {**_empty, "errors": 1, "error": err}
+
+    _log.info(f"[Reconcile] Alpaca returned {len(fills)} filled order(s) for {trade_date}")
 
     matched = unmatched = errors = exit_fills = 0
     for fill in fills:
         sym        = (fill.get("symbol") or "").upper()
         fill_price = float(fill.get("filled_avg_price") or 0)
+        side       = (fill.get("side") or "").lower()
+        order_type = (fill.get("order_type") or fill.get("type") or "").lower()
+        order_id   = fill.get("id", "")
+
         if not sym or fill_price <= 0:
+            _log.debug(f"[Reconcile] Skip order — sym={sym or '?'} fill_price={fill_price}")
             continue
+
+        _log.info(
+            f"[Reconcile/Pass1] {sym} | side={side} | type={order_type} | "
+            f"fill={fill_price} | id={order_id[:8] if order_id else '?'}"
+        )
 
         # ── Extract exit fill from bracket legs ───────────────────────────────
         # Alpaca bracket orders carry child legs in the `legs` array.
@@ -7310,26 +7340,171 @@ def reconcile_alpaca_fills(
                 if leg_price > 0:
                     exit_fill_price = leg_price
                     exit_fills += 1
+                    _log.info(
+                        f"[Reconcile/Pass1] {sym} — bracket leg filled at {exit_fill_price} "
+                        f"(leg type={leg.get('type', '?')})"
+                    )
                     break  # only one leg fills in a bracket
 
-        patch: dict = {"alpaca_fill_price": fill_price}
-        if exit_fill_price is not None:
-            patch["alpaca_exit_fill_price"] = exit_fill_price
+        # ── Build the DB patch ────────────────────────────────────────────────
+        # Standalone sell-side orders are force-close market sells — write
+        # the fill price to alpaca_exit_fill_price, not the entry column.
+        if side == "sell" and not legs:
+            patch: dict = {"alpaca_exit_fill_price": fill_price}
+            _log.info(f"[Reconcile/Pass1] {sym} — sell-side (force-close exit): exit_fill={fill_price}")
+        else:
+            # Buy-side (or bracket with legs): entry fill goes to alpaca_fill_price.
+            patch = {"alpaca_fill_price": fill_price}
+            if exit_fill_price is not None:
+                patch["alpaca_exit_fill_price"] = exit_fill_price
 
+        # Only update rows where the target fill column is still NULL — prevents
+        # overwriting an already-reconciled value on re-runs or duplicate tickers.
         try:
-            (
+            _null_col = "alpaca_exit_fill_price" if (side == "sell" and not legs) else "alpaca_fill_price"
+            result = (
                 supabase.table("paper_trades")
                 .update(patch)
                 .eq("user_id", user_id)
                 .eq("trade_date", trade_date)
                 .eq("ticker", sym)
+                .is_(_null_col, "null")
                 .execute()
             )
-            matched += 1
-        except Exception:
+            rows_updated = len(result.data) if result.data else 0
+            if rows_updated:
+                matched += 1
+                _log.info(f"[Reconcile/Pass1] {sym} — DB patched ({rows_updated} row): {patch}")
+            else:
+                unmatched += 1
+                _log.warning(
+                    f"[Reconcile/Pass1] {sym} — no matching paper_trades row "
+                    f"for date={trade_date} user={user_id[:8] if user_id else '?'} "
+                    f"(or {_null_col} already populated)"
+                )
+        except Exception as _e:
             errors += 1
+            _log.warning(f"[Reconcile/Pass1] {sym} — DB update error: {_e}")
 
-    return {"matched": matched, "unmatched": unmatched, "errors": errors, "exit_fills": exit_fills}
+    # ── Pass 2: direct order-ID lookup ────────────────────────────────────────
+    # For rows that have alpaca_order_id stored but still have alpaca_fill_price
+    # NULL (e.g. market entries where the two-step order ID differs from what's
+    # in the symbol+date scan), fetch the order directly from Alpaca by ID.
+    order_id_matched = 0
+    if ak and sk:
+        try:
+            pending_rows = (
+                supabase.table("paper_trades")
+                .select("id,ticker,alpaca_order_id,trade_date")
+                .eq("user_id", user_id)
+                .eq("trade_date", trade_date)
+                .not_.is_("alpaca_order_id", "null")
+                .is_("alpaca_fill_price", "null")
+                .execute()
+            ).data or []
+
+            if pending_rows:
+                _log.info(
+                    f"[Reconcile/Pass2] {len(pending_rows)} row(s) have alpaca_order_id "
+                    f"but alpaca_fill_price=NULL — fetching each order directly"
+                )
+
+            base_url = (
+                "https://paper-api.alpaca.markets" if is_paper
+                else "https://api.alpaca.markets"
+            )
+            headers = {"APCA-API-KEY-ID": ak, "APCA-API-SECRET-KEY": sk}
+
+            for row in pending_rows:
+                oid = row.get("alpaca_order_id") or ""
+                sym = (row.get("ticker") or "").upper()
+                if not oid or not sym:
+                    continue
+
+                try:
+                    r = requests.get(
+                        f"{base_url}/v2/orders/{oid}",
+                        headers=headers,
+                        timeout=8,
+                    )
+                    if r.status_code != 200:
+                        _log.warning(
+                            f"[Reconcile/Pass2] {sym} order {oid[:8]} — "
+                            f"HTTP {r.status_code}"
+                        )
+                        continue
+
+                    order      = r.json()
+                    status     = (order.get("status") or "").lower()
+                    avg_price  = float(order.get("filled_avg_price") or 0)
+                    order_side = (order.get("side") or "").lower()
+
+                    _log.info(
+                        f"[Reconcile/Pass2] {sym} | status={status} | "
+                        f"fill={avg_price} | side={order_side}"
+                    )
+
+                    if status != "filled" or avg_price <= 0:
+                        _log.info(
+                            f"[Reconcile/Pass2] {sym} — not yet filled "
+                            f"(status={status}), skipping"
+                        )
+                        continue
+
+                    pass2_patch: dict = {"alpaca_fill_price": avg_price}
+
+                    for leg in (order.get("legs") or []):
+                        if (leg.get("status") or "").lower() == "filled":
+                            lp = float(leg.get("filled_avg_price") or 0)
+                            if lp > 0:
+                                pass2_patch["alpaca_exit_fill_price"] = lp
+                                exit_fills += 1
+                                _log.info(
+                                    f"[Reconcile/Pass2] {sym} — bracket leg exit at {lp}"
+                                )
+                            break
+
+                    result2 = (
+                        supabase.table("paper_trades")
+                        .update(pass2_patch)
+                        .eq("user_id", user_id)
+                        .eq("trade_date", trade_date)
+                        .eq("ticker", sym)
+                        .eq("alpaca_order_id", oid)
+                        .execute()
+                    )
+                    rows2 = len(result2.data) if result2.data else 0
+                    if rows2:
+                        order_id_matched += 1
+                        _log.info(
+                            f"[Reconcile/Pass2] {sym} — DB patched via order_id "
+                            f"({rows2} row): {pass2_patch}"
+                        )
+                    else:
+                        _log.warning(
+                            f"[Reconcile/Pass2] {sym} — order filled in Alpaca "
+                            f"but 0 DB rows updated (order_id={oid[:8]})"
+                        )
+
+                except Exception as _oe:
+                    _log.warning(
+                        f"[Reconcile/Pass2] {sym} order {oid[:8]} — error: {_oe}"
+                    )
+
+        except Exception as _pe:
+            _log.warning(f"[Reconcile/Pass2] Could not fetch pending rows from DB: {_pe}")
+
+    _log.info(
+        f"[Reconcile] Done — matched={matched} unmatched={unmatched} "
+        f"errors={errors} exit_fills={exit_fills} order_id_matched={order_id_matched}"
+    )
+    return {
+        "matched": matched,
+        "unmatched": unmatched,
+        "errors": errors,
+        "exit_fills": exit_fills,
+        "order_id_matched": order_id_matched,
+    }
 
 
 def match_fills_to_roundtrips(fills: list) -> list:

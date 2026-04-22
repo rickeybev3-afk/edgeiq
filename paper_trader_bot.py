@@ -2395,6 +2395,11 @@ _ZONE_WATCH_LOCK: _zone_threading.Lock = _zone_threading.Lock()
 _ZONE_LAST_CHECK_TS: float           = 0.0
 ZONE_CHECK_INTERVAL  = 300  # seconds between price checks (5 min)
 
+# Rate-limit for intraday fill reconciliation — runs at most once per 5 minutes
+# during the 30-second monitoring loop so fill prices appear promptly after entries.
+_LAST_RECONCILE_TS: float    = 0.0
+RECONCILE_INTERVAL: int      = 300  # seconds (5 min)
+
 
 def _alpaca_get_order_status(order_id: str) -> str:
     """Return the Alpaca order status string for a given order ID.
@@ -6519,6 +6524,8 @@ def eod_update():
         )
         log.info(
             f"  Fills matched: {rec.get('matched', 0)} | "
+            f"order_id_matched: {rec.get('order_id_matched', 0)} | "
+            f"exit_fills: {rec.get('exit_fills', 0)} | "
             f"unmatched: {rec.get('unmatched', 0)} | "
             f"errors: {rec.get('errors', 0)}"
         )
@@ -8569,6 +8576,36 @@ def main():
             _monitor_trailing_stops()
         except Exception as _tse:
             log.warning(f"[TrailingStop] monitor error (non-fatal): {_tse}")
+
+        # Every 5 minutes (during market hours) — reconcile Alpaca fill prices
+        # back into paper_trades so alpaca_fill_price is populated promptly after
+        # an entry fills, not just at 4:20 PM EOD.
+        global _LAST_RECONCILE_TS
+        if LIVE_ORDERS_ENABLED and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+            _now_et_rc = datetime.now(EASTERN)
+            _rc_hm     = _now_et_rc.hour * 60 + _now_et_rc.minute
+            if 9 * 60 + 30 <= _rc_hm <= 16 * 60 + 30:
+                if time.monotonic() - _LAST_RECONCILE_TS >= RECONCILE_INTERVAL:
+                    _LAST_RECONCILE_TS = time.monotonic()
+                    try:
+                        _rc = reconcile_alpaca_fills(
+                            trade_date = _now_et_rc.strftime("%Y-%m-%d"),
+                            user_id    = USER_ID,
+                            is_paper   = IS_PAPER_ALPACA,
+                            api_key    = ALPACA_API_KEY,
+                            secret_key = ALPACA_SECRET_KEY,
+                        )
+                        _rc_total = _rc.get("matched", 0) + _rc.get("order_id_matched", 0)
+                        if _rc_total or _rc.get("errors"):
+                            log.info(
+                                f"[Reconcile] Intraday run — matched={_rc.get('matched',0)} "
+                                f"order_id_matched={_rc.get('order_id_matched',0)} "
+                                f"exit_fills={_rc.get('exit_fills',0)} "
+                                f"unmatched={_rc.get('unmatched',0)} "
+                                f"errors={_rc.get('errors',0)}"
+                            )
+                    except Exception as _rce:
+                        log.warning(f"[Reconcile] Intraday reconcile error (non-fatal): {_rce}")
 
         # Every 5 minutes — cancel open entry orders whose IB zone has broken.
         try:
