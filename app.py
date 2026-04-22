@@ -24793,10 +24793,36 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         st.warning(
                             f"This combo was optimised with a TCS baseline of **{_p3_combo_baseline_tcs}** "
                             f"and your slider is **{_p3_diff_sign}** from that. "
-                            f"Your warning threshold is set to **±{_P3_TCS_WARN_THRESHOLD}** — "
-                            "adjust it in the sensitivity section below. "
                             "Applied performance may differ from backtest results."
                         )
+                        _p3_inline_threshold_val = st.number_input(
+                            f"Warning threshold (±TCS pts) — currently ±{_P3_TCS_WARN_THRESHOLD}",
+                            min_value=1,
+                            max_value=20,
+                            value=_P3_TCS_WARN_THRESHOLD,
+                            step=1,
+                            key="p3_tcs_warn_threshold_inline",
+                            help="Raise to silence this warning; lower for stricter alerts. Saves immediately.",
+                        )
+                        _p3_inline_save_btn = st.button(
+                            "💾 Update threshold",
+                            key="p3_tcs_warn_threshold_inline_save",
+                        )
+                        if _p3_inline_save_btn:
+                            _p3_inline_cfg = {}
+                            if _p3_os.path.exists(_P3_CFG):
+                                try:
+                                    with open(_P3_CFG) as _f:
+                                        _p3_inline_cfg = _p3_json.load(_f)
+                                except Exception:
+                                    pass
+                            _p3_inline_cfg["tcs_warn_threshold"] = int(_p3_inline_threshold_val)
+                            try:
+                                with open(_P3_CFG, "w") as _f:
+                                    _p3_json.dump(_p3_inline_cfg, _f, indent=2)
+                                st.rerun()
+                            except Exception as _p3_inline_ex:
+                                st.error(f"Failed to save threshold: {_p3_inline_ex}")
             with _p3_info_col:
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
