@@ -1712,10 +1712,41 @@ def render_login_page():
     _, col, _ = st.columns([1, 2, 1])
     with col:
         _auth_tab = st.radio(
-            "Action", ["🔐 Log In", "📝 Sign Up"],
+            "Action", ["🔐 Log In", "🔑 Passcode", "📝 Sign Up"],
             horizontal=True, key="auth_tab_select", label_visibility="collapsed",
         )
         st.markdown("")
+
+        # ── Passcode bypass (works even when Supabase auth is down) ──────────
+        if _auth_tab == "🔑 Passcode":
+            _pc_val = st.text_input(
+                "Passcode", type="password", placeholder="Enter passcode",
+                key="auth_passcode_input", label_visibility="collapsed",
+            )
+            if st.button("Unlock", use_container_width=True, type="primary",
+                         key="auth_passcode_btn"):
+                _pc_env = os.environ.get("NOTES_PASSCODE", "")
+                if not _pc_val:
+                    st.error("Please enter the passcode.")
+                elif _pc_val == _pc_env:
+                    _pc_uid = "a5e1fcab-8369-42c4-8550-a8a19734510c"
+                    st.session_state["auth_user"]         = None
+                    st.session_state["auth_user_id"]      = _pc_uid
+                    st.session_state["auth_email"]        = "local@passcode"
+                    st.session_state["auth_access_token"] = ""
+                    st.session_state["auth_refresh_token"]= ""
+                    set_user_session("", "")
+                    st.success("Access granted! Loading dashboard…")
+                    st.rerun()
+                else:
+                    st.error("Incorrect passcode.")
+            st.caption("Use this when Supabase auth is unavailable.")
+            st.markdown(
+                '<div style="text-align:center; font-size:10px; color:#333; margin-top:24px;">'
+                'Powered by Supabase Auth · Data isolated per account'
+                '</div>', unsafe_allow_html=True,
+            )
+            return
 
         _email = st.text_input(
             "Email", placeholder="you@example.com",
