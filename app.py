@@ -24681,7 +24681,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _p3_cur.get("tcs_intraday_min", 35),
                 ))
                 st.caption(f"Will set TCS floor to **{_p3_preview_tcs}**")
-                _P3_TCS_WARN_THRESHOLD = 5
+                try:
+                    _P3_TCS_WARN_THRESHOLD = max(1, min(20, int(_p3_cur.get("tcs_warn_threshold", 5))))
+                except (TypeError, ValueError):
+                    _P3_TCS_WARN_THRESHOLD = 5
                 _p3_combo_baseline_tcs = None
                 try:
                     _p3_raw_baseline = _p3_summary.get("tcs_intraday_min")
@@ -24734,6 +24737,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "source_sharpe":    _p3_best.get("sharpe"),
                     "source_weekly_expectancy_r": _p3_best.get("weekly_expectancy_r"),
                     "source_n_trades":  _p3_best.get("n_trades"),
+                    "tcs_warn_threshold": max(1, min(20, int(_p3_cur.get("tcs_warn_threshold", 5)))),
                 }
                 try:
                     with open(_P3_CFG, "w") as _f:
@@ -24792,6 +24796,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.success(f"TCS intraday floor saved as {_p3_tcs_new_val} \u2014 bot will pick it up on the next scan.")
             except Exception as _p3_tcs_ex:
                 st.error(f"Failed to write filter_config.json: {_p3_tcs_ex}")
+
+        # ── TCS Divergence Warning Sensitivity ──────────────────────────────────
+        st.divider()
+        st.markdown("⚠️ TCS Divergence Warning Sensitivity")
+        _p3_warn_cur = 5
+        if _p3_os.path.exists(_P3_CFG):
+            try:
+                with open(_P3_CFG) as _f:
+                    _p3_warn_cur = int(_p3_json.load(_f).get("tcs_warn_threshold", 5))
+            except Exception:
+                pass
+        _p3_warn_cur = max(1, min(20, _p3_warn_cur))
+        _p3_warn_col, _p3_warn_btn_col = st.columns([4, 1])
+        with _p3_warn_col:
+            _p3_warn_new_val = st.number_input(
+                "Warning threshold (±TCS points)",
+                min_value=1,
+                max_value=20,
+                value=_p3_warn_cur,
+                step=1,
+                key="p3_tcs_warn_threshold_input",
+                help="Show a warning when the selected TCS floor differs from the combo's optimised baseline by more than this many points. Lower = more sensitive (e.g. ±2), higher = less sensitive (e.g. ±10). Range: 1–20.",
+            )
+        with _p3_warn_btn_col:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            _p3_warn_save_btn = st.button("💾 Save", key="p3_tcs_warn_save_btn", type="primary")
+        st.caption(f"Current threshold: **±{_p3_warn_cur}**. Warning fires when slider diverges from combo baseline by more than this many TCS points.")
+        if _p3_warn_save_btn:
+            _p3_warn_cfg = {}
+            if _p3_os.path.exists(_P3_CFG):
+                try:
+                    with open(_P3_CFG) as _f:
+                        _p3_warn_cfg = _p3_json.load(_f)
+                except Exception:
+                    pass
+            _p3_warn_cfg["tcs_warn_threshold"] = int(_p3_warn_new_val)
+            try:
+                with open(_P3_CFG, "w") as _f:
+                    _p3_json.dump(_p3_warn_cfg, _f, indent=2)
+                st.success(f"Warning threshold saved as ±{int(_p3_warn_new_val)} — applies immediately to all combos.")
+            except Exception as _p3_warn_ex:
+                st.error(f"Failed to write filter_config.json: {_p3_warn_ex}")
 
         # ── Dimension summary panel ───────────────────────────────────────────
         _p3_dim_summary = {}
