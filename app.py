@@ -24853,7 +24853,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             try:
                                 with open(_P3_CFG, "w") as _f:
                                     _p3_json.dump(_p3_inline_cfg, _f, indent=2)
-                                st.session_state["_p3_tcs_threshold_saved"] = True
+                                st.session_state["_p3_tcs_threshold_saved"] = time.time()
                                 st.rerun()
                             except Exception as _p3_inline_ex:
                                 st.error(f"Failed to save threshold: {_p3_inline_ex}")
@@ -24872,8 +24872,18 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.rerun()
                             except Exception as _p3_reset_ex:
                                 st.error(f"Failed to reset threshold: {_p3_reset_ex}")
-                        if st.session_state.pop("_p3_tcs_threshold_saved", False):
-                            st.success("Saved ✓")
+                        _p3_saved_at = st.session_state.get("_p3_tcs_threshold_saved")
+                        if _p3_saved_at:
+                            _p3_elapsed = time.time() - _p3_saved_at
+                            _p3_dismiss_after = 3.0
+                            if _p3_elapsed < _p3_dismiss_after:
+                                st.success("Saved ✓")
+                                _p3_remaining = _p3_dismiss_after - _p3_elapsed
+                                time.sleep(_p3_remaining)
+                                del st.session_state["_p3_tcs_threshold_saved"]
+                                st.rerun()
+                            else:
+                                del st.session_state["_p3_tcs_threshold_saved"]
             with _p3_info_col:
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
