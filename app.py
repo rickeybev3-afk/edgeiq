@@ -16266,6 +16266,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 import streamlit.components.v1 as _cmp_copy_link
                 _cmp_copy_link.html(
                     """
+                    <div style="font-family:sans-serif;">
                     <button id="copy-link-btn" onclick="copyLink()" style="
                         display:inline-flex;align-items:center;gap:6px;
                         padding:4px 10px;font-size:12px;cursor:pointer;
@@ -16274,34 +16275,82 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         font-family:sans-serif;transition:background 0.2s;">
                       \U0001f517 Copy link
                     </button>
+                    <div id="copy-fallback" style="display:none;margin-top:6px;">
+                      <input id="copy-url-field" type="text" readonly style="
+                        width:100%;box-sizing:border-box;
+                        padding:4px 8px;font-size:12px;
+                        background:#1e1e2e;color:#cdd6f4;
+                        border:1px solid #a6e3a1;border-radius:6px;
+                        font-family:sans-serif;" />
+                      <div style="font-size:11px;color:#a6e3a1;margin-top:3px;">
+                        \U0001f4cb Tap the field above and copy the URL manually.
+                      </div>
+                    </div>
+                    </div>
                     <script>
+                    function showBtn(text, color, borderColor) {
+                        var btn = document.getElementById('copy-link-btn');
+                        btn.textContent = text;
+                        btn.style.color = color;
+                        btn.style.borderColor = borderColor;
+                    }
+                    function resetBtn() {
+                        var btn = document.getElementById('copy-link-btn');
+                        btn.innerHTML = '\U0001f517 Copy link';
+                        btn.style.color = '#cdd6f4';
+                        btn.style.borderColor = '#555';
+                    }
+                    function showFallback(url) {
+                        var box = document.getElementById('copy-fallback');
+                        var field = document.getElementById('copy-url-field');
+                        field.value = url;
+                        box.style.display = 'block';
+                        field.focus();
+                        field.select();
+                        setTimeout(function() {
+                            box.style.display = 'none';
+                        }, 8000);
+                    }
+                    function legacyCopy(url) {
+                        var ta = document.createElement('textarea');
+                        ta.value = url;
+                        ta.style.position = 'fixed';
+                        ta.style.opacity = '0';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        var ok = false;
+                        try { ok = document.execCommand('copy'); } catch(e) {}
+                        document.body.removeChild(ta);
+                        return ok;
+                    }
                     function copyLink() {
                         var url = window.parent.location.href;
-                        navigator.clipboard.writeText(url).then(function() {
-                            var btn = document.getElementById('copy-link-btn');
-                            btn.textContent = '\u2713 Copied!';
-                            btn.style.color = '#a6e3a1';
-                            btn.style.borderColor = '#a6e3a1';
-                            setTimeout(function() {
-                                btn.innerHTML = '\U0001f517 Copy link';
-                                btn.style.color = '#cdd6f4';
-                                btn.style.borderColor = '#555';
-                            }, 1500);
-                        }).catch(function() {
-                            var btn = document.getElementById('copy-link-btn');
-                            btn.textContent = '\u26a0 Copy failed';
-                            btn.style.color = '#f38ba8';
-                            btn.style.borderColor = '#f38ba8';
-                            setTimeout(function() {
-                                btn.innerHTML = '\U0001f517 Copy link';
-                                btn.style.color = '#cdd6f4';
-                                btn.style.borderColor = '#555';
-                            }, 2000);
-                        });
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(url).then(function() {
+                                showBtn('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
+                                setTimeout(resetBtn, 1500);
+                            }).catch(function() {
+                                if (legacyCopy(url)) {
+                                    showBtn('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
+                                    setTimeout(resetBtn, 1500);
+                                } else {
+                                    showFallback(url);
+                                    resetBtn();
+                                }
+                            });
+                        } else {
+                            if (legacyCopy(url)) {
+                                showBtn('\u2713 Copied!', '#a6e3a1', '#a6e3a1');
+                                setTimeout(resetBtn, 1500);
+                            } else {
+                                showFallback(url);
+                            }
+                        }
                     }
                     </script>
                     """,
-                    height=40,
+                    height=100,
                 )
             _url_push("min_tcs_trades", str(_MIN_TCS_TRADES))
 
