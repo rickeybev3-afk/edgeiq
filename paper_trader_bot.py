@@ -444,7 +444,12 @@ def _struct_tcs_floor(r: dict, tcs_thresholds: dict, regime_floor: int) -> int:
 
 # ── Dynamic position sizing ────────────────────────────────────────────────────
 def _compute_risk_dollars() -> float:
-    """Return 2.1% of current Alpaca account equity, capped at $2,000.
+    """Return 2.1% of current Alpaca account equity, capped at $4,000.
+
+    The $4,000 cap aligns with the Phase 3 projection model's 20× compounding
+    ceiling: 10% of $2,000 position × 20× = $4,000/trade max.  This keeps
+    the live bot's compound curve consistent with the projection table and
+    still has negligible market impact on liquid gapping stocks.
 
     Falls back to RISK_PER_TRADE env var if account fetch fails.
     """
@@ -455,7 +460,7 @@ def _compute_risk_dollars() -> float:
     )
     if equity and equity > 0:
         dynamic = equity * 0.021         # 2.1% of account
-        risk    = min(dynamic, 2000.0)   # cap $2,000
+        risk    = min(dynamic, 4000.0)   # cap $4,000 (matches 20× projection model ceiling)
         log.info(f"  Account equity: ${equity:,.0f} → 2.1% = ${dynamic:,.0f} → risk/trade: ${risk:,.0f}")
         return risk
     log.warning(f"  Could not fetch account equity — using fallback ${RISK_PER_TRADE:.0f}/trade")
@@ -529,7 +534,7 @@ def _ib_size_mult(ib_pct: float) -> float:
 # Calibrated from v5 trailing-stop sim (33,773 rows, April 2026).
 # Applied AFTER the IB-range mult so the two stack multiplicatively.
 # Net max exposure: 2.00× (IB) × 1.50× (P3) = 3.00× base risk (never exceeds
-# the $2,000 risk cap enforced in _compute_risk_dollars).
+# the $4,000 risk cap enforced in _compute_risk_dollars).
 #   P3: Morning  TCS≥70   → +4.607R / 81.9% WR → 1.50× (premium runners)
 #   P1: Intraday TCS≥70   → +2.998R / 88.8% WR → 1.25× (high-frequency edge)
 #   P2: Intraday TCS50-69 → +0.947R / 75.1% WR → 1.00× (baseline, acceptable)
