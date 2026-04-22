@@ -24714,6 +24714,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
             except Exception:
                 pass
         _p3_tcs_cur_val = max(30, min(55, _p3_tcs_cur_val))
+        # Initialise slider position from URL param `tcs_floor` (falls back to config value)
+        _url_init_int("tcs_floor", "p3_tcs_intraday_min_slider",
+                      default=_p3_tcs_cur_val, clamp=(30, 55, 1))
         _p3_tcs_slider_col, _p3_tcs_btn_col = st.columns([4, 1])
         with _p3_tcs_slider_col:
             _p3_tcs_new_val = st.slider(
@@ -24725,6 +24728,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 key="p3_tcs_intraday_min_slider",
                 help="Minimum TCS score required for intraday scan entries (range 30\u201355). The live-session floor (TCS\u226570) is never overridden. The bot hot-reloads filter_config.json \u2014 no restart needed.",
             )
+        # Persist slider position to URL so a reload restores the same value
+        _url_push("tcs_floor", str(_p3_tcs_new_val))
         with _p3_tcs_btn_col:
             st.markdown("&nbsp;", unsafe_allow_html=True)
             _p3_tcs_save_btn = st.button("\U0001f4be Save", key="p3_tcs_floor_save_btn", type="primary")
