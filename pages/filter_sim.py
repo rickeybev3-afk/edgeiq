@@ -307,9 +307,6 @@ else:
     final       = after_rvol
     vwap_rej    = []
 
-# Layer 5: + Gap direction (Phase 3 best combo: gap-UP only)
-# Mirrors filter_grid_search: gap_dir_up = gap_pct > 0
-final      = [r for r in final if (r.get("gap_pct") or 0) > 0]
 s3 = compute_stats(final)
 
 # ── Filter funnel cards ───────────────────────────────────────────────────────
@@ -588,11 +585,11 @@ with _bm_info:
             "**Bot Mode ON** — 2.1% of equity / trade · $4,000 hard cap · "
             "P3 morning TCS≥70 → 1.50× · P1 intraday TCS≥70 → 1.25× · P2 → 1.00×  "
             "*(matches live paper_trader_bot.py exactly)*  \n"
-            "📊 **Phase 3 best combo (gap-UP only):** WR **86.0%** · avg R **+0.987R** · "
-            "PF **15.86** · Sharpe **10.10** · MaxDD **5.55R** (↓74% vs prior 21.6R) · n=4,793 trades  \n"
-            "🔼 **gap-UP filter active** — gap-down setups excluded (they cluster losses during bear phases). "
-            "Structures: Bullish/Bearish Break · Ntrl Extreme · Neutral · Dbl Dist · Non-Trend. "
-            "Per-structure TCS floors: `double_dist` ≥49 · `ntrl_extreme` ≥53 · `break` ≥57 · `neutral` ≥60+."
+            "📊 **Phase 3 best combo:** WR **84.6%** · avg R **+0.929R** · "
+            "PF **14.9** · Sharpe **9.85** · MaxDD **21.59R** · n=5,266 trades · **6.5 TPD** (long+short)  \n"
+            "Bot uses **per-structure TCS floors** (49–70) from Phase 3 baseline, not a blanket minimum. "
+            "Paper mode: `double_dist` ≥49 · `ntrl_extreme` ≥53 · `bullish/bearish break` ≥57 · `neutral` ≥60+. "
+            "Live mode: TCS≥70 across all structures."
         )
 
 # ── Primary sizing inputs (plain English) ─────────────────────────────────────
