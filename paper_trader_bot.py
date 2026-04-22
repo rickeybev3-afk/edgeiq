@@ -8194,6 +8194,7 @@ def main():
     _morning_done          = False
     _intraday_done         = False
     _force_close_done      = False
+    _eod_cancel_done       = False
     _eod_done              = False
     _verify_done           = False
     _recalibration_done    = False
@@ -8312,6 +8313,7 @@ def main():
             _morning_done          = False
             _intraday_done         = False
             _force_close_done      = False
+            _eod_cancel_done       = False
             _eod_done              = False
             _verify_done           = False
             _recalibration_done    = False
@@ -8502,6 +8504,41 @@ def main():
             if cleared:
                 log.info(f"[ZoneWatch] EOD clear — removed {cleared} stale watch entry(s)")
             _force_close_done = True
+
+        # 3:35 PM — cancel any lingering open bracket/stop orders that survived
+        # the force-close window.  Alpaca's order ledger must be clean before the
+        # 4:00 PM close auction so that reconcile_alpaca_fills doesn't pick up
+        # ghost legs as fills.  Fires on weekdays only; non-fatal on failure.
+        if (
+            not _eod_cancel_done
+            and now_et.weekday() < 5
+            and now_et.hour == 15
+            and now_et.minute >= 35
+        ):
+            log.info(
+                "[EODCancel] 3:35 PM — cancelling any remaining open orders "
+                "before Alpaca EOD reconciliation..."
+            )
+            try:
+                cancel_result = cancel_alpaca_day_orders(
+                    is_paper=IS_PAPER_ALPACA,
+                    api_key=ALPACA_API_KEY,
+                    secret_key=ALPACA_SECRET_KEY,
+                )
+                cancelled = cancel_result.get("cancelled", 0) if isinstance(cancel_result, dict) else 0
+                errors    = cancel_result.get("errors", 0)    if isinstance(cancel_result, dict) else 0
+                if cancelled:
+                    log.info(
+                        f"[EODCancel] Cancelled {cancelled} open order(s) — "
+                        "no orphan brackets remain before market close"
+                    )
+                if errors:
+                    log.warning(f"[EODCancel] {errors} order(s) could not be cancelled")
+                if not cancelled and not errors:
+                    log.info("[EODCancel] No open orders found — account is clean")
+            except Exception as _ece:
+                log.warning(f"[EODCancel] Order cancellation failed (non-fatal): {_ece}")
+            _eod_cancel_done = True
 
         # 4:20 PM — EOD update (only reachable if market extended session; normally
         # handled in the after-close block above)
