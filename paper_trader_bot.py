@@ -5113,11 +5113,16 @@ def watchlist_refresh(midday: bool = False):
     }
     _pass3_short_float_filter = _SHORT_FLOAT_FILTER_MAP.get(_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT)
     if _pass3_short_float_filter is None:
-        raise ValueError(
-            f"No Finviz filter code for short-float threshold "
-            f"{_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT}%. "
-            f"Supported values: {sorted(_SHORT_FLOAT_FILTER_MAP)}"
+        _supported = sorted(_SHORT_FLOAT_FILTER_MAP)
+        _nearest = min(_supported, key=lambda v: abs(v - _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT))
+        log.error(
+            f"[watchlist_refresh] _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT={_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT}% "
+            f"is not a supported Finviz breakpoint. "
+            f"Supported values: {_supported}. "
+            f"Falling back to nearest supported value: {_nearest}%."
         )
+        _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = _nearest
+        _pass3_short_float_filter = _SHORT_FLOAT_FILTER_MAP[_nearest]
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
