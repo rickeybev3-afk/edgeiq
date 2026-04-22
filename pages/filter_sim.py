@@ -583,7 +583,10 @@ with _bm_info:
         st.info(
             "**Bot Mode ON** — 2.1% of equity / trade · $4,000 hard cap · "
             "P3 morning TCS≥70 → 1.50× · P1 intraday TCS≥70 → 1.25× · P2 → 1.00×  "
-            "*(matches live paper_trader_bot.py exactly)*"
+            "*(matches live paper_trader_bot.py exactly)*  \n"
+            "📊 Historical signal rate at Phase 3 filters: **~5 signals/day** (TCS≥60 paper) · "
+            "**~3 signals/day** (TCS≥70 live). TCS≥50 and TCS≥60 are equivalent — "
+            "no qualifying signals exist below TCS 60 in the Phase 3 dataset."
         )
 
 # ── Primary sizing inputs (plain English) ─────────────────────────────────────
