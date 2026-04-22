@@ -16240,14 +16240,15 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _tk_pos_size = float(st.session_state.get("rp_pos_size", 500))
 
             # ── Min-trade-count slider ─────────────────────────────────────────
+            # Initialise from URL param when present, else fall back to saved pref / default 8
+            _min_tcs_pref = max(5, min(20, st.session_state.get("min_tcs_trades", 8)))
+            _url_init_int("min_tcs_trades", "min_tcs_trades", _min_tcs_pref, clamp=(5, 20))
             _min_tcs_col, _ = st.columns([1, 3])
             with _min_tcs_col:
-                _min_tcs_seed = max(5, min(20, st.session_state.get("min_tcs_trades", 8)))
                 _MIN_TCS_TRADES = st.slider(
                     "Min trades required for Best TCS",
                     min_value=5,
                     max_value=20,
-                    value=_min_tcs_seed,
                     step=1,
                     key="min_tcs_trades",
                     help=(
@@ -16257,6 +16258,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "higher values require more trades before trusting a floor."
                     ),
                 )
+            _url_push("min_tcs_trades", str(_MIN_TCS_TRADES))
 
             # Persist slider value to user prefs whenever it changes
             if _AUTH_USER_ID:
