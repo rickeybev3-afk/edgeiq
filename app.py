@@ -6922,7 +6922,7 @@ if _journal_param == _NOTES_USER_ID:
     render_trade_journal_page()
     st.stop()
 
-if not st.session_state.get("auth_user"):
+if not st.session_state.get("auth_user") and not st.session_state.get("auth_user_id"):
     render_login_page()
     st.stop()
 
