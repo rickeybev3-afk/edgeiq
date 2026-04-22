@@ -2911,7 +2911,8 @@ def render_log_entry_ui():
             )
             gc  = _GRADE_COLORS.get(grade, "#aaa")
             pgc = _GRADE_COLORS.get(proc_grade, "#aaa")
-            st.success(f"Logged! **Outcome {grade}** · **Process {proc_grade}**")
+            st.session_state["_journal_logged_at"]  = time.time()
+            st.session_state["_journal_logged_msg"] = f"Logged! **Outcome {grade}** · **Process {proc_grade}**"
             st.caption(reason)
             st.markdown(
                 f'<div style="display:flex; gap:12px; align-items:center;">'
@@ -2965,6 +2966,20 @@ def render_log_entry_ui():
                     )
                 _chips_html += '</div></div>'
                 st.markdown(_chips_html, unsafe_allow_html=True)
+
+    # ── Auto-dismiss trade-logged success banner ──────────────────────────────
+    _jl_saved_at = st.session_state.get("_journal_logged_at")
+    if _jl_saved_at:
+        _jl_elapsed = time.time() - _jl_saved_at
+        if _jl_elapsed < 3.0:
+            st.success(st.session_state.get("_journal_logged_msg", "Logged!"))
+            time.sleep(3.0 - _jl_elapsed)
+            del st.session_state["_journal_logged_at"]
+            st.session_state.pop("_journal_logged_msg", None)
+            st.rerun()
+        else:
+            del st.session_state["_journal_logged_at"]
+            st.session_state.pop("_journal_logged_msg", None)
 
     # ── Recent Trades preview (last 10 from Supabase) ─────────────────────────
     _recent_df = _cached_load_journal(user_id=st.session_state.get("auth_user_id", ""))
@@ -5227,6 +5242,8 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
             # Auto-reload so changes appear immediately without manual button click
             _raw_notes = _cached_load_eod_notes(user_id=_uid, limit=100)
             st.session_state["_eod_notes_loaded"] = enrich_eod_from_journal(_raw_notes, df)
+            if _src == "supabase":
+                time.sleep(3.0)
             st.rerun()
         else:
             st.error("❌ Save failed completely. Contact support.")
@@ -5492,6 +5509,7 @@ def render_journal_tab(api_key: str = "", secret_key: str = ""):
                                     pass
                                 st.success("Outcome saved — contributes to your hit rate!")
                                 st.session_state["_eod_notes_loaded"] = None
+                                time.sleep(3.0)
                                 st.rerun()
                             else:
                                 st.warning("Save failed — check Supabase connection.")
@@ -9730,9 +9748,22 @@ with st.sidebar:
         _ok = save_watchlist(_wl_list, st.session_state.get("auth_user_id", ""))
         st.session_state["_watchlist_tickers"] = ", ".join(_wl_list)
         if _ok:
-            st.success(f"Saved {len(_wl_list)} tickers")
+            st.session_state["_wl_saved_at"]  = time.time()
+            st.session_state["_wl_saved_msg"] = f"Saved {len(_wl_list)} tickers"
         else:
             st.warning("Saved locally (Supabase unavailable)")
+    _wl_saved_at = st.session_state.get("_wl_saved_at")
+    if _wl_saved_at:
+        _wl_elapsed = time.time() - _wl_saved_at
+        if _wl_elapsed < 3.0:
+            st.success(st.session_state.get("_wl_saved_msg", "Saved"))
+            time.sleep(3.0 - _wl_elapsed)
+            del st.session_state["_wl_saved_at"]
+            st.session_state.pop("_wl_saved_msg", None)
+            st.rerun()
+        else:
+            del st.session_state["_wl_saved_at"]
+            st.session_state.pop("_wl_saved_msg", None)
     if _wl_cols[1].button("▶ Next Ticker", use_container_width=True, key="wl_load_btn"):
         _wl_list = [t.strip().upper() for t in _wl_raw.replace("\n", ",").split(",")
                     if t.strip()]
