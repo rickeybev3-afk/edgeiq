@@ -23046,6 +23046,195 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 except Exception as _pj_ex:
                     st.warning(f"Projection audit unavailable: {_pj_ex}")
 
+                # ── Stacked Scenario Chart: Old → Phase 3 → Phase 3 + P-tier ──
+                with st.expander("📈 Projection Stack: Old vs Phase 3 vs Phase 3 + P-tier Sizing", expanded=True):
+                    import pandas as _stk_pd
+
+                    def _stk_compound(avg_r_pdt, avg_r_free, tpd_pdt, tpd_free,
+                                      pos_size=1500.0, start_eq=7000.0, cap_x=20.0,
+                                      n_years=5, ptier_mult=1.0):
+                        base_1r = pos_size * 0.10
+                        eq = start_eq
+                        pdt_window = []
+                        eq_by_day = {0: start_eq}
+                        unlock_day = None
+                        for day in range(1, n_years * 252 + 1):
+                            cf = min(eq / start_eq, cap_x)
+                            actual_1r = base_1r * cf * ptier_mult
+                            if eq < 25000:
+                                recent = sum(1 for d in pdt_window if d >= day - 4)
+                                n = min(max(0, 3 - recent), 3)
+                                n = min(n, tpd_pdt)
+                                use_avg = avg_r_pdt
+                            else:
+                                if unlock_day is None:
+                                    unlock_day = day
+                                n = tpd_free
+                                use_avg = avg_r_free
+                            eq += n * use_avg * actual_1r
+                            for _ in range(int(min(n, 3))):
+                                pdt_window.append(day)
+                            pdt_window = [d for d in pdt_window if d >= day - 4]
+                            eq_by_day[day] = eq
+                        return eq_by_day, unlock_day
+
+                    _STK_OLD_AVG_R    = 0.825
+                    _STK_OLD_TPD_PDT  = 0.6
+                    _STK_OLD_TPD_FREE = 15.0
+                    _STK_P3_AVG_R     = 0.929
+                    _STK_P3_AVG_RPDT  = 1.00
+                    _STK_P3_TPD_PDT   = 0.6
+                    _STK_P3_TPD_FREE  = 15.23
+                    # P-tier effective multiplier:
+                    # morning TCS≥70 → 1.50× (28%) | intraday TCS≥70 → 1.25× (42%) | TCS<70 → 1.00× (30%)
+                    _STK_PTIER_MULT   = 0.28 * 1.50 + 0.12 * 1.00 + 0.42 * 1.25 + 0.18 * 1.00  # = 1.245
+
+                    _stk_col1, _stk_col2 = st.columns([3, 1])
+                    with _stk_col2:
+                        _stk_pos_lbl = st.radio("Position size", ["$1,500", "$2,000"], horizontal=False, key="_stk_pos_radio")
+                        _stk_psize = 1500.0 if _stk_pos_lbl == "$1,500" else 2000.0
+                        _stk_1r_base = _stk_psize * 0.10
+                        st.metric("Base 1R", f"${_stk_1r_base:.0f}")
+                        st.metric("Max 1R (20× cap)", f"${_stk_1r_base*20:.0f}")
+                        st.metric("P-tier multiplier", f"{_STK_PTIER_MULT:.3f}×")
+                        st.metric("P3 win rate", "84.6%")
+                        st.metric("P3 avg R/trade", "0.929R")
+                        st.metric("Profit factor", "14.9×")
+
+                    _stk_configs = [
+                        ("OLD  — PDT ON",   _STK_OLD_AVG_R,   _STK_OLD_AVG_R,   _STK_OLD_TPD_PDT,  _STK_OLD_TPD_FREE, 1.0,              "#ef4444", "dash"),
+                        ("OLD  — PDT OFF",  _STK_OLD_AVG_R,   _STK_OLD_AVG_R,   _STK_OLD_TPD_FREE, _STK_OLD_TPD_FREE, 1.0,              "#f97316", "dot"),
+                        ("P3   — PDT ON",   _STK_P3_AVG_RPDT, _STK_P3_AVG_R,    _STK_P3_TPD_PDT,   _STK_P3_TPD_FREE,  1.0,              "#3b82f6", "dash"),
+                        ("P3   — PDT OFF",  _STK_P3_AVG_R,    _STK_P3_AVG_R,    _STK_P3_TPD_FREE,  _STK_P3_TPD_FREE,  1.0,              "#60a5fa", "dot"),
+                        ("P3+PT — PDT ON",  _STK_P3_AVG_RPDT, _STK_P3_AVG_R,    _STK_P3_TPD_PDT,   _STK_P3_TPD_FREE,  _STK_PTIER_MULT,  "#10b981", "dash"),
+                        ("P3+PT — PDT OFF", _STK_P3_AVG_R,    _STK_P3_AVG_R,    _STK_P3_TPD_FREE,  _STK_P3_TPD_FREE,  _STK_PTIER_MULT,  "#34d399", "dot"),
+                    ]
+
+                    _stk_fig = go.Figure()
+                    _stk_xs_days = list(range(0, 5 * 252 + 1, 21))
+                    _stk_xs_yr   = [d / 252 for d in _stk_xs_days]
+
+                    _stk_all_curves = {}
+                    for _lbl, _rp, _rf, _tp, _tf, _pm, _col, _dash in _stk_configs:
+                        _curve, _ud = _stk_compound(_rp, _rf, _tp, _tf, pos_size=_stk_psize, ptier_mult=_pm)
+                        _stk_all_curves[_lbl] = _curve
+                        _ys_m = [_curve[min(d, 1260)] / 1_000_000 for d in _stk_xs_days]
+                        _hover = [
+                            f"<b>{_lbl}</b><br>Year {d/252:.1f}<br>${_curve[min(d,1260)]:,.0f}"
+                            for d in _stk_xs_days
+                        ]
+                        _stk_fig.add_trace(go.Scatter(
+                            x=_stk_xs_yr, y=_ys_m,
+                            name=_lbl, mode="lines",
+                            line=dict(color=_col, width=2.5, dash=_dash),
+                            hovertemplate="%{customdata}<extra></extra>",
+                            customdata=_hover,
+                        ))
+
+                    _stk_fig.update_layout(
+                        title=dict(
+                            text=f"5-Year Equity Curve — {_stk_pos_lbl} Position  |  20× Compounding Cap  |  Base 1R = ${_stk_1r_base:.0f}",
+                            font=dict(size=14),
+                        ),
+                        xaxis=dict(
+                            title="Year",
+                            tickvals=[0, 1, 2, 3, 4, 5],
+                            ticktext=["Start", "Y1", "Y2", "Y3", "Y4", "Y5"],
+                            gridcolor="rgba(255,255,255,0.08)",
+                        ),
+                        yaxis=dict(
+                            title="Account Value ($M)",
+                            tickprefix="$",
+                            ticksuffix="M",
+                            tickformat=".0f",
+                            gridcolor="rgba(255,255,255,0.08)",
+                        ),
+                        legend=dict(
+                            orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="right", x=1, font=dict(size=11),
+                        ),
+                        height=420,
+                        template="plotly_dark",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0.06)",
+                        margin=dict(l=0, r=0, t=70, b=0),
+                        hovermode="x unified",
+                    )
+                    _stk_fig.add_vline(x=1, line_dash="dot", line_color="rgba(255,255,255,0.2)", annotation_text="Y1")
+                    _stk_fig.add_vline(x=2, line_dash="dot", line_color="rgba(255,255,255,0.2)", annotation_text="Y2")
+                    _stk_fig.add_vline(x=3, line_dash="dot", line_color="rgba(255,255,255,0.2)", annotation_text="Y3")
+                    _stk_fig.add_vline(x=5, line_dash="dot", line_color="rgba(255,255,255,0.2)", annotation_text="Y5")
+
+                    with _stk_col1:
+                        st.plotly_chart(_stk_fig, use_container_width=True)
+
+                    st.divider()
+
+                    _stk_c1, _stk_c2 = st.columns(2)
+
+                    with _stk_c1:
+                        st.markdown("**Year-End Milestones — all 3 tiers**")
+                        _stk_yr_rows = []
+                        for _lbl, _rp, _rf, _tp, _tf, _pm, _col, _dash in _stk_configs:
+                            _curve = _stk_all_curves[_lbl]
+                            _stk_yr_rows.append({
+                                "Scenario": _lbl.strip(),
+                                "Y1": f"${_curve[252]:,.0f}",
+                                "Y2": f"${_curve[504]:,.0f}",
+                                "Y3": f"${_curve[756]:,.0f}",
+                                "Y4": f"${_curve[1008]:,.0f}",
+                                "Y5": f"${_curve[1260]:,.0f}",
+                            })
+                        st.dataframe(_stk_pd.DataFrame(_stk_yr_rows).set_index("Scenario"), use_container_width=True)
+
+                    with _stk_c2:
+                        st.markdown("**Gain vs Old Baseline (PDT ON)**")
+                        _old_c = _stk_all_curves["OLD  — PDT ON"]
+                        _p3_c  = _stk_all_curves["P3   — PDT ON"]
+                        _pt_c  = _stk_all_curves["P3+PT — PDT ON"]
+                        _stk_delta_rows = []
+                        for _yr in [1, 2, 3, 4, 5]:
+                            _d = _yr * 252
+                            _p3_delta  = _p3_c[_d] - _old_c[_d]
+                            _pt_delta  = _pt_c[_d] - _old_c[_d]
+                            _stk_delta_rows.append({
+                                "Year": f"Y{_yr}",
+                                "OLD": f"${_old_c[_d]:,.0f}",
+                                "P3 only": f"${_p3_c[_d]:,.0f}",
+                                "P3 vs OLD": f"+{100*_p3_delta/_old_c[_d]:.1f}%",
+                                "P3 + P-tier": f"${_pt_c[_d]:,.0f}",
+                                "P3+PT vs OLD": f"+{100*_pt_delta/_old_c[_d]:.1f}%",
+                            })
+                        st.dataframe(_stk_pd.DataFrame(_stk_delta_rows).set_index("Year"), use_container_width=True)
+
+                    st.divider()
+                    st.markdown("**Position Scaling Ladder — how 1R and daily max grow with account size**")
+                    _stk_scale_rows = []
+                    for _mult, _eq_label in [(1, 7_000), (2, 14_000), (3.57, 25_000), (5, 35_000),
+                                             (10, 70_000), (15, 105_000), (20, 140_000)]:
+                        _1r        = _stk_psize * 0.10 * _mult
+                        _1r_pt     = _1r * _STK_PTIER_MULT
+                        _d_old     = _STK_OLD_TPD_FREE * _STK_OLD_AVG_R * _1r
+                        _d_p3      = _STK_P3_TPD_FREE  * _STK_P3_AVG_R  * _1r
+                        _d_pt      = _STK_P3_TPD_FREE  * _STK_P3_AVG_R  * _1r_pt
+                        _stk_scale_rows.append({
+                            "Equity":            f"${_eq_label:,}",
+                            "Comp ×":            f"{_mult:.1f}×",
+                            f"1R ({_stk_pos_lbl})": f"${_1r:,.0f}",
+                            "1R w/ P-tier":      f"${_1r_pt:,.0f}",
+                            "OLD $/day":         f"${_d_old:,.0f}",
+                            "P3 $/day":          f"${_d_p3:,.0f}",
+                            "P3+PT $/day":       f"${_d_pt:,.0f}",
+                        })
+                    st.dataframe(_stk_pd.DataFrame(_stk_scale_rows).set_index("Equity"), use_container_width=True)
+                    st.caption(
+                        f"**P-tier weights:** Morning TCS≥70 → 1.50× (28% of trades) · "
+                        f"Intraday TCS≥70 → 1.25× (42%) · TCS<70 → 1.00× (30%) · "
+                        f"Weighted avg: {_STK_PTIER_MULT:.3f}×  |  "
+                        f"**Phase 3 filter:** gap ≥ 2.0% · 5 structures (Bullish Break, Bearish Break, "
+                        f"Neutral Extreme, Neutral, Double Distribution) · WR 84.6% · AvgR 0.929R · PF 14.9×"
+                    )
+
                 # ── Morning vs Intraday breakdown ─────────────────────────────
                 st.markdown("##### Morning vs Intraday Split (per variant)")
                 _rfc_split_rows = []
