@@ -149,6 +149,11 @@ _TP_PREVIEW_STATE_FILE = os.path.join(
     ".edgeiq_tp_preview_run.json",
 )
 
+_MORNING_TCS_CALIB_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".edgeiq_morning_tcs_calib.json",
+)
+
 _CACHE_ALERT_STATE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     ".edgeiq_cache_alert_state.json",
@@ -2241,6 +2246,269 @@ def run_pending_resolver(date_from: str = "", date_to: str = "") -> None:
         log.warning("Could not write pending resolver alert state: %s", _e)
 
 
+# ── Morning TCS floor auto-recalibration ──────────────────────────────────────
+
+_FILTER_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "filter_config.json"
+)
+
+_MORNING_TCS_WIN_RATE_THRESHOLD = 0.75
+_MORNING_TCS_CALIB_DEFAULT_DAYS = 90
+_MORNING_TCS_CALIB_DEFAULT_MIN_TRADES = 50
+
+
+def _query_morning_tcs_band(
+    backend_mod,
+    tcs_lo: int,
+    tcs_hi: int,
+    date_from_str: str,
+    limit: int = 5000,
+) -> tuple:
+    """Return (total_settled, win_count) for a morning TCS band over the trailing window.
+
+    Queries backtest_sim_runs for rows where scan_type='morning',
+    tcs between tcs_lo and tcs_hi (inclusive), actual_outcome is not null
+    and not 'Pending', and sim_date >= date_from_str.
+
+    Returns (-1, -1) on any query error.
+    """
+    try:
+        resp = (
+            backend_mod.supabase
+            .table("backtest_sim_runs")
+            .select("actual_outcome")
+            .eq("scan_type", "morning")
+            .gte("tcs", tcs_lo)
+            .lte("tcs", tcs_hi)
+            .gte("sim_date", date_from_str)
+            .not_.is_("actual_outcome", "null")
+            .neq("actual_outcome", "Pending")
+            .limit(limit)
+            .execute()
+        )
+        rows = resp.data or []
+        total = len(rows)
+        wins  = sum(1 for r in rows if str(r.get("actual_outcome", "")).strip() == "Win")
+        if total >= limit:
+            log.warning(
+                "Morning TCS band %d-%d result set hit limit=%d — consider raising limit.",
+                tcs_lo, tcs_hi, limit,
+            )
+        return total, wins
+    except Exception as exc:
+        log.warning(
+            "Could not query backtest_sim_runs for morning TCS %d-%d: %s",
+            tcs_lo, tcs_hi, exc,
+        )
+        return -1, -1
+
+
+def _recalibrate_morning_tcs_floor() -> None:
+    """Auto-update morning_tcs_min in filter_config.json based on recent backtest WR.
+
+    Logic (all over the trailing window set by MORNING_TCS_CALIB_DAYS, default 90 days):
+
+    1. Query backtest_sim_runs for morning TCS 55-59 settled rows and compute WR.
+    2. Query backtest_sim_runs for morning TCS 50-54 settled rows and compute WR.
+    3. Decision:
+       a. If 55-59 WR < 75%  -> raise floor to 60 and send a Telegram alert.
+       b. If 55-59 WR >= 75% AND 50-54 WR >= 75%  -> lower floor to 50 and send alert.
+       c. If 55-59 WR >= 75% but 50-54 WR < 75%  -> keep floor at 55 (no change needed).
+    4. When the floor changes, filter_config.json is updated with the new value and a note.
+    5. If either band has fewer than MORNING_TCS_CALIB_MIN_TRADES (default 50) settled rows
+       the decision for that band is skipped (insufficient data).
+
+    No-op guard: if the computed new floor equals the value already in filter_config.json
+    the function returns early without writing the file or sending an alert.
+    """
+    log.info("─── Morning TCS floor recalibration ──────────────────────────")
+
+    try:
+        trailing_days = int(os.getenv("MORNING_TCS_CALIB_DAYS", str(_MORNING_TCS_CALIB_DEFAULT_DAYS)))
+    except (ValueError, TypeError):
+        trailing_days = _MORNING_TCS_CALIB_DEFAULT_DAYS
+        log.warning("Invalid MORNING_TCS_CALIB_DAYS — using default %d days.", trailing_days)
+
+    try:
+        min_trades = int(os.getenv("MORNING_TCS_CALIB_MIN_TRADES", str(_MORNING_TCS_CALIB_DEFAULT_MIN_TRADES)))
+    except (ValueError, TypeError):
+        min_trades = _MORNING_TCS_CALIB_DEFAULT_MIN_TRADES
+        log.warning("Invalid MORNING_TCS_CALIB_MIN_TRADES — using default %d.", min_trades)
+
+    date_from_dt  = datetime.datetime.utcnow() - datetime.timedelta(days=trailing_days)
+    date_from_str = date_from_dt.strftime("%Y-%m-%d")
+    log.info(
+        "Morning TCS floor check: trailing window %d days (from %s), min_trades=%d.",
+        trailing_days, date_from_str, min_trades,
+    )
+
+    try:
+        import backend as _backend
+        if not getattr(_backend, "supabase", None):
+            log.warning("Supabase client not initialised — skipping morning TCS recalibration.")
+            return
+    except Exception as exc:
+        log.warning("Could not import backend for morning TCS recalibration: %s", exc)
+        return
+
+    total_5559, wins_5559 = _query_morning_tcs_band(_backend, 55, 59, date_from_str)
+    total_5054, wins_5054 = _query_morning_tcs_band(_backend, 50, 54, date_from_str)
+
+    if total_5559 < 0:
+        log.warning("Morning TCS 55-59 query failed — aborting recalibration.")
+        return
+
+    if total_5559 < min_trades:
+        log.info(
+            "Morning TCS 55-59 band: only %d settled row(s) in trailing %d days "
+            "(min_trades=%d) — insufficient data, skipping.",
+            total_5559, trailing_days, min_trades,
+        )
+        return
+
+    wr_5559 = wins_5559 / total_5559
+    log.info(
+        "Morning TCS 55-59: %d settled, %d wins, WR=%.1f%% (threshold: %.0f%%).",
+        total_5559, wins_5559, wr_5559 * 100, _MORNING_TCS_WIN_RATE_THRESHOLD * 100,
+    )
+
+    has_5054_data = total_5054 >= 0 and total_5054 >= min_trades
+    wr_5054 = None
+    if total_5054 < 0:
+        log.warning("Morning TCS 50-54 query failed — treating 50-54 band as unavailable.")
+    elif total_5054 < min_trades:
+        log.info(
+            "Morning TCS 50-54 band: only %d settled row(s) (min_trades=%d) — insufficient data.",
+            total_5054, min_trades,
+        )
+    else:
+        wr_5054 = wins_5054 / total_5054
+        log.info(
+            "Morning TCS 50-54: %d settled, %d wins, WR=%.1f%% (threshold: %.0f%%).",
+            total_5054, wins_5054, wr_5054 * 100, _MORNING_TCS_WIN_RATE_THRESHOLD * 100,
+        )
+
+    now_et   = _et_now()
+    run_date = now_et.strftime("%Y-%m-%d")
+
+    if wr_5559 < _MORNING_TCS_WIN_RATE_THRESHOLD:
+        new_floor = 60
+        decision  = "raise"
+        note = (
+            f"Morning TCS floor raised 55->60 on {run_date} by nightly recalibration "
+            f"(MORNING_TCS_CALIB_DAYS={trailing_days}). "
+            f"TCS 55-59: {wr_5559*100:.1f}% WR / {total_5559} trades -- "
+            f"below {_MORNING_TCS_WIN_RATE_THRESHOLD*100:.0f}% threshold."
+        )
+        tg_msg = (
+            f"\u26a0\ufe0f <b>Morning TCS floor raised: 55 \u2192 60</b>\n"
+            f"Date: {run_date}\n"
+            f"TCS 55-59 WR dropped to <b>{wr_5559*100:.1f}%</b> "
+            f"({wins_5559}/{total_5559} trades, trailing {trailing_days} days).\n"
+            f"Threshold: {_MORNING_TCS_WIN_RATE_THRESHOLD*100:.0f}% \u2014 floor raised back to 60.\n"
+            f"<i>filter_config.json updated automatically.</i>"
+        )
+    elif has_5054_data and wr_5054 is not None and wr_5054 >= _MORNING_TCS_WIN_RATE_THRESHOLD:
+        new_floor = 50
+        decision  = "lower"
+        note = (
+            f"Morning TCS floor lowered 55->50 on {run_date} by nightly recalibration "
+            f"(MORNING_TCS_CALIB_DAYS={trailing_days}). "
+            f"TCS 55-59: {wr_5559*100:.1f}% WR / {total_5559} trades, "
+            f"TCS 50-54: {wr_5054*100:.1f}% WR / {total_5054} trades -- "
+            f"both bands clear {_MORNING_TCS_WIN_RATE_THRESHOLD*100:.0f}% threshold."
+        )
+        tg_msg = (
+            f"\u2705 <b>Morning TCS floor lowered: 55 \u2192 50</b>\n"
+            f"Date: {run_date}\n"
+            f"TCS 55-59: <b>{wr_5559*100:.1f}%</b> WR ({total_5559} trades)  "
+            f"TCS 50-54: <b>{wr_5054*100:.1f}%</b> WR ({total_5054} trades)\n"
+            f"Both bands clear {_MORNING_TCS_WIN_RATE_THRESHOLD*100:.0f}% \u2014 floor lowered to 50.\n"
+            f"<i>filter_config.json updated automatically.</i>"
+        )
+    else:
+        new_floor = 55
+        decision  = "hold"
+        if has_5054_data and wr_5054 is not None:
+            log.info(
+                "Morning TCS floor holds at 55 — 55-59 WR %.1f%% (ok), "
+                "50-54 WR %.1f%% (below threshold).",
+                wr_5559 * 100, wr_5054 * 100,
+            )
+        else:
+            log.info(
+                "Morning TCS floor holds at 55 — 55-59 WR %.1f%% (ok), "
+                "50-54 band has insufficient data.",
+                wr_5559 * 100,
+            )
+        note   = None
+        tg_msg = None
+
+    try:
+        with open(_FILTER_CONFIG_PATH) as _fcf:
+            cfg = json.load(_fcf)
+    except Exception as exc:
+        log.warning(
+            "Could not read filter_config.json for morning TCS update — aborting to avoid "
+            "overwriting a partially-parsed config: %s",
+            exc,
+        )
+        return
+
+    current_floor = int(cfg.get("morning_tcs_min", 60))
+
+    if decision == "hold" and current_floor == new_floor:
+        log.info("Morning TCS floor unchanged at %d — no update needed.", new_floor)
+        return
+
+    if decision != "hold" and current_floor == new_floor:
+        log.info(
+            "Morning TCS floor already at %d — no change needed "
+            "(55-59 WR=%.1f%%, decision=%s).",
+            new_floor, wr_5559 * 100, decision,
+        )
+        return
+
+    log.info(
+        "Morning TCS floor: %d -> %d (decision=%s, 55-59 WR=%.1f%%).",
+        current_floor, new_floor, decision, wr_5559 * 100,
+    )
+
+    cfg["morning_tcs_min"] = new_floor
+    if note:
+        cfg["_morning_tcs_min_note"] = note
+    try:
+        with open(_FILTER_CONFIG_PATH, "w") as _fcf:
+            json.dump(cfg, _fcf, indent=2)
+        log.info("filter_config.json updated: morning_tcs_min=%d.", new_floor)
+    except Exception as exc:
+        log.warning("Could not write filter_config.json with new morning TCS floor: %s", exc)
+        return
+
+    try:
+        with open(_MORNING_TCS_CALIB_STATE_FILE, "w") as _sf:
+            json.dump(
+                {
+                    "last_run_utc":  datetime.datetime.utcnow().isoformat(),
+                    "floor_set":     new_floor,
+                    "decision":      decision,
+                    "wr_5559":       round(wr_5559, 4),
+                    "n_5559":        total_5559,
+                    "wr_5054":       round(wr_5054, 4) if wr_5054 is not None else None,
+                    "n_5054":        total_5054 if has_5054_data else None,
+                    "trailing_days": trailing_days,
+                },
+                _sf,
+                indent=2,
+            )
+    except Exception as exc:
+        log.warning("Could not write morning TCS calib state file: %s", exc)
+
+    if tg_msg:
+        _send_telegram(tg_msg)
+        log.info("Morning TCS floor recalibration Telegram alert sent.")
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
@@ -2341,6 +2609,7 @@ def main():
     run_backfill(date_from=date_from, date_to=date_to)
     run_pending_resolver(date_from=date_from, date_to=date_to)
     _check_all_uncalibrated_screeners()
+    _recalibrate_morning_tcs_floor()
     refresh_summary_cache()
 
     run_number = 0
@@ -2385,6 +2654,9 @@ def main():
             if _shutdown.is_set():
                 break
             _check_all_uncalibrated_screeners()
+            _recalibrate_morning_tcs_floor()
+            if _shutdown.is_set():
+                break
             # Send TP calibration preview on Friday night (Sat 00:05 ET).
             if _should_run_tp_preview():
                 run_tp_calibration_preview()
