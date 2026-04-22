@@ -24622,17 +24622,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
             _p3_dim_df = _p3_pd.DataFrame(_p3_dim_rows, columns=["Dimension", "Value"])
             st.dataframe(_p3_dim_df, use_container_width=True, hide_index=True)
 
+            _p3_cur = {}
+            if _p3_os.path.exists(_P3_CFG):
+                try:
+                    with open(_P3_CFG) as _f:
+                        _p3_cur = _p3_json.load(_f)
+                except Exception:
+                    pass
+
             _p3_apply_col, _p3_info_col = st.columns([1, 3])
             with _p3_apply_col:
                 _p3_apply = st.button(f"✅ Apply Combo #{_p3_sel_rank}", key="p3_apply_btn", type="primary")
+                _p3_preview_tcs = int(st.session_state.get(
+                    "p3_tcs_intraday_min_slider",
+                    _p3_cur.get("tcs_intraday_min", 35),
+                ))
+                st.caption(f"Will set TCS floor to **{_p3_preview_tcs}**")
             with _p3_info_col:
-                _p3_cur = {}
-                if _p3_os.path.exists(_P3_CFG):
-                    try:
-                        with open(_P3_CFG) as _f:
-                            _p3_cur = _p3_json.load(_f)
-                    except Exception:
-                        pass
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
                                f"TCS floor\u2265{_p3_cur.get('tcs_intraday_min', 35)} · "
