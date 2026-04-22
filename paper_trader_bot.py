@@ -4479,6 +4479,20 @@ def _alert_morning_summary(
     """Send a summary header before individual setup alerts."""
     tcs_threshold = effective_tcs if effective_tcs is not None else MIN_TCS
 
+    # Per-pass breakdown from the screener tag dict (populated at watchlist refresh)
+    _pass_counts = {"gap": 0, "trend": 0, "squeeze": 0, "gap_down": 0}
+    for _tag in _TICKER_SCREENER_PASS.values():
+        if _tag in _pass_counts:
+            _pass_counts[_tag] += 1
+    _pass_total = sum(_pass_counts.values())
+    if _pass_total > 0:
+        _pass_line = (
+            f" ({_pass_counts['gap']} gap · {_pass_counts['trend']} trend · "
+            f"{_pass_counts['squeeze']} squeeze · {_pass_counts['gap_down']} gap-down)"
+        )
+    else:
+        _pass_line = ""
+
     # Load macro regime for context line
     _regime_line = ""
     try:
@@ -4516,7 +4530,7 @@ def _alert_morning_summary(
     if not qualified:
         tg_send(
             f"🔍 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
-            f"No setups met per-structure TCS thresholds today out of {total_scanned} scanned.\n"
+            f"No setups met per-structure TCS thresholds today out of {total_scanned} scanned{_pass_line}.\n"
             f"Watching for intraday opportunities..."
             + _threshold_legend
             + _regime_line
@@ -4528,7 +4542,7 @@ def _alert_morning_summary(
         f"🔔 <b>EdgeIQ Morning Scan — {trade_date}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"✅ <b>{len(qualified)} setup(s)</b> qualified (per-structure thresholds)\n"
-        f"📋 Scanned {total_scanned} tickers from your Finviz watchlist"
+        f"📋 Scanned {total_scanned} tickers{_pass_line}"
         + _threshold_legend
         + _regime_line
         + _ib_filter_line
