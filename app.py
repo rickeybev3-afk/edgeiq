@@ -7229,6 +7229,16 @@ if _AUTH_USER_ID and (
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Read active TCS intraday floor from filter_config.json ─────────────────
+_sfi_tcs_floor = 35
+try:
+    import json as _sfi_json
+    _sfi_cfg_path = os.path.join(os.path.dirname(__file__), "filter_config.json")
+    with open(_sfi_cfg_path) as _sfi_f:
+        _sfi_tcs_floor = int(_sfi_json.load(_sfi_f).get("tcs_intraday_min", 35))
+except Exception:
+    pass
+
 with st.sidebar:
     # ── Persistent sticky feed indicator ───────────────────────────────────
     st.markdown(
@@ -7244,6 +7254,10 @@ with st.sidebar:
   <span style="font-size:10px; font-weight:600; color:#6b7280;
                letter-spacing:0.07em; text-transform:uppercase; white-space:nowrap;">
     Active Feed
+  </span>
+  <span title="Active intraday TCS floor (from filter_config.json). Update via Filter Optimizer." style="
+    font-size:10px; font-weight:600; color:#9e9e9e; white-space:nowrap;">
+    TCS&#8197;&#8805;&#8197;__SFI_TCS_FLOOR__
   </span>
   <span id="_sfi_pill" title="Click to switch feed" style="
     font-size:10px; font-weight:700; padding:2px 10px;
@@ -7280,7 +7294,7 @@ with st.sidebar:
   } catch (e) {}
 })();
 </script>
-""",
+""".replace("__SFI_TCS_FLOOR__", str(_sfi_tcs_floor)),
         unsafe_allow_html=True,
     )
 
