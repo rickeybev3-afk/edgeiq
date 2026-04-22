@@ -24816,6 +24816,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 f"and your slider is **{_p3_diff_sign}** from that. "
                                 "Applied performance may differ from backtest results."
                             )
+                        _url_init_int("tcs_warn", "p3_tcs_warn_threshold_inline",
+                                      default=_P3_TCS_WARN_THRESHOLD, clamp=(1, 20, 1))
                         _p3_inline_threshold_val = st.number_input(
                             f"Warning threshold (±TCS pts) — currently ±{_P3_TCS_WARN_THRESHOLD}",
                             min_value=1,
@@ -24825,6 +24827,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             key="p3_tcs_warn_threshold_inline",
                             help="Raise to silence this warning; lower for stricter alerts. Saves immediately.",
                         )
+                        _url_push("tcs_warn", str(int(_p3_inline_threshold_val)))
                         _p3_btn_col1, _p3_btn_col2 = st.columns([1, 1])
                         with _p3_btn_col1:
                             _p3_inline_save_btn = st.button(
