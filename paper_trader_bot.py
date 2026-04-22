@@ -39,6 +39,7 @@ Optional env vars:
                                  Unlocks PDT ~8 weeks sooner. Set to 0 to disable.
 """
 
+import html
 import os
 import time
 import logging
@@ -1316,25 +1317,31 @@ def _patch_skip_reason(r: dict, ticker: str, reason: str) -> None:
         log.debug(f"  [{ticker}] skip_reason patch failed (non-fatal): {_sr_err}")
 
 
-def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
+def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
     """Place a bracket order on Alpaca for a qualified setup and log the order ID.
 
     Only runs when LIVE_ORDERS_ENABLED=true.  Skips non-directional predictions.
     Sizes at 1% of current account equity (capped $250–$2,000).
     Patches the paper_trades row with alpaca_order_id, alpaca_qty, order_placed_at,
     and skip_reason (always written so the funnel panel can count every row).
+
+    Returns a short outcome string:
+      "placed"                          — bracket order submitted successfully
+      "skipped:<reason>"                — blocked before order was sent
+      "skipped:<reason>:<detail>"       — blocked with extra context (e.g. slippage %)
+    Skip reasons that already send their own Telegram are marked with (*) in comments.
     """
     _ticker_raw = r.get("ticker", "unknown")
 
     if not LIVE_ORDERS_ENABLED:
         _patch_skip_reason(r, _ticker_raw, "orders_disabled")
-        return
+        return "skipped:orders_disabled"
 
     direction = r.get("predicted", "")
     if direction not in ("Bullish Break", "Bearish Break"):
         log.info(f"  [{_ticker_raw}] skip order — prediction is '{direction}' (not directional)")
         _patch_skip_reason(r, _ticker_raw, "non_directional")
-        return
+        return "skipped:non_directional"
 
     # ── Universe-alignment filter ─────────────────────────────────────────────
     # Bearish Break setups require a gap-DOWN universe to have positive expectancy.
@@ -1352,7 +1359,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"only trading Bearish Break from gap-down screener pass."
             )
             _patch_skip_reason(r, _ticker_raw, "bearish_break_not_gap_down")
-            return
+            return "skipped:bearish_break_not_gap_down"
 
     # ── Pre-flight price guard (ALL modes) ───────────────────────────────────
     # Alpaca 422 if stop_price < market price (buy stop) or > market price (sell stop).
@@ -1402,7 +1409,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                         f"(> {SLIPPAGE_TOLERANCE_PCT}% tolerance)"
                     )
                     _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
-                    return
+                    return f"skipped:entry_already_triggered:{_slip_pct:.2f}%"
             # Live-mode anti-chasing: price approaching IB level but 1.5%+ below (Bullish)
             # or above (Bearish) — stop order would still be valid but setup is stale.
             if not _pf_crossed and not IS_PAPER_ALPACA:
@@ -1414,7 +1421,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                         f"(>{ENTRY_ALREADY_TRIGGERED_PCT}% chase threshold)"
                     )
                     _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
-                    return
+                    return "skipped:entry_already_triggered"
                 if _pf_direction == "Bearish Break" and _pf_px < _pf_entry * (1 - _pct_thresh):
                     log.warning(
                         f"  [{_ticker_raw}] ⛔ LIVE ORDER BLOCKED — price ${_pf_px:.2f} already "
@@ -1422,7 +1429,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                         f"(>{ENTRY_ALREADY_TRIGGERED_PCT}% chase threshold)"
                     )
                     _patch_skip_reason(r, _ticker_raw, "entry_already_triggered")
-                    return
+                    return "skipped:entry_already_triggered"
 
     # ── Morning TCS floor ─────────────────────────────────────────────────────
     # 5-yr data: Morning TCS<60 → net negative expectancy across all structures.
@@ -1441,7 +1448,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"Morning TCS &lt;{MORNING_TCS_FLOOR} hist: negative expectancy — skipping"
         )
         _patch_skip_reason(r, _ticker_raw, "morning_tcs_below_floor")
-        return
+        return "skipped:morning_tcs_below_floor"  # (*) own Telegram already sent above
 
     # ── Lunch blackout (intraday only) ─────────────────────────────────────────
     # Intraday setups firing during 11:30 AM–1:30 PM ET (default) are skipped.
@@ -1457,7 +1464,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"Low-volume window — skipping to protect fill quality."
         )
         _patch_skip_reason(r, _ticker_raw, "lunch_blackout")
-        return
+        return "skipped:lunch_blackout"  # (*) own Telegram already sent above
 
     ticker = r.get("ticker", "").upper()
 
@@ -1490,6 +1497,8 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
         )
         # Send Telegram only once per calendar day — prevents N duplicate alerts
         # when N setups all hit the same PDT block in one scan session.
+        # Return distinct outcome strings so _send_skip_outcome_tg can send a
+        # brief follow-up for the subsequent setups whose Telegram was suppressed.
         global _PDT_BLOCK_ALERTED_DATE
         _today_pdt = datetime.now(EASTERN).date()
         if _PDT_BLOCK_ALERTED_DATE != _today_pdt:
@@ -1500,10 +1509,12 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"No new orders will be placed until a trade day rolls off.\n"
                 f"<i>FINRA PDT rule: &lt;$25k accounts limited to 3 round-trips / 5 days.</i>"
             )
+            _patch_skip_reason(r, ticker, "pdt_blocked")
+            return "skipped:pdt_blocked"  # (*) own Telegram already sent above
         else:
             log.info(f"  [{ticker}] PDT block alert suppressed — already sent today")
-        _patch_skip_reason(r, ticker, "pdt_blocked")
-        return
+            _patch_skip_reason(r, ticker, "pdt_blocked")
+            return "skipped:pdt_blocked_silent"  # no Telegram was sent — follow-up needed
 
     # ── PDT quality gate (live, sub-$25k only) ────────────────────────────────
     # While PDT is in effect but not yet exhausted, reserve the limited 3-per-5-day
@@ -1531,7 +1542,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"Will trade all S2 signals freely once account clears $25k."
         )
         _patch_skip_reason(r, ticker, "pdt_quality_gate")
-        return
+        return "skipped:pdt_quality_gate"  # (*) own Telegram already sent above
 
     # ── PDT equity floor warning (fires if equity near $25k boundary) ──────────
     _warn_pdt_equity_floor()
@@ -1549,7 +1560,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             f"Waiting for an existing position to close before adding new exposure."
         )
         _patch_skip_reason(r, ticker, "concurrent_cap")
-        return
+        return "skipped:concurrent_cap"  # (*) own Telegram already sent above
 
     # ── Per-ticker existing-position guard ─────────────────────────────────────
     # Prevents duplicate entries on bot restart. If Alpaca already holds an open
@@ -1564,7 +1575,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"Restart/duplicate-entry guard engaged."
             )
             _patch_skip_reason(r, ticker, "position_already_open")
-            return
+            return "skipped:position_already_open"
     except Exception as _guard_err:
         log.warning(f"  [{ticker}] Per-ticker position guard check failed ({_guard_err}) — allowing order through")
 
@@ -1573,7 +1584,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
     if ib_high <= 0 or ib_low <= 0 or ib_high <= ib_low:
         log.warning(f"  [{ticker}] skip order — invalid IB ({ib_low}–{ib_high})")
         _patch_skip_reason(r, ticker, "invalid_ib")
-        return
+        return "skipped:invalid_ib"
 
     risk_dollars = _compute_risk_dollars()
     _ib_mult     = 1.0          # default if open_px unavailable
@@ -1597,7 +1608,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"Chaotic structure — hist WR 54-68% vs 72-86% when narrow"
             )
             _patch_skip_reason(r, ticker, "ib_too_wide")
-            return
+            return "skipped:ib_too_wide"  # (*) own Telegram already sent above
 
         # ── IB-range position-size multiplier ─────────────────────────────────
         # Tighter IB → higher Expected R and WR → scale up; wider → scale down.
@@ -1629,7 +1640,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"Low-participation setup — hist 28.2% WR / -0.513R at RVOL &lt;1.0"
             )
             _patch_skip_reason(r, ticker, "rvol_below_floor")
-            return
+            return "skipped:rvol_below_floor"  # (*) own Telegram already sent above
 
         # ── RVOL bonus position-size multiplier ───────────────────────────────
         # RVOL ≥ 2.5× confirms strong momentum — scale up size to compound edge.
@@ -1672,11 +1683,11 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 )
                 tg_send(
                     f"⛔ <b>{ticker} Blocked — PM-IB gate</b>\n"
-                    f"Pre-market did not accept past prior IB in <b>{_pm_dir_low}</b> direction.\n"
+                    f"Pre-market did not accept past prior IB in <b>{html.escape(_pm_dir_low)}</b> direction.\n"
                     f"PM: {_pm_lo:.2f}–{_pm_hi:.2f} | Prior IB: {_prev_ib_lo:.2f}–{_prev_ib_h:.2f}"
                 )
                 _patch_skip_reason(r, ticker, "pm_ib_filter")
-                return
+                return "skipped:pm_ib_filter"  # (*) own Telegram already sent above
             else:
                 log.info(
                     f"  [{ticker}] PM-IB gate PASS "
@@ -1733,7 +1744,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     f"(+{_flt_tcs_offset} optimizer offset)"
                 )
                 _patch_skip_reason(r, ticker, "filter_config_tcs")
-                return
+                return "skipped:filter_config_tcs"  # (*) own Telegram already sent above
 
         # 2. Gap% floor
         # Mirrors filter_grid_search._apply_combo: fail when filter active AND data is None.
@@ -1748,7 +1759,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                        if _gap_pct_v is not None else f"gap% data unavailable, floor={_flt_gap_min}%")
                 )
                 _patch_skip_reason(r, ticker, "filter_config_gap")
-                return
+                return "skipped:filter_config_gap"  # (*) own Telegram already sent above
 
         # 3. Follow-through floor
         # Mirrors filter_grid_search._apply_combo: fail when filter active AND data is None.
@@ -1763,7 +1774,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                        if _ft_pct_v is not None else f"Follow-thru data unavailable, floor={_flt_ft_min}%")
                 )
                 _patch_skip_reason(r, ticker, "filter_config_follow_thru")
-                return
+                return "skipped:filter_config_follow_thru"  # (*) own Telegram already sent above
 
         # 4. Structure filter
         _flt_struct = str(_flt_cfg.get("struct_filter", "all"))
@@ -1793,10 +1804,10 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 )
                 tg_send(
                     f"⛔ <b>{ticker} Filtered — Structure type excluded</b>\n"
-                    f"<b>{_direction_raw}</b> is outside optimizer struct_filter=<b>{_flt_struct}</b>"
+                    f"<b>{html.escape(_direction_raw)}</b> is outside optimizer struct_filter=<b>{html.escape(_flt_struct)}</b>"
                 )
                 _patch_skip_reason(r, ticker, "filter_config_struct")
-                return
+                return "skipped:filter_config_struct"  # (*) own Telegram already sent above
 
         # 5. False-break exclusion
         if _flt_cfg.get("excl_false_break") and (_fb_up or _fb_dn):
@@ -1807,7 +1818,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                 f"False break <b>{_fb_desc}</b> — optimizer excludes these setups"
             )
             _patch_skip_reason(r, ticker, "filter_config_false_break")
-            return
+            return "skipped:filter_config_false_break"  # (*) own Telegram already sent above
 
         # 6. PM range floor
         # Mirrors filter_grid_search: fail when filter is active AND data is None.
@@ -1830,7 +1841,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     )
                 )
                 _patch_skip_reason(r, ticker, "filter_config_pm_range")
-                return
+                return "skipped:filter_config_pm_range"  # (*) own Telegram already sent above
 
         # 7. PM IB direction
         # Mirrors filter_grid_search: bullish_accepted → pm_ib_high > prev_day_ib_high;
@@ -1874,11 +1885,11 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
                     )
                     tg_send(
                         f"⛔ <b>{ticker} Filtered — PM direction mismatch</b>\n"
-                        f"Optimizer requires PM IB dir <b>{_flt_pm_ib_dir}</b>.\n"
+                        f"Optimizer requires PM IB dir <b>{html.escape(_flt_pm_ib_dir)}</b>.\n"
                         f"PM: {_flt_pm_lo_f:.2f}–{_flt_pm_hi_f:.2f} | Prior IB: {_flt_prev_lo_f:.2f}–{_flt_prev_hi_f:.2f}"
                     )
                     _patch_skip_reason(r, ticker, "filter_config_pm_ib_dir")
-                    return
+                    return "skipped:filter_config_pm_ib_dir"  # (*) own Telegram already sent above
             else:
                 log.debug(
                     f"  [{ticker}] filter_config PM-IB dir check: data unavailable — passing through"
@@ -2078,10 +2089,57 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> None:
             target             = result["target"],
             qty                = qty,
         )
+        return "placed"
     else:
         log.warning(f"  ❌ [{ticker}] Order failed: {result.get('error')}")
         tg_send(f"⚠️ <b>{acct_type} Order Failed — {ticker}</b>\n{result.get('error','unknown error')}")
         _patch_skip_reason(r, ticker, "order_failed")
+        return "skipped:order_failed"  # (*) own Telegram already sent above
+
+
+# ── Order outcome follow-up Telegram ─────────────────────────────────────────
+# Skip reasons that already send their own Telegram inside _place_order_for_setup.
+# These count as the outcome message — no second notification needed.
+_SKIP_REASONS_WITH_OWN_TG: frozenset = frozenset({
+    "morning_tcs_below_floor", "lunch_blackout",
+    "pdt_blocked", "pdt_quality_gate", "concurrent_cap",
+    "ib_too_wide", "rvol_below_floor", "pm_ib_filter",
+    "filter_config_tcs", "filter_config_gap", "filter_config_follow_thru",
+    "filter_config_struct", "filter_config_false_break",
+    "filter_config_pm_range", "filter_config_pm_ib_dir",
+    "order_failed",
+})
+
+
+def _send_skip_outcome_tg(ticker: str, outcome: str) -> None:
+    """Send a brief Telegram follow-up for skip reasons that don't already send one.
+
+    Called after every _alert_setup + _place_order_for_setup pair so traders
+    always get an outcome message: either the order-placed Telegram that
+    _place_order_for_setup sent, the per-skip Telegram it already sent (*), or
+    this concise ⛔ line for silent skips that had no message yet.
+    """
+    if not outcome or not outcome.startswith("skipped:"):
+        return
+    parts     = outcome.split(":", 2)
+    skip_key  = parts[1] if len(parts) > 1 else ""
+    if skip_key in _SKIP_REASONS_WITH_OWN_TG:
+        return
+    detail = parts[2] if len(parts) > 2 else ""
+    _reason_map = {
+        "orders_disabled":            "orders disabled (LIVE_ORDERS_ENABLED=false)",
+        "non_directional":            "non-directional structure — no edge to trade",
+        "bearish_break_not_gap_down": "Bearish Break on gap-up ticker — hist WR 40%, skipped",
+        "entry_already_triggered":    (
+            f"price already past entry ({detail} slippage)" if detail
+            else "price already past entry (chase guard)"
+        ),
+        "position_already_open":      "position already open in this ticker",
+        "invalid_ib":                 "invalid IB range data",
+        "pdt_blocked_silent":         "PDT limit reached (alert already sent today)",
+    }
+    reason_text = _reason_map.get(skip_key, skip_key.replace("_", " "))
+    tg_send(f"⛔ <b>{html.escape(ticker)}</b> — Not entered: {reason_text}")
 
 
 # ── Trailing stop monitoring ──────────────────────────────────────────────────
@@ -4164,7 +4222,7 @@ def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
 
     ticker    = r.get("ticker", "?")
     tcs       = float(r.get("tcs", 0))
-    predicted = r.get("predicted", "Unknown")
+    predicted = r.get("predicted", "Unknown") or "Unknown"
     conf      = float(r.get("confidence", 0))
     ib_low    = float(r.get("ib_low", 0))
     ib_high   = float(r.get("ib_high", 0))
@@ -4267,6 +4325,7 @@ def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
     except Exception:
         context_lines = ""
 
+    _predicted_html = html.escape(predicted)
     msg = (
         f"{emoji} <b>EdgeIQ Setup — {ticker}</b>\n"
         f"⏰ {scan_time}  ·  📅 {trade_date}\n"
@@ -4274,7 +4333,7 @@ def _alert_setup(r: dict, trade_date: date, context: dict | None = None):
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"💰 Price at IB close: <b>${cur_px:.2f}</b>  "
         f"({chg_arrow}{abs(chg_pct):.1f}% from open ${open_px:.2f})\n"
-        f"📊 Structure: <b>{predicted}</b>  ({conf:.0f}% conf)\n"
+        f"📊 Structure: <b>{_predicted_html}</b>  ({conf:.0f}% conf)\n"
         f"{tcs_line}\n"
         f"📦 IB Range:  ${ib_low:.2f} – ${ib_high:.2f}  (mid ${ib_mid:.2f}){ib_pct_str}"
         f"{vwap_line}\n"
@@ -5093,7 +5152,8 @@ def morning_scan():
             )
             _ctx = _prev_day_map.get(r.get("ticker"), {})
             _alert_setup(r, today, context=_ctx if _ctx else None)
-            _place_order_for_setup(r, "morning")
+            _outcome = _place_order_for_setup(r, "morning")
+            _send_skip_outcome_tg(r.get("ticker", "?"), _outcome)
             time.sleep(0.3)  # Telegram rate limit buffer
     else:
         log.info("No setups met TCS threshold today.")
@@ -5210,7 +5270,8 @@ def intraday_scan():
             r["_priority_tier"] = tier
             _ctx = _prev_day_map.get(r.get("ticker"), {})
             _alert_setup(r, today, context=_ctx if _ctx else None)
-            _place_order_for_setup(r, "intraday")
+            _outcome = _place_order_for_setup(r, "intraday")
+            _send_skip_outcome_tg(r.get("ticker", "?"), _outcome)
             time.sleep(0.3)
     else:
         log.info("No intraday setups above threshold.")
