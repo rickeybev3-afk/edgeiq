@@ -24821,10 +24821,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             key="p3_tcs_warn_threshold_inline",
                             help="Raise to silence this warning; lower for stricter alerts. Saves immediately.",
                         )
-                        _p3_inline_save_btn = st.button(
-                            "💾 Update threshold",
-                            key="p3_tcs_warn_threshold_inline_save",
-                        )
+                        _p3_btn_col1, _p3_btn_col2 = st.columns([1, 1])
+                        with _p3_btn_col1:
+                            _p3_inline_save_btn = st.button(
+                                "💾 Update threshold",
+                                key="p3_tcs_warn_threshold_inline_save",
+                                use_container_width=True,
+                            )
+                        with _p3_btn_col2:
+                            _p3_inline_reset_btn = st.button(
+                                "↺ Reset (±5)",
+                                key="p3_tcs_warn_threshold_inline_reset",
+                                use_container_width=True,
+                            )
                         if _p3_inline_save_btn:
                             _p3_inline_cfg = {}
                             if _p3_os.path.exists(_P3_CFG):
@@ -24840,6 +24849,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.rerun()
                             except Exception as _p3_inline_ex:
                                 st.error(f"Failed to save threshold: {_p3_inline_ex}")
+                        if _p3_inline_reset_btn:
+                            _p3_reset_cfg = {}
+                            if _p3_os.path.exists(_P3_CFG):
+                                try:
+                                    with open(_P3_CFG) as _f:
+                                        _p3_reset_cfg = _p3_json.load(_f)
+                                except Exception:
+                                    pass
+                            _p3_reset_cfg["tcs_warn_threshold"] = 5
+                            try:
+                                with open(_P3_CFG, "w") as _f:
+                                    _p3_json.dump(_p3_reset_cfg, _f, indent=2)
+                                st.rerun()
+                            except Exception as _p3_reset_ex:
+                                st.error(f"Failed to reset threshold: {_p3_reset_ex}")
             with _p3_info_col:
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
