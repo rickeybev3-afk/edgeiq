@@ -13660,7 +13660,7 @@ def compute_bot_vs_trader_stats(user_id: str, days: int = 90) -> dict:
         pt_data = pt_res.data or []
 
         cd_res = (supabase.table("cognitive_delta_log")
-                  .select("trade_date,ticker,user_action,system_tcs,system_structure,actual_chg,notes")
+                  .select("trade_date,ticker,user_action,system_tcs,system_structure,actual_chg")
                   .eq("user_id", user_id)
                   .gte("trade_date", cutoff)
                   .execute())
@@ -13673,7 +13673,7 @@ def compute_bot_vs_trader_stats(user_id: str, days: int = 90) -> dict:
             columns=["trade_date", "ticker", "tcs", "rvol", "alpaca_order_id", "predicted", "win_loss", "scan_type"]
         )
         cd_df = pd.DataFrame(cd_data) if cd_data else pd.DataFrame(
-            columns=["trade_date", "ticker", "user_action", "system_tcs", "system_structure", "actual_chg", "notes"]
+            columns=["trade_date", "ticker", "user_action", "system_tcs", "system_structure", "actual_chg"]
         )
 
         if not pt_df.empty:
