@@ -1,6 +1,6 @@
 """Unit tests for squeeze-specific win/loss and R-value calculations.
 
-Covers three bug-fixes merged into the squeeze trade pipeline:
+Covers four bug-fixes merged into the squeeze trade pipeline:
 
   1. Squeeze win/loss price override (_squeeze_win_loss_override in
      backfill_pending_sim_rows.py):
@@ -17,7 +17,13 @@ Covers three bug-fixes merged into the squeeze trade pipeline:
      — Parametrized table over (predicted_direction, close, ib_high, ib_low,
        existing_wl) → expected return value (new win_loss or None = no change).
 
-All three sections import the *real* functions from their source modules so
+  4. Bearish pnl_r_sim direction fix (fix_squeeze_data.fix_backtest_sim_runs Bug #3):
+     — Overriding actual_outcome to predicted before calling compute_trade_sim
+       ensures bearish squeeze rows use the correct short-trade directional formula.
+     — Bearish stopped-out trade (close > ib_high) → pnl_r_sim < 0.
+     — Without the fix (wrong actual_outcome) the same row gives pnl_r_sim > 0.
+
+All sections import the *real* functions from their source modules so
 regressions in production code are caught automatically.
 """
 
@@ -117,6 +123,31 @@ def fix_squeeze_module():
     _ensure_stub_backend()
     sys.modules.pop("fix_squeeze_data", None)
     return importlib.import_module("fix_squeeze_data")
+
+
+@pytest.fixture(scope="session")
+def real_backend():
+    """Import the real backend module so compute_trade_sim can be tested directly.
+
+    Installs supabase/streamlit stubs before import so no live DB connection is
+    required.  Skips the entire test class if backend.py cannot be loaded (e.g.
+    a missing system dependency in CI).
+    """
+    _install_stubs()
+    existing = sys.modules.get("backend")
+    if (
+        existing is not None
+        and hasattr(existing, "__file__")
+        and existing.__file__
+        and "backend.py" in existing.__file__
+    ):
+        return existing
+    sys.modules.pop("backend", None)
+    try:
+        import backend as _backend
+        return _backend
+    except Exception as exc:
+        pytest.skip(f"Could not import real backend.py: {exc}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -392,4 +423,117 @@ def test_squeeze_win_loss_helper(
         f"[{case_id}] predicted={predicted!r} close={close} "
         f"ib_high={ib_high} ib_low={ib_low} existing={existing_wl!r} "
         f"→ expected {expected!r}, got {result!r}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Bearish pnl_r_sim direction fix  (fix_squeeze_data.fix_backtest_sim_runs)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Bug #3 in fix_backtest_sim_runs: bearish squeeze rows had actual_outcome set
+# to the wrong value, so compute_trade_sim used the bullish formula and returned
+# a positive pnl_r_sim when it should have been negative (short stopped out).
+#
+# The fix overrides actual_outcome = predicted before calling compute_trade_sim
+# so the correct directional formula is always selected.
+#
+# IB levels: ib_low=100, ib_high=105, range=5
+#   Bearish short: entry=100 (ib_low), stop=105 (ib_high), target=90 (100−2×5)
+#   Bullish long:  entry=105 (ib_high), stop=100 (ib_low),  target=115 (105+2×5)
+
+def _sim_row(predicted, actual_outcome, close_price, ib_high=105.0, ib_low=100.0):
+    """Minimal row dict for compute_trade_sim — no MFE/MAE so EOD close is used."""
+    return {
+        "ib_high":                ib_high,
+        "ib_low":                 ib_low,
+        "predicted":              predicted,
+        "actual_outcome":         actual_outcome,
+        "close_price":            close_price,
+        "mfe":                    None,
+        "mae":                    None,
+        "tcs":                    50,
+        "rvol":                   1.0,
+        "ib_range_pct":           5.0,
+        "scan_type":              "daily",
+        "pnl_r_actual":           None,
+        "alpaca_exit_fill_price": None,
+    }
+
+
+# Parametrized cases: (id, predicted, actual_outcome, close_price, expected_sign)
+# actual_outcome is set equal to predicted — this mirrors the Bug #3 fix pattern
+# (enriched["actual_outcome"] = predicted before calling compute_trade_sim).
+_PNL_DIR_CASES = [
+    # ── Bearish short (short entry at ib_low=100, stop at ib_high=105) ────────
+    # close=110 > ib_high(105) → EOD above stop → stopped out → pnl_r_sim = -1.0
+    ("bearish_stopped_out",  "Bearish Break", "Bearish Break", 110.0, "negative"),
+    # close=88 < ib_high(105), pnl_r = (100-88)/100*100 / (5/100*100) = 2.4 → +2.4R win
+    ("bearish_profitable",   "Bearish Break", "Bearish Break",  88.0, "positive"),
+    # ── Bullish long (long entry at ib_high=105, stop at ib_low=100) ─────────
+    # close=97 <= ib_low(100) → EOD at/below effective stop → stopped out → pnl_r_sim = -1.0
+    ("bullish_stopped_out",  "Bullish Break", "Bullish Break",  97.0, "negative"),
+    # close=118 > ib_low(100), pnl_r = (118-105)/105*100 / (5/105*100) ≈ +2.6R win
+    ("bullish_profitable",   "Bullish Break", "Bullish Break", 118.0, "positive"),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id,predicted,actual_outcome,close_price,expected_sign",
+    [(*c,) for c in _PNL_DIR_CASES],
+    ids=[c[0] for c in _PNL_DIR_CASES],
+)
+def test_pnl_r_sim_direction_fix_parametrized(
+    real_backend, case_id, predicted, actual_outcome, close_price, expected_sign,
+):
+    """compute_trade_sim returns the correct pnl_r_sim sign when actual_outcome
+    is overridden to predicted — mirroring the Bug #3 fix in fix_backtest_sim_runs.
+
+    Bearish short stopped out (close > ib_high) must give pnl_r_sim < 0.
+    Bullish long stopped out (close < ib_low) must give pnl_r_sim < 0.
+    Profitable trades in either direction give pnl_r_sim > 0.
+    """
+    row = _sim_row(predicted, actual_outcome, close_price)
+    result = real_backend.compute_trade_sim(row, target_r=2.0)
+    pnl_r = result["pnl_r_sim"]
+    assert result["sim_outcome"] not in ("no_trade", "missing_data", "invalid_ib"), (
+        f"[{case_id}] Expected a valid simulation, got sim_outcome="
+        f"{result['sim_outcome']!r}"
+    )
+    assert pnl_r is not None, f"[{case_id}] pnl_r_sim should not be None"
+    if expected_sign == "negative":
+        assert pnl_r < 0, (
+            f"[{case_id}] predicted={predicted!r} close={close_price} → "
+            f"expected pnl_r_sim < 0, got {pnl_r}"
+        )
+    else:
+        assert pnl_r > 0, (
+            f"[{case_id}] predicted={predicted!r} close={close_price} → "
+            f"expected pnl_r_sim > 0, got {pnl_r}"
+        )
+
+
+def test_bearish_wrong_direction_gives_opposite_sign(real_backend):
+    """Without the Bug #3 fix, passing actual_outcome='Bullish Break' for a bearish
+    squeeze row (close=110, above ib_high=105) makes compute_trade_sim use the
+    bullish long formula and return pnl_r_sim > 0 — a false positive.
+
+    The fix (actual_outcome = predicted = 'Bearish Break') correctly returns
+    pnl_r_sim = -1.0 (stopped out).  This test documents both outcomes so any
+    future change to compute_trade_sim that silently fixes or re-introduces the
+    sign error is caught.
+    """
+    close = 110.0
+
+    fixed_row = _sim_row("Bearish Break", "Bearish Break", close)
+    fixed = real_backend.compute_trade_sim(fixed_row, target_r=2.0)
+    assert fixed["pnl_r_sim"] < 0, (
+        f"With correct direction (Bearish Break) pnl_r_sim should be < 0, "
+        f"got {fixed['pnl_r_sim']}"
+    )
+
+    bug_row = _sim_row("Bearish Break", "Bullish Break", close)
+    bugged = real_backend.compute_trade_sim(bug_row, target_r=2.0)
+    assert bugged["pnl_r_sim"] > 0, (
+        f"With wrong direction (Bullish Break) pnl_r_sim should be > 0 "
+        f"(demonstrating the original bug), got {bugged['pnl_r_sim']}"
     )
