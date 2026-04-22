@@ -402,6 +402,7 @@ try:
         verify_cognitive_delta,
         place_alpaca_bracket_order,
         cancel_alpaca_day_orders,
+        cancel_alpaca_ticker_orders,
         reconcile_alpaca_fills,
         get_alpaca_account_equity,
         fetch_alpaca_fills,
@@ -3536,26 +3537,49 @@ def _force_close_all_positions() -> None:
     failed   = []
 
     def _close_one(ticker: str) -> bool:
-        """Use Alpaca's DELETE /v2/positions/{symbol} — cancels open orders + closes position atomically."""
-        try:
-            resp = _req.delete(
-                f"{base}/v2/positions/{ticker}",
-                params={"percentage": "100"},
-                headers=headers,
-                timeout=10,
-            )
-            if resp.status_code in (200, 201, 204):
-                log.info(f"[ForceClose] {ticker} — position close submitted via DELETE /v2/positions")
-                return True
-            elif resp.status_code == 404:
-                log.info(f"[ForceClose] {ticker} — already flat (404)")
-                return True
-            else:
-                log.warning(f"[ForceClose] {ticker} — DELETE failed: {resp.status_code} {resp.text[:200]}")
-                return False
-        except Exception as _e:
-            log.warning(f"[ForceClose] {ticker} — exception: {_e}")
-            return False
+        """Cancel any bracket orders then close via DELETE /v2/positions/{symbol}.
+
+        Bracket legs hold shares as held_for_orders (available=0), which causes
+        Alpaca to reject the position-close with HTTP 403.  We cancel all open
+        orders for the ticker first, wait 1 s for Alpaca to release the lock,
+        then retry the position close up to 3 times.
+        """
+        cancelled = cancel_alpaca_ticker_orders(
+            ticker,
+            is_paper=IS_PAPER_ALPACA,
+            api_key=ALPACA_API_KEY,
+            secret_key=ALPACA_SECRET_KEY,
+        )
+        if cancelled:
+            log.info(f"[ForceClose] {ticker}: cancelled {cancelled} bracket orders before close-out")
+        _time.sleep(1)
+
+        for _attempt in range(3):
+            try:
+                resp = _req.delete(
+                    f"{base}/v2/positions/{ticker}",
+                    params={"percentage": "100"},
+                    headers=headers,
+                    timeout=10,
+                )
+                if resp.status_code in (200, 201, 204):
+                    log.info(f"[ForceClose] {ticker} — position close submitted via DELETE /v2/positions")
+                    return True
+                elif resp.status_code == 404:
+                    log.info(f"[ForceClose] {ticker} — already flat (404)")
+                    return True
+                else:
+                    log.warning(
+                        f"[ForceClose] {ticker} — DELETE attempt {_attempt + 1}/3 failed: "
+                        f"{resp.status_code} {resp.text[:200]}"
+                    )
+                    if _attempt < 2:
+                        _time.sleep(1)
+            except Exception as _e:
+                log.warning(f"[ForceClose] {ticker} — exception on attempt {_attempt + 1}/3: {_e}")
+                if _attempt < 2:
+                    _time.sleep(1)
+        return False
 
     # ── First pass ────────────────────────────────────────────────────────────
     symbols_attempted = []

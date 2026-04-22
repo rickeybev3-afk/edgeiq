@@ -7063,6 +7063,45 @@ def cancel_alpaca_day_orders(
         return {"cancelled": 0, "errors": 1, "error": str(exc)}
 
 
+def cancel_alpaca_ticker_orders(
+    ticker: str,
+    is_paper: bool = True,
+    api_key: str = "",
+    secret_key: str = "",
+) -> int:
+    """Cancel all open orders for a single ticker on Alpaca.
+
+    Calls DELETE /v2/orders?symbol={ticker} to release any held_for_orders
+    lock before a force-close market sell.
+
+    Returns the number of orders cancelled (0 on failure).
+    """
+    ak = api_key  or ALPACA_API_KEY
+    sk = secret_key or ALPACA_SECRET_KEY
+    if not ak or not sk or not ticker:
+        return 0
+
+    base    = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
+    headers = {"APCA-API-KEY-ID": ak, "APCA-API-SECRET-KEY": sk}
+
+    try:
+        resp = requests.delete(
+            f"{base}/v2/orders",
+            params={"symbol": ticker.upper()},
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code == 207:
+            results   = resp.json() if resp.content else []
+            cancelled = sum(1 for r in results if r.get("status") == 200)
+            return cancelled
+        if resp.status_code == 200:
+            return 0
+        return 0
+    except Exception:
+        return 0
+
+
 def get_alpaca_open_positions(
     is_paper: bool = True,
     api_key: str = "",
