@@ -584,9 +584,9 @@ with _bm_info:
             "**Bot Mode ON** — 2.1% of equity / trade · $4,000 hard cap · "
             "P3 morning TCS≥70 → 1.50× · P1 intraday TCS≥70 → 1.25× · P2 → 1.00×  "
             "*(matches live paper_trader_bot.py exactly)*  \n"
-            "📊 Historical signal rate at Phase 3 filters: **~5 signals/day** (TCS≥60 paper) · "
-            "**~3 signals/day** (TCS≥70 live). TCS≥50 and TCS≥60 are equivalent — "
-            "no qualifying signals exist below TCS 60 in the Phase 3 dataset."
+            "📊 Bot uses **per-structure TCS floors** (49–70) from Phase 3 baseline, not a blanket minimum. "
+            "Paper mode: `double_dist` ≥49 · `ntrl_extreme` ≥53 · `bullish/bearish break` ≥57 · `neutral` ≥60+. "
+            "Live mode: TCS≥70 across all structures."
         )
 
 # ── Primary sizing inputs (plain English) ─────────────────────────────────────
