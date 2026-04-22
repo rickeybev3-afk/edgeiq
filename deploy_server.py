@@ -36,6 +36,8 @@ _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "
 _DEFAULT_BACKTEST_LOOKBACK_DAYS = int(os.environ.get("BACKTEST_CLOSE_LOOKBACK_DAYS", "60"))
 _DEFAULT_MIN_TCS = int(os.environ.get("PAPER_TRADE_MIN_TCS", "50"))
 _DEFAULT_ARCHIVE_KEEP = 26
+_DEFAULT_MORNING_TCS_FLOOR = int(os.environ.get("MORNING_TCS_FLOOR", "60"))
+_FILTER_CONFIG_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_config.json")
 _ADAPTIVE_EXITS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adaptive_exits.json")
 _TP_CALIB_HISTORY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tp_calib_history.json")
 _GRID_SEARCH_SUMMARY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_summary.json")
@@ -2665,7 +2667,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
           "paper_close_lookback_days":  {"value": int,   "source": "override"|"env"},
           "backtest_close_lookback_days": {"value": int, "source": "override"|"env"},
           "paper_trade_min_tcs":        {"value": int,   "source": "override"|"env"},
-          "backfill_heartbeat_hours":   {"value": float, "source": "override"|"env"}
+          "backfill_heartbeat_hours":   {"value": float, "source": "override"|"env"},
+          "morning_tcs_min":            {"value": int,   "source": "filter_config"|"env"},
+          "tcs_intraday_min":           {"value": int,   "source": "filter_config"|"env"}
         }
         """
         try:
@@ -2706,12 +2710,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 archive_keep = _DEFAULT_ARCHIVE_KEEP
                 archive_keep_source = "env"
 
+            filter_cfg: dict = {}
+            try:
+                with open(_FILTER_CONFIG_JSON, "r") as _f:
+                    filter_cfg = json.load(_f)
+            except Exception:
+                pass
+
+            if "morning_tcs_min" in filter_cfg:
+                morning_tcs = int(filter_cfg["morning_tcs_min"])
+                morning_tcs_source = "filter_config"
+            else:
+                morning_tcs = _DEFAULT_MORNING_TCS_FLOOR
+                morning_tcs_source = "env"
+
+            if "tcs_intraday_min" in filter_cfg:
+                tcs_intraday = int(filter_cfg["tcs_intraday_min"])
+                tcs_intraday_source = "filter_config"
+            else:
+                tcs_intraday = 35
+                tcs_intraday_source = "env"
+
             payload = {
                 "paper_close_lookback_days": {"value": paper_days, "source": paper_source},
                 "backtest_close_lookback_days": {"value": backtest_days, "source": backtest_source},
                 "paper_trade_min_tcs": {"value": min_tcs, "source": min_tcs_source},
                 "backfill_heartbeat_hours": {"value": heartbeat_hours, "source": heartbeat_source},
                 "archive_keep": {"value": archive_keep, "source": archive_keep_source},
+                "morning_tcs_min": {"value": morning_tcs, "source": morning_tcs_source},
+                "tcs_intraday_min": {"value": tcs_intraday, "source": tcs_intraday_source},
             }
             body = json.dumps(payload).encode()
             self.send_response(200)

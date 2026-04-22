@@ -236,7 +236,7 @@ interface TpCalibHistoryState {
 
 interface ConfigParam {
   value: number;
-  source: "env" | "override";
+  source: "env" | "override" | "filter_config";
 }
 
 interface ConfigSummary {
@@ -245,6 +245,8 @@ interface ConfigSummary {
   paper_trade_min_tcs: ConfigParam;
   backfill_heartbeat_hours: ConfigParam;
   archive_keep: ConfigParam;
+  morning_tcs_min: ConfigParam;
+  tcs_intraday_min: ConfigParam;
 }
 
 interface ConfigSummaryState {
@@ -1858,29 +1860,62 @@ export default function Settings() {
                     unit: "runs",
                     fmt: (v: number) => String(v),
                   },
+                  {
+                    key: "morning_tcs_min" as const,
+                    label: "Morning TCS Floor",
+                    unit: "",
+                    fmt: (v: number) => String(v),
+                  },
+                  {
+                    key: "tcs_intraday_min" as const,
+                    label: "Intraday TCS Floor",
+                    unit: "",
+                    fmt: (v: number) => String(v),
+                  },
                 ] as const
               ).map(({ key, label, unit, fmt }) => {
                 const param = configSummary.data![key];
                 const isOverride = param.source === "override";
+                const isFilterConfig = param.source === "filter_config";
+                const cardBg = isOverride
+                  ? "rgba(234,179,8,0.05)"
+                  : isFilterConfig
+                  ? "rgba(99,102,241,0.05)"
+                  : "rgba(255,255,255,0.02)";
+                const cardBorder = isOverride
+                  ? "#713f12"
+                  : isFilterConfig
+                  ? "#3730a3"
+                  : "#1e2d40";
+                const valueColor = isOverride
+                  ? "#fbbf24"
+                  : isFilterConfig
+                  ? "#818cf8"
+                  : "#94a3b8";
+                const cardTitle = isOverride
+                  ? "User override — set via Settings"
+                  : isFilterConfig
+                  ? "Active value from filter_config.json"
+                  : "Environment default";
                 return (
                   <div
                     key={key}
                     style={{
-                      background: isOverride ? "rgba(234,179,8,0.05)" : "rgba(255,255,255,0.02)",
-                      border: `1px solid ${isOverride ? "#713f12" : "#1e2d40"}`,
+                      background: cardBg,
+                      border: `1px solid ${cardBorder}`,
                       borderRadius: "7px",
                       padding: "10px 12px",
                       display: "flex",
                       flexDirection: "column",
                       gap: "3px",
                     }}
-                    title={isOverride ? "User override — set via Settings" : "Environment default"}
+                    title={cardTitle}
                   >
                     <span style={{ fontSize: "11px", color: "#475569", letterSpacing: "0.03em" }}>
                       {label}
                     </span>
                     <div style={{ display: "flex", alignItems: "baseline", gap: "4px" }}>
-                      <span style={{ fontSize: "18px", fontWeight: 700, color: isOverride ? "#fbbf24" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>
+                      <span style={{ fontSize: "18px", fontWeight: 700, color: valueColor, fontVariantNumeric: "tabular-nums" }}>
                         {fmt(param.value)}
                       </span>
                       {unit && (
@@ -1889,6 +1924,9 @@ export default function Settings() {
                     </div>
                     {isOverride && (
                       <span style={{ fontSize: "10px", color: "#a16207", letterSpacing: "0.03em" }}>override</span>
+                    )}
+                    {isFilterConfig && (
+                      <span style={{ fontSize: "10px", color: "#4338ca", letterSpacing: "0.03em" }}>filter_config</span>
                     )}
                   </div>
                 );
