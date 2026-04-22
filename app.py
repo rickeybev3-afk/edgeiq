@@ -24703,7 +24703,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _p3_diff_sign = f"+{_p3_tcs_diff}" if _p3_tcs_diff > 0 else str(_p3_tcs_diff)
                         st.warning(
                             f"This combo was optimised with a TCS baseline of **{_p3_combo_baseline_tcs}** "
-                            f"(slider is **{_p3_diff_sign}** from that — warning threshold: ±{_P3_TCS_WARN_THRESHOLD}). "
+                            f"and your slider is **{_p3_diff_sign}** from that. "
+                            f"Your warning threshold is set to **±{_P3_TCS_WARN_THRESHOLD}** — "
+                            "adjust it in the sensitivity section below. "
                             "Applied performance may differ from backtest results."
                         )
             with _p3_info_col:
