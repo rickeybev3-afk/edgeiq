@@ -1,12 +1,12 @@
 {
-  "run_at": "2026-04-22T14:16:52.813741Z",
+  "run_at": "2026-04-22T17:10:52.966414Z",
   "phase": 3,
   "date_range": {
     "start": "all",
     "end": "latest"
   },
-  "total_rows": 186126,
-  "traded_rows": 143383,
+  "total_rows": 191768,
+  "traded_rows": 152985,
   "min_n": 100,
   "top_n": 100,
   "combos_tested": 14045184,
@@ -23,10 +23,11 @@
       "bearish_accepted"
     ]
   },
-  "combos_with_any_trade": 8446352,
-  "combos_qualifying": 2503276,
-  "elapsed_seconds": 1479.6,
-  "best_combo": {
+  "combos_with_any_trade": 8446576,
+  "combos_qualifying": 2506608,
+  "elapsed_seconds": 1435.4,
+  "best_combo": null,
+  "best_combo_with_lookahead": {
     "phase": 3,
     "struct_label": "Neutral Extreme + Neutral + Double Distribution",
     "struct_tokens": [
@@ -42,9 +43,9 @@
     "follow_label": "any",
     "excl_false_break": false,
     "scan_type": "any",
-    "gap_direction": "up",
+    "gap_direction": "any",
     "vwap_position": "any",
-    "screener": "any",
+    "screener": "pass",
     "ib_size": "any",
     "mfe_min": "0.5r",
     "mae_max": "any",
@@ -54,21 +55,22 @@
     "pm_ib_dir": "any",
     "pm_ib_dir_label": "any PM dir",
     "qualifies": true,
-    "n_trades": 10389,
-    "n_scanned": 10389,
+    "n_trades": 10339,
+    "n_scanned": 10339,
     "scan_to_trade_pct": 100.0,
     "win_rate": 92.2,
-    "avg_r": 1.0852,
-    "total_r": 11274.005,
-    "profit_factor": 28.513,
-    "sharpe": 7.202,
+    "avg_r": 1.0863,
+    "total_r": 11230.847,
+    "profit_factor": 28.521,
+    "sharpe": 7.249,
     "max_drawdown_r": 5.542,
     "avg_win_r": 1.22,
-    "avg_loss_r": -0.507,
-    "trades_per_week": 42.33,
-    "proj_weekly_usd": 6891.2,
-    "weekly_expectancy_r": 45.9413,
-    "low_sample": false
+    "avg_loss_r": -0.509,
+    "trades_per_week": 42.13,
+    "proj_weekly_usd": 6864.82,
+    "weekly_expectancy_r": 45.7655,
+    "low_sample": false,
+    "is_lookahead": true
   },
   "archive_path": "grid_search_archive/2026-04-22"
 }
