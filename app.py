@@ -17923,6 +17923,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 # Persist the selected value — URL query param (survives refresh) +
                 # localStorage (survives new sessions via the JS restore above)
                 _url_push("sweep_sort", _sweep_sort_sel)
+                _render_copy_link_button("copy-link-sweep-sort")
                 _cmp_sort.html(
                     f"<script>localStorage.setItem('sweep_chart_sort',"
                     f" {repr(_sweep_sort_sel)});</script>",
@@ -21436,6 +21437,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         ),
                     )
                     _url_push("sweep_suf_only", "1" if _sweep_suf_only else "0")
+                    _render_copy_link_button("copy-link-sweep-filter")
                     if _sweep_suf_only:
                         _all_sweep_export_df = _all_sweep_df[
                             _all_sweep_df["Sufficient"] == "✓"
