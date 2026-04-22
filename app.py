@@ -24446,6 +24446,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
             st.markdown("---")
             st.markdown("#### Phase 3 Top Combinations (sortable)")
 
+            _p3_tcs_floor_disp = _p3_summary.get("tcs_intraday_min")
+            if _p3_tcs_floor_disp is None:
+                try:
+                    with open(_P3_CFG) as _f:
+                        _p3_tcs_floor_disp = int(_p3_json.load(_f).get("tcs_intraday_min", 35))
+                except Exception:
+                    _p3_tcs_floor_disp = 35
+            _p3_tcs_src = "recorded at run time" if "tcs_intraday_min" in _p3_summary else "current config (not recorded at run time)"
+            st.info(
+                f"**Active TCS floor when this search was run: `tcs_intraday_min ≥ {_p3_tcs_floor_disp}`** "
+                f"({_p3_tcs_src}). "
+                "All combo metrics in this table were computed with trades filtered to this TCS floor. "
+                "Applying a combo under a different TCS floor may produce different results."
+            )
+
             _p3_sort_col = st.selectbox(
                 "Sort by",
                 ["Weekly Expectancy", "Trades/Week", "Sharpe", "Win Rate %", "Profit Factor", "Total R"],

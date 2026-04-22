@@ -1415,6 +1415,14 @@ def main():
     best_clean = _clean_results[0] if _clean_results else None
     best_all   = top_results[0] if top_results else None
 
+    _tcs_floor_at_run = 35
+    try:
+        _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_config.json")
+        with open(_cfg_path) as _cfg_f:
+            _tcs_floor_at_run = int(json.load(_cfg_f).get("tcs_intraday_min", 35))
+    except Exception:
+        pass
+
     summary = {
         "run_at":                 datetime.utcnow().isoformat() + "Z",
         "phase":                  args.phase,
@@ -1434,6 +1442,7 @@ def main():
         "best_combo":             best_clean,   # deployable — no lookahead filters
         "best_combo_with_lookahead": best_all,  # overall best, may use MFE/MAE (not deployable live)
         "archive_path":           archive_path,
+        "tcs_intraday_min":       _tcs_floor_at_run,
     }
     with open("filter_grid_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
