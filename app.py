@@ -15397,6 +15397,498 @@ Measures how accurately the 7-structure framework classified those days in hinds
         st.caption(f"📐 {_drift_msg}")
         st.markdown("<div style='margin:8px 0;'></div>", unsafe_allow_html=True)
 
+    # ── Entry Slippage Analysis ──────────────────────────────────────────────────
+    with st.expander("🔬 Entry Slippage Analysis", expanded=False):
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _slp_fetch(_uid):
+            _rows, _off = [], 0
+            while True:
+                _batch = (
+                    supabase.table("backtest_sim_runs")
+                    .select(
+                        "sim_date,predicted,tcs,scan_type,gap_pct,"
+                        "entry_price_sim,ib_high,ib_low,pnl_r_sim"
+                    )
+                    .eq("user_id", _uid)
+                    .not_.is_("entry_price_sim", "null")
+                    .not_.is_("pnl_r_sim", "null")
+                    .range(_off, _off + 999)
+                    .execute()
+                    .data or []
+                )
+                _rows.extend(_batch)
+                if len(_batch) < 1000:
+                    break
+                _off += 1000
+            return _rows
+
+        with st.spinner("Loading slippage data…"):
+            _slp_raw = _slp_fetch(_AUTH_USER_ID)
+
+        if not _slp_raw:
+            st.info("No settled backtest rows with entry price data yet. Start the Pending Sim Rows Backfill to populate this.")
+        else:
+            _slp_df = pd.DataFrame(_slp_raw)
+            for _c in ["tcs", "gap_pct", "entry_price_sim", "ib_high", "ib_low", "pnl_r_sim"]:
+                _slp_df[_c] = pd.to_numeric(_slp_df[_c], errors="coerce")
+            _slp_df["sim_year"] = pd.to_datetime(_slp_df["sim_date"], errors="coerce").dt.year
+
+            def _slp_calc(row):
+                try:
+                    pred = str(row.get("predicted", "")).lower()
+                    if pred.startswith("bull"):
+                        if row["ib_high"] > 0:
+                            return (row["entry_price_sim"] - row["ib_high"]) / row["ib_high"] * 100
+                    else:
+                        if row["ib_low"] > 0:
+                            return (row["ib_low"] - row["entry_price_sim"]) / row["ib_low"] * 100
+                except Exception:
+                    pass
+                return None
+
+            _slp_df["slip_pct"] = _slp_df.apply(_slp_calc, axis=1)
+            _slp_df = _slp_df.dropna(subset=["slip_pct", "pnl_r_sim"])
+            _slp_n = len(_slp_df)
+
+            st.caption(
+                f"Dataset: **{_slp_n:,}** settled rows with entry price data  |  "
+                f"Overall avg R: **{_slp_df['pnl_r_sim'].mean():+.3f}R**  |  "
+                f"Win rate: **{(_slp_df['pnl_r_sim']>0).mean()*100:.1f}%**"
+            )
+
+            st.markdown("#### Slippage Distribution & Edge Decay")
+            _slp_bands = [
+                ("Below level (negative)",  None,  0.0),
+                ("0.0 – 0.5%",              0.0,   0.5),
+                ("0.5 – 1.0%",              0.5,   1.0),
+                ("1.0 – 1.5%",              1.0,   1.5),
+                ("1.5 – 2.0%",              1.5,   2.0),
+                ("2.0 – 3.0%",              2.0,   3.0),
+                ("3.0%+",                   3.0,   None),
+            ]
+            _slp_overall_r = _slp_df["pnl_r_sim"].mean()
+            _slp_band_rows = []
+            for _slp_lbl, _slp_lo, _slp_hi in _slp_bands:
+                if _slp_lo is None:
+                    _slp_mask = _slp_df["slip_pct"] < 0.0
+                elif _slp_hi is None:
+                    _slp_mask = _slp_df["slip_pct"] >= _slp_lo
+                else:
+                    _slp_mask = (_slp_df["slip_pct"] >= _slp_lo) & (_slp_df["slip_pct"] < _slp_hi)
+                _slp_b = _slp_df[_slp_mask]
+                if len(_slp_b) == 0:
+                    continue
+                _slp_wr  = (_slp_b["pnl_r_sim"] > 0).mean() * 100
+                _slp_ar  = _slp_b["pnl_r_sim"].mean()
+                _slp_p25 = _slp_b["slip_pct"].quantile(0.25)
+                _slp_p75 = _slp_b["slip_pct"].quantile(0.75)
+                _slp_band_rows.append({
+                    "Slippage Band":  _slp_lbl,
+                    "Trades":         len(_slp_b),
+                    "% of Total":     f"{len(_slp_b)/_slp_n*100:.1f}%",
+                    "Win Rate":       f"{_slp_wr:.1f}%",
+                    "Avg R":          f"{_slp_ar:+.3f}R",
+                    "vs. Dataset":    "⚠️ Below avg" if _slp_ar < _slp_overall_r - 0.005 else "✅ At/above",
+                })
+            st.dataframe(pd.DataFrame(_slp_band_rows), use_container_width=True, hide_index=True)
+
+            _slp_rec_label = None
+            for _sb in _slp_band_rows:
+                _sb_r = float(_sb["Avg R"].replace("+", "").replace("R", ""))
+                if "Below" not in _sb["Slippage Band"] and "0.0" not in _sb["Slippage Band"]:
+                    if _sb_r < _slp_overall_r - 0.005:
+                        _slp_rec_label = _sb["Slippage Band"]
+                        break
+            if _slp_rec_label:
+                _slp_rec_lo = _slp_rec_label.split("–")[0].strip().replace("%", "").strip()
+                st.info(
+                    f"💡 **Suggested SLIPPAGE_TOLERANCE_PCT ≈ {_slp_rec_lo}%** — avg R first drops "
+                    f"below dataset mean ({_slp_overall_r:+.3f}R) in the '{_slp_rec_label}' band. "
+                    f"Current default: 1.5%."
+                )
+
+            _slp_c1, _slp_c2 = st.columns(2)
+            with _slp_c1:
+                st.markdown("**By TCS Tier**")
+                _slp_tcs_rows = []
+                for _slp_tier, _slp_tlo, _slp_thi in [("≥70", 70, 999), ("60–69", 60, 70), ("50–59", 50, 60)]:
+                    _slp_t = _slp_df[(_slp_df["tcs"] >= _slp_tlo) & (_slp_df["tcs"] < _slp_thi)]
+                    if len(_slp_t) == 0:
+                        continue
+                    _slp_tcs_rows.append({
+                        "TCS Tier":     _slp_tier,
+                        "Trades":       len(_slp_t),
+                        "Avg Slip %":   f"{_slp_t['slip_pct'].mean():.2f}%",
+                        "Median %":     f"{_slp_t['slip_pct'].median():.2f}%",
+                        "P95 %":        f"{_slp_t['slip_pct'].quantile(0.95):.2f}%",
+                        "Avg R":        f"{_slp_t['pnl_r_sim'].mean():+.3f}R",
+                    })
+                if _slp_tcs_rows:
+                    st.dataframe(pd.DataFrame(_slp_tcs_rows), use_container_width=True, hide_index=True)
+
+            with _slp_c2:
+                st.markdown("**By Scan Type**")
+                _slp_scan_rows = []
+                for _slp_sc in sorted(_slp_df["scan_type"].dropna().unique()):
+                    _slp_s = _slp_df[_slp_df["scan_type"] == _slp_sc]
+                    _slp_scan_rows.append({
+                        "Scan Type":  _slp_sc,
+                        "Trades":     len(_slp_s),
+                        "Avg Slip %": f"{_slp_s['slip_pct'].mean():.2f}%",
+                        "P95 %":      f"{_slp_s['slip_pct'].quantile(0.95):.2f}%",
+                        "Avg R":      f"{_slp_s['pnl_r_sim'].mean():+.3f}R",
+                    })
+                if _slp_scan_rows:
+                    st.dataframe(pd.DataFrame(_slp_scan_rows), use_container_width=True, hide_index=True)
+
+            st.markdown("**By Year**")
+            _slp_yr_rows = []
+            for _slp_yr in sorted(_slp_df["sim_year"].dropna().unique()):
+                _slp_y = _slp_df[_slp_df["sim_year"] == _slp_yr]
+                _slp_yr_rows.append({
+                    "Year":       int(_slp_yr),
+                    "Trades":     len(_slp_y),
+                    "Avg Slip %": f"{_slp_y['slip_pct'].mean():.2f}%",
+                    "P95 %":      f"{_slp_y['slip_pct'].quantile(0.95):.2f}%",
+                    "Avg R":      f"{_slp_y['pnl_r_sim'].mean():+.3f}R",
+                })
+            st.dataframe(pd.DataFrame(_slp_yr_rows), use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            st.markdown("#### Gap Multiplier Audit (P-tier sizing vs flat 1×)")
+            st.caption(
+                "P-tier multipliers: Morning TCS≥70 → 1.50×  |  Intraday TCS≥70 → 1.25×  |  "
+                "All TCS<70 → 1.00×  |  Multipliers stack *after* IB-range mult."
+            )
+
+            def _slp_ptier(row):
+                _tcs_v = row.get("tcs") or 0
+                _sc_v  = str(row.get("scan_type") or "").lower()
+                if _sc_v == "morning"  and _tcs_v >= 70: return 1.50
+                if _sc_v == "intraday" and _tcs_v >= 70: return 1.25
+                return 1.00
+
+            _slp_df["ptier_mult"] = _slp_df.apply(_slp_ptier, axis=1)
+            _slp_df["r_flat"]     = _slp_df["pnl_r_sim"]
+            _slp_df["r_sized"]    = _slp_df["pnl_r_sim"] * _slp_df["ptier_mult"]
+
+            _slp_gm_rows = []
+            for _gm_tier, _gm_tlo, _gm_thi, _gm_mult in [
+                ("Morning TCS≥70",   70, 999, 1.50),
+                ("Intraday TCS≥70",  70, 999, 1.25),
+                ("TCS<70 (all)",     0,   70, 1.00),
+            ]:
+                _gm_sc = "morning" if "Morning" in _gm_tier else ("intraday" if "Intraday" in _gm_tier else None)
+                if _gm_sc:
+                    _gm_mask = (
+                        (_slp_df["scan_type"] == _gm_sc) &
+                        (_slp_df["tcs"] >= _gm_tlo) &
+                        (_slp_df["tcs"] < _gm_thi)
+                    )
+                else:
+                    _gm_mask = _slp_df["tcs"] < 70
+                _gm_sub = _slp_df[_gm_mask]
+                if len(_gm_sub) == 0:
+                    continue
+                _gm_flat_r  = _gm_sub["r_flat"].sum()
+                _gm_sized_r = _gm_sub["r_sized"].sum()
+                _gm_delta   = _gm_sized_r - _gm_flat_r
+                _slp_gm_rows.append({
+                    "P-Tier":        _gm_tier,
+                    "Multiplier":    f"{_gm_mult:.2f}×",
+                    "Trades":        len(_gm_sub),
+                    "Flat Net R":    f"{_gm_flat_r:+.1f}R",
+                    "Sized Net R":   f"{_gm_sized_r:+.1f}R",
+                    "Delta":         f"{_gm_delta:+.1f}R",
+                    "Delta/Trade":   f"{_gm_delta/len(_gm_sub):+.3f}R",
+                })
+            if _slp_gm_rows:
+                st.dataframe(pd.DataFrame(_slp_gm_rows), use_container_width=True, hide_index=True)
+                _gm_total_delta = sum(float(r["Delta"].replace("+","").replace("R","")) for r in _slp_gm_rows)
+                if _gm_total_delta > 0:
+                    st.success(f"✅ P-tier sizing adds **{_gm_total_delta:+.1f}R** net vs flat 1× across all {_slp_n:,} trades.")
+                else:
+                    st.warning(f"⚠️ P-tier sizing shows **{_gm_total_delta:+.1f}R** net vs flat 1× — may need recalibration.")
+
+    # ── Anti-Chase Threshold Grid ─────────────────────────────────────────────────
+    with st.expander("🏃 Anti-Chase Threshold Optimization", expanded=False):
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _ac_fetch(_uid):
+            _rows, _off = [], 0
+            while True:
+                _batch = (
+                    supabase.table("backtest_sim_runs")
+                    .select(
+                        "sim_date,predicted,tcs,gap_pct,scan_type,"
+                        "entry_price_sim,ib_high,ib_low,pnl_r_sim"
+                    )
+                    .eq("user_id", _uid)
+                    .not_.is_("entry_price_sim", "null")
+                    .not_.is_("pnl_r_sim", "null")
+                    .range(_off, _off + 999)
+                    .execute()
+                    .data or []
+                )
+                _rows.extend(_batch)
+                if len(_batch) < 1000:
+                    break
+                _off += 1000
+            return _rows
+
+        with st.spinner("Loading anti-chase data…"):
+            _ac_raw = _ac_fetch(_AUTH_USER_ID)
+
+        if not _ac_raw:
+            st.info("No entry price data yet — run the Pending Sim Rows Backfill to populate.")
+        else:
+            _ac_df = pd.DataFrame(_ac_raw)
+            for _c in ["tcs", "gap_pct", "entry_price_sim", "ib_high", "ib_low", "pnl_r_sim"]:
+                _ac_df[_c] = pd.to_numeric(_ac_df[_c], errors="coerce")
+            _ac_df = _ac_df.dropna(subset=["entry_price_sim", "ib_high", "ib_low", "pnl_r_sim"])
+
+            def _ac_overshoot(row):
+                try:
+                    pred = str(row.get("predicted", "")).lower()
+                    if pred.startswith("bull"):
+                        if row["ib_high"] > 0:
+                            return (row["entry_price_sim"] - row["ib_high"]) / row["ib_high"] * 100
+                    else:
+                        if row["ib_low"] > 0:
+                            return (row["ib_low"] - row["entry_price_sim"]) / row["ib_low"] * 100
+                except Exception:
+                    pass
+                return None
+
+            _ac_df["overshoot_pct"] = _ac_df.apply(_ac_overshoot, axis=1)
+            _ac_df = _ac_df.dropna(subset=["overshoot_pct"])
+            _ac_total = len(_ac_df)
+
+            st.caption(
+                f"Dataset: **{_ac_total:,}** rows  |  "
+                f"Current anti-chase threshold: **1.5%**  |  "
+                f"Avg overshoot: **{_ac_df['overshoot_pct'].mean():.2f}%**  |  "
+                f"P95 overshoot: **{_ac_df['overshoot_pct'].quantile(0.95):.2f}%**"
+            )
+
+            _ac_thresholds = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
+            _ac_grid = []
+            for _ac_th in _ac_thresholds:
+                _ac_kept = _ac_df[_ac_df["overshoot_pct"] <= _ac_th]
+                if len(_ac_kept) == 0:
+                    continue
+                _ac_wr   = (_ac_kept["pnl_r_sim"] > 0).mean() * 100
+                _ac_ar   = _ac_kept["pnl_r_sim"].mean()
+                _ac_netr = _ac_kept["pnl_r_sim"].sum()
+                _ac_grid.append({
+                    "Threshold":     f"≤{_ac_th:.1f}%",
+                    "_th_val":       _ac_th,
+                    "Trades Kept":   len(_ac_kept),
+                    "% of Total":    f"{len(_ac_kept)/_ac_total*100:.1f}%",
+                    "Win Rate":      f"{_ac_wr:.1f}%",
+                    "Avg R":         f"{_ac_ar:+.3f}R",
+                    "Net R":         f"{_ac_netr:+.1f}R",
+                    "_avg_r_val":    _ac_ar,
+                })
+
+            _ac_best_idx = max(range(len(_ac_grid)), key=lambda i: _ac_grid[i]["_avg_r_val"])
+            _ac_display = [{k: v for k, v in r.items() if not k.startswith("_")} for r in _ac_grid]
+            st.dataframe(pd.DataFrame(_ac_display), use_container_width=True, hide_index=True)
+
+            _ac_best_thr = _ac_grid[_ac_best_idx]["Threshold"]
+            _ac_best_ar  = _ac_grid[_ac_best_idx]["Avg R"]
+            _ac_current  = next((r for r in _ac_grid if r["_th_val"] == 1.5), None)
+            _ac_current_ar = _ac_current["_avg_r_val"] if _ac_current else None
+            _ac_delta    = _ac_grid[_ac_best_idx]["_avg_r_val"] - (_ac_current_ar or 0.0)
+
+            if _ac_grid[_ac_best_idx]["_th_val"] == 1.5:
+                st.success(f"📍 Current threshold **1.5%** is already optimal — highest avg R at {_ac_best_ar}.")
+            else:
+                _ac_dir = "tighter" if _ac_grid[_ac_best_idx]["_th_val"] < 1.5 else "looser"
+                st.info(
+                    f"💡 **Optimal threshold: {_ac_best_thr}** (avg R {_ac_best_ar}) — "
+                    f"{_ac_dir} than current 1.5% by {abs(_ac_grid[_ac_best_idx]['_th_val']-1.5):.1f}pp  |  "
+                    f"Delta vs current: {_ac_delta:+.3f}R/trade."
+                )
+
+            _ac_fig = go.Figure(go.Bar(
+                x=[r["Threshold"] for r in _ac_grid],
+                y=[r["_avg_r_val"] for r in _ac_grid],
+                marker_color=[
+                    "#4caf50" if i == _ac_best_idx else
+                    ("#ffa726" if _ac_grid[i]["_th_val"] == 1.5 else "#546e7a")
+                    for i in range(len(_ac_grid))
+                ],
+                text=[r["Avg R"] for r in _ac_grid],
+                textposition="outside",
+            ))
+            _ac_fig.update_layout(
+                title="Avg R per Trade by Anti-Chase Threshold  (green = best, orange = current 1.5%)",
+                xaxis_title="Max Overshoot Allowed",
+                yaxis_title="Avg R per Trade",
+                template="plotly_dark",
+                height=320,
+                margin=dict(t=50, b=40, l=50, r=20),
+                plot_bgcolor="#0e1117",
+                paper_bgcolor="#0e1117",
+            )
+            st.plotly_chart(_ac_fig, use_container_width=True)
+
+            st.markdown("**TCS Tier Breakdown — current 1.5% vs optimal**")
+            _ac_tcs_rows = []
+            for _ac_tier, _ac_tlo, _ac_thi in [("TCS≥70", 70, 999), ("TCS 60–69", 60, 70), ("TCS 50–59", 50, 60)]:
+                for _ac_th_label, _ac_th_val in [("1.5% (current)", 1.5), (_ac_best_thr, _ac_grid[_ac_best_idx]["_th_val"])]:
+                    if _ac_th_val == 1.5 and _ac_th_label != "1.5% (current)":
+                        continue
+                    _ac_t = _ac_df[
+                        (_ac_df["tcs"] >= _ac_tlo) &
+                        (_ac_df["tcs"] < _ac_thi) &
+                        (_ac_df["overshoot_pct"] <= _ac_th_val)
+                    ]
+                    if len(_ac_t) == 0:
+                        continue
+                    _ac_tcs_rows.append({
+                        "TCS Tier":   _ac_tier,
+                        "Threshold":  _ac_th_label,
+                        "Trades":     len(_ac_t),
+                        "Win Rate":   f"{(_ac_t['pnl_r_sim']>0).mean()*100:.1f}%",
+                        "Avg R":      f"{_ac_t['pnl_r_sim'].mean():+.3f}R",
+                    })
+            if _ac_tcs_rows:
+                st.dataframe(pd.DataFrame(_ac_tcs_rows), use_container_width=True, hide_index=True)
+
+    # ── Exit Strategy Comparison ──────────────────────────────────────────────────
+    with st.expander("🚪 Exit Strategy Comparison (Tiered Trail vs EOD Hold)", expanded=False):
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _ex_fetch(_uid):
+            _rows, _off = [], 0
+            while True:
+                _batch = (
+                    supabase.table("backtest_sim_runs")
+                    .select(
+                        "sim_date,predicted,tcs,scan_type,"
+                        "pnl_r_sim,eod_pnl_r,tiered_pnl_r"
+                    )
+                    .eq("user_id", _uid)
+                    .not_.is_("pnl_r_sim", "null")
+                    .range(_off, _off + 999)
+                    .execute()
+                    .data or []
+                )
+                _rows.extend(_batch)
+                if len(_batch) < 1000:
+                    break
+                _off += 1000
+            return _rows
+
+        with st.spinner("Loading exit comparison data…"):
+            _ex_raw = _ex_fetch(_AUTH_USER_ID)
+
+        if not _ex_raw:
+            st.info("No backtest rows yet — run the Pending Sim Rows Backfill to populate.")
+        else:
+            _ex_df = pd.DataFrame(_ex_raw)
+            for _c in ["tcs", "pnl_r_sim", "eod_pnl_r", "tiered_pnl_r"]:
+                _ex_df[_c] = pd.to_numeric(_ex_df[_c], errors="coerce")
+            _ex_df["sim_year"] = pd.to_datetime(_ex_df["sim_date"], errors="coerce").dt.year
+
+            _ex_has_eod    = _ex_df.dropna(subset=["pnl_r_sim", "eod_pnl_r"])
+            _ex_has_tiered = _ex_df.dropna(subset=["tiered_pnl_r"])
+            _ex_all        = _ex_df.dropna(subset=["pnl_r_sim"])
+
+            st.caption(
+                f"Rows with raw sim: **{len(_ex_all):,}**  |  "
+                f"with EOD P&L: **{len(_ex_has_eod):,}**  |  "
+                f"with tiered P&L: **{len(_ex_has_tiered):,}**"
+            )
+
+            def _ex_stats(series, label):
+                n = len(series)
+                if n == 0:
+                    return {"Exit Strategy": label, "Trades": 0, "Win Rate": "—", "Avg R": "—", "Net R": "—", "Max DD": "—", "Avg Win R": "—", "Avg Loss R": "—"}
+                _wr    = (series > 0).mean() * 100
+                _ar    = series.mean()
+                _netr  = series.sum()
+                _wins  = series[series > 0]
+                _losses= series[series <= 0]
+                _cum   = series.cumsum()
+                _dd    = (_cum - _cum.cummax()).min()
+                return {
+                    "Exit Strategy": label,
+                    "Trades":        n,
+                    "Win Rate":      f"{_wr:.1f}%",
+                    "Avg R":         f"{_ar:+.3f}R",
+                    "Net R":         f"{_netr:+.1f}R",
+                    "Avg Win R":     f"{_wins.mean():+.3f}R"  if len(_wins)  else "—",
+                    "Avg Loss R":    f"{_losses.mean():+.3f}R" if len(_losses) else "—",
+                    "Max DD":        f"{_dd:.2f}R",
+                    "_ar_val":       _ar,
+                }
+
+            _ex_summary = [
+                _ex_stats(_ex_has_tiered["tiered_pnl_r"], "Tiered Trail (v6)"),
+                _ex_stats(_ex_has_eod["eod_pnl_r"],       "EOD Hold"),
+                _ex_stats(_ex_all["pnl_r_sim"],            "Raw Sim (first exit)"),
+            ]
+
+            st.markdown("#### Overall Comparison")
+            _ex_disp = [{k: v for k, v in r.items() if k != "_ar_val"} for r in _ex_summary]
+            st.dataframe(pd.DataFrame(_ex_disp), use_container_width=True, hide_index=True)
+
+            _ex_valid = [r for r in _ex_summary if r["Trades"] > 0]
+            if _ex_valid:
+                _ex_winner = max(_ex_valid, key=lambda r: r["_ar_val"])
+                st.success(f"🏆 **{_ex_winner['Exit Strategy']}** leads on avg R ({_ex_winner['Avg R']})")
+
+            st.markdown("#### Year-by-Year Breakdown")
+            _ex_yr_rows = []
+            for _ex_yr in sorted(_ex_df["sim_year"].dropna().unique()):
+                _ex_y          = _ex_df[_ex_df["sim_year"] == _ex_yr]
+                _ex_y_tiered   = _ex_y.dropna(subset=["tiered_pnl_r"])
+                _ex_y_eod      = _ex_y.dropna(subset=["pnl_r_sim", "eod_pnl_r"])
+                _ex_t_ar       = _ex_y_tiered["tiered_pnl_r"].mean() if len(_ex_y_tiered) else None
+                _ex_e_ar       = _ex_y_eod["eod_pnl_r"].mean()       if len(_ex_y_eod)    else None
+                _ex_yr_winner  = (
+                    "Tiered" if (_ex_t_ar is not None and _ex_e_ar is not None and _ex_t_ar >= _ex_e_ar) else
+                    "EOD"    if (_ex_e_ar is not None and (_ex_t_ar is None or _ex_e_ar > _ex_t_ar))    else
+                    "—"
+                )
+                _ex_yr_rows.append({
+                    "Year":            int(_ex_yr),
+                    "Tiered n":        len(_ex_y_tiered),
+                    "Tiered Avg R":    f"{_ex_t_ar:+.3f}R" if _ex_t_ar is not None else "—",
+                    "EOD n":           len(_ex_y_eod),
+                    "EOD Avg R":       f"{_ex_e_ar:+.3f}R" if _ex_e_ar is not None else "—",
+                    "Year Winner":     _ex_yr_winner,
+                })
+            st.dataframe(pd.DataFrame(_ex_yr_rows), use_container_width=True, hide_index=True)
+
+            st.markdown("#### TCS Tier Breakdown")
+            _ex_tcs_rows = []
+            for _ex_tier, _ex_tlo, _ex_thi in [("TCS≥70", 70, 999), ("TCS 60–69", 60, 70), ("TCS 50–59", 50, 60)]:
+                _ex_tf = _ex_has_eod[(_ex_has_eod["tcs"] >= _ex_tlo) & (_ex_has_eod["tcs"] < _ex_thi)]
+                _ex_tt = _ex_has_tiered[(_ex_has_tiered["tcs"] >= _ex_tlo) & (_ex_has_tiered["tcs"] < _ex_thi)]
+                if len(_ex_tf) == 0 and len(_ex_tt) == 0:
+                    continue
+                _ex_t_ar = _ex_tt["tiered_pnl_r"].mean() if len(_ex_tt) else None
+                _ex_e_ar = _ex_tf["eod_pnl_r"].mean()    if len(_ex_tf) else None
+                _ex_delta = (_ex_t_ar - _ex_e_ar) if (_ex_t_ar is not None and _ex_e_ar is not None) else None
+                _ex_tcs_rows.append({
+                    "TCS Tier":       _ex_tier,
+                    "Tiered Trades":  len(_ex_tt),
+                    "Tiered Avg R":   f"{_ex_t_ar:+.3f}R" if _ex_t_ar is not None else "—",
+                    "EOD Trades":     len(_ex_tf),
+                    "EOD Avg R":      f"{_ex_e_ar:+.3f}R" if _ex_e_ar is not None else "—",
+                    "Δ (Tier–EOD)":   f"{_ex_delta:+.3f}R" if _ex_delta is not None else "—",
+                })
+            if _ex_tcs_rows:
+                st.dataframe(pd.DataFrame(_ex_tcs_rows), use_container_width=True, hide_index=True)
+
+            st.caption(
+                "ℹ️ Flat fixed-target exits (1.5R, 2R, 3R) require an `mfe_r` column in backtest_sim_runs "
+                "— not yet backfilled. Once the Pending Sim Rows Backfill completes, this section will "
+                "be extended to include flat target simulation."
+            )
+
     # ── Monte Carlo equity simulation ────────────────────────────────────────────
     if _results and len(_results) >= 3:
         _mc_risk_frac = st.session_state.get("bt_mc_risk", 2.0) / 100.0
