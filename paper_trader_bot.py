@@ -1796,6 +1796,28 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
                 _patch_skip_reason(r, ticker, "filter_config_gap")
                 return "skipped:filter_config_gap"  # (*) own Telegram already sent above
 
+        # 2b. Gap direction (up / down / any)
+        # Mirrors filter_grid_conservative_mode: gap_direction="up" requires gap_pct > 0.
+        # Only evaluated when gap data is present; absent data is a defensive pass-through
+        # (consistent with how gap_min treats missing data above).
+        _flt_gap_dir = str(_flt_cfg.get("gap_direction", "any")).lower()
+        if _flt_gap_dir in ("up", "down") and _gap_pct_v is not None:
+            _actual_gap = float(_gap_pct_v)
+            _dir_pass = (_actual_gap > 0) if _flt_gap_dir == "up" else (_actual_gap < 0)
+            if not _dir_pass:
+                _dir_label = "upward (gap-up)" if _flt_gap_dir == "up" else "downward (gap-down)"
+                log.info(
+                    f"  [{ticker}] filter_config skip — gap direction mismatch "
+                    f"(need {_flt_gap_dir}, actual gap={_actual_gap:+.2f}%)"
+                )
+                tg_send(
+                    f"⛔ <b>{ticker} Filtered — Gap direction mismatch</b>\n"
+                    f"Optimizer requires {_dir_label} gap.\n"
+                    f"Actual gap: <b>{_actual_gap:+.2f}%</b>"
+                )
+                _patch_skip_reason(r, ticker, "filter_config_gap_direction")
+                return "skipped:filter_config_gap_direction"  # (*) own Telegram already sent above
+
         # 3. Follow-through floor
         # Mirrors filter_grid_search._apply_combo: fail when filter active AND data is None.
         _flt_ft_min = float(_flt_cfg.get("follow_min_pct", -999.0))
@@ -2140,7 +2162,8 @@ _SKIP_REASONS_WITH_OWN_TG: frozenset = frozenset({
     "morning_tcs_below_floor", "lunch_blackout",
     "pdt_blocked", "pdt_quality_gate", "concurrent_cap",
     "ib_too_wide", "rvol_below_floor", "pm_ib_filter",
-    "filter_config_tcs", "filter_config_gap", "filter_config_follow_thru",
+    "filter_config_tcs", "filter_config_gap", "filter_config_gap_direction",
+    "filter_config_follow_thru",
     "filter_config_struct", "filter_config_false_break",
     "filter_config_pm_range", "filter_config_pm_ib_dir",
     "order_failed",
@@ -2173,8 +2196,9 @@ def _send_skip_outcome_tg(ticker: str, outcome: str) -> None:
         "position_already_open":       "position already open in this ticker",
         "invalid_ib":                  "invalid IB range data",
         "pdt_blocked_silent":          "PDT limit reached (alert already sent today)",
-        "already_placed_this_session": "already entered today (restart guard)",
-        "already_placed_today":        "already entered today (restart guard)",
+        "already_placed_this_session":  "already entered today (restart guard)",
+        "already_placed_today":         "already entered today (restart guard)",
+        "filter_config_gap_direction":  "gap direction mismatch (optimizer requires gap-up only)",
     }
     reason_text = _reason_map.get(skip_key, skip_key.replace("_", " "))
     tg_send(f"⛔ <b>{html.escape(ticker)}</b> — Not entered: {reason_text}")
