@@ -281,7 +281,11 @@ if os.getenv("EDGEIQ_PRODUCTION", "").strip() != "1":
 IS_PAPER_ALPACA         = os.getenv("IS_PAPER_ALPACA",     "true").lower()  == "true"
 MIN_TCS                 = _PAPER_MIN_TCS if IS_PAPER_ALPACA else _LIVE_MIN_TCS
 RISK_PER_TRADE          = float(os.getenv("RISK_PER_TRADE", "500"))   # dollars risked per trade (= 1R)
-MAX_POSITION_SIZE       = float(os.getenv("MAX_POSITION_SIZE", "1500"))  # max notional per position ($)
+# Max notional per position: paper uses $10,000 so risk-based sizing (risk_dollars/ib_range)
+# drives qty rather than the notional cap. Live keeps $1,500 (protects real capital at $10k–$25k).
+# Raise this as live equity grows past $25k.
+_default_max_pos = "10000" if IS_PAPER_ALPACA else "1500"
+MAX_POSITION_SIZE       = float(os.getenv("MAX_POSITION_SIZE", _default_max_pos))  # max notional per position ($)
 # PDT guard: block new orders when day-trade count >= this limit (FINRA: 3 in rolling 5 days)
 PDT_MAX_DAY_TRADES       = int(os.getenv("PDT_MAX_DAY_TRADES", "3"))
 # Concurrent position cap: block new orders when open positions >= this limit
