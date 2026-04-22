@@ -4837,7 +4837,7 @@ def watchlist_refresh(midday: bool = False):
                Only these tickers qualify for Bearish Break bracket orders.
 
     Gap plays take priority (listed first), then trend, then squeeze, then gap-down.
-    Combined list is capped at 120 tickers.
+    Combined list is capped at 200 tickers.
 
     ``midday=True`` is the 11:45 AM pass.  Each pass has its own daily lock file
     in /tmp so bot restarts can't fire a duplicate Telegram notification.
@@ -4855,14 +4855,14 @@ def watchlist_refresh(midday: bool = False):
     log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze + gap-down passes)")
     log.info("=" * 60)
     try:
-        # ── Pass 1: gap-of-day (existing behaviour) ───────────────────────────
+        # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
             change_min_pct=3.0,
             float_max_m=100.0,
             price_min=PRICE_MIN,
             price_max=PRICE_MAX,
             avg_vol_min_k=1000,
-            max_tickers=60,
+            max_tickers=100,
         )
         log.info(f"Gap-of-day screener: {len(gap_tickers)} tickers")
 
@@ -4875,7 +4875,7 @@ def watchlist_refresh(midday: bool = False):
             price_min=5.0,
             price_max=50.0,
             avg_vol_min_k=2000,
-            max_tickers=60,
+            max_tickers=100,
             extra_filters=["ta_sma20_pa", "ta_sma50_pa"],
         )
         log.info(f"Trend-continuation screener: {len(trend_tickers)} tickers")
@@ -4890,7 +4890,7 @@ def watchlist_refresh(midday: bool = False):
             price_min=1.0,
             price_max=50.0,
             avg_vol_min_k=500,
-            max_tickers=30,
+            max_tickers=50,
             extra_filters=["sh_short_o15"],  # short float > 15%
         )
         log.info(f"Short-squeeze screener: {len(squeeze_tickers)} tickers")
@@ -4905,11 +4905,11 @@ def watchlist_refresh(midday: bool = False):
             price_min=PRICE_MIN,
             price_max=PRICE_MAX,
             avg_vol_min_k=500,
-            max_tickers=40,
+            max_tickers=60,
         )
         log.info(f"Gap-down screener (Bearish Break universe): {len(gap_down_tickers)} tickers")
 
-        # ── Merge: gap → trend → squeeze → gap-down (deduped), cap at 120 ────
+        # ── Merge: gap → trend → squeeze → gap-down (deduped), cap at 200 ────
         merged: list[str] = list(gap_tickers)
         for t in trend_tickers:
             if t not in merged:
@@ -4920,7 +4920,7 @@ def watchlist_refresh(midday: bool = False):
         for t in gap_down_tickers:
             if t not in merged:
                 merged.append(t)
-        merged = merged[:120]
+        merged = merged[:200]
 
         # ── Tag each ticker with the pass that first claimed it ───────────────
         global _TICKER_SCREENER_PASS
@@ -4958,7 +4958,7 @@ def watchlist_refresh(midday: bool = False):
                     f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
                     f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze · "
                     f"{len(gap_down_tickers)} gap-down)\n"
-                    f"Gap: ≥3% chg · Float ≤100M · $1–$20\n"
+                    f"Gap: ≥3% chg · Float ≤100M · ${PRICE_MIN:.0f}–${PRICE_MAX:.0f}\n"
                     f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
                     f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
                     f"{_gd_line}"

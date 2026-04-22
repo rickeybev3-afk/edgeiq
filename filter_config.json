@@ -1,9 +1,9 @@
 {
-  "_note": "Phase 3 conservative mode (combo #13). gap>=2% up-gaps only. Reduces MaxDD 74% (21.6R->5.6R) vs full Phase 3 at cost of only 3% fewer trades. WR 86.0%, avg_R +0.99R, 19.5 trades/wk. Source: filter_grid_conservative_mode.json",
-  "_source": "combo #13 — conservative mode",
+  "_note": "Phase 3 best combo (Apr 21 grid search). gap>=2% any direction. gap_dir=any allows both gap-up and gap-down setups through. 84.6% WR, avg_R +0.929R, 21.5 trades/wk (~4.3/day), MaxDD 21.6R ($3,239 at $150/R), +4,894R total over 4.9yr. Source: grid_search_archive/2026-04-21/filter_grid_summary.json best_combo.",
+  "_source": "Apr 21 best combo — gap>=2%, gap_dir=any, all 5 structures",
   "tcs_offset": 0,
   "gap_min": 2.0,
-  "gap_direction": "up",
+  "gap_direction": "any",
   "follow_min_pct": -999.0,
   "struct_filter": "all",
   "excl_false_break": false,
