@@ -116,6 +116,10 @@ _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT: float = float(
 )
 
 # ── Startup validation: catch misconfigured short-float threshold immediately ──
+# tg_send() is defined later in the file, so we store the alert message here
+# and dispatch it via watchlist_refresh() on first run instead of calling
+# tg_send() directly at module level.
+_SHORT_FLOAT_FALLBACK_TG_MSG: str | None = None
 if _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT not in _SHORT_FLOAT_FILTER_MAP:
     _supported_vals = sorted(_SHORT_FLOAT_FILTER_MAP)
     _nearest_val = min(_supported_vals, key=lambda v: abs(v - _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT))
@@ -124,6 +128,12 @@ if _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT not in _SHORT_FLOAT_FILTER_MAP:
         f"is not a supported Finviz breakpoint. "
         f"Supported values: {_supported_vals}. "
         f"Falling back to nearest supported value: {_nearest_val}%."
+    )
+    _SHORT_FLOAT_FALLBACK_TG_MSG = (
+        f"⚠️ Short-float threshold misconfiguration\n"
+        f"Configured value {_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT}% is not a supported Finviz breakpoint.\n"
+        f"Falling back to nearest supported value: {_nearest_val}%.\n"
+        f"Supported breakpoints: {_supported_vals}"
     )
     _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = _nearest_val
 
@@ -5162,6 +5172,13 @@ def watchlist_refresh(midday: bool = False):
 
     # _SHORT_FLOAT_FILTER_MAP and _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT are
     # module-level constants (validated at startup); use them directly here.
+    # If the startup block detected a misconfiguration it stored a pending
+    # Telegram message in _SHORT_FLOAT_FALLBACK_TG_MSG — flush it now so the
+    # operator is notified at the moment the first watchlist scan runs.
+    global _SHORT_FLOAT_FALLBACK_TG_MSG
+    if _SHORT_FLOAT_FALLBACK_TG_MSG:
+        tg_send(_SHORT_FLOAT_FALLBACK_TG_MSG)
+        _SHORT_FLOAT_FALLBACK_TG_MSG = None
     _pass3_short_float_filter = _SHORT_FLOAT_FILTER_MAP[_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT]
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
