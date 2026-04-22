@@ -657,6 +657,9 @@ def check_db_connection() -> tuple[bool, str]:
     accepted.  Returns (False, reason) for any failure, including missing
     credentials or network/auth errors.  Uses a HEAD request to the REST
     root so no table needs to exist and no rows are transferred.
+
+    The reason string is prefixed with "AUTH:" for definitive auth rejections
+    (HTTP 401/403) so callers can distinguish transient outages from bad keys.
     """
     global _db_last_checked_ts
     _db_last_checked_ts = time.monotonic()
@@ -670,6 +673,9 @@ def check_db_connection() -> tuple[bool, str]:
         )
         if resp.status_code in (200, 404):
             return True, ""
+        if resp.status_code in (401, 403):
+            return False, f"AUTH:HTTP {resp.status_code}"
+        # 5xx / 503 / 502 — transient service outage, not a key issue
         return False, f"HTTP {resp.status_code}"
     except requests.exceptions.Timeout:
         return False, "Timed out"
@@ -748,17 +754,19 @@ def _run_credential_check() -> None:
         if ok:
             supabase_ok_this_run = True
             _providers_confirmed_ok.add("supabase")
-        elif "supabase" in _providers_confirmed_ok:
-            # Was working, now failing — surface as a runtime error.
+        elif reason.startswith("AUTH:") and "supabase" in _providers_confirmed_ok:
+            # Definitive 401/403 rejection — surface as a runtime credential error.
+            display_reason = reason[5:]  # strip "AUTH:" prefix
             errors.append((
                 "SUPABASE_KEY",
                 f"Supabase credentials are no longer accepted (were working earlier "
-                f"this session): {reason}. Check that SUPABASE_URL and SUPABASE_KEY "
+                f"this session): {display_reason}. Check that SUPABASE_URL and SUPABASE_KEY "
                 f"have not expired or been revoked.",
             ))
         else:
-            # Never confirmed — log quietly; startup banner already covers missing creds.
-            logging.debug("[RUNTIME] Supabase connectivity check failed before first success: %s", reason)
+            # Transient failure (timeout, 5xx, 502, 503) or not yet confirmed —
+            # log quietly and do NOT surface as a credential error.
+            logging.debug("[RUNTIME] Supabase connectivity check failed (transient): %s", reason)
 
     # — Alpaca —
     # Only re-check if both keys were present at startup.
