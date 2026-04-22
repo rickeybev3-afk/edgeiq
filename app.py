@@ -24490,6 +24490,19 @@ Measures how accurately the 7-structure framework classified those days in hinds
             }
             _p3_sk = _p3_sort_map[_p3_sort_col]
 
+            _p3_table_baseline_tcs = None
+            try:
+                _p3_raw_tcs = _p3_summary.get("tcs_intraday_min")
+                if _p3_raw_tcs is not None:
+                    _p3_table_baseline_tcs = int(_p3_raw_tcs)
+            except (TypeError, ValueError):
+                _p3_table_baseline_tcs = None
+            _p3_table_cur_tcs = int(st.session_state.get("p3_tcs_intraday_min_slider", 35))
+            _p3_table_tcs_delta = (
+                _p3_table_cur_tcs - _p3_table_baseline_tcs
+                if _p3_table_baseline_tcs is not None else None
+            )
+
             _p3_rows_disp = []
             for _i, _c in enumerate(_p3_top_data, 1):
                 _pf  = _c.get("profit_factor", 0)
@@ -24522,6 +24535,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     "$/wk":           _c.get("proj_weekly_usd", 0),
                     "WklyR":          _c.get("weekly_expectancy_r", 0),
                     "⚠":             "low N" if _c.get("low_sample") else "",
+                    "TCS Δ":         (
+                        f"{_p3_table_tcs_delta:+d}" if _p3_table_tcs_delta is not None else "—"
+                    ),
                 })
 
             _p3_df = _p3_pd.DataFrame(_p3_rows_disp)
@@ -24540,8 +24556,16 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 except (ValueError, TypeError):
                     s = 0.0
                 is_low = row.get("⚠") == "low N"
+                tcs_delta_str = row.get("TCS Δ", "—")
+                try:
+                    tcs_delta_val = int(str(tcs_delta_str).replace("+", "")) if tcs_delta_str != "—" else 0
+                except (ValueError, TypeError):
+                    tcs_delta_val = 0
+                is_tcs_warn = abs(tcs_delta_val) > 5
                 if is_low:
                     return ["background-color:#fff8e1; color:#5d4037"] * len(row)
+                if is_tcs_warn:
+                    return ["background-color:#fff3e0; color:#e65100"] * len(row)
                 if s >= 5:
                     return ["background-color:#e8f5e9; color:#1b5e20"] * len(row)
                 if s >= 2:
@@ -24564,7 +24588,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
             )
             st.caption(
                 "🟢 Sharpe ≥ 5 · 🟡 Sharpe 2–5 · 🔴 Sharpe < 2 · "
-                "⚠ low N (< 75 trades, use with caution)"
+                "⚠ low N (< 75 trades, use with caution) · "
+                "🟠 TCS Δ > ±5 (slider differs from training baseline)"
             )
 
             _p3_csv_bytes = _p3_df_sorted.to_csv(index=False).encode("utf-8")
