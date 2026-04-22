@@ -4992,12 +4992,12 @@ def watchlist_refresh(midday: bool = False):
     Runs FOUR screener passes and merges them:
       Pass 1 — Gap-of-day plays: ≥2% change · Float ≤100M · $1–$20
                Catches high-momentum small-float catalysts.
-      Pass 2 — Trend continuation plays: ≥1% change · Float ≤500M · $5–$50
+      Pass 2 — Trend continuation plays: ≥_PASS2_TREND_MIN_PCT% chg · Float ≤500M · $5–$50
                Above 20-day AND 50-day SMA · Avg vol ≥2M
                Catches institutional-quality stocks extending multi-week trends.
                These produce cleaner Bullish/Bearish Break IB structure vs
                gap-and-stall small-floats that tend to read as Neutral/Ntrl Extreme.
-      Pass 3 — Short squeeze candidates: Short float ≥15% · Float ≤50M · ≥1% chg
+      Pass 3 — Short squeeze candidates: Short float ≥_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT% · Float ≤50M · ≥1% chg
                High short interest + low float = covering pressure amplifies IB breaks.
                These are layered behind gap/trend fills; capped at 30 tickers.
       Pass 4 — Gap-down plays: ≤-3% change · $1–$50 · avg vol ≥500K
@@ -5022,7 +5022,9 @@ def watchlist_refresh(midday: bool = False):
     log.info("=" * 60)
     log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze + gap-down passes)")
     log.info("=" * 60)
-    _PASS1_GAP_MIN_PCT = 2.0   # Pass 1 gap-of-day threshold — shown in Telegram message
+    _PASS1_GAP_MIN_PCT = 2.0    # Pass 1 gap-of-day threshold — shown in Telegram message
+    _PASS2_TREND_MIN_PCT = 1.0  # Pass 2 trend-continuation change threshold — shown in Telegram message
+    _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = 15.0  # Pass 3 short-float threshold — shown in Telegram message
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
@@ -5039,7 +5041,7 @@ def watchlist_refresh(midday: bool = False):
         # Stocks in established uptrends on elevated volume → cleaner IB structure
         # and more Bullish Break / Bearish Break outcomes vs gap-and-stall noise.
         trend_tickers = fetch_finviz_watchlist(
-            change_min_pct=1.0,
+            change_min_pct=_PASS2_TREND_MIN_PCT,
             float_max_m=500.0,
             price_min=5.0,
             price_max=50.0,
@@ -5050,8 +5052,8 @@ def watchlist_refresh(midday: bool = False):
         log.info(f"Trend-continuation screener: {len(trend_tickers)} tickers")
 
         # ── Pass 3: short squeeze candidates ─────────────────────────────────
-        # High short interest (≥15% float short) + low float → covering pressure
-        # amplifies IB breakouts. When a heavily shorted stock clears IB high,
+        # High short interest (≥_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT% float short) + low float →
+        # covering pressure amplifies IB breakouts. When a heavily shorted stock clears IB high,
         # shorts are forced to cover into the move on top of buyer demand.
         squeeze_tickers = fetch_finviz_watchlist(
             change_min_pct=1.0,
@@ -5060,7 +5062,7 @@ def watchlist_refresh(midday: bool = False):
             price_max=50.0,
             avg_vol_min_k=500,
             max_tickers=50,
-            extra_filters=["sh_short_o15"],  # short float > 15%
+            extra_filters=["sh_short_o15"],  # short float > _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT%
         )
         log.info(f"Short-squeeze screener: {len(squeeze_tickers)} tickers")
 
@@ -5128,8 +5130,8 @@ def watchlist_refresh(midday: bool = False):
                     f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze · "
                     f"{len(gap_down_tickers)} gap-down)\n"
                     f"Gap ≥{_PASS1_GAP_MIN_PCT:.1f}%: Float ≤100M · ${PRICE_MIN:.0f}–${PRICE_MAX:.0f}\n"
-                    f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
-                    f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
+                    f"Trend: ≥{_PASS2_TREND_MIN_PCT:.0f}% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
+                    f"Squeeze: Short float ≥{_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT:.0f}% · Float ≤50M · ≥1% chg\n"
                     f"{_gd_line}"
                     f"{_scan_note}"
                 )
