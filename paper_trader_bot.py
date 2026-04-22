@@ -568,14 +568,14 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
 #              deviation (min 30); 1.00× is the data-confirmed baseline.
 #              Re-run the script once ≥30 gap_down rows have tiered_pnl_r
 #              populated; it will print the exact line to paste here.
-#   'squeeze' (2026-04-21 → 2026-04-22): 32 trades, 96.9% WR / -0.130R avg → 0.70×
+#   'squeeze' (2026-04-21 → 2026-04-22): 36 trades, 88.9% WR / +0.009R avg → 0.70×
 # Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
 _SP_MULT_TABLE: dict[str, float] = {
     "other":    1.15,
     "gap":      1.00,
     "trend":    0.85,
     "gap_down": 1.00,   # Bearish Break universe — calibrated 2026-04-20 (6 settled trades, n<30 → baseline confirmed); re-run calibrate_sp_mult.py --pass gap_down once ≥30 settle
-    "squeeze":  0.70,   # 32 trades 2026-04-21 → 2026-04-22, 96.9% WR / -0.130R → 0.70×
+    "squeeze":  0.70,   # 36 trades 2026-04-21 → 2026-04-22, 88.9% WR / +0.009R → 0.70×
 }
 
 _SP_CALIB_DATES: dict[str, str] = {

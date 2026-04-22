@@ -296,7 +296,7 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
         try:
             q = (
                 backend.supabase.table("paper_trades")
-                .select("id,ticker,trade_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r,rvol")
+                .select("id,ticker,trade_date,actual_outcome,ib_high,ib_low,close_price,eod_pnl_r,rvol,screener_pass")
                 .eq("user_id", user_id)
                 .in_("actual_outcome", ["Bullish Break", "Bearish Break"])
                 .is_("tiered_pnl_r", "null")
@@ -329,6 +329,7 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
             close_price    = row.get("close_price")
             existing_eod   = row.get("eod_pnl_r")
             rvol_raw       = row.get("rvol")
+            screener_pass  = row.get("screener_pass")
 
             try:
                 if isinstance(trade_date_raw, str):
@@ -423,6 +424,17 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
                             eod_pnl_r = round(float(eod_pnl_r) * _rvol_mult, 4)
                 except (TypeError, ValueError):
                     pass
+
+            # Squeeze tiered_pnl_r sentinel fix: volatile squeeze stocks can trigger
+            # an intraday stop-hit (-1R from bar-by-bar sim) that contradicts a
+            # profitable EOD close.  Fall back to eod_pnl_r (real close-based R) when
+            # tiered is negative but EOD is positive so calibration uses clean data.
+            if ((screener_pass or "").strip().lower() == "squeeze"
+                    and tiered_pnl_r is not None and tiered_pnl_r < 0
+                    and eod_pnl_r is not None and eod_pnl_r > 0):
+                print(f"squeeze sentinel override: tiered={tiered_pnl_r:+.4f} → eod={eod_pnl_r:+.4f}  ",
+                      end="", flush=True)
+                tiered_pnl_r = eod_pnl_r
 
             if tiered_pnl_r is None:
                 print("no entry cross — tiered stays NULL (matches live path)")

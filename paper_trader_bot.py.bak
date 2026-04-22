@@ -568,23 +568,22 @@ def _ptier_size_mult(tcs: float, scan_type: str) -> float:
 #              deviation (min 30); 1.00× is the data-confirmed baseline.
 #              Re-run the script once ≥30 gap_down rows have tiered_pnl_r
 #              populated; it will print the exact line to paste here.
-#   'squeeze':   calibrated 2026-04-20 via `python calibrate_sp_mult.py --pass squeeze`;
-#               0 settled squeeze trades in paper_trades — insufficient for
-#               deviation (min 30); 1.00× is the data-confirmed baseline.
-#               Re-run the script once ≥30 squeeze rows have tiered_pnl_r
-#               populated; it will print the exact line to paste here.
+#   'squeeze' (2026-04-22, reverted): prior 0.70× was based on corrupt data (win/loss
+#              misclassification + tiered_pnl_r sentinel bugs); reverted to 1.00× baseline.
+#              Re-run `python calibrate_sp_mult.py --pass squeeze --apply` after
+#              fix_squeeze_data.py backfill completes on corrected data.
 # Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
 _SP_MULT_TABLE: dict[str, float] = {
     "other":    1.15,
     "gap":      1.00,
     "trend":    0.85,
     "gap_down": 1.00,   # Bearish Break universe — calibrated 2026-04-20 (6 settled trades, n<30 → baseline confirmed); re-run calibrate_sp_mult.py --pass gap_down once ≥30 settle
-    "squeeze":  1.00,   # calibrated 2026-04-20 (0 settled trades, n<30 → baseline confirmed); re-run calibrate_sp_mult.py --pass squeeze once ≥30 settle
+    "squeeze":  1.00,   # reverted 2026-04-22: prior 0.70× based on corrupt calibration data; re-calibrate after fix_squeeze_data.py backfill
 }
 
 _SP_CALIB_DATES: dict[str, str] = {
     "gap_down": "2026-04-20",
-    "squeeze":  "2026-04-20",
+    "squeeze":  "2026-04-22",
 }
 
 def _sp_size_mult(screener_pass: str | None) -> float:

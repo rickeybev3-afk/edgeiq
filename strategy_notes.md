@@ -44,7 +44,19 @@ IB mult 2.00× (0–2% IB) × P3 1.50× = **3.00× base risk** hard ceiling (nev
 Per-band exit targets driven by TCS, scan type, and structure. Example: ACDC 2026-04-22 → TCS 60, morning, Bullish Break → 1.2R target.
 
 ### Screener Pass Multiplier
-Calibrated from settled paper trades (threshold: 30 trades). Currently all at 1.00× (gap, gap_down, squeeze all at baseline; re-runs automatically once more settled trades accumulate).
+Calibrated from settled paper trades (threshold: 30 trades minimum).
+
+| Pass | Mult | Last calibrated | Notes |
+|---|---|---|---|
+| gap | 1.00× | baseline anchor | ≥3% gap universe |
+| other | 1.15× | (backtest) | <3% daily change |
+| trend | 0.85× | (backtest) | 1–3% + above SMA20/50 |
+| gap_down | 1.00× | 2026-04-20 | 6 trades settled, n<30 → baseline; re-run once ≥30 settle |
+| squeeze | 0.70× | 2026-04-22 (re-calibrated on clean data) | 36 trades, 88.9% WR, +0.009R avg vs gap +0.129R → ratio 0.072 → sqrt-clamp → 0.70× |
+
+**Squeeze calibration history:**
+- 2026-04-21 (corrupt): First calibration → 0.70× (32 trades, 96.9% WR, −0.130R avg). Data corrupt: stopped-out trades mislabelled "Win" (BZUN, SCHL, GTM), tiered_pnl_r stored as −1 sentinel (AMPY actual +1.667R), pnl_r_sim used wrong direction for bearish setups.
+- 2026-04-22 (clean): Bugs fixed via `python fix_squeeze_data.py --apply` (3 win_loss corrections, 2 tiered_pnl_r corrections). Re-ran `python calibrate_sp_mult.py --pass squeeze --apply`. Result: **36 trades, 88.9% WR, +0.009R avg → 0.70×**. The 0.70× floor is again correct, but now for the right reason: genuine low expectancy vs the gap anchor (+0.009R ÷ +0.129R = 0.072 → sqrt → 0.267 → clamped to 0.70 minimum).
 
 ---
 
