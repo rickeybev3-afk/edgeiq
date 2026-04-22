@@ -16258,6 +16258,11 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         "higher values require more trades before trusting a floor."
                     ),
                 )
+                st.caption(
+                    "\U0001f517 This threshold is saved in the page URL "
+                    f"(`?min_tcs_trades={_MIN_TCS_TRADES}`). "
+                    "Copy the current URL to share this exact setting with a colleague."
+                )
             _url_push("min_tcs_trades", str(_MIN_TCS_TRADES))
 
             # Persist slider value to user prefs whenever it changes
