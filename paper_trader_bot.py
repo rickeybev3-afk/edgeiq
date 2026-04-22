@@ -521,6 +521,7 @@ try:
         send_divergence_alert,
         save_daily_scan_log,
         ensure_daily_scan_log_table,
+        check_tcs_intraday_rolling_wr,
     )
 except ImportError as e:
     log.error(f"Cannot import backend: {e}")
@@ -7221,6 +7222,119 @@ def _refresh_all_doc_timestamps() -> None:
             log.warning(f"[DocTimestamp] {_fname} failed: {_exc}")
 
 
+_TCS_INTRADAY_WR_WARN     = 0.80  # WARNING  — auto-raise tcs_intraday_min to 40
+_TCS_INTRADAY_WR_CRITICAL = 0.75  # CRITICAL — auto-raise tcs_intraday_min to 45
+
+
+def _check_tcs_intraday_edge_degradation():
+    """Check 60-day rolling WR for TCS 35-49 intraday; alert and auto-adjust if degraded.
+
+    Thresholds (from task spec):
+      WR <  80% (WARNING):  raise tcs_intraday_min → 40 in filter_config.json + log WARNING
+      WR <  75% (CRITICAL): raise tcs_intraday_min → 45 in filter_config.json + log CRITICAL
+
+    Called nightly from nightly_recalibration() after both brain updates complete.
+    """
+    try:
+        result = check_tcs_intraday_rolling_wr(user_id=USER_ID, lookback_days=60)
+    except Exception as exc:
+        log.warning(f"[TCS-IntraWR] Rolling WR check failed: {exc}")
+        return
+
+    if result.get("error"):
+        log.warning(f"[TCS-IntraWR] Supabase query error: {result['error']}")
+        return
+
+    wr    = result.get("win_rate")
+    total = result.get("total", 0)
+    wins  = result.get("wins", 0)
+    wr_pct = f"{wr * 100:.1f}%" if wr is not None else "N/A"
+
+    log.info(
+        f"[TCS-IntraWR] 60-day rolling WR for TCS 35-49 intraday: "
+        f"{wr_pct} ({wins}/{total} trades)"
+    )
+
+    if wr is None:
+        log.info("[TCS-IntraWR] Not enough data (<10 resolved trades in window). No action.")
+        return
+
+    if wr >= _TCS_INTRADAY_WR_WARN:
+        log.info(
+            f"[TCS-IntraWR] Edge healthy — {wr_pct} ≥ "
+            f"{_TCS_INTRADAY_WR_WARN * 100:.0f}% threshold. No action needed."
+        )
+        return
+
+    if wr < _TCS_INTRADAY_WR_CRITICAL:
+        new_floor = 45
+        level     = "CRITICAL"
+        emoji     = "🚨"
+        threshold_label = f"< {int(_TCS_INTRADAY_WR_CRITICAL * 100)}%"
+        log.critical(
+            f"[TCS-IntraWR] CRITICAL — 60-day intraday WR {wr_pct} < "
+            f"{_TCS_INTRADAY_WR_CRITICAL * 100:.0f}%. "
+            f"Degradation target floor: {new_floor} (monotonic check follows)."
+        )
+    else:
+        new_floor = 40
+        level     = "WARNING"
+        emoji     = "⚠️"
+        threshold_label = f"< {int(_TCS_INTRADAY_WR_WARN * 100)}%"
+        log.warning(
+            f"[TCS-IntraWR] WARNING — 60-day intraday WR {wr_pct} < "
+            f"{_TCS_INTRADAY_WR_WARN * 100:.0f}%. "
+            f"Degradation target floor: {new_floor} (monotonic check follows)."
+        )
+
+    # Update filter_config.json — monotonic: never lower an already-stricter floor
+    try:
+        cfg = {}
+        if os.path.exists(_FILTER_CONFIG_PATH):
+            with open(_FILTER_CONFIG_PATH, "r", encoding="utf-8") as _fcf:
+                cfg = json.load(_fcf)
+        old_floor = cfg.get("tcs_intraday_min", MIN_TCS)
+        # Never decrease strictness — if the existing floor is already higher,
+        # leave it in place and skip the write entirely.
+        effective_floor = max(old_floor, new_floor)
+        if effective_floor == old_floor and old_floor > new_floor:
+            log.info(
+                f"[TCS-IntraWR] Floor unchanged — existing tcs_intraday_min ({old_floor}) "
+                f"is already stricter than the degradation target ({new_floor}). "
+                f"No config update needed."
+            )
+        else:
+            cfg["tcs_intraday_min"] = effective_floor
+            cfg["applied_at"] = datetime.now(EASTERN).strftime("%Y-%m-%dT%H:%M:%SZ")
+            cfg["_tcs_intraday_autoadjust_note"] = (
+                f"Auto-raised by edge-degradation check ({level}): "
+                f"60-day rolling WR {wr_pct} ({wins}/{total} trades). "
+                f"Previous floor: {old_floor}. "
+                f"Timestamp: {cfg['applied_at']}"
+            )
+            with open(_FILTER_CONFIG_PATH, "w", encoding="utf-8") as _fcf:
+                json.dump(cfg, _fcf, indent=2)
+            # Invalidate in-process cache so the bot picks up the new floor immediately
+            global _FILTER_CONFIG_CACHE
+            _FILTER_CONFIG_CACHE = None
+            log.info(
+                f"[TCS-IntraWR] filter_config.json updated: "
+                f"tcs_intraday_min {old_floor} → {effective_floor}"
+            )
+            new_floor = effective_floor  # use for Telegram message below
+    except Exception as exc:
+        log.error(f"[TCS-IntraWR] Failed to update filter_config.json: {exc}")
+
+    # Telegram alert
+    tg_send(
+        f"{emoji} <b>TCS 35-49 Intraday Edge — {level}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"60-day rolling WR: <b>{wr_pct}</b> ({wins}/{total} trades)\n"
+        f"Trigger: {threshold_label}\n"
+        f"Action: <b>tcs_intraday_min raised → {new_floor}</b>"
+    )
+
+
 def nightly_recalibration():
     """4:30 PM ET — update BOTH brains: live personal + historical prior."""
     log.info("=" * 60)
@@ -7287,6 +7401,15 @@ def nightly_recalibration():
         append_tcs_threshold_history(old_tcs, new_tcs)
     except Exception as exc:
         log.warning(f"TCS threshold change alert/history failed: {exc}")
+
+    # ── TCS 35-49 intraday edge-degradation trip-wire ──────────────────────────
+    # Checks the 60-day rolling WR for the TCS 35-49 intraday band.
+    # Automatically raises tcs_intraday_min (→40 at WARNING, →45 at CRITICAL)
+    # and sends a Telegram alert if the edge starts to erode.
+    try:
+        _check_tcs_intraday_edge_degradation()
+    except Exception as exc:
+        log.warning(f"TCS intraday edge-degradation check failed: {exc}")
 
     # ── Close-price catch-up sweep (PAPER_CLOSE_LOOKBACK_DAYS) ───────────────
     # The 4:20 PM eod_update() sweep covers today's rows.  Any day the bot was

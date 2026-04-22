@@ -3758,6 +3758,76 @@ def recalibrate_from_history(user_id: str = "") -> dict:
     return result
 
 
+def check_tcs_intraday_rolling_wr(user_id: str = "", lookback_days: int = 60) -> dict:
+    """Compute the rolling win rate for the TCS 35-49 intraday band.
+
+    Queries backtest_sim_runs for the last `lookback_days` calendar days where:
+      - scan_type = 'intraday'
+      - tcs >= 35 AND tcs < 50
+      - win_loss in ('Win', 'Loss')
+
+    Returns:
+      {
+        "win_rate":      float | None,  # 0.0–1.0, or None when < 10 resolved trades
+        "wins":          int,
+        "total":         int,
+        "lookback_days": int,
+        "computed_at":   iso string,
+        "error":         str | None,
+      }
+    """
+    from datetime import timedelta as _td
+
+    result = {
+        "win_rate":      None,
+        "wins":          0,
+        "total":         0,
+        "lookback_days": lookback_days,
+        "computed_at":   datetime.now(EASTERN).isoformat(),
+        "error":         None,
+    }
+
+    if not supabase:
+        result["error"] = "Supabase not connected"
+        return result
+
+    try:
+        cutoff_date = (datetime.now(EASTERN) - _td(days=lookback_days)).date().isoformat()
+
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            q = (
+                supabase.table("backtest_sim_runs")
+                .select("win_loss")
+                .eq("scan_type", "intraday")
+                .gte("tcs", 35)
+                .lt("tcs", 50)
+                .in_("win_loss", ["Win", "Loss"])
+                .gte("sim_date", cutoff_date)
+            )
+            if user_id:
+                q = q.eq("user_id", user_id)
+            q = q.range(offset, offset + page_size - 1)
+            batch = q.execute().data or []
+            all_rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+
+        wins  = sum(1 for r in all_rows if str(r.get("win_loss", "")).lower() == "win")
+        total = len(all_rows)
+        result["wins"]  = wins
+        result["total"] = total
+        if total >= 10:
+            result["win_rate"] = round(wins / total, 4)
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 def blend_brain_weights(
     live_weights: dict,
     hist_weights: dict,
