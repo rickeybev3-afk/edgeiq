@@ -4857,7 +4857,7 @@ def watchlist_refresh(midday: bool = False):
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
-            change_min_pct=3.0,
+            change_min_pct=2.0,
             float_max_m=100.0,
             price_min=PRICE_MIN,
             price_max=PRICE_MAX,
@@ -4958,7 +4958,7 @@ def watchlist_refresh(midday: bool = False):
                     f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
                     f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze · "
                     f"{len(gap_down_tickers)} gap-down)\n"
-                    f"Gap: ≥3% chg · Float ≤100M · ${PRICE_MIN:.0f}–${PRICE_MAX:.0f}\n"
+                    f"Gap: ≥2% chg · Float ≤100M · ${PRICE_MIN:.0f}–${PRICE_MAX:.0f}\n"
                     f"Trend: ≥1% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
                     f"Squeeze: Short float ≥15% · Float ≤50M · ≥1% chg\n"
                     f"{_gd_line}"
