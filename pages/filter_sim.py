@@ -564,6 +564,28 @@ st.caption(
     f"**{s3['n']:,}-signal live-filter set**. Use 'Max trades / day' below to set your concurrency."
 )
 
+# ── Bot Mode toggle ────────────────────────────────────────────────────────────
+_bm_col, _bm_info = st.columns([1, 3])
+with _bm_col:
+    bot_mode = st.toggle(
+        "🤖 Live Bot Mode",
+        value=True,
+        key="fs_bot_mode",
+        help=(
+            "When ON: uses the exact live-bot sizing rules — 2.1% of equity per trade, "
+            "$4,000 hard cap, and P-tier multipliers (P3 morning TCS≥70 → 1.50×, "
+            "P1 intraday TCS≥70 → 1.25×, P2 baseline → 1.00×). "
+            "When OFF: use the manual sizing controls below."
+        ),
+    )
+with _bm_info:
+    if bot_mode:
+        st.info(
+            "**Bot Mode ON** — 2.1% of equity / trade · $4,000 hard cap · "
+            "P3 morning TCS≥70 → 1.50× · P1 intraday TCS≥70 → 1.25× · P2 → 1.00×  "
+            "*(matches live paper_trader_bot.py exactly)*"
+        )
+
 # ── Primary sizing inputs (plain English) ─────────────────────────────────────
 _r1c1, _r1c2, _r1c3, _r1c4 = st.columns([1.2, 1.2, 1, 1])
 with _r1c1:
@@ -731,7 +753,15 @@ else:
 
     # ── Simulation ─────────────────────────────────────────────────────────────
     _start_eq = float(pnl_equity)
-    COMPOUND_CAP = 20.0  # same cap used in the main backtest engine
+    COMPOUND_CAP   = 20.0   # used only in non-bot-mode paths
+    BOT_RISK_PCT   = 0.021  # 2.1% of equity (live bot)
+    BOT_RISK_CAP   = 4000.0 # $4,000 hard cap (matches 20× projection model ceiling)
+    # P-tier multipliers (live bot — paper_trader_bot.py)
+    PTIER_MORNING_HIGH = 1.50  # P3: morning + TCS ≥ 70
+    PTIER_INTRA_HIGH   = 1.25  # P1: intraday + TCS ≥ 70
+    PTIER_BASELINE     = 1.00  # P2/P4: everything else
+    PTIER_TCS_FLOOR    = 70.0
+
     eq   = _start_eq
     curve = [eq]
     peak  = eq
@@ -739,10 +769,29 @@ else:
     max_dd_dollar = 0.0
     drawdown_pcts = [0.0]
     cap_hit = False
+    ptier_counts  = {"P3": 0, "P1": 0, "P2": 0}
 
     for trade in sorted_trades:
         r_val = trade.get("pnl_r_sim") or 0.0
-        if pnl_fixed_risk is not None:
+        if bot_mode:
+            # ── Live bot: 2.1% of current equity, $4k hard cap, P-tier mult ──
+            base_risk = min(eq * BOT_RISK_PCT, BOT_RISK_CAP)
+            if base_risk >= BOT_RISK_CAP:
+                cap_hit = True
+            tcs_val   = float(trade.get("tcs") or 50)
+            scan      = (trade.get("scan_type") or "").lower()
+            is_morning = "morning" in scan or scan == "gap"
+            if tcs_val >= PTIER_TCS_FLOOR and is_morning:
+                ptier_mult = PTIER_MORNING_HIGH
+                ptier_counts["P3"] += 1
+            elif tcs_val >= PTIER_TCS_FLOOR:
+                ptier_mult = PTIER_INTRA_HIGH
+                ptier_counts["P1"] += 1
+            else:
+                ptier_mult = PTIER_BASELINE
+                ptier_counts["P2"] += 1
+            risk_amt = base_risk * ptier_mult
+        elif pnl_fixed_risk is not None:
             if pnl_pos_compound:
                 compound_factor = min(eq / _start_eq, COMPOUND_CAP)
                 if compound_factor >= COMPOUND_CAP:
@@ -799,7 +848,13 @@ else:
         )
 
     # ── Cap-hit notice ─────────────────────────────────────────────────────────
-    if cap_hit:
+    if bot_mode and cap_hit:
+        st.info(
+            "ℹ️ **$4,000/trade cap reached** — bot stopped scaling risk once "
+            "account equity crossed ~**$190,000** (2.1% × $190k = $4k). "
+            "Above that, gains still compound but the per-trade dollar risk stays flat at $4k × P-tier."
+        )
+    elif cap_hit:
         st.info(
             f"ℹ️ Position size capped at **{int(COMPOUND_CAP)}× starting risk** "
             f"(same guardrail used in the main backtest engine). "
@@ -818,14 +873,36 @@ else:
               delta=f"{max_dd_pct:.1f}% from peak")
     m4.metric("Avg $ / Trade",   fmt_money(avg_trade_amt),
               delta=f"{s3['exp']:+.3f}R avg")
-    if pnl_fixed_risk is not None:
+    if bot_mode:
+        _r_label = "2.1% of equity · $4k cap"
+        _r_delta  = "P-tier mult applied"
+    elif pnl_fixed_risk is not None:
         _compound_note = " (compounding)" if pnl_pos_compound else ""
         _r_label = f"1R = {fmt_money(pnl_fixed_risk)}{_compound_note}"
+        _r_delta  = None
     elif cap_hit:
         _r_label = f"1R = {pnl_risk_pct}% of equity (capped {int(COMPOUND_CAP)}×)"
+        _r_delta  = None
     else:
         _r_label = f"1R = {pnl_risk_pct}% of equity"
-    m5.metric("Risk per trade",  _r_label, delta=None)
+        _r_delta  = None
+    m5.metric("Risk per trade", _r_label, delta=_r_delta)
+
+    # ── P-tier breakdown (bot mode only) ───────────────────────────────────────
+    if bot_mode and sum(ptier_counts.values()) > 0:
+        _total_pt = sum(ptier_counts.values())
+        _p3_pct = ptier_counts["P3"] / _total_pt * 100
+        _p1_pct = ptier_counts["P1"] / _total_pt * 100
+        _p2_pct = ptier_counts["P2"] / _total_pt * 100
+        st.markdown(
+            f"<div style='font-size:12px;color:#546e7a;margin-bottom:6px;'>"
+            f"P-tier breakdown: "
+            f"<span style='color:#80cbc4;font-weight:600;'>P3 {ptier_counts['P3']:,} ({_p3_pct:.0f}%)</span> morning TCS≥70 ×1.50 &nbsp;·&nbsp; "
+            f"<span style='color:#9fa8da;font-weight:600;'>P1 {ptier_counts['P1']:,} ({_p1_pct:.0f}%)</span> intraday TCS≥70 ×1.25 &nbsp;·&nbsp; "
+            f"<span style='color:#546e7a;font-weight:600;'>P2 {ptier_counts['P2']:,} ({_p2_pct:.0f}%)</span> baseline ×1.00"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     # ── Equity curve chart ─────────────────────────────────────────────────────
     fig_eq = go.Figure()
@@ -878,7 +955,9 @@ else:
         )
         st.plotly_chart(fig_dd, use_container_width=True)
 
-    if pnl_fixed_risk is not None:
+    if bot_mode:
+        sizing_label = "2.1% of equity / trade · $4,000 hard cap · P-tier mult (live bot logic)"
+    elif pnl_fixed_risk is not None:
         _cmp_sfx = " (compounding)" if pnl_pos_compound else ""
         sizing_label = f"${pnl_fixed_risk:,}/trade fixed risk{_cmp_sfx}"
     else:
