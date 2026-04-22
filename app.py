@@ -24638,6 +24638,23 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     _p3_cur.get("tcs_intraday_min", 35),
                 ))
                 st.caption(f"Will set TCS floor to **{_p3_preview_tcs}**")
+                _P3_TCS_WARN_THRESHOLD = 5
+                _p3_combo_baseline_tcs = None
+                try:
+                    _p3_raw_baseline = _p3_summary.get("tcs_intraday_min")
+                    if _p3_raw_baseline is not None:
+                        _p3_combo_baseline_tcs = int(_p3_raw_baseline)
+                except (TypeError, ValueError):
+                    _p3_combo_baseline_tcs = None
+                if _p3_combo_baseline_tcs is not None:
+                    _p3_tcs_diff = _p3_preview_tcs - _p3_combo_baseline_tcs
+                    if abs(_p3_tcs_diff) > _P3_TCS_WARN_THRESHOLD:
+                        _p3_diff_sign = f"+{_p3_tcs_diff}" if _p3_tcs_diff > 0 else str(_p3_tcs_diff)
+                        st.warning(
+                            f"This combo was optimised with a TCS baseline of **{_p3_combo_baseline_tcs}** "
+                            f"(slider is **{_p3_diff_sign}** from that). "
+                            "Applied performance may differ from backtest results."
+                        )
             with _p3_info_col:
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
