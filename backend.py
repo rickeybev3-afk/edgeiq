@@ -7024,16 +7024,20 @@ def place_alpaca_bracket_order(
             }
 
         # ── Step 3: submit OCO bracket now that the position is open ──────────
+        # Alpaca OCO format: parent IS the limit (take-profit) leg; stop-loss is
+        # a nested child.  The "take_profit" key is bracket/OTO syntax — using it
+        # inside an OCO payload causes a 422 rejection.  The take-profit price
+        # must live at the top level as "limit_price".
         oco_side    = "sell" if side == "buy" else "buy"
         oco_payload = {
             "symbol":        ticker.upper(),
             "qty":           str(qty),
             "side":          oco_side,
             "type":          "limit",
+            "limit_price":   str(target),
             "time_in_force": "gtc",
             "order_class":   "oco",
             "stop_loss":     {"stop_price": str(stop)},
-            "take_profit":   {"limit_price": str(target)},
         }
         try:
             oco_resp = requests.post(

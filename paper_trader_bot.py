@@ -7601,15 +7601,19 @@ def _alpaca_place_oco_exit(
         "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
         "Content-Type":        "application/json",
     }
+    # Alpaca OCO format: parent IS the limit (take-profit) leg, so "limit_price"
+    # must be at the top level.  The "take_profit" nested key is bracket/OTO
+    # syntax; including it in an OCO payload causes a 422 rejection from Alpaca.
+    # Using "gtc" so exit orders survive overnight / across sessions.
     payload = {
-        "symbol":       ticker.upper(),
-        "qty":          str(abs(int(qty))),
-        "side":         exit_side,
-        "type":         "limit",
-        "time_in_force": "day",
-        "order_class":  "oco",
-        "take_profit":  {"limit_price": str(round(tp_price, 2))},
-        "stop_loss":    {"stop_price":  str(round(stop_price, 2))},
+        "symbol":        ticker.upper(),
+        "qty":           str(abs(int(qty))),
+        "side":          exit_side,
+        "type":          "limit",
+        "limit_price":   str(round(tp_price, 2)),
+        "time_in_force": "gtc",
+        "order_class":   "oco",
+        "stop_loss":     {"stop_price": str(round(stop_price, 2))},
     }
     try:
         r = _req.post(
