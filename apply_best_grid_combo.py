@@ -1,5 +1,5 @@
 """apply_best_grid_combo.py — Parse Phase 3 grid search results and auto-apply best combo
-to filter_config.json while always preserving tcs_intraday_min.
+to filter_config.json while preserving ALL existing keys not in the grid-derived set.
 
 Usage:
     python3 apply_best_grid_combo.py                # uses default paths
@@ -10,18 +10,14 @@ Usage:
 Selection logic:
     1. Read filter_grid_top100.json (sorted by Sharpe) — pick highest Sharpe with N>=min_n
     2. Fall back to filter_grid_summary.json best_combo if top100 is empty
-    3. If no qualifying combo exists, preserve current filter_config.json unchanged
-       and exit with code 0 (non-fatal — this is expected when the grid is too sparse)
+    3. If no qualifying combo: preserve current filter_config.json unchanged (exit 0)
 
-Preserves from existing filter_config.json:
-    - tcs_intraday_min   (intraday TCS floor — set independently)
-    - drawdown_lookback_n / drawdown_warning_r / drawdown_critical_r (risk management)
-
-Applies from best combo:
-    - tcs_offset, rvol_min, gap_min, gap_direction, follow_min_pct, struct_filter,
-      struct_tokens, struct_label, excl_false_break, scan_type, screener,
-      vwap_position, ib_size, mfe_min, mae_max, rvol_cap, day_of_week,
-      pm_range_floor, pm_ib_dir
+Merge semantics:
+    - Load existing filter_config.json first
+    - Apply ONLY the grid-derived keys on top (tcs_offset, rvol_min, gap_min, etc.)
+    - ALL other existing keys are preserved verbatim (tcs_intraday_min, drawdown_*,
+      applied_at, source_*, _note fields, custom user keys, etc.)
+    - This ensures no existing configuration is accidentally lost on apply
 """
 
 from __future__ import annotations
@@ -32,16 +28,40 @@ import json
 import os
 import sys
 
-TOP100_PATH  = os.path.join(os.path.dirname(__file__), "filter_grid_top100.json")
-SUMMARY_PATH = os.path.join(os.path.dirname(__file__), "filter_grid_summary.json")
-CONFIG_PATH  = os.path.join(os.path.dirname(__file__), "filter_config.json")
+TOP100_PATH  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_top100.json")
+SUMMARY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_grid_summary.json")
+CONFIG_PATH  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_config.json")
 
-# Keys to always preserve from the existing config (user-managed, not grid-search derived)
-_PRESERVE_KEYS = {
-    "tcs_intraday_min",
-    "drawdown_lookback_n",
-    "drawdown_warning_r",
-    "drawdown_critical_r",
+# Keys that are derived from the grid search best combo and overwritten on apply.
+# Every OTHER key in filter_config.json is preserved verbatim.
+_GRID_DERIVED_KEYS = {
+    "tcs_offset",
+    "rvol_min",
+    "gap_min",
+    "gap_direction",
+    "follow_min_pct",
+    "struct_filter",
+    "struct_tokens",
+    "struct_label",
+    "excl_false_break",
+    "scan_type",
+    "screener",
+    "vwap_position",
+    "ib_size",
+    "mfe_min",
+    "mae_max",
+    "rvol_cap",
+    "day_of_week",
+    "pm_range_floor",
+    "pm_ib_dir",
+    # Apply metadata (overwritten on each apply)
+    "applied_at",
+    "applied_from",
+    "source_phase",
+    "source_combo_rank",
+    "source_sharpe",
+    "source_weekly_expectancy_r",
+    "source_n_trades",
 }
 
 
@@ -61,9 +81,9 @@ def _load_existing_config() -> dict:
     return cfg if isinstance(cfg, dict) else {}
 
 
-def _build_new_config(combo: dict, existing: dict, source_label: str) -> dict:
-    """Merge combo into a new filter_config dict, preserving _PRESERVE_KEYS from existing."""
-    cfg = {
+def _grid_values_from_combo(combo: dict, source_label: str, rank: int) -> dict:
+    """Extract ONLY the grid-derived keys from a combo dict."""
+    return {
         "tcs_offset":       int(combo.get("tcs_offset", 0)),
         "rvol_min":         float(combo.get("rvol_min", 0.0)),
         "gap_min":          float(combo.get("gap_min", 0.0)),
@@ -85,105 +105,91 @@ def _build_new_config(combo: dict, existing: dict, source_label: str) -> dict:
         "pm_ib_dir":        combo.get("pm_ib_dir", "any"),
         "applied_at":       datetime.datetime.utcnow().isoformat() + "Z",
         "applied_from":     source_label,
+        "source_phase":     3,
+        "source_combo_rank": rank,
         "source_sharpe":    combo.get("sharpe"),
-        "source_n_trades":  combo.get("n_trades"),
         "source_weekly_expectancy_r": combo.get("weekly_expectancy_r"),
+        "source_n_trades":  combo.get("n_trades"),
     }
 
-    # Preserve user-managed keys
-    for key in _PRESERVE_KEYS:
-        if key in existing:
-            cfg[key] = existing[key]
 
-    # Default tcs_intraday_min to 35 if not already set
-    if "tcs_intraday_min" not in cfg:
-        cfg["tcs_intraday_min"] = 35
-
-    return cfg
-
-
-def select_best_combo(top100: list | None, summary: dict | None, min_n: int, min_sharpe: float) -> tuple[dict | None, str]:
-    """Select the best combo from available sources. Returns (combo_dict, source_label)."""
-    # 1. Try top100 (already sorted by Sharpe descending from grid search)
+def select_best_combo(
+    top100: list | None, summary: dict | None, min_n: int, min_sharpe: float
+) -> tuple[dict | None, str, int]:
+    """Select the best combo. Returns (combo_dict, source_label, rank_1indexed)."""
     if top100 and isinstance(top100, list):
-        for combo in top100:
-            n = combo.get("n_trades", 0)
-            sharpe = combo.get("sharpe", 0)
-            if n >= min_n and sharpe >= min_sharpe:
-                rank = top100.index(combo) + 1
-                return combo, f"filter_grid_top100.json rank={rank}"
+        for i, combo in enumerate(top100):
+            if combo.get("n_trades", 0) >= min_n and combo.get("sharpe", 0) >= min_sharpe:
+                return combo, TOP100_PATH, i + 1
 
-    # 2. Try summary best_combo (non-lookahead)
     if summary and isinstance(summary, dict):
         best = summary.get("best_combo")
         if best and isinstance(best, dict):
-            n = best.get("n_trades", 0)
-            sharpe = best.get("sharpe", 0)
-            if n >= min_n and sharpe >= min_sharpe:
-                return best, "filter_grid_summary.json best_combo"
+            if best.get("n_trades", 0) >= min_n and best.get("sharpe", 0) >= min_sharpe:
+                return best, SUMMARY_PATH + " best_combo", 1
 
-    return None, ""
+    return None, "", 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Auto-apply best Phase 3 grid combo to filter_config.json")
-    parser.add_argument("--dry-run",    action="store_true", help="Print what would be written without writing")
-    parser.add_argument("--min-n",      type=int,   default=30,  help="Minimum trade count (default: 30)")
-    parser.add_argument("--min-sharpe", type=float, default=2.0, help="Minimum Sharpe ratio (default: 2.0)")
+    parser = argparse.ArgumentParser(
+        description="Auto-apply best Phase 3 grid combo to filter_config.json"
+    )
+    parser.add_argument("--dry-run",    action="store_true", help="Print without writing")
+    parser.add_argument("--min-n",      type=int,   default=30,  help="Min trade count (default: 30)")
+    parser.add_argument("--min-sharpe", type=float, default=2.0, help="Min Sharpe (default: 2.0)")
     args = parser.parse_args()
 
-    top100  = _load_json(TOP100_PATH)
-    summary = _load_json(SUMMARY_PATH)
+    top100   = _load_json(TOP100_PATH)
+    summary  = _load_json(SUMMARY_PATH)
     existing = _load_existing_config()
 
-    combo, source = select_best_combo(
-        top100  = top100  if isinstance(top100,  list) else None,
-        summary = summary if isinstance(summary, dict) else None,
-        min_n   = args.min_n,
+    combo, source, rank = select_best_combo(
+        top100     = top100  if isinstance(top100,  list) else None,
+        summary    = summary if isinstance(summary, dict) else None,
+        min_n      = args.min_n,
         min_sharpe = args.min_sharpe,
     )
 
     if combo is None:
         print(
-            f"[apply_best_grid_combo] No qualifying combo found "
-            f"(min_n={args.min_n}, min_sharpe={args.min_sharpe}). "
-            f"filter_config.json unchanged."
+            f"[apply_best_grid_combo] No qualifying combo (min_n={args.min_n}, "
+            f"min_sharpe={args.min_sharpe}). filter_config.json unchanged."
         )
-        # Still ensure tcs_intraday_min is present in existing config
+        # Ensure tcs_intraday_min default is present even without a new combo
         if "tcs_intraday_min" not in existing:
-            existing["tcs_intraday_min"] = 35
+            merged = dict(existing)
+            merged["tcs_intraday_min"] = 35
             if not args.dry_run:
                 with open(CONFIG_PATH, "w") as f:
-                    json.dump(existing, f, indent=2)
-                print("[apply_best_grid_combo] Added tcs_intraday_min=35 to existing config.")
+                    json.dump(merged, f, indent=2)
+                print("[apply_best_grid_combo] Added default tcs_intraday_min=35.")
             else:
-                print("[apply_best_grid_combo] DRY-RUN: would add tcs_intraday_min=35 to existing config.")
+                print("[apply_best_grid_combo] DRY-RUN: would add tcs_intraday_min=35.")
         return 0
 
-    new_cfg = _build_new_config(combo, existing, source)
+    # Merge: start from existing config, update ONLY grid-derived keys
+    merged = dict(existing)
+    grid_vals = _grid_values_from_combo(combo, source, rank)
+    merged.update(grid_vals)
 
     print(
-        f"[apply_best_grid_combo] Best combo selected from {source}:\n"
+        f"[apply_best_grid_combo] Best combo — source: {source} rank #{rank}\n"
         f"  structures : {combo.get('struct_label', '?')}\n"
         f"  tcs_offset : +{combo.get('tcs_offset', 0)}\n"
-        f"  gap_min    : {combo.get('gap_min', 0)}%\n"
-        f"  gap_dir    : {combo.get('gap_direction', 'any')}\n"
+        f"  gap_min    : {combo.get('gap_min', 0)}%  gap_dir: {combo.get('gap_direction', 'any')}\n"
         f"  scan_type  : {combo.get('scan_type', 'any')}\n"
-        f"  n_trades   : {combo.get('n_trades', '?')}\n"
-        f"  sharpe     : {combo.get('sharpe', '?')}\n"
-        f"  win_rate   : {combo.get('win_rate', '?')}%\n"
-        f"  avg_r      : {combo.get('avg_r', '?')}\n"
-        f"  Preserved  : tcs_intraday_min={new_cfg.get('tcs_intraday_min', 35)} "
-        f"(user-managed, not overwritten)"
+        f"  n_trades   : {combo.get('n_trades','?')}  sharpe: {combo.get('sharpe','?')}  WR: {combo.get('win_rate','?')}%\n"
+        f"  Preserved (not overwritten): {sorted(set(existing.keys()) - _GRID_DERIVED_KEYS)}"
     )
 
     if args.dry_run:
         print("\n[apply_best_grid_combo] DRY-RUN — would write:")
-        print(json.dumps(new_cfg, indent=2))
+        print(json.dumps(merged, indent=2))
         return 0
 
     with open(CONFIG_PATH, "w") as f:
-        json.dump(new_cfg, f, indent=2)
+        json.dump(merged, f, indent=2)
 
     print(f"[apply_best_grid_combo] filter_config.json updated from {source}.")
     return 0
