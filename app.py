@@ -24976,7 +24976,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
             except Exception:
                 pass
         _p3_warn_cur = max(1, min(20, _p3_warn_cur))
-        _p3_warn_col, _p3_warn_btn_col = st.columns([4, 1])
+        _p3_warn_col, _p3_warn_btn_col, _p3_warn_reset_col = st.columns([4, 1, 1])
         with _p3_warn_col:
             _p3_warn_new_val = st.number_input(
                 "Warning threshold (±TCS points)",
@@ -24990,6 +24990,9 @@ Measures how accurately the 7-structure framework classified those days in hinds
         with _p3_warn_btn_col:
             st.markdown("&nbsp;", unsafe_allow_html=True)
             _p3_warn_save_btn = st.button("💾 Save", key="p3_tcs_warn_save_btn", type="primary")
+        with _p3_warn_reset_col:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            _p3_warn_reset_btn = st.button("↺ Reset (±5)", key="p3_tcs_warn_reset_btn")
         st.caption(f"Current threshold: **±{_p3_warn_cur}**. Warning fires when slider diverges from combo baseline by more than this many TCS points.")
         if _p3_warn_save_btn:
             _p3_warn_cfg = {}
@@ -25006,6 +25009,21 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.success(f"Warning threshold saved as ±{int(_p3_warn_new_val)} — applies immediately to all combos.")
             except Exception as _p3_warn_ex:
                 st.error(f"Failed to write filter_config.json: {_p3_warn_ex}")
+        if _p3_warn_reset_btn:
+            _p3_warn_reset_cfg = {}
+            if _p3_os.path.exists(_P3_CFG):
+                try:
+                    with open(_P3_CFG) as _f:
+                        _p3_warn_reset_cfg = _p3_json.load(_f)
+                except Exception:
+                    pass
+            _p3_warn_reset_cfg["tcs_warn_threshold"] = 5
+            try:
+                with open(_P3_CFG, "w") as _f:
+                    _p3_json.dump(_p3_warn_reset_cfg, _f, indent=2)
+                st.rerun()
+            except Exception as _p3_warn_reset_ex:
+                st.error(f"Failed to reset threshold: {_p3_warn_reset_ex}")
 
         # ── Dimension summary panel ───────────────────────────────────────────
         _p3_dim_summary = {}
