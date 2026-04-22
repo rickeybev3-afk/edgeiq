@@ -635,8 +635,9 @@ def _compute_trade_notional() -> float:
 #   P3: Morning  TCS≥70   → +6.102R / 79.7% WR  (67/yr  — NEVER miss)
 #   P1: Intraday TCS≥70   → +3.715R / 89.8% WR  (631/yr)
 #   P2: Intraday TCS50-69 → +1.265R / 74.8% WR  (979/yr — take with 1.0× size)
-#   P4: Morning  TCS60-69 → +0.366R / 36.9% WR  (203/yr — marginal but +EV)
-#   BLOCKED: Morning TCS<60 → negative expectancy (do not trade)
+#   P4: Morning  TCS55-69 → +0.366R / 36.9% WR  (203/yr — marginal but +EV)
+#          ↑ floor lowered 60→55 (Task #2036): TCS 55-59 morning = 85.4% WR / 882 trades
+#   BLOCKED: Morning TCS<55 → negative expectancy (do not trade; floor via filter_config)
 _TIER_EXPECTED_R = {
     "P3": 6.102,
     "P1": 3.715,
@@ -645,9 +646,11 @@ _TIER_EXPECTED_R = {
 }
 
 # ── Morning-scan TCS floor ──────────────────────────────────────────────────────
-# 5-yr data: morning TCS 60-69 → +0.366R / 36.9% WR on 203 trades/yr (+$111K/yr at $1500R).
-# Morning TCS 50-59 → +0.386R / 42.8% WR but only 217/yr and collapses in weak regimes.
-# Morning TCS<60 is net negative expectancy — hard block.
+# Env var default stays 60 for backward compat. filter_config.json morning_tcs_min
+# overrides this value at the gate in _place_order_for_setup (Task #2036, 2026-04-22).
+# Hist (backtest_sim_runs, 5-yr): morning TCS 55-59 = 85.4% WR / 882 trades.
+#   TCS 55: 83.5% / 321 | TCS 56: 85.4% / 137 | TCS 57: 90.7% / 194 | TCS 58: 83.4% / 229
+# Morning TCS 60-69 → +0.366R / 36.9% WR (203/yr) — positive, take it.
 # Intraday TCS 50-59 → +1.265R / 74.8% WR (979/yr, +$1.86M/yr) — allowed via MIN_TCS.
 MORNING_TCS_FLOOR = int(os.environ.get("MORNING_TCS_FLOOR", "60"))
 
@@ -1595,20 +1598,31 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
                     return "skipped:entry_already_triggered"
 
     # ── Morning TCS floor ─────────────────────────────────────────────────────
-    # 5-yr data: Morning TCS<60 → net negative expectancy across all structures.
+    # Default (env var MORNING_TCS_FLOOR=60) kept for backward compat.
+    # filter_config.json morning_tcs_min overrides the env-var floor when present.
+    # Hist (backtest_sim_runs, 5-yr): morning TCS 55-59 = 85.4% WR / 882 trades
+    #   TCS 55: 83.5% WR / 321 trades | TCS 56: 85.4% / 137 | TCS 57: 90.7% / 194
+    #   TCS 58: 83.4% / 229 — all above 75% threshold, unlocked 2026-04-22 (Task #2036).
     # Morning TCS 60-69 → +0.366R / 36.9% WR (203/yr) — positive, take it.
     # Intraday TCS 50-59 handled by MIN_TCS + per-structure floor (not blocked here).
     _tcs_val     = float(r.get("tcs", 0))
     _scan_type_v = (r.get("scan_type") or scan_label or "").lower()
-    if _scan_type_v == "morning" and _tcs_val < MORNING_TCS_FLOOR:
+    _effective_morning_floor = MORNING_TCS_FLOOR
+    try:
+        _flt_morning = _load_filter_config()
+        if "morning_tcs_min" in _flt_morning:
+            _effective_morning_floor = int(_flt_morning["morning_tcs_min"])
+    except Exception:
+        pass
+    if _scan_type_v == "morning" and _tcs_val < _effective_morning_floor:
         log.info(
-            f"  [{_ticker_raw}] skip order — morning TCS {_tcs_val:.0f} < floor {MORNING_TCS_FLOOR} "
-            f"(hist: negative expectancy below TCS {MORNING_TCS_FLOOR})"
+            f"  [{_ticker_raw}] skip order — morning TCS {_tcs_val:.0f} < floor {_effective_morning_floor} "
+            f"(hist: negative expectancy below TCS {_effective_morning_floor})"
         )
         tg_send(
             f"⛔ <b>{_ticker_raw} Blocked — Morning TCS too low</b>\n"
-            f"TCS <b>{_tcs_val:.0f}</b> < floor <b>{MORNING_TCS_FLOOR}</b>\n"
-            f"Morning TCS &lt;{MORNING_TCS_FLOOR} hist: negative expectancy — skipping"
+            f"TCS <b>{_tcs_val:.0f}</b> < floor <b>{_effective_morning_floor}</b>\n"
+            f"Morning TCS &lt;{_effective_morning_floor} hist: negative expectancy — skipping"
         )
         _patch_skip_reason(r, _ticker_raw, "morning_tcs_below_floor")
         return "skipped:morning_tcs_below_floor"  # (*) own Telegram already sent above
@@ -8179,7 +8193,7 @@ def main():
 
     _flt_startup = _load_filter_config()
     _intraday_tcs_startup = int(_flt_startup.get("tcs_intraday_min", MIN_TCS))
-    _morning_tcs_startup  = MORNING_TCS_FLOOR
+    _morning_tcs_startup  = int(_flt_startup.get("morning_tcs_min", MORNING_TCS_FLOOR))
     log.info(
         f"Watching {len(TICKERS)} tickers | feed: {FEED.upper()} | "
         f"TCS floors → morning ≥ {_morning_tcs_startup} | intraday ≥ {_intraday_tcs_startup} "
