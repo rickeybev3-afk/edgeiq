@@ -5059,6 +5059,24 @@ def watchlist_refresh(midday: bool = False):
     _PASS4_PRICE_MIN       = PRICE_MIN   # Pass 4 price floor — mirrors global PRICE_MIN
     _PASS4_PRICE_MAX       = PRICE_MAX   # Pass 4 price ceiling — mirrors global PRICE_MAX
     _PASS4_AVG_VOL_MIN_K   = 500    # Pass 4 avg-volume floor (thousands)
+
+    # Maps numeric short-float thresholds → Finviz filter codes (sh_short_o{N}).
+    # Add entries here whenever Finviz introduces a new breakpoint.
+    _SHORT_FLOAT_FILTER_MAP: dict[float, str] = {
+        5.0:  "sh_short_o5",
+        10.0: "sh_short_o10",
+        15.0: "sh_short_o15",
+        20.0: "sh_short_o20",
+        25.0: "sh_short_o25",
+        30.0: "sh_short_o30",
+    }
+    _pass3_short_float_filter = _SHORT_FLOAT_FILTER_MAP.get(_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT)
+    if _pass3_short_float_filter is None:
+        raise ValueError(
+            f"No Finviz filter code for short-float threshold "
+            f"{_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT}%. "
+            f"Supported values: {sorted(_SHORT_FLOAT_FILTER_MAP)}"
+        )
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
@@ -5096,7 +5114,7 @@ def watchlist_refresh(midday: bool = False):
             price_max=_PASS3_PRICE_MAX,
             avg_vol_min_k=_PASS3_AVG_VOL_MIN_K,
             max_tickers=50,
-            extra_filters=["sh_short_o15"],  # short float > _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT%
+            extra_filters=[_pass3_short_float_filter],
         )
         log.info(f"Short-squeeze screener: {len(squeeze_tickers)} tickers")
 
