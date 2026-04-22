@@ -140,6 +140,38 @@ if _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT not in _SHORT_FLOAT_FILTER_MAP:
 _USER_PREFS_FILE_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "user_prefs.json")
 _OWNER_USER_ID               = os.getenv("OWNER_USER_ID", "").strip() or "anonymous"
 _DRAWDOWN_ALERT_STATE_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "drawdown_alert_state.json")
+_ORDERGUARD_ALERTS_FILE      = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local", "orderguard_alerts.json")
+_ORDERGUARD_ALERTS_MAX       = 50
+
+
+def _orderguard_append_event(ticker: str, reason: str, timestamp: str) -> None:
+    """Append an OrderGuard block event to .local/orderguard_alerts.json so the
+    dashboard can surface it without requiring Telegram access."""
+    import json as _json
+    import threading as _th
+
+    event = {"ticker": ticker, "reason": reason, "timestamp": timestamp}
+    _lock = getattr(_orderguard_append_event, "_lock", None)
+    if _lock is None:
+        _orderguard_append_event._lock = _th.Lock()
+        _lock = _orderguard_append_event._lock
+    with _lock:
+        try:
+            if os.path.exists(_ORDERGUARD_ALERTS_FILE):
+                with open(_ORDERGUARD_ALERTS_FILE) as _f:
+                    events = _json.load(_f)
+                if not isinstance(events, list):
+                    events = []
+            else:
+                events = []
+            events.append(event)
+            if len(events) > _ORDERGUARD_ALERTS_MAX:
+                events = events[-_ORDERGUARD_ALERTS_MAX:]
+            os.makedirs(os.path.dirname(_ORDERGUARD_ALERTS_FILE), exist_ok=True)
+            with open(_ORDERGUARD_ALERTS_FILE, "w") as _f:
+                _json.dump(events, _f)
+        except Exception as _exc:
+            log.warning("[OrderGuard] could not write alert file: %s", _exc)
 
 # ── IB Context Enrichment toggle ──────────────────────────────────────────────
 # When enabled (IB_CONTEXT_ENABLED=1) the bot fetches the prior day's IB range
@@ -2165,6 +2197,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
                 f"  [{ticker}] [OrderGuard] Telegram alert suppressed "
                 f"(cooldown {ORDERGUARD_ALERT_COOLDOWN}s)"
             )
+        _orderguard_append_event(ticker, "existing open position", _ts)
         return
 
     # ── OrderGuard: skip if there are pending (unfilled) orders for this ticker ─
@@ -2189,6 +2222,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
                 f"  [{ticker}] [OrderGuard] Telegram alert suppressed "
                 f"(cooldown {ORDERGUARD_ALERT_COOLDOWN}s)"
             )
+        _orderguard_append_event(ticker, f"{len(_open_order_ids)} open order(s) already pending", _ts)
         return
 
     result = place_alpaca_bracket_order(

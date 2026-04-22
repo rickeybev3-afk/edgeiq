@@ -264,6 +264,12 @@ interface DbEvent {
   duration_seconds: number | null;
 }
 
+interface OrderGuardAlert {
+  ticker: string;
+  reason: string;
+  timestamp: string;
+}
+
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
@@ -613,6 +619,130 @@ function PdtGatedPanel() {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function OrderGuardAlertsPanel() {
+  const [events, setEvents] = useState<OrderGuardAlert[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/orderguard-alerts");
+        const data = await res.json();
+        if (!cancelled) {
+          setEvents(data.events ?? []);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  if (!loading && events.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        background: "#1e2435",
+        border: "1px solid #2d3748",
+        borderRadius: "10px",
+        padding: "24px",
+        maxWidth: "640px",
+        width: "100%",
+      }}
+    >
+      <h2
+        style={{
+          fontSize: "15px",
+          fontWeight: 700,
+          color: "#cbd5e1",
+          marginBottom: "6px",
+          marginTop: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+        }}
+      >
+        <span>🛡️</span> OrderGuard Alerts
+      </h2>
+      <p
+        style={{
+          fontSize: "13px",
+          color: "#94a3b8",
+          marginBottom: "16px",
+          lineHeight: "1.6",
+          marginTop: 0,
+        }}
+      >
+        Duplicate-entry blocks fired by the bot, newest first. Refreshes every 30 s.
+      </p>
+      {loading && (
+        <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+      )}
+      {!loading && events.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {events.map((ev, i) => (
+            <div
+              key={i}
+              style={{
+                padding: "12px 16px",
+                background: "rgba(251,146,60,0.07)",
+                border: "1px solid #78350f",
+                borderRadius: "8px",
+                fontSize: "13px",
+                color: "#e2e8f0",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                  marginBottom: "6px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: "#f97316",
+                      flexShrink: 0,
+                      boxShadow: "0 0 5px #f97316",
+                    }}
+                  />
+                  <span style={{ fontWeight: 700, color: "#fb923c", fontFamily: "monospace", fontSize: "14px" }}>
+                    {ev.ticker}
+                  </span>
+                </div>
+                <span
+                  style={{
+                    fontSize: "11px",
+                    color: "#94a3b8",
+                    fontFamily: "monospace",
+                  }}
+                >
+                  {ev.timestamp}
+                </span>
+              </div>
+              <div style={{ fontSize: "12px", color: "#94a3b8", paddingLeft: "16px" }}>
+                {ev.reason}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -2457,6 +2587,8 @@ function Home({ health }: { health: HealthState }) {
         <ConfigPanel />
 
         <PdtGatedPanel />
+
+        <OrderGuardAlertsPanel />
 
         <DbEventsPanel />
       </div>

@@ -28,6 +28,8 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 _TRADING_MODE_FILE = "/tmp/trading_mode.json"
 _TRADING_WRITE_SECRET = os.environ.get("DASHBOARD_WRITE_SECRET", "").strip()
 _USER_PREFS_FILE = ".local/user_prefs.json"
+_ORDERGUARD_ALERTS_FILE = ".local/orderguard_alerts.json"
+_ORDERGUARD_ALERTS_MAX = 50
 _OWNER_USER_ID = os.environ.get("OWNER_USER_ID", "").strip() or "anonymous"
 _GRID_SEARCH_ALERT_CONFIG_FILE = ".local/grid_search_alert_config.json"
 _DEFAULT_PAPER_LOOKBACK_DAYS = int(os.environ.get("PAPER_CLOSE_LOOKBACK_DAYS", "60"))
@@ -623,6 +625,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/db-events":
             self._db_events_get()
+            return
+        if path == "/api/orderguard-alerts":
+            self._orderguard_alerts_get()
             return
         if path == "/api/backfill-health":
             self._backfill_health()
@@ -1242,6 +1247,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _db_events_get(self):
         """Return recent DB connectivity outage events as JSON."""
         body = json.dumps({"events": _get_db_events()}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _orderguard_alerts_get(self):
+        """Return recent OrderGuard block events from .local/orderguard_alerts.json."""
+        try:
+            if os.path.exists(_ORDERGUARD_ALERTS_FILE):
+                with open(_ORDERGUARD_ALERTS_FILE) as _f:
+                    events = json.load(_f)
+                if not isinstance(events, list):
+                    events = []
+            else:
+                events = []
+            events = list(reversed(events[-_ORDERGUARD_ALERTS_MAX:]))
+        except Exception:
+            events = []
+        body = json.dumps({"events": events}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
