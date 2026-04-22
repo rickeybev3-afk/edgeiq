@@ -24606,6 +24606,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         pass
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
+                               f"TCS floor\u2265{_p3_cur.get('tcs_intraday_min', 35)} · "
                                f"source: {_p3_cur.get('applied_from','?')}")
             if _p3_apply:
                 _p3_new_cfg = {
@@ -24641,6 +24642,49 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     st.success("filter_config.json updated with Phase 3 best combo.")
                 except Exception as _p3_ex:
                     st.error(f"Failed to write config: {_p3_ex}")
+
+
+        # ── TCS Intraday Floor slider (Phase 3) ──────────────────────────────
+        st.divider()
+        st.markdown("\U0001f39a TCS Intraday Floor")
+        _p3_tcs_cur_val = 35
+        if _p3_os.path.exists(_P3_CFG):
+            try:
+                with open(_P3_CFG) as _f:
+                    _p3_tcs_cur_val = int(_p3_json.load(_f).get("tcs_intraday_min", 35))
+            except Exception:
+                pass
+        _p3_tcs_cur_val = max(30, min(55, _p3_tcs_cur_val))
+        _p3_tcs_slider_col, _p3_tcs_btn_col = st.columns([4, 1])
+        with _p3_tcs_slider_col:
+            _p3_tcs_new_val = st.slider(
+                "Intraday TCS floor (tcs_intraday_min)",
+                min_value=30,
+                max_value=55,
+                value=_p3_tcs_cur_val,
+                step=1,
+                key="p3_tcs_intraday_min_slider",
+                help="Minimum TCS score required for intraday scan entries (range 30\u201355). The live-session floor (TCS\u226570) is never overridden. The bot hot-reloads filter_config.json \u2014 no restart needed.",
+            )
+        with _p3_tcs_btn_col:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            _p3_tcs_save_btn = st.button("\U0001f4be Save", key="p3_tcs_floor_save_btn", type="primary")
+        st.caption(f"Current value: **{_p3_tcs_cur_val}**. Bot hot-reloads filter_config.json on mtime change \u2014 no restart needed.")
+        if _p3_tcs_save_btn:
+            _p3_tcs_cfg = {}
+            if _p3_os.path.exists(_P3_CFG):
+                try:
+                    with open(_P3_CFG) as _f:
+                        _p3_tcs_cfg = _p3_json.load(_f)
+                except Exception:
+                    pass
+            _p3_tcs_cfg["tcs_intraday_min"] = _p3_tcs_new_val
+            try:
+                with open(_P3_CFG, "w") as _f:
+                    _p3_json.dump(_p3_tcs_cfg, _f, indent=2)
+                st.success(f"TCS intraday floor saved as {_p3_tcs_new_val} \u2014 bot will pick it up on the next scan.")
+            except Exception as _p3_tcs_ex:
+                st.error(f"Failed to write filter_config.json: {_p3_tcs_ex}")
 
         # ── Dimension summary panel ───────────────────────────────────────────
         _p3_dim_summary = {}
