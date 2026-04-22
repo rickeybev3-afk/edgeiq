@@ -225,6 +225,83 @@ def _determine_win_loss(predicted: str, actual_outcome: str) -> str:
     return "Win" if win else "Loss"
 
 
+# ── Squeeze-specific win/loss price override ──────────────────────────────────
+
+def _squeeze_tiered_sentinel(
+    is_squeeze: bool,
+    tiered_pnl_r: float | None,
+    eod_pnl_r: float | None,
+) -> float | None:
+    """Fall back to eod_pnl_r when tiered_pnl_r is the intraday-stop sentinel.
+
+    Volatile squeeze stocks can trigger an intraday stop-hit (-1R) that
+    contradicts a profitable EOD close.  The close-based R (eod_pnl_r) is the
+    more reliable anchor so tiered is replaced when:
+      - is_squeeze is True
+      - tiered_pnl_r is not None and is negative
+      - eod_pnl_r is not None and is positive
+
+    Returns the (possibly updated) tiered_pnl_r.
+    """
+    if (
+        is_squeeze
+        and tiered_pnl_r is not None and tiered_pnl_r < 0
+        and eod_pnl_r is not None and eod_pnl_r > 0
+    ):
+        return eod_pnl_r
+    return tiered_pnl_r
+
+
+def _squeeze_win_loss_override(
+    screener_pass: str | None,
+    predicted: str,
+    close_price: float | None,
+    ib_high: float,
+    ib_low: float,
+    win_loss: str,
+) -> str:
+    """Apply squeeze price-based win/loss override and return updated win_loss.
+
+    For squeeze screener trades the predicted direction (how the bot traded) is
+    used together with close-vs-stop/target price comparison, replacing the
+    default prediction-vs-outcome matching.
+
+    Bullish (predicted="Bullish Break"): entry=ib_high, stop=ib_low, target=entry+2R
+      close <= stop  → Loss
+      close >= target → Win
+      else            → win_loss unchanged
+
+    Bearish (predicted="Bearish Break"): entry=ib_low, stop=ib_high, target=entry-2R
+      close >= stop  → Loss
+      close <= target → Win
+      else            → win_loss unchanged
+
+    Rows whose screener_pass is not "squeeze" or whose close_price is None are
+    returned unchanged.
+    """
+    if (screener_pass or "").strip().lower() != "squeeze" or close_price is None:
+        return win_loss
+
+    _ib_rng = ib_high - ib_low
+    if predicted == "Bullish Break":
+        _sq_entry  = ib_high
+        _sq_stop   = ib_low
+        _sq_target = _sq_entry + 2.0 * _ib_rng
+        if close_price <= _sq_stop:
+            win_loss = "Loss"
+        elif close_price >= _sq_target:
+            win_loss = "Win"
+    elif predicted == "Bearish Break":
+        _sq_entry  = ib_low
+        _sq_stop   = ib_high
+        _sq_target = _sq_entry - 2.0 * _ib_rng
+        if close_price >= _sq_stop:
+            win_loss = "Loss"
+        elif close_price <= _sq_target:
+            win_loss = "Win"
+    return win_loss
+
+
 # ── Outcome classification from post-IB bars ──────────────────────────────────
 
 def _classify_outcome(aft_df, ib_high: float, ib_low: float) -> tuple:
@@ -662,27 +739,10 @@ def backfill_pending(
                 # Squeeze stocks often briefly cross one IB boundary then reverse —
                 # actual_outcome classification of that boundary is irrelevant to PnL;
                 # what matters is whether the trade direction's stop or target was reached.
-                # Bullish (predicted="Bullish Break"): close <= ib_low → Loss; close >= target → Win
-                # Bearish (predicted="Bearish Break"): close >= ib_high → Loss; close <= target → Win
-                if (screener_pass or "").strip().lower() == "squeeze" and close_price is not None:
-                    _ib_rng = ib_high - ib_low
-                    _sq_pred = predicted  # direction the bot traded
-                    if _sq_pred == "Bullish Break":
-                        _sq_entry  = ib_high
-                        _sq_stop   = ib_low
-                        _sq_target = _sq_entry + 2.0 * _ib_rng
-                        if close_price <= _sq_stop:
-                            win_loss = "Loss"
-                        elif close_price >= _sq_target:
-                            win_loss = "Win"
-                    elif _sq_pred == "Bearish Break":
-                        _sq_entry  = ib_low
-                        _sq_stop   = ib_high
-                        _sq_target = _sq_entry - 2.0 * _ib_rng
-                        if close_price >= _sq_stop:
-                            win_loss = "Loss"
-                        elif close_price <= _sq_target:
-                            win_loss = "Win"
+                win_loss = _squeeze_win_loss_override(
+                    screener_pass, predicted, close_price,
+                    ib_high, ib_low, win_loss,
+                )
 
                 # ── Build base patch ──────────────────────────────────────────
                 patch: dict = {
@@ -803,10 +863,7 @@ def backfill_pending(
                 # eod_pnl_r is positive, fall back to the real close-based directional R:
                 #   bullish: (close - entry) / (entry - stop) = eod_pnl_r
                 #   bearish: (entry - close) / (stop - entry) = eod_pnl_r
-                if (_is_squeeze
-                        and tiered_pnl_r is not None and tiered_pnl_r < 0
-                        and eod_pnl_r is not None and eod_pnl_r > 0):
-                    tiered_pnl_r = eod_pnl_r
+                tiered_pnl_r = _squeeze_tiered_sentinel(_is_squeeze, tiered_pnl_r, eod_pnl_r)
 
                 # tiered_pnl_r = 0.0 when bars show no entry cross (matches existing behavior)
                 patch["tiered_pnl_r"] = tiered_pnl_r if tiered_pnl_r is not None else 0.0

@@ -115,6 +115,35 @@ ALPACA_SLEEP_S = 0.35   # seconds between Alpaca bar fetches (~171 req/min)
 MAX_ERRORS     = 20     # stop after this many consecutive Alpaca failures
 
 
+# ── Squeeze tiered_pnl_r sentinel fix ─────────────────────────────────────────
+
+def _squeeze_tiered_sentinel(
+    screener_pass: str | None,
+    tiered_pnl_r: float | None,
+    eod_pnl_r: float | None,
+) -> float | None:
+    """Fall back to eod_pnl_r when tiered_pnl_r is the intraday-stop sentinel.
+
+    Volatile squeeze stocks can trigger an intraday stop-hit (-1R from bar-by-bar
+    sim) that contradicts a profitable EOD close.  The close-based R (eod_pnl_r)
+    is the more reliable anchor for calibration so we replace a negative tiered
+    value with the EOD value when:
+      - screener_pass == "squeeze" (case-insensitive, whitespace-stripped)
+      - tiered_pnl_r is not None and is negative
+      - eod_pnl_r is not None and is positive
+
+    Returns the (possibly updated) tiered_pnl_r.  All other rows are returned
+    unchanged.
+    """
+    if (
+        (screener_pass or "").strip().lower() == "squeeze"
+        and tiered_pnl_r is not None and tiered_pnl_r < 0
+        and eod_pnl_r is not None and eod_pnl_r > 0
+    ):
+        return eod_pnl_r
+    return tiered_pnl_r
+
+
 # ── User discovery ─────────────────────────────────────────────────────────────
 
 def discover_user_ids() -> list[str]:
@@ -429,12 +458,11 @@ def backfill_user(user_id: str, dry_run: bool, rate_limit: bool) -> dict:
             # an intraday stop-hit (-1R from bar-by-bar sim) that contradicts a
             # profitable EOD close.  Fall back to eod_pnl_r (real close-based R) when
             # tiered is negative but EOD is positive so calibration uses clean data.
-            if ((screener_pass or "").strip().lower() == "squeeze"
-                    and tiered_pnl_r is not None and tiered_pnl_r < 0
-                    and eod_pnl_r is not None and eod_pnl_r > 0):
-                print(f"squeeze sentinel override: tiered={tiered_pnl_r:+.4f} → eod={eod_pnl_r:+.4f}  ",
+            _tiered_before = tiered_pnl_r
+            tiered_pnl_r = _squeeze_tiered_sentinel(screener_pass, tiered_pnl_r, eod_pnl_r)
+            if tiered_pnl_r != _tiered_before:
+                print(f"squeeze sentinel override: tiered={_tiered_before:+.4f} → eod={tiered_pnl_r:+.4f}  ",
                       end="", flush=True)
-                tiered_pnl_r = eod_pnl_r
 
             if tiered_pnl_r is None:
                 print("no entry cross — tiered stays NULL (matches live path)")
