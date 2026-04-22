@@ -4990,17 +4990,22 @@ def watchlist_refresh(midday: bool = False):
     """9:35 AM ET (or 11:45 AM midday) — pull today's movers from Finviz, save to Supabase.
 
     Runs FOUR screener passes and merges them:
-      Pass 1 — Gap-of-day plays: ≥2% change · Float ≤100M · $1–$20
+      Pass 1 — Gap-of-day plays: ≥_PASS1_GAP_MIN_PCT% change · Float ≤_PASS1_FLOAT_MAX_M M
+               · $_PASS1_PRICE_MIN–$_PASS1_PRICE_MAX · Avg vol ≥_PASS1_AVG_VOL_MIN_K K
                Catches high-momentum small-float catalysts.
-      Pass 2 — Trend continuation plays: ≥_PASS2_TREND_MIN_PCT% chg · Float ≤500M · $5–$50
-               Above 20-day AND 50-day SMA · Avg vol ≥2M
+      Pass 2 — Trend continuation plays: ≥_PASS2_TREND_MIN_PCT% chg · Float ≤_PASS2_FLOAT_MAX_M M
+               · $_PASS2_PRICE_MIN–$_PASS2_PRICE_MAX · Avg vol ≥_PASS2_AVG_VOL_MIN_K K
+               Above 20-day AND 50-day SMA
                Catches institutional-quality stocks extending multi-week trends.
                These produce cleaner Bullish/Bearish Break IB structure vs
                gap-and-stall small-floats that tend to read as Neutral/Ntrl Extreme.
-      Pass 3 — Short squeeze candidates: Short float ≥_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT% · Float ≤50M · ≥1% chg
+      Pass 3 — Short squeeze candidates: Short float ≥_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT%
+               · Float ≤_PASS3_FLOAT_MAX_M M · ≥_PASS3_CHANGE_MIN_PCT% chg
+               · $_PASS3_PRICE_MIN–$_PASS3_PRICE_MAX · Avg vol ≥_PASS3_AVG_VOL_MIN_K K
                High short interest + low float = covering pressure amplifies IB breaks.
                These are layered behind gap/trend fills; capped at 30 tickers.
-      Pass 4 — Gap-down plays: ≤-3% change · $1–$50 · avg vol ≥500K
+      Pass 4 — Gap-down plays: ≤_PASS4_CHANGE_MAX_PCT% change · $_PASS4_PRICE_MIN–$_PASS4_PRICE_MAX
+               · Avg vol ≥_PASS4_AVG_VOL_MIN_K K
                Bearish Break universe — tickers gapping down with structure.
                Only these tickers qualify for Bearish Break bracket orders.
 
@@ -5022,17 +5027,34 @@ def watchlist_refresh(midday: bool = False):
     log.info("=" * 60)
     log.info("WATCHLIST REFRESH — fetching from Finviz (gap + trend + squeeze + gap-down passes)")
     log.info("=" * 60)
-    _PASS1_GAP_MIN_PCT = 2.0    # Pass 1 gap-of-day threshold — shown in Telegram message
-    _PASS2_TREND_MIN_PCT = 1.0  # Pass 2 trend-continuation change threshold — shown in Telegram message
+    _PASS1_GAP_MIN_PCT     = 2.0    # Pass 1 gap-of-day change threshold — shown in Telegram message
+    _PASS1_FLOAT_MAX_M     = 100.0  # Pass 1 float cap (millions)
+    _PASS1_PRICE_MIN       = PRICE_MIN   # Pass 1 price floor — mirrors global PRICE_MIN
+    _PASS1_PRICE_MAX       = PRICE_MAX   # Pass 1 price ceiling — mirrors global PRICE_MAX
+    _PASS1_AVG_VOL_MIN_K   = 1000   # Pass 1 avg-volume floor (thousands)
+    _PASS2_TREND_MIN_PCT   = 1.0    # Pass 2 trend-continuation change threshold — shown in Telegram message
+    _PASS2_FLOAT_MAX_M     = 500.0  # Pass 2 float cap (millions)
+    _PASS2_PRICE_MIN       = 5.0    # Pass 2 price floor
+    _PASS2_PRICE_MAX       = 50.0   # Pass 2 price ceiling
+    _PASS2_AVG_VOL_MIN_K   = 2000   # Pass 2 avg-volume floor (thousands)
     _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = 15.0  # Pass 3 short-float threshold — shown in Telegram message
+    _PASS3_CHANGE_MIN_PCT  = 1.0    # Pass 3 minimum change threshold
+    _PASS3_FLOAT_MAX_M     = 50.0   # Pass 3 float cap (millions)
+    _PASS3_PRICE_MIN       = 1.0    # Pass 3 price floor
+    _PASS3_PRICE_MAX       = 50.0   # Pass 3 price ceiling
+    _PASS3_AVG_VOL_MIN_K   = 500    # Pass 3 avg-volume floor (thousands)
+    _PASS4_CHANGE_MAX_PCT  = -3.0   # Pass 4 gap-down change ceiling (negative)
+    _PASS4_PRICE_MIN       = PRICE_MIN   # Pass 4 price floor — mirrors global PRICE_MIN
+    _PASS4_PRICE_MAX       = PRICE_MAX   # Pass 4 price ceiling — mirrors global PRICE_MAX
+    _PASS4_AVG_VOL_MIN_K   = 500    # Pass 4 avg-volume floor (thousands)
     try:
         # ── Pass 1: gap-of-day ────────────────────────────────────────────────
         gap_tickers = fetch_finviz_watchlist(
             change_min_pct=_PASS1_GAP_MIN_PCT,
-            float_max_m=100.0,
-            price_min=PRICE_MIN,
-            price_max=PRICE_MAX,
-            avg_vol_min_k=1000,
+            float_max_m=_PASS1_FLOAT_MAX_M,
+            price_min=_PASS1_PRICE_MIN,
+            price_max=_PASS1_PRICE_MAX,
+            avg_vol_min_k=_PASS1_AVG_VOL_MIN_K,
             max_tickers=100,
         )
         log.info(f"Gap-of-day screener: {len(gap_tickers)} tickers")
@@ -5042,10 +5064,10 @@ def watchlist_refresh(midday: bool = False):
         # and more Bullish Break / Bearish Break outcomes vs gap-and-stall noise.
         trend_tickers = fetch_finviz_watchlist(
             change_min_pct=_PASS2_TREND_MIN_PCT,
-            float_max_m=500.0,
-            price_min=5.0,
-            price_max=50.0,
-            avg_vol_min_k=2000,
+            float_max_m=_PASS2_FLOAT_MAX_M,
+            price_min=_PASS2_PRICE_MIN,
+            price_max=_PASS2_PRICE_MAX,
+            avg_vol_min_k=_PASS2_AVG_VOL_MIN_K,
             max_tickers=100,
             extra_filters=["ta_sma20_pa", "ta_sma50_pa"],
         )
@@ -5056,11 +5078,11 @@ def watchlist_refresh(midday: bool = False):
         # covering pressure amplifies IB breakouts. When a heavily shorted stock clears IB high,
         # shorts are forced to cover into the move on top of buyer demand.
         squeeze_tickers = fetch_finviz_watchlist(
-            change_min_pct=1.0,
-            float_max_m=50.0,
-            price_min=1.0,
-            price_max=50.0,
-            avg_vol_min_k=500,
+            change_min_pct=_PASS3_CHANGE_MIN_PCT,
+            float_max_m=_PASS3_FLOAT_MAX_M,
+            price_min=_PASS3_PRICE_MIN,
+            price_max=_PASS3_PRICE_MAX,
+            avg_vol_min_k=_PASS3_AVG_VOL_MIN_K,
             max_tickers=50,
             extra_filters=["sh_short_o15"],  # short float > _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT%
         )
@@ -5072,10 +5094,10 @@ def watchlist_refresh(midday: bool = False):
         # universe produces 40% WR on Bearish Break (below random).  Gap-down
         # stocks with IB structure breaking below IB low are the intended target.
         gap_down_tickers = fetch_gap_down_watchlist(
-            change_max_pct=-3.0,
-            price_min=PRICE_MIN,
-            price_max=PRICE_MAX,
-            avg_vol_min_k=500,
+            change_max_pct=_PASS4_CHANGE_MAX_PCT,
+            price_min=_PASS4_PRICE_MIN,
+            price_max=_PASS4_PRICE_MAX,
+            avg_vol_min_k=_PASS4_AVG_VOL_MIN_K,
             max_tickers=60,
         )
         log.info(f"Gap-down screener (Bearish Break universe): {len(gap_down_tickers)} tickers")
@@ -5121,7 +5143,9 @@ def watchlist_refresh(midday: bool = False):
                 )
                 _scan_note = "Midday refresh complete." if midday else "Morning scan at 10:47 AM ET..."
                 _gd_line = (
-                    f"Gap-Down: ≤-3% chg · $1–${PRICE_MAX:.0f} · vol ≥500K ({len(gap_down_tickers)} tickers)\n"
+                    f"Gap-Down: ≤{_PASS4_CHANGE_MAX_PCT:.0f}% chg · "
+                    f"${_PASS4_PRICE_MIN:.0f}–${_PASS4_PRICE_MAX:.0f} · "
+                    f"vol ≥{_PASS4_AVG_VOL_MIN_K}K ({len(gap_down_tickers)} tickers)\n"
                     if gap_down_tickers else ""
                 )
                 tg_send(
@@ -5129,9 +5153,13 @@ def watchlist_refresh(midday: bool = False):
                     f"<b>{len(merged)} tickers</b> ({len(gap_tickers)} gap-of-day · "
                     f"{len(trend_tickers)} trend · {len(squeeze_tickers)} squeeze · "
                     f"{len(gap_down_tickers)} gap-down)\n"
-                    f"Gap ≥{_PASS1_GAP_MIN_PCT:.1f}%: Float ≤100M · ${PRICE_MIN:.0f}–${PRICE_MAX:.0f}\n"
-                    f"Trend: ≥{_PASS2_TREND_MIN_PCT:.0f}% chg · Float ≤500M · $5–$50 · Above 20+50 SMA\n"
-                    f"Squeeze: Short float ≥{_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT:.0f}% · Float ≤50M · ≥1% chg\n"
+                    f"Gap ≥{_PASS1_GAP_MIN_PCT:.1f}%: Float ≤{_PASS1_FLOAT_MAX_M:.0f}M · "
+                    f"${_PASS1_PRICE_MIN:.0f}–${_PASS1_PRICE_MAX:.0f} · vol ≥{_PASS1_AVG_VOL_MIN_K}K\n"
+                    f"Trend: ≥{_PASS2_TREND_MIN_PCT:.0f}% chg · Float ≤{_PASS2_FLOAT_MAX_M:.0f}M · "
+                    f"${_PASS2_PRICE_MIN:.0f}–${_PASS2_PRICE_MAX:.0f} · vol ≥{_PASS2_AVG_VOL_MIN_K}K · Above 20+50 SMA\n"
+                    f"Squeeze: Short float ≥{_PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT:.0f}% · "
+                    f"Float ≤{_PASS3_FLOAT_MAX_M:.0f}M · ≥{_PASS3_CHANGE_MIN_PCT:.0f}% chg · "
+                    f"${_PASS3_PRICE_MIN:.0f}–${_PASS3_PRICE_MAX:.0f} · vol ≥{_PASS3_AVG_VOL_MIN_K}K\n"
                     f"{_gd_line}"
                     f"{_scan_note}"
                 )
