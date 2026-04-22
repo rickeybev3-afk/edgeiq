@@ -8588,6 +8588,16 @@ def main():
                         f"[EODCancel] Cancelled {cancelled} open order(s) — "
                         "no orphan brackets remain before market close"
                     )
+                    _cancel_date = now_et.strftime("%Y-%m-%d")
+                    _cancel_msg = (
+                        f"🚫 <b>EdgeIQ EOD Cancel — {_cancel_date}</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⚠️ <b>{cancelled} open order(s)</b> were cancelled at the "
+                        f"3:35 PM EOD sweep.\n"
+                        f"These were orphan bracket legs that did not fill before "
+                        f"market close and have been removed from the Alpaca ledger."
+                    )
+                    tg_send(_cancel_msg)
                 if errors:
                     log.warning(f"[EODCancel] {errors} order(s) could not be cancelled")
                 if not cancelled and not errors:
