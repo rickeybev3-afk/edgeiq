@@ -3552,6 +3552,7 @@ def _force_close_all_positions() -> None:
 
     closed   = []
     failed   = []
+    cancelled_bracket_orders: dict[str, int] = {}
 
     def _close_one(ticker: str) -> bool:
         """Cancel any bracket orders then close via DELETE /v2/positions/{symbol}.
@@ -3569,6 +3570,7 @@ def _force_close_all_positions() -> None:
         )
         if cancelled:
             log.info(f"[ForceClose] {ticker}: cancelled {cancelled} bracket orders before close-out")
+            cancelled_bracket_orders[ticker] = cancelled
         _time.sleep(1)
 
         for _attempt in range(3):
@@ -3755,6 +3757,13 @@ def _force_close_all_positions() -> None:
 
         if failed:
             lines.append(f"⚠️ Failed after retry: {', '.join(sorted(set(failed)))} — check manually")
+
+        if cancelled_bracket_orders:
+            for _sym, _n in sorted(cancelled_bracket_orders.items()):
+                _order_word = "order" if _n == 1 else "orders"
+                lines.append(
+                    f"⚠️ {_sym}: {_n} bracket {_order_word} cancelled at force-close — review bracket setup"
+                )
 
         if trade_summaries:
             total_r       = sum(t["pnl_r"] for t in trade_summaries if t["pnl_r"] is not None)
