@@ -24583,6 +24583,22 @@ Measures how accurately the 7-structure framework classified those days in hinds
             except Exception:
                 pass
 
+            _p3_hide_mismatch = st.checkbox(
+                "Hide TCS-mismatched combos (TCS Δ > ±5)",
+                key="p3_hide_tcs_mismatch",
+                help="Hides orange rows — combos evaluated under a different TCS floor than the current slider value.",
+            )
+            if _p3_hide_mismatch and _p3_table_baseline_tcs is not None:
+                def _p3_tcs_delta_int(v):
+                    try:
+                        return abs(int(str(v).replace("+", ""))) if str(v) != "—" else 0
+                    except (ValueError, TypeError):
+                        return 0
+                _p3_df_sorted = _p3_df_sorted[
+                    _p3_df_sorted["TCS Δ"].apply(_p3_tcs_delta_int) <= 5
+                ].reset_index(drop=True)
+                _p3_df_sorted["#"] = range(1, len(_p3_df_sorted) + 1)
+
             st.dataframe(
                 _p3_df_sorted.style.apply(_p3_color, axis=1),
                 use_container_width=True,
@@ -24679,7 +24695,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         _p3_diff_sign = f"+{_p3_tcs_diff}" if _p3_tcs_diff > 0 else str(_p3_tcs_diff)
                         st.warning(
                             f"This combo was optimised with a TCS baseline of **{_p3_combo_baseline_tcs}** "
-                            f"(slider is **{_p3_diff_sign}** from that). "
+                            f"(slider is **{_p3_diff_sign}** from that — warning threshold: ±{_P3_TCS_WARN_THRESHOLD}). "
                             "Applied performance may differ from backtest results."
                         )
             with _p3_info_col:
