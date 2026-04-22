@@ -82,6 +82,16 @@ interface PaperLookbackState {
   saved: boolean;
 }
 
+interface SqueezeThresholdState {
+  pct: number;
+  source: "default" | "override";
+  options: number[];
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
 interface BackfillHeartbeatWindowState {
   hours: number;
   source: "env" | "override";
@@ -580,6 +590,16 @@ export default function Settings() {
     saved: false,
   });
 
+  const [squeezeThreshold, setSqueezeThreshold] = useState<SqueezeThresholdState>({
+    pct: 15,
+    source: "default",
+    options: [5, 10, 15, 20, 25, 30],
+    loading: true,
+    saving: false,
+    error: null,
+    saved: false,
+  });
+
   const [heartbeatWindow, setHeartbeatWindow] = useState<BackfillHeartbeatWindowState>({
     hours: 25,
     source: "env",
@@ -682,6 +702,33 @@ export default function Settings() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : "Could not load look-back window.";
           setPaperLookback((s) => ({ ...s, loading: false, error: msg }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/squeeze-threshold")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setSqueezeThreshold((s) => ({
+            ...s,
+            pct: data.pct,
+            source: data.source === "override" ? "override" : "default",
+            options: Array.isArray(data.options) ? data.options : s.options,
+            loading: false,
+          }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load squeeze threshold.";
+          setSqueezeThreshold((s) => ({ ...s, loading: false, error: msg }));
         }
       });
     return () => { cancelled = true; };
@@ -1279,12 +1326,12 @@ export default function Settings() {
   }
 
   useHashScroll(
-    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history", "#grid-search", "#grid-search-alerts", "#archive-keep"],
+    ["#trading-mode", "#credential-alerts", "#subscriber-opt-out", "#backfill-health", "#context-dryrun", "#paper-lookback", "#squeeze-threshold", "#backfill-heartbeat-window", "#eod-recalc-health", "#rvol-size-tiers", "#tp-calib-history", "#grid-search", "#grid-search-alerts", "#archive-keep"],
     [state.loading, credAlerts.loading, subscribersState.loading, backfillHealth.loading, backfillErrAlerts.loading, recalcZeroAlerts.loading, paperLookback.loading, heartbeatWindow.loading, eodRecalcHealth.loading, rvolTiers.loading, tpCalibHistory.loading, gridSearchAlert.loading, archiveKeep.loading]
   );
 
   useEffect(() => {
-    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history", "grid-search", "grid-search-alerts", "archive-keep"];
+    const sectionIds = ["trading-mode", "credential-alerts", "subscriber-opt-out", "backfill-health", "context-dryrun", "paper-lookback", "squeeze-threshold", "backfill-heartbeat-window", "eod-recalc-health", "rvol-size-tiers", "tp-calib-history", "grid-search", "grid-search-alerts", "archive-keep"];
     const visibleSections = new Set<string>();
 
     const observer = new IntersectionObserver(
@@ -1582,6 +1629,60 @@ export default function Settings() {
     }
   }
 
+  async function handleSqueezeThresholdSave(newPct: number) {
+    setSqueezeThreshold((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/squeeze-threshold", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getWriteHeaders() },
+        body: JSON.stringify({ pct: newPct }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setSqueezeThreshold((s) => ({
+        ...s,
+        pct: data.pct,
+        source: data.source === "override" ? "override" : "default",
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setSqueezeThreshold((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setSqueezeThreshold((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
+  async function handleSqueezeThresholdReset() {
+    setSqueezeThreshold((s) => ({ ...s, saving: true, error: null, saved: false }));
+    try {
+      const res = await fetch("/api/squeeze-threshold", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getWriteHeaders() },
+        body: JSON.stringify({ pct: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setSqueezeThreshold((s) => ({
+        ...s,
+        pct: data.pct,
+        source: "default",
+        saving: false,
+        saved: true,
+      }));
+      setTimeout(() => setSqueezeThreshold((s) => ({ ...s, saved: false })), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setSqueezeThreshold((s) => ({ ...s, saving: false, error: msg }));
+    }
+  }
+
   async function handleArchiveKeepSave() {
     const parsed = parseInt(archiveKeep.draft, 10);
     if (isNaN(parsed) || parsed < 1 || parsed > 500) {
@@ -1825,6 +1926,7 @@ export default function Settings() {
               { id: "backfill-health", label: "Backfill Health" },
               { id: "context-dryrun", label: "Context Dry-Run" },
               { id: "paper-lookback", label: "Paper Lookback" },
+              { id: "squeeze-threshold", label: "Squeeze Threshold" },
               { id: "backfill-heartbeat-window", label: "Alert Window" },
               { id: "eod-recalc-health", label: "EOD Recalc" },
               { id: "rvol-size-tiers", label: "RVOL Tiers" },
@@ -2843,6 +2945,104 @@ export default function Settings() {
           {paperLookback.error && (
             <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
               ⚠ {paperLookback.error}
+            </p>
+          )}
+        </section>
+
+        <section
+          id="squeeze-threshold"
+          style={{
+            background: "#1e2435",
+            border: "1px solid #2d3748",
+            borderRadius: "10px",
+            padding: "24px",
+            scrollMarginTop: "60px",
+            marginTop: "20px",
+          }}
+        >
+          <h2 style={{ fontSize: "15px", fontWeight: 700, color: "#cbd5e1", marginBottom: "6px" }}>
+            Pass 3 Squeeze Threshold
+          </h2>
+          <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "20px", lineHeight: "1.6" }}>
+            Minimum short-float percentage for the Pass 3 short-squeeze screener. Only stocks with
+            at least this share of float sold short will be included in the watchlist. Limited to the
+            breakpoints Finviz supports: 5%, 10%, 15%, 20%, 25%, 30%.
+          </p>
+
+          {squeezeThreshold.loading ? (
+            <p style={{ fontSize: "13px", color: "#64748b" }}>Loading…</p>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  marginBottom: "14px",
+                }}
+              >
+                <select
+                  value={squeezeThreshold.pct}
+                  disabled={squeezeThreshold.saving}
+                  onChange={(e) => handleSqueezeThresholdSave(parseFloat(e.target.value))}
+                  style={{
+                    padding: "8px 12px",
+                    background: "#0e1117",
+                    border: "1px solid #3d4f6b",
+                    borderRadius: "6px",
+                    color: "#f1f5f9",
+                    fontSize: "15px",
+                    fontFamily: "monospace",
+                    outline: "none",
+                    cursor: squeezeThreshold.saving ? "not-allowed" : "pointer",
+                    opacity: squeezeThreshold.saving ? 0.5 : 1,
+                  }}
+                >
+                  {squeezeThreshold.options.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}%
+                    </option>
+                  ))}
+                </select>
+                <span style={{ fontSize: "13px", color: "#64748b" }}>short float</span>
+                {squeezeThreshold.source === "override" && (
+                  <button
+                    onClick={handleSqueezeThresholdReset}
+                    disabled={squeezeThreshold.saving}
+                    style={{
+                      padding: "8px 14px",
+                      background: "transparent",
+                      border: "1px solid #475569",
+                      borderRadius: "6px",
+                      color: "#94a3b8",
+                      fontSize: "13px",
+                      cursor: squeezeThreshold.saving ? "not-allowed" : "pointer",
+                      opacity: squeezeThreshold.saving ? 0.5 : 1,
+                    }}
+                  >
+                    Reset to default (15%)
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: "12px", color: "#475569", margin: 0 }}>
+                {squeezeThreshold.source === "override"
+                  ? `Using a dashboard override (${squeezeThreshold.pct}%). The built-in default (15%) is ignored until reset.`
+                  : "Using the built-in default (15%). Change the dropdown to override it."}
+              </p>
+            </div>
+          )}
+
+          {squeezeThreshold.saving && (
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "14px" }}>Saving…</p>
+          )}
+          {squeezeThreshold.saved && (
+            <p style={{ fontSize: "13px", color: "#4ade80", marginTop: "14px" }}>
+              ✓ Squeeze threshold updated. The next watchlist refresh will use this value.
+            </p>
+          )}
+          {squeezeThreshold.error && (
+            <p style={{ fontSize: "13px", color: "#f87171", marginTop: "14px" }}>
+              ⚠ {squeezeThreshold.error}
             </p>
           )}
         </section>

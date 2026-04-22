@@ -313,6 +313,34 @@ def _get_effective_paper_lookback_days() -> int:
     return PAPER_CLOSE_LOOKBACK_DAYS
 
 
+_SQUEEZE_SHORT_FLOAT_BREAKPOINTS: tuple[float, ...] = (5.0, 10.0, 15.0, 20.0, 25.0, 30.0)
+_SQUEEZE_SHORT_FLOAT_DEFAULT_PCT: float = 15.0
+
+
+def _get_effective_squeeze_short_float_pct() -> float:
+    """Return the active Pass 3 short-float threshold (percent).
+
+    Checks the dashboard prefs store (.local/user_prefs.json, written by
+    deploy_server.py) for a 'squeeze_short_float_pct' override first.
+    Falls back to _SQUEEZE_SHORT_FLOAT_DEFAULT_PCT (15%) when no override
+    is present, the file cannot be read, or the stored value is not a
+    recognised Finviz breakpoint.
+    """
+    try:
+        import json as _json
+        if os.path.exists(_USER_PREFS_FILE_PATH):
+            with open(_USER_PREFS_FILE_PATH) as _f:
+                all_prefs = _json.load(_f)
+            owner_prefs = all_prefs.get(_OWNER_USER_ID, {})
+            if "squeeze_short_float_pct" in owner_prefs:
+                val = float(owner_prefs["squeeze_short_float_pct"])
+                if val in _SQUEEZE_SHORT_FLOAT_BREAKPOINTS:
+                    return val
+    except Exception:
+        pass
+    return _SQUEEZE_SHORT_FLOAT_DEFAULT_PCT
+
+
 # ── Alpaca live execution config ───────────────────────────────────────────────
 # Set LIVE_ORDERS_ENABLED=true in env to actually place orders on Alpaca.
 # IS_PAPER_ALPACA=true  → paper-api.alpaca.markets  (safe, simulated fills)
@@ -5186,6 +5214,7 @@ def watchlist_refresh(midday: bool = False):
     _PASS2_PRICE_MIN       = 5.0    # Pass 2 price floor
     _PASS2_PRICE_MAX       = 50.0   # Pass 2 price ceiling
     _PASS2_AVG_VOL_MIN_K   = 2000   # Pass 2 avg-volume floor (thousands)
+    _PASS3_SQUEEZE_SHORT_FLOAT_MIN_PCT = _get_effective_squeeze_short_float_pct()  # Pass 3 short-float threshold — shown in Telegram message; editable from Settings
     _PASS3_CHANGE_MIN_PCT  = 1.0    # Pass 3 minimum change threshold
     _PASS3_FLOAT_MAX_M     = 50.0   # Pass 3 float cap (millions)
     _PASS3_PRICE_MIN       = 1.0    # Pass 3 price floor

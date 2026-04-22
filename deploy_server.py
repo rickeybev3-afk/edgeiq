@@ -633,6 +633,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/paper-lookback":
             self._paper_lookback_get()
             return
+        if path == "/api/squeeze-threshold":
+            self._squeeze_threshold_get()
+            return
         if path == "/api/eod-sweep":
             self._eod_sweep()
             return
@@ -737,6 +740,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/paper-lookback":
             self._paper_lookback_post()
+            return
+        if path == "/api/squeeze-threshold":
+            self._squeeze_threshold_post()
             return
         if path == "/api/backfill-heartbeat-window":
             self._backfill_heartbeat_window_post()
@@ -1792,6 +1798,132 @@ class Handler(http.server.BaseHTTPRequestHandler):
             prefs["paper_close_lookback_days"] = days
             _save_owner_prefs(prefs)
             body = json.dumps({"days": days, "source": "override"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+    _SQUEEZE_SHORT_FLOAT_BREAKPOINTS = (5.0, 10.0, 15.0, 20.0, 25.0, 30.0)
+    _SQUEEZE_SHORT_FLOAT_DEFAULT_PCT = 15.0
+
+    def _squeeze_threshold_get(self):
+        """Return the effective Pass 3 squeeze short-float threshold (percent).
+
+        Reads squeeze_short_float_pct from owner prefs when set, otherwise
+        returns the default of 15%.
+        Response: {"pct": float, "source": "override"|"default", "options": [5,10,15,20,25,30]}
+        """
+        try:
+            prefs = _load_owner_prefs()
+            if "squeeze_short_float_pct" in prefs:
+                pct = float(prefs["squeeze_short_float_pct"])
+                source = "override"
+            else:
+                pct = self._SQUEEZE_SHORT_FLOAT_DEFAULT_PCT
+                source = "default"
+            body = json.dumps({
+                "pct": pct,
+                "source": source,
+                "options": list(self._SQUEEZE_SHORT_FLOAT_BREAKPOINTS),
+            }).encode()
+            self.send_response(200)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _squeeze_threshold_post(self):
+        """Accept {"pct": float} and persist squeeze_short_float_pct in owner's user prefs.
+
+        pct must be one of the supported Finviz breakpoints: 5, 10, 15, 20, 25, 30.
+        Passing null clears the override and reverts to the default (15%).
+        Requires DASHBOARD_WRITE_SECRET header when the env var is set.
+        """
+        if _TRADING_WRITE_SECRET:
+            client_secret = self.headers.get("X-Dashboard-Secret", "")
+            if client_secret != _TRADING_WRITE_SECRET:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw) if raw else {}
+            if "pct" not in payload:
+                body = json.dumps({"error": "'pct' field is required"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            raw_pct = payload["pct"]
+            if raw_pct is None:
+                prefs = _load_owner_prefs()
+                prefs.pop("squeeze_short_float_pct", None)
+                _save_owner_prefs(prefs)
+                body = json.dumps({
+                    "pct": self._SQUEEZE_SHORT_FLOAT_DEFAULT_PCT,
+                    "source": "default",
+                    "options": list(self._SQUEEZE_SHORT_FLOAT_BREAKPOINTS),
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            try:
+                pct = float(raw_pct)
+            except (TypeError, ValueError):
+                body = json.dumps({"error": "'pct' must be a number"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if pct not in self._SQUEEZE_SHORT_FLOAT_BREAKPOINTS:
+                body = json.dumps({
+                    "error": f"'pct' must be one of {list(self._SQUEEZE_SHORT_FLOAT_BREAKPOINTS)}",
+                }).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            prefs = _load_owner_prefs()
+            prefs["squeeze_short_float_pct"] = pct
+            _save_owner_prefs(prefs)
+            body = json.dumps({
+                "pct": pct,
+                "source": "override",
+                "options": list(self._SQUEEZE_SHORT_FLOAT_BREAKPOINTS),
+            }).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
