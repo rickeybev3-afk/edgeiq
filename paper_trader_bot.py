@@ -2055,7 +2055,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
             f"  [{ticker}] [OrderGuard] skipping order — market is closed ({_now_str}). "
             f"Re-run tomorrow; setup: {direction}"
         )
-        return
+        return "skipped:market_closed"
 
     # Dual-constraint sizing: notional (equity × NOTIONAL_PCT) and risk (2.1% of equity)
     # are both computed live; qty = min(qty_by_risk, qty_by_notional) picks the tighter.
