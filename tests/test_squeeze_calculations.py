@@ -1,6 +1,6 @@
 """Unit tests for squeeze-specific win/loss and R-value calculations.
 
-Covers five bug-fixes / behaviour paths in the squeeze trade pipeline:
+Covers six bug-fixes / behaviour paths in the squeeze trade pipeline:
 
   1. Squeeze win/loss price override (_squeeze_win_loss_override in
      backfill_pending_sim_rows.py):
@@ -28,6 +28,13 @@ Covers five bug-fixes / behaviour paths in the squeeze trade pipeline:
      — Bearish v6: mae >= 1.0 → stopped_out with pnl_r_sim = -1.0.
      — Bearish v6: tight_trail_exit when nearest_support is within 0.3R of entry.
      — Symmetric bullish MFE/MAE cases as positive control.
+
+  6. R values survive apply_rvol_sizing_to_sim (backend.apply_rvol_sizing_to_sim):
+     — Sign of pnl_r_sim is never flipped by the position-size multiplier.
+     — Magnitude of pnl_r_sim is scaled by the correct rvol_size_mult() factor.
+     — pnl_pct_sim is scaled by the same multiplier.
+     — Bypass conditions (None rvol, rvol=0, below-threshold rvol, pnl_r_sim=None)
+       leave the sim dict unmodified.
 
 All sections import the *real* functions from their source modules so
 regressions in production code are caught automatically.
@@ -711,3 +718,206 @@ def test_v6_intraday_mfe_mae_paths(
         f"[{case_id}] direction={direction!r} mfe={mfe} mae={mae} "
         f"→ expected pnl_r_sim={expected_pnl_r}, got {result['pnl_r_sim']}"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. R values survive apply_rvol_sizing_to_sim  (backend.py)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# After compute_trade_sim returns the raw sim dict, fix_backtest_sim_runs pipes
+# it through apply_rvol_sizing_to_sim (fix_squeeze_data.py lines 288-290).
+# These tests confirm that the position-size multiplier never flips the sign of
+# pnl_r_sim and that the magnitude is scaled by exactly rvol_size_mult(rvol).
+#
+# Default RVOL tiers (fallback when adaptive_exits.json is absent):
+#   rvol >= 3.5 → 1.5×
+#   rvol >= 2.5 → 1.25×
+#   below 2.5   → 1.0× (no change)
+
+class TestApplyRvolSizingToSim:
+    """Verify backend.apply_rvol_sizing_to_sim preserves R-value sign and
+    scales magnitude correctly for both bullish and bearish sim results."""
+
+    # ── helper ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_sim(pnl_r, pnl_pct=None, sim_outcome="stopped_out"):
+        return {
+            "pnl_r_sim":   pnl_r,
+            "pnl_pct_sim": pnl_pct,
+            "sim_outcome": sim_outcome,
+        }
+
+    # ── sign preservation ─────────────────────────────────────────────────────
+
+    def test_bearish_stopped_out_negative_sign_preserved(self, real_backend):
+        """Bearish stopped-out pnl_r_sim=-1.0 must remain negative after sizing.
+
+        This is the core invariant: a multiplier > 0 can only scale magnitude,
+        never flip sign.  Uses rvol=2.5 which triggers the 1.25× default tier.
+        """
+        raw = self._make_sim(-1.0, pnl_pct=-0.5)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=2.5)
+        assert result["pnl_r_sim"] < 0, (
+            f"Bearish stopped-out pnl_r_sim must remain negative after rvol sizing; "
+            f"got {result['pnl_r_sim']}"
+        )
+
+    def test_bullish_profitable_positive_sign_preserved(self, real_backend):
+        """Bullish winning pnl_r_sim=+1.5 must remain positive after sizing."""
+        raw = self._make_sim(+1.5, pnl_pct=0.75)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=2.5)
+        assert result["pnl_r_sim"] > 0, (
+            f"Bullish winning pnl_r_sim must remain positive after rvol sizing; "
+            f"got {result['pnl_r_sim']}"
+        )
+
+    def test_bearish_profitable_positive_sign_preserved(self, real_backend):
+        """Bearish profitable trade pnl_r_sim=+2.0 stays positive after sizing."""
+        raw = self._make_sim(+2.0, pnl_pct=1.0, sim_outcome="target_hit")
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=3.5)
+        assert result["pnl_r_sim"] > 0, (
+            f"Bearish profitable pnl_r_sim must remain positive after rvol sizing; "
+            f"got {result['pnl_r_sim']}"
+        )
+
+    def test_bullish_stopped_out_negative_sign_preserved(self, real_backend):
+        """Bullish stopped-out pnl_r_sim=-1.0 stays negative after high rvol sizing."""
+        raw = self._make_sim(-1.0, pnl_pct=-0.48)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=3.5)
+        assert result["pnl_r_sim"] < 0, (
+            f"Bullish stopped-out pnl_r_sim must remain negative after rvol sizing; "
+            f"got {result['pnl_r_sim']}"
+        )
+
+    # ── magnitude scaling ─────────────────────────────────────────────────────
+
+    def test_magnitude_scales_by_rvol_multiplier_bearish_loss(self, real_backend):
+        """pnl_r_sim magnitude is multiplied by rvol_size_mult(rvol_raw).
+
+        Uses dynamic lookup of the multiplier so the test is correct regardless
+        of whether adaptive_exits.json overrides the default tiers.
+        """
+        raw_r = -1.0
+        rvol = 2.5
+        raw = self._make_sim(raw_r)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=rvol)
+        expected_mult = real_backend.rvol_size_mult(rvol)
+        expected_r = round(raw_r * expected_mult, 4)
+        assert result["pnl_r_sim"] == pytest.approx(expected_r), (
+            f"Expected pnl_r_sim={expected_r} (raw={raw_r} × mult={expected_mult}), "
+            f"got {result['pnl_r_sim']}"
+        )
+
+    def test_magnitude_scales_by_rvol_multiplier_bullish_win(self, real_backend):
+        """Bullish winning pnl_r_sim is scaled by the same factor."""
+        raw_r = +1.5
+        rvol = 3.5
+        raw = self._make_sim(raw_r)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=rvol)
+        expected_mult = real_backend.rvol_size_mult(rvol)
+        expected_r = round(raw_r * expected_mult, 4)
+        assert result["pnl_r_sim"] == pytest.approx(expected_r), (
+            f"Expected pnl_r_sim={expected_r} (raw={raw_r} × mult={expected_mult}), "
+            f"got {result['pnl_r_sim']}"
+        )
+
+    def test_pnl_pct_sim_also_scaled_by_same_multiplier(self, real_backend):
+        """pnl_pct_sim is scaled by the same multiplier as pnl_r_sim."""
+        raw_r, raw_pct = -1.0, -0.5
+        rvol = 2.5
+        raw = self._make_sim(raw_r, pnl_pct=raw_pct)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=rvol)
+        mult = real_backend.rvol_size_mult(rvol)
+        expected_pct = round(raw_pct * mult, 4)
+        assert result.get("pnl_pct_sim") == pytest.approx(expected_pct), (
+            f"pnl_pct_sim should be scaled to {expected_pct} "
+            f"(raw={raw_pct} × mult={mult}), got {result.get('pnl_pct_sim')}"
+        )
+
+    def test_rvol_mult_stored_in_result(self, real_backend):
+        """apply_rvol_sizing_to_sim records rvol_mult in the returned dict."""
+        raw = self._make_sim(-1.0)
+        rvol = 2.5
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=rvol)
+        expected_mult = real_backend.rvol_size_mult(rvol)
+        assert result.get("rvol_mult") == pytest.approx(expected_mult), (
+            f"rvol_mult should be {expected_mult}, got {result.get('rvol_mult')}"
+        )
+
+    def test_higher_rvol_produces_larger_loss_magnitude(self, real_backend):
+        """Larger rvol triggers a bigger multiplier, amplifying the loss magnitude.
+
+        Skipped gracefully if the loaded config doesn't differentiate 2.5 vs 3.5.
+        """
+        raw_r = -1.0
+        rvol_low, rvol_high = 2.5, 3.5
+        mult_low = real_backend.rvol_size_mult(rvol_low)
+        mult_high = real_backend.rvol_size_mult(rvol_high)
+        if mult_high <= mult_low:
+            pytest.skip(
+                f"Config does not differentiate rvol={rvol_low} vs {rvol_high} "
+                f"(both → {mult_low}×); skipping magnitude-ordering check."
+            )
+        sim_low = real_backend.apply_rvol_sizing_to_sim(
+            self._make_sim(raw_r), rvol_raw=rvol_low
+        )
+        sim_high = real_backend.apply_rvol_sizing_to_sim(
+            self._make_sim(raw_r), rvol_raw=rvol_high
+        )
+        assert abs(sim_high["pnl_r_sim"]) > abs(sim_low["pnl_r_sim"]), (
+            f"Higher rvol ({rvol_high}) should produce a larger loss magnitude; "
+            f"low={sim_low['pnl_r_sim']}, high={sim_high['pnl_r_sim']}"
+        )
+
+    # ── bypass conditions ─────────────────────────────────────────────────────
+
+    def test_none_rvol_raw_returns_sim_unchanged(self, real_backend):
+        """rvol_raw=None → function returns the original sim dict unmodified."""
+        raw = self._make_sim(-1.0, pnl_pct=-0.5)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=None)
+        assert result["pnl_r_sim"] == pytest.approx(-1.0), (
+            f"rvol_raw=None must leave pnl_r_sim unchanged; got {result['pnl_r_sim']}"
+        )
+        assert result.get("pnl_pct_sim") == pytest.approx(-0.5), (
+            f"rvol_raw=None must leave pnl_pct_sim unchanged; got {result.get('pnl_pct_sim')}"
+        )
+
+    def test_zero_rvol_raw_returns_sim_unchanged(self, real_backend):
+        """rvol_raw=0 (falsy) → function returns the original sim dict unmodified."""
+        raw = self._make_sim(-1.0, pnl_pct=-0.5)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=0)
+        assert result["pnl_r_sim"] == pytest.approx(-1.0), (
+            f"rvol_raw=0 must leave pnl_r_sim unchanged; got {result['pnl_r_sim']}"
+        )
+
+    def test_rvol_below_all_thresholds_unchanged(self, real_backend):
+        """rvol below every configured tier → mult=1.0 → pnl_r_sim unchanged."""
+        raw_r = -1.0
+        rvol = 1.0
+        raw = self._make_sim(raw_r, pnl_pct=-0.5)
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=rvol)
+        mult = real_backend.rvol_size_mult(rvol)
+        if mult == 1.0:
+            assert result["pnl_r_sim"] == pytest.approx(raw_r), (
+                f"rvol={rvol} gives mult=1.0; pnl_r_sim should be unchanged at "
+                f"{raw_r}, got {result['pnl_r_sim']}"
+            )
+        else:
+            assert result["pnl_r_sim"] < 0, (
+                f"Even with non-default tier, sign must stay negative; "
+                f"got {result['pnl_r_sim']}"
+            )
+
+    def test_none_pnl_r_sim_not_modified(self, real_backend):
+        """pnl_r_sim=None (no_trade / missing-data row) is left as None.
+
+        This mirrors the bypass in apply_rvol_sizing_to_sim that guards against
+        None before scaling, ensuring no_trade rows propagate correctly.
+        """
+        raw = self._make_sim(None, sim_outcome="no_trade")
+        result = real_backend.apply_rvol_sizing_to_sim(raw, rvol_raw=2.5)
+        assert result["pnl_r_sim"] is None, (
+            f"pnl_r_sim=None must not be modified by sizing; "
+            f"got {result['pnl_r_sim']}"
+        )
