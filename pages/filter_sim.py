@@ -604,18 +604,14 @@ with _r1c2:
     pnl_pos_size = st.number_input(
         "Trade size ($)", min_value=100, max_value=500_000,
         value=1500, step=100, key="fs_pnl_pos_size",
-        disabled=bot_mode,
-        help="How much you put into each trade (e.g. $1,500). "
-             "Not used in Bot Mode — bot sizes by 2.1% of equity.",
+        help="How much you put into each trade (e.g. $1,500).",
     )
 with _r1c3:
     pnl_stop_pct = st.number_input(
         "Stop loss %", min_value=1.0, max_value=50.0,
         value=10.0, step=0.5, key="fs_pnl_stop_pct",
-        disabled=bot_mode,
         help="How far your stop is from entry, as a % of trade size. "
-             "10% stop on a $1,500 trade = $150 max loss. "
-             "Not used in Bot Mode — bot uses real entry/stop prices.",
+             "10% stop on a $1,500 trade = $150 max loss.",
     )
 with _r1c4:
     pnl_fixed_risk = round(float(pnl_pos_size) * float(pnl_stop_pct) / 100.0, 2)
