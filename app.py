@@ -24638,9 +24638,13 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                f"TCS floor\u2265{_p3_cur.get('tcs_intraday_min', 35)} · "
                                f"source: {_p3_cur.get('applied_from','?')}")
             if _p3_apply:
+                _p3_tcs_apply_val = int(st.session_state.get(
+                    "p3_tcs_intraday_min_slider",
+                    _p3_cur.get("tcs_intraday_min", 35),
+                ))
                 _p3_new_cfg = {
                     "tcs_offset":       _p3_best.get("tcs_offset", 0),
-                    "tcs_intraday_min": int(_p3_cur.get("tcs_intraday_min", 35)),
+                    "tcs_intraday_min": _p3_tcs_apply_val,
                     "rvol_min":         _p3_best.get("rvol_min", 0.0),
                     "gap_min":          _p3_best.get("gap_min", 0.0),
                     "follow_min_pct":   _p3_best.get("follow_min", -999.0),
@@ -24668,7 +24672,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 try:
                     with open(_P3_CFG, "w") as _f:
                         _p3_json.dump(_p3_new_cfg, _f, indent=2)
-                    st.success("filter_config.json updated with Phase 3 best combo.")
+                    st.success(
+                        f"Combo #{_p3_sel_rank} applied \u2014 "
+                        f"TCS floor set to {_p3_tcs_apply_val}."
+                    )
                 except Exception as _p3_ex:
                     st.error(f"Failed to write config: {_p3_ex}")
 
