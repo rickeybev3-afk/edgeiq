@@ -2045,6 +2045,18 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
             f"({_stop_reason})"
         )
 
+    # ── Market-close guard — never place orders outside regular session ───────
+    # Catch-up scans can start within hours but run past 4:00 PM ET.
+    # Check real-time here so no order is submitted after the session ends.
+    _now_for_order = datetime.now(EASTERN)
+    if not _market_is_open(_now_for_order):
+        _now_str = _now_for_order.strftime("%H:%M:%S ET")
+        log.warning(
+            f"  [{ticker}] [OrderGuard] skipping order — market is closed ({_now_str}). "
+            f"Re-run tomorrow; setup: {direction}"
+        )
+        return
+
     # Dual-constraint sizing: notional (equity × NOTIONAL_PCT) and risk (2.1% of equity)
     # are both computed live; qty = min(qty_by_risk, qty_by_notional) picks the tighter.
     # Under $25k the notional cap (~20% of equity) almost always wins over 2.1% risk at
@@ -8142,7 +8154,7 @@ def main():
             _morning_done = True
         if _su_hm >= 11 * 60 + 45:
             _midday_watchlist_done = True
-        if 14 * 60 <= _su_hm < 16 * 60 and not _intraday_done:
+        if 14 * 60 <= _su_hm < 15 * 60 + 30 and not _intraday_done:
             log.info("[Catch-up] Started after 2:00 PM — running intraday scan now...")
             try:
                 intraday_scan()
