@@ -22097,7 +22097,8 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             pass
                     if _fgs_cur_cfg:
                         st.caption(
-                            f"Current config: RVOL≥{_fgs_cur_cfg.get('rvol_min',0)} · "
+                            f"Current config: TCS floor≥{_fgs_cur_cfg.get('tcs_intraday_min',35)} · "
+                            f"RVOL≥{_fgs_cur_cfg.get('rvol_min',0)} · "
                             f"|gap|≥{_fgs_cur_cfg.get('gap_min',0)}% · "
                             f"FT≥{_fgs_cur_cfg.get('follow_min_pct','any')} · "
                             f"struct={_fgs_cur_cfg.get('struct_filter','all')} · "
@@ -22158,6 +22159,48 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 )
             except Exception:
                 pass
+
+        # ── TCS Intraday Floor slider ────────────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("🎚 TCS Intraday Floor")
+        _tcs_cur_val = 35
+        if _fgs_os.path.exists(_FGS_CFG):
+            try:
+                with open(_FGS_CFG) as _f:
+                    _tcs_cur_val = int(_fgs_json.load(_f).get("tcs_intraday_min", 35))
+            except Exception:
+                pass
+        _tcs_cur_val = max(30, min(55, _tcs_cur_val))
+        _tcs_slider_col, _tcs_btn_col = st.columns([4, 1])
+        with _tcs_slider_col:
+            _tcs_new_val = st.slider(
+                "Intraday TCS floor (tcs_intraday_min)",
+                min_value=30,
+                max_value=55,
+                value=_tcs_cur_val,
+                step=1,
+                key="tcs_intraday_min_slider",
+                help="Minimum TCS score required for intraday scan entries (range 30–55). The live-session floor (TCS≥70) is never overridden. The bot hot-reloads filter_config.json — no restart needed.",
+            )
+        with _tcs_btn_col:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            _tcs_save_btn = st.button("💾 Save", key="tcs_floor_save_btn", type="primary")
+        st.caption(f"Current value: **{_tcs_cur_val}**. Bot hot-reloads filter_config.json on mtime change — no restart needed.")
+        if _tcs_save_btn:
+            _tcs_cfg = {}
+            if _fgs_os.path.exists(_FGS_CFG):
+                try:
+                    with open(_FGS_CFG) as _f:
+                        _tcs_cfg = _fgs_json.load(_f)
+                except Exception:
+                    pass
+            _tcs_cfg["tcs_intraday_min"] = _tcs_new_val
+            try:
+                with open(_FGS_CFG, "w") as _f:
+                    _fgs_json.dump(_tcs_cfg, _f, indent=2)
+                st.success(f"TCS intraday floor saved as {_tcs_new_val} — bot will pick it up on the next scan.")
+            except Exception as _tcs_ex:
+                st.error(f"Failed to write filter_config.json: {_tcs_ex}")
 
         # ── Feature Correlation & Interaction Analysis ───────────────────────
         st.divider()
