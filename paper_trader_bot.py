@@ -51,7 +51,7 @@ from datetime import date, datetime
 
 import pytz
 
-from trade_utils import ib_size_mult, p_tier_size_mult
+from trade_utils import ib_size_mult, p_tier_size_mult, sp_size_mult
 
 logging.basicConfig(
     level=logging.INFO,
@@ -673,44 +673,6 @@ def _in_lunch_blackout() -> bool:
     except Exception:
         return False
 
-
-# ── Screener-pass position-size multiplier ─────────────────────────────────
-# Derived from live backtest data (calibrate_sp_mult.py, 2021-2026):
-#   'other'  (< 3% daily change, same screener pool): 87% WR / +0.622R avg → 1.15×
-#   'gap'    (≥ 3% daily change):                      65% WR / +0.327R avg → 1.00×
-#   'trend'  (1-3% + above SMA20/50):                  only 12 trades       → 0.85×
-#   'gap_down' (Bearish Break, ≥3% gap-down universe): calibrated 2026-04-20
-#              via `python calibrate_sp_mult.py --pass gap_down`; 6 settled
-#              gap_down Bearish Break trades in paper_trades — insufficient for
-#              deviation (min 30); 1.00× is the data-confirmed baseline.
-#              Re-run the script once ≥30 gap_down rows have tiered_pnl_r
-#              populated; it will print the exact line to paste here.
-#   'squeeze' (2026-04-21 → 2026-04-22): 36 trades, 88.9% WR / +0.009R avg → 0.70×
-# Applied AFTER IB-range, RVOL and P-tier mults as a final expectancy layer.
-_SP_MULT_TABLE: dict[str, float] = {
-    "other":    1.15,
-    "gap":      1.00,
-    "trend":    0.85,
-    "gap_down": 1.00,   # Bearish Break universe — calibrated 2026-04-20 (6 settled trades, n<30 → baseline confirmed); re-run calibrate_sp_mult.py --pass gap_down once ≥30 settle
-    "squeeze":  0.70,   # 36 trades 2026-04-21 → 2026-04-22, 88.9% WR / +0.009R → 0.70×
-}
-
-_SP_CALIB_DATES: dict[str, str] = {
-    "gap_down": "2026-04-20",
-    "squeeze":  "2026-04-22",
-}
-
-def _sp_size_mult(screener_pass: str | None) -> float:
-    """Return position-size multiplier for a given screener_pass label.
-
-    Derived from live backtest calibration (calibrate_sp_mult.py, 2021-2026).
-    'other' stocks (smaller-move days, tighter IB) consistently outperform
-    'gap' stocks on every metric in every year — 87% vs 65% WR — because
-    smaller gaps produce cleaner, less volatile initial balance structures.
-    'gap_down' (Bearish Break) calibrated 2026-04-20 → 1.00× baseline.
-    Returns 1.0 for unknown / unclassified passes (safe baseline).
-    """
-    return _SP_MULT_TABLE.get((screener_pass or "").lower().strip(), 1.00)
 
 
 # ── RVOL bonus position-size multiplier ────────────────────────────────────
@@ -2061,7 +2023,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
     #   other 87% WR / +0.622R  →  1.15×   gap 65% WR / +0.327R  →  1.00×
     #   trend only 12 trades    →  0.85×   squeeze no data        →  1.00×
     _sp_tag  = _TICKER_SCREENER_PASS.get(ticker) or _TICKER_SCREENER_PASS.get(ticker.upper())
-    _sp_mult = _sp_size_mult(_sp_tag)
+    _sp_mult = sp_size_mult(_sp_tag)
     risk_dollars = round(risk_dollars * _sp_mult, 2)
     if _sp_mult != 1.0:
         log.info(

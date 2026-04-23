@@ -549,9 +549,9 @@ def _check_screener_calibration_due(
         )
         return
 
-    # ── Step 2: read current _SP_MULT_TABLE[screener_key] from paper_trader_bot.py
+    # ── Step 2: read current SP_MULT_TABLE[screener_key] from trade_utils.py
     _bot_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py"
+        os.path.dirname(os.path.abspath(__file__)), "trade_utils.py"
     )
     current_mult: float | None = None
     try:
@@ -563,7 +563,7 @@ def _check_screener_calibration_due(
                     break
     except Exception as _exc:
         log.warning(
-            "Could not read _SP_MULT_TABLE from paper_trader_bot.py: %s", _exc
+            "Could not read SP_MULT_TABLE from trade_utils.py: %s", _exc
         )
         return
 
@@ -880,11 +880,11 @@ def _check_all_uncalibrated_screeners() -> None:
     (at most once per cooldown window) listing all newly stubbed screeners.
     """
     try:
-        import paper_trader_bot as _ptb
-        sp_table: dict[str, float] = _ptb._SP_MULT_TABLE
+        import trade_utils as _tu
+        sp_table: dict[str, float] = _tu.SP_MULT_TABLE
     except Exception as _exc:
         log.warning(
-            "Could not import _SP_MULT_TABLE from paper_trader_bot — "
+            "Could not import SP_MULT_TABLE from trade_utils — "
             "skipping auto calibration checks: %s",
             _exc,
         )

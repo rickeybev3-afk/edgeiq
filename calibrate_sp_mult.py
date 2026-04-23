@@ -7,7 +7,7 @@ Usage:
   python calibrate_sp_mult.py                      # list available passes
   python calibrate_sp_mult.py --pass squeeze        # calibrate the squeeze pass
   python calibrate_sp_mult.py --pass gap_down       # calibrate the gap_down pass
-  python calibrate_sp_mult.py --pass squeeze --apply  # calibrate AND patch paper_trader_bot.py
+  python calibrate_sp_mult.py --pass squeeze --apply  # calibrate AND patch trade_utils.py
   python calibrate_sp_mult.py --reset-pass trend    # reset trend back to 1.00x baseline
   python calibrate_sp_mult.py --restore-bak trend  # undo a reset by restoring the .bak backup
   python calibrate_sp_mult.py --show-reset-log      # print a formatted table of all past resets
@@ -22,8 +22,8 @@ Methodology (mirrors the 5-year backtest used across passes):
   5. Apply a sqrt-dampened ratio so one outlier week can't swing sizing by >+/-30%.
      mult = max(0.70, min(1.30, sqrt(expectancy_pass / expectancy_gap)))
   6. Round to nearest 0.05 for a clean table entry.
-  7. Print a data-citation block ready to paste above _SP_MULT_TABLE.
-     With --apply: patch paper_trader_bot.py directly (backup created first).
+  7. Print a data-citation block ready to paste above SP_MULT_TABLE.
+     With --apply: patch trade_utils.py directly (backup created first).
 
 Requirements:
   SUPABASE_URL, SUPABASE_KEY environment variables must be set (same as main app).
@@ -1346,11 +1346,11 @@ def _restore_from_bak(
     dry_run: bool = False,
     yes: bool = False,
 ) -> None:
-    """Restore paper_trader_bot.py from its .bak backup created by --reset-pass or --apply.
+    """Restore trade_utils.py from its .bak backup created by --reset-pass or --apply.
 
     Steps:
-      1. Locate paper_trader_bot.py.bak (or <bot_path>.bak).
-      2. Verify the backup contains a valid _SP_MULT_TABLE entry for pass_name.
+      1. Locate trade_utils.py.bak (or <bot_path>.bak).
+      2. Verify the backup contains a valid SP_MULT_TABLE entry for pass_name.
       3. Print a unified diff from the current file to the backup.
       4. If dry_run is True:  print a "Dry run" message and exit without writing.
          If dry_run is False and yes is False: prompt for confirmation before writing.
@@ -1379,28 +1379,28 @@ def _restore_from_bak(
         print(f"ERROR: cannot read backup {backup_path} — {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if "_SP_MULT_TABLE" not in backup_content:
+    if "SP_MULT_TABLE" not in backup_content:
         print(
-            f"ERROR: backup file {backup_path} does not contain a _SP_MULT_TABLE entry.\n"
+            f"ERROR: backup file {backup_path} does not contain a SP_MULT_TABLE entry.\n"
             "       This backup may be corrupt or from an incompatible version.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     entry_pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*[\d.]+')
-    table_start = backup_content.find("_SP_MULT_TABLE")
+    table_start = backup_content.find("SP_MULT_TABLE")
     brace_open = backup_content.find("{", table_start)
     brace_close = backup_content.find("}", brace_open)
     if table_start == -1 or brace_open == -1 or brace_close == -1:
         print(
-            f"ERROR: could not locate _SP_MULT_TABLE block in backup {backup_path}.",
+            f"ERROR: could not locate SP_MULT_TABLE block in backup {backup_path}.",
             file=sys.stderr,
         )
         sys.exit(1)
     block = backup_content[brace_open : brace_close + 1]
     if not entry_pat.search(block):
         print(
-            f"ERROR: backup does not contain a valid '{pass_name}' entry in _SP_MULT_TABLE.\n"
+            f"ERROR: backup does not contain a valid '{pass_name}' entry in SP_MULT_TABLE.\n"
             f"       Cannot restore — backup may be for a different pass.",
             file=sys.stderr,
         )
@@ -1410,7 +1410,7 @@ def _restore_from_bak(
     restored_value_str = re.search(r"[\d.]+$", m.group(0)).group(0) if m else "?"
     print(
         f"Restoring '{pass_name}' from backup {backup_path}\n"
-        f"  Backed-up value: _SP_MULT_TABLE['{pass_name}'] = {restored_value_str}"
+        f"  Backed-up value: SP_MULT_TABLE['{pass_name}'] = {restored_value_str}"
     )
 
     try:
@@ -1424,8 +1424,8 @@ def _restore_from_bak(
         difflib.unified_diff(
             current_content.splitlines(keepends=True),
             backup_content.splitlines(keepends=True),
-            fromfile="paper_trader_bot.py (current)",
-            tofile="paper_trader_bot.py (restored from .bak)",
+            fromfile="trade_utils.py (current)",
+            tofile="trade_utils.py (restored from .bak)",
             n=3,
         )
     )
@@ -1462,7 +1462,7 @@ def _restore_from_bak(
 
 
 def _reset_pass_to_baseline(pass_name: str, bot_path: str | None = None) -> None:
-    """Reset _SP_MULT_TABLE[pass_name] to 1.00× baseline in paper_trader_bot.py.
+    """Reset SP_MULT_TABLE[pass_name] to 1.00× baseline in trade_utils.py.
 
     Writes the '0 settled trades as of <today>' stale-warning comment and
     1.00× baseline value, identical to the state before any calibration data
@@ -1493,7 +1493,7 @@ def _reset_pass_to_baseline(pass_name: str, bot_path: str | None = None) -> None
 
 
 def _read_current_mult(pass_name: str, bot_path: str | None = None) -> float | None:
-    """Return the current multiplier for pass_name from paper_trader_bot.py, or None on error."""
+    """Return the current multiplier for pass_name from trade_utils.py, or None on error."""
     path = bot_path if bot_path is not None else _BOT_FILE
     try:
         with open(path) as fh:
@@ -1511,14 +1511,14 @@ def _read_current_mult(pass_name: str, bot_path: str | None = None) -> float | N
 
 
 def _read_calib_date(pass_name: str, bot_path: str | None = None) -> str | None:
-    """Return the calibration date for pass_name from _SP_CALIB_DATES, or None if absent."""
+    """Return the calibration date for pass_name from SP_CALIB_DATES, or None if absent."""
     path = bot_path if bot_path is not None else _BOT_FILE
     try:
         with open(path) as fh:
             content = fh.read()
     except OSError:
         return None
-    calib_start = content.find("_SP_CALIB_DATES")
+    calib_start = content.find("SP_CALIB_DATES")
     if calib_start == -1:
         return None
     cb_open = content.find("{", calib_start)
@@ -1532,14 +1532,14 @@ def _read_calib_date(pass_name: str, bot_path: str | None = None) -> str | None:
 
 
 def _read_inline_comment(pass_name: str, bot_path: str | None = None) -> str | None:
-    """Return the trailing inline comment for pass_name inside _SP_MULT_TABLE, or None."""
+    """Return the trailing inline comment for pass_name inside SP_MULT_TABLE, or None."""
     path = bot_path if bot_path is not None else _BOT_FILE
     try:
         with open(path) as fh:
             content = fh.read()
     except OSError:
         return None
-    table_start = content.find("_SP_MULT_TABLE")
+    table_start = content.find("SP_MULT_TABLE")
     if table_start == -1:
         return None
     brace_open = content.find("{", table_start)
@@ -1565,7 +1565,7 @@ def _list_passes() -> None:
     print("Usage:  python calibrate_sp_mult.py --pass <pass_name>")
 
 
-_BOT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_trader_bot.py")
+_BOT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_utils.py")
 from log_config import _RESET_LOG_PATH as _RESET_LOG_FILE, _RESET_LOG_MAX_BYTES, _RESET_LOG_BACKUP_COUNT  # noqa: E402
 
 
@@ -1676,13 +1676,13 @@ def _apply_to_bot(
     citation_line: str = "",
     bot_path: str = _BOT_FILE,
 ) -> None:
-    """Patch _SP_MULT_TABLE[pass_name] in paper_trader_bot.py in place.
+    """Patch SP_MULT_TABLE[pass_name] in trade_utils.py in place.
 
     Steps:
-      1. Read the file and locate the _SP_MULT_TABLE block.
+      1. Read the file and locate the SP_MULT_TABLE block.
       2. Replace the numeric value and trailing comment for pass_name.
       3. If citation_line is provided, also replace the per-pass comment block
-         above _SP_MULT_TABLE with the fresh citation string.
+         above SP_MULT_TABLE with the fresh citation string.
       4. Write a .bak backup of the original.
       5. Print a unified diff of both changes combined.
       6. Write the patched file.
@@ -1696,15 +1696,15 @@ def _apply_to_bot(
         print(f"ERROR: cannot read {bot_path} — {exc}", file=sys.stderr)
         sys.exit(1)
 
-    table_start = original.find("_SP_MULT_TABLE")
+    table_start = original.find("SP_MULT_TABLE")
     if table_start == -1:
-        print("ERROR: _SP_MULT_TABLE not found in paper_trader_bot.py", file=sys.stderr)
+        print("ERROR: SP_MULT_TABLE not found in trade_utils.py", file=sys.stderr)
         sys.exit(1)
 
     brace_open = original.find("{", table_start)
     brace_close = original.find("}", brace_open)
     if brace_open == -1 or brace_close == -1:
-        print("ERROR: could not locate _SP_MULT_TABLE braces in paper_trader_bot.py", file=sys.stderr)
+        print("ERROR: could not locate SP_MULT_TABLE braces in trade_utils.py", file=sys.stderr)
         sys.exit(1)
 
     block = original[brace_open : brace_close + 1]
@@ -1714,7 +1714,7 @@ def _apply_to_bot(
     )
     if not entry_pat.search(block):
         print(
-            f"ERROR: could not find '{pass_name}' entry inside _SP_MULT_TABLE in paper_trader_bot.py",
+            f"ERROR: could not find '{pass_name}' entry inside SP_MULT_TABLE in trade_utils.py",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1734,10 +1734,10 @@ def _apply_to_bot(
 
     new_content = original[:brace_open] + new_block + original[brace_close + 1 :]
 
-    # Also update _SP_CALIB_DATES[pass_name] with today's date.
+    # Also update SP_CALIB_DATES[pass_name] with today's date.
     import datetime as _dt
     today_str = _dt.date.today().isoformat()
-    _calib_start = new_content.find("_SP_CALIB_DATES")
+    _calib_start = new_content.find("SP_CALIB_DATES")
     if _calib_start != -1:
         _cb_open = new_content.find("{", _calib_start)
         _cb_close = new_content.find("}", _cb_open)
@@ -1759,7 +1759,7 @@ def _apply_to_bot(
             new_content = new_content[:_cb_open] + new_calib_block + new_content[_cb_close + 1 :]
     else:
         print(
-            "WARNING: _SP_CALIB_DATES not found in paper_trader_bot.py"
+            "WARNING: SP_CALIB_DATES not found in trade_utils.py"
             " — calibration date not updated.",
             file=sys.stderr,
         )
@@ -1795,8 +1795,8 @@ def _apply_to_bot(
         difflib.unified_diff(
             original.splitlines(keepends=True),
             new_content.splitlines(keepends=True),
-            fromfile="paper_trader_bot.py (original)",
-            tofile="paper_trader_bot.py (patched)",
+            fromfile="trade_utils.py (original)",
+            tofile="trade_utils.py (patched)",
             n=3,
         )
     )
@@ -1814,7 +1814,7 @@ def _apply_to_bot(
         print(f"The original is preserved in {backup_path}.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\nApplied: _SP_MULT_TABLE['{pass_name}'] = {rec_mult:.2f}")
+    print(f"\nApplied: SP_MULT_TABLE['{pass_name}'] = {rec_mult:.2f}")
 
 
 def main(pass_name: str, apply: bool = False) -> None:
@@ -1854,7 +1854,7 @@ def main(pass_name: str, apply: bool = False) -> None:
             f"\n⛔  Only {tgt['n']} settled {count_label} trades found — "
             f"minimum is {MIN_TRADES}.\n"
             f"    Re-run this script once {MIN_TRADES - tgt['n']} more trades settle.\n"
-            f"    _SP_MULT_TABLE['{pass_name}'] remains at 1.00× (safe baseline)."
+            f"    SP_MULT_TABLE['{pass_name}'] remains at 1.00× (safe baseline)."
         )
         sys.exit(0)
 
@@ -1890,7 +1890,7 @@ def main(pass_name: str, apply: bool = False) -> None:
             date_range = f"{dates[0]} → {dates[-1]}"
 
     print(f"\n{'='*60}")
-    print(f"RECOMMENDATION:  _SP_MULT_TABLE['{pass_name}'] = {rec_mult:.2f}")
+    print(f"RECOMMENDATION:  SP_MULT_TABLE['{pass_name}'] = {rec_mult:.2f}")
     print(f"{'='*60}")
     wr_str = f"{tgt['wr']:.1%}" if tgt["wr"] is not None else "N/A"
 
@@ -1909,7 +1909,7 @@ def main(pass_name: str, apply: bool = False) -> None:
     )
 
     print(
-        f"\nData citation to paste above _SP_MULT_TABLE in paper_trader_bot.py:\n"
+        f"\nData citation to paste above SP_MULT_TABLE in trade_utils.py:\n"
         f"\n"
         f"{citation_line}"
     )
@@ -1932,14 +1932,14 @@ def main(pass_name: str, apply: bool = False) -> None:
 
     if apply:
         print(f"\n{'='*60}")
-        print("Applying change to paper_trader_bot.py  (--apply flag set)")
+        print("Applying change to trade_utils.py  (--apply flag set)")
         print(f"{'='*60}")
         inline_comment = f"{wr_comment} → {rec_mult:.2f}×"
         _apply_to_bot(pass_name, rec_mult, inline_comment, citation_line=citation_line)
         print(f"  To undo this apply, run: python calibrate_sp_mult.py --restore-bak {pass_name}")
     else:
         print(
-            f"\nNext step: manually update paper_trader_bot.py, or re-run with --apply to patch automatically:\n"
+            f"\nNext step: manually update trade_utils.py, or re-run with --apply to patch automatically:\n"
             f"    \"{pass_name}\": {rec_mult:.2f},   "
             f"# {wr_comment}"
         )
@@ -1949,7 +1949,7 @@ if __name__ == "__main__":
     validate_env_config()
 
     parser = argparse.ArgumentParser(
-        description="Calibrate _SP_MULT_TABLE for any screener pass.",
+        description="Calibrate SP_MULT_TABLE in trade_utils.py for any screener pass.",
         add_help=True,
     )
     parser.add_argument(
@@ -1963,7 +1963,7 @@ if __name__ == "__main__":
         dest="reset_pass",
         metavar="PASS",
         help=(
-            "Reset a screener pass back to 1.00\u00d7 baseline in paper_trader_bot.py, "
+            "Reset a screener pass back to 1.00\u00d7 baseline in trade_utils.py, "
             "writing a '0 settled trades as of <today>' stale-warning comment. "
             "Use this when a strategy change invalidates previous calibration data and "
             "you want to start fresh data collection. "
@@ -1975,9 +1975,9 @@ if __name__ == "__main__":
         dest="restore_bak",
         metavar="PASS",
         help=(
-            "Restore paper_trader_bot.py from the .bak backup that was created "
+            "Restore trade_utils.py from the .bak backup that was created "
             "automatically by the last --reset-pass or --apply run. "
-            "Verifies the backup contains a valid _SP_MULT_TABLE entry for the named pass, "
+            "Verifies the backup contains a valid SP_MULT_TABLE entry for the named pass, "
             "prints a diff of what is being restored, then overwrites the current file. "
             f"Available passes: {', '.join(PASS_CONFIG)}"
         ),
@@ -2012,7 +2012,7 @@ if __name__ == "__main__":
         "--apply",
         action="store_true",
         help=(
-            "Patch _SP_MULT_TABLE in paper_trader_bot.py in place. "
+            "Patch SP_MULT_TABLE in trade_utils.py in place. "
             "A .bak backup is created and a diff is printed before writing."
         ),
     )
@@ -2068,7 +2068,7 @@ if __name__ == "__main__":
                 f"\nWARNING: You are about to reset '{args.reset_pass}' to 1.00\u00d7 baseline "
                 f"(current value: {val_str}).\n"
                 f"  Calibration info: {calib_str}\n"
-                f"This will overwrite calibration data in paper_trader_bot.py for this pass.\n"
+                f"This will overwrite calibration data in trade_utils.py for this pass.\n"
                 f"The only recovery path is the .bak backup file.\n"
             )
             try:

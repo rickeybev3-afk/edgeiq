@@ -36143,16 +36143,12 @@ function _bqCopyShareLink() {
         if not _live_resolved.empty and "screener_pass" in _live_resolved.columns:
             _sp_live = _live_resolved.copy()
             _sp_live["screener_pass"] = _sp_live["screener_pass"].fillna("untagged").str.strip().str.lower()
-            try:
-                import paper_trader_bot as _ptb_mod
-                _SP_MULT_LIVE = dict(_ptb_mod._SP_MULT_TABLE)
-            except Exception:
-                _ptb_mod = None  # type: ignore[assignment]
-                _SP_MULT_LIVE = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00, "gap_down": 1.00}
+            import trade_utils as _tu
+            _SP_MULT_LIVE = dict(_tu.SP_MULT_TABLE)
 
             def _read_sp_calib_date(_pass: str) -> "str | None":
                 try:
-                    return _ptb_mod._SP_CALIB_DATES.get(_pass)
+                    return _tu.SP_CALIB_DATES.get(_pass)
                 except Exception:
                     return None
 
