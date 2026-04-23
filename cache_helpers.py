@@ -485,6 +485,77 @@ def _load_screener_pass_grid(uid, start_date=None, end_date=None, by_year=False)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _slp_fetch(_uid):
+    _rows, _off = [], 0
+    while True:
+        _batch = (
+            supabase.table("backtest_sim_runs")
+            .select(
+                "sim_date,predicted,tcs,scan_type,gap_pct,"
+                "entry_price_sim,ib_high,ib_low,pnl_r_sim"
+            )
+            .eq("user_id", _uid)
+            .not_.is_("entry_price_sim", "null")
+            .not_.is_("pnl_r_sim", "null")
+            .range(_off, _off + 999)
+            .execute()
+            .data or []
+        )
+        _rows.extend(_batch)
+        if len(_batch) < 1000:
+            break
+        _off += 1000
+    return _rows
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _ac_fetch(_uid):
+    _rows, _off = [], 0
+    while True:
+        _batch = (
+            supabase.table("backtest_sim_runs")
+            .select(
+                "sim_date,predicted,tcs,gap_pct,scan_type,"
+                "entry_price_sim,ib_high,ib_low,pnl_r_sim"
+            )
+            .eq("user_id", _uid)
+            .not_.is_("entry_price_sim", "null")
+            .not_.is_("pnl_r_sim", "null")
+            .range(_off, _off + 999)
+            .execute()
+            .data or []
+        )
+        _rows.extend(_batch)
+        if len(_batch) < 1000:
+            break
+        _off += 1000
+    return _rows
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _ex_fetch(_uid):
+    _rows, _off = [], 0
+    while True:
+        _batch = (
+            supabase.table("backtest_sim_runs")
+            .select(
+                "sim_date,predicted,tcs,scan_type,"
+                "pnl_r_sim,eod_pnl_r,tiered_pnl_r"
+            )
+            .eq("user_id", _uid)
+            .not_.is_("pnl_r_sim", "null")
+            .range(_off, _off + 999)
+            .execute()
+            .data or []
+        )
+        _rows.extend(_batch)
+        if len(_batch) < 1000:
+            break
+        _off += 1000
+    return _rows
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_tier_screener_pass_data(uid, start_date=None, end_date=None):
     """Paginated fetch of backtest_sim_runs for the per-tier screener-pass table.
 

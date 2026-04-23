@@ -150,6 +150,9 @@ from cache_helpers import (
     _load_ladder_pnl_cache,
     _load_screener_pass_grid,
     _load_tier_screener_pass_data,
+    _slp_fetch,
+    _ac_fetch,
+    _ex_fetch,
 )
 
 
@@ -15114,29 +15117,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
     # ── Entry Slippage Analysis ──────────────────────────────────────────────────
     with st.expander("🔬 Entry Slippage Analysis", expanded=False):
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _slp_fetch(_uid):
-            _rows, _off = [], 0
-            while True:
-                _batch = (
-                    supabase.table("backtest_sim_runs")
-                    .select(
-                        "sim_date,predicted,tcs,scan_type,gap_pct,"
-                        "entry_price_sim,ib_high,ib_low,pnl_r_sim"
-                    )
-                    .eq("user_id", _uid)
-                    .not_.is_("entry_price_sim", "null")
-                    .not_.is_("pnl_r_sim", "null")
-                    .range(_off, _off + 999)
-                    .execute()
-                    .data or []
-                )
-                _rows.extend(_batch)
-                if len(_batch) < 1000:
-                    break
-                _off += 1000
-            return _rows
-
         with st.spinner("Loading slippage data…"):
             _slp_raw = _slp_fetch(_AUTH_USER_ID)
 
@@ -15327,29 +15307,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
     # ── Anti-Chase Threshold Grid ─────────────────────────────────────────────────
     with st.expander("🏃 Anti-Chase Threshold Optimization", expanded=False):
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _ac_fetch(_uid):
-            _rows, _off = [], 0
-            while True:
-                _batch = (
-                    supabase.table("backtest_sim_runs")
-                    .select(
-                        "sim_date,predicted,tcs,gap_pct,scan_type,"
-                        "entry_price_sim,ib_high,ib_low,pnl_r_sim"
-                    )
-                    .eq("user_id", _uid)
-                    .not_.is_("entry_price_sim", "null")
-                    .not_.is_("pnl_r_sim", "null")
-                    .range(_off, _off + 999)
-                    .execute()
-                    .data or []
-                )
-                _rows.extend(_batch)
-                if len(_batch) < 1000:
-                    break
-                _off += 1000
-            return _rows
-
         with st.spinner("Loading anti-chase data…"):
             _ac_raw = _ac_fetch(_AUTH_USER_ID)
 
@@ -15473,28 +15430,6 @@ Measures how accurately the 7-structure framework classified those days in hinds
 
     # ── Exit Strategy Comparison ──────────────────────────────────────────────────
     with st.expander("🚪 Exit Strategy Comparison (Tiered Trail vs EOD Hold)", expanded=False):
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _ex_fetch(_uid):
-            _rows, _off = [], 0
-            while True:
-                _batch = (
-                    supabase.table("backtest_sim_runs")
-                    .select(
-                        "sim_date,predicted,tcs,scan_type,"
-                        "pnl_r_sim,eod_pnl_r,tiered_pnl_r"
-                    )
-                    .eq("user_id", _uid)
-                    .not_.is_("pnl_r_sim", "null")
-                    .range(_off, _off + 999)
-                    .execute()
-                    .data or []
-                )
-                _rows.extend(_batch)
-                if len(_batch) < 1000:
-                    break
-                _off += 1000
-            return _rows
-
         with st.spinner("Loading exit comparison data…"):
             _ex_raw = _ex_fetch(_AUTH_USER_ID)
 
