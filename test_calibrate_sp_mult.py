@@ -765,6 +765,62 @@ class TestResetPassToBaseline:
         finally:
             self._cleanup(tmp)
 
+    def test_reset_squeeze_value_is_1_00(self, csm):
+        """
+        Resetting 'squeeze' (was 1.00 in _APPLY_FIXTURE) writes 1.00 to the table.
+        squeeze has an empty next_step_comment_prefix, so no prefix appears before
+        the baseline phrase in the inline comment.
+        """
+        tmp = self._run_reset(csm, "squeeze")
+        try:
+            got = _read_table_entry(tmp, "squeeze")
+            assert abs(got - 1.00) < 0.001, (
+                f"Expected squeeze=1.00 after reset, got {got:.2f}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_squeeze_stale_inline_comment_present(self, csm):
+        """
+        After resetting 'squeeze', the inline comment is exactly
+        "baseline; recalibrate once >=30 trades settle" (no prefix, since
+        squeeze.next_step_comment_prefix is "").
+        """
+        tmp = self._run_reset(csm, "squeeze")
+        try:
+            inline = csm._read_inline_comment("squeeze", bot_path=tmp)
+            assert inline is not None, (
+                "No inline comment found for 'squeeze' after reset"
+            )
+            assert "baseline; recalibrate once >=30 trades settle" in inline, (
+                f"Stale inline comment not found for 'squeeze' after reset; got: {inline!r}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_idempotent_already_stale_squeeze(self, csm):
+        """
+        squeeze is already at 1.00 with the baseline stale comment in _APPLY_FIXTURE,
+        so re-resetting it is idempotent: the value stays 1.00 and the inline comment
+        "baseline; recalibrate once >=30 trades settle" is preserved after the re-reset.
+        """
+        tmp = self._run_reset(csm, "squeeze", fixture=csm._APPLY_FIXTURE)
+        try:
+            got = _read_table_entry(tmp, "squeeze")
+            assert abs(got - 1.00) < 0.001, (
+                f"Expected squeeze=1.00 after idempotent re-reset, got {got:.2f}"
+            )
+            inline = csm._read_inline_comment("squeeze", bot_path=tmp)
+            assert inline is not None, (
+                "No inline comment found for 'squeeze' after idempotent re-reset"
+            )
+            assert "baseline; recalibrate once >=30 trades settle" in inline, (
+                f"Expected 'baseline; recalibrate once >=30 trades settle' "
+                f"in squeeze inline comment after idempotent re-reset; got: {inline!r}"
+            )
+        finally:
+            self._cleanup(tmp)
+
 
 # ---------------------------------------------------------------------------
 # 6. MIN_TRADES guard — calibration aborts when the dataset is too small
