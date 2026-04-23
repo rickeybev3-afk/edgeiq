@@ -109,6 +109,7 @@ Flags
 import sys, os, time, json, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
+from trade_utils import sp_size_mult
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 PAGE_SZ     = 1000
@@ -334,12 +335,10 @@ def _sim_patch(r: dict) -> dict | None:
                         _eod_r = round(float(_eod_r) * _rvol_mult, 4)
                 except (TypeError, ValueError):
                     pass
-            # Apply screener-pass multiplier — mirrors live bot sizing
-            # other=1.15×  gap=1.00×  trend=0.85×  squeeze=1.00×
-            # Derived from 5-yr backtest (33,776 trades, 2021-2026).
-            _SP_MULT = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00}
+            # Apply screener-pass multiplier — mirrors live bot sizing.
+            # Source of truth: sp_size_mult() in trade_utils.py (SP_MULT_TABLE).
             _sp_tag  = (r.get("screener_pass") or "").strip().lower()
-            _sp_mult = _SP_MULT.get(_sp_tag, 1.00)
+            _sp_mult = sp_size_mult(_sp_tag)
             if _sp_mult != 1.0:
                 _eod_r = round(float(_eod_r) * _sp_mult, 4)
             patch["eod_pnl_r"] = _eod_r

@@ -74,6 +74,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend
+from trade_utils import sp_size_mult
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -850,10 +851,10 @@ def backfill_pending(
                     except (TypeError, ValueError):
                         pass
 
-                # Screener-pass multiplier on eod_pnl_r
-                _SP_MULT = {"other": 1.15, "gap": 1.00, "trend": 0.85, "squeeze": 1.00}
+                # Screener-pass multiplier on eod_pnl_r.
+                # Source of truth: sp_size_mult() in trade_utils.py (SP_MULT_TABLE).
                 _sp_tag  = (screener_pass or "").strip().lower()
-                _sp_mult = _SP_MULT.get(_sp_tag, 1.00)
+                _sp_mult = sp_size_mult(_sp_tag)
                 if eod_pnl_r is not None and _sp_mult != 1.0:
                     eod_pnl_r = round(float(eod_pnl_r) * _sp_mult, 4)
 
