@@ -25,7 +25,21 @@ jobs:
         run: pip install uv
 
       - name: Install dependencies
-        run: uv pip install --system -e .
+        run: |
+          uv pip install --system \
+            "alpaca-py>=0.43.2" \
+            "fpdf>=1.7.2" \
+            "numpy>=2.4.4" \
+            "openpyxl>=3.1.5" \
+            "pandas>=2.3.3" \
+            "plotly>=6.6.0" \
+            "pytz>=2026.1.post1" \
+            "requests>=2.33.0" \
+            "streamlit>=1.55.0" \
+            "streamlit-lightweight-charts>=0.7.20" \
+            "pytest>=9.0" \
+            "supabase>=2.28.3" \
+            "apscheduler>=3.10"
 
       - name: Run tests
         run: python -m pytest -v --tb=short
