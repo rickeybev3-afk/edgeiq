@@ -495,3 +495,148 @@ class TestApplyToBot:
             )
         finally:
             self._cleanup(tmp)
+
+
+# ---------------------------------------------------------------------------
+# 5. TestResetPassToBaseline — end-to-end: reset → 1.00× baseline
+# ---------------------------------------------------------------------------
+
+
+class TestResetPassToBaseline:
+    """
+    End-to-end tests for _reset_pass_to_baseline().
+
+    Each test writes the shared _APPLY_FIXTURE to a NamedTemporaryFile, calls
+    _reset_pass_to_baseline() for a specific pass_name, then reads back the
+    _SP_MULT_TABLE entry and asserts:
+      - the stored value equals 1.00
+      - the stale inline comment ("baseline; recalibrate once >=30 trades settle")
+        is present on the table entry line
+    Self-contained: uses tempfile, never touches real trade_utils.py or Supabase.
+    """
+
+    @staticmethod
+    def _run_reset(csm, pass_name, fixture=None):
+        """
+        Write fixture to a temp file, call _reset_pass_to_baseline(), return the
+        temp file path (caller is responsible for cleanup via try/finally).
+        """
+        if fixture is None:
+            fixture = csm._APPLY_FIXTURE
+        tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+        try:
+            tf.write(fixture)
+            tf.close()
+            csm._reset_pass_to_baseline(pass_name, bot_path=tf.name)
+            return tf.name
+        except Exception:
+            try:
+                os.unlink(tf.name)
+            except OSError:
+                pass
+            try:
+                os.unlink(tf.name + ".bak")
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _cleanup(path):
+        for p in (path, path + ".bak"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    def test_reset_trend_value_is_1_00(self, csm):
+        """
+        Resetting 'trend' (was 0.85 in _APPLY_FIXTURE) writes 1.00 to the table.
+        """
+        tmp = self._run_reset(csm, "trend")
+        try:
+            got = _read_table_entry(tmp, "trend")
+            assert abs(got - 1.00) < 0.001, (
+                f"Expected trend=1.00 after reset, got {got:.2f}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_trend_stale_inline_comment_present(self, csm):
+        """
+        After resetting 'trend', the stale inline comment is on the table entry line.
+        """
+        tmp = self._run_reset(csm, "trend")
+        try:
+            inline = csm._read_inline_comment("trend", bot_path=tmp)
+            assert inline is not None, (
+                "No inline comment found for 'trend' after reset"
+            )
+            assert "baseline; recalibrate once >=30 trades settle" in inline, (
+                f"Stale inline comment not found for 'trend' after reset; got: {inline!r}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_other_value_is_1_00(self, csm):
+        """
+        Resetting 'other' (was 1.15 in _APPLY_FIXTURE) writes 1.00 to the table.
+        """
+        tmp = self._run_reset(csm, "other")
+        try:
+            got = _read_table_entry(tmp, "other")
+            assert abs(got - 1.00) < 0.001, (
+                f"Expected other=1.00 after reset, got {got:.2f}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_other_stale_inline_comment_present(self, csm):
+        """
+        After resetting 'other', the stale inline comment is on the table entry line.
+        """
+        tmp = self._run_reset(csm, "other")
+        try:
+            inline = csm._read_inline_comment("other", bot_path=tmp)
+            assert inline is not None, (
+                "No inline comment found for 'other' after reset"
+            )
+            assert "baseline; recalibrate once >=30 trades settle" in inline, (
+                f"Stale inline comment not found for 'other' after reset; got: {inline!r}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_other_leaves_other_entries_untouched(self, csm):
+        """
+        Resetting 'other' must not change any other _SP_MULT_TABLE entry.
+        The fixture has gap=1.00, trend=0.85, squeeze=1.00, gap_down=1.00.
+        """
+        tmp = self._run_reset(csm, "other")
+        try:
+            assert abs(_read_table_entry(tmp, "gap") - 1.00) < 0.001
+            assert abs(_read_table_entry(tmp, "trend") - 0.85) < 0.001
+            assert abs(_read_table_entry(tmp, "squeeze") - 1.00) < 0.001
+            assert abs(_read_table_entry(tmp, "gap_down") - 1.00) < 0.001
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_idempotent_already_stale_trend(self, csm):
+        """
+        Resetting a pass already at 1.00 with a stale comment is safe: the value
+        stays 1.00 and the stale inline comment remains after the re-reset.
+        """
+        tmp = self._run_reset(csm, "trend", fixture=csm._APPLY_FIXTURE_TREND_STALE)
+        try:
+            got = _read_table_entry(tmp, "trend")
+            assert abs(got - 1.00) < 0.001, (
+                f"Expected trend=1.00 after idempotent re-reset, got {got:.2f}"
+            )
+            inline = csm._read_inline_comment("trend", bot_path=tmp)
+            assert inline is not None, (
+                "No inline comment found for 'trend' after idempotent re-reset"
+            )
+            assert "baseline; recalibrate once >=30 trades settle" in inline, (
+                f"Stale inline comment missing after idempotent re-reset; got: {inline!r}"
+            )
+        finally:
+            self._cleanup(tmp)
