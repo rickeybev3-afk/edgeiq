@@ -7553,7 +7553,27 @@ def nightly_recalibration():
                 )
         else:
             lines.append("  ✅ All paper-trade P&amp;L rows are fully filled.")
-        tg_send("\n".join(lines))
+        # Cooldown: suppress duplicate sends if eod_update() is called more than
+        # once in the same calendar day (e.g. bot restart after 4:20 PM ET).
+        import datetime as _dt_sw, json as _json_sw, os as _os_sw
+        _today_sw = _dt_sw.datetime.now(_dt_sw.timezone.utc).strftime("%Y-%m-%d")
+        _status_path_sw = _os_sw.path.join(
+            _os_sw.path.dirname(_os_sw.path.abspath(__file__)), "eod_sweep_status.json"
+        )
+        _already_sent = False
+        if _os_sw.path.exists(_status_path_sw):
+            try:
+                with open(_status_path_sw) as _sf_sw:
+                    _status_sw = _json_sw.load(_sf_sw)
+                if (_status_sw.get("ran_at") or "")[:10] == _today_sw:
+                    _already_sent = True
+                    log.info(
+                        "EOD sweep Telegram already sent today (%s) — suppressing duplicate.", _today_sw
+                    )
+            except Exception:
+                pass
+        if not _already_sent:
+            tg_send("\n".join(lines))
     except Exception as exc:
         log.warning(f"Nightly eod_pnl_r Telegram summary failed: {exc}")
 
