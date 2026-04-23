@@ -387,7 +387,6 @@ def test_dbl_dist_wins_on_both_hit_day(real_backend):
     )
 
     _assert_sums_to_100(scores)
-    top_score = max(scores.values())
-    assert scores["Dbl Dist"] == top_score, (
-        f"Expected Dbl Dist to be among top scorers; scores={scores}"
+    assert _top_label(scores) == "Dbl Dist", (
+        f"Expected Dbl Dist to lead; scores={scores}"
     )
