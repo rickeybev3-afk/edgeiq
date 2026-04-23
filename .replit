@@ -134,12 +134,12 @@ args = "python3 run_60day_backtest.py --start 2026-01-26 --end 2026-04-17"
 name = "python-tests"
 author = "agent"
 
+[workflows.workflow.metadata]
+isValidation = true
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python -m pytest -v"
-
-[workflows.workflow.metadata]
-isValidation = true
 
 [[workflows.workflow]]
 name = "Weekly Phase 3 Grid Search"
