@@ -51,6 +51,8 @@ from datetime import date, datetime
 
 import pytz
 
+from trade_utils import ib_size_mult
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -670,31 +672,6 @@ def _in_lunch_blackout() -> bool:
         return LUNCH_BLACKOUT_START <= _now_et < LUNCH_BLACKOUT_END
     except Exception:
         return False
-
-# IB-range position-sizing multiplier table
-# Source: 5-yr backtest, TCS≥50 + IB<10% universe (Apr 2026).
-# Each bucket's half-Kelly fraction normalised to the 4-6% base tier,
-# then blended with Expected-R ratio so the 0-2% tier (4.32R, 89.5% WR)
-# gets genuinely large size while 6-10% buckets get modest reduction.
-#   0–2%:  89.5% WR, +4.32R  → 2.00×  premium  (up to 2× base risk)
-#   2–4%:  85.3% WR, +1.24R  → 1.30×  strong
-#   4–6%:  83.6% WR, +0.99R  → 1.00×  standard (base tier)
-#   6–8%:  82.9% WR, +0.77R  → 0.75×  reduced
-#   8–10%: 82.6% WR, +0.88R  → 0.80×  reduced
-_IB_RANGE_MULT = [
-    (2.0,  2.00),   # IB pct < 2%
-    (4.0,  1.30),   # 2% ≤ IB pct < 4%
-    (6.0,  1.00),   # 4% ≤ IB pct < 6%
-    (8.0,  0.75),   # 6% ≤ IB pct < 8%
-    (10.0, 0.80),   # 8% ≤ IB pct < 10%
-]
-
-def _ib_size_mult(ib_pct: float) -> float:
-    """Return position-size multiplier for a given IB range %."""
-    for ceiling, mult in _IB_RANGE_MULT:
-        if ib_pct < ceiling:
-            return mult
-    return 0.80  # ≥10% shouldn't pass IB filter, safe fallback
 
 
 # ── P-tier position-sizing multiplier ─────────────────────────────────────────
@@ -1791,7 +1768,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
         # ── IB-range position-size multiplier ─────────────────────────────────
         # Tighter IB → higher Expected R and WR → scale up; wider → scale down.
         # 0-2%: 2.00×  |  2-4%: 1.30×  |  4-6%: 1.00×  |  6-8%: 0.75×  |  8-10%: 0.80×
-        _ib_mult     = _ib_size_mult(ib_range_pct_val)
+        _ib_mult     = ib_size_mult(ib_range_pct_val)
         risk_dollars = round(risk_dollars * _ib_mult, 2)
         log.info(
             f"  [{ticker}] IB range {ib_range_pct_val:.1f}% "

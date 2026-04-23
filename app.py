@@ -19,6 +19,7 @@ from url_sync import (
 )
 
 from log_utils import _rotate_log, _parse_int_env, validate_env_config, get_config_issues
+from trade_utils import ib_size_mult
 from ui_helpers import (
     _auto_dismiss_success,
     _render_copy_link_button,
@@ -156,14 +157,6 @@ from cache_helpers import (
 )
 
 
-# IB-range position-sizing multiplier — mirrors paper_trader_bot._ib_size_mult.
-# 0-2%: 2.00× | 2-4%: 1.30× | 4-6%: 1.00× | 6-8%: 0.75× | 8-10%: 0.80×
-_IB_RANGE_MULT_APP = [(2.0,2.00),(4.0,1.30),(6.0,1.00),(8.0,0.75),(10.0,0.80)]
-def _ib_size_mult(ib_pct: float) -> float:
-    for _ceil, _m in _IB_RANGE_MULT_APP:
-        if ib_pct < _ceil:
-            return _m
-    return 0.80
 
 # Exponential back-off constants for the DB status widget
 _DB_RETRY_BASE_S: int = 30   # initial / reset interval (seconds)
@@ -11992,7 +11985,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             # Mirrors live bot: tighter IB → bigger size (0-2%: 2×, 2-4%: 1.3×,
                             # 4-6%: 1×, 6-8%: 0.75×, 8-10%: 0.8×).  ib_range_pct=0 → no scale.
                             _rp_ib_pct  = float(_rp_r.get("ib_range_pct") or 0)
-                            _rp_ib_mult = _ib_size_mult(_rp_ib_pct) if _rp_ib_pct > 0 else 1.0
+                            _rp_ib_mult = ib_size_mult(_rp_ib_pct) if _rp_ib_pct > 0 else 1.0
                             _risk_1r   *= _rp_ib_mult
 
                             # ── RVOL size bonus ────────────────────────────────────────────────
@@ -15959,7 +15952,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                             _ib_col_ok = "ib_range_pct" in _sw_sub.columns
                             _sw_pnl_n  = sum(
                                 _tk_pos_size
-                                * _ib_size_mult(float(ib) if _ib_col_ok and ib == ib else 0)
+                                * ib_size_mult(float(ib) if _ib_col_ok and ib == ib else 0)
                                 * abs(float(ft) if ft == ft else 0) / 100
                                 * (1 if wl == "Win" else -1)
                                 for ft, wl, ib in zip(
