@@ -1,17 +1,24 @@
 """
 Tests for calibrate_sp_mult.py.
 
-Two complementary layers:
+Three complementary layers:
   1. test_self_test — subprocess wrapper for the script's built-in --self-test
      suite (covers _recommend_mult and _apply_to_bot via the existing
      deterministic harness inside the script).
   2. Direct unit tests for _stats() and _recommend_mult() that use small
      synthetic fixture rows and never touch Supabase.
+  3. TestApplyToBot — end-to-end tests for the full calibration pipeline:
+     recommend multiplier → call _apply_to_bot against a tempfile fixture →
+     read back the patched _SP_MULT_TABLE entry → assert the value is correct.
+     Self-contained: uses tempfile, never touches real trade_utils.py or Supabase.
 """
 import importlib
 import math
+import os
+import re
 import subprocess
 import sys
+import tempfile
 import types
 import unittest.mock as mock
 
@@ -268,3 +275,223 @@ class TestRecommendMult:
             assert 0.70 <= result <= 1.30, (
                 f"_recommend_mult({pass_exp}, {gap_exp}) = {result} outside [0.70, 1.30]"
             )
+
+
+# ---------------------------------------------------------------------------
+# 4. TestApplyToBot — end-to-end: recommend → patch tempfile → read back
+# ---------------------------------------------------------------------------
+
+def _read_table_entry(path: str, pass_name: str) -> float:
+    """Read _SP_MULT_TABLE[pass_name] from a patched file. Raises if not found."""
+    with open(path) as fh:
+        content = fh.read()
+    pat = re.compile(r'"' + re.escape(pass_name) + r'"\s*:\s*([\d.]+)')
+    m = pat.search(content)
+    if not m:
+        raise AssertionError(
+            f"'{pass_name}' entry not found in _SP_MULT_TABLE after patching"
+        )
+    return float(m.group(1))
+
+
+class TestApplyToBot:
+    """
+    End-to-end tests for _apply_to_bot().
+
+    Each test writes the shared _APPLY_FIXTURE to a NamedTemporaryFile, calls
+    _apply_to_bot() with a specific (pass_name, multiplier, comment) triple,
+    then reads the _SP_MULT_TABLE entry back from disk and asserts it matches
+    the intended value.  No real trade_utils.py is ever modified, and no
+    Supabase connection is required.
+    """
+
+    @staticmethod
+    def _run_apply(csm, pass_name, new_mult, comment, fixture=None, citation_line=""):
+        """
+        Write fixture to a temp file, call _apply_to_bot(), return the temp
+        file path (caller is responsible for cleanup via try/finally).
+        """
+        if fixture is None:
+            fixture = csm._APPLY_FIXTURE
+        tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+        try:
+            tf.write(fixture)
+            tf.close()
+            csm._apply_to_bot(pass_name, new_mult, comment,
+                               citation_line=citation_line, bot_path=tf.name)
+            return tf.name
+        except Exception:
+            try:
+                os.unlink(tf.name)
+            except OSError:
+                pass
+            try:
+                os.unlink(tf.name + ".bak")
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _cleanup(path):
+        for p in (path, path + ".bak"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    def test_apply_squeeze_writes_correct_value(self, csm):
+        """
+        Full pipeline: _apply_to_bot writes the recommended multiplier for
+        'squeeze' into the fixture file and the value reads back correctly.
+        """
+        rec_mult = csm._recommend_mult(0.411, 0.327)
+        tmp = self._run_apply(
+            csm, "squeeze", rec_mult,
+            f"47 trades, 72.3% WR / +0.411R → {rec_mult:.2f}×",
+        )
+        try:
+            got = _read_table_entry(tmp, "squeeze")
+            assert abs(got - rec_mult) < 0.001, (
+                f"Expected squeeze={rec_mult:.2f}, got {got:.2f} after patching"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_gap_down_writes_correct_value(self, csm):
+        """_apply_to_bot correctly patches 'gap_down' from 1.00 to 0.85."""
+        rec_mult = 0.85
+        tmp = self._run_apply(
+            csm, "gap_down", rec_mult,
+            "33 trades, 58.1% WR / +0.290R → 0.85×",
+        )
+        try:
+            got = _read_table_entry(tmp, "gap_down")
+            assert abs(got - 0.85) < 0.001, (
+                f"Expected gap_down=0.85, got {got:.2f} after patching"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_gap_writes_correct_value(self, csm):
+        """_apply_to_bot correctly patches 'gap' to a new calibrated value."""
+        rec_mult = 1.10
+        tmp = self._run_apply(
+            csm, "gap", rec_mult,
+            "55 trades, 67.3% WR / +0.350R → 1.10×",
+        )
+        try:
+            got = _read_table_entry(tmp, "gap")
+            assert abs(got - 1.10) < 0.001, (
+                f"Expected gap=1.10, got {got:.2f} after patching"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_other_entries_untouched(self, csm):
+        """
+        Patching 'squeeze' must not change any other _SP_MULT_TABLE entry.
+        The fixture has other=1.15, gap=1.00, trend=0.85, gap_down=1.00.
+        """
+        rec_mult = 1.15
+        tmp = self._run_apply(
+            csm, "squeeze", rec_mult,
+            "47 trades, 72.3% WR / +0.411R → 1.15×",
+        )
+        try:
+            assert abs(_read_table_entry(tmp, "other") - 1.15) < 0.001
+            assert abs(_read_table_entry(tmp, "gap") - 1.00) < 0.001
+            assert abs(_read_table_entry(tmp, "trend") - 0.85) < 0.001
+            assert abs(_read_table_entry(tmp, "gap_down") - 1.00) < 0.001
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_inline_comment_is_updated(self, csm):
+        """The inline comment on the table entry line is replaced with the new text."""
+        rec_mult = 1.15
+        comment = "47 trades, 72.3% WR / +0.411R → 1.15×"
+        tmp = self._run_apply(csm, "squeeze", rec_mult, comment)
+        try:
+            with open(tmp) as fh:
+                content = fh.read()
+            assert "72.3% WR" in content, (
+                "Inline comment fragment '72.3% WR' not found in patched file"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_with_citation_line_updates_header_comment(self, csm):
+        """When citation_line is supplied, the header comment block is updated."""
+        rec_mult = 1.15
+        citation = "#   'squeeze' (2024-01-03 → 2024-12-31): 47 trades, 72.3% WR / +0.411R avg → 1.15×"
+        tmp = self._run_apply(
+            csm, "squeeze", rec_mult,
+            "47 trades, 72.3% WR / +0.411R → 1.15×",
+            citation_line=citation,
+        )
+        try:
+            with open(tmp) as fh:
+                content = fh.read()
+            assert "47 trades, 72.3% WR / +0.411R avg → 1.15×" in content, (
+                "Citation fragment not found in patched header comment"
+            )
+            assert "'squeeze':   0 settled trades as of 2026-04-20" not in content, (
+                "Stale comment was not removed after citation_line was applied"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_idempotent(self, csm):
+        """Re-applying the same multiplier to the same file is safe and stable."""
+        rec_mult = 1.15
+        comment = "47 trades, 72.3% WR / +0.411R → 1.15×"
+        citation = "#   'squeeze' (2024-01-03 → 2024-12-31): 47 trades, 72.3% WR / +0.411R avg → 1.15×"
+        tmp = self._run_apply(
+            csm, "squeeze", rec_mult, comment, citation_line=citation,
+        )
+        try:
+            csm._apply_to_bot("squeeze", rec_mult, comment,
+                               citation_line=citation, bot_path=tmp)
+            got = _read_table_entry(tmp, "squeeze")
+            assert abs(got - rec_mult) < 0.001, (
+                f"Value drifted after idempotent re-apply: expected {rec_mult:.2f}, got {got:.2f}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_recommend_mult_then_write_round_trip(self, csm):
+        """
+        Full round-trip: _recommend_mult() produces a value → _apply_to_bot()
+        writes it → the file is read back → the stored value equals the
+        recommended value exactly (within float tolerance).
+
+        This is the core regression guard: any break in the regex, rounding, or
+        file-write chain causes this assertion to fail before bad data reaches
+        live sizing in trade_utils.py.
+        """
+        pass_exp = 0.500
+        gap_exp = 0.327
+        rec_mult = csm._recommend_mult(pass_exp, gap_exp)
+        comment = f"60 trades, 80.0% WR / +0.500R → {rec_mult:.2f}×"
+        tmp = self._run_apply(csm, "other", rec_mult, comment)
+        try:
+            got = _read_table_entry(tmp, "other")
+            assert abs(got - rec_mult) < 0.001, (
+                f"Round-trip mismatch: _recommend_mult({pass_exp}, {gap_exp}) = {rec_mult:.2f} "
+                f"but _SP_MULT_TABLE['other'] read back as {got:.2f}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_apply_backup_file_is_created(self, csm):
+        """_apply_to_bot must create a .bak file alongside the patched target."""
+        rec_mult = 1.15
+        tmp = self._run_apply(
+            csm, "squeeze", rec_mult,
+            "47 trades, 72.3% WR / +0.411R → 1.15×",
+        )
+        try:
+            assert os.path.exists(tmp + ".bak"), (
+                ".bak backup file was not created by _apply_to_bot()"
+            )
+        finally:
+            self._cleanup(tmp)
