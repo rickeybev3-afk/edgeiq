@@ -15,11 +15,30 @@ dependencies = [
     "streamlit>=1.55.0",
     "streamlit-lightweight-charts>=0.7.20",
     "pytest>=9.0",
+    "pytest-cov>=5.0",
     "supabase>=2.28.3",
     "apscheduler>=3.10",
 ]
 
+[tool.setuptools]
+packages = []
+
 [tool.pytest.ini_options]
-testpaths = ["."]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "test_*.py",
+    "tests/*",
+    "migrations/*",
+    "artifacts/*",
+    ".pythonlibs/*",
+    "node_modules/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
