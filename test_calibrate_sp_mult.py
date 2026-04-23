@@ -646,6 +646,68 @@ class TestResetPassToBaseline:
         finally:
             self._cleanup(tmp)
 
+    def test_reset_header_block_contains_stale_text(self, csm):
+        """
+        After resetting 'trend', the stale citation text ('0 settled trades as of')
+        appears in the header comment block above _SP_MULT_TABLE, not just on the
+        inline table entry line.  This guards against regressions in the
+        stale_comment_template formatting or the header-block regex in _apply_to_bot.
+        """
+        tmp = self._run_reset(csm, "trend")
+        try:
+            with open(tmp) as fh:
+                content = fh.read()
+            table_pos = content.find("_SP_MULT_TABLE")
+            assert table_pos != -1, "_SP_MULT_TABLE not found in patched file"
+            header_block = content[:table_pos]
+            assert "0 settled trades as of" in header_block, (
+                "Stale citation text '0 settled trades as of' not found in the header "
+                "comment block above _SP_MULT_TABLE after reset.\n"
+                f"Header block:\n{header_block}"
+            )
+            assert ">=30 trades settle" in header_block, (
+                "'>=30 trades settle' not found in the header comment block above "
+                f"_SP_MULT_TABLE after reset.\nHeader block:\n{header_block}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_replaces_prior_calibration_citation_not_appends(self, csm):
+        """
+        If a prior calibration citation line is present in the header comment block
+        for a pass, resetting replaces it with the stale text — it must not be
+        appended alongside the old citation or left in place.
+        """
+        fixture_with_trend_citation = csm._APPLY_FIXTURE.replace(
+            "#   'trend'  (1-3%):              only 12 trades       → 0.85×",
+            "#   'trend' (2024-01-03 → 2024-12-31): 50 trades, 68.0% WR / +0.350R avg → 1.00×",
+        )
+        tmp = self._run_reset(csm, "trend", fixture=fixture_with_trend_citation)
+        try:
+            with open(tmp) as fh:
+                content = fh.read()
+            table_pos = content.find("_SP_MULT_TABLE")
+            assert table_pos != -1, "_SP_MULT_TABLE not found in patched file"
+            header_block = content[:table_pos]
+            assert "50 trades, 68.0% WR" not in header_block, (
+                "Prior calibration citation ('50 trades, 68.0% WR') was not removed "
+                "from the header block after reset — old text still present.\n"
+                f"Header block:\n{header_block}"
+            )
+            assert "0 settled trades as of" in header_block, (
+                "Stale citation text '0 settled trades as of' not found in the header "
+                "comment block above _SP_MULT_TABLE after reset.\n"
+                f"Header block:\n{header_block}"
+            )
+            trend_header_count = header_block.count("#   'trend'")
+            assert trend_header_count == 1, (
+                f"Expected exactly 1 'trend' header entry after reset, found "
+                f"{trend_header_count} — stale text was appended rather than replacing "
+                f"the prior citation.\nHeader block:\n{header_block}"
+            )
+        finally:
+            self._cleanup(tmp)
+
 
 # ---------------------------------------------------------------------------
 # 6. MIN_TRADES guard — calibration aborts when the dataset is too small
