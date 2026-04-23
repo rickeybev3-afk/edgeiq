@@ -977,12 +977,31 @@ def _self_test_fixture_keys() -> None:
         else:
             print(f"  OK   fixture_keys {name}: keys match trade_utils.SP_MULT_TABLE {sorted(canonical_keys)}")
 
+    pass_config_keys: set[str] = set(PASS_CONFIG.keys())
+    missing_pc = canonical_keys - pass_config_keys
+    extra_pc = pass_config_keys - canonical_keys
+    if missing_pc or extra_pc:
+        if missing_pc:
+            print(
+                f"  FAIL fixture_keys PASS_CONFIG: PASS_CONFIG is missing screener passes "
+                f"that are in trade_utils.SP_MULT_TABLE: {sorted(missing_pc)}"
+            )
+        if extra_pc:
+            print(
+                f"  FAIL fixture_keys PASS_CONFIG: PASS_CONFIG contains passes not present "
+                f"in trade_utils.SP_MULT_TABLE: {sorted(extra_pc)}"
+            )
+        all_ok = False
+    else:
+        print(f"  OK   fixture_keys PASS_CONFIG: keys match trade_utils.SP_MULT_TABLE {sorted(canonical_keys)}")
+
     if not all_ok:
         print(
-            "\nERROR: One or more _APPLY_FIXTURE_* strings are out of sync with "
+            "\nERROR: One or more _APPLY_FIXTURE_* strings or PASS_CONFIG are out of sync with "
             "trade_utils.SP_MULT_TABLE.\n"
-            "Update the fixture(s) listed above so every screener-pass key present in "
-            "trade_utils.SP_MULT_TABLE is also present in each fixture dict."
+            "Update the fixture(s) and/or PASS_CONFIG listed above so every screener-pass key "
+            "present in trade_utils.SP_MULT_TABLE is also present in each fixture dict and in "
+            "PASS_CONFIG."
         )
         sys.exit(1)
 
