@@ -928,6 +928,67 @@ def _self_test_apply() -> None:
         sys.exit(1)
 
 
+def _self_test_fixture_keys() -> None:
+    """Check that every _APPLY_FIXTURE_* has the same screener-pass keys as trade_utils.SP_MULT_TABLE.
+
+    Fails with a clear message listing which fixtures are out of sync so that adding a new
+    screener pass to trade_utils.SP_MULT_TABLE is never silently missed by the self-tests.
+    """
+    import importlib.util
+    import pathlib
+
+    # Locate and import trade_utils relative to this file so the check works regardless
+    # of the working directory.
+    tu_path = pathlib.Path(__file__).with_name("trade_utils.py")
+    spec = importlib.util.spec_from_file_location("trade_utils", tu_path)
+    tu = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(tu)  # type: ignore[union-attr]
+    canonical_keys: set[str] = set(tu.SP_MULT_TABLE.keys())
+
+    fixtures: dict[str, str] = {
+        "_APPLY_FIXTURE": _APPLY_FIXTURE,
+        "_APPLY_FIXTURE_GAP_STALE": _APPLY_FIXTURE_GAP_STALE,
+        "_APPLY_FIXTURE_TREND_STALE": _APPLY_FIXTURE_TREND_STALE,
+        "_APPLY_FIXTURE_OTHER_STALE": _APPLY_FIXTURE_OTHER_STALE,
+    }
+
+    all_ok = True
+    for name, fixture in fixtures.items():
+        m = re.search(r'_SP_MULT_TABLE\s*:.*?=\s*\{([^}]+)\}', fixture, re.DOTALL)
+        if not m:
+            print(f"  FAIL fixture_keys {name}: could not locate _SP_MULT_TABLE dict in fixture")
+            all_ok = False
+            continue
+        fixture_keys = set(re.findall(r'"(\w+)"\s*:', m.group(1)))
+        missing = canonical_keys - fixture_keys
+        extra = fixture_keys - canonical_keys
+        if missing or extra:
+            if missing:
+                print(
+                    f"  FAIL fixture_keys {name}: fixture is missing screener passes "
+                    f"that are in trade_utils.SP_MULT_TABLE: {sorted(missing)}"
+                )
+            if extra:
+                print(
+                    f"  FAIL fixture_keys {name}: fixture contains passes not present "
+                    f"in trade_utils.SP_MULT_TABLE: {sorted(extra)}"
+                )
+            all_ok = False
+        else:
+            print(f"  OK   fixture_keys {name}: keys match trade_utils.SP_MULT_TABLE {sorted(canonical_keys)}")
+
+    if not all_ok:
+        print(
+            "\nERROR: One or more _APPLY_FIXTURE_* strings are out of sync with "
+            "trade_utils.SP_MULT_TABLE.\n"
+            "Update the fixture(s) listed above so every screener-pass key present in "
+            "trade_utils.SP_MULT_TABLE is also present in each fixture dict."
+        )
+        sys.exit(1)
+
+    print("All fixture-key self-tests passed.")
+
+
 def _self_test_reset_log() -> None:
     """Verify that _write_reset_log() appends a correctly formatted entry."""
     import tempfile
@@ -2040,6 +2101,8 @@ if __name__ == "__main__":
         _self_test()
         print("\nRunning _apply_to_bot() self-tests...")
         _self_test_apply()
+        print("\nRunning fixture-key sync check...")
+        _self_test_fixture_keys()
         print("\nRunning reset-log self-tests...")
         _self_test_reset_log()
         print("\nRunning reset-confirm self-tests...")
