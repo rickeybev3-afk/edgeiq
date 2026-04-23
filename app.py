@@ -36143,8 +36143,15 @@ function _bqCopyShareLink() {
         if not _live_resolved.empty and "screener_pass" in _live_resolved.columns:
             _sp_live = _live_resolved.copy()
             _sp_live["screener_pass"] = _sp_live["screener_pass"].fillna("untagged").str.strip().str.lower()
+            import importlib
+            import os as _os
             import trade_utils as _tu
-            _SP_MULT_LIVE = dict(_tu.SP_MULT_TABLE)
+            importlib.reload(_tu)  # pick up any on-disk changes from calibrate_sp_mult.py --apply
+            try:
+                _tu_mtime = _os.path.getmtime(_tu.__file__)
+                _tu_mtime_str = datetime.fromtimestamp(_tu_mtime).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                _tu_mtime_str = "unknown"
 
             def _read_sp_calib_date(_pass: str) -> "str | None":
                 try:
@@ -36193,7 +36200,7 @@ function _bqCopyShareLink() {
                 _sw = _sg["is_win"].sum() if "is_win" in _sg.columns else 0
                 _sn = len(_sg)
                 _swr = _sw / _sn * 100 if _sn > 0 else 0
-                _smult = _SP_MULT_LIVE.get(_spass, 1.00)
+                _smult = _tu.SP_MULT_TABLE.get(_spass, 1.00)
                 _smeta = _SP_CALIB_META.get(_spass)
                 if _smeta is None or _smeta["type"] != "live":
                     _scalib_col = _smeta["label"] if _smeta else "—"
@@ -36227,7 +36234,8 @@ function _bqCopyShareLink() {
                     "gap & other: calibrated from 5-yr backtest data. "
                     "trend, gap_down & squeeze: using conservative baseline until ≥30 live trades settle — "
                     f"Calibration column shows progress toward the {_SP_CALIB_MIN}-trade threshold. "
-                    "Hover over a row for full calibration detail."
+                    "Hover over a row for full calibration detail. "
+                    f"Table last updated: {_tu_mtime_str} (trade_utils.py on disk)."
                 )
                 # ── Calibration threshold banners ─────────────────────────────
                 # Show a one-time dismissible banner for each live pass that has
