@@ -1,7 +1,7 @@
 """
 Tests for calibrate_sp_mult.py.
 
-Three complementary layers:
+Five complementary layers:
   1. test_self_test — subprocess wrapper for the script's built-in --self-test
      suite (covers _recommend_mult and _apply_to_bot via the existing
      deterministic harness inside the script).
@@ -11,6 +11,11 @@ Three complementary layers:
      recommend multiplier → call _apply_to_bot against a tempfile fixture →
      read back the patched _SP_MULT_TABLE entry → assert the value is correct.
      Self-contained: uses tempfile, never touches real trade_utils.py or Supabase.
+  4. TestResetPassToBaseline — end-to-end tests for _reset_pass_to_baseline():
+     verifies the reset writes 1.00 and the stale inline comment correctly.
+  5. TestMinTradesGuard — verifies that calibration is aborted (no multiplier
+     computed, no patch written) when the target pass has fewer than MIN_TRADES
+     (30) settled trades.
 """
 import importlib
 import math
@@ -640,3 +645,110 @@ class TestResetPassToBaseline:
             )
         finally:
             self._cleanup(tmp)
+
+
+# ---------------------------------------------------------------------------
+# 6. MIN_TRADES guard — calibration aborts when the dataset is too small
+# ---------------------------------------------------------------------------
+
+def _synthetic_rows(n, win_r=2.0, loss_r=-1.0):
+    """Return n synthetic settled rows, alternating Win/Loss."""
+    rows = []
+    for i in range(n):
+        if i % 2 == 0:
+            rows.append({"win_loss": "Win", "tiered_pnl_r": win_r,
+                         "trade_date": f"2024-{(i // 28) % 12 + 1:02d}-{i % 28 + 1:02d}"})
+        else:
+            rows.append({"win_loss": "Loss", "tiered_pnl_r": loss_r,
+                         "trade_date": f"2024-{(i // 28) % 12 + 1:02d}-{i % 28 + 1:02d}"})
+    return rows
+
+
+class TestMinTradesGuard:
+    """
+    Verify the early-exit guard in main():
+      n < MIN_TRADES  → sys.exit(0), _recommend_mult not called, no --apply patch written
+      n >= MIN_TRADES → calibration proceeds, _recommend_mult called, --apply patch written
+    """
+
+    def test_below_threshold_exits_zero_no_mult_computed(self, csm):
+        """29 target rows (< 30): sys.exit(0), _recommend_mult never called, no patch written."""
+        target_rows = _synthetic_rows(29)
+        gap_rows = _synthetic_rows(50)
+        with mock.patch.object(csm, "_fetch_settled", side_effect=[target_rows, gap_rows]):
+            with mock.patch.object(csm, "_recommend_mult") as mock_mult:
+                with mock.patch.object(csm, "_apply_to_bot") as mock_apply:
+                    with pytest.raises(SystemExit) as exc_info:
+                        csm.main("squeeze", apply=True)
+                    assert exc_info.value.code == 0, (
+                        "Expected sys.exit(0) when n < MIN_TRADES"
+                    )
+                    mock_mult.assert_not_called()
+                    mock_apply.assert_not_called()
+
+    def test_below_threshold_prints_status_message(self, csm, capsys):
+        """A human-readable status message is printed when aborting early."""
+        target_rows = _synthetic_rows(5)
+        gap_rows = _synthetic_rows(50)
+        with mock.patch.object(csm, "_fetch_settled", side_effect=[target_rows, gap_rows]):
+            with mock.patch.object(csm, "_recommend_mult"):
+                with pytest.raises(SystemExit):
+                    csm.main("squeeze", apply=False)
+        captured = capsys.readouterr()
+        assert "5" in captured.out, "Output should include the actual trade count"
+        assert str(csm.MIN_TRADES) in captured.out, (
+            "Output should reference the minimum threshold"
+        )
+
+    def test_zero_rows_aborts_no_mult_computed(self, csm):
+        """Zero target rows is strictly below the threshold — must abort without computing a multiplier."""
+        gap_rows = _synthetic_rows(50)
+        with mock.patch.object(csm, "_fetch_settled", side_effect=[[], gap_rows]):
+            with mock.patch.object(csm, "_recommend_mult") as mock_mult:
+                with mock.patch.object(csm, "_apply_to_bot") as mock_apply:
+                    with pytest.raises(SystemExit) as exc_info:
+                        csm.main("gap_down", apply=True)
+                    assert exc_info.value.code == 0
+                    mock_mult.assert_not_called()
+                    mock_apply.assert_not_called()
+
+    def test_exactly_min_trades_proceeds_and_computes_mult(self, csm):
+        """n == MIN_TRADES (30): calibration proceeds, _recommend_mult is called, patch is written."""
+        target_rows = _synthetic_rows(30)
+        gap_rows = _synthetic_rows(50)
+        with mock.patch.object(csm, "_fetch_settled", side_effect=[target_rows, gap_rows]):
+            with mock.patch.object(csm, "_recommend_mult", return_value=1.00) as mock_mult:
+                with mock.patch.object(csm, "_apply_to_bot") as mock_apply:
+                    csm.main("squeeze", apply=True)
+                    mock_mult.assert_called_once()
+                    mock_apply.assert_called_once()
+
+    def test_above_threshold_proceeds_computes_mult_and_applies(self, csm):
+        """n > MIN_TRADES: _recommend_mult called and --apply patch written."""
+        target_rows = _synthetic_rows(50)
+        gap_rows = _synthetic_rows(50)
+        with mock.patch.object(csm, "_fetch_settled", side_effect=[target_rows, gap_rows]):
+            with mock.patch.object(csm, "_recommend_mult", return_value=1.10) as mock_mult:
+                with mock.patch.object(csm, "_apply_to_bot") as mock_apply:
+                    csm.main("gap_down", apply=True)
+                    mock_mult.assert_called_once()
+                    mock_apply.assert_called_once()
+
+    def test_boundary_29_skips_mult_30_calls_mult(self, csm):
+        """Boundary: 29 rows skips _recommend_mult; 30 rows calls it."""
+        gap_rows = _synthetic_rows(50)
+
+        with mock.patch.object(csm, "_fetch_settled", side_effect=[_synthetic_rows(29), gap_rows]):
+            with mock.patch.object(csm, "_recommend_mult") as mock_mult:
+                with mock.patch.object(csm, "_apply_to_bot"):
+                    with pytest.raises(SystemExit) as exc_info:
+                        csm.main("gap", apply=False)
+                    assert exc_info.value.code == 0
+                    mock_mult.assert_not_called()
+
+        gap_rows2 = _synthetic_rows(50)
+        with mock.patch.object(csm, "_fetch_settled", side_effect=[_synthetic_rows(30), gap_rows2]):
+            with mock.patch.object(csm, "_recommend_mult", return_value=1.00) as mock_mult:
+                with mock.patch.object(csm, "_apply_to_bot"):
+                    csm.main("gap", apply=False)
+                    mock_mult.assert_called_once()
