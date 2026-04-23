@@ -499,8 +499,6 @@ def _check_screener_calibration_due(
     only when you need to hard-override the env-var mechanism (e.g. from a
     dedicated wrapper that has its own backward-compatible env-var name).
     """
-    import re as _re
-
     if min_trades is None:
         min_trades = resolve_calib_threshold(screener_key)
 
@@ -549,21 +547,14 @@ def _check_screener_calibration_due(
         )
         return
 
-    # ── Step 2: read current SP_MULT_TABLE[screener_key] from trade_utils.py
-    _bot_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "trade_utils.py"
-    )
+    # ── Step 2: read current SP_MULT_TABLE[screener_key] from trade_utils ───
     current_mult: float | None = None
     try:
-        with open(_bot_path) as _bf:
-            for _line in _bf:
-                _m = _re.search(rf'"{_re.escape(screener_key)}"\s*:\s*([\d.]+)', _line)
-                if _m:
-                    current_mult = float(_m.group(1))
-                    break
+        import trade_utils as _tu
+        current_mult = _tu.SP_MULT_TABLE.get(screener_key)
     except Exception as _exc:
         log.warning(
-            "Could not read SP_MULT_TABLE from trade_utils.py: %s", _exc
+            "Could not import SP_MULT_TABLE from trade_utils: %s", _exc
         )
         return
 
