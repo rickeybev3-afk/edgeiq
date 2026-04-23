@@ -22351,7 +22351,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                         }
                     except Exception as _fgs_ex:
                         st.error(f"Failed to write filter_config.json: {_fgs_ex}")
-                _auto_dismiss_success("_fgs_apply_save_confirm", icon=None)
+                _auto_dismiss_success("_fgs_apply_save_confirm")
 
         # ── Full results download ─────────────────────────────────────────────
         if _fgs_os.path.exists(_FGS_ALL):
@@ -22409,7 +22409,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.session_state["_fgs_tcs_floor_save_confirm"] = {"at": time.time(), "msg": f"TCS intraday floor saved as {_tcs_new_val} — bot will pick it up on the next scan."}
             except Exception as _tcs_ex:
                 st.error(f"Failed to write filter_config.json: {_tcs_ex}")
-        _auto_dismiss_success("_fgs_tcs_floor_save_confirm", icon=None)
+        _auto_dismiss_success("_fgs_tcs_floor_save_confirm")
 
         # ── Feature Correlation & Interaction Analysis ───────────────────────
         st.divider()
@@ -24952,7 +24952,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                                 st.rerun()
                             except Exception as _p3_reset_ex:
                                 st.error(f"Failed to reset threshold: {_p3_reset_ex}")
-                        _auto_dismiss_success("_p3_tcs_threshold_saved", "Saved ✓", icon=None)
+                        _auto_dismiss_success("_p3_tcs_threshold_saved", "Saved")
             with _p3_info_col:
                 if _p3_cur:
                     st.caption(f"Current config set {_p3_cur.get('applied_at','?')[:10]} · "
@@ -25000,7 +25000,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                     }
                 except Exception as _p3_ex:
                     st.error(f"Failed to write config: {_p3_ex}")
-            _auto_dismiss_success("_p3_combo_apply_confirm", icon=None)
+            _auto_dismiss_success("_p3_combo_apply_confirm")
 
         # ── TCS Intraday Floor slider (Phase 3) ──────────────────────────────
         st.divider()
@@ -25051,7 +25051,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.session_state["_p3_tcs_floor_save_confirm"] = {"at": time.time(), "msg": f"TCS intraday floor saved as {_p3_tcs_new_val} \u2014 bot will pick it up on the next scan."}
             except Exception as _p3_tcs_ex:
                 st.error(f"Failed to write filter_config.json: {_p3_tcs_ex}")
-        _auto_dismiss_success("_p3_tcs_floor_save_confirm", icon=None)
+        _auto_dismiss_success("_p3_tcs_floor_save_confirm")
 
         # ── TCS Divergence Warning Sensitivity ──────────────────────────────────
         st.divider()
@@ -25105,7 +25105,7 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 st.session_state["_p3_warn_save_confirm"] = {"at": time.time(), "msg": f"Warning threshold saved as ±{int(_p3_warn_new_val)} — applies immediately to all combos."}
             except Exception as _p3_warn_ex:
                 st.error(f"Failed to write filter_config.json: {_p3_warn_ex}")
-        _auto_dismiss_success("_p3_warn_save_confirm", icon=None)
+        _auto_dismiss_success("_p3_warn_save_confirm")
         if _p3_warn_reset_btn:
             _p3_warn_reset_cfg = {}
             if _p3_os.path.exists(_P3_CFG):
