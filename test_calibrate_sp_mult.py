@@ -708,6 +708,63 @@ class TestResetPassToBaseline:
         finally:
             self._cleanup(tmp)
 
+    def test_reset_gap_down_value_is_1_00(self, csm):
+        """
+        Resetting 'gap_down' (was 1.00 in _APPLY_FIXTURE) writes 1.00 to the table.
+        """
+        tmp = self._run_reset(csm, "gap_down")
+        try:
+            got = _read_table_entry(tmp, "gap_down")
+            assert abs(got - 1.00) < 0.001, (
+                f"Expected gap_down=1.00 after reset, got {got:.2f}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_gap_down_inline_comment_contains_bearish_break_prefix(self, csm):
+        """
+        After resetting 'gap_down', the inline comment contains the full
+        "Bearish Break — baseline; recalibrate once >=30 trades settle" string.
+        gap_down is the only pass with a non-empty next_step_comment_prefix, so a
+        regex regression on that prefix pattern would not be caught by any other test.
+        """
+        tmp = self._run_reset(csm, "gap_down")
+        try:
+            inline = csm._read_inline_comment("gap_down", bot_path=tmp)
+            assert inline is not None, (
+                "No inline comment found for 'gap_down' after reset"
+            )
+            assert "Bearish Break — baseline; recalibrate once >=30 trades settle" in inline, (
+                f"Expected 'Bearish Break — baseline; recalibrate once >=30 trades settle' "
+                f"in gap_down inline comment after reset; got: {inline!r}"
+            )
+        finally:
+            self._cleanup(tmp)
+
+    def test_reset_idempotent_already_stale_gap_down(self, csm):
+        """
+        Re-resetting gap_down when it is already at 1.00 with a stale comment
+        (using _APPLY_FIXTURE_GAP_STALE) is safe: the value stays 1.00 and the
+        full "Bearish Break — baseline; recalibrate once >=30 trades settle"
+        inline comment is preserved after the re-reset.
+        """
+        tmp = self._run_reset(csm, "gap_down", fixture=csm._APPLY_FIXTURE_GAP_STALE)
+        try:
+            got = _read_table_entry(tmp, "gap_down")
+            assert abs(got - 1.00) < 0.001, (
+                f"Expected gap_down=1.00 after idempotent re-reset, got {got:.2f}"
+            )
+            inline = csm._read_inline_comment("gap_down", bot_path=tmp)
+            assert inline is not None, (
+                "No inline comment found for 'gap_down' after idempotent re-reset"
+            )
+            assert "Bearish Break — baseline; recalibrate once >=30 trades settle" in inline, (
+                f"Expected 'Bearish Break — baseline; recalibrate once >=30 trades settle' "
+                f"in gap_down inline comment after idempotent re-reset; got: {inline!r}"
+            )
+        finally:
+            self._cleanup(tmp)
+
 
 # ---------------------------------------------------------------------------
 # 6. MIN_TRADES guard — calibration aborts when the dataset is too small
