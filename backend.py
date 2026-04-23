@@ -4889,7 +4889,7 @@ def compute_structure_probabilities(df, bin_centers, vap, ib_high, ib_low, poc_p
     else:
         s_trend    = 2.0
         s_nrml_var = 2.0
-        s_dbl_dist = 70.0 if has_dd else 2.0   # DD can still override on both-hit days
+        s_dbl_dist = 75.0 if has_dd else 2.0   # DD overrides on both-hit days with bimodal VAP
 
     scores = {
         "Non-Trend":    s_nontrend,
