@@ -51,7 +51,7 @@ from datetime import date, datetime
 
 import pytz
 
-from trade_utils import ib_size_mult
+from trade_utils import ib_size_mult, p_tier_size_mult
 
 logging.basicConfig(
     level=logging.INFO,
@@ -672,33 +672,6 @@ def _in_lunch_blackout() -> bool:
         return LUNCH_BLACKOUT_START <= _now_et < LUNCH_BLACKOUT_END
     except Exception:
         return False
-
-
-# ── P-tier position-sizing multiplier ─────────────────────────────────────────
-# Calibrated from v5 trailing-stop sim (33,773 rows, April 2026).
-# Applied AFTER the IB-range mult so the two stack multiplicatively.
-# Net max exposure: 2.00× (IB) × 1.50× (P3) = 3.00× base risk (never exceeds
-# the $4,000 risk cap enforced in _compute_risk_dollars).
-#   P3: Morning  TCS≥70   → +4.607R / 81.9% WR → 1.50× (premium runners)
-#   P1: Intraday TCS≥70   → +2.998R / 88.8% WR → 1.25× (high-frequency edge)
-#   P2: Intraday TCS50-69 → +0.947R / 75.1% WR → 1.00× (baseline, acceptable)
-#   P4: Morning  TCS50-69 → blocked by MORNING_TCS_FLOOR before sizing; 1.0× baseline
-#                            if somehow reaches sizing after floor override.
-_PTIER_MULT = [
-    # (scan_type, tcs_min, multiplier)
-    ("morning",  70, 1.50),
-    ("morning",  50, 1.00),   # P4 — blocked by MORNING_TCS_FLOOR; baseline if floor overridden
-    ("intraday", 70, 1.25),
-    ("intraday", 50, 1.00),
-]
-
-def _ptier_size_mult(tcs: float, scan_type: str) -> float:
-    """Return P-tier position-size multiplier for a given TCS and scan type."""
-    st = (scan_type or "").lower()
-    for s, tcs_min, mult in _PTIER_MULT:
-        if s == st and tcs >= tcs_min:
-            return mult
-    return 1.00  # fallback — unknown tier, baseline sizing
 
 
 # ── Screener-pass position-size multiplier ─────────────────────────────────
@@ -2075,7 +2048,7 @@ def _place_order_for_setup(r: dict, scan_label: str = "morning") -> str:
     # ── P-tier position-size multiplier ───────────────────────────────────────
     # Stack on top of IB-range mult: P3 (morning 70+) → 1.50×; P1 (intraday 70+)
     # → 1.25×; P2 (intraday 50-69) → 1.00×.  P4 morning is already blocked above.
-    _ptier_mult  = _ptier_size_mult(_tcs_val, _scan_type_v)
+    _ptier_mult  = p_tier_size_mult(_tcs_val, _scan_type_v)
     risk_dollars = round(risk_dollars * _ptier_mult, 2)
     if _ptier_mult != 1.0:
         log.info(

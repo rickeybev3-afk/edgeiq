@@ -19,7 +19,7 @@ from url_sync import (
 )
 
 from log_utils import _rotate_log, _parse_int_env, validate_env_config, get_config_issues
-from trade_utils import ib_size_mult
+from trade_utils import ib_size_mult, p_tier_size_mult
 from ui_helpers import (
     _auto_dismiss_success,
     _render_copy_link_button,
@@ -15249,14 +15249,10 @@ Measures how accurately the 7-structure framework classified those days in hinds
                 "All TCS<70 → 1.00×  |  Multipliers stack *after* IB-range mult."
             )
 
-            def _slp_ptier(row):
-                _tcs_v = row.get("tcs") or 0
-                _sc_v  = str(row.get("scan_type") or "").lower()
-                if _sc_v == "morning"  and _tcs_v >= 70: return 1.50
-                if _sc_v == "intraday" and _tcs_v >= 70: return 1.25
-                return 1.00
-
-            _slp_df["ptier_mult"] = _slp_df.apply(_slp_ptier, axis=1)
+            _slp_df["ptier_mult"] = _slp_df.apply(
+                lambda row: p_tier_size_mult(row.get("tcs") or 0, row.get("scan_type") or ""),
+                axis=1,
+            )
             _slp_df["r_flat"]     = _slp_df["pnl_r_sim"]
             _slp_df["r_sized"]    = _slp_df["pnl_r_sim"] * _slp_df["ptier_mult"]
 
