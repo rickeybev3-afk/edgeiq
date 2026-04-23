@@ -34,6 +34,9 @@ def _stub_modules():
 
 _stub_modules()
 
+# Force the real backend to load (earlier test files may have stubbed it with
+# a MagicMock).  Remove any pre-existing stub so Python re-imports from disk.
+sys.modules.pop("backend", None)
 import backend  # noqa: E402  (import after stubs)
 
 
@@ -45,14 +48,22 @@ import backend  # noqa: E402  (import after stubs)
 
 def _load_bot_fn():
     import importlib.util, os
+    _orig_ptb = sys.modules.get("paper_trader_bot")
     spec = importlib.util.spec_from_file_location(
         "paper_trader_bot",
         os.path.join(os.path.dirname(__file__), "paper_trader_bot.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules["paper_trader_bot"] = mod
-    spec.loader.exec_module(mod)
-    return mod._rvol_size_mult
+    try:
+        spec.loader.exec_module(mod)
+        fn = mod._rvol_size_mult
+    finally:
+        if _orig_ptb is None:
+            sys.modules.pop("paper_trader_bot", None)
+        else:
+            sys.modules["paper_trader_bot"] = _orig_ptb
+    return fn
 
 
 try:

@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 _STUB_MODULES = [
     "requests", "pytz", "supabase",
-    "backend", "log_utils", "log_config",
+    "backend",
 ]
 for _mod in _STUB_MODULES:
     if _mod not in sys.modules:
@@ -736,6 +736,7 @@ class TestEodNormalization(unittest.TestCase):
             return_value={"eod_pnl_r": -0.5}
         )
         import sys
+        _orig_backend = sys.modules.get("backend")
         sys.modules["backend"] = fake_tiered_mod
         try:
             _ptb._supabase_client = mock_sb
@@ -743,7 +744,10 @@ class TestEodNormalization(unittest.TestCase):
             _ptb._recalc_eod_pnl_r_recent(lookback_days=None)
         finally:
             _ptb._supabase_client = orig_sb
-            del sys.modules["backend"]
+            if _orig_backend is None:
+                sys.modules.pop("backend", None)
+            else:
+                sys.modules["backend"] = _orig_backend
 
         # Verify DB update was called at least once
         mock_sb.table.return_value.update.assert_called()
@@ -789,13 +793,17 @@ class TestEodNormalization(unittest.TestCase):
             return_value={"eod_pnl_r": 1.5}
         )
         import sys
+        _orig_backend = sys.modules.get("backend")
         sys.modules["backend"] = fake_tiered_mod
         try:
             _ptb._supabase_client = mock_sb
             _ptb._recalc_eod_pnl_r_recent(lookback_days=None)
         finally:
             _ptb._supabase_client = orig_sb
-            del sys.modules["backend"]
+            if _orig_backend is None:
+                sys.modules.pop("backend", None)
+            else:
+                sys.modules["backend"] = _orig_backend
 
         all_payloads = [
             call.args[0]

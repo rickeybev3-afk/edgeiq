@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 _STUB_MODULES = [
     "requests", "pytz", "supabase",
-    "backend", "log_utils", "log_config",
+    "backend",
 ]
 for _mod in _STUB_MODULES:
     if _mod not in sys.modules:
